@@ -72,7 +72,7 @@ export const make = Effect.gen(function* () {
       runningCheckouts.add(cwd);
       return yield* Effect.gen(function* () {
         const status = yield* git.status({ cwd });
-        if (!status.isRepo || status.refName === null)
+        if (!status.isRepo || (input.scope.type === "branch" && status.refName === null))
           return yield* fail("Switch to a Git branch before rebuilding commits.");
         if (status.refName !== input.expectedBranch)
           return yield* fail("The branch changed. Reopen the commit dialog and try again.");

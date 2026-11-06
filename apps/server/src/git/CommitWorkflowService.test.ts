@@ -243,6 +243,55 @@ describe("agent commit workflow", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
+  it.effect(
+    "splits uncommitted changes on detached HEAD without disturbing a paused rebase",
+    () => {
+      const h = harness({ status: { refName: null } });
+      return Effect.gen(function* () {
+        const service = yield* CommitWorkflow.CommitWorkflowService;
+        yield* service.start({ ...input, expectedBranch: null });
+        const request = h.run.mock.calls[0]![0];
+        expect(request.request.expectedBranch).toBeNull();
+        const text = buildCommitWorkflowPrompt(request.request, request.style);
+        expect(text).toContain("Expected source state: detached HEAD");
+        expect(text).toContain("git update-ref --no-deref HEAD <candidate> <recorded-head>");
+        expect(text).toContain("Do not continue, skip, abort, or restart the rebase");
+        expect(text).toContain("Preserve all existing commits");
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
+
+  it.effect("still requires a named branch when rebuilding existing history", () => {
+    const h = harness({ status: { refName: null, hasWorkingTreeChanges: false } });
+    return Effect.gen(function* () {
+      const service = yield* CommitWorkflow.CommitWorkflowService;
+      const error = yield* service
+        .start({
+          ...input,
+          expectedBranch: null,
+          scope: { type: "branch" },
+        })
+        .pipe(Effect.flip);
+      expect(error.message).toContain("Switch to a Git branch");
+      expect(h.run).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect.each([
+    { refName: "feature", expectedBranch: null },
+    { refName: null, expectedBranch: "feature" },
+  ])("refuses a checkout whose attachment changed: $refName / $expectedBranch", (target) => {
+    const h = harness({ status: { refName: target.refName } });
+    return Effect.gen(function* () {
+      const service = yield* CommitWorkflow.CommitWorkflowService;
+      const error = yield* service
+        .start({ ...input, expectedBranch: target.expectedBranch })
+        .pipe(Effect.flip);
+      expect(error.message).toContain("branch changed");
+      expect(h.run).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(h.layer));
+  });
+
   it.effect("rebuilds branch history from an explicit base without a hunk or commit limit", () => {
     const h = harness({ status: { hasWorkingTreeChanges: false } });
     return Effect.gen(function* () {

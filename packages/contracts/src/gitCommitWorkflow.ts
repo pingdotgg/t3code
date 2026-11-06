@@ -19,7 +19,7 @@ export const GitStartCommitWorkflowInput = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   cwd: TrimmedNonEmptyString,
-  expectedBranch: TrimmedNonEmptyString,
+  expectedBranch: Schema.NullOr(TrimmedNonEmptyString),
   scope: GitCommitWorkflowScope,
   instructions: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(10_000))),
 });

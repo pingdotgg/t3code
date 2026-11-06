@@ -185,6 +185,8 @@ uses the project's instructions and recent commit subjects.
 Use **Split into logical commits** to arrange uncommitted changes or existing branch commits by
 responsibility and dependency. It uses the model and writing style from **Settings → Source Control**,
 including project overrides, and runs independently as a quick action without chat history.
+Uncommitted changes can also be split on detached HEAD during a paused interactive rebase.
+The rebase stays paused; review the new commits, then continue the rebase yourself.
 Existing branch history requires a clean feature branch; leave the base branch blank to use the
 repository default. The workflow reads `.t3code/commit-message.md` and is instructed to build in a
 separate worktree, inspect dependency ordering, preserve the final contents, and keep a backup ref.

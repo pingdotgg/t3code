@@ -41,10 +41,10 @@ export function CommitWorkflowDialog(props: {
   const unavailable =
     scope === "working_tree"
       ? !props.hasChanges || props.filePaths?.length === 0
-      : props.hasChanges || props.isDefaultRef;
+      : props.hasChanges || props.isDefaultRef || props.branch === null;
 
   const submit = () => {
-    if (!canStart || unavailable || submitted.current || !props.branch) return;
+    if (!canStart || unavailable || submitted.current) return;
     const payload = {
       threadId: props.threadRef.threadId,
       cwd: props.cwd,
@@ -137,9 +137,15 @@ export function CommitWorkflowDialog(props: {
                 />
               </label>
             )}
-            {scope === "branch" && (props.hasChanges || props.isDefaultRef) && (
-              <p className="text-sm text-warning">
-                Use a feature branch with a clean working tree to rebuild existing commits.
+            {scope === "branch" &&
+              (props.hasChanges || props.isDefaultRef || props.branch === null) && (
+                <p className="text-sm text-warning">
+                  Use a feature branch with a clean working tree to rebuild existing commits.
+                </p>
+              )}
+            {scope === "working_tree" && props.branch === null && (
+              <p className="text-sm text-muted-foreground">
+                Commits will be created on detached HEAD. Any paused rebase will stay paused.
               </p>
             )}
             {scope === "working_tree" && props.isDefaultRef && (
@@ -166,7 +172,7 @@ export function CommitWorkflowDialog(props: {
           <Button variant="outline" size="sm" onClick={props.onClose}>
             Cancel
           </Button>
-          <Button size="sm" disabled={!canStart || unavailable || !props.branch} onClick={submit}>
+          <Button size="sm" disabled={!canStart || unavailable} onClick={submit}>
             Split into commits
           </Button>
         </DialogFooter>

@@ -94,10 +94,12 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const workflowUnavailable =
     selectedThread?.id !== _props.route.params.threadId ||
     selectedThread?.environmentId !== _props.route.params.environmentId ||
-    !gitStatus.data?.refName ||
+    !gitStatus.data?.isRepo ||
     (workflowScope === "working_tree"
       ? noneSelected
-      : isDefaultRef || gitStatus.data?.hasWorkingTreeChanges !== false);
+      : !gitStatus.data?.refName ||
+        isDefaultRef ||
+        gitStatus.data?.hasWorkingTreeChanges !== false);
   const runWorkflow = async () => {
     if (
       !selectedThread ||
@@ -105,7 +107,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       !canStartWorkflow ||
       submittedWorkflow.current ||
       workflowUnavailable ||
-      !gitStatus.data?.refName
+      !gitStatus.data
     )
       return;
     const payload = {
@@ -202,6 +204,11 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                   </Text>
                 </Pressable>
               ))}
+              {workflowScope === "working_tree" && gitStatus.data?.refName === null && (
+                <Text className="text-foreground-secondary text-sm">
+                  Commits will be created on detached HEAD. Any paused rebase will stay paused.
+                </Text>
+              )}
               {workflowScope === "branch" && (
                 <>
                   <TextInput
