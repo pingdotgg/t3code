@@ -21,7 +21,7 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
-import { formatBytes } from "./lib/format-bytes";
+import { formatBytes } from "../../lib/formatBytes";
 
 export function SettingsClientStorageRouteScreen() {
   const insets = useSafeAreaInsets();

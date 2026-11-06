@@ -121,6 +121,9 @@ export const layer = HttpApiBuilder.group(
             clientName: resolved.client.name,
             redirectHost: new URL(resolved.redirectUri).host,
             environmentHost: new URL(urls.issuer).host,
+            ...(oauth.runtimeModeCeiling === undefined
+              ? {}
+              : { runtimeModeCeiling: oauth.runtimeModeCeiling }),
             ...(session === undefined
               ? {}
               : {
