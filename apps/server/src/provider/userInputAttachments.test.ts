@@ -182,6 +182,7 @@ describe("question answer paths", () => {
     ],
     ["hyphen symbol fallback", String.raw`{\rtf1\ansi\uc3\u945\~\_\-Z}`, "αZ"],
     ["control word", String.raw`{\rtf1\ansi A\u9\tab X}`, "A\tX"],
+    ["line break paragraphs", "{\\rtf1\\ansi First\\\nSecond\\\r\nThird}", "First\nSecond\nThird"],
     ["group close", String.raw`{\rtf1\ansi{\u945}Z}`, "αZ"],
     ["group open", String.raw`{\rtf1\ansi\u945{Z}}`, "αZ"],
     ["hex byte", String.raw`{\rtf1\ansi\u945\'3fZ}`, "αZ"],
