@@ -1,5 +1,4 @@
-// ZeroClaw driver. The snapshot probe connects, handshakes, and lists agents
-// and models. It never opens a session.
+// Health discovery never waits for remote model catalogs or opens a session.
 import {
   ProviderDriverKind,
   TextGenerationError,
@@ -15,6 +14,8 @@ import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Path from "effect/Path";
@@ -140,47 +141,13 @@ export const probeZeroClaw = Effect.fn("probeZeroClaw")(function* (input: {
       const agents = yield* connection
         .request("agents/list", {})
         .pipe(Effect.flatMap(decodeAgentsListResult));
-      const catalog = yield* connection
-        .request("config/catalog", {})
-        .pipe(Effect.orElseSucceed(() => ({ model_providers: [] })));
-      // The daemon returns `{ model_providers: [{ name, display_name, local }] }`.
-      const listedProviders = (catalog as { model_providers?: unknown }).model_providers;
-      const providers = Array.isArray(listedProviders)
-        ? listedProviders.flatMap((provider: unknown) =>
-            typeof provider === "object" &&
-            provider !== null &&
-            typeof (provider as { name?: unknown }).name === "string"
-              ? [(provider as { name: string }).name]
-              : [],
-          )
-        : [];
-      const models: ServerProviderModel[] = [];
-      for (const provider of providers) {
-        const listed = yield* connection
-          .request("config/catalog-models", { model_provider: provider })
-          .pipe(Effect.orElseSucceed(() => ({ models: [] as string[] })));
-        const names = Array.isArray((listed as { models?: unknown }).models)
-          ? ((listed as { models: unknown[] }).models.filter(
-              (model) => typeof model === "string",
-            ) as string[])
-          : [];
-        for (const name of names) {
-          models.push({
-            slug: `${provider}/${name}`,
-            name,
-            subProvider: provider,
-            isCustom: false,
-            capabilities: null,
-          });
-        }
-      }
       return {
         kind: "ready" as const,
         version: status.version,
         agents: agents.agents
           .filter((agent) => agent.enabled !== false)
           .map((agent) => agent.alias),
-        models,
+        models: [] as ServerProviderModel[],
       };
     }),
   ).pipe(
@@ -209,6 +176,46 @@ export const probeZeroClaw = Effect.fn("probeZeroClaw")(function* (input: {
     models: probed.models,
     version: probed.version,
   });
+});
+
+const discoverModels = Effect.fn("ZeroClaw.discoverModels")(function* (socketPath: string) {
+  const connection = yield* makeZeroClawRpcConnection({ socketPath });
+  yield* connection.request("initialize", INITIALIZE_PARAMS);
+  const catalog = yield* connection
+    .request("config/catalog", {})
+    .pipe(Effect.orElseSucceed(() => ({ model_providers: [] })));
+  // The daemon returns `{ model_providers: [{ name, display_name, local }] }`.
+  const listedProviders = (catalog as { model_providers?: unknown }).model_providers;
+  const providers = Array.isArray(listedProviders)
+    ? listedProviders.flatMap((provider: unknown) =>
+        typeof provider === "object" &&
+        provider !== null &&
+        typeof (provider as { name?: unknown }).name === "string"
+          ? [(provider as { name: string }).name]
+          : [],
+      )
+    : [];
+  const models: ServerProviderModel[] = [];
+  for (const provider of providers) {
+    const listed = yield* connection
+      .request("config/catalog-models", { model_provider: provider })
+      .pipe(Effect.orElseSucceed(() => ({ models: [] as string[] })));
+    const names = Array.isArray((listed as { models?: unknown }).models)
+      ? ((listed as { models: unknown[] }).models.filter(
+          (model) => typeof model === "string",
+        ) as string[])
+      : [];
+    for (const name of names) {
+      models.push({
+        slug: `${provider}/${name}`,
+        name,
+        subProvider: provider,
+        isCustom: false,
+        capabilities: null,
+      });
+    }
+  }
+  return models;
 });
 
 export function agentOptionDescriptor(agents: ReadonlyArray<string>) {
@@ -263,12 +270,44 @@ export const ZeroClawDriver: ProviderDriver<ZeroClawSettings, ZeroClawDriverEnv>
           })),
         );
     const snapshot = yield* SubscriptionRef.make(stampSnapshot(yield* check));
-    const refresh = Effect.gen(function* () {
+    const scope = yield* Effect.scope;
+    const refreshSemaphore = yield* Semaphore.make(1);
+    let enrichment: Fiber.Fiber<void> | undefined;
+    const enrich = Effect.fn("ZeroClaw.enrichSnapshot")(function* () {
+      const cached = cache.current;
+      if (!input.enabled || cached === undefined) return;
+      enrichment = yield* discoverModels(socketPath).pipe(
+        Effect.scoped,
+        Effect.flatMap((models) =>
+          Effect.gen(function* () {
+            if (cache.current !== cached) return;
+            cache.current = { ...cached, models };
+            yield* SubscriptionRef.set(
+              snapshot,
+              stampSnapshot(
+                readySnapshot({
+                  instanceId: input.instanceId,
+                  checkedAt: DateTime.formatIso(DateTime.makeUnsafe(cached.at)),
+                  version: cached.version,
+                  models,
+                }),
+              ),
+            );
+          }),
+        ),
+        Effect.ignore,
+        Effect.forkIn(scope),
+      );
+    });
+    const refresh = Effect.fn("ZeroClaw.refreshSnapshot")(function* () {
+      if (enrichment !== undefined) yield* Fiber.interrupt(enrichment);
       cache.current = undefined;
       const next = stampSnapshot(yield* check);
       yield* SubscriptionRef.set(snapshot, next);
+      yield* enrich();
       return next;
-    });
+    }, refreshSemaphore.withPermits(1));
+    yield* enrich();
     const adapter = yield* makeZeroClawAdapterV2({
       instanceId: input.instanceId,
       settings: input.config,
@@ -283,7 +322,7 @@ export const ZeroClawDriver: ProviderDriver<ZeroClawSettings, ZeroClawDriverEnv>
       enabled: input.enabled,
       snapshot: {
         getSnapshot: SubscriptionRef.get(snapshot),
-        refresh,
+        refresh: refresh(),
         streamChanges: SubscriptionRef.changes(snapshot),
         resolveMaintenance: () =>
           Effect.succeed(

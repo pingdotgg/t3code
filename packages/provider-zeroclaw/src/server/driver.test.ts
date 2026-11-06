@@ -7,6 +7,10 @@ import * as NodePath from "node:path";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -16,6 +20,7 @@ import { agentOptionDescriptor, probeZeroClaw, ZeroClawDriver } from "./driver.t
 interface DaemonState {
   agents: string[];
   failAgentDiscovery: boolean;
+  onCatalogModels?: (reply: () => void) => void;
 }
 
 const withDaemon = <A, E, R>(
@@ -89,7 +94,11 @@ const withDaemon = <A, E, R>(
                           live: false,
                         }
                       : {};
-          socket.write(`${JSON.stringify({ jsonrpc: "2.0", id: frame.id, result })}\n`);
+          const reply = () =>
+            socket.write(`${JSON.stringify({ jsonrpc: "2.0", id: frame.id, result })}\n`);
+          if (frame.method === "config/catalog-models" && state.onCatalogModels) {
+            state.onCatalogModels(reply);
+          } else reply();
         }
       });
     });
@@ -129,7 +138,7 @@ describe("probeZeroClaw", () => {
       expect((yield* instance.snapshot.getSnapshot).checkedAt).toBe("1970-01-01T00:00:03.000Z");
     }).pipe(Effect.provide(Path.layer)),
   );
-  it.live("returns a ready snapshot with models and does not open a session", () =>
+  it.live("returns readiness with the default model without opening a session", () =>
     withDaemon((socketPath) =>
       Effect.gen(function* () {
         const snapshot = yield* probeZeroClaw({
@@ -138,16 +147,55 @@ describe("probeZeroClaw", () => {
           cache: { current: undefined },
         });
         expect(snapshot.status).toBe("ready");
-        expect("models" in snapshot ? snapshot.models?.map((model) => model.slug) : []).toEqual([
-          "default",
-          "openai/gpt",
-        ]);
+        expect(snapshot.models?.map((model) => model.slug)).toEqual(["default"]);
         expect(agentOptionDescriptor(["coder", "reviewer"]).options).toEqual([
           { id: "coder", label: "coder" },
           { id: "reviewer", label: "reviewer" },
         ]);
       }),
     ),
+  );
+
+  it.live("publishes readiness and refreshes while model discovery is pending", () =>
+    withDaemon((socketPath, _initializeParams, state) =>
+      Effect.gen(function* () {
+        const requested = yield* Deferred.make<() => void>();
+        state.onCatalogModels = (reply) => Deferred.doneUnsafe(requested, Effect.succeed(reply));
+        const created = yield* ZeroClawDriver.create({
+          instanceId: ProviderInstanceId.make("zc"),
+          enabled: true,
+          config: { ...ZeroClawDriver.defaultConfig(), socketPath },
+          environment: [],
+          displayName: undefined,
+        }).pipe(Effect.forkScoped);
+        const reply = yield* Deferred.await(requested);
+        expect(created.pollUnsafe()).toBeDefined();
+        const instance = yield* Fiber.join(created);
+        expect(yield* instance.snapshot.getSnapshot).toMatchObject({ status: "ready" });
+        expect((yield* instance.snapshotForCwd!("/w")).optionDescriptors).toEqual([
+          agentOptionDescriptor(["coder", "reviewer"]),
+        ]);
+        const refreshedRequest = yield* Deferred.make<() => void>();
+        state.onCatalogModels = (send) =>
+          Deferred.doneUnsafe(refreshedRequest, Effect.succeed(send));
+        const refreshed = yield* instance.snapshot.refresh.pipe(Effect.forkScoped);
+        const refreshReply = yield* Deferred.await(refreshedRequest);
+        expect(refreshed.pollUnsafe()).toBeDefined();
+        expect(yield* Fiber.join(refreshed)).toMatchObject({ status: "ready" });
+        reply();
+        refreshReply();
+        const enriched = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) => snapshot.models?.some((model) => model.slug === "openai/gpt") === true,
+          ),
+          Stream.runHead,
+        );
+        expect(Option.getOrThrow(enriched).models?.map((model) => model.slug)).toEqual([
+          "default",
+          "openai/gpt",
+        ]);
+      }),
+    ).pipe(Effect.provide(Path.layer)),
   );
 
   it.live("does not cache failed discovery and refreshes workspace agents", () =>
