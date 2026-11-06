@@ -177,6 +177,7 @@ it.effect("reads a management key from its secret provider", () => {
 it.effect.each(["listing", "quota", "changed-account"] as const)(
   "retains provider-filtered readings through %s failures with account isolation",
   (failure) => {
+    let requests = 0;
     let fail = false;
     let includeCodex = false;
     return Effect.gen(function* () {
@@ -195,6 +196,10 @@ it.effect.each(["listing", "quota", "changed-account"] as const)(
         ["claudeAgent", "codex"],
       );
       const prior = (yield* sources.current)[0]!;
+      const beforeHiddenRefresh = requests;
+      yield* sources.refresh.pipe(Effect.provideService(UsageProviderFilter, ["cursor"]));
+      expect(requests).toBe(beforeHiddenRefresh);
+      expect((yield* sources.current)[0]).toEqual(prior);
       yield* TestClock.adjust("5 minutes");
       fail = true;
       yield* sources.refresh;
@@ -251,6 +256,7 @@ it.effect.each(["listing", "quota", "changed-account"] as const)(
           HttpClient.HttpClient,
           HttpClient.make((request) =>
             Effect.sync(() => {
+              requests++;
               if (fail && failure === "listing")
                 return HttpClientResponse.fromWeb(request, Response.json({}, { status: 401 }));
               if (request.url.endsWith("/auth-files"))

@@ -201,7 +201,7 @@ export const readClaudeUsageAccountIdentity = Effect.fn(
 )((accountConfigPath: string) =>
   readJson(Config, accountConfigPath).pipe(
     Effect.map((config) =>
-      config.oauthAccount && Object.values(config.oauthAccount).some((value) => value?.trim())
+      config.oauthAccount?.accountUuid?.trim() || config.oauthAccount?.emailAddress?.trim()
         ? `claude:${encodeAccountCacheKey(config)}`
         : undefined,
     ),

@@ -93,6 +93,58 @@ describe("claudeResetCreditsToContract", () => {
 });
 
 effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
+  it.effect.each(["organization-only", "account", "email"] as const)(
+    "isolates credentials unless a user identity is known (%s)",
+    (identity) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const first = yield* writeLogin;
+        const second = yield* writeLogin;
+        const oauthAccount = {
+          organizationUuid: "org-1",
+          ...(identity === "account" ? { accountUuid: "same-account" } : {}),
+          ...(identity === "email" ? { emailAddress: "same@example.test" } : {}),
+        };
+        for (const login of [first, second])
+          yield* fs.writeFileString(login.accountConfigPath, JSON.stringify({ oauthAccount }));
+        yield* fs.writeFileString(
+          path.join(second.configDir, ".credentials.json"),
+          JSON.stringify({ claudeAiOauth: { accessToken: "other-token" } }),
+        );
+        let reads = 0;
+        const client = yield* makeUsageHttpClient(
+          HttpClient.make((request) =>
+            Effect.sync(() => {
+              reads++;
+              const id =
+                request.headers.authorization === "Bearer oauth-token" ? "grant_a" : "grant_b";
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  cedar_ember: { eligible: true, next_grant_id: id, grants: [grant({ id })] },
+                }),
+              );
+            }),
+          ),
+        );
+        const read = (login: typeof first) =>
+          ClaudeResetCredits.readClaudeResetCredits(
+            login.configDir,
+            "2.1.0",
+            login.accountConfigPath,
+          ).pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(HttpClient.HttpClient, client),
+          );
+        expect((yield* read(first))?.nextCreditId).toBe("grant_a");
+        expect((yield* read(second))?.nextCreditId).toBe(
+          identity === "organization-only" ? "grant_b" : "grant_a",
+        );
+        expect(reads).toBe(identity === "organization-only" ? 2 : 1);
+      }),
+  );
+
   it.effect("reads the grants with the CLI's request", () =>
     Effect.gen(function* () {
       const { configDir, accountConfigPath } = yield* writeLogin;
@@ -189,6 +241,10 @@ effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
     Effect.gen(function* () {
       const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
       const login = yield* writeLogin;
+      yield* (yield* FileSystem.FileSystem).writeFileString(
+        login.accountConfigPath,
+        '{"oauthAccount":{"organizationUuid":"org-1","accountUuid":"account-a"}}',
+      );
       const started = yield* Deferred.make<void>();
       const requestIds: string[] = [];
       const client = HttpClient.make((request) =>

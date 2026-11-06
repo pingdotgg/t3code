@@ -151,6 +151,12 @@ export const make = Effect.gen(function* () {
   // Serialize refreshes so slow old-settings reads cannot resurrect removed sources after newer refreshes.
   const refreshLock = yield* Semaphore.make(1);
   const refresh = Effect.gen(function* () {
+    const providers = yield* UsageProviderFilter;
+    if (
+      providers !== undefined &&
+      !providers.some((driver) => driver === "codex" || driver === "claudeAgent")
+    )
+      return;
     const settings = yield* settingsService.getSettings.pipe(
       Effect.orElseSucceed((): ServerSettings | null => null),
     );
