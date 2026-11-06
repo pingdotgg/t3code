@@ -390,6 +390,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     return host;
   });
 
+  // Readiness phases replace the shown detail; this restores an incomplete listing's cause once ready.
+  const discoveryDetails = new Map<DeviceHostId, string>();
+
   const setHostStatus = (
     hostId: DeviceHostId,
     status: DeviceServiceState["hostStatuses"][string],
@@ -399,13 +402,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         ? SynchronizedRef.get(stateRef).pipe(Effect.map(({ state }) => state))
         : publish((state) => {
             const previous = state.hostStatuses[hostId];
-            // Discovery problems outlive readiness updates until a listing clears them.
             const detail =
               status.detail ??
               (status.status === "ready" &&
-              previous?.status === "ready" &&
-              previous.incompletePlatforms
-                ? previous.detail
+              (previous?.incompletePlatforms || previous?.androidDiscoveryIncomplete)
+                ? discoveryDetails.get(hostId)
                 : undefined);
             return {
               ...state,
@@ -575,6 +576,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       Effect.gen(function* () {
         if (!(yield* readDeviceSettings).enabled || !host || hosts.get(ready.hostId) !== host)
           return (yield* SynchronizedRef.get(stateRef)).state;
+        if (detail && (incompletePlatforms.length > 0 || androidDiscoveryIncomplete))
+          discoveryDetails.set(ready.hostId, detail);
+        else discoveryDetails.delete(ready.hostId);
         return yield* publish((state) => ({
           ...state,
           hosts: hostSummaries,

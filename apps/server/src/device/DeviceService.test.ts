@@ -881,6 +881,14 @@ it.effect(
       });
       yield* service.agentReadinessIfSupported();
       expect((yield* service.state).hostStatuses.local).toEqual(failed.hostStatuses.local);
+      yield* service.setHostStatus(LOCAL_DEVICE_HOST_ID, {
+        status: "starting",
+        detail: "Reconnecting to device host…",
+      });
+      yield* service.setHostStatus(LOCAL_DEVICE_HOST_ID, { status: "ready" });
+      const reconnected = yield* service.state;
+      expect(reconnected.hostStatuses.local).toEqual(failed.hostStatuses.local);
+      expect(reconnected.hostStatusDetail).toBe(simctlMessage);
       yield* Ref.set(discoveryErrors, []);
       const recovered = yield* service.list;
       expect(recovered.devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
