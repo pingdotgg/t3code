@@ -705,7 +705,7 @@ export const layer = Layer.effect(
     // and timeout errors are not, since a rebuild would close their sessions.
     const rebuildMissingAndRefresh = Effect.fn("rebuildMissingAndRefresh")(function* () {
       const instances = yield* instanceRegistry.listInstances;
-      yield* refresh();
+      yield* refresh().pipe(Effect.catchCause(recoverRefreshFailure));
       const missing = yield* Effect.filter(instances, (instance) =>
         Effect.gen(function* () {
           // ACP also reports installed:false for setup states unrelated to executable discovery.
@@ -725,7 +725,14 @@ export const layer = Layer.effect(
       );
       if (missing.length === 0) return yield* Ref.get(providersRef);
       yield* instanceRegistryMutator.rebuild(missing);
-      return yield* refresh();
+      // A shared pass already in flight may hold the retired instances, so probe each rebuilt one.
+      yield* Effect.forEach(
+        missing,
+        (instance) =>
+          refreshInstance(instance.instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+        { concurrency: "unbounded", discard: true },
+      );
+      return yield* Ref.get(providersRef);
     });
 
     const refreshAfterUpdate = Effect.fn("refreshAfterUpdate")(function* (
