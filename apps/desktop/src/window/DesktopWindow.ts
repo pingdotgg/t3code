@@ -479,7 +479,10 @@ export const make = Effect.gen(function* () {
       minHeight: DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.height,
       show: false,
       autoHideMenuBar: true,
-      ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
+      // Without it, macOS drops the activating click and keys stay in the composer, not the preview.
+      ...(environment.platform === "darwin"
+        ? { acceptFirstMouse: true, disableAutoHideCursor: true }
+        : {}),
       backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
       ...iconOption,
       title: environment.displayName,
