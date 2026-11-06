@@ -2086,6 +2086,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (item.command === "side" || item.command === "btw") {
         if (props.sideChatDisabledReason) return;
         const openImmediately =
+          !isEditingQueuedMessage &&
           snapshot.value.slice(0, trigger.rangeStart).trim() === "" &&
           snapshot.value.slice(trigger.rangeEnd).trim() === "";
         const replacement = `/${item.command} `;
