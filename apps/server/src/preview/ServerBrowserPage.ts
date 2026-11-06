@@ -214,9 +214,12 @@ const CREDENTIAL_PARAM_NAMES = [
   "key",
 ];
 
-/** Network entries reach the agent, so session ids, OAuth codes and tokens in a query stay out. */
+/**
+ * Network entries reach the agent, so session ids, OAuth codes and tokens in a query stay out.
+ * Cut first: redacting costs time per parameter, and a page picks its request URLs.
+ */
 export const networkEntryUrl = (url: string) =>
-  UrlParams.redactUrl(withoutDataPayload(url), CREDENTIAL_PARAM_NAMES);
+  UrlParams.redactUrl(withoutDataPayload(url).slice(0, 2048), CREDENTIAL_PARAM_NAMES);
 
 /**
  * Chromium's own console messages, which carry no arguments, quote `data:` URLs whole, as in a
