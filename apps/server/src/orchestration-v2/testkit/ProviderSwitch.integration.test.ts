@@ -3005,6 +3005,23 @@ describe("orchestration v2 provider switching", () => {
           // The previous run left a background command or subagent behind.
           yield* Ref.set(backgroundWork, true);
 
+          // Someone sending from the client is still told to wait or press Stop.
+          const refused = yield* orchestrator
+            .dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:fresh-context:scheduled:interactive"),
+              threadId: scheduledThreadId,
+              messageId: MessageId.make("message:fresh-context:scheduled:interactive"),
+              text: "Prompt interactive",
+              attachments: [],
+              freshContext: true,
+              dispatchMode: { type: "start_immediately" },
+            })
+            .pipe(Effect.flip);
+          assert.include(String(refused.cause), "a fresh session would end them");
+
           // Nobody watches a scheduled fire to wait or press Stop, so refusing it stalls the schedule.
           yield* fire("beta");
           yield* worker.drain();
