@@ -83,6 +83,9 @@ describe("appendTerminalOutput", () => {
 
   it("drops an escape sequence that never terminates and resumes after it", () => {
     expect(feed(["ok\u001b]", "x".repeat(200), "\nafter"]).text).toBe("ok\nafter");
+    expect(feed(["ok\u001b]0;title\u001b", "\u001b[31mred"]).text).toBe(
+      "ok\u001b[0;31mred\u001b[0m",
+    );
   });
 });
 
