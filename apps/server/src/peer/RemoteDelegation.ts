@@ -563,8 +563,12 @@ const make = Effect.gen(function* () {
           if (reason === undefined) return yield* error;
           // Gone there, or no link to reach it by: nothing left to stop there.
           const { task } = yield* readTask(parentThreadId, taskId);
-          const stopCount = task?.remoteChild?.stopCount;
-          yield* complete(parentThreadId, taskId, "failed", reason, "stopped", stopCount);
+          const remote = task?.remoteChild;
+          const result =
+            task?.status === "cancelled" && task.result !== null && remote !== undefined
+              ? mayStillRun(task.result, remote, error)
+              : reason;
+          yield* complete(parentThreadId, taskId, "failed", result, "stopped", remote?.stopCount);
         }),
       }),
       Effect.retry(followRetry),

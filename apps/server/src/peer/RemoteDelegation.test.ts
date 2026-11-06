@@ -2140,6 +2140,13 @@ it.effect("cancel ends the task here even when the link is gone", () =>
       expect(task?.status).toBe("cancelled");
       // Its follower still owes the stop there.
       expect(task?.remoteChild?.stoppedThere).toBeUndefined();
+      // Then it gives up, with nothing left to stop it by.
+      const settled = yield* taskUpdate(
+        a,
+        (update) => update.id === delegated.taskId && update.remoteChild?.stoppedThere === true,
+      );
+      expect(settled?.status).toBe("cancelled");
+      expect(settled?.result).toContain("Cancelled. It could not be stopped in Box");
       expect(yield* Ref.get(thread.interrupted)).toBe(0);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
