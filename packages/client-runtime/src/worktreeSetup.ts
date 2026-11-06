@@ -1,9 +1,9 @@
-import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
+import type { OrchestrationV2Run, WorktreeSetupSnapshot } from "@t3tools/contracts";
 
 export function resolveVisibleWorktreeSetup(input: {
   live: WorktreeSetupSnapshot | null;
   recorded: WorktreeSetupSnapshot | null;
-  turnStarted: boolean;
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "startedAt">>;
   followUpSent: boolean;
 }): WorktreeSetupSnapshot | null {
   const snapshot =
@@ -14,7 +14,7 @@ export function resolveVisibleWorktreeSetup(input: {
   if (snapshot.phase === "running") return snapshot;
   if (input.followUpSent) return null;
   if (snapshot.phase !== "done") return snapshot;
-  if (!input.turnStarted) return snapshot;
+  if (!input.runs.some((run) => run.startedAt !== null)) return snapshot;
   return snapshot.stages.some((stage) => stage.status === "failed") ? snapshot : null;
 }
 
