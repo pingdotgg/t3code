@@ -11,7 +11,10 @@ import {
 } from "./PullRequestMedia";
 import { videoMimeType } from "@t3tools/shared/video";
 import { createContext, useContext, useMemo, useState } from "react";
-import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
+import {
+  changeRequestReferenceAutolinker,
+  resolveChangeRequestMediaUrl,
+} from "@t3tools/client-runtime/pull-request-markdown";
 import {
   sourceControlClients,
   type ReferenceAutolink,
@@ -37,6 +40,7 @@ const AutolinksContext = createContext<((text: string) => ReadonlyArray<Referenc
   null,
 );
 const LineBreaksContext = createContext(false);
+const ChangeRequestUrlContext = createContext<string | null>(null);
 
 export function PullRequestMarkdownRepository(props: {
   /** The change request the markdown belongs to, whose host decides what its text links. */
@@ -57,11 +61,15 @@ export function PullRequestMarkdownRepository(props: {
     projectId: target.input.projectId,
   });
   const cwd = project?.workspaceRoot;
-  const media = cwd ? { environmentId: target.environmentId, cwd } : null;
+  const media = cwd
+    ? { environmentId: target.environmentId, cwd, repository: target.input.repository }
+    : null;
   return (
     <AutolinksContext value={autolinks}>
       <LineBreaksContext value={lineBreaks}>
-        <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
+        <ChangeRequestUrlContext value={url ?? null}>
+          <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
+        </ChangeRequestUrlContext>
       </LineBreaksContext>
     </AutolinksContext>
   );
@@ -157,6 +165,9 @@ function PullRequestMarkdownContent(props: {
   const hostLineBreaks = useContext(LineBreaksContext);
   const autolinks = useContext(AutolinksContext);
   const mediaContext = useContext(PullRequestMediaContext);
+  const changeRequestUrl = useContext(ChangeRequestUrlContext);
+  const resolveMediaUrl = (href: string) =>
+    changeRequestUrl ? resolveChangeRequestMediaUrl(href, changeRequestUrl) : href;
   const markdown = linkReferenceAutolinks(props.markdown, autolinks);
   const openPullRequest = useOpenPullRequest();
   const openLink = (href: string) => {
@@ -165,6 +176,7 @@ function PullRequestMarkdownContent(props: {
   const gallery: FilePreviewItem[] = markdownImageSources(
     props.imageGroupMarkdown ?? props.markdown,
   )
+    .map(resolveMediaUrl)
     .filter(
       (uri) =>
         /^https?:\/\//i.test(uri) &&
@@ -173,7 +185,7 @@ function PullRequestMarkdownContent(props: {
     .map((uri) => pullRequestImageSource(uri, mediaContext));
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
   const renderImage: MarkdownImageRenderer = (image) => (
-    <MarkdownImage href={image.href} alt={image.alt} onPreview={setPreview} />
+    <MarkdownImage href={resolveMediaUrl(image.href)} alt={image.alt} onPreview={setPreview} />
   );
   const styles = useMarkdownPreviewStyles();
   return (
@@ -184,7 +196,9 @@ function PullRequestMarkdownContent(props: {
         textStyle={styles.nativeTextStyle}
         onLinkPress={openLink}
         renderImage={renderImage}
-        onImagePress={(href) => setPreview(pullRequestImageSource(href, mediaContext))}
+        onImagePress={(href) =>
+          setPreview(pullRequestImageSource(resolveMediaUrl(href), mediaContext))
+        }
         onTaskListItemPress={props.onTaskListItemPress}
       />
       <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
