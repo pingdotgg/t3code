@@ -11,6 +11,7 @@ const preferences: AppearanceFontPreferences = {
   sizePrompt: 14,
   sizeCode: 13,
   smoothing: true,
+  separate: true,
 };
 
 describe("reply font appearance", () => {
