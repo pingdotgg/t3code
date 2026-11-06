@@ -10,6 +10,7 @@ import {
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
+  isListedThreadLineage,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -128,7 +129,7 @@ export function useThreadActionMenu(input: {
         settlement: configLoaded,
         autoSettleOptOut: readEnvironmentSupportsAutoSettleOptOut(threadRef.environmentId),
         snooze: configLoaded,
-        pinning: configLoaded,
+        pinning: configLoaded && (thread.pinnedAt != null || isListedThreadLineage(thread.lineage)),
         titleRegeneration: configLoaded,
       };
       const isRegeneratingTitle = thread.titleRegeneration != null;

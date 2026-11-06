@@ -64,6 +64,7 @@ import {
   orchestrationV2WorktreePending,
   ProviderInstanceId,
   ProviderInteractionMode,
+  isListedThreadLineage,
   isRuntimeModeAbove,
   resolveProviderInstanceEnabled,
   resolveProjectProviderInstanceEnabled,
@@ -3396,6 +3397,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} is archived.`,
+      });
+    }
+    if (command.type === "thread.pin" && !isListedThreadLineage(thread.lineage)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause:
+          "Subagents and side chats cannot be pinned because thread lists never show them. Pin the parent thread instead.",
       });
     }
     // Reject reorder after unpin so a raced request cannot restore a cleared pin.
