@@ -38,10 +38,16 @@ import {
   TextSelection,
   type Transaction,
 } from "@tiptap/pm/state";
+import { ReplaceStep } from "@tiptap/pm/transform";
 
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import { nextOrderedMarkerText } from "~/composer-list-continuation";
-import { parseInlineMarkdown, RICH_TEXT_DELIMITERS, type RichTextMark } from "~/composer-rich-text";
+import {
+  MARKDOWN_SOURCE_MARK,
+  parseInlineMarkdown,
+  RICH_TEXT_DELIMITERS,
+  type RichTextMark,
+} from "~/composer-rich-text";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { composerMathRanges } from "@t3tools/shared/composerInlineTokens";
 
@@ -80,7 +86,7 @@ function codePairCaretPlugin(type: MarkType) {
           const to = tr.mapping.mapResult(pair.to, -1);
           return from.deleted || to.deleted ? [] : [{ from: from.pos, to: to.pos }];
         });
-        const typed = tr.getMeta(codePairKey) as CodePair | undefined;
+        const typed = (tr.getMeta(codePairKey) as CodePair | undefined) ?? composedCodePair(tr);
         return typed ? [...mapped, typed] : mapped;
       },
     },
@@ -89,8 +95,9 @@ function codePairCaretPlugin(type: MarkType) {
         if (view.composing || from !== to || text !== "`") return false;
         const $from = view.state.doc.resolve(from);
         if (!$from.parent.isTextblock || $from.parent.type.spec.code) return false;
+        if (touchesMarkdownSource(view.state, from, to)) return false;
         const before = $from.nodeBefore?.text ?? "";
-        if (/(^|[^`])`$/.test(before)) {
+        if (closesBacktickPair($from)) {
           view.dispatch(insert().setMeta(codePairKey, { from: from - 1, to: from + 1 }));
           return true;
         }
@@ -152,6 +159,45 @@ function codePairCaretPlugin(type: MarkType) {
 }
 
 /**
+ * Whether a backtick typed at `$pos` would complete an empty `` pair. The
+ * backtick before `$pos` only opens one when earlier backticks are all paired.
+ */
+function closesBacktickPair($pos: ResolvedPos): boolean {
+  return (
+    $pos.parent.isTextblock &&
+    !$pos.parent.type.spec.code &&
+    /(^|[^`])`$/.test($pos.nodeBefore?.text ?? "") &&
+    literalBackticksBefore($pos) % 2 === 1
+  );
+}
+
+/**
+ * Layouts where backtick is a dead key type it through composition, and the
+ * pair handler above skips composing input. Read the pair
+ * from the composed insert instead; dispatching mid-composition would break it.
+ */
+function composedCodePair(tr: Transaction): CodePair | undefined {
+  if (tr.getMeta("composition") === undefined || tr.steps.length !== 1) {
+    return undefined;
+  }
+
+  const step = tr.steps[0];
+  if (!(step instanceof ReplaceStep) || step.from !== step.to || step.slice.size !== 1) {
+    return undefined;
+  }
+
+  if (step.slice.content.firstChild?.text !== "`") {
+    return undefined;
+  }
+
+  if (!closesBacktickPair(tr.before.resolve(step.from))) {
+    return undefined;
+  }
+
+  return { from: step.from - 1, to: step.from + 1 };
+}
+
+/**
  * Tiptap's code mark excludes every other mark, which rejects the `bold+code`
  * spans markdown like `**\`x\`**` parses into and drops the whole insert.
  */
@@ -168,7 +214,58 @@ export const ComposerCodeExtension = Code.extend({
   addProseMirrorPlugins() {
     return [...(this.parent?.() ?? []), codePairCaretPlugin(this.type)];
   },
+  // Tiptap's rule reads back from the caret, so after a literal `enabled` the
+  // next typed backtick would reuse its closing backtick and wrap ` and ` in
+  // code. Backticks pair left to right, so skip an opener that closes a pair.
+  addInputRules() {
+    return (this.parent?.() ?? []).map(
+      (rule) =>
+        new InputRule({
+          find: rule.find,
+          undoable: rule.undoable,
+          handler: (props) => {
+            if (
+              literalBackticksBefore(props.state.doc.resolve(props.range.from)) % 2 === 1 ||
+              touchesMarkdownSource(props.state, props.range.from, props.range.to)
+            ) {
+              return null;
+            }
+
+            return rule.handler(props);
+          },
+        }),
+    );
+  },
 });
+
+/** Counts backticks typed as plain text before `$pos` in its textblock; code text never pairs. */
+function literalBackticksBefore($pos: ResolvedPos): number {
+  let count = 0;
+  $pos.parent.forEach((node, offset) => {
+    if (offset >= $pos.parentOffset) return;
+    if (!node.isText) {
+      count = 0;
+      return;
+    }
+    if (node.marks.some((mark) => mark.type.spec.code)) return;
+
+    const text = node.text!.slice(0, $pos.parentOffset - offset);
+    count += [...text.matchAll(/(?<!`)`(?!`)/g)].length;
+  });
+  return count;
+}
+
+/**
+ * Whether `from`-`to`, or the caret at `from`, is in shown Markdown source.
+ * Typed delimiters there stay text until the caret leaves and the source is parsed.
+ */
+function touchesMarkdownSource(state: EditorState, from: number, to: number): boolean {
+  const type = state.schema.marks[MARKDOWN_SOURCE_MARK];
+  if (!type) return false;
+  if (from < to) return state.doc.rangeHasMark(from, to, type);
+  const $pos = state.doc.resolve(from);
+  return [$pos.nodeBefore, $pos.nodeAfter].some((node) => node && type.isInSet(node.marks));
+}
 
 // Code permits nested emphasis, so Tiptap's exclusion check cannot protect literal delimiters.
 function markInputRuleOutsideCode(find: RegExp, type: MarkType) {
@@ -181,6 +278,7 @@ function markInputRuleOutsideCode(find: RegExp, type: MarkType) {
       const content = match[match.length - 1] ?? "";
       const textStart = range.from + match[0].indexOf(content);
       const textEnd = textStart + content.length;
+      if (touchesMarkdownSource(state, range.from, range.to)) return null;
       if (
         code &&
         (state.doc.rangeHasMark(range.from + match[0].search(/\S/), textStart, code) ||
@@ -1130,7 +1228,8 @@ function renumberFollowingItems(
   });
 }
 
-export function splitOrLiftListItem(editor: Editor): boolean {
+/** `prepare` runs first in the same transaction, which the split then reads. */
+export function splitOrLiftListItem(editor: Editor, prepare: Command): boolean {
   const $from = editor.state.selection.$from;
   const itemType = listItemTypeAt($from);
   if (!itemType) return false;
@@ -1145,7 +1244,7 @@ export function splitOrLiftListItem(editor: Editor): boolean {
     if (moved) alignListItemWithSiblings(tr, itemType);
     return moved;
   };
-  return editor.can().command(move) && editor.chain().command(move).run();
+  return editor.can().command(move) && editor.chain().command(prepare).command(move).run();
 }
 
 export function convertBulletItemToTask(
@@ -1563,15 +1662,20 @@ export function pmToFlat(map: RichDocMap, pmPos: number): number {
 
 // Styled boundaries need two caret stops at one position, one for each side's marks.
 
+// Shown Markdown source has real characters at its edges, so it needs no extra stop.
+function styleMarks(marks: readonly Mark[]): readonly Mark[] {
+  return marks.filter((mark) => mark.type.name !== MARKDOWN_SOURCE_MARK);
+}
+
 function styledEdge(state: EditorState) {
   const { selection } = state;
   if (!selection.empty) return null;
   const { $from } = selection;
   if (!$from.parent.inlineContent) return null;
-  const before = $from.nodeBefore?.marks ?? Mark.none;
-  const after = $from.nodeAfter?.marks ?? Mark.none;
+  const before = styleMarks($from.nodeBefore?.marks ?? Mark.none);
+  const after = styleMarks($from.nodeAfter?.marks ?? Mark.none);
   if (Mark.sameSet(before, after)) return null;
-  return { before, after, current: state.storedMarks ?? $from.marks() };
+  return { before, after, current: styleMarks(state.storedMarks ?? $from.marks()) };
 }
 
 export function caretTakesMarksBefore(state: EditorState): boolean {

@@ -1,14 +1,15 @@
 import {
+  OrchestrationProjectShell,
   OrchestrationV2ThreadShell,
   RepositoryIdentity,
   ThreadPullRequestLink,
-  type OrchestrationProjectShell,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ShellStreamItem,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 const sameThreadShell = Schema.toEquivalence(OrchestrationV2ThreadShell);
+const sameProjectShell = Schema.toEquivalence(OrchestrationProjectShell);
 const sameLinks = Schema.toEquivalence(Schema.UndefinedOr(Schema.Array(ThreadPullRequestLink)));
 const sameRepositoryIdentity = Schema.toEquivalence(
   Schema.UndefinedOr(Schema.NullOr(RepositoryIdentity)),
@@ -116,16 +117,16 @@ export function mergeShellSnapshotProjects(
   }
 
   const previousById = new Map(previous.projects.map((project) => [project.id, project] as const));
-  return {
-    ...next,
-    projects: next.projects.map((project) => {
-      const prior = previousById.get(project.id);
-      if (resolvedRootSet?.has(project.workspaceRoot) === true) {
-        return project;
-      }
-      return retainRepositoryIdentity(prior, project);
-    }),
-  };
+  // Project atoms and shell persistence compare by reference, so unchanged projects keep their objects.
+  const projects = next.projects.map((project) => {
+    const prior = previousById.get(project.id);
+    const merged = retainRepositoryIdentity(prior, project);
+    return prior !== undefined && sameProjectShell(prior, merged) ? prior : merged;
+  });
+  const unchanged =
+    projects.length === previous.projects.length &&
+    projects.every((project, index) => project === previous.projects[index]);
+  return { ...next, projects: unchanged ? previous.projects : projects };
 }
 
 export function applyShellStreamEvent(

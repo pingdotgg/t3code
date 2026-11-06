@@ -21,6 +21,7 @@ vi.mock("../hooks/useEnvironmentTheme", () => ({ useEnvironmentThemeDefinitions:
 vi.mock("../hooks/useSettings", async (original) => ({
   ...(await original<typeof import("../hooks/useSettings")>()),
   useClientSettings: () => DEFAULT_CLIENT_SETTINGS,
+  useUpdateEnvironmentSettings: () => () => undefined,
 }));
 vi.mock("../hooks/useScratchProject", () => ({
   useScratchProject: () => ({ scratchEnvironmentId: () => null }),
@@ -66,6 +67,10 @@ vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
   useProjects: () => [],
   useThreadShells: () => [],
+  useVisibleThreadShells: () => [],
+  useHiddenThreadKeys: () => new Set(),
+  useAnyEnvironmentHiding: () => false,
+  useEnvironmentThreadRefs: () => [],
   useServerConfigs: () => new Map(),
   waitForProject: async () => undefined,
 }));
@@ -127,4 +132,18 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
       await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
     }
   });
+});
+
+it("keeps the caret in place when an edit briefly makes the folder path not a path", async () => {
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByText("Local folder", { exact: true }).click();
+  const input = () => page.getByRole("combobox");
+  await input().fill("/workspace/project");
+  await userEvent.keyboard("{Home}{ArrowRight}{Backspace}");
+  await expect.element(input()).toHaveValue("workspace/project");
+  await userEvent.keyboard("/");
+  await expect.element(input()).toHaveValue("/workspace/project");
+  await userEvent.keyboard("w");
+  await expect.element(input()).toHaveValue("/wworkspace/project");
 });
