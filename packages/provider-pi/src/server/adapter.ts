@@ -2531,8 +2531,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 createdAt,
                 updatedAt: createdAt,
               };
-        threadState = { providerThread, activeTurn: null,
-        lastItemOrdinal: 0, lastItemOrdinal: 0 };
+        threadState = { providerThread, activeTurn: null, lastItemOrdinal: 0 };
         const baselineEntries = yield* request({ type: "get_entries" }).pipe(
           Effect.orElseSucceed(() => undefined),
         );

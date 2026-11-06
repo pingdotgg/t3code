@@ -5110,8 +5110,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         }
         const duplicated = [...counts.entries()].filter(([, count]) => count > 1);
         // @effect-diagnostics-next-line globalConsoleInEffect:off -- probe
-      console.log("[probe] allocated ordinals:", JSON.stringify((globalThis as { __acpOrd?: number[] }).__acpOrd))
-      expect(duplicated).toEqual([]);
+        console.log(
+          "[probe] allocated ordinals:",
+          JSON.stringify((globalThis as { __acpOrd?: number[] }).__acpOrd),
+        );
+        expect(duplicated).toEqual([]);
       }),
     );
   });
