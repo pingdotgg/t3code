@@ -1,7 +1,7 @@
+import * as http from "node:http";
 import { expect, layer } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as http from "node:http";
 import { Service } from "../../bindings/index.ts";
 import * as RemoteBindings from "../../remote-bindings/RemoteBindings.ts";
 import * as RemoteWorker from "../../remote-bindings/RemoteWorker.ts";
@@ -95,8 +95,7 @@ const startFakeEdge = Effect.acquireRelease(
     });
     server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
   }),
-  (server) =>
-    Effect.callback<void>((resume) => server.close(() => resume(Effect.void))),
+  (server) => Effect.callback<void>((resume) => server.close(() => resume(Effect.void))),
 ).pipe(
   Effect.tap((server) =>
     Effect.sync(() => {
@@ -124,9 +123,7 @@ const startWorkerWithRemoteBinding = (name: string) =>
     modules: [{ name: "main.js", type: "ESModule", content: WORKER_SCRIPT }],
   });
 
-const fetchBody = (worker: {
-  fetch: (path: string) => Effect.Effect<Response>;
-}) =>
+const fetchBody = (worker: { fetch: (path: string) => Effect.Effect<Response> }) =>
   worker.fetch("/").pipe(
     Effect.flatMap((response) =>
       Effect.promise(async () => ({
@@ -141,84 +138,72 @@ const testLayer = RemoteBindings.RemoteBindingsLive.pipe(
   Layer.provideMerge(localRuntimeLayer),
 );
 
-layer(testLayer, { excludeTestServices: true })(
-  "RemoteBindings stale session",
-  (it) => {
-    it.effect(
-      "recovers when the edge returns 400 'Invalid Workers Preview configuration'",
-      () =>
-        Effect.gen(function* () {
-          yield* resetState({
-            status: 400,
-            body: "<html>Invalid Workers Preview configuration</html>",
-          });
-          yield* startFakeEdge;
-          const worker = yield* startWorkerWithRemoteBinding(
-            "stale-invalid-preview-config",
-          );
+layer(testLayer, { excludeTestServices: true })("RemoteBindings stale session", (it) => {
+  it.effect(
+    "recovers when the edge returns 400 'Invalid Workers Preview configuration'",
+    () =>
+      Effect.gen(function* () {
+        yield* resetState({
+          status: 400,
+          body: "<html>Invalid Workers Preview configuration</html>",
+        });
+        yield* startFakeEdge;
+        const worker = yield* startWorkerWithRemoteBinding("stale-invalid-preview-config");
 
-          // The cached session (generation 1) is expired. The proxy must
-          // create a fresh session and retry, so the caller never sees the
-          // stale-session error.
-          const first = yield* fetchBody(worker);
-          expect(first.body).toMatch(/^ok:/);
-          expect(first.status).toBe(200);
-        }).pipe(Effect.scoped),
-      { timeout: 30_000 },
-    );
+        // The cached session (generation 1) is expired. The proxy must
+        // create a fresh session and retry, so the caller never sees the
+        // stale-session error.
+        const first = yield* fetchBody(worker);
+        expect(first.body).toMatch(/^ok:/);
+        expect(first.status).toBe(200);
+      }).pipe(Effect.scoped),
+    { timeout: 30_000 },
+  );
 
-    it.effect(
-      "recovers when the edge returns 'error code: 1031' (D1/R2/AI session timeout)",
-      () =>
-        Effect.gen(function* () {
-          yield* resetState({ status: 400, body: "error code: 1031" });
-          yield* startFakeEdge;
-          const worker = yield* startWorkerWithRemoteBinding(
-            "stale-error-code-1031",
-          );
+  it.effect(
+    "recovers when the edge returns 'error code: 1031' (D1/R2/AI session timeout)",
+    () =>
+      Effect.gen(function* () {
+        yield* resetState({ status: 400, body: "error code: 1031" });
+        yield* startFakeEdge;
+        const worker = yield* startWorkerWithRemoteBinding("stale-error-code-1031");
 
-          const first = yield* fetchBody(worker);
-          expect(first.body).toMatch(/^ok:/);
-          expect(first.status).toBe(200);
+        const first = yield* fetchBody(worker);
+        expect(first.body).toMatch(/^ok:/);
+        expect(first.status).toBe(200);
 
-          // Recovery must not degrade into deploy-per-request: the refreshed
-          // session is cached and reused.
-          const settled = state.deployCount;
-          const second = yield* fetchBody(worker);
-          expect(second.body).toMatch(/^ok:/);
-          expect(state.deployCount).toBe(settled);
-        }).pipe(Effect.scoped),
-      { timeout: 30_000 },
-    );
+        // Recovery must not degrade into deploy-per-request: the refreshed
+        // session is cached and reused.
+        const settled = state.deployCount;
+        const second = yield* fetchBody(worker);
+        expect(second.body).toMatch(/^ok:/);
+        expect(state.deployCount).toBe(settled);
+      }).pipe(Effect.scoped),
+    { timeout: 30_000 },
+  );
 
-    it.effect(
-      "concurrent requests against an expired session share a single refresh",
-      () =>
-        Effect.gen(function* () {
-          yield* resetState({
-            status: 400,
-            body: "<html>Invalid Workers Preview configuration</html>",
-          });
-          yield* startFakeEdge;
-          const worker = yield* startWorkerWithRemoteBinding(
-            "stale-single-flight",
-          );
+  it.effect(
+    "concurrent requests against an expired session share a single refresh",
+    () =>
+      Effect.gen(function* () {
+        yield* resetState({
+          status: 400,
+          body: "<html>Invalid Workers Preview configuration</html>",
+        });
+        yield* startFakeEdge;
+        const worker = yield* startWorkerWithRemoteBinding("stale-single-flight");
 
-          const [first, second] = yield* Effect.all(
-            [fetchBody(worker), fetchBody(worker)],
-            {
-              concurrency: "unbounded",
-            },
-          );
-          expect(first.body).toMatch(/^ok:/);
-          expect(second.body).toMatch(/^ok:/);
+        const [first, second] = yield* Effect.all([fetchBody(worker), fetchBody(worker)], {
+          concurrency: "unbounded",
+        });
+        expect(first.body).toMatch(/^ok:/);
+        expect(second.body).toMatch(/^ok:/);
 
-          // The prefetched session (deploy #1) expired; recovering from that
-          // must cost exactly one more deploy no matter how many requests were
-          // in flight when it was detected.
-          expect(state.deployCount).toBe(2);
-        }).pipe(Effect.scoped),
-      { timeout: 30_000 },
-    );
-  },
-);
+        // The prefetched session (deploy #1) expired; recovering from that
+        // must cost exactly one more deploy no matter how many requests were
+        // in flight when it was detected.
+        expect(state.deployCount).toBe(2);
+      }).pipe(Effect.scoped),
+    { timeout: 30_000 },
+  );
+});
