@@ -6,6 +6,7 @@ import { GITHUB_REPOSITORY_URL } from "../lib/site";
 <Layout
   title="404 | T3 Code"
   description="This page doesn't exist. The agent looked everywhere."
+  noindex
 >
   <section class="not-found">
     <div class="container not-found-inner">
@@ -31,11 +32,13 @@ import { GITHUB_REPOSITORY_URL } from "../lib/site";
       </h1>
       <p class="not-found-sub" data-rise style="--d:270ms">
         Whatever you were looking for isn't here. It might have moved, been renamed, or never
-        existed in the first place.
+        existed in the first place. t3.codes is the only official T3 Code website. Download builds
+        from this site, GitHub releases, or the app stores.
       </p>
 
       <div class="not-found-actions" data-rise style="--d:360ms">
         <a href="/" class="btn btn-primary btn-lg">Go home</a>
+        <a class="btn btn-ghost btn-lg" href="/download">Download T3 Code</a>
         <a
           class="btn btn-ghost btn-lg"
           href={GITHUB_REPOSITORY_URL}
