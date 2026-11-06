@@ -1,9 +1,15 @@
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { Trash2 } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
+import {
+  SpeechTextField,
+  TextFieldSpeechControls,
+  type TextFieldSpeech,
+} from "~/speech/useTextFieldSpeech";
 import { textDirection } from "~/textDirection";
 import { useNowMinute } from "~/hooks/useNowMinute";
 import { formatElapsedDurationLabel } from "~/timestampFormat";
@@ -18,6 +24,10 @@ interface DiffCommentSecondaryAction {
 }
 
 interface DiffCommentAnnotationProps {
+  /** With an environment, the draft can be dictated; its project supplies vocabulary. */
+  environmentId?: EnvironmentId | undefined;
+  projectId?: ProjectId | null | undefined;
+  ownerKey?: string;
   kind: "draft" | "comment";
   rangeLabel: string;
   text: string;
@@ -87,6 +97,9 @@ export const COMMENT_CARD_CLASS =
   "relative min-w-0 rounded-card bg-linear-to-b from-(--popover-top) to-(--popover-bottom) font-sans text-foreground shadow-(--popover-shadow) before:pointer-events-none before:absolute before:inset-0 before:rounded-[inherit] before:surface-tint-rim";
 
 export function DiffCommentAnnotation({
+  environmentId,
+  projectId,
+  ownerKey,
   kind,
   rangeLabel,
   text,
@@ -154,8 +167,20 @@ export function DiffCommentAnnotation({
     );
   }
 
+  const submit = (
+    speech: TextFieldSpeech | undefined,
+    action: (text: string) => void,
+    allowEmpty = false,
+  ) => {
+    const finish = (value: string) => {
+      if (!pending && (allowEmpty || value.trim())) action(value.trim());
+    };
+    if (speech) speech.submitAfterDictation(finish);
+    else finish(displayedText);
+  };
+
   // Pierre hides native carets and selection; textarea comments need their own visible feedback.
-  return (
+  const renderDraft = (speech?: TextFieldSpeech) => (
     <div
       data-diff-comment-annotation
       className={`flex flex-col gap-2 p-2.5 ${COMMENT_CARD_CLASS} caret-foreground selection:bg-primary selection:text-primary-foreground [--surface-tint-rim:var(--diff-comment-rim,var(--popover-rim))]`}
@@ -165,6 +190,7 @@ export function DiffCommentAnnotation({
       <CommentCardHead meta={rangeLabel} stateLabel={stateLabel} />
       <Textarea
         ref={textareaRef}
+        readOnly={speech?.freezesEditor}
         autoFocus={focusOnMount}
         size="sm"
         value={displayedText}
@@ -179,16 +205,18 @@ export function DiffCommentAnnotation({
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.preventDefault();
-            onCancel();
+            if (speech && speech.state.phase !== "idle") speech.cancel();
+            else onCancel();
           }
-          if (isCommentSubmitShortcut(event, trimmedText, pending)) {
+          if (isCommentSubmitShortcut(event, trimmedText, pending, speech?.blocksSubmission)) {
             event.preventDefault();
-            onComment(trimmedText);
+            submit(speech, onComment);
           }
         }}
       />
-      <div className="flex items-center gap-1">
+      <div className="flex flex-wrap items-center gap-1">
         <span className="mr-auto text-micro text-dim-foreground">⌘/Ctrl Enter to send</span>
+        {speech ? <TextFieldSpeechControls speech={speech} disabled={pending} /> : null}
         <Button variant="ghost-muted" size="xs" onClick={onCancel}>
           Cancel
         </Button>
@@ -196,17 +224,41 @@ export function DiffCommentAnnotation({
           <Button
             size="xs"
             variant="secondary"
-            disabled={!secondaryAction.allowEmpty && !trimmedText}
-            onClick={() => secondaryAction.onAction(trimmedText)}
+            disabled={
+              speech?.preparing ||
+              pending ||
+              (!speech?.blocksSubmission && !secondaryAction.allowEmpty && !trimmedText)
+            }
+            onClick={() => submit(speech, secondaryAction.onAction, secondaryAction.allowEmpty)}
           >
             {secondaryAction.icon}
             {secondaryAction.label}
           </Button>
         ) : null}
-        <Button size="xs" disabled={pending || !trimmedText} onClick={() => onComment(trimmedText)}>
+        <Button
+          size="xs"
+          disabled={speech?.preparing || pending || (!speech?.blocksSubmission && !trimmedText)}
+          onClick={() => submit(speech, onComment)}
+        >
           {submitLabel}
         </Button>
       </div>
     </div>
+  );
+
+  return environmentId ? (
+    <SpeechTextField
+      environmentId={environmentId}
+      projectId={projectId}
+      ownerKey={ownerKey ?? rangeLabel}
+      text={displayedText}
+      textareaRef={textareaRef}
+      onTextChange={onTextChange ?? setLocalDraftText}
+      disabled={pending}
+    >
+      {renderDraft}
+    </SpeechTextField>
+  ) : (
+    renderDraft()
   );
 }

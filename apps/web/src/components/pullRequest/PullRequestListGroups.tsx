@@ -1,6 +1,6 @@
 import type { EnvironmentId, PullRequestAction } from "@t3tools/contracts";
 import { EyeIcon, LayersIcon, PenLineIcon, UsersIcon, type LucideIcon } from "lucide-react";
-import { Fragment, type RefCallback } from "react";
+import { Fragment, useDeferredValue, type RefCallback } from "react";
 
 import { cn } from "~/lib/utils";
 import { Separator } from "../ui/separator";
@@ -25,11 +25,25 @@ const GROUP_ICONS: Record<string, LucideIcon> = {
 };
 
 const MATCHED_ELSEWHERE_SCORE = 10;
+const FIRST_PAINT_ROWS = 24;
+
+function firstPaintGroups<Group extends { entries: ReadonlyArray<unknown> }>(
+  groups: ReadonlyArray<Group>,
+): ReadonlyArray<Group> {
+  let left = FIRST_PAINT_ROWS;
+  return groups.flatMap((group) => {
+    const entries = group.entries.slice(0, left);
+    left -= entries.length;
+    return entries.length === 0 ? [] : [{ ...group, entries }];
+  });
+}
 
 function PullRequestGroupHeader({
   group,
+  count,
 }: {
-  group: { key: string; label: string; entries: ReadonlyArray<unknown> };
+  group: { key: string; label: string };
+  count: number;
 }) {
   const Icon = GROUP_ICONS[group.key] ?? LayersIcon;
   // The icon sits in the rows' 16px glyph column and the label on their title line.
@@ -39,9 +53,7 @@ function PullRequestGroupHeader({
         <Icon aria-hidden className="size-3.25" />
       </span>
       <h2 className="shrink-0">{group.label}</h2>
-      <span className="shrink-0 tabular-nums font-normal text-dim-foreground">
-        {group.entries.length}
-      </span>
+      <span className="shrink-0 tabular-nums font-normal text-dim-foreground">{count}</span>
       <Separator className="min-w-2 flex-1" />
     </div>
   );
@@ -55,6 +67,7 @@ export function PullRequestListGroups({
   showProvider,
   statsRef,
   onSelect,
+  onIntent,
   hostActionsOf,
   onActed,
   closingKeys,
@@ -74,12 +87,17 @@ export function PullRequestListGroups({
   showProvider: boolean;
   statsRef: RefCallback<HTMLDivElement>;
   onSelect: (entry: PullRequestRowTarget) => void;
+  onIntent: (entry: PullRequestRowTarget | null) => void;
   hostActionsOf: (entry: EnvironmentPullRequestEntry) => ReadonlySet<PullRequestAction>;
   onActed: (result: PullRequestSpeedActionResult) => void;
   closingKeys: ReadonlySet<string>;
   sweepingKeys: ReadonlySet<string>;
   onCloseSweepStart: (entry: EnvironmentPullRequestEntry, event: PointerEvent) => void;
 }) {
+  // Every row mounts tooltips and actions; painting a first screenful before the rest keeps
+  // opening the page from blocking on the whole list.
+  const shownGroups = useDeferredValue(groups, firstPaintGroups(groups));
+  const counts = new Map(groups.map((group) => [group.key, group.entries.length]));
   const isSelectedEntry = (entry: EnvironmentPullRequestEntry) =>
     selected?.environmentId === entry.environmentId &&
     selected.repository === entry.repository &&
@@ -101,17 +119,24 @@ export function PullRequestListGroups({
       matchedElsewhere:
         query.length > 0 && scorePullRequestMatch(entry, query) <= MATCHED_ELSEWHERE_SCORE,
       onSelect,
+      onIntent,
       closing: closingKeys.has(entryKey),
       sweeping: sweepingKeys.has(entryKey),
       onCloseSweepStart,
     };
   };
+
   return (
     <PullRequestSpeedModeProvider>
       <div className={cn("flex flex-col gap-3", sweepingKeys.size > 0 && "**:pointer-events-none")}>
-        {groups.map((group) => (
+        {shownGroups.map((group) => (
           <div key={group.key} className="flex flex-col">
-            {group.label ? <PullRequestGroupHeader group={group} /> : null}
+            {group.label ? (
+              <PullRequestGroupHeader
+                group={group}
+                count={counts.get(group.key) ?? group.entries.length}
+              />
+            ) : null}
             {clusterPullRequestStacks(group.entries).map((item, index) => (
               <Fragment key={item.kind === "row" ? pullRequestEntryKey(item.entry) : item.key}>
                 {index > 0 ? <Separator /> : null}

@@ -357,6 +357,7 @@ const COMMAND_LABELS: Partial<Record<string, string>> = {
   "composer.sendAlternate": "Send with the opposite queue or steer action",
   "composer.sendBackground": "Start in background",
   "composer.sendAndNewThread": "Send and start a new thread",
+  "composer.dictation": "Start or finish dictation",
   "composer.host": "Choose machine",
   "composer.effort": "Choose effort",
   "composer.mode": "Choose access mode",
