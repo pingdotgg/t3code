@@ -118,6 +118,39 @@ export function useVoiceTranscriptionDestination() {
   };
 }
 
+/**
+ * Why the composer mic cannot start yet, or null when it can or should not show at all
+ * (a browser that cannot capture audio has nothing to turn on).
+ */
+export function useSpeechUnavailableReason(speech: {
+  readonly available: boolean;
+  readonly status: EnvironmentSpeechStatus | null;
+}) {
+  const hydrated = useClientSettingsHydrated();
+  const grant = useAudioGrant();
+  const destination = useVoiceTranscriptionDestination();
+  const environment = useEnvironment(destination.environmentId);
+  const connection = Option.getOrNull(usePreparedConnection(destination.environmentId));
+  const canCapture =
+    typeof navigator !== "undefined" &&
+    Boolean(navigator.mediaDevices?.getUserMedia) &&
+    typeof AudioWorkletNode !== "undefined";
+  if (!canCapture || speech.available) return null;
+  const where = destination.label ?? "The voice destination";
+  if (destination.prepared) {
+    return speech.status?.supported === false ? speech.status.reason : "Checking voice input.";
+  }
+  if (!hydrated) return "Loading voice settings.";
+  if (!grant) return "Voice input is off. Turn it on in Settings > Voice.";
+  if (!connection || !environment?.serverConfig) {
+    return `${where} is not connected. Check Settings > Voice.`;
+  }
+  if (environment.serverConfig.environment.capabilities.voiceTranscription !== true) {
+    return `${where} can't transcribe voice. Pick another destination in Settings > Voice.`;
+  }
+  return `Voice input is not ready on ${where}. Check Settings > Voice.`;
+}
+
 export function useEnvironmentSpeechInput(input: HookInput) {
   const destination = useVoiceTranscriptionDestination();
   const prepared = destination.prepared;
