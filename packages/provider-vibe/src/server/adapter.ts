@@ -578,17 +578,34 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         }
         // Confine reads/writes to the session checkout: resolve and reject paths outside it.
         const path = yield* Path.Path;
-        const root = path.resolve(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const root = yield* fileSystem
+          .realPath(cwd)
+          .pipe(Effect.orElseSucceed(() => path.resolve(cwd)));
         const absolute = path.resolve(root, filePath);
-        const relative = path.relative(root, absolute);
-        if (relative.startsWith("..") || path.isAbsolute(relative)) {
+        const isInside = (candidate: string) => {
+          const relative = path.relative(root, candidate);
+          return !relative.startsWith("..") && !path.isAbsolute(relative);
+        };
+        if (!isInside(absolute)) {
           return yield* new VibeAppServerError.VibeAppServerRequestError({
             method,
             code: "invalid_params",
             detail: "path is outside the workspace",
           });
         }
-        const fileSystem = yield* FileSystem.FileSystem;
+        // Re-check against the filesystem-resolved path so symlinks cannot bypass containment;
+        // targets that do not exist yet fall back to the lexically resolved path.
+        const resolved = yield* fileSystem
+          .realPath(absolute)
+          .pipe(Effect.orElseSucceed(() => absolute));
+        if (resolved !== absolute && !isInside(resolved)) {
+          return yield* new VibeAppServerError.VibeAppServerRequestError({
+            method,
+            code: "invalid_params",
+            detail: "path is outside the workspace",
+          });
+        }
         if (method === "clientTool/readTextFile") {
           const content = yield* fileSystem.readFileString(absolute).pipe(
             Effect.mapError(
