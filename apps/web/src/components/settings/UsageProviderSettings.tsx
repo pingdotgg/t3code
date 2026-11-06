@@ -1,4 +1,4 @@
-import type { EnvironmentId, UnifiedSettings } from "@t3tools/contracts";
+import { ProviderDriverKind, type EnvironmentId, type UnifiedSettings } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
@@ -54,7 +54,10 @@ export function UsageProviderSettings({
       input: { patch: { cursorKeychainUsageEnabled: enabled } },
     });
     if (result._tag === "Success") {
-      await refreshProviders({ environmentId, input: {} });
+      await refreshProviders({
+        environmentId,
+        input: { usage: enabled, usageProviders: [ProviderDriverKind.make("cursor")] },
+      });
     }
     setUpdatingCursor(false);
   };

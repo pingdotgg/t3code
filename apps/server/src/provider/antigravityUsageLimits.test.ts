@@ -60,6 +60,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     /** Per-host quota summaries; hosts not listed fall back to `summary`. */
     summaryByHost?: Record<string, unknown>;
     models?: unknown;
+    modelsStatus?: number;
     summaryStatus?: number;
     usageRetryAfter?: string;
     rotateAccessToken?: boolean;
@@ -132,7 +133,9 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
               status: options.summaryStatusByHost?.[url.host] ?? options.summaryStatus ?? 200,
               headers: options.usageRetryAfter ? { "retry-after": options.usageRetryAfter } : {},
             })
-          : Response.json(options.models ?? { models: {} }),
+          : Response.json(options.models ?? { models: {} }, {
+              status: options.modelsStatus ?? 200,
+            }),
       );
     }).pipe(
       Effect.tap(() =>
@@ -572,15 +575,38 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("keeps one endpoint's quotas when the other fails", () =>
-    Effect.gen(function* () {
-      const { probe } = yield* fixture({
-        summaryStatusByHost: { "daily-cloudcode-pa.googleapis.com": 503 },
-      });
-      const limits = yield* probe;
-      expect(limits.unavailable).toBeUndefined();
-      expect(limits.windows).toHaveLength(4);
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  it.effect.each(["one", "all"] as const)(
+    "preserves quota cache expiry when %s endpoints fail",
+    (failure) =>
+      Effect.gen(function* () {
+        const options = {
+          summaryStatusByHost: {
+            "daily-cloudcode-pa.googleapis.com": 503,
+            "cloudcode-pa.googleapis.com": failure === "all" ? 503 : 200,
+          },
+          modelsStatus: failure === "all" ? 503 : 200,
+          usageRetryAfter: "300",
+        };
+        const { probe, requests } = yield* fixture(options);
+        const limits = yield* probe;
+        expect(limits.unavailable?.reason).toBe(failure === "all" ? "probeFailed" : undefined);
+        expect(limits.windows).toHaveLength(failure === "all" ? 0 : 4);
+        expect(limits.refreshAfter).toBe(300_000);
+        const quotaCalls = () => requests.filter(({ url }) => url.includes("/v1internal:")).length;
+        const firstCalls = quotaCalls();
+        yield* TestClock.adjust("4 minutes");
+        expect((yield* probe).refreshAfter).toBe(300_000);
+        expect(quotaCalls()).toBe(firstCalls);
+        options.summaryStatusByHost["daily-cloudcode-pa.googleapis.com"] = 200;
+        options.summaryStatusByHost["cloudcode-pa.googleapis.com"] = 200;
+        options.modelsStatus = 200;
+        yield* TestClock.adjust("1 minute");
+        const recovered = yield* probe;
+        expect(recovered.unavailable).toBeUndefined();
+        expect(recovered.windows).toHaveLength(4);
+        expect(recovered.refreshAfter).toBe(600_000);
+        expect(quotaCalls()).toBe(firstCalls + 2);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("re-reads changed credentials and clears cached access after sign-out", () =>

@@ -192,7 +192,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
+  const client = yield* HttpClient.HttpClient;
   const crypto = yield* Digest.Digest;
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
