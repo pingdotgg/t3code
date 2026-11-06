@@ -177,7 +177,7 @@ function channelSwitchBlockReason(
 /** This app's reinstall restarts every server it hosts, so each of their databases must allow the
  * switch. `backendCount` is the desktop's own inventory: a backend still starting has no client
  * entry yet. A cached config can outlive its connection, so only a connected server's head counts.
- * With Local environment off this app hosts no server, so there is no database to check. */
+ * With Local environment off this app runs no server, so its reinstall restarts none. */
 export function localSwitchBlockReason(
   appVersion: string,
   release: ChannelSwitchRelease,
