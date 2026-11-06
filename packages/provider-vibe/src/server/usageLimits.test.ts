@@ -24,6 +24,8 @@ describe("accountViewToUsageLimits", () => {
       kind: "monthly",
       usedPercent: 42.5,
       resetsAt: "2026-12-01T00:00:00Z",
+      // November has 30 days; the length lets the UI show pace.
+      windowDurationMins: 30 * 24 * 60,
     });
   });
 
@@ -33,6 +35,7 @@ describe("accountViewToUsageLimits", () => {
       "2026-11-15T00:00:00.000Z",
     );
     expect(limits.windows[0]?.usedPercent).toBe(100);
+    expect(limits.windows[0]?.windowDurationMins).toBeUndefined();
     expect(limits.windows[0]?.label).toContain("pay-as-you-go");
   });
 
