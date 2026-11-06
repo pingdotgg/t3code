@@ -1,6 +1,7 @@
 import { useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
-import { View } from "react-native";
+import { Platform, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppBar } from "../../components/ui/AppBar";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
@@ -20,6 +21,7 @@ export function PullRequestSearchSheet(props: {
   const navigation = useNavigation();
   // The compact search toolbar floats over the end of the list.
   const bottomSearch = useNativeMailSearchToolbar();
+  const insets = useSafeAreaInsets();
   return (
     <View className="flex-1 bg-sheet" collapsable={false}>
       <AppBar
@@ -37,7 +39,13 @@ export function PullRequestSearchSheet(props: {
         }}
       />
       {props.children({
-        paddingBottom: bottomSearch ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET + 16 : 16,
+        // Android's bottom inset also covers the floating workspace tabs while Settings is open.
+        paddingBottom:
+          Platform.OS === "android"
+            ? insets.bottom + 16
+            : bottomSearch
+              ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET + 16
+              : 16,
       })}
     </View>
   );

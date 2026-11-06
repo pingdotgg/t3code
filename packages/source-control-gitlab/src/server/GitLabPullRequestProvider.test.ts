@@ -42,6 +42,7 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
                               ],
                             },
                             mergeRequest: {
+                              userPermissions: { adminMergeRequest: true },
                               diffStatsSummary: { fileCount: 1 },
                               diffStats: [{ path: "src/a.ts", additions: 2, deletions: 1 }],
                             },
@@ -112,7 +113,7 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
       yield* provider.searchRepositoryAuthors(reference);
       yield* provider.runAction({ ...reference, action });
 
-      expect(readHosts).toEqual(Array(action === "merge" ? 12 : 11).fill(selectedHost));
+      expect(readHosts).toEqual(Array(action === "merge" ? 14 : 13).fill(selectedHost));
       expect({ url: detail.url, mutatedHosts: mergedHosts }).toEqual({
         url: `https://${selectedHost}/acme/web/-/merge_requests/7`,
         mutatedHosts: [selectedHost],
@@ -122,7 +123,13 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
 
 describe("gitLabViewerPermissions", () => {
   it("offers everything to a viewer GitLab says can merge", () => {
-    expect(gitLabViewerPermissions({ viewerCanMerge: true })).toEqual({
+    expect(
+      gitLabViewerPermissions({
+        viewerCanMerge: true,
+        viewerCanDeleteBranch: true,
+        viewerCanEditLabels: true,
+      }),
+    ).toEqual({
       actions: [
         "merge",
         "ready",
@@ -132,11 +139,13 @@ describe("gitLabViewerPermissions", () => {
         "update-branch",
         "enable-auto-merge",
         "disable-auto-merge",
+        "delete-branch",
       ],
       comment: true,
       resolve: true,
       verdicts: ["comment", "approve"],
       requestReviewers: true,
+      labels: true,
       updateMethods: ["rebase"],
     });
   });
@@ -148,6 +157,7 @@ describe("gitLabViewerPermissions", () => {
       resolve: true,
       verdicts: ["comment", "approve"],
       requestReviewers: true,
+      labels: false,
     });
   });
 });
@@ -348,6 +358,7 @@ describe("merge request reads", () => {
               return { merge: true, squash: true, rebase: true };
             }),
           runMergeRequestAction: () => Effect.void,
+          setLabels: () => Effect.void,
         }),
       ),
     );
@@ -387,12 +398,23 @@ describe("merge request reads", () => {
     }),
   );
 
-  it.effect("reads a merge request again after a write to it", () =>
+  it.effect.each([
+    {
+      write: "runAction",
+      run: (provider: Effect.Success<typeof make>) =>
+        provider.runAction({ ...reference, action: "ready" }),
+    },
+    {
+      write: "setLabels",
+      run: (provider: Effect.Success<typeof make>) =>
+        provider.setLabels?.({ ...reference, labels: ["bug"], applied: true }) ?? Effect.void,
+    },
+  ])("reads a merge request again after $write", ({ run }) =>
     Effect.gen(function* () {
       const { provider, checks, calls } = yield* countingProvider;
 
       yield* provider.getChangeRequest(reference);
-      yield* provider.runAction({ ...reference, action: "ready" });
+      yield* run(provider);
       yield* checks(reference);
 
       expect(calls.detail).toBe(2);
@@ -480,12 +502,45 @@ describe("optional activity reads", () => {
     messageHeadline: "Keep this commit",
     committedDate: "2026-07-01T00:00:00Z",
   };
+  const webUrl = "https://git.acme.dev/acme/web/-/merge_requests/7";
   const reads = {
+    getMergeRequestDetail: () =>
+      Effect.succeed({
+        number: 7,
+        title: "Merge request 7",
+        url: webUrl,
+        author: null,
+        headBranch: "feat/page",
+        baseBranch: "main",
+        state: "open" as const,
+        isDraft: false,
+        mergeability: "mergeable" as const,
+        additions: 0,
+        deletions: 0,
+        createdAt: "2026-07-01T00:00:00Z",
+        updatedAt: "2026-07-02T00:00:00Z",
+        reviewRequestLogins: [],
+        labels: [],
+        body: "",
+        changedFiles: 1,
+        mergedAt: null,
+        closedAt: null,
+        reviewers: [],
+        checks: [],
+        viewerCanMerge: true,
+        reviewerIds: [],
+      }),
     listNotes: () => Effect.succeed({ comments: [comment], truncated: false }),
     listCommits: () => Effect.succeed([commit]),
     listDiscussions: () =>
       Effect.succeed({ threads: [], overviewFindingIds: [], truncated: false }),
-    listReactions: () => Effect.succeed({ reactions: [], reactionsByNoteId: new Map() }),
+    listReactions: () =>
+      Effect.succeed({
+        reactions: [],
+        reactionsByNoteId: new Map(),
+        editedAtByNoteId: new Map(),
+        botLogins: new Set<string>(),
+      }),
   };
   const context = {
     operation: "execute" as const,
@@ -558,7 +613,81 @@ describe("optional activity reads", () => {
     }),
   );
 
-  it.effect("keeps comments and commits when optional discussions and reactions fail", () =>
+  it.effect("dates edited comments in the conversation and in threads", () =>
+    Effect.gen(function* () {
+      const editedAt = "2026-07-02T00:00:00Z";
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...reads,
+            listDiscussions: () =>
+              Effect.succeed({
+                threads: [
+                  {
+                    id: "d1",
+                    path: "src/a.ts",
+                    line: 1,
+                    side: "right" as const,
+                    isResolved: false,
+                    isOutdated: false,
+                    comments: [comment],
+                  },
+                ],
+                overviewFindingIds: [],
+                truncated: false,
+              }),
+            listReactions: () =>
+              Effect.succeed({
+                reactions: [],
+                reactionsByNoteId: new Map(),
+                editedAtByNoteId: new Map([[comment.id, editedAt]]),
+                botLogins: new Set<string>(),
+              }),
+          }),
+        ),
+      );
+
+      const activity = yield* provider.getChangeRequestActivity(reference);
+
+      expect(activity.comments[0]?.editedAt).toBe(editedAt);
+      expect(activity.reviewThreads[0]?.comments[0]?.editedAt).toBe(editedAt);
+    }),
+  );
+
+  it.effect("links comments and thread comments to their note on the merge request page", () =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...reads,
+            listDiscussions: () =>
+              Effect.succeed({
+                threads: [
+                  {
+                    id: "d1",
+                    path: "src/a.ts",
+                    line: 1,
+                    side: "right" as const,
+                    isResolved: false,
+                    isOutdated: false,
+                    comments: [comment],
+                  },
+                ],
+                overviewFindingIds: [],
+                truncated: false,
+              }),
+          }),
+        ),
+      );
+
+      const activity = yield* provider.getChangeRequestActivity(reference);
+
+      expect(activity.comments[0]?.url).toBe(`${webUrl}#note_42`);
+      expect(activity.reviewThreads[0]?.comments[0]?.url).toBe(`${webUrl}#note_42`);
+    }),
+  );
+
+  it.effect("keeps comments and commits when optional discussions, reactions and links fail", () =>
     Effect.gen(function* () {
       const provider = yield* make.pipe(
         Effect.provide(
@@ -574,6 +703,7 @@ describe("optional activity reads", () => {
                 }),
               ),
             listReactions: () => Effect.fail(new GitLabCli.GitLabCliCommandError(context)),
+            getMergeRequestDetail: () => Effect.fail(new GitLabCli.GitLabCliCommandError(context)),
           }),
         ),
       );
@@ -586,6 +716,57 @@ describe("optional activity reads", () => {
         reactions: [],
         commits: [commit],
       });
+    }),
+  );
+
+  it.effect("flags comments by bot authors as bots, in the conversation and in threads", () =>
+    Effect.gen(function* () {
+      const bot = { login: "project_1_bot_abc", name: "Review bot", avatarUrl: null };
+      const human = { login: "julius", name: null, avatarUrl: null };
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...reads,
+            listNotes: () =>
+              Effect.succeed({
+                comments: [
+                  { ...comment, author: bot },
+                  { ...comment, id: "43", author: human },
+                ],
+                truncated: false,
+              }),
+            listDiscussions: () =>
+              Effect.succeed({
+                threads: [
+                  {
+                    id: "d1",
+                    path: "a.ts",
+                    line: 1,
+                    side: "right" as const,
+                    isResolved: false,
+                    isOutdated: false,
+                    comments: [
+                      { id: "44", author: bot, body: "x", createdAt: comment.createdAt, url: null },
+                    ],
+                  },
+                ],
+                overviewFindingIds: [],
+                truncated: false,
+              }),
+            listReactions: () =>
+              Effect.succeed({
+                reactions: [],
+                reactionsByNoteId: new Map(),
+                editedAtByNoteId: new Map(),
+                botLogins: new Set([bot.login.toUpperCase()]),
+              }),
+          }),
+        ),
+      );
+
+      const activity = yield* provider.getChangeRequestActivity(reference);
+      expect(activity.comments.map((entry) => entry.author?.isBot)).toEqual([true, undefined]);
+      expect(activity.reviewThreads[0]?.comments[0]?.author?.isBot).toBe(true);
     }),
   );
 });
