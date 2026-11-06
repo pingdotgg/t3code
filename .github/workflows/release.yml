@@ -594,6 +594,20 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      # publish_cli publishes this exact tarball, so the trusted publisher
+      # needs no workspace checkout or install. It is version-matched here.
+      - name: Build the npm launcher
+        run: node scripts/build-npm-launcher.ts --version "${{ needs.preflight.outputs.version }}" --output-dir npm-packages
+
+      # Kept past the JS bundle's one day so a rerun of a failed publish still finds it.
+      - name: Upload the npm launcher
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-launcher
+          path: npm-packages/t3.tgz
+          if-no-files-found: error
+          retention-days: 7
+
   # One job per platform and architecture (see release-desktop.yml), each
   # gated only on the JS bundle. Windows targets build on Linux and run their
   # native checks on a Windows runner of their own architecture.
@@ -1008,26 +1022,44 @@ jobs:
       contents: read
       id-token: write
     steps:
+      # Only what setup-ci-deps reads to install the project's Node and npm.
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
-            /*
-            !/.repos/
+            /.github/actions/setup-ci-deps/
+            /package.json
+            /pnpm-workspace.yaml
           sparse-checkout-cone-mode: false
 
-      - name: Setup dependencies
+      - name: Setup Node.js
         uses: ./.github/actions/setup-ci-deps
         with:
-          install-args: --filter=t3... --filter=@t3tools/scripts...
+          install: "false"
 
-      - name: Build the npm launcher
-        run: node scripts/build-npm-launcher.ts --version "${{ needs.preflight.outputs.version }}" --output-dir npm-packages
+      - name: Download the npm launcher
+        uses: actions/download-artifact@v8
+        with:
+          name: npm-launcher
+          path: npm-packages
+
+      - name: Check the npm launcher version
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          built="$(tar -xzOf npm-packages/t3.tgz package/package.json | jq -r .version)"
+          if [[ "$built" != "$RELEASE_VERSION" ]]; then
+            echo "::error::npm-launcher holds t3@$built, expected t3@$RELEASE_VERSION." >&2
+            exit 1
+          fi
 
       - name: Publish the npm launcher
+        env:
+          DIST_TAG: ${{ needs.preflight.outputs.cli_dist_tag }}
         run: |
-          if ! node apps/server/scripts/cli.ts publish --packages-dir npm-packages --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --provenance --verbose; then
+          # The ./ keeps npm from reading the path as a GitHub owner/repo spec.
+          if ! npm publish --access public --tag "$DIST_TAG" --provenance ./npm-packages/t3.tgz; then
             echo "::error::npm publish failed. Make sure package t3 has a trusted publisher registered for .github/workflows/release.yml (see docs/operations/release.md)." >&2
             exit 1
           fi
