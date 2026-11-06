@@ -185,6 +185,7 @@ export default defineConfig({
       // Vendored and generated C.
       "apps/mobile/modules/t3-highlights/Vendor/**",
       "apps/mobile/modules/t3-highlights/cpp/generated/**",
+      "apps/mobile/modules/t3-highlights/nitrogen/generated/**",
       "*.icon/**",
     ],
     sortPackageJson: {},
@@ -667,6 +668,7 @@ export default defineConfig({
           "apps/mobile/src/features/files/AttachmentFileScreen.tsx",
           "apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx",
           "apps/mobile/src/features/files/thread-file-navigator-pane.tsx",
+          "apps/mobile/src/features/layout/nested-stacks.tsx",
           "apps/mobile/src/features/review/ReviewSheet.tsx",
           "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
           "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
@@ -674,8 +676,8 @@ export default defineConfig({
           "apps/mobile/src/features/threads/ThreadFeed.tsx",
           "apps/mobile/src/features/threads/ThreadQueueControl.tsx",
           "apps/mobile/src/features/review/ReviewCommentCard.tsx",
-          "apps/mobile/src/features/threads/ThreadSettingsSheet.tsx",
           "apps/mobile/src/features/threads/thread-list-v2-items.tsx",
+          "apps/mobile/src/components/ui/SecretTextInput.android.tsx",
           "apps/mobile/src/lib/useMobileNavigationTheme.ts",
           "apps/mobile/src/native/T3ComposerEditor.ios.tsx",
           "apps/mobile/src/native/T3ComposerEditor.native.tsx",
@@ -758,6 +760,8 @@ export default defineConfig({
         "apps/web/src/components/sidebar/SidebarUpdateReleaseNotes.tsx": 1,
         "apps/web/src/components/ThreadStatusIndicators.tsx": 1,
         "apps/web/src/components/usage/UsageLimitsPooled.tsx": 1,
+        "apps/web/src/components/settings/MicrophoneTest.tsx": 1,
+        "apps/web/src/components/settings/SpeechModelComparison.tsx": 1,
       }).map(([file, maxOccurrences]) => {
         const rule: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
         return { files: [file], rules: { "t3code/no-styled-raw-controls": rule } };
@@ -781,6 +785,7 @@ export default defineConfig({
         "apps/web/src/components/chat/TimelineWorkGroupRows.tsx": 3,
         "apps/web/src/components/chat/UserMessageContextChips.tsx": 14,
         "apps/web/src/components/settings/DiagnosticsSettings.tsx": 49,
+        "apps/web/src/components/settings/ConnectionsSettings.tsx": 2,
         "apps/web/src/components/settings/AddEnvironmentDialog.tsx": 1,
         "apps/web/src/components/settings/AuthorizedClientsSettings.tsx": 26,
         "apps/web/src/components/usage/UsagePage.tsx": 34,
@@ -993,6 +998,14 @@ export default defineConfig({
         "apps/web/src/components/sidebar/SidebarChrome.tsx": 1,
         "apps/web/src/components/sidebar/SidebarProviderUpdatePill.tsx": 1,
         "apps/web/src/components/ThreadCommandSubtitle.tsx": 1,
+        "apps/web/src/components/chat/ComposerSpeechButton.tsx": 2,
+        "apps/web/src/components/chat/VoiceInputErrorPill.tsx": 1,
+        "apps/web/src/components/chat/VoiceInputSetup.tsx": 8,
+        "apps/web/src/components/settings/MicrophoneTest.tsx": 4,
+        "apps/web/src/components/settings/SecretsSettings.tsx": 1,
+        "apps/web/src/components/settings/SpeechModelComparison.tsx": 5,
+        "apps/web/src/components/settings/VoiceSettingsPanel.tsx": 19,
+        "apps/web/src/speech/useTextFieldSpeech.tsx": 1,
       }).map(([file, maxOccurrences]) => {
         const rule: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
         return { files: [file], rules: { "t3code/no-raw-type-classes": rule } };
