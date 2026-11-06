@@ -4,6 +4,7 @@ import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/con
 import * as DateTime from "effect/DateTime";
 
 import {
+  liveThoughtLine,
   resolveWorkEntryToolPresentation,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
@@ -202,5 +203,17 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolData: { server: "another-server", tool: "preview_click" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("liveThoughtLine", () => {
+  it("keeps a first sentence that contains e.g. or i.e.", () => {
+    expect(liveThoughtLine("Check one setting, e.g. the port, first. Then restart.")).toBe(
+      "Check one setting, e.g. the port, first.",
+    );
+    expect(liveThoughtLine("Only the cached value (i.e. the old one) is read. Next.")).toBe(
+      "Only the cached value (i.e. the old one) is read.",
+    );
+    expect(liveThoughtLine("E.g. the port is wrong. Next.")).toBe("E.g. the port is wrong.");
   });
 });
