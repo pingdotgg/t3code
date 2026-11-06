@@ -1,0 +1,15 @@
+{
+  "name": "alchemy-vite-do-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev"
+  },
+  "devDependencies": {
+    "@alchemy.run/cloudflare": "workspace:*",
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "vite": "catalog:"
+  }
+}
