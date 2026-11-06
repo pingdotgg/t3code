@@ -59,6 +59,7 @@ interface ScannerTestInput {
   readonly importedWorkspaceRoots?: ReadonlyArray<string>;
   readonly configBaseDir?: string;
   readonly providerInstances?: ContractServerSettings["providerInstances"];
+  readonly agentSessionImport?: Partial<ContractServerSettings["agentSessionImport"]>;
   readonly processRunner?: Layer.Layer<ProcessRunner.ProcessRunner>;
 }
 
@@ -69,9 +70,10 @@ const layerScannerTest = (input: ScannerTestInput) =>
         Layer.provide(input.processRunner),
       )
   ).pipe(
-    Layer.provide(
+    Layer.provideMerge(
       Layer.mergeAll(
         ServerSettings.layerTest({
+          agentSessionImport: input.agentSessionImport ?? {},
           providerInstances: {
             [ProviderInstanceId.make("claudeAgent")]: {
               driver: ProviderDriverKind.make("claudeAgent"),
@@ -181,6 +183,80 @@ function makeRecordLimitTranscript(cwd: string, overflow: boolean): string {
         "\n"
     : records;
 }
+
+const writeCodexRollout = Effect.fn("AgentSessionScanner.test.writeCodexRollout")(
+  function* (input: {
+    readonly codexHomePath: string;
+    readonly name: string;
+    readonly workspace: string;
+    readonly mtimeMs: number;
+    readonly replies?: ReadonlyArray<string>;
+    readonly blankRecords?: number;
+  }) {
+    const path = yield* Path.Path;
+    yield* writeTranscript({
+      filePath: path.join(
+        input.codexHomePath,
+        "sessions",
+        "2026",
+        "08",
+        "24",
+        `rollout-${input.name}.jsonl`,
+      ),
+      contents: [
+        encodeTranscriptRecord({
+          type: "session_meta",
+          payload: { id: input.name, cwd: input.workspace },
+        }),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          payload: { type: "user_message", message: "First prompt" },
+        }),
+        ...(input.replies ?? []).map((text) =>
+          encodeTranscriptRecord({
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text }],
+            },
+          }),
+        ),
+        ...Array.from({ length: input.blankRecords ?? 0 }, () => "{}"),
+      ].join("\n"),
+      mtimeMs: input.mtimeMs,
+    });
+  },
+);
+
+// Each cwd sits behind ~300 KiB of padding, so a 1 MiB metadata budget reads three of the four.
+const writePaddedClaudeProjects = Effect.fn("AgentSessionScanner.test.writePaddedClaudeProjects")(
+  function* (claudeHomePath: string, nowMs: number) {
+    const path = yield* Path.Path;
+    const workspaces: Array<string> = [];
+    for (const index of [0, 1, 2, 3]) {
+      const workspace = yield* makeTempDir(`t3code-padded-workspace-${index}-`);
+      workspaces.push(workspace);
+      yield* writeTranscript({
+        filePath: path.join(claudeHomePath, "projects", `-padded-${index}`, "session.jsonl"),
+        contents: [
+          encodeTranscriptRecord({
+            type: "file-history-snapshot",
+            padding: "x".repeat(300 * 1024),
+          }),
+          encodeTranscriptRecord({
+            type: "user",
+            cwd: workspace,
+            sessionId: `padded-${index}`,
+            message: { role: "user", content: "Fix the project" },
+          }),
+        ].join("\n"),
+        mtimeMs: nowMs - index * 60_000,
+      });
+    }
+    return workspaces;
+  },
+);
 
 const makeFileIdentityFixture = Effect.fn("AgentSessionScanner.test.makeFileIdentityFixture")(
   function* (originalInode = 10_000_000_000_000_001n, replacementInode = 10_000_000_000_000_000n) {
@@ -1120,6 +1196,65 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         ]);
       }),
     );
+
+    it.effect("stops reading transcript metadata at the configured scan budget", () =>
+      Effect.gen(function* () {
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-budget-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-budget-codex-");
+        const workspaces = yield* writePaddedClaudeProjects(claudeHomePath, nowMs);
+
+        const limited = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          agentSessionImport: { scanBudgetMiB: 1 },
+        });
+        const unlimited = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(limited.candidates.map((candidate) => candidate.path)).toEqual(
+          workspaces.slice(0, 3),
+        );
+        expect(limited.truncated).toBe(true);
+        expect(unlimited.candidates.map((candidate) => candidate.path)).toEqual(workspaces);
+        expect(unlimited.truncated).toBeUndefined();
+      }),
+    );
+
+    it.effect("raises the metadata record budget in step with the configured scan budget", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-records-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-records-codex-");
+        const workspaces: Array<string> = [];
+        // 101 transcripts reading 999 records each overrun the default 100,000-record budget.
+        for (let index = 0; index <= 100; index++) {
+          const workspace = yield* makeTempDir(`t3code-records-workspace-${index}-`);
+          workspaces.push(workspace);
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", `-records-${index}`, "session.jsonl"),
+            contents: `${"{}\n".repeat(998)}${claudeSessionLine(workspace)}`,
+            mtimeMs: nowMs - index * 60_000,
+          });
+        }
+
+        const defaults = yield* runScan({ claudeHomePath, codexHomePath });
+        const raised = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          agentSessionImport: { scanBudgetMiB: 256 },
+        });
+
+        expect(defaults.candidates.map((candidate) => candidate.path)).toEqual(
+          workspaces.slice(0, 100),
+        );
+        expect(defaults.truncated).toBe(true);
+        expect(raised.candidates.map((candidate) => candidate.path)).toEqual(workspaces);
+        expect(raised.truncated).toBeUndefined();
+      }),
+    );
   });
 
   describe("recentThreads", () => {
@@ -1151,12 +1286,22 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         yield* writeTranscript({
           filePath: path.join(claudeHomePath, "projects", "-selected", "claude-recent.jsonl"),
           contents: claudeTranscript(workspace, "claude-recent"),
-          mtimeMs: nowMs - 24 * 60 * 60 * 1000,
+          mtimeMs: nowMs - 36 * 60 * 60 * 1000,
         });
         yield* writeTranscript({
           filePath: path.join(claudeHomePath, "projects", "-selected", "claude-old.jsonl"),
           contents: claudeTranscript(workspace, "claude-old"),
           mtimeMs: nowMs - 31 * 24 * 60 * 60 * 1000,
+        });
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-selected", "claude-ancient.jsonl"),
+          contents: claudeTranscript(workspace, "claude-ancient"),
+          mtimeMs: nowMs - 400 * 24 * 60 * 60 * 1000,
+        });
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-selected", "claude-future.jsonl"),
+          contents: claudeTranscript(workspace, "claude-future"),
+          mtimeMs: nowMs + 24 * 60 * 60 * 1000,
         });
         yield* writeTranscript({
           filePath: path.join(claudeHomePath, "projects", "-other", "claude-other.jsonl"),
@@ -1284,6 +1429,28 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           ["Legacy prompt", "Legacy answer"],
         ]);
         expect(threads[0]).toMatchObject({ source: "pi", title: "Pi refactor" });
+
+        // A future-dated transcript is never imported, even with unlimited history.
+        for (const [agentSessionImport, expected] of [
+          [
+            { windowDays: 45 },
+            ["pi-recent", "codex-recent", "claude-recent", "pi-v1", "claude-old"],
+          ],
+          [{ windowDays: 1 }, ["pi-recent", "codex-recent"]],
+          [
+            { windowDays: null },
+            ["pi-recent", "codex-recent", "claude-recent", "pi-v1", "claude-old", "claude-ancient"],
+          ],
+        ] as const) {
+          const configured = yield* runRecentThreads({
+            claudeHomePath,
+            codexHomePath,
+            piAgentDir,
+            workspaceRoot: workspace,
+            agentSessionImport,
+          });
+          expect(configured.map((thread) => thread.providerSessionId)).toEqual(expected);
+        }
       }),
     );
 
@@ -1541,6 +1708,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           }),
           prompt("Keep the first request"),
           reply("First reply"),
+          ...Array.from({ length: 1_000 }, () => "{}"),
         ]
           .map((record) => `${record}\n`)
           .join("");
@@ -1575,25 +1743,35 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           mtimeMs: nowMs,
         });
 
-        const threads = yield* runRecentThreads({
-          claudeHomePath,
-          codexHomePath,
-          workspaceRoot: workspace,
-        });
+        // The inherited prefix has 1,003 records, so a 1,000-record limit imports the rollout alone.
+        for (const [agentSessionImport, expected] of [
+          [
+            {},
+            {
+              title: "Keep the first request",
+              messages: ["Keep the first request", "First reply", "Ask again", "Final reply"],
+            },
+          ],
+          [
+            { recordsPerConversation: 1_000 },
+            { title: "Ask again", messages: ["Ask again", "Final reply"] },
+          ],
+        ] as const) {
+          const threads = yield* runRecentThreads({
+            claudeHomePath,
+            codexHomePath,
+            workspaceRoot: workspace,
+            agentSessionImport,
+          });
 
-        expect(
-          threads.map((thread) => ({
-            id: thread.providerSessionId,
-            title: thread.title,
-            messages: thread.messages.map((message) => message.text),
-          })),
-        ).toEqual([
-          {
-            id: threadId,
-            title: "Keep the first request",
-            messages: ["Keep the first request", "First reply", "Ask again", "Final reply"],
-          },
-        ]);
+          expect(
+            threads.map((thread) => ({
+              id: thread.providerSessionId,
+              title: thread.title,
+              messages: thread.messages.map((message) => message.text),
+            })),
+          ).toEqual([{ id: threadId, ...expected }]);
+        }
       }),
     );
 
@@ -1729,15 +1907,103 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             mtimeMs,
           });
         }
-        const outcomes = yield* runRecentThreadOutcomes({
-          claudeHomePath,
+        for (const [agentSessionImport, expected] of [
+          [{}, ["Skipped", "Importable"]],
+          [{ recordsPerConversation: 100_001 }, ["Importable", "Importable"]],
+        ] as const) {
+          const outcomes = yield* runRecentThreadOutcomes({
+            claudeHomePath,
+            codexHomePath,
+            workspaceRoot: workspace,
+            agentSessionImport,
+          });
+          expect(outcomes.map((outcome) => outcome._tag)).toEqual(expected);
+          expect(outcomes[1]).toMatchObject({
+            thread: { providerSessionId: "record-limit-session" },
+          });
+        }
+      }),
+    );
+
+    it.effect("stops importing at the configured conversation and record limits", () =>
+      Effect.gen(function* () {
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-limits-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-limits-codex-");
+        const workspace = yield* makeTempDir("t3code-limits-workspace-");
+        const rollouts = [
+          ["newest", 500],
+          ["middle", 1_500],
+          ["oldest", 500],
+        ] as const;
+        for (const [index, [name, blankRecords]] of rollouts.entries()) {
+          yield* writeCodexRollout({
+            codexHomePath,
+            name,
+            workspace,
+            mtimeMs: nowMs - (index + 1) * 60_000,
+            blankRecords,
+          });
+        }
+
+        for (const [agentSessionImport, expected] of [
+          [{}, ["newest", "middle", "oldest"]],
+          [{ conversationsPerRun: 2 }, ["newest", "middle", "Skipped"]],
+          // The cap applies to each transcript, so the oldest still fits after a skipped one.
+          [{ recordsPerConversation: 1_000 }, ["newest", "Skipped", "oldest"]],
+        ] as const) {
+          const outcomes = yield* runRecentThreadOutcomes({
+            claudeHomePath,
+            codexHomePath,
+            workspaceRoot: workspace,
+            agentSessionImport,
+          });
+          expect(
+            outcomes.map((outcome) =>
+              outcome._tag === "Importable" ? outcome.thread.providerSessionId : outcome._tag,
+            ),
+          ).toEqual(expected);
+        }
+      }),
+    );
+
+    it.effect("keeps the first prompt and the latest messages up to the configured limit", () =>
+      Effect.gen(function* () {
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-messages-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-messages-codex-");
+        const workspace = yield* makeTempDir("t3code-messages-workspace-");
+        const replies = Array.from({ length: 249 }, (_, index) => `Reply ${index + 1}`);
+        const all = ["First prompt", ...replies];
+        yield* writeCodexRollout({
           codexHomePath,
-          workspaceRoot: workspace,
+          name: "long",
+          workspace,
+          mtimeMs: nowMs,
+          replies,
         });
-        expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Skipped", "Importable"]);
-        expect(outcomes[1]).toMatchObject({
-          thread: { providerSessionId: "record-limit-session" },
-        });
+
+        for (const [agentSessionImport, expected, omitted] of [
+          [{}, [all[0], ...all.slice(-199)], 50],
+          [{ messagesPerThread: 4 }, [all[0], ...all.slice(-3)], 246],
+          [{ messagesPerThread: 2 }, [all[0], all.at(-1)], 248],
+          [{ messagesPerThread: null }, all, 0],
+        ] as const) {
+          const threads = yield* runRecentThreads({
+            claudeHomePath,
+            codexHomePath,
+            workspaceRoot: workspace,
+            agentSessionImport,
+          });
+          expect(
+            threads.map((thread) => [
+              thread.messages.map((message) => message.text),
+              thread.omittedMessageCount,
+            ]),
+          ).toEqual([[expected, omitted]]);
+        }
       }),
     );
 
@@ -2034,6 +2300,77 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("charges retained Pi tool-result links against the selected-history budget", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-pi-links-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-pi-links-codex-");
+        const piAgentDir = yield* makeTempDir("t3code-pi-links-agent-");
+        const workspace = yield* makeTempDir("t3code-pi-links-workspace-");
+        const linkId = (index: number) => String(index).padStart(1_000, "0");
+        // Tool results keep only their links, but those still count against the 32 MiB budget.
+        const makeTranscript = (sessionId: string, toolResultsPerKind: number) => {
+          const toolResult = (index: number, content: unknown) =>
+            encodeTranscriptRecord({
+              type: "message",
+              id: linkId(index),
+              parentId: index === 1 ? "prompt" : linkId(index - 1),
+              message: { role: "toolResult", content },
+            });
+          return [
+            encodeTranscriptRecord({ type: "session", version: 3, id: sessionId, cwd: workspace }),
+            encodeTranscriptRecord({
+              type: "message",
+              id: "prompt",
+              parentId: null,
+              message: { role: "user", content: "Run the tools" },
+            }),
+            // Null content fails the record schema, so those links take the rescue path.
+            ...Array.from({ length: toolResultsPerKind }, (_, index) =>
+              toolResult(index + 1, [{ type: "text", text: "output" }]),
+            ),
+            ...Array.from({ length: toolResultsPerKind }, (_, index) =>
+              toolResult(toolResultsPerKind + index + 1, null),
+            ),
+            encodeTranscriptRecord({
+              type: "message",
+              id: "answer",
+              parentId: linkId(2 * toolResultsPerKind),
+              message: { role: "assistant", content: [{ type: "text", text: "Done" }] },
+            }),
+          ].join("\n");
+        };
+        // Each kind alone stays within the budget; together they exceed it.
+        for (const [sessionId, toolResultsPerKind, mtimeMs] of [
+          ["pi-links-over", 5_500, nowMs],
+          ["pi-links-under", 500, nowMs - 1_000],
+        ] as const) {
+          yield* writeTranscript({
+            filePath: path.join(piAgentDir, "sessions", "--links--", `${sessionId}.jsonl`),
+            contents: makeTranscript(sessionId, toolResultsPerKind),
+            mtimeMs,
+          });
+        }
+
+        const outcomes = yield* runRecentThreadOutcomes({
+          claudeHomePath,
+          codexHomePath,
+          piAgentDir,
+          workspaceRoot: workspace,
+        });
+
+        expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Skipped", "Importable"]);
+        expect(outcomes[1]).toMatchObject({
+          thread: {
+            providerSessionId: "pi-links-under",
+            messages: [{ text: "Run the tools" }, { text: "Done" }],
+          },
+        });
+      }),
+    );
+
     it.effect("skips growth during reading without exceeding the reserved bytes", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -2147,6 +2484,41 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         });
 
         expect(threads.map((thread) => thread.providerInstanceId)).toEqual(["codex-work"]);
+      }),
+    );
+
+    it.effect("recollects candidates when the scan budget is raised after a scan", () =>
+      Effect.gen(function* () {
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-recollect-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-recollect-codex-");
+        const workspaces = yield* writePaddedClaudeProjects(claudeHomePath, nowMs);
+        const missedWorkspace = workspaces[3]!;
+
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const settings = yield* ServerSettings.ServerSettingsService;
+          const scan = yield* scanner.scan;
+          const outcomeTags = scanner.recentThreads(missedWorkspace).pipe(
+            Stream.runCollect,
+            Effect.map((outcomes) => outcomes.map((outcome) => outcome._tag)),
+          );
+
+          expect(scan.candidates).toHaveLength(3);
+          expect(yield* outcomeTags).toEqual([]);
+
+          yield* settings.updateSettings({ agentSessionImport: { scanBudgetMiB: 64 } });
+          expect(yield* outcomeTags).toEqual(["Importable"]);
+        }).pipe(
+          Effect.provide(
+            layerScannerTest({
+              claudeHomePath,
+              codexHomePath,
+              agentSessionImport: { scanBudgetMiB: 1 },
+            }),
+          ),
+        );
       }),
     );
   });

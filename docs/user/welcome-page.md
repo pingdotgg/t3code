@@ -69,9 +69,10 @@ are listed first, newest activity on top. When the remote is on GitHub, the
 group shows the repository as `owner/name`. Clones with the same remote share
 one group. Directories that are not git repositories sit under "Other folders".
 
-The page offers git repositories active within the last 30 days with at least
-three conversations, already checked. Projects already in T3 Code are not checked
-again. Uncheck the box to start without them, or
+The page offers git repositories active within the last 30 days, or within the
+import time window if it is shorter, with at least three conversations, already
+checked. Projects already in T3 Code are not checked again. Uncheck the box to
+start without them, or
 select **Review all** to pick from everything found, with "Select all" and
 "Select none". Linked worktrees of bare repositories
 can be offered as separate projects. Other linked git worktrees, Codex scratch
@@ -80,9 +81,11 @@ offered.
 
 A large or malformed history can reach the scan limit. T3 Code keeps the
 projects it found and warns when projects or conversations may be missing.
+Raising the scan budget in **Settings → Threads → Session import** finds more.
 
 Imported projects include Claude, Codex and Pi conversations active within the last
-30 days. You can continue those conversations in T3 Code. Pi is off by default:
+30 days by default. You can continue those conversations in T3 Code.
+Pi is off by default:
 open **Add more agents** and select **Turn on** next to Pi, and the page looks for
 its sessions too. Pi sessions
 are read from each enabled Pi provider's session directory, which follows
@@ -90,21 +93,28 @@ are read from each enabled Pi provider's session directory, which follows
 Pi conversation imports its active branch, the one Pi reopens.
 
 Conversation import is best effort. T3 Code keeps the first user prompt and the
-newest remaining visible user and assistant messages, with 200 messages total.
+newest remaining visible user and assistant messages, up to 200 by default.
 It omits tool activity and attachments. For Codex, it omits generated setup
 context only when a canonical user event and a valid shared turn ID identify the
 same user turn. Ambiguous legacy or response-only context stays in the imported
 conversation so T3 Code does not remove user text. It reads one conversation at
 a time and skips files larger than 4 GiB. It also skips a conversation when the
 message text and metadata it keeps need more than 32 MiB of memory. Tool output
-does not count toward that limit. It skips a conversation with more than 100,000
-records every time, so opening the page again does not import it. It ignores
+does not count toward that limit. By default it skips a conversation with more
+than 100,000 records, and opening the page again does not import it until that
+limit is raised. It ignores
 malformed records and skips unreadable or unparseable conversations.
 
-Each import attempt reads up to 100 conversation files and 4 GiB per project. To
-continue a large batch, open the Welcome page again and pick the project in
+By default, each import attempt reads up to 100 conversation files per project,
+never more than 4 GiB. To continue a large batch, open the Welcome page again
+and pick the project in
 **Review all**. Completed conversations are not imported again. You can continue
 without the remaining history.
+
+To change these limits, open **Settings → Threads → Session import**. Higher
+limits take longer and use more memory on the computer running the import. New
+limits apply to conversations that are not imported yet, and the 32 MiB memory
+limit for each conversation still applies.
 
 You can start without importing. While an import runs, T3 Code stays on the
 Welcome page. If you quit, open the Welcome page again from **Settings → About**; the

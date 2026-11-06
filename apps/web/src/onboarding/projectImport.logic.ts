@@ -4,16 +4,19 @@ import {
 } from "@t3tools/client-runtime/state/projects";
 import type { AgentSessionProjectCandidate, EnvironmentId, ProjectId } from "@t3tools/contracts";
 
-const RECENT_PROJECT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const RECENT_PROJECT_WINDOW_MS = 30 * DAY_MS;
 const DEFAULT_SELECTION_MIN_THREADS = 3;
 
-/** Treat candidates missing git as repositories for servers predating git scans. */
-export function partitionOnboardingProjects<T extends AgentSessionProjectCandidate>(
-  candidates: ReadonlyArray<T>,
-  now = Date.now(),
-) {
-  const cutoff = now - RECENT_PROJECT_WINDOW_MS;
-
+/**
+ * Treat candidates missing git as repositories for servers predating git scans. A shorter
+ * import window narrows `recent`, so it only holds projects with conversations to import.
+ */
+export function partitionOnboardingProjects<
+  T extends AgentSessionProjectCandidate & {
+    readonly importWindowDays?: number | null | undefined;
+  },
+>(candidates: ReadonlyArray<T>, now = Date.now()) {
   return {
     available: candidates,
     recent: candidates.filter((candidate) => {
@@ -21,7 +24,11 @@ export function partitionOnboardingProjects<T extends AgentSessionProjectCandida
       if (candidate.threadCount < DEFAULT_SELECTION_MIN_THREADS) return false;
       if (candidate.lastActiveAt === null) return false;
       const lastActiveAt = Date.parse(candidate.lastActiveAt);
-      return lastActiveAt >= cutoff && lastActiveAt <= now;
+      const windowMs = Math.min(
+        RECENT_PROJECT_WINDOW_MS,
+        (candidate.importWindowDays ?? Infinity) * DAY_MS,
+      );
+      return lastActiveAt >= now - windowMs && lastActiveAt <= now;
     }),
   };
 }

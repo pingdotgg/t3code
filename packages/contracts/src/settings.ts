@@ -1337,6 +1337,49 @@ export const CloudSpeechCredentials = Schema.Struct({
   openrouter: CloudSpeechCredential,
 });
 
+// Upper bounds keep one import run from tying up the server. The fixed 32 MiB history budget per
+// conversation still applies, so raising the record or message limits cannot exhaust memory.
+export const AGENT_SESSION_IMPORT_BOUNDS = {
+  windowDays: { minimum: 1, maximum: 3650 },
+  conversationsPerRun: { minimum: 1, maximum: 5000 },
+  recordsPerConversation: { minimum: 1000, maximum: 1_000_000 },
+  messagesPerThread: { minimum: 2, maximum: 10_000 },
+  scanBudgetMiB: { minimum: 1, maximum: 1024 },
+} as const;
+const AgentSessionImportWindowDays = Schema.NullOr(
+  Schema.Int.check(Schema.isBetween(AGENT_SESSION_IMPORT_BOUNDS.windowDays)),
+);
+const AgentSessionImportConversationsPerRun = Schema.Int.check(
+  Schema.isBetween(AGENT_SESSION_IMPORT_BOUNDS.conversationsPerRun),
+);
+const AgentSessionImportRecordsPerConversation = Schema.Int.check(
+  Schema.isBetween(AGENT_SESSION_IMPORT_BOUNDS.recordsPerConversation),
+);
+const AgentSessionImportMessagesPerThread = Schema.NullOr(
+  Schema.Int.check(Schema.isBetween(AGENT_SESSION_IMPORT_BOUNDS.messagesPerThread)),
+);
+const AgentSessionImportScanBudgetMiB = Schema.Int.check(
+  Schema.isBetween(AGENT_SESSION_IMPORT_BOUNDS.scanBudgetMiB),
+);
+
+/** Null `windowDays` imports all history; null `messagesPerThread` keeps every message. */
+export const AgentSessionImportSettings = Schema.Struct({
+  windowDays: AgentSessionImportWindowDays.pipe(Schema.withDecodingDefault(Effect.succeed(30))),
+  conversationsPerRun: AgentSessionImportConversationsPerRun.pipe(
+    Schema.withDecodingDefault(Effect.succeed(100)),
+  ),
+  recordsPerConversation: AgentSessionImportRecordsPerConversation.pipe(
+    Schema.withDecodingDefault(Effect.succeed(100_000)),
+  ),
+  messagesPerThread: AgentSessionImportMessagesPerThread.pipe(
+    Schema.withDecodingDefault(Effect.succeed(200)),
+  ),
+  scanBudgetMiB: AgentSessionImportScanBudgetMiB.pipe(
+    Schema.withDecodingDefault(Effect.succeed(64)),
+  ),
+});
+export type AgentSessionImportSettings = typeof AgentSessionImportSettings.Type;
+
 export const ServerSettings = Schema.Struct({
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -1346,6 +1389,9 @@ export const ServerSettings = Schema.Struct({
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(StorageCleanupSettings)({}))),
+  ),
+  agentSessionImport: AgentSessionImportSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(AgentSessionImportSettings)({}))),
   ),
 
   worktreesDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -1802,6 +1848,15 @@ export const ServerSettingsPatch = Schema.Struct({
       worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
       browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
       logsAfterDays: Schema.optionalKey(StorageRetentionDays),
+    }),
+  ),
+  agentSessionImport: Schema.optionalKey(
+    Schema.Struct({
+      windowDays: Schema.optionalKey(AgentSessionImportWindowDays),
+      conversationsPerRun: Schema.optionalKey(AgentSessionImportConversationsPerRun),
+      recordsPerConversation: Schema.optionalKey(AgentSessionImportRecordsPerConversation),
+      messagesPerThread: Schema.optionalKey(AgentSessionImportMessagesPerThread),
+      scanBudgetMiB: Schema.optionalKey(AgentSessionImportScanBudgetMiB),
     }),
   ),
   worktreesDirectory: Schema.optionalKey(TrimmedString),
