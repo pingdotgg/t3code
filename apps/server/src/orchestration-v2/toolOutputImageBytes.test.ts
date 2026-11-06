@@ -121,6 +121,29 @@ describe("stripUnservedToolOutputImageBytes", () => {
     ]);
   });
 
+  it("keeps the screenshot inside an MCP app's stored tool result", () => {
+    const image = { type: "image", mimeType: "image/png", data: PNG_BASE64 };
+    const item = toolItem(
+      {
+        t3McpApp: {
+          attachmentId: "mcp-app-1",
+          server: "revyl",
+          tool: "screenshot",
+          resourceUri: "ui://revyl/screenshot",
+        },
+        result: { content: [image], structuredContent: { device: "phone" } },
+      },
+      "revyl.screenshot",
+    );
+
+    const stripped = stripUnservedToolOutputImageBytes(item);
+
+    expect(outputOf(stripped)).toEqual(outputOf(item));
+    expect(toolOutputImages(outputOf(stripped))).toEqual([
+      { mimeType: "image/png", data: PNG_BASE64 },
+    ]);
+  });
+
   it("strips only the images past the last one an asset can serve", () => {
     const images = Array.from({ length: MAX_TOOL_OUTPUT_IMAGES + 2 }, () => ({
       type: "image",
