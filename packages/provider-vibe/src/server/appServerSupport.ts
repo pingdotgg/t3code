@@ -16,6 +16,14 @@ import * as VibeError from "@t3tools/vibe-app-server/errors";
 
 export const VIBE_PROVIDER = ProviderDriverKind.make("vibe");
 export const VIBE_DEFAULT_BINARY = "vibe-app-server";
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+
+const str = (value: unknown): string | undefined =>
+  typeof value === "string" && value.length > 0 ? value : undefined;
 export const DEFAULT_VIBE_MODEL = "mistral-medium-3.5";
 
 /** Mistral Vibe's application rate-limit code, outside the JSON-RPC reserved range. */
@@ -167,12 +175,36 @@ export const withVibeAppServerClient = Effect.fn("VibeAppServerSupport.withVibeA
     const init = yield* client.initialize({
       clientName: input.clientInfo?.name ?? "t3-code",
       clientVersion: input.clientInfo?.version ?? "0.0.0",
+      // Non-interactive contexts (probe, text generation) cannot answer prompts: advertise
+      // callbacks so delivery is accepted, then resolve them immediately as declined.
       capabilities: {
         callbackKinds: ["approval", "user_input"],
-        clientTools: ["filesystem/read", "filesystem/write", "terminal"],
       },
     });
     yield* client.initialized();
+    yield* client.handleUnknownServerRequest((method, params) => {
+      if (method !== "callback/call") {
+        return Effect.fail(
+          new VibeError.VibeAppServerRequestError({
+            method,
+            code: "method_not_found",
+            detail: `Unsupported vibe-app-server request: ${method}`,
+          }),
+        );
+      }
+      const callback = asRecord(asRecord(params)?.["callback"]);
+      const callbackId = str(callback?.["callbackId"]) ?? str(callback?.["callback_id"]);
+      const sessionId = str(callback?.["sessionId"]);
+      if (!callbackId || !sessionId) return Effect.succeed({ accepted: false });
+      return Effect.as(
+        client.callbackResult({
+          sessionId,
+          callbackId,
+          result: { error: "not answerable in this context" },
+        }),
+        { callbackId, accepted: true },
+      );
+    });
     return yield* use(client, init.serverInfo).pipe(
       Effect.ensuring(child.kill().pipe(Effect.ignore)),
     );

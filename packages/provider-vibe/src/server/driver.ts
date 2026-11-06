@@ -108,6 +108,7 @@ export const VibeDriver: ProviderDriver<VibeSettings, VibeDriverEnv> = {
     }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(SecureRandom.SecureRandom, random),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.mapError(
         (cause) =>
           new ProviderDriverError({
