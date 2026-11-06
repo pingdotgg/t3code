@@ -26,9 +26,12 @@ Changes and Uncommitted include files inside initialized submodules, including n
 Paths include the submodule directory, so files with the same name in different repositories stay
 distinct. Comparisons use the submodule commit recorded by the parent repository at the selected
 base. Commit reviews compare the recorded submodule commits without including local edits.
+Review includes declared submodules even when Git's submodule ignore settings hide them from summaries.
 
 Initialize submodules and fetch their recorded commits to review their file contents. When those
-are unavailable, the comparison shows the submodule commit pointer. Turn diffs, checkpoint restore,
+are unavailable, or a comparison adds or removes a submodule, it shows the submodule commit pointer.
+If a submodule has too many untracked files to list, its pointer remains and the comparison is marked
+as truncated. Files in the parent and other submodules remain available. Turn diffs, checkpoint restore,
 staging, and committing still operate on the thread's repository. Commit submodule changes inside each
 submodule before recording the updated pointer in the parent.
 
