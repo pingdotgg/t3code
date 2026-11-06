@@ -496,18 +496,21 @@ export const make = Effect.fn("@t3tools/vibe-app-server/VibeAppServerClient.make
       });
     }),
     sessionHistoryList: Effect.fn("VibeAppServerClient.sessionHistoryList")(function* (input) {
+      const page: Record<string, unknown> = { limit: input.limit ?? 200 };
+      if (input.cursor !== undefined && input.cursor !== null) page["cursor"] = input.cursor;
       return yield* typed("session/history/list", PageResult, {
         sessionId: input.sessionId,
-        ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
-        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        page,
       });
     }),
     sessionTurnsList: Effect.fn("VibeAppServerClient.sessionTurnsList")(function* (input) {
-      const params: Record<string, unknown> = { sessionId: input.sessionId };
-      if (input.cursor !== undefined && input.cursor !== null) params["cursor"] = input.cursor;
-      if (input.limit !== undefined) params["limit"] = input.limit;
-      const page = yield* typed("session/turns/list", PageResult, params);
-      return yield* Effect.forEach(page.items, (item) =>
+      const page: Record<string, unknown> = { limit: input.limit ?? 200 };
+      if (input.cursor !== undefined && input.cursor !== null) page["cursor"] = input.cursor;
+      const pageResult = yield* typed("session/turns/list", PageResult, {
+        sessionId: input.sessionId,
+        page,
+      });
+      return yield* Effect.forEach(pageResult.items, (item) =>
         decodeTurnItem(item).pipe(
           Effect.mapError(
             (error) =>
@@ -560,8 +563,10 @@ export const make = Effect.fn("@t3tools/vibe-app-server/VibeAppServerClient.make
     callbackResult: Effect.fn("VibeAppServerClient.callbackResult")(function* (input) {
       return yield* requestRaw("callback/result", {
         sessionId: input.sessionId,
-        callbackId: input.callbackId,
-        result: input.result,
+        result: {
+          callbackId: input.callbackId,
+          output: input.result,
+        },
       });
     }),
   });

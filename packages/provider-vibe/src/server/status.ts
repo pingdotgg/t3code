@@ -158,6 +158,8 @@ const probeVibeAppServer = Effect.fn("VibeStatus.probeVibeAppServer")(function* 
   probeCwd: string,
 ): Effect.fn.Return<VibeProbeResult, never, ChildProcessSpawner.ChildProcessSpawner> {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  // The timeout wraps the whole scoped probe, including initialize, so a stalled
+  // app server cannot hold the refresh semaphore forever.
   return yield* Effect.scoped(
     withVibeAppServerClient(
       {
@@ -174,7 +176,8 @@ const probeVibeAppServer = Effect.fn("VibeStatus.probeVibeAppServer")(function* 
             agentConfig: {
               cwd: probeCwd,
               headless: true,
-              trustWorkspace: settings.trustWorkspace,
+              // Probes must not mutate the user's persisted workspace trust.
+              trustWorkspace: false,
             },
           });
           const sessionId = started.state.session.id;
@@ -191,24 +194,23 @@ const probeVibeAppServer = Effect.fn("VibeStatus.probeVibeAppServer")(function* 
             defaultAgent: config.defaultAgent ?? undefined,
             installed: true,
           } satisfies VibeProbeResult;
-        }).pipe(
-          Effect.timeoutOption(PROBE_TIMEOUT_MS),
-          Effect.map((option) =>
-            option._tag === "None"
-              ? ({
-                  version: null,
-                  auth: { status: "unknown" },
-                  usageLimits: undefined,
-                  models: [...FALLBACK_MODELS],
-                  defaultAgent: undefined,
-                  installed: true,
-                  message: "Mistral Vibe app server timed out while probing.",
-                } satisfies VibeProbeResult)
-              : option.value,
-          ),
-        ),
+        }),
     ),
   ).pipe(
+    Effect.timeoutOption(PROBE_TIMEOUT_MS),
+    Effect.map((option) =>
+      option._tag === "None"
+        ? ({
+            version: null,
+            auth: { status: "unknown" },
+            usageLimits: undefined,
+            models: [...FALLBACK_MODELS],
+            defaultAgent: undefined,
+            installed: true,
+            message: "Mistral Vibe app server timed out while probing.",
+          } satisfies VibeProbeResult)
+        : option.value,
+    ),
     Effect.catchCause((cause) =>
       Effect.succeed({
         version: null,

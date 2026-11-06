@@ -1,6 +1,7 @@
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
@@ -125,8 +126,8 @@ export const makeVibeAppServerProtocol = Effect.fn("@t3tools/vibe-app-server/pro
       string | number,
       Deferred.Deferred<unknown, VibeError.VibeAppServerRequestError>
     >();
-    const requestQueue = yield* Queue.unbounded<JsonRpcRequest>();
-    const notificationQueue = yield* Queue.unbounded<JsonRpcNotification>();
+    const requestPubSub = yield* PubSub.unbounded<JsonRpcRequest>();
+    const notificationPubSub = yield* PubSub.unbounded<JsonRpcNotification>();
     const outgoing = yield* Queue.unbounded<string>();
     const termination = yield* Deferred.make<never, VibeError.VibeAppServerError>();
     let nextId = 1;
@@ -162,8 +163,23 @@ export const makeVibeAppServerProtocol = Effect.fn("@t3tools/vibe-app-server/pro
 
     const failTermination = (error: VibeError.VibeAppServerError) =>
       Effect.andThen(
-        Deferred.fail(termination, error),
-        options.onTermination ? options.onTermination(error) : Effect.void,
+        Effect.forEach(
+          [...pending.entries()],
+          ([id, deferred]) =>
+            Deferred.fail(
+              deferred,
+              new VibeError.VibeAppServerRequestError({
+                method: "",
+                code: "terminated",
+                detail: error.message,
+              }),
+            ).pipe(Effect.asVoid, Effect.andThen(Effect.sync(() => pending.delete(id)))),
+          { discard: true },
+        ),
+        Effect.andThen(
+          Deferred.fail(termination, error),
+          options.onTermination ? options.onTermination(error) : Effect.void,
+        ),
       );
 
     const dispatch = (
@@ -208,7 +224,7 @@ export const makeVibeAppServerProtocol = Effect.fn("@t3tools/vibe-app-server/pro
               );
         return Effect.asVoid(
           Effect.andThen(
-            Queue.offer(requestQueue, message),
+            Effect.asVoid(PubSub.publish(requestPubSub, message)),
             Effect.flatMap(answer, (response) =>
               "result" in response
                 ? enqueueOutgoing({ jsonrpc: "2.0", id: message.id, result: response.result })
@@ -220,7 +236,7 @@ export const makeVibeAppServerProtocol = Effect.fn("@t3tools/vibe-app-server/pro
       if (isJsonRpcNotification(message)) {
         return Effect.asVoid(
           Effect.andThen(
-            Queue.offer(notificationQueue, message),
+            Effect.asVoid(PubSub.publish(notificationPubSub, message)),
             options.onNotification === undefined
               ? Effect.void
               : Effect.ignore(options.onNotification(message)),
@@ -230,12 +246,13 @@ export const makeVibeAppServerProtocol = Effect.fn("@t3tools/vibe-app-server/pro
       return Effect.void;
     };
 
+    // Partial lines survive chunk boundaries: remainder lives outside the per-chunk callback.
+    let remainder = "";
     yield* options.stdio.stdin.pipe(
       Stream.decodeText(),
       Stream.runForEach(
         Effect.fnUntraced(function* (chunk) {
           let start = 0;
-          let remainder = "";
           while (start < chunk.length) {
             const newline = chunk.indexOf("\n", start);
             const fragment = chunk.slice(start, newline === -1 ? chunk.length : newline);
@@ -299,16 +316,33 @@ export const makeVibeAppServerProtocol = Effect.fn("@t3tools/vibe-app-server/pro
         method,
         ...(params !== undefined ? { params } : {}),
       });
-      return yield* Effect.mapError(Deferred.await(deferred), (error) =>
-        error.method.length === 0
-          ? new VibeError.VibeAppServerRequestError({
-              method,
-              code: error.code,
-              detail: error.detail,
-              ...(error.data !== undefined ? { data: error.data } : {}),
-            })
-          : error,
+      // Race the response against termination so a dead server cannot suspend callers forever.
+      const result = yield* Effect.mapError(
+        Effect.raceFirst(
+          Deferred.await(deferred),
+          Deferred.await(termination).pipe(
+            Effect.mapError(
+              (error) =>
+                new VibeError.VibeAppServerRequestError({
+                  method,
+                  code: "terminated",
+                  detail: error.message,
+                }),
+            ),
+          ),
+        ),
+        (error) =>
+          error.method.length === 0
+            ? new VibeError.VibeAppServerRequestError({
+                method,
+                code: error.code,
+                detail: error.detail,
+                ...(error.data !== undefined ? { data: error.data } : {}),
+              })
+            : error,
       );
+      pending.delete(id);
+      return result;
     });
 
     const notify = (method: string, params?: unknown) =>
@@ -338,8 +372,8 @@ export const makeVibeAppServerProtocol = Effect.fn("@t3tools/vibe-app-server/pro
       notify,
       respond,
       respondError,
-      incomingRequests: Stream.fromQueue(requestQueue),
-      incomingNotifications: Stream.fromQueue(notificationQueue),
+      incomingRequests: Stream.fromPubSub(requestPubSub),
+      incomingNotifications: Stream.fromPubSub(notificationPubSub),
       awaitTermination: Deferred.await(termination),
     };
   },
