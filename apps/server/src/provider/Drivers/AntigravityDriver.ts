@@ -7,7 +7,7 @@ import {
   type ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { compareSemverVersions } from "@t3tools/shared/semver";
+import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
   NodeRuntimeUnavailableError,
@@ -81,6 +81,7 @@ const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
 
 // The Runtime settings row installs the pinned release; there is no update command to run.
+// Releases before 1.3.0 recorded build names such as agy_acp_server_1.1.1, which predate any pin.
 function managedRuntimeAdvisory(
   executable: AntigravityInstallation.AntigravityExecutable,
   pinnedVersion: string | undefined,
@@ -89,7 +90,8 @@ function managedRuntimeAdvisory(
     executable.source !== "managed" ||
     !executable.version ||
     !pinnedVersion ||
-    compareSemverVersions(executable.version, pinnedVersion) >= 0
+    (parseSemver(executable.version) !== null &&
+      compareSemverVersions(executable.version, pinnedVersion) >= 0)
   ) {
     return undefined;
   }

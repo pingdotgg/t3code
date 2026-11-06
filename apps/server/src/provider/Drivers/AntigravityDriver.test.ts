@@ -386,14 +386,17 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
     () =>
       Effect.gen(function* () {
         const h = yield* makeHarness();
-        h.controls.selected = { ...h.first, version: "1.1.1" };
-        const snapshot = yield* h.instance.snapshot.refresh;
-        expect(snapshot.version).toBe("1.1.1");
-        expect(snapshot.versionAdvisory).toMatchObject({
-          status: "behind_latest",
-          currentVersion: "1.1.1",
-          latestVersion: pinnedRelease?.version,
-        });
+        // Releases before 1.3.0 recorded the build name rather than a semver version.
+        for (const version of ["1.1.1", "agy_acp_server_1.1.1"]) {
+          h.controls.selected = { ...h.first, version };
+          const snapshot = yield* h.instance.snapshot.refresh;
+          expect(snapshot.version).toBe(version);
+          expect(snapshot.versionAdvisory).toMatchObject({
+            status: "behind_latest",
+            currentVersion: version,
+            latestVersion: pinnedRelease?.version,
+          });
+        }
       }).pipe(Effect.scoped),
   );
 
