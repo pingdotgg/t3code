@@ -205,7 +205,14 @@ function ChatWithSideChatPane(props: { ran: string[] }) {
     scriptKeybindings: [],
     getShortcutContext: () => shortcutContext,
     threadFindActive: false,
-    composerRef: { current: null },
+    composerRef: {
+      current: {
+        insertTextAtEnd: (key: string) => {
+          props.ran.push(`typed ${key}`);
+          return true;
+        },
+      } as Partial<ChatComposerHandle> as ChatComposerHandle,
+    },
     branchToolbarRef: { current: null },
     closeThreadFind: () => {},
     commands: {
@@ -234,6 +241,7 @@ it("runs right panel commands from inside a side chat pane, but not thread comma
   await userEvent.keyboard("{Control>}{Shift>}X{/Shift}{/Control}");
   await userEvent.click(screen.getByRole("region", { name: "Conversation" }));
   await userEvent.keyboard("{Control>}{Alt>}B{/Alt}{/Control}");
+  await userEvent.keyboard("q");
 
   expect(ran).toEqual(["toggle", "close", "toggle"]);
 });
