@@ -474,7 +474,9 @@ export function getMobileThemeVariables(
         ? appearance === "light"
           ? colors.toolbarControl
           : colors.surface
-        : colors.muted;
+        : themeId === "t3-learn" && appearance === "light"
+          ? colors.surface
+          : colors.muted;
   const mobileColors =
     themeId === DEFAULT_MOBILE_THEME_ID
       ? {
