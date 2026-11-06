@@ -20,6 +20,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -270,6 +271,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
 
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
   const openSessionInner = Effect.fn("VibeAdapterV2.openSession")(function* (
     input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
@@ -574,7 +576,18 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
             detail: "path is required",
           });
         }
-        const absolute = filePath.startsWith("/") ? filePath : `${cwd}/${filePath}`;
+        // Confine reads/writes to the session checkout: resolve and reject paths outside it.
+        const path = yield* Path.Path;
+        const root = path.resolve(cwd);
+        const absolute = path.resolve(root, filePath);
+        const relative = path.relative(root, absolute);
+        if (relative.startsWith("..") || path.isAbsolute(relative)) {
+          return yield* new VibeAppServerError.VibeAppServerRequestError({
+            method,
+            code: "invalid_params",
+            detail: "path is outside the workspace",
+          });
+        }
         const fileSystem = yield* FileSystem.FileSystem;
         if (method === "clientTool/readTextFile") {
           const content = yield* fileSystem.readFileString(absolute).pipe(
@@ -657,7 +670,11 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       return { callbackId, accepted: true };
     });
     yield* client.handleUnknownServerRequest((method, params) =>
-      Effect.provideService(onServerRequest(method, params), FileSystem.FileSystem, fileSystem),
+      Effect.provideService(
+        Effect.provideService(onServerRequest(method, params), FileSystem.FileSystem, fileSystem),
+        Path.Path,
+        path,
+      ),
     );
 
     const ensureThread: ProviderAdapter.ProviderAdapterV2SessionRuntime["ensureThread"] = Effect.fn(
@@ -826,24 +843,45 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
             detail: "No Mistral Vibe session owns this runtime request.",
           });
         }
-        const decision = responseInput.decision ?? "cancel";
         const pending = state.callbackByRequest.get(responseInput.requestId);
         const callbackId = pending?.callbackId ?? responseInput.requestId;
         const requestKind = pending?.kind ?? "permission";
-        const result =
-          decision === "cancel"
-            ? { outcome: "cancelled" as const }
-            : decision === "decline"
-              ? { outcome: "denied" as const }
-              : {
-                  outcome: "approved" as const,
-                  ...(responseInput.answers ? { answers: responseInput.answers } : {}),
-                };
+        // An answer-only response (no decision) on a user_input callback must still deliver the
+        // answers; defaulting to cancel here would discard them.
+        const decision =
+          responseInput.decision ?? (requestKind === "user_input" ? undefined : "cancel");
+        // vibe-app-server CallbackOutput contract: approvals and user input have distinct envelopes.
+        const output =
+          requestKind === "user_input"
+            ? {
+                type: "user_input" as const,
+                result: {
+                  answers: Object.entries(responseInput.answers ?? {}).map(
+                    ([question, answer]) => ({ question, answer: String(answer) }),
+                  ),
+                  cancelled: decision === "cancel",
+                },
+              }
+            : {
+                type: "approval" as const,
+                decision: {
+                  type: (decision === "accept"
+                    ? "approve"
+                    : decision === "acceptForSession"
+                      ? "approve_for_session"
+                      : decision === "acceptAlways"
+                        ? "approve_permanently"
+                        : decision === "decline"
+                          ? "deny"
+                          : "cancel_turn") as string,
+                },
+                ...(responseInput.feedback ? { feedback: responseInput.feedback } : {}),
+              };
         yield* Effect.mapError(
           client.callbackResult({
             sessionId: nativeSessionId,
             callbackId,
-            result,
+            result: output,
           }),
           protocolError,
         );
@@ -870,6 +908,30 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         });
       });
 
+    // Reads every history page (following nextCursor), so long threads are not truncated.
+    const readAllHistoryEntries = Effect.fn("VibeAdapterV2.readAllHistoryEntries")(function* (
+      nativeSessionId: string,
+    ) {
+      const entries: Array<Record<string, unknown>> = [];
+      let cursor: string | null | undefined = null;
+      while (true) {
+        const page: {
+          readonly items: ReadonlyArray<unknown>;
+          readonly nextCursor?: string | null | undefined;
+        } = yield* Effect.mapError(
+          client.sessionHistoryList({ sessionId: nativeSessionId, limit: 500, cursor }),
+          protocolError,
+        );
+        for (const item of page.items) {
+          const entry = asRecord(item);
+          if (entry) entries.push(entry);
+        }
+        cursor = page.nextCursor ?? null;
+        if (cursor === null) break;
+      }
+      return entries;
+    });
+
     const readThreadSnapshot: ProviderAdapter.ProviderAdapterV2SessionRuntime["readThreadSnapshot"] =
       Effect.fn("VibeAdapterV2.readThreadSnapshot")(function* (snapshotInput) {
         const nativeSessionId = snapshotInput.providerThread.nativeThreadRef?.nativeId;
@@ -879,20 +941,16 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
             providerThreadId: snapshotInput.providerThread.id,
           });
         }
-        const history = yield* Effect.mapError(
-          client.sessionHistoryList({ sessionId: nativeSessionId, limit: 500 }),
-          protocolError,
-        );
+        const historyEntries = yield* readAllHistoryEntries(nativeSessionId);
         const turns = yield* Effect.mapError(
-          client.sessionTurnsList({ sessionId: nativeSessionId, limit: 200 }),
+          client.sessionTurnsList({ sessionId: nativeSessionId, limit: 500 }),
           protocolError,
         );
         const now = yield* DateTime.now;
         const messages: OrchestrationV2ConversationMessage[] = [];
-        for (const item of history.items) {
-          const entry = asRecord(item);
+        for (const entry of historyEntries) {
           const text = entryText(entry);
-          if (!entry || !text) continue;
+          if (!text) continue;
           const role = str(entry["role"]) === "user" ? "user" : "assistant";
           const nativeItemId = str(entry["id"]) ?? `entry-${messages.length}`;
           messages.push({
@@ -962,25 +1020,11 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           });
         }
         // session/rewind takes a history entry id, not a turn id: resolve the input entry of the
-        // target turn, following nextCursor across all pages so older targets are found too.
-        let entryId: string | undefined;
-        let cursor: string | null | undefined = null;
-        while (entryId === undefined) {
-          const page: {
-            readonly items: ReadonlyArray<unknown>;
-            readonly nextCursor?: string | null | undefined;
-          } = yield* Effect.mapError(
-            client.sessionHistoryList({ sessionId: nativeSessionId, limit: 500, cursor }),
-            protocolError,
-          );
-          entryId = page.items
-            .map((item) => asRecord(item))
-            .find(
-              (entry) => str(entry?.["turnId"]) === targetTurnId && str(entry?.["role"]) === "user",
-            )?.["id"] as string | undefined;
-          cursor = page.nextCursor ?? null;
-          if (cursor === null) break;
-        }
+        // target turn across all history pages so older targets are found too.
+        const historyEntries = yield* readAllHistoryEntries(nativeSessionId);
+        const entryId = historyEntries.find(
+          (entry) => str(entry["turnId"]) === targetTurnId && str(entry["role"]) === "user",
+        )?.["id"] as string | undefined;
         if (typeof entryId !== "string" || entryId.length === 0) {
           return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
             driver: VIBE_PROVIDER,
@@ -1094,12 +1138,16 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
     openSession: Effect.fn("VibeAdapterV2.openSession")(function* (input) {
       return yield* Effect.provideService(
         Effect.provideService(
-          openSessionInner(input),
-          ChildProcessSpawner.ChildProcessSpawner,
-          spawner,
+          Effect.provideService(
+            openSessionInner(input),
+            ChildProcessSpawner.ChildProcessSpawner,
+            spawner,
+          ),
+          FileSystem.FileSystem,
+          fileSystem,
         ),
-        FileSystem.FileSystem,
-        fileSystem,
+        Path.Path,
+        path,
       );
     }),
   });
@@ -1108,6 +1156,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
 export type VibeAdapterV2Env =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
+  | Path.Path
   | SecureRandom.SecureRandom
   | IdAllocator.IdAllocatorV2
   | ProviderHost.ProviderHost;
