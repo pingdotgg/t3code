@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 
 import { act, render } from "../../test/render";
+import type { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
 import {
   chooseAudioDestination,
@@ -133,12 +134,10 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
       return { text: `Cleaned ${transcript}` };
     }),
 }));
-// Capture and the wire live behind the platform; its `prepared` is where audio would go.
 vi.mock("./browserVoiceInput", () => ({
-  createBrowserVoiceInputPlatform: (input: {
-    prepared: PreparedConnection;
-    getTranscriptionOptions?: () => SpeechTranscriptionOptions;
-  }) => {
+  createBrowserVoiceInputPlatform: (
+    input: Parameters<typeof createBrowserVoiceInputPlatform>[0],
+  ) => {
     const environmentId = input.prepared.environmentId;
     mocks.platforms.push(environmentId);
     return {
@@ -152,12 +151,13 @@ vi.mock("./browserVoiceInput", () => ({
       },
       transcriber: {
         prepare: async () => {
-          const options = input.getTranscriptionOptions?.();
-          if (options) mocks.recordingOptions.push(options);
+          mocks.recordingOptions.push(input.getTranscriptionOptions());
           return {
             locale: "en",
             transcribe: async () => {
-              mocks.transcribeCalls.push(environmentId);
+              mocks.transcribeCalls.push(
+                input.cloudProvider ? `${input.cloudProvider} via ${environmentId}` : environmentId,
+              );
               const next = mocks.transcripts.shift() ?? "dictated";
               if (next instanceof Error) throw next;
               return next;
@@ -401,16 +401,23 @@ it("revokes across windows even before the storage event and survives stale pref
 
 it("recovers from a corrupt choice without enabling cloud dictation before the save completes", async () => {
   setup();
+  mocks.cloudVoiceCapable.add("env-b");
+  mocks.modelState = "missing-model";
   window.localStorage.setItem("t3code:voice-audio-grant:v1", "not-json");
   const save = pendingCloudAudioChoice({
     kind: "cloud",
     environmentId: EnvironmentId.make("env-b"),
-    provider: "openai",
+    provider: "xai",
   });
   await using _screen = await render(<Probe />);
   expect(mocks.voice.transcriptionEnvironmentId).toBeNull();
+  await act(() => mocks.voice.start());
+  expectNoAudioSent();
   await act(save);
-  expect(mocks.voice.transcriptionEnvironmentId).toBe("env-b");
+  await act(() => mocks.voice.start());
+  await act(() => mocks.voice.stop());
+  expect(mocks.transcribeCalls).toEqual(["xai via env-b"]);
+  expect(mocks.statusRequests).toEqual([]);
 });
 
 it("uses neither destination when the cloud save marker cannot be read", async () => {
