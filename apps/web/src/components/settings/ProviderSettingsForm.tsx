@@ -28,7 +28,7 @@ import type { ProviderClientDefinition } from "@t3tools/provider-core/client";
 export type SettingsFormDefinition = Pick<ProviderClientDefinition, "settingsSchema"> & {
   readonly driverKind?: ProviderClientDefinition["driverKind"];
 };
-import { SettingsRow } from "./settingsLayout";
+import { SettingResetButton, SettingsRow } from "./settingsLayout";
 
 export interface ProviderSettingsFieldModel {
   readonly key: string;
@@ -36,12 +36,14 @@ export interface ProviderSettingsFieldModel {
   readonly label: string;
   readonly description?: string | undefined;
   readonly placeholder?: string | undefined;
+  readonly maxLength?: number | undefined;
   readonly clearWhenEmpty: "omit" | "persist";
   /** Kept in the server's secret store: a saved value arrives as `SECRET_REDACTED` and never shows. */
   readonly secret?: boolean | undefined;
   /** Typed `SettingsSecretValue`: may name a secret provider reference instead of a value. */
   readonly acceptsSecretReference?: boolean | undefined;
   readonly defaultBooleanValue?: boolean | undefined;
+  readonly defaultStringValue?: string | undefined;
 
   readonly options?: ReadonlyArray<ProviderSettingsFormOption> | undefined;
 }
@@ -89,6 +91,16 @@ function readFieldBooleanDefault(
   return Option.isSome(decoded) && typeof decoded.value === "boolean" ? decoded.value : undefined;
 }
 
+function readFieldTextDefault(
+  fieldSchema: ProviderClientDefinition["settingsSchema"]["fields"][string],
+): string | undefined {
+  const decodeDefault = Schema.decodeUnknownOption(fieldSchema as Schema.Decoder<unknown>);
+  const decoded = decodeDefault(undefined);
+  return Option.isSome(decoded) && typeof decoded.value === "string" && decoded.value.length > 0
+    ? decoded.value
+    : undefined;
+}
+
 export function deriveProviderSettingsFields(
   definition: SettingsFormDefinition,
   value?: unknown,
@@ -114,7 +126,14 @@ export function deriveProviderSettingsFields(
       const fieldSchema = definition.settingsSchema.fields[key]!;
       const formAnnotation = readProviderSettingsFormAnnotation(fieldSchema);
       if (formAnnotation.hidden) return [];
-      if (isLocalAcp && key !== "source" && key !== "commandPath") return [];
+      if (
+        isLocalAcp &&
+        key !== "source" &&
+        key !== "commandPath" &&
+        key !== "fileLinkInstructions"
+      ) {
+        return [];
+      }
 
       const annotatedTitle = readFieldAnnotationString(fieldSchema, "title");
       const annotatedDescription = readFieldAnnotationString(fieldSchema, "description");
@@ -136,11 +155,17 @@ export function deriveProviderSettingsFields(
             : formAnnotation.placeholder !== undefined
               ? { placeholder: formAnnotation.placeholder }
               : {}),
+          ...(formAnnotation.maxLength !== undefined
+            ? { maxLength: formAnnotation.maxLength }
+            : {}),
           clearWhenEmpty: formAnnotation.clearWhenEmpty ?? "omit",
           ...(isSecretSetting(fieldSchema) ? { secret: true } : {}),
           ...(acceptsSecretReference(fieldSchema) ? { acceptsSecretReference: true } : {}),
           ...(formAnnotation.control === "switch"
             ? { defaultBooleanValue: readFieldBooleanDefault(fieldSchema) }
+            : {}),
+          ...(formAnnotation.control === "textarea"
+            ? { defaultStringValue: readFieldTextDefault(fieldSchema) }
             : {}),
           ...(formAnnotation.control === "select" && formAnnotation.options
             ? { options: formAnnotation.options }
@@ -284,10 +309,10 @@ function ProviderCommandArguments({
   );
 }
 
-function readProviderConfigString(config: unknown, key: string): string {
-  if (config === null || typeof config !== "object") return "";
+function readProviderConfigString(config: unknown, key: string, defaultValue = ""): string {
+  if (config === null || typeof config !== "object") return defaultValue;
   const value = (config as Record<string, unknown>)[key];
-  return typeof value === "string" ? value : "";
+  return typeof value === "string" ? value : defaultValue;
 }
 
 function readProviderConfigBoolean(config: unknown, key: string, defaultValue = false): boolean {
@@ -320,7 +345,10 @@ export function nextProviderConfigWithFieldValue(
   }
 
   const trimmed = value.trim();
-  if (field.clearWhenEmpty === "omit" && trimmed.length === 0) {
+  if (
+    (field.clearWhenEmpty === "omit" && trimmed.length === 0) ||
+    trimmed === field.defaultStringValue
+  ) {
     delete base[field.key];
   } else {
     base[field.key] = value;
@@ -434,6 +462,34 @@ function ProviderSettingsSelect({
   );
 }
 
+function ProviderSettingsTextarea({
+  field,
+  value,
+  onChange,
+  ...rest
+}: Pick<ProviderSettingsFieldRowProps, "field" | "value" | "onChange"> & {
+  readonly id: string;
+  readonly className?: string | undefined;
+  readonly "aria-describedby"?: string | undefined;
+}) {
+  const text = readProviderConfigString(value, field.key, field.defaultStringValue);
+  return (
+    <Textarea
+      {...rest}
+      key={text}
+      defaultValue={text}
+      onBlur={(event) => {
+        if (event.target.value !== text) {
+          onChange(nextProviderConfigWithFieldValue(value, field, event.target.value));
+        }
+      }}
+      placeholder={field.placeholder}
+      maxLength={field.maxLength}
+      spellCheck={false}
+    />
+  );
+}
+
 function FieldFrame(props: {
   readonly variant: ProviderSettingsFormProps["variant"];
   readonly children: ReactNode;
@@ -475,6 +531,7 @@ function ProviderSettingsFieldRow({
 
   if (variant === "settings") {
     const descriptionId = field.description ? `${inputId}-description` : undefined;
+    const defaultText = field.defaultStringValue;
     const secretConfigured =
       field.secret === true && readProviderConfigString(value, field.key).length > 0;
     const control =
@@ -497,16 +554,13 @@ function ProviderSettingsFieldRow({
           onChange={onChange}
         />
       ) : field.control === "textarea" ? (
-        <Textarea
+        <ProviderSettingsTextarea
+          field={field}
+          value={value}
           id={inputId}
           aria-describedby={descriptionId}
           className="w-full max-w-full @min-[32rem]/settings-row:w-[min(24rem,50cqw)]"
-          value={readProviderConfigString(value, field.key)}
-          onChange={(event) =>
-            onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))
-          }
-          placeholder={field.placeholder}
-          spellCheck={false}
+          onChange={onChange}
         />
       ) : field.acceptsSecretReference && environmentId !== undefined ? (
         <SecretSettingsControl
@@ -565,6 +619,15 @@ function ProviderSettingsFieldRow({
         description={
           field.description ? <span id={descriptionId}>{field.description}</span> : undefined
         }
+        resetAction={
+          defaultText !== undefined &&
+          readProviderConfigString(value, field.key, defaultText) !== defaultText ? (
+            <SettingResetButton
+              label={field.label}
+              onClick={() => onChange(nextProviderConfigWithFieldValue(value, field, defaultText))}
+            />
+          ) : undefined
+        }
         control={control}
         managed={managedReason}
       />
@@ -615,15 +678,12 @@ function ProviderSettingsFieldRow({
       <FieldFrame variant={variant}>
         <label htmlFor={inputId} className={cn(variant === "card" && "block")}>
           {label}
-          <Textarea
+          <ProviderSettingsTextarea
+            field={field}
+            value={value}
             id={inputId}
             className={cn(variant === "card" && "mt-1.5")}
-            value={readProviderConfigString(value, field.key)}
-            onChange={(event) =>
-              onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))
-            }
-            placeholder={field.placeholder}
-            spellCheck={false}
+            onChange={onChange}
           />
           {description}
         </label>

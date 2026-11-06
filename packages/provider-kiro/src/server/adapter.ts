@@ -582,6 +582,7 @@ export const makeKiroAdapterV2 = Effect.fn("makeKiroAdapterV2")(function* (
   return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
     flavor: makeKiroAcpAdapterFlavor(options),
+    fileLinkInstructions: options.settings.fileLinkInstructions,
     selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.testHooks === undefined ? {} : { testHooks: options.testHooks }),

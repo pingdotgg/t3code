@@ -291,6 +291,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
     flavor,
+    fileLinkInstructions: options.settings.fileLinkInstructions,
     selfInvocation: options.selfInvocation,
     ...(options.continuationRequests === undefined
       ? {}

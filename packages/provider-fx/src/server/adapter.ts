@@ -198,6 +198,7 @@ export const makeFxAdapterV2 = Effect.fn("makeFxAdapterV2")(function* (
   return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
     flavor: makeFxAcpAdapterFlavor(options),
+    fileLinkInstructions: options.settings.fileLinkInstructions,
     selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.testHooks === undefined ? {} : { testHooks: options.testHooks }),

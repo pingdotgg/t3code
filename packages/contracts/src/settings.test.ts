@@ -11,7 +11,9 @@ import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   ClaudeSettings,
+  DEFAULT_FILE_LINK_INSTRUCTIONS,
   DEFAULT_SERVER_SETTINGS,
+  FILE_LINK_INSTRUCTIONS_MAX_LENGTH,
   globalIdleCompaction,
   idleCompactionPatch,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
@@ -249,6 +251,18 @@ describe("custom model settings", () => {
       "bare-slug",
       { slug: "named", name: "Named", capabilities },
     ]);
+  });
+});
+
+describe("file link instructions", () => {
+  it("sends the shipped text when unset, none when cleared, and rejects text Codex would truncate", () => {
+    expect(decodeClaudeSettings({}).fileLinkInstructions).toBe(DEFAULT_FILE_LINK_INSTRUCTIONS);
+    expect(decodeClaudeSettings({ fileLinkInstructions: " \n " }).fileLinkInstructions).toBe("");
+    expect(() =>
+      decodeClaudeSettings({
+        fileLinkInstructions: "x".repeat(FILE_LINK_INSTRUCTIONS_MAX_LENGTH + 1),
+      }),
+    ).toThrow();
   });
 });
 

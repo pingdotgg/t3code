@@ -1,8 +1,36 @@
 import { assert, describe, it } from "@effect/vitest";
+import { DEFAULT_FILE_LINK_INSTRUCTIONS } from "@t3tools/contracts";
 
-import { buildRuntimeInstructions } from "./runtimeInstructions.ts";
+import {
+  buildRuntimeInstructions,
+  PULL_REQUEST_LINKING_INSTRUCTIONS,
+} from "./runtimeInstructions.ts";
 
 describe("buildRuntimeInstructions", () => {
+  it("sends the instance's file link instructions after the runtime identity, and the shipped text by default", () => {
+    const runtime = { harness: "Codex", model: "gpt-6.1-sol", reasoningEffort: "high" };
+    const identity =
+      "<runtime_info>In case you're asked: you are running in T3 Code through the Codex harness, as gpt-6.1-sol with high reasoning effort. No need to mention this otherwise.";
+    const shipped = `${identity} You can embed images, video, and audio in your response using Markdown image syntax with absolute file paths. Link any other file you produce using its absolute path so the user can open it in T3 Code's files viewer.</runtime_info>\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`;
+
+    assert.strictEqual(buildRuntimeInstructions(runtime), shipped);
+    assert.strictEqual(
+      buildRuntimeInstructions({
+        ...runtime,
+        fileLinkInstructions: DEFAULT_FILE_LINK_INSTRUCTIONS,
+      }),
+      shipped,
+    );
+    assert.strictEqual(
+      buildRuntimeInstructions({ ...runtime, fileLinkInstructions: "Link files as browser URLs." }),
+      `${identity} Link files as browser URLs.</runtime_info>\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`,
+    );
+    assert.strictEqual(
+      buildRuntimeInstructions({ ...runtime, fileLinkInstructions: "" }),
+      `${identity}</runtime_info>\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`,
+    );
+  });
+
   it("leaves PR linking to a session that already carries it, and keeps runtime identity", () => {
     const instructions = buildRuntimeInstructions({
       harness: "Antigravity",

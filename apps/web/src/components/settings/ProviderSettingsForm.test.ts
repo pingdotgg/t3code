@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  DEFAULT_FILE_LINK_INSTRUCTIONS,
+  FILE_LINK_INSTRUCTIONS_MAX_LENGTH,
   makeProviderSettingsSchema,
   ProviderDriverKind,
   SettingsSecretValue,
@@ -50,6 +52,40 @@ describe("ProviderSettingsForm helpers", () => {
     );
 
     expect(next).toEqual({ forkOwned: 1 });
+  });
+
+  it("keeps file link instructions unset until edited, within Codex's limit, and resettable", () => {
+    const claude = providerClients.get(ProviderDriverKind.make("claudeAgent"));
+    const field = deriveProviderSettingsFields(claude!).find(
+      ({ key }) => key === "fileLinkInstructions",
+    );
+    expect(field).toMatchObject({
+      control: "textarea",
+      defaultStringValue: DEFAULT_FILE_LINK_INSTRUCTIONS,
+      maxLength: FILE_LINK_INSTRUCTIONS_MAX_LENGTH,
+    });
+
+    expect(nextProviderConfigWithFieldValue(undefined, field!, "Cite files as URLs.")).toEqual({
+      fileLinkInstructions: "Cite files as URLs.",
+    });
+    expect(nextProviderConfigWithFieldValue({ launchArgs: "--chrome" }, field!, "")).toEqual({
+      launchArgs: "--chrome",
+      fileLinkInstructions: "",
+    });
+    expect(
+      nextProviderConfigWithFieldValue(
+        { launchArgs: "--chrome", fileLinkInstructions: "" },
+        field!,
+        DEFAULT_FILE_LINK_INSTRUCTIONS,
+      ),
+    ).toEqual({ launchArgs: "--chrome" });
+  });
+
+  it("offers file link instructions for local ACP agents", () => {
+    const acpRegistry = providerClients.get(ProviderDriverKind.make("acpRegistry"));
+    expect(
+      deriveProviderSettingsFields(acpRegistry!, { source: "local" }).map(({ key }) => key),
+    ).toEqual(["source", "commandPath", "fileLinkInstructions"]);
   });
 
   it("stores false boolean fields when true is the default", () => {
