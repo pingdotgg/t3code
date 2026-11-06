@@ -1,5 +1,7 @@
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
+import worktreeFastSource from "../../../../../native/worktree-fast/source.json";
+
 import { AdvancedSettings } from "./AdvancedSettings";
 import { BranchNamingSettings } from "./BranchNamingSettings";
 import { WorktreeSubmodulesRow } from "./ProjectDefaultsSettings";
@@ -56,8 +58,8 @@ function StartFromRemoteRow() {
   );
 }
 
-const WORKTREE_FAST_INSTALL_COMMAND =
-  "cargo install --locked --git https://github.com/mweinbach/worktree-fast.git git-worktree-fast";
+// Same revision the desktop app bundles, so manual installs match what T3 Code was tested with.
+const WORKTREE_FAST_INSTALL_COMMAND = `cargo install --locked --git ${worktreeFastSource.repository} --rev ${worktreeFastSource.rev} git-worktree-fast`;
 
 function WorktreeFastRow() {
   const { connectedEnvironments } = useSettingsScope();
@@ -85,10 +87,9 @@ function WorktreeFastRow() {
       description={
         missing.length === 0 ? (
           <>
-            Clones commits you prepared with git-worktree-fast from its APFS cache instead of
-            checking them out. Prepare one by running <code>git worktree-fast prepare</code> in a T3
-            Code terminal. Other commits, and a failed fast clone that left nothing behind, use
-            Git’s normal checkout.
+            Clones prepared commits from an APFS cache instead of checking them out. Run{" "}
+            <code>git worktree-fast prepare</code> in a T3 Code terminal to prepare one. Other
+            commits use Git’s normal checkout.
           </>
         ) : (
           <span className="block space-y-1">
