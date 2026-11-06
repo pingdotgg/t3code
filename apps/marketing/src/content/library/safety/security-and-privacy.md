@@ -98,7 +98,7 @@ Declining the card tells the agent to explain what is blocked and continue witho
 
 ## Where do I report a vulnerability?
 
-Report suspected T3 Code vulnerabilities to [security@ping.gg](mailto:security@ping.gg), as directed by the [security policy](/security-policy). Include the affected component, reproduction steps, and sanitized evidence. Read the policy before testing or disclosing an issue. Privacy requests go to [privacy@t3.tools](mailto:privacy@t3.tools).
+Report suspected T3 Code vulnerabilities to [security@t3.codes](mailto:security@t3.codes), as directed by the [security policy](/security-policy). Include the affected component, reproduction steps, and sanitized evidence. Read the policy before testing or disclosing an issue. Privacy requests go to [privacy@t3.tools](mailto:privacy@t3.tools).
 
 ## Next steps
 
