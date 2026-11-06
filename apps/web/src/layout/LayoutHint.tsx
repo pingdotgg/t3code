@@ -124,9 +124,11 @@ function useHintPlacement() {
         );
     const place = () => {
       const composer = pane?.querySelector('[data-chat-composer-stack="true"]');
+      const paneBounds = pane?.getBoundingClientRect();
+      const scale = pane && paneBounds ? paneBounds.height / pane.offsetHeight : 0;
       const lift =
-        pane && composer
-          ? pane.getBoundingClientRect().bottom - composer.getBoundingClientRect().top + HINT_GAP_PX
+        paneBounds && composer && scale > 0
+          ? (paneBounds.bottom - composer.getBoundingClientRect().top) / scale + HINT_GAP_PX
           : 0;
       const bottom = lift > HINT_BOTTOM_PX ? lift : null;
       setPlacement((current) =>
