@@ -71,6 +71,7 @@ export interface IssuedBearerSession {
   readonly subject: string;
   readonly client: AuthClientMetadata;
   readonly expiresAt: DateTime.Utc;
+  readonly mcpAccess?: AuthMcpClientAccess;
 }
 
 // MCP client tokens are restricted to /mcp; HTTP API and WebSocket RPC would bypass their access cap.
@@ -551,14 +552,8 @@ export class EnvironmentAuth extends Context.Service<
       readonly access: AuthMcpClientAccess;
       readonly peerLink: boolean;
       readonly client: AuthClientMetadata;
-    }) => Effect.Effect<
-      {
-        readonly sessionId: AuthSessionId;
-        readonly token: string;
-        readonly expiresAt: DateTime.DateTime;
-      },
-      ServerAuthInternalError
-    >;
+      readonly ttl?: Duration.Duration;
+    }) => Effect.Effect<IssuedBearerSession, ServerAuthInternalError>;
     /** Spends a code covering all granted scopes. Rejects desktop grants and leaves refused proof-bound codes unspent. */
     readonly consumeMcpApprovalCode: (
       code: string,
@@ -1326,7 +1321,7 @@ export const make = Effect.gen(function* () {
         subject: MCP_CLIENT_SUBJECT,
         method: "bearer-access-token",
         scopes: mcpClientScopes(input.access),
-        ttl: MCP_CLIENT_SESSION_TTL,
+        ttl: input.ttl ?? MCP_CLIENT_SESSION_TTL,
         ...(input.access === "read-only" ? {} : { runtimeModeCeiling: input.access }),
         peerLink: input.peerLink,
         client: { ...input.client, label: input.label, deviceType: "bot" },
@@ -1335,7 +1330,12 @@ export const make = Effect.gen(function* () {
         Effect.map((issued) => ({
           sessionId: issued.sessionId,
           token: issued.token,
-          expiresAt: issued.expiresAt,
+          method: "bearer-access-token" as const,
+          scopes: issued.scopes,
+          subject: MCP_CLIENT_SUBJECT,
+          client: issued.client,
+          expiresAt: DateTime.toUtc(issued.expiresAt),
+          mcpAccess: input.access,
         })),
         Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
         Effect.withSpan("EnvironmentAuth.issueMcpClientSession"),

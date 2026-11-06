@@ -1,11 +1,13 @@
-import { AuthSessionId, AuthStandardClientScopes } from "@t3tools/contracts";
+import { AuthMcpClientAccess, AuthSessionId, AuthStandardClientScopes } from "@t3tools/contracts";
 import * as Console from "effect/Console";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
+import * as CliError from "effect/cli/CliError";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 
@@ -168,7 +170,17 @@ const pairingCommand = Command.make("pairing").pipe(
 
 const sessionIssueCommand = Command.make("issue", {
   ...authLocationFlags,
-  scopes: authScopesFlag(AuthStandardClientScopes),
+  scopes: authScopesFlag([]).pipe(
+    Flag.withDescription(
+      `Authorization scope to grant; repeat for multiple scopes. Defaults to ${AuthStandardClientScopes.join(", ")}. Cannot be combined with --mcp-access.`,
+    ),
+  ),
+  mcpAccess: Flag.Literals("mcp-access", AuthMcpClientAccess.literals).pipe(
+    Flag.withDescription(
+      "Issue an MCP-only session with this access ceiling instead of a generic API session.",
+    ),
+    Flag.optional,
+  ),
   ttl: ttlFlag,
   label: labelFlag,
   subject: subjectFlag,
@@ -177,27 +189,59 @@ const sessionIssueCommand = Command.make("issue", {
 }).pipe(
   Command.withDescription("Issue a scoped bearer access token for headless or remote clients."),
   Command.withHandler((flags) =>
-    runWithEnvironmentAuth(
-      flags,
-      (environmentAuth) =>
-        Effect.gen(function* () {
-          const issued = yield* environmentAuth.issueSession({
-            scopes: flags.scopes,
-            ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
-            ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
-            ...(Option.isSome(flags.subject) ? { subject: flags.subject.value } : {}),
+    Effect.gen(function* () {
+      if (Option.isSome(flags.mcpAccess)) {
+        if (flags.scopes.length > 0 || Option.isSome(flags.subject)) {
+          return yield* new CliError.UserError({
+            cause: "conflicting_options",
+            userMessage:
+              "--mcp-access cannot be combined with --scope or --subject; MCP access determines both.",
           });
-          yield* Console.log(
-            formatIssuedSession(issued, {
-              json: flags.json,
-              tokenOnly: flags.tokenOnly,
-            }),
-          );
-        }),
-      {
-        quietLogs: flags.json || flags.tokenOnly,
-      },
-    ),
+        }
+        if (
+          Option.isSome(flags.ttl) &&
+          (!Number.isFinite(Duration.toMillis(flags.ttl.value)) ||
+            Duration.toMillis(flags.ttl.value) <= 0)
+        ) {
+          return yield* new CliError.UserError({
+            cause: "invalid_ttl",
+            userMessage: "An MCP session TTL must be finite and greater than zero.",
+          });
+        }
+      }
+      return yield* runWithEnvironmentAuth(
+        flags,
+        (environmentAuth) =>
+          Effect.gen(function* () {
+            const options = {
+              ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
+              ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
+            };
+            const issued = yield* Option.isSome(flags.mcpAccess)
+              ? environmentAuth.issueMcpClientSession({
+                  ...options,
+                  label: options.label ?? "MCP client",
+                  access: flags.mcpAccess.value,
+                  peerLink: false,
+                  client: { deviceType: "bot" },
+                })
+              : environmentAuth.issueSession({
+                  ...options,
+                  scopes: flags.scopes.length > 0 ? flags.scopes : AuthStandardClientScopes,
+                  ...(Option.isSome(flags.subject) ? { subject: flags.subject.value } : {}),
+                });
+            yield* Console.log(
+              formatIssuedSession(issued, {
+                json: flags.json,
+                tokenOnly: flags.tokenOnly,
+              }),
+            );
+          }),
+        {
+          quietLogs: flags.json || flags.tokenOnly,
+        },
+      );
+    }),
   ),
 );
 
