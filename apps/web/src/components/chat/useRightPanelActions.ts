@@ -4,6 +4,7 @@ import type { ThreadPreviewState } from "../../previewStateStore";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { useClientSettings } from "../../hooks/useSettings";
 import { type ScopedThreadRef, type RunId } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useEffect } from "react";
@@ -134,8 +135,16 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     onDiffPanelOpen?.();
   };
   const addDiffSurfaceStable = useStableCallback(addDiffSurface);
-  const openChangesFromThreadPanel = () => {
-    addDiffSurface();
+  const changesComparison = useClientSettings((settings) => settings.changesComparison);
+  const openChangesFromThreadPanel = (scope: "branch" | "unstaged") => {
+    if (!activeThreadRef || !isServerThread || !isGitRepo) return;
+    const store = useDiffPanelStore.getState();
+    if (scope === "branch" && changesComparison === "committed") {
+      store.selectBranchBaseRef(activeThreadRef, null);
+    }
+    store.selectGitScope(activeThreadRef, scope);
+    useRightPanelStore.getState().open(activeThreadRef, "diff");
+    onDiffPanelOpen?.();
   };
   const openChangesFromThreadPanelStable = useStableCallback(openChangesFromThreadPanel);
   const addFilesSurface = () => {

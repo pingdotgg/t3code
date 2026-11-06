@@ -303,6 +303,17 @@ describe("resolveIdleCompaction", () => {
   });
 });
 
+describe("ClientSettings changes comparison", () => {
+  it("keeps local work included unless committed comparison is selected", () => {
+    expect(decodeClientSettings({}).changesComparison).toBe("all");
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("changesComparison");
+    expect(decodeClientSettingsPatch({ changesComparison: "committed" })).toEqual({
+      changesComparison: "committed",
+    });
+    expect(() => decodeClientSettingsPatch({ changesComparison: "unknown" })).toThrow();
+  });
+});
+
 describe("ClientSettings notifications", () => {
   it("requires opt-in when existing settings omit notification preferences", () => {
     expect(decodeClientSettings({}).notificationMode).toBe("off");

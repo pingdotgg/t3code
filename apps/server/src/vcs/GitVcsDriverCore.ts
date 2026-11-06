@@ -3421,6 +3421,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     branch: string | null,
     explicitBaseRef?: string,
     knownOriginDefaultBranch: string | null = null,
+    headRef = "HEAD",
   ) {
     const base =
       explicitBaseRef !== undefined
@@ -3437,9 +3438,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               knownOriginDefaultBranch,
             }).pipe(Effect.orElseSucceed(() => null))
           : null;
-    if (base === null) return { baseRef: null, mergeBase: "HEAD" };
+    if (base === null) return { baseRef: null, mergeBase: headRef };
     const { baseRef, comparisonRef } = base;
-    const args = ["merge-base", "--end-of-options", comparisonRef, "HEAD"];
+    const args = ["merge-base", "--end-of-options", comparisonRef, headRef];
     const result = yield* executeGit("GitVcsDriver.resolveReviewMergeBase", cwd, args, {
       allowNonZeroExit: true,
     });
@@ -3794,11 +3795,41 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       };
     }
 
+    const committedBranch = input.branchMode === "committed";
     const dirtyRef = sourceKind === "branch-range" ? null : "HEAD";
+    const head =
+      !committedBranch || sourceKind === "working-tree"
+        ? null
+        : yield* executeGit(
+            "GitVcsDriver.getReviewDiffPreview.head",
+            cwd,
+            [
+              "rev-parse",
+              "--verify",
+              "--quiet",
+              "--end-of-options",
+              input.headRef ? `${input.headRef}^{commit}` : "HEAD",
+            ],
+            { allowNonZeroExit: true },
+          );
+    if (
+      head &&
+      head.exitCode !== 0 &&
+      (input.headRef !== undefined || !(head.exitCode === 1 && head.stderr.trim() === ""))
+    ) {
+      return yield* reviewCommitError(cwd, "Could not resolve the current branch commit.");
+    }
+    const headRef = head?.exitCode === 0 ? head.stdout.trim() : null;
     const review =
-      sourceKind === "working-tree"
+      sourceKind === "working-tree" || (committedBranch && headRef === null)
         ? { baseRef: input.baseRef ?? null, mergeBase: null }
-        : yield* resolveReviewMergeBase(cwd, repository.currentBranch, input.baseRef);
+        : yield* resolveReviewMergeBase(
+            cwd,
+            repository.currentBranch,
+            input.baseRef,
+            null,
+            headRef ?? "HEAD",
+          );
 
     const diffArgs = [
       ...REVIEW_DIFF_ARGS,
@@ -3808,12 +3839,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const readStats = Effect.fn("GitVcsDriver.getReviewDiffPreview.stat")(function* (
       ref: string,
       env?: NodeJS.ProcessEnv,
+      targetRef?: string,
     ) {
       const args = [...diffArgs, "--numstat", "-z"];
       const result = yield* executeGit(
         "GitVcsDriver.getReviewDiffPreview.stat",
         cwd,
-        [...args, ref, "--", ...pathArgs],
+        [...args, ref, ...(targetRef ? [targetRef] : []), "--", ...pathArgs],
         { allowNonZeroExit: true, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES, env },
       );
       if (result.exitCode === 0) return { ref, files: parseReviewNumstat(result.stdout) };
@@ -3839,43 +3871,53 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ref: string | null,
       env?: NodeJS.ProcessEnv,
       metadataOnly = false,
+      targetRef?: string,
     ) {
       if (ref === null) return { stdout: "", stdoutTruncated: false, files: [] };
-      const stat = yield* readStats(ref, env);
+      const stat = yield* readStats(ref, env, targetRef);
       if (metadataOnly || stat.files.length === 0) {
         return { stdout: "", stdoutTruncated: false, files: stat.files };
       }
       const patch = yield* executeGit(
         "GitVcsDriver.getReviewDiffPreview.patch",
         cwd,
-        [...diffArgs, "--patch", stat.ref, "--", ...pathArgs],
+        [...diffArgs, "--patch", stat.ref, ...(targetRef ? [targetRef] : []), "--", ...pathArgs],
         { maxOutputBytes: patchLimit, appendTruncationMarker: true, env },
       );
       return { ...patch, files: stat.files };
     });
     const [dirtyTrackedResult, baseResult] = yield* Effect.gen(function* () {
-      const untracked = input.trackedOnly
-        ? { env: undefined, omitted: false }
-        : yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path);
+      const untracked =
+        input.trackedOnly || (committedBranch && dirtyRef === null)
+          ? { env: undefined, omitted: false }
+          : yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path);
       // Untracked files left out make the file list partial, so the bounded patch is sent instead.
       const complete = untracked !== null && !untracked.omitted;
-      const metadataOnly = input.metadataOnly === true && !input.file && complete;
+      const metadataOnly = input.metadataOnly === true && !input.file;
       const [dirty, base] =
-        review.mergeBase === dirtyRef
-          ? yield* readTrackedDiff(dirtyRef, untracked?.env, metadataOnly).pipe(
+        !committedBranch && review.mergeBase === dirtyRef
+          ? yield* readTrackedDiff(dirtyRef, untracked?.env, metadataOnly && complete).pipe(
               Effect.map((result) => [result, result] as const),
             )
           : yield* Effect.all(
               [
-                readTrackedDiff(dirtyRef, untracked?.env, metadataOnly),
-                readTrackedDiff(review.mergeBase, untracked?.env, metadataOnly),
+                readTrackedDiff(dirtyRef, untracked?.env, metadataOnly && complete),
+                readTrackedDiff(
+                  review.mergeBase,
+                  committedBranch ? undefined : untracked?.env,
+                  metadataOnly && (committedBranch || complete),
+                  headRef ?? undefined,
+                ),
               ],
               { concurrency: 2 },
             );
       if (complete) return [dirty, base] as const;
       const incomplete = (ref: string | null, result: typeof dirty) =>
         ref === null ? result : { ...result, files: undefined, stdoutTruncated: true };
-      return [incomplete(dirtyRef, dirty), incomplete(review.mergeBase, base)] as const;
+      return [
+        incomplete(dirtyRef, dirty),
+        committedBranch ? base : incomplete(review.mergeBase, base),
+      ] as const;
     }).pipe(Effect.scoped);
     const dirtyFiles = dirtyTrackedResult.files;
     const baseFiles = baseResult.files;
@@ -3906,7 +3948,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         kind: "branch-range",
         title: review.baseRef ? `Changes vs ${review.baseRef}` : "Changes",
         baseRef: review.baseRef,
-        headRef: repository.currentBranch ?? "HEAD",
+        headRef: committedBranch ? headRef : (repository.currentBranch ?? "HEAD"),
+        branchMode: input.branchMode ?? "working-tree",
         diff: baseDiff,
         ...(baseFiles === undefined ? {} : { files: baseFiles }),
         diffHash: baseDiffHash,
@@ -3923,7 +3966,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       sources: input.sourceKind
         ? sources.filter((source) => source.kind === input.sourceKind)
         : sources,
-      ...(input.trackedOnly ? { incomplete: true } : {}),
+      ...(input.trackedOnly && !(committedBranch && sourceKind === "branch-range")
+        ? { incomplete: true }
+        : {}),
     };
   });
 
@@ -4068,10 +4113,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
       return { oldContents, newContents };
     }
+    const committedBranch = input.sourceKind === "branch-range" && input.branchMode === "committed";
+    if (committedBranch && !input.headRef) {
+      return yield* reviewDiffFileError(input, "Selected branch commit is no longer available.");
+    }
+    const headRevision =
+      committedBranch && input.headRef
+        ? (yield* resolveCommit({ cwd: input.cwd, revision: input.headRef })).commitSha
+        : "HEAD";
     const oldRevision =
       input.sourceKind === "working-tree"
         ? (input.baseRef ?? "HEAD")
-        : (yield* resolveReviewMergeBase(input.cwd, null, input.baseRef ?? undefined)).mergeBase;
+        : (yield* resolveReviewMergeBase(
+            input.cwd,
+            null,
+            input.baseRef ?? undefined,
+            null,
+            headRevision,
+          )).mergeBase;
     const [oldContents, newContents] = yield* Effect.all(
       [
         input.changeType === "new"
@@ -4079,7 +4138,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : readReviewFileAtRevision(input, oldRevision, input.oldPath),
         input.changeType === "deleted"
           ? Effect.succeed("")
-          : readWorkingTreeReviewFile(input, repositoryRoot),
+          : committedBranch
+            ? readReviewFileAtRevision(input, headRevision, input.newPath)
+            : readWorkingTreeReviewFile(input, repositoryRoot),
       ],
       { concurrency: 2 },
     );

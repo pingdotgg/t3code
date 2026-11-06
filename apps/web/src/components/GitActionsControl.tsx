@@ -53,6 +53,7 @@ import {
   type GitQuickAction,
   type DefaultBranchConfirmableAction,
   requiresDefaultBranchConfirmation,
+  resolveChangesPullRequest,
   resolveChangesTotals,
   resolveDefaultBranchActionDialogCopy,
   resolveFeatureBranchUnavailableReason,
@@ -126,6 +127,8 @@ import {
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useOpenLink } from "~/browser/useOpenLink";
+import { pullRequestEnvironment } from "~/state/pullRequests";
+import { useRightPanelStore } from "~/rightPanelStore";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -134,7 +137,7 @@ interface GitActionsControlProps {
   compact?: boolean;
   showActions?: boolean;
   showChanges?: boolean;
-  onOpenChanges?: () => void;
+  onOpenChanges?: (scope: "branch" | "unstaged") => void;
   workspaceMutationId?: string | null;
 }
 
@@ -1077,10 +1080,31 @@ export default function GitActionsControl({
   const changesBaseRef = useDiffPanelStore((state) =>
     selectThreadBranchBaseRef(state, activeThreadRef),
   );
-  const ignoreWhitespaceSetting = useClientSettings((settings) => settings.diffIgnoreWhitespace);
+  const changesSettings = useClientSettings((settings) => ({
+    comparison: settings.changesComparison,
+    ignoreWhitespace: settings.diffIgnoreWhitespace,
+  }));
   const ignoreWhitespace =
-    useDiffPanelSessionStore((state) => state.ignoreWhitespace) ?? ignoreWhitespaceSetting;
+    useDiffPanelSessionStore((state) => state.ignoreWhitespace) ?? changesSettings.ignoreWhitespace;
   const { canReadFiles } = useFilesystemReadAccess(activeEnvironmentId);
+  const committedComparison = changesSettings.comparison === "committed";
+  const changesPullRequest = committedComparison
+    ? resolveChangesPullRequest(
+        gitStatus,
+        activeServerThread?.projectId ?? activeDraftThread?.projectId,
+      )
+    : null;
+  const changesPullRequestQuery = useEnvironmentQuery(
+    showChanges && activeEnvironmentId && changesPullRequest
+      ? pullRequestEnvironment.detail({
+          environmentId: activeEnvironmentId,
+          input: { ...changesPullRequest, allowStale: false },
+        })
+      : null,
+  );
+  const currentPullRequest = changesPullRequestQuery.data;
+  const changesTarget =
+    currentPullRequest && currentPullRequest.state !== "open" ? null : changesPullRequest;
   // Same input as the Diff panel's branch query, so both read one cached result. Status
   // totals join the revision because edits, pulls and resets outside a turn leave the mutation
   // id as is.
@@ -1099,6 +1123,7 @@ export default function GitActionsControl({
     showChanges &&
       isRepo &&
       canReadFiles &&
+      !changesTarget &&
       changesRevision !== null &&
       activeEnvironmentId !== null &&
       gitCwd !== null
@@ -1107,9 +1132,10 @@ export default function GitActionsControl({
             environmentId: activeEnvironmentId,
             input: {
               cwd: gitCwd,
-              ...(changesBaseRef ? { baseRef: changesBaseRef } : {}),
+              ...(!committedComparison && changesBaseRef ? { baseRef: changesBaseRef } : {}),
               ignoreWhitespace,
               metadataOnly: true,
+              ...(committedComparison ? { branchMode: "committed" as const } : {}),
               sourceKind: "branch-range",
             },
           }),
@@ -1117,16 +1143,41 @@ export default function GitActionsControl({
         )
       : null,
   );
-  const resolvedChangesTotals = resolveChangesTotals(
-    gitStatusForActions,
-    changesPreview.data?.sources.find((source) => source.kind === "branch-range"),
+  const changesSource = changesPreview.data?.sources.find(
+    (source) => source.kind === "branch-range",
   );
+  const resolvedChangesTotals = !committedComparison
+    ? resolveChangesTotals(gitStatusForActions, changesSource)
+    : changesTarget
+      ? currentPullRequest
+        ? {
+            insertions: currentPullRequest.additions,
+            deletions: currentPullRequest.deletions,
+            baseRef: currentPullRequest.baseBranch,
+          }
+        : null
+      : resolveChangesTotals(null, changesSource);
   const changesTotals = resolvedChangesTotals ?? { insertions: 0, deletions: 0 };
-  const changesBaseLabel = resolvedChangesTotals
-    ? resolvedChangesTotals.baseRef === null
-      ? "Uncommitted"
-      : `vs ${resolvedChangesTotals.baseRef}`
-    : null;
+  const changesBaseLabel = changesTarget
+    ? `${changeRequestTerminology.shortLabel} #${changesTarget.number}`
+    : resolvedChangesTotals
+      ? resolvedChangesTotals.baseRef
+        ? `vs ${resolvedChangesTotals.baseRef}`
+        : committedComparison
+          ? null
+          : "Uncommitted"
+      : null;
+  const openCommittedChanges = () => {
+    if (changesTarget && activeThreadRef) {
+      useRightPanelStore.getState().openPullRequest(activeThreadRef, {
+        ...changesTarget,
+        ...(gitStatus?.pr ? { url: gitStatus.pr.url } : {}),
+        detailTab: "code",
+      });
+    } else {
+      onOpenChanges?.("branch");
+    }
+  };
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   // Changed-file paths are repository-relative, so they must resolve against
@@ -1197,7 +1248,8 @@ export default function GitActionsControl({
     !gitStatusError &&
     quickAction.disabled &&
     !changesTotals.insertions &&
-    !changesTotals.deletions;
+    !changesTotals.deletions &&
+    (!committedComparison || (!gitStatus?.hasWorkingTreeChanges && changesTarget === null));
   const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
     ? resolveDefaultBranchActionDialogCopy({
         action: pendingDefaultBranchAction.action,
@@ -1739,53 +1791,89 @@ export default function GitActionsControl({
       )}
 
       {showChanges && isRepo && !quietEmptyDraft ? (
-        <ThreadDetailsControl
-          type="button"
-          variant="ghost"
-          size="sm"
-          part="row"
-          disabled={!onOpenChanges}
-          onClick={onOpenChanges}
-        >
-          <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-          <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-            <span className="shrink-0">Changes</span>
-            {changesBaseLabel ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span className="pointer-events-auto min-w-0 truncate font-normal text-muted-foreground" />
-                  }
-                >
-                  {changesBaseLabel}
-                </TooltipTrigger>
-                <TooltipPopup side="top" className="max-w-96 break-words">
-                  {changesBaseLabel}
-                </TooltipPopup>
-              </Tooltip>
-            ) : null}
-            <span className="ml-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
-              <span
-                className={
-                  changesTotals.insertions
-                    ? "text-diff-addition-foreground"
-                    : "text-muted-foreground"
-                }
-              >
-                +{formatDiffCount(changesTotals.insertions)}
+        <>
+          {[
+            {
+              label: "Changes",
+              totals: committedComparison ? resolvedChangesTotals : changesTotals,
+              baseLabel: changesBaseLabel,
+              onClick: openCommittedChanges,
+            },
+            ...(committedComparison
+              ? [
+                  {
+                    label: "Uncommitted",
+                    totals: null,
+                    baseLabel: null,
+                    onClick: () => onOpenChanges?.("unstaged"),
+                  },
+                ]
+              : []),
+          ].map(({ label, totals, baseLabel, onClick }) => (
+            <ThreadDetailsControl
+              key={label}
+              type="button"
+              variant="ghost"
+              size="sm"
+              part="row"
+              disabled={!onOpenChanges}
+              onClick={onClick}
+            >
+              <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+              <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+                <span className="shrink-0">{label}</span>
+                {baseLabel ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span className="pointer-events-auto min-w-0 truncate font-normal text-muted-foreground" />
+                      }
+                    >
+                      {baseLabel}
+                    </TooltipTrigger>
+                    <TooltipPopup side="top" className="max-w-96 break-words">
+                      {baseLabel}
+                    </TooltipPopup>
+                  </Tooltip>
+                ) : null}
+                {label === "Uncommitted" ? (
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {gitStatus ? (gitStatus.hasWorkingTreeChanges ? "View" : "None") : "Loading…"}
+                  </span>
+                ) : totals ? (
+                  <span className="ml-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
+                    <span
+                      className={
+                        totals.insertions
+                          ? "text-diff-addition-foreground"
+                          : "text-muted-foreground"
+                      }
+                    >
+                      +{formatDiffCount(totals.insertions)}
+                    </span>
+                    <span
+                      className={
+                        totals.deletions ? "text-diff-deletion-foreground" : "text-muted-foreground"
+                      }
+                    >
+                      -{formatDiffCount(totals.deletions)}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {changesTarget
+                      ? changesPullRequestQuery.isPending
+                        ? "Loading…"
+                        : "Unavailable"
+                      : changesPreview.isPending
+                        ? "Loading…"
+                        : "Unavailable"}
+                  </span>
+                )}
               </span>
-              <span
-                className={
-                  changesTotals.deletions
-                    ? "text-diff-deletion-foreground"
-                    : "text-muted-foreground"
-                }
-              >
-                -{formatDiffCount(changesTotals.deletions)}
-              </span>
-            </span>
-          </span>
-        </ThreadDetailsControl>
+            </ThreadDetailsControl>
+          ))}
+        </>
       ) : null}
 
       <Dialog
