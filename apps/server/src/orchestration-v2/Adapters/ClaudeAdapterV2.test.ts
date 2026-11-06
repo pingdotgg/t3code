@@ -3424,6 +3424,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       IdAllocator.layer,
       McpProviderSessions.layer,
       NodeServices.layer,
+      NodeCrypto.layer,
     );
     const makeModelTurn = Effect.fn("ClaudeAdapterV2.test.makeModelTurn")(function* (
       thread: Pick<ProviderAdapter.ProviderAdapterV2TurnInput, "threadId" | "providerThread">,
