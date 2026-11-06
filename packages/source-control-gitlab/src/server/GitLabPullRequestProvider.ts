@@ -1,11 +1,14 @@
+import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import type {
+  PullRequestActor,
   PullRequestCapabilities,
   PullRequestReaction,
+  PullRequestReviewDecision,
   PullRequestViewerPermissions,
 } from "@t3tools/contracts";
 
@@ -24,6 +27,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   comment: true,
   actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
+  deleteBranch: true,
   // GitLab has no merge-target-into-source operation.
   updateMethods: ["rebase"],
   search: true,
@@ -38,6 +42,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     verdicts: ["comment", "approve"],
   },
   reviewers: { request: true, listCandidates: true },
+  labels: true,
   edit: { changeRequest: true, comment: true },
 };
 
@@ -62,15 +67,20 @@ const MERGE_ACTIONS: ReadonlySet<string> = new Set([
 /** Authors may close/reopen/change draft state regardless of role; REST omits authorship. */
 export function gitLabViewerPermissions(input: {
   readonly viewerCanMerge: boolean;
+  readonly viewerCanDeleteBranch?: boolean;
+  readonly viewerCanEditLabels?: boolean | undefined;
 }): PullRequestViewerPermissions {
   return {
-    actions: CAPABILITIES.actions.filter(
-      (action) => !MERGE_ACTIONS.has(action) || input.viewerCanMerge,
+    actions: CAPABILITIES.actions.filter((action) =>
+      action === "delete-branch"
+        ? input.viewerCanDeleteBranch === true
+        : !MERGE_ACTIONS.has(action) || input.viewerCanMerge,
     ),
     comment: true,
     resolve: true,
     verdicts: CAPABILITIES.review.verdicts,
     requestReviewers: true,
+    labels: input.viewerCanEditLabels === true,
     ...(input.viewerCanMerge ? { updateMethods: CAPABILITIES.updateMethods } : {}),
   };
 }
@@ -180,6 +190,17 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // The rows were already read, so even a rate limit only leaves their decision unknown.
+  const reviewDecisions = (input: Parameters<typeof cli.getReviewDecisions>[0]) =>
+    cli.getReviewDecisions(input).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("GitLab merge request approval read failed", {
+          repository: input.repository,
+          reason: error._tag,
+        }).pipe(Effect.as<ReadonlyMap<number, PullRequestReviewDecision | null>>(new Map())),
+      ),
+    );
+
   // REST omits line counts; the CLI recovers optional stats failures per batch.
   const mergeRequestWithStats = (
     input: {
@@ -209,6 +230,7 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("gitlab"),
     capabilities: CAPABILITIES,
+    mergeMessageRewrite: removeAgentCredits,
     unavailableRequirement: UNAVAILABLE_REQUIREMENT,
 
     getViewer: (input) => cli.getViewerUsername(input).pipe(Effect.mapError(fail("getViewer"))),
@@ -228,8 +250,21 @@ export const make = Effect.gen(function* () {
           filters: input.filters,
         })
         .pipe(
+          Effect.flatMap((batch) =>
+            reviewDecisions({
+              cwd: input.cwd,
+              host: input.host,
+              repository: input.repository,
+              numbers: batch.items.map((item) => item.number),
+            }).pipe(
+              Effect.map((decisions) => ({
+                ...batch,
+                items: batch.items.map((item) => withReviewDecision(item, decisions)),
+                continues: true,
+              })),
+            ),
+          ),
           Effect.mapError(fail("listChangeRequests")),
-          Effect.map((batch) => ({ ...batch, continues: true })),
         ),
 
     getFileStats: (input) =>
@@ -249,7 +284,21 @@ export const make = Effect.gen(function* () {
       cli.getMergeRequestDetail(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
 
     getChangeRequestSummary: (input) =>
-      mergeRequestWithStats(input).pipe(Effect.mapError(fail("getChangeRequestSummary"))),
+      Effect.all(
+        [
+          mergeRequestWithStats(input),
+          reviewDecisions({
+            cwd: input.cwd,
+            host: input.host,
+            repository: input.repository,
+            numbers: [input.number],
+          }),
+        ],
+        { concurrency: 2 },
+      ).pipe(
+        Effect.map(([mergeRequest, decisions]) => withReviewDecision(mergeRequest, decisions)),
+        Effect.mapError(fail("getChangeRequestSummary")),
+      ),
 
     getChangeRequest: (input) =>
       Effect.all(
@@ -289,35 +338,62 @@ export const make = Effect.gen(function* () {
           recoverRead(cli.listReactions(input), {
             reactions: [] as ReadonlyArray<PullRequestReaction>,
             reactionsByNoteId: new Map<string, ReadonlyArray<PullRequestReaction>>(),
+            editedAtByNoteId: new Map<string, string>(),
+            botLogins: new Set<string>(),
           }),
+          // Usually cached by the detail read beside this one; web_url holds the real web origin.
+          recoverRead(
+            mergeRequestDetail(input).pipe(Effect.map((mergeRequest) => mergeRequest.url)),
+            null,
+          ),
         ],
-        { concurrency: 4 },
+        { concurrency: 5 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => ({
-          reactions: awards.reactions,
-          comments: notes.comments.map((comment) => ({
-            ...comment,
-            reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
-          })),
-          commentCount: notes.comments.length,
-          commentsTruncated: notes.truncated || discussions.truncated,
-          reviewThreads: discussions.threads.map((thread) => ({
-            ...thread,
-            comments: thread.comments.map((comment) => ({
-              ...comment,
-              reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
-            })),
-          })),
-          commits,
-        })),
+        Effect.map(
+          ([notes, commits, discussions, awards, webUrl]): ProviderChangeRequestActivity => {
+            const noteUrl = (id: string) => (webUrl === null ? null : `${webUrl}#note_${id}`);
+            const edited = (id: string) => {
+              const editedAt = awards.editedAtByNoteId.get(id);
+              return editedAt === undefined ? {} : { editedAt };
+            };
+            const botLogins = new Set([...awards.botLogins].map((login) => login.toLowerCase()));
+            const withBotFlag = (author: PullRequestActor | null) =>
+              author !== null && botLogins.has(author.login.toLowerCase())
+                ? { ...author, isBot: true }
+                : author;
+            return {
+              reactions: awards.reactions,
+              comments: notes.comments.map((comment) => ({
+                ...comment,
+                ...edited(comment.id),
+                author: withBotFlag(comment.author),
+                url: noteUrl(comment.id),
+                reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+              })),
+              commentCount: notes.comments.length,
+              commentsTruncated: notes.truncated || discussions.truncated,
+              reviewThreads: discussions.threads.map((thread) => ({
+                ...thread,
+                comments: thread.comments.map((comment) => ({
+                  ...comment,
+                  ...edited(comment.id),
+                  author: withBotFlag(comment.author),
+                  url: noteUrl(comment.id),
+                  reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+                })),
+              })),
+              commits,
+            };
+          },
+        ),
       ),
 
     // Straight from the host, never the shared read: this is what a write is refused or let
     // through on, and access granted or withdrawn within the minute must count.
     getViewerPermissions: (input) =>
       cli
-        .getMergeRequestDetail(input)
+        .getMergeRequestDetail({ ...input, downstreamChecks: false })
         .pipe(Effect.mapError(fail("getViewerPermissions")), Effect.map(gitLabViewerPermissions)),
 
     forgetChangeRequestReads: (scope) =>
@@ -361,6 +437,29 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("listReviewerCandidates"))),
 
+    listLabelCandidates: (input) =>
+      cli
+        .listLabelCandidates({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+          number: input.number,
+        })
+        .pipe(Effect.mapError(fail("listLabelCandidates"))),
+
+    setLabels: writing((input) =>
+      cli
+        .setLabels({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+          number: input.number,
+          labels: input.labels,
+          applied: input.applied,
+        })
+        .pipe(Effect.mapError(fail("setLabels"))),
+    ),
+
     listRepositoryLabels: (input) =>
       cli
         .listProjectLabels({
@@ -403,6 +502,7 @@ export const make = Effect.gen(function* () {
           number: input.number,
           action: input.action,
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
+          ...(input.removeAgentCreditsOnMerge === true ? { removeAgentCreditsOnMerge: true } : {}),
         })
         .pipe(Effect.mapError(fail("runAction"))),
     ),
@@ -484,3 +584,11 @@ export const make = Effect.gen(function* () {
 
   return provider;
 });
+
+function withReviewDecision<Item extends { readonly number: number }>(
+  item: Item,
+  decisions: ReadonlyMap<number, PullRequestReviewDecision | null>,
+): Item & { readonly reviewDecision?: PullRequestReviewDecision | null } {
+  const reviewDecision = decisions.get(item.number);
+  return reviewDecision === undefined ? item : { ...item, reviewDecision };
+}

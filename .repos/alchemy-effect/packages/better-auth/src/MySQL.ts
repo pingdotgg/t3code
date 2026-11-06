@@ -2,18 +2,14 @@ import {
   resolveConnectionSource,
   staticConnectionSource,
   type ConnectionSource,
-} from "alchemy/SQL/ConnectionSource";
-import { openMySQLPool } from "alchemy/SQL/MySQLDriver";
+} from "@alchemy.run/sql/ConnectionSource";
+import { openMySQLPool } from "@alchemy.run/sql/MySQLDriver";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as Redacted from "effect/Redacted";
 import type * as Scope from "effect/Scope";
 import type { PoolOptions } from "mysql2/promise";
-import {
-  Database,
-  type DatabaseService,
-  type DirectDatabase,
-} from "./Database.ts";
+import { Database, type DatabaseService, type DirectDatabase } from "./Database.ts";
 import { makeMigrateSupport, type SqlLayerOptions } from "./Postgres.ts";
 
 export interface MySQLOptions extends SqlLayerOptions {
@@ -93,11 +89,5 @@ export const makeMySQLService = (
  * @peer mysql2
  * @product MySQL
  */
-export const MySQL = (
-  url: ConnectionSource,
-  options?: MySQLOptions,
-): Layer.Layer<Database> =>
-  Layer.effect(
-    Database,
-    makeMySQLService(url, options),
-  ) as Layer.Layer<Database>;
+export const MySQL = (url: ConnectionSource, options?: MySQLOptions): Layer.Layer<Database> =>
+  Layer.effect(Database, makeMySQLService(url, options)) as Layer.Layer<Database>;

@@ -1,7 +1,7 @@
 /**
  * Plain-fetch client of the git-service REST API (`/api/v1`).
  *
- * The types mirror `alchemy/Git`'s API schemas (`src/Git/Api/Schema.ts`)
+ * The types mirror `@alchemy.run/git`'s API schemas (`packages/git/src/Api/Schema.ts`)
  * by hand — the SPA deliberately ships no Effect runtime; it is an example
  * of consuming the service from any plain JS frontend.
  */
@@ -66,17 +66,10 @@ export const signUp = (
   c: Connection,
   input: { name: string; email: string; password: string },
 ): Promise<User> =>
-  authRequest<{ user: User }>(c, "POST", "/sign-up/email", input).then(
-    (r) => r.user,
-  );
+  authRequest<{ user: User }>(c, "POST", "/sign-up/email", input).then((r) => r.user);
 
-export const signIn = (
-  c: Connection,
-  input: { email: string; password: string },
-): Promise<User> =>
-  authRequest<{ user: User }>(c, "POST", "/sign-in/email", input).then(
-    (r) => r.user,
-  );
+export const signIn = (c: Connection, input: { email: string; password: string }): Promise<User> =>
+  authRequest<{ user: User }>(c, "POST", "/sign-in/email", input).then((r) => r.user);
 
 export const signOut = (c: Connection): Promise<void> =>
   authRequest<unknown>(c, "POST", "/sign-out", {}).then(() => undefined);
@@ -94,16 +87,11 @@ export interface ApiKey {
 export const listApiKeys = (c: Connection): Promise<ApiKey[]> =>
   authRequest<ApiKey[]>(c, "GET", "/api-key/list");
 
-export const createApiKey = (
-  c: Connection,
-  name: string,
-): Promise<ApiKey & { key: string }> =>
+export const createApiKey = (c: Connection, name: string): Promise<ApiKey & { key: string }> =>
   authRequest(c, "POST", "/api-key/create", { name });
 
 export const deleteApiKey = (c: Connection, keyId: string): Promise<void> =>
-  authRequest<unknown>(c, "POST", "/api-key/delete", { keyId }).then(
-    () => undefined,
-  );
+  authRequest<unknown>(c, "POST", "/api-key/delete", { keyId }).then(() => undefined);
 
 export type RepoStatus = "ready" | "importing" | "forking" | "deleting";
 
@@ -333,25 +321,12 @@ export const compactRepo = (c: Connection, owner: string, repo: string) =>
 // ── refs ────────────────────────────────────────────────────────────────────
 
 export const listRefs = (c: Connection, owner: string, repo: string) =>
-  request<{ head: string | null; refs: Ref[] }>(
-    c,
-    "GET",
-    `/repos/${seg(owner)}/${seg(repo)}/refs`,
-  );
+  request<{ head: string | null; refs: Ref[] }>(c, "GET", `/repos/${seg(owner)}/${seg(repo)}/refs`);
 
 // ── objects ─────────────────────────────────────────────────────────────────
 
-export const getCommit = (
-  c: Connection,
-  owner: string,
-  repo: string,
-  oid: string,
-) =>
-  request<CommitInfo>(
-    c,
-    "GET",
-    `/repos/${seg(owner)}/${seg(repo)}/commits/${seg(oid)}`,
-  );
+export const getCommit = (c: Connection, owner: string, repo: string, oid: string) =>
+  request<CommitInfo>(c, "GET", `/repos/${seg(owner)}/${seg(repo)}/commits/${seg(oid)}`);
 
 export const getLog = (
   c: Connection,
@@ -367,12 +342,7 @@ export const getLog = (
   return request(c, "GET", `/repos/${seg(owner)}/${seg(repo)}/log${qs}`);
 };
 
-export const getTree = (
-  c: Connection,
-  owner: string,
-  repo: string,
-  oid: string,
-) =>
+export const getTree = (c: Connection, owner: string, repo: string, oid: string) =>
   request<{ oid: string; entries: TreeEntry[] }>(
     c,
     "GET",
@@ -388,28 +358,16 @@ export const getFile = async (
 ): Promise<Uint8Array> => {
   const params = new URLSearchParams({ path: options.path });
   if (options.ref) params.set("ref", options.ref);
-  const res = await fetch(
-    `${c.url}/api/v1/repos/${seg(owner)}/${seg(repo)}/file?${params}`,
-    {
-      credentials: "include",
-    },
-  );
+  const res = await fetch(`${c.url}/api/v1/repos/${seg(owner)}/${seg(repo)}/file?${params}`, {
+    credentials: "include",
+  });
   if (!res.ok) throw await parseError(res);
   return new Uint8Array(await res.arrayBuffer());
 };
 
 /** Changed files of a commit vs its first parent (empty tree for a root). */
-export const getCommitDiff = (
-  c: Connection,
-  owner: string,
-  repo: string,
-  oid: string,
-) =>
-  request<CommitDiff>(
-    c,
-    "GET",
-    `/repos/${seg(owner)}/${seg(repo)}/commits/${seg(oid)}/diff`,
-  );
+export const getCommitDiff = (c: Connection, owner: string, repo: string, oid: string) =>
+  request<CommitDiff>(c, "GET", `/repos/${seg(owner)}/${seg(repo)}/commits/${seg(oid)}/diff`);
 
 /**
  * Three-dot comparison of two revisions (short/full refname or 40-hex
@@ -423,11 +381,7 @@ export const compareCommits = (
   query: { base: string; head: string },
 ) => {
   const params = new URLSearchParams({ base: query.base, head: query.head });
-  return request<Comparison>(
-    c,
-    "GET",
-    `/repos/${seg(owner)}/${seg(repo)}/compare?${params}`,
-  );
+  return request<Comparison>(c, "GET", `/repos/${seg(owner)}/${seg(repo)}/compare?${params}`);
 };
 
 /** JSON blob endpoint serves ≤ 1 MiB only (422 beyond; use /raw). */
@@ -490,12 +444,7 @@ export const getBlob = async (
 export type PullState = "open" | "closed" | "merged";
 
 /** Why `mergeable` is what it is (see {@link PullDetail}). */
-export type MergeableReason =
-  | "ff"
-  | "merge-commit"
-  | "conflict"
-  | "up-to-date"
-  | "unknown";
+export type MergeableReason = "ff" | "merge-commit" | "conflict" | "up-to-date" | "unknown";
 
 /**
  * A pull request. PRs track **live** branches by ref name — the record
@@ -573,17 +522,8 @@ export const listPulls = (
 };
 
 /** Reads one PR with live compare fields (ahead/behind/mergeable). */
-export const getPull = (
-  c: Connection,
-  owner: string,
-  repo: string,
-  number: number,
-) =>
-  request<PullDetail>(
-    c,
-    "GET",
-    `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}`,
-  );
+export const getPull = (c: Connection, owner: string, repo: string, number: number) =>
+  request<PullDetail>(c, "GET", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}`);
 
 /** Opens a PR. `base`/`head` accept short (`main`) or full branch names. */
 export const createPull = (
@@ -591,8 +531,7 @@ export const createPull = (
   owner: string,
   repo: string,
   payload: { title: string; body?: string; base: string; head: string },
-) =>
-  request<Pull>(c, "POST", `/repos/${seg(owner)}/${seg(repo)}/pulls`, payload);
+) => request<Pull>(c, "POST", `/repos/${seg(owner)}/${seg(repo)}/pulls`, payload);
 
 /** Patches title/body, or closes/reopens via `state`. */
 export const updatePull = (
@@ -605,13 +544,7 @@ export const updatePull = (
     body?: string | null;
     state?: "open" | "closed";
   },
-) =>
-  request<Pull>(
-    c,
-    "PATCH",
-    `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}`,
-    payload,
-  );
+) => request<Pull>(c, "PATCH", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}`, payload);
 
 /**
  * Merges an open PR: fast-forward when possible, else a merge commit iff
