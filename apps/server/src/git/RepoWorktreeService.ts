@@ -283,17 +283,6 @@ const SETTLED_RUN_STATUSES: ReadonlySet<string> = new Set([
   "rolled_back",
 ]);
 
-/** Records in `git status --porcelain=v1 -z`; renames and copies carry a second path. */
-function countStatusRecords(stdout: string): number {
-  const records = stdout.split("\0").filter(Boolean);
-  let count = 0;
-  for (let index = 0; index < records.length; index++) {
-    count++;
-    if (/^[RC]|^.[RC]/.test(records[index]!)) index++;
-  }
-  return count;
-}
-
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const settingsService = yield* ServerSettings.ServerSettingsService;
@@ -507,16 +496,33 @@ const make = Effect.gen(function* () {
     return parseWorktreeList(stdout);
   });
 
-  const countUncommittedFiles = (worktreePath: string) =>
-    git
-      .execute({
-        operation: "RepoWorktreeService.countUncommittedFiles",
-        cwd: worktreePath,
-        args: ["status", "--porcelain=v1", "-z", "--untracked-files=normal"],
-        maxOutputBytes: 256 * 1024,
-        timeoutMs: 30_000,
-      })
-      .pipe(Effect.map((result) => countStatusRecords(result.stdout)));
+  // Without -z, porcelain v1 quotes paths with control characters and keeps a
+  // rename on one line, so each line is one changed file. Lines are counted as
+  // they stream, so the count stays exact however large the output is.
+  const countChangedFiles = Effect.fnUntraced(function* (
+    cwd: string,
+    operation: string,
+    untrackedFiles: "normal" | "no",
+    timeoutMs: number,
+  ) {
+    let count = 0;
+    yield* git.execute({
+      operation: `RepoWorktreeService.${operation}`,
+      cwd,
+      args: ["status", "--porcelain=v1", `--untracked-files=${untrackedFiles}`],
+      timeoutMs,
+      maxOutputBytes: 4_096,
+      appendTruncationMarker: true,
+      keepLineCallbacksAfterTruncation: true,
+      progress: {
+        onStdoutLine: () =>
+          Effect.sync(() => {
+            count++;
+          }),
+      },
+    });
+    return count;
+  });
 
   const allocateWorktreePath = Effect.fnUntraced(function* (
     worktreesDirectory: string,
@@ -663,7 +669,12 @@ const make = Effect.gen(function* () {
 
     if (existing !== undefined) {
       const worktreePath = path.resolve(existing.path);
-      const uncommittedFiles = yield* countUncommittedFiles(worktreePath);
+      const uncommittedFiles = yield* countChangedFiles(
+        worktreePath,
+        "countUncommittedFiles",
+        "normal",
+        30_000,
+      );
       const alreadyAttached = yield* attachedWorktree(thread, worktreePath);
       // An entry whose checkout was switched to this branch is relabeled, so
       // the thread never lists a branch the checkout does not have.
@@ -1059,13 +1070,7 @@ const make = Effect.gen(function* () {
       }
     }
 
-    const changes = yield* run(submoduleDir, "submoduleChanges", [
-      "status",
-      "--porcelain=v1",
-      "-z",
-      "--untracked-files=no",
-    ]);
-    if (countStatusRecords(changes.stdout) > 0) {
+    if ((yield* countChangedFiles(submoduleDir, "submoduleChanges", "no", 60_000)) > 0) {
       return yield* new RepoWorktreeRequestError({
         reason: "submodule_changes",
         path: submodulePath,

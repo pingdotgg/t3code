@@ -22,6 +22,7 @@ import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexA
 import * as CheckpointService from "../orchestration-v2/CheckpointService.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
@@ -31,6 +32,10 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
+import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
+import * as WorkspaceFileSystem from "../workspace/WorkspaceFileSystem.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
 import * as RepoWorktreeService from "./RepoWorktreeService.ts";
 
@@ -135,6 +140,7 @@ function makeLayer(input: {
     ),
     Layer.provideMerge(layerGitDriver),
     Layer.provideMerge(layerServerConfig),
+    Layer.provideMerge(layerDatabase),
   );
 }
 
@@ -278,6 +284,41 @@ const readThread = (threadId: ThreadId) =>
 const requestReason = (error: RepoWorktreeService.RepoWorktreeFailure) =>
   error._tag === "RepoWorktreeRequestError" ? error.reason : error._tag;
 
+/** Saves README.md as the Files editor does, through the real workspace authorization. */
+const saveReadme = (workspaceRoot: string, cwd: string) =>
+  Effect.gen(function* () {
+    const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+    yield* files.writeFile({ cwd, relativePath: "README.md", contents: "saved\n" });
+    return "saved";
+  }).pipe(
+    Effect.catchTags({ UnknownWorkspaceError: () => Effect.succeed("refused") }),
+    Effect.provide(
+      WorkspaceFileSystem.layer.pipe(
+        Layer.provide(KnownWorkspaces.layer),
+        Layer.provide(
+          Layer.mock(ProjectStore.ProjectStoreV2)({
+            listShells: () =>
+              Effect.succeed([
+                {
+                  id: projectId,
+                  title: "Folder",
+                  workspaceRoot,
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt: "2026-01-01T00:00:00.000Z",
+                  updatedAt: "2026-01-01T00:00:00.000Z",
+                },
+              ]),
+          }),
+        ),
+        Layer.provide(WorkspacePaths.layer),
+        Layer.provide(
+          Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+        ),
+      ),
+    ),
+  );
+
 const withFixture = <A, E, R>(
   test: (fixture: Fixture) => Effect.Effect<A, E, R>,
   options: {
@@ -382,6 +423,16 @@ describe("RepoWorktreeService", () => {
         const worktreePath = created.repoWorktree.worktreePath;
         yield* fileSystem.writeFileString(path.join(worktreePath, "README.md"), "edited\n");
         yield* fileSystem.writeFileString(path.join(worktreePath, "notes.txt"), "draft\n");
+        // Over 256 KiB of status output; a rename and a name Git quotes count once each.
+        for (let index = 0; index < 1_100; index++) {
+          yield* fileSystem.writeFileString(
+            path.join(worktreePath, `${index}-${"x".repeat(240)}.txt`),
+            "",
+          );
+        }
+        yield* commitFile(worktreePath, "old-name.txt", "old\n", "add old name");
+        yield* git(worktreePath, ["mv", "old-name.txt", "new-name.txt"]);
+        yield* fileSystem.writeFileString(path.join(worktreePath, "line\nbreak.txt"), "");
 
         const reused = yield* service.ensure({
           threadId: second,
@@ -390,7 +441,7 @@ describe("RepoWorktreeService", () => {
         });
         assert.equal(reused.status, "reused");
         assert.isFalse(reused.alreadyAttached);
-        assert.equal(reused.uncommittedFiles, 2);
+        assert.equal(reused.uncommittedFiles, 1_104);
         assert.equal(reused.repoWorktree.worktreePath, worktreePath);
         assert.equal(reused.repoWorktree.origin, "reused");
         assert.equal(
@@ -922,6 +973,97 @@ describe("RepoWorktreeService", () => {
           assert.isFalse(yield* fileSystem.exists(worktreePath));
         }),
       { linkedWorktreesDirectory: true },
+    ),
+  );
+
+  it.effect("lets Files save in attached worktrees outside both folders until detached", () =>
+    withFixture((fixture) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const service = yield* RepoWorktreeService.RepoWorktreeService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const outside = path.join(fixture.root, "outside");
+        const alphaWorktree = path.join(outside, "alpha");
+        const serverWorktree = path.join(outside, "server");
+        const serverOther = path.join(outside, "server-other");
+        yield* git(fixture.alpha, ["worktree", "add", "-b", "feature/external", alphaWorktree]);
+        yield* git(fixture.server, ["worktree", "add", "-b", "feature/external", serverWorktree]);
+        yield* git(fixture.server, ["worktree", "add", "-b", "feature/other", serverOther]);
+        yield* fileSystem.writeFileString(path.join(alphaWorktree, "draft.txt"), "draft\n");
+        const unrelated = path.join(fixture.root, "unrelated");
+        const unrelatedWorktree = path.join(fixture.root, "unrelated-feature");
+        yield* initRepo(unrelated);
+        yield* git(unrelated, ["worktree", "add", "-b", "feature/x", unrelatedWorktree]);
+        const linked = path.join(fixture.folder, "linked");
+        yield* fileSystem.symlink(unrelated, linked);
+        const plain = path.join(fixture.root, "plain");
+        yield* fileSystem.makeDirectory(plain);
+
+        // Bound by its own worktree path, which the folder project's Git list lacks.
+        yield* createThreadIn({ branch: "feature/external", worktreePath: serverWorktree });
+        const threadId = yield* createThread;
+        const alpha = yield* service.ensure({
+          threadId,
+          repository: "alpha",
+          branch: "feature/external",
+        });
+        assert.equal(alpha.status, "reused");
+        assert.equal(alpha.uncommittedFiles, 1);
+        assert.equal(alpha.repoWorktree.worktreePath, alphaWorktree);
+        const server = yield* service.ensure({
+          threadId,
+          repository: "server",
+          branch: "feature/external",
+        });
+        assert.equal(server.status, "reused");
+
+        assert.equal(yield* saveReadme(fixture.folder, alphaWorktree), "saved");
+        assert.equal(yield* saveReadme(fixture.folder, serverWorktree), "saved");
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(alphaWorktree, "README.md")),
+          "saved\n",
+        );
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(alphaWorktree, "draft.txt")),
+          "draft\n",
+        );
+
+        // Records only the server writes, naming checkouts Git does not list for that repository.
+        for (const [repositoryPath, worktreePath] of [
+          [fixture.alpha, serverOther],
+          [unrelated, unrelatedWorktree],
+          [linked, unrelatedWorktree],
+          [fixture.alpha, plain],
+        ] as const) {
+          const forged = yield* createThread;
+          yield* threads.dispatch({
+            type: "thread.repo-worktree.attach",
+            commandId: CommandId.make(`attach:${forged}`),
+            threadId: forged,
+            repoWorktree: {
+              repository: "forged",
+              repositoryPath,
+              worktreePath,
+              branch: "forged",
+              baseRef: null,
+              origin: "reused",
+              attachedAt: "2026-01-01T00:00:00.000Z",
+            },
+          });
+          assert.equal(yield* saveReadme(fixture.folder, worktreePath), "refused");
+        }
+
+        yield* service.detach({ threadId, worktreePath: alphaWorktree });
+        assert.equal(yield* saveReadme(fixture.folder, alphaWorktree), "refused");
+        assert.equal(yield* saveReadme(fixture.folder, serverWorktree), "saved");
+        yield* threads.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make(`delete:${threadId}`),
+          threadId,
+        });
+        assert.equal(yield* saveReadme(fixture.folder, serverWorktree), "refused");
+      }),
     ),
   );
 });

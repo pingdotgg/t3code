@@ -90,7 +90,7 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
   .annotate(Tool.Destructive, false);
 const RepoWorktreeEnsureTool = Tool.make("t3_repo_worktree_ensure", {
   description:
-    "Needs an agent running inside a T3 thread, in a project with Multi-Repository Project Folder turned on (see t3_worktree_status). Gets a worktree for one Git repository inside the project folder and attaches it to this thread, which stays in the folder: no handoff or restart. Call it before editing a repository, and again for each further repository the work needs. Reuses the worktree that already has this repository and exact branch checked out, keeping its uncommitted edits; never stash, reset, or clean them. Otherwise creates one in the worktree location. A new branch needs baseRef. A branch that exists without a worktree needs useExistingBranch:true. For a submodule you edit, ensure a worktree for the submodule's path too (for example 'service/framework'), commit there, then use t3_repo_worktree_set_submodule. Do all edits, builds, and commits in the returned worktreePath. T3 snapshots the worktree before this returns and with every turn after, for the user's diffs and rollback.",
+    "For a project with Multi-Repository Project Folder on. Attaches a worktree of one Git repository in the project folder to this thread: reuses the worktree on this exact branch with its uncommitted edits as they are, or creates one. `repository` is a path relative to the folder, such as 'service/framework'. A new branch needs `baseRef`. Work in the returned `worktreePath`.",
   parameters: WorktreeMcpRepoEnsureInput,
   success: WorktreeMcpRepoEnsureResult,
   failure: WorktreeToolFailure,
@@ -105,7 +105,7 @@ const RepoWorktreeEnsureTool = Tool.make("t3_repo_worktree_ensure", {
 
 const RepoWorktreeDetachTool = Tool.make("t3_repo_worktree_detach", {
   description:
-    "Needs an agent running inside a T3 thread. Detaches a repository worktree from this thread. The folder, branch, and edits stay; it only stops being listed and protected as this thread's work.",
+    "Detaches a repository worktree from this thread. Its folder, branch, and edits stay.",
   parameters: WorktreeMcpRepoDetachInput,
   success: WorktreeMcpRepoDetachResult,
   failure: WorktreeToolFailure,
@@ -120,7 +120,7 @@ const RepoWorktreeDetachTool = Tool.make("t3_repo_worktree_detach", {
 
 const RepoWorktreeSetSubmoduleTool = Tool.make("t3_repo_worktree_set_submodule", {
   description:
-    "Needs an agent running inside a T3 thread, in a project with Multi-Repository Project Folder turned on. Points a submodule inside a parent repository worktree at a commit from the submodule repository's own worktree; both must be attached to this thread. Copies the commit into the parent worktree's submodule with a local fetch when it is missing (no push, no remote or URL change), checks it out on a detached HEAD, and stages the gitlink. Refuses a submodule with uncommitted changes. Call it again after each new submodule commit, then commit the parent with ordinary git.",
+    "Points `submodulePath` in the parent repository worktree `worktreePath` at a commit (default HEAD) of `sourceWorktreePath`, the submodule's own worktree; both attached to this thread. Fetches it locally when missing (no push or remote change), checks it out detached, and stages the gitlink. Refuses a submodule with uncommitted changes.",
   parameters: WorktreeMcpRepoSetSubmoduleInput,
   success: WorktreeMcpRepoSetSubmoduleResult,
   failure: WorktreeToolFailure,

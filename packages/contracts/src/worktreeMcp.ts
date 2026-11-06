@@ -111,13 +111,12 @@ export const WorktreeMcpRepoEnsureInput = Schema.Struct({
   startFromOrigin: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "Fetch origin and start a new branch from the remote-tracking commit of baseRef. Defaults to the project's 'new worktrees start from origin' setting. When off, nothing is fetched.",
+        "True: fetch, start a new branch from baseRef's remote ref. Default: project setting.",
     }),
   ),
   useExistingBranch: Schema.optional(
     Schema.Boolean.annotate({
-      description:
-        "Set true to continue a branch that already exists locally or on origin but has no worktree. Without it such a branch is refused, so new work never lands on an existing branch by accident.",
+      description: "True: continue a branch that exists locally or on origin but has no worktree.",
     }),
   ),
 });
@@ -176,8 +175,7 @@ export const WorktreeMcpRepoSetSubmoduleInput = Schema.Struct({
   ),
   stage: Schema.optional(
     Schema.Boolean.annotate({
-      description:
-        "Stage the new gitlink in the parent worktree. Defaults to true. Commit it with ordinary git.",
+      description: "Default true.",
     }),
   ),
 });

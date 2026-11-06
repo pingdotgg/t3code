@@ -8,6 +8,7 @@ import {
   type ProjectId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
+  type ThreadRepoWorktree,
 } from "@t3tools/contracts";
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
 import { AuthFilesystemWriteScope } from "@t3tools/contracts";
@@ -76,6 +77,7 @@ import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/envi
 import { previewEnvironment } from "~/state/preview";
 import { serverEnvironment } from "~/state/server";
 import { useEnvironmentScope } from "~/state/session";
+import { environmentThreadDetails } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
@@ -114,6 +116,7 @@ import { projectFileCacheKey } from "./fileContentRevision";
 import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
+  repoWorktreeFilePath,
   resolveFilePreviewPath,
   shouldShowFileExplorer,
   workspaceAssetResource,
@@ -130,6 +133,7 @@ import {
 } from "./projectFilesQueryState";
 
 const NO_FILE_REVISION_ATOM = Atom.make(null);
+const NO_REPO_WORKTREES = Atom.make<ReadonlyArray<ThreadRepoWorktree>>([]);
 
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
@@ -655,6 +659,8 @@ interface EditableFileSurfaceProps {
   projectId?: ProjectId | undefined;
   cwd: string;
   relativePath: string;
+  /** The path the tab and review comments use; saves use cwd and relativePath. */
+  surfacePath: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
   contents: string;
   resolvedTheme: "light" | "dark";
@@ -674,6 +680,7 @@ function EditableFileSurface({
   projectId,
   cwd,
   relativePath,
+  surfacePath,
   composerDraftTarget,
   contents,
   resolvedTheme,
@@ -694,7 +701,12 @@ function EditableFileSurface({
   const surfaceRef = useRef<HTMLDivElement>(null);
   const selectionFrameRef = useRef<number | null>(null);
   const saveTarget = { environmentId, cwd, relativePath };
-  useFileSaveSession(saveTarget, onPendingChange);
+  useFileSaveSession(
+    saveTarget,
+    surfacePath === relativePath
+      ? onPendingChange
+      : (_path, pending) => onPendingChange(surfacePath, pending),
+  );
   // Retain file identity for echoed editor changes; only external changes replace the editor's draft.
   const [externalFile, setExternalFile] = useState(() =>
     editableFileContents(environmentId, cwd, relativePath, contents),
@@ -735,7 +747,7 @@ function EditableFileSurface({
           composerDraftTarget,
           buildFileReviewComment({
             id: entry.id,
-            filePath: relativePath,
+            filePath: surfacePath,
             startLine: entry.startLine,
             endLine: entry.endLine,
             text: entry.text,
@@ -767,7 +779,7 @@ function EditableFileSurface({
         composerDraftTarget,
         buildFileReviewComment({
           id: entry.id,
-          filePath: relativePath,
+          filePath: surfacePath,
           startLine: entry.startLine,
           endLine: entry.endLine,
           text,
@@ -938,6 +950,7 @@ function RenderedMarkdownSurface({
   onPendingChange,
 }: Omit<
   EditableFileSurfaceProps,
+  | "surfacePath"
   | "resolvedTheme"
   | "composerDraftTarget"
   | "revealLine"
@@ -1050,14 +1063,27 @@ export default function FilePreviewPanel({
   const isHtml = relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
   const isHostFile =
     attachment !== undefined || (relativePath !== null && isHostPath(relativePath));
+  // A draft's thread is not on the server yet, so it has no repository worktrees to read.
+  const repoWorktrees = useAtomValue(
+    draft ? NO_REPO_WORKTREES : environmentThreadDetails.repoWorktreesAtom(threadRef),
+  );
+  // A host file in a repository worktree attached to this thread is read and saved
+  // through that worktree, so it is editable; everything else uses its absolute path.
+  const repoFile =
+    attachment === undefined && relativePath !== null
+      ? repoWorktreeFilePath(relativePath, repoWorktrees)
+      : null;
+  const fileCwd = repoFile?.worktreePath ?? cwd;
+  const filePath = repoFile?.relativePath ?? relativePath;
+  const readOnlyHostFile = isHostFile && repoFile === null;
   const fileAccess = useFilesystemReadAccess(environmentId);
   const { canReadFiles } = fileAccess;
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const file = useProjectFileQuery(
     environmentId,
-    cwd,
-    relativePath,
-    attachment === undefined && relativePath !== null,
+    fileCwd,
+    filePath,
+    attachment === undefined && filePath !== null,
   );
   const [fileRefreshRevision, setFileRefreshRevision] = useState(0);
   const attemptedPath = file.readError?.resolvedPath ?? file.readError?.operationPath;
@@ -1182,12 +1208,12 @@ export default function FilePreviewPanel({
   useAtomMount(
     canReadFiles &&
       attachment === undefined &&
-      relativePath !== null &&
+      filePath !== null &&
       // Skip mutation reads for media and documents; folders still detect conversion to files.
       (isFolder || (!isMedia && !isPdf && !isDocument)) &&
       !selectedFilePending
       ? revisionedQuery(
-          getProjectFileQueryAtom(environmentId, cwd, relativePath),
+          getProjectFileQueryAtom(environmentId, fileCwd, filePath),
           workspaceMutationId,
         )
       : NO_FILE_REVISION_ATOM,
@@ -1340,7 +1366,11 @@ export default function FilePreviewPanel({
           ) : null}
         </div>
       ) : null}
-      {relativePath && !attachment && !isHostFile && !canWriteFiles && !fileAccess.isPending ? (
+      {relativePath &&
+      !attachment &&
+      !readOnlyHostFile &&
+      !canWriteFiles &&
+      !fileAccess.isPending ? (
         <div className="shrink-0 border-b px-3 py-1.5 text-2xs text-muted-foreground">
           Read-only connection. Unsaved edits are kept until write access returns.
         </div>
@@ -1511,7 +1541,7 @@ export default function FilePreviewPanel({
                 text={file.data.contents}
                 delimiter={tableDelimiter}
               />
-            ) : file.data.truncated || isHostFile || !canWriteFiles ? (
+            ) : file.data.truncated || readOnlyHostFile || !canWriteFiles ? (
               <SourceFilePreview
                 name={relativePath}
                 text={file.data.contents}
@@ -1525,8 +1555,9 @@ export default function FilePreviewPanel({
                   key={`${relativePath}:${resolvedTheme}`}
                   environmentId={environmentId}
                   projectId={projectId}
-                  cwd={cwd}
-                  relativePath={relativePath}
+                  cwd={fileCwd}
+                  relativePath={repoFile?.relativePath ?? relativePath}
+                  surfacePath={relativePath}
                   composerDraftTarget={composerDraftTarget}
                   contents={file.data.contents}
                   resolvedTheme={resolvedTheme}
