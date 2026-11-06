@@ -1350,32 +1350,72 @@ it.live("text the page copies after the controlling viewer's click is only offer
       const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
       yield* viewer.input({ type: "takeControl" });
       yield* viewer.input({ type: "navigate", url: "https://copy.example/app" });
-      const nextCopy = Effect.gen(function* () {
-        for (;;) {
-          const item = yield* Queue.take(viewer.output);
-          if (item._tag === "clipboard" || item._tag === "copyOffer") return item;
-        }
-      });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      const copies = () =>
+        Queue.clear(viewer.output).pipe(
+          Effect.map((items) =>
+            items.filter((item) => item._tag === "clipboard" || item._tag === "copyOffer"),
+          ),
+        );
+      const advance = (ms: number) => Effect.promise(() => vi.advanceTimersByTimeAsync(ms));
+      const mouse = (button: string, action: string, buttons: number) =>
+        viewer.input({ type: "mouse", action, x: 10, y: 10, button, buttons });
       const click = (button: string) =>
         Effect.forEach(["down", "up"], (action) =>
-          viewer.input({ type: "mouse", action, x: 10, y: 10, button, buttons: 1 }),
+          mouse(
+            button,
+            action,
+            action === "up" ? 0 : button === "left" ? 1 : button === "right" ? 2 : 4,
+          ),
         );
       const offer = (text: string) => ({ _tag: "copyOffer", text, host: "copy.example" });
-      // Text left from before the click and a right click's copy are never offered.
       pageClickCopy = "before the click";
       yield* click("left");
-      clickCopy = "right button";
-      yield* click("right");
+      yield* advance(5_000);
+      expect(yield* copies()).toEqual([]);
+      for (const button of ["right", "middle"]) {
+        clickCopy = `${button} button`;
+        yield* click(button);
+        yield* advance(5_000);
+        expect(yield* copies()).toEqual([]);
+        for (const sequence of [
+          ["left", button, "left", button],
+          ["left", button, button, "left"],
+          [button, "left", "left", button],
+          [button, "left", button, "left"],
+        ]) {
+          let buttons = 0;
+          for (const [index, pressed] of sequence.entries()) {
+            const down = index < 2;
+            const bit = pressed === "left" ? 1 : pressed === "right" ? 2 : 4;
+            buttons = down ? buttons | bit : buttons & ~bit;
+            yield* mouse(pressed, down ? "down" : "up", buttons);
+          }
+          yield* advance(5_000);
+          expect(yield* copies()).toEqual([]);
+        }
+      }
+      yield* mouse("left", "down", 1);
+      yield* viewer.input({ type: "releaseControl" });
+      yield* viewer.input({ type: "takeControl" });
+      yield* mouse("left", "up", 0);
+      yield* advance(5_000);
+      expect(yield* copies()).toEqual([]);
       clickCopy = "secret";
       yield* click("left");
-      expect(yield* nextCopy).toEqual(offer("secret"));
+      yield* advance(0);
+      expect(yield* copies()).toEqual([offer("secret")]);
       clickCopy = "";
       yield* click("left");
+      yield* advance(0);
+      expect(yield* copies()).toEqual([]);
       pageClickCopy = "after awaiting";
-      expect(yield* nextCopy).toEqual(offer("after awaiting"));
+      yield* advance(250);
+      expect(yield* copies()).toEqual([offer("after awaiting")]);
       keyCopy = "keys";
       yield* viewer.input({ type: "key", action: "down", key: "c", code: "KeyC", modifiers: 4 });
-      expect(yield* nextCopy).toEqual({ _tag: "clipboard", text: "keys" });
+      expect(yield* copies()).toEqual([{ _tag: "clipboard", text: "keys" }]);
       const watched = yield* Queue.clear(watcher.output);
       expect(watched.filter((item) => item._tag === "copyOffer")).toEqual([]);
     }),

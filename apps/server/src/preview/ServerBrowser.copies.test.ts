@@ -13,6 +13,7 @@ const PAGE = `<!doctype html>
 <button id="write" onclick="navigator.clipboard.writeText('written').then(() => document.body.dataset.written = 'yes')">write</button>
 <button id="later" onclick="setTimeout(() => navigator.clipboard.writeText('later').then(() => document.body.dataset.later = 'yes'), 50)">later</button>
 <button id="exec" onclick="const t = document.createElement('textarea'); t.value = 'executed'; document.body.append(t); t.select(); document.execCommand('copy'); t.remove()">exec</button>
+<button id="replace" onclick="document.execCommand(this.dataset.command)">replace</button>
 <button id="plain">plain</button>
 <p id="text">selected</p>`;
 
@@ -72,6 +73,73 @@ describe("server browser page copies", () => {
     expect(await takeCopy(false)).toBe("selected");
   });
 
+  it.each([
+    { target: "document", capture: true, format: "text/plain" },
+    { target: "document", capture: false, format: "text" },
+    { target: "window", capture: true, format: "TEXT/PLAIN" },
+    { target: "window", capture: false, format: "Text" },
+  ])(
+    "keeps the final copy and cut payload from $target handlers (capture: $capture)",
+    async ({ target, capture, format }) => {
+      await inPage(`
+        for (const type of ["copy", "cut"]) {
+          ${target}.addEventListener(type, (event) => {
+            event.preventDefault();
+            event.clipboardData.setData("text/plain", "replaced earlier");
+            event.clipboardData.setData("${format}", "page " + event.type);
+            event.clipboardData.setData("text/html", "<p>other format</p>");
+            if (document.body.dataset.clear === "yes") event.clipboardData.clearData();
+            event.stopImmediatePropagation();
+          }, ${capture});
+        }
+      `);
+      for (const command of ["copy", "cut"]) {
+        await page.locator("#text").selectText();
+        await inPage(`document.getElementById("replace").dataset.command = "${command}"`);
+        await page.locator("#replace").click();
+        expect(await takeCopy(true)).toBe(`page ${command}`);
+        expect(await takeCopy(false)).toBe("");
+
+        await page.locator("#text").selectText();
+        const key = command === "copy" ? "c" : "x";
+        const code = command === "copy" ? "KeyC" : "KeyX";
+        await cdp.send("Input.dispatchKeyEvent", {
+          type: "rawKeyDown",
+          key,
+          code,
+          modifiers: 4,
+          commands: [command],
+        });
+        expect(await takeCopy(true)).toBe("");
+        expect(await takeCopy(false)).toBe(`page ${command}`);
+        await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key, code, modifiers: 4 });
+      }
+      await inPage(`document.body.dataset.clear = "yes"`);
+      await page.locator("#text").selectText();
+      await page.locator("#replace").click();
+      expect(await takeCopy(true)).toBe("");
+      expect(await takeCopy(false)).toBe("");
+    },
+  );
+
+  it.each(["right", "middle"] as const)(
+    "keeps nothing the page copies from a %s click",
+    async (button) => {
+      await inPage(`
+        for (const id of ["write", "exec"]) {
+          const button = document.getElementById(id);
+          button.onmousedown = button.onclick;
+        }
+      `);
+      await page.locator("#write").click({ button });
+      await page.locator("body[data-written=yes]").waitFor();
+      expect(await takeCopy(true)).toBe("");
+      await page.locator("#exec").click({ button });
+      expect(await takeCopy(true)).toBe("");
+      expect(await takeCopy(false)).toBe("");
+    },
+  );
+
   it("keeps nothing the page copies without a real click", async () => {
     await inPage(`document.getElementById("write").click()`);
     await inPage(`document.getElementById("exec").click()`);
@@ -81,9 +149,18 @@ describe("server browser page copies", () => {
     await inPage(
       `dispatchEvent(new CustomEvent("t3-preview-clipboard-write", { detail: "forged" }))`,
     );
+    await inPage(
+      `dispatchEvent(new CustomEvent("t3-preview-clipboard-data", { detail: "forged" }))`,
+    );
     expect(await takeCopy(true)).toBe("");
     expect(await takeCopy(false)).toBe("");
     expect(await inPage("typeof globalThis.takeCopy")).toBe("undefined");
     expect(await inPage("navigator.userActivation.hasBeenActive")).toBe(false);
+    await page.locator("#plain").click();
+    await inPage(
+      `dispatchEvent(new CustomEvent("t3-preview-clipboard-data", { detail: "forged after a click" }))`,
+    );
+    expect(await takeCopy(true)).toBe("");
+    expect(await takeCopy(false)).toBe("");
   });
 });
