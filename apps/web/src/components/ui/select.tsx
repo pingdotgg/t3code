@@ -92,7 +92,9 @@ function SelectButton({
   render,
   ...props
 }: useRender.ComponentProps<"button"> &
-  Pick<VariantProps<typeof selectTriggerVariants>, "size" | "variant"> & { leadingIcon?: React.ReactNode }) {
+  Pick<VariantProps<typeof selectTriggerVariants>, "size" | "variant"> & {
+    leadingIcon?: React.ReactNode;
+  }) {
   const defaultProps = {
     className: cn(selectTriggerVariants({ size, variant }), className),
     "data-slot": "select-trigger",
