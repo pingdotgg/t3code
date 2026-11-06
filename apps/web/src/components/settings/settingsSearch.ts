@@ -629,7 +629,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "close-pull-requests-on-settle",
     title: "Close open pull requests when settling",
     to: "/settings/threads",
-    targetId: "auto-settle",
     searchTerms: ["close pull request settle linked open ask confirm"],
   },
   {

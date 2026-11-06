@@ -84,7 +84,11 @@ export function AutoSettleSettingsRows(props: {
   const referenceSettings = reference?.settings ?? null;
 
   if (reference === null || referenceSettings === null) {
-    return null;
+    return (
+      <SettingsSection title="Auto-settle">
+        <ClosePullRequestsOnSettleRow />
+      </SettingsSection>
+    );
   }
 
   const writeToAll = (
