@@ -34,9 +34,12 @@ refuses redirects so credentials and audio cannot follow one to another host.
 
 Transcript cleanup requires its own grant, off by default.
 It sends text, never audio, to the text generation provider of the draft's
-own environment, because that is where the provider credentials live. A later
-backend adds its own destination kind, disclosure, and transcriber; capture and
-the controller stay as they are.
+own environment, because that is where the provider credentials live.
+
+A cloud destination binds both the forwarding environment and the named provider.
+It uses a separate, batch-only endpoint: changing a server key cannot upgrade
+an environment-local grant, and a cloud recording never uses the streaming
+socket or falls back to another provider or the environment's native model.
 
 ## Server side
 

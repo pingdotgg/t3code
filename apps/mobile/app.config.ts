@@ -458,6 +458,9 @@ const config: ExpoConfig = {
   ],
   extra: {
     appVariant: APP_VARIANT,
+    secretsFeatureEnabled: ["1", "true"].includes(
+      process.env.T3CODE_FEATURE_SECRETS?.trim().toLowerCase() ?? "",
+    ),
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,

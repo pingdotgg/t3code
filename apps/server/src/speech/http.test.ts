@@ -7,6 +7,9 @@ import { expect, vi } from "vite-plus/test";
 import {
   AuthSessionId,
   AuthOrchestrationOperateScope,
+  AuthSettingsWriteScope,
+  type AuthEnvironmentScope,
+  CloudSpeechError,
   DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
   SPEECH_MAX_OPTIONS_BYTES,
   DEFAULT_SERVER_SETTINGS,
@@ -16,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
@@ -23,6 +27,7 @@ import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import type * as NetAddress from "effect/net/NetAddress";
 import * as SpeechService from "./SpeechService.ts";
+import * as CloudSpeech from "./CloudSpeech.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -30,7 +35,20 @@ import { speechHttpApiLayer } from "./http.ts";
 
 const decodeSessionId = Schema.decodeUnknownSync(AuthSessionId);
 
+const principal = (...scopes: AuthEnvironmentScope[]) =>
+  Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
+    effect.pipe(
+      Effect.provideService(EnvironmentAuthenticatedPrincipal, {
+        sessionId: decodeSessionId("voice-test"),
+        subject: "test",
+        method: "bearer-access-token",
+        scopes: new Set(scopes),
+      }),
+    ),
+  );
+
 const dependencies = Layer.mergeAll(
+  Layer.mock(CloudSpeech.CloudSpeech)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
   Layer.mock(ServerSettings.ServerSettingsService)({
     getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
@@ -51,21 +69,11 @@ const dependencies = Layer.mergeAll(
 effectIt.live("rejects oversized chunked audio without invoking transcription", () =>
   Effect.gen(function* () {
     const transcribe = vi.fn(() => Effect.succeed("unexpected"));
-    const auth = Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
-      effect.pipe(
-        Effect.provideService(EnvironmentAuthenticatedPrincipal, {
-          sessionId: decodeSessionId("voice-test"),
-          subject: "test",
-          method: "bearer-access-token",
-          scopes: new Set([AuthOrchestrationOperateScope]),
-        }),
-      ),
-    );
     const routes = HttpApiBuilder.layer(
       HttpApi.make("environment").add(EnvironmentVoiceHttpApi),
     ).pipe(
       Layer.provide(speechHttpApiLayer),
-      Layer.provide(auth),
+      Layer.provide(principal(AuthOrchestrationOperateScope)),
       Layer.provide(
         Layer.succeed(SpeechService.SpeechService, {
           status: Effect.succeed({ supported: false as const, reason: "test" }),
@@ -97,6 +105,14 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
         }),
       );
       expect(select.status).toBe(403);
+      const changeKey = yield* Effect.promise(() =>
+        fetch(new URL("cloud/xai/key", url), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ key: "fixture" }),
+        }),
+      );
+      expect(changeKey.status).toBe(403);
       yield* Effect.promise(() =>
         expect(
           fetch(url, {
@@ -118,6 +134,80 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
       expect(transcribe).not.toHaveBeenCalled();
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeHttpServer.layerTest, dependencies)));
   }),
+);
+
+effectIt.effect(
+  "keeps keys write-only and returns provider failures without an auth challenge",
+  () =>
+    Effect.gen(function* () {
+      let stored = false;
+      const reference = { provider: "work", reference: "op://Work/Voice/key" };
+      const save = vi.fn();
+      const cloud = Layer.mock(CloudSpeech.CloudSpeech)({
+        configured: Effect.sync(() => ({ openai: stored, xai: false })),
+        setKey: (provider, key) =>
+          Effect.sync(() => {
+            save(provider, key);
+            stored =
+              provider === "openai" &&
+              Redacted.isRedacted(key) &&
+              Redacted.value(key) === "fixture";
+          }),
+        transcribe: (provider) =>
+          Effect.fail(new CloudSpeechError({ provider, reason: "rejected-key" })),
+      });
+      const { handler, dispose } = HttpRouter.toWebHandler(
+        HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
+          Layer.provide(speechHttpApiLayer),
+          Layer.provide(principal(AuthOrchestrationOperateScope, AuthSettingsWriteScope)),
+          Layer.provide(Layer.mock(SpeechService.SpeechService)({})),
+          Layer.provide(cloud),
+          Layer.provide(dependencies),
+          Layer.provide(HttpServer.layerServices),
+          Layer.provide(NodeServices.layer),
+        ),
+        { disableLogger: true },
+      );
+      yield* Effect.addFinalizer(() => Effect.promise(dispose));
+      const context = yield* Layer.build(NodeServices.layer);
+      const call = (path: string, init?: RequestInit) =>
+        Effect.promise(() =>
+          handler(new Request(`http://localhost/api/voice/cloud/${path}`, init), context),
+        );
+      const saved = yield* call("openai/key", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ key: "fixture" }),
+      });
+      expect(saved.status).toBe(204);
+      expect(yield* Effect.promise(() => saved.text())).toBe("");
+      const keys = yield* call("keys");
+      expect(yield* Effect.promise(() => keys.json())).toEqual({
+        openai: true,
+        xai: false,
+      });
+      const setReference = (key: unknown) =>
+        call("xai/key", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ key }),
+        });
+      expect((yield* setReference(reference)).status).toBe(204);
+      expect(save).toHaveBeenLastCalledWith("xai", reference);
+      expect((yield* setReference(reference.reference)).status).toBe(400);
+      expect(save).toHaveBeenCalledTimes(2);
+      const failed = yield* call("openai/transcribe", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: encodeSpeechPcmRequest(new Uint8Array(4), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS),
+      });
+      expect(failed.status).toBe(422);
+      expect(yield* Effect.promise(() => failed.json())).toEqual({
+        _tag: "CloudSpeechError",
+        provider: "openai",
+        reason: "rejected-key",
+      });
+    }).pipe(Effect.scoped),
 );
 
 effectIt.effect.each([
@@ -151,16 +241,6 @@ effectIt.effect.each([
   ({ error, reason, ...options }) =>
     Effect.gen(function* () {
       // Only authentication and the native service are replaced; exercise the actual HTTP handlers and codecs.
-      const auth = Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
-        effect.pipe(
-          Effect.provideService(EnvironmentAuthenticatedPrincipal, {
-            sessionId: decodeSessionId("voice-test"),
-            subject: "test",
-            method: "bearer-access-token",
-            scopes: new Set([AuthOrchestrationOperateScope]),
-          }),
-        ),
-      );
       const transcribe = vi.fn(() => Effect.fail(error));
       const service = Layer.succeed(SpeechService.SpeechService, {
         status: Effect.succeed({ supported: false as const, reason: "test" }),
@@ -179,7 +259,7 @@ effectIt.effect.each([
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(api).pipe(
           Layer.provide(speechHttpApiLayer),
-          Layer.provide(auth),
+          Layer.provide(principal(AuthOrchestrationOperateScope)),
           Layer.provide(service),
           Layer.provide(HttpServer.layerServices),
           Layer.provide(dependencies),

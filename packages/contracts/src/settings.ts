@@ -53,6 +53,7 @@ import {
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 import {
+  CloudSpeechProvider,
   SpeechAcceleration,
   SpeechCorrectionCue,
   SpeechCustomWords,
@@ -366,10 +367,14 @@ export const VoiceShortcutMode = Schema.Literals(["auto", "hold", "toggle"]);
 export type VoiceShortcutMode = typeof VoiceShortcutMode.Type;
 
 /** Where this device sends microphone audio. A later backend adds its own kind here. */
-export const VoiceTranscriptionDestination = Schema.Struct({
-  kind: Schema.Literal("environment"),
-  environmentId: EnvironmentId,
-});
+export const VoiceTranscriptionDestination = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("environment"), environmentId: EnvironmentId }),
+  Schema.Struct({
+    kind: Schema.Literal("cloud"),
+    environmentId: EnvironmentId,
+    provider: CloudSpeechProvider,
+  }),
+]);
 export type VoiceTranscriptionDestination = typeof VoiceTranscriptionDestination.Type;
 
 export const ClientSettingsSchema = Schema.Struct({
@@ -1224,6 +1229,14 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+const CloudSpeechCredential = SettingsSecretValue.pipe(
+  Schema.withDecodingDefault(Effect.succeed("")),
+);
+export const CloudSpeechCredentials = Schema.Struct({
+  openai: CloudSpeechCredential,
+  xai: CloudSpeechCredential,
+});
+
 export const ServerSettings = Schema.Struct({
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -1249,6 +1262,9 @@ export const ServerSettings = Schema.Struct({
   ),
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  cloudSpeechCredentials: CloudSpeechCredentials.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "" })),
+  ),
   speechModelId: Schema.String.pipe(
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
   ),
@@ -1668,6 +1684,12 @@ export const ServerSettingsPatch = Schema.Struct({
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
+  cloudSpeechCredentials: Schema.optionalKey(
+    Schema.Struct({
+      openai: Schema.optionalKey(SettingsSecretValue),
+      xai: Schema.optionalKey(SettingsSecretValue),
+    }),
+  ),
   speechModelId: Schema.optionalKey(Schema.String),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),
   speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),

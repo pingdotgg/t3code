@@ -49,6 +49,10 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import {
+  CloudSpeechApiKey,
+  CloudSpeechError,
+  CloudSpeechKeys,
+  CloudSpeechProvider,
   EnvironmentSpeechAccelerationRequest,
   EnvironmentSpeechModelRequest,
   EnvironmentSpeechModels,
@@ -58,6 +62,7 @@ import {
   EnvironmentSpeechStatus,
   EnvironmentSpeechTranscriptionResult,
 } from "./speech.ts";
+import { SecretReference } from "./secretReference.ts";
 import {
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ThreadBoundedSnapshot,
@@ -775,6 +780,41 @@ export class EnvironmentVoiceBodyLimit extends HttpApiMiddleware.Service<Environ
 ) {}
 
 export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
+  .add(
+    HttpApiEndpoint.get("cloudKeys", "/api/voice/cloud/keys", {
+      headers: OptionalBearerHeaders,
+      success: CloudSpeechKeys,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("setCloudKey", "/api/voice/cloud/:provider/key", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ provider: CloudSpeechProvider }),
+      payload: Schema.Struct({
+        key: Schema.NullOr(
+          Schema.Union([Schema.RedactedFromValue(CloudSpeechApiKey), SecretReference]),
+        ),
+      }),
+      success: HttpApiSchema.NoContent,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("transcribeCloud", "/api/voice/cloud/:provider/transcribe", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ provider: CloudSpeechProvider }),
+      payload: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
+      success: EnvironmentSpeechTranscriptionResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentRequestInvalidError,
+        CloudSpeechError,
+      ],
+    })
+      .middleware(EnvironmentVoiceBodyLimit)
+      .middleware(EnvironmentAuthenticatedAuth),
+  )
   .add(
     HttpApiEndpoint.get("status", "/api/voice/status", {
       headers: OptionalBearerHeaders,

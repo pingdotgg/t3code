@@ -1,5 +1,52 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+
+export const CloudSpeechApiKey = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(4096),
+  Schema.isPattern(/^(?![a-z][a-z\d+.-]*:\/\/)[!-~]+$/i),
+);
+
+export const CloudSpeechProvider = Schema.Literals(["openai", "xai"]);
+export type CloudSpeechProvider = typeof CloudSpeechProvider.Type;
+export const CLOUD_SPEECH_LABELS = {
+  openai: "OpenAI",
+  xai: "Grok Voice Transcribe",
+} as const;
+export const CLOUD_SPEECH_PROVIDER_NAMES = { openai: "OpenAI", xai: "xAI" } as const;
+export const CloudSpeechKeys = Schema.Record(CloudSpeechProvider, Schema.Boolean);
+export type CloudSpeechKeys = typeof CloudSpeechKeys.Type;
+
+export class CloudSpeechError extends Schema.TaggedError<CloudSpeechError>()(
+  "CloudSpeechError",
+  {
+    provider: CloudSpeechProvider,
+    reason: Schema.Literals([
+      "missing-key",
+      "unreadable-key",
+      "rejected-key",
+      "rate-limit",
+      "unavailable",
+    ]),
+  },
+  { httpApiStatus: 422 },
+) {
+  override get message() {
+    const name = CLOUD_SPEECH_PROVIDER_NAMES[this.provider];
+    switch (this.reason) {
+      case "missing-key":
+        return `Add your ${name} API key in Settings → Voice.`;
+      case "unreadable-key":
+        return `Couldn’t read the ${name} API key. Unlock the vault on the selected environment or update the key in Settings → Voice. No audio was sent to ${name}.`;
+      case "rejected-key":
+        return `${name} rejected this API key. Check its permissions and billing in Settings → Voice.`;
+      case "rate-limit":
+        return `${name} reached a usage limit. Check the account's quota or try again later.`;
+      case "unavailable":
+        return `${name} couldn’t transcribe this recording. Try again later.`;
+    }
+  }
+}
 
 export const SpeechModelId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(160));
 export type SpeechModelId = typeof SpeechModelId.Type;

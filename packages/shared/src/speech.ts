@@ -8,6 +8,15 @@ import * as Schema from "effect/Schema";
 const decodeOptions = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechTranscriptionOptions));
 const encodeOptions = Schema.encodeSync(Schema.fromJsonString(SpeechTranscriptionOptions));
 
+// Only offer explicit hints understood by all cloud APIs; other languages can still be detected.
+export const cloudSpeechLanguages = {
+  supportsLanguageDetection: true,
+  languages:
+    "ar bg ca cs da de el en es fa fi fr hi hr hu id it ja ko mk ms nl pl pt ro ru sk sv th tr uk ur vi zh".split(
+      " ",
+    ),
+};
+
 /** Resolve the language the model can produce from the requested language. */
 export function effectiveSpeechLanguage(
   model: { readonly languages: readonly string[]; readonly supportsLanguageDetection: boolean },

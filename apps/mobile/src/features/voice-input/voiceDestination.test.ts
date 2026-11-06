@@ -46,7 +46,11 @@ vi.mock("../../state/presentation", () => ({
       mocks.probe(id);
       return Atom.make({
         connection: { phase: id === "offline" ? "offline" : "connected" },
-        serverConfig: { environment: { capabilities: { voiceTranscription: true } } },
+        serverConfig: {
+          environment: {
+            capabilities: { voiceTranscription: true, cloudVoiceTranscription: true },
+          },
+        },
       });
     }),
   },
@@ -158,6 +162,46 @@ it("keeps local as the default and never reuses consent for an offline or resele
     expect(mocks.fetch.mock.calls.map(([url, init]) => [String(url), init?.redirect])).toEqual([
       ["https://my-server.test/api/voice/status", "error"],
       ["https://my-server.test/api/voice/transcribe", "error"],
+    ]);
+    chooseVoiceDestination(host, "openai");
+    const cloud = appAtomRegistry.get(voiceRouteAtom)!.transcriber!;
+    mocks.fetch.mockResolvedValueOnce(Response.json({ openai: false, xai: true }));
+    await expect(cloud.prepare(options)).rejects.toMatchObject({
+      code: "unavailable",
+      message: expect.stringContaining("Add your OpenAI API key"),
+    });
+    mocks.fetch.mockResolvedValueOnce(Response.json({ openai: true, xai: true }));
+    const recorded = await cloud.prepare(options);
+    chooseVoiceDestination(host, "xai");
+    await expect(recorded.transcribe("file:///voice.m4a", options)).rejects.toThrow(
+      "Your transcription choice changed.",
+    );
+    mocks.fetch
+      .mockResolvedValueOnce(Response.json({ openai: true, xai: true }))
+      .mockResolvedValueOnce(Response.json({ text: "cloud" }));
+    const next = await appAtomRegistry.get(voiceRouteAtom)!.transcriber!.prepare(options);
+    await expect(next.transcribe("file:///voice.m4a", options)).resolves.toBe("cloud");
+    mocks.fetch.mockResolvedValueOnce(
+      Response.json(
+        {
+          _tag: "CloudSpeechError",
+          provider: "xai",
+          reason: "rejected-key",
+        },
+        { status: 422 },
+      ),
+    );
+    await expect(next.transcribe("file:///voice.m4a", options)).rejects.toMatchObject({
+      _tag: "VoiceTranscriptionError",
+      code: "transcription-failed",
+      message: expect.stringContaining("rejected this API key"),
+    });
+    expect(mocks.fetch.mock.calls.slice(2).map(([url]) => new URL(String(url)).pathname)).toEqual([
+      "/api/voice/cloud/keys",
+      "/api/voice/cloud/keys",
+      "/api/voice/cloud/keys",
+      "/api/voice/cloud/xai/transcribe",
+      "/api/voice/cloud/xai/transcribe",
     ]);
     const failWrite = () => {
       throw new Error("Device storage is unavailable");

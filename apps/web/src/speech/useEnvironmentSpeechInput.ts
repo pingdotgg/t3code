@@ -11,7 +11,7 @@ import {
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, CLOUD_SPEECH_LABELS } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   EnvironmentSpeechModel,
@@ -109,11 +109,19 @@ export function useVoiceTranscriptionDestination() {
   const environment = useEnvironment(environmentId);
   const connection = Option.getOrNull(usePreparedConnection(environmentId));
   const canDictate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
-  const supported = environment?.serverConfig?.environment.capabilities.voiceTranscription === true;
+  const provider = grant?.destination.kind === "cloud" ? grant.destination.provider : undefined;
+  const supported =
+    environment?.serverConfig?.environment.capabilities[
+      provider ? "cloudVoiceTranscription" : "voiceTranscription"
+    ] === true;
   return {
     environmentId,
+    ...(provider ? { cloudProvider: provider } : {}),
     grantId: grant?.id ?? null,
-    label: environment?.label ?? null,
+    label:
+      provider && environment
+        ? `${CLOUD_SPEECH_LABELS[provider]} via ${environment.label}`
+        : (environment?.label ?? null),
     prepared: supported && canDictate ? connection : null,
   };
 }
@@ -122,6 +130,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const destination = useVoiceTranscriptionDestination();
   const prepared = destination.prepared;
   const grantId = destination.grantId;
+  const cloudProvider = destination.cloudProvider;
   const originatingEnvironment = useEnvironment(input.environmentId);
   const originatingConnection = Option.getOrNull(usePreparedConnection(input.environmentId));
   const canCleanUp = useEnvironmentScope(input.environmentId, AuthOrchestrationOperateScope);
@@ -231,6 +240,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     };
     const platform = createBrowserVoiceInputPlatform({
       prepared,
+      cloudProvider,
       hasAudioConsent,
       getTranscriptionOptions: (): SpeechTranscriptionOptions => {
         const {
@@ -344,11 +354,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       controller.dispose();
       if (controllerRef.current === controller) controllerRef.current = null;
     };
-  }, [prepared, grantId]);
+  }, [prepared, grantId, cloudProvider]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- probes the chosen environment's speech status once its connection is available
   useEffect(() => {
-    if (!prepared) return;
+    if (!prepared || cloudProvider) return;
     let disposed = false;
     void probeSpeechStatus(prepared)
       .then((value) => {
@@ -360,8 +370,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     return () => {
       disposed = true;
     };
-  }, [prepared]);
-  const currentStatus = status?.prepared === prepared ? status.value : null;
+  }, [prepared, cloudProvider]);
+  const currentStatus = !cloudProvider && status?.prepared === prepared ? status.value : null;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls download progress while the setup dialog owns an active model download
   useEffect(() => {
@@ -425,6 +435,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     const controller = controllerRef.current;
     const owner = latestRef.current.input.ownerKey;
     if (latestRef.current.input.disabled || !controller || !prepared) return;
+    if (cloudProvider) {
+      setLevel(0);
+      await controller.start();
+      return;
+    }
     const stillCurrent = () =>
       request === startRequestRef.current &&
       controllerRef.current === controller &&
@@ -511,8 +526,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   return {
     available:
       prepared !== null &&
-      status?.prepared === prepared &&
-      status.value?.supported !== false &&
+      (cloudProvider !== undefined ||
+        (status?.prepared === prepared && status.value?.supported !== false)) &&
       typeof navigator !== "undefined" &&
       Boolean(navigator.mediaDevices?.getUserMedia) &&
       typeof AudioWorkletNode !== "undefined",
