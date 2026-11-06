@@ -10877,13 +10877,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // Switch Plan and the permission mode live, so a background agent survives the change.
             // Record the mode Claude accepted, as the init frame does for a fresh process.
             if (existing.queryPolicy.permissionMode !== queryPolicy.permissionMode) {
-              existing.permissionMode = yield* setClaudeLivePermissionMode(
+              const accepted = yield* setClaudeLivePermissionMode(
                 existing,
                 queryPolicy.permissionMode,
               );
-              existing.openedPermissionMode = existing.permissionMode;
+              existing.permissionMode = accepted;
+              existing.openedPermissionMode = accepted;
+              // The default fallback forwards its approvals, so the callback must ask for them.
+              existing.queryPolicy =
+                accepted === queryPolicy.permissionMode
+                  ? queryPolicy
+                  : { ...queryPolicy, permissionMode: accepted, installPermissionCallback: true };
+            } else {
+              existing.queryPolicy = queryPolicy;
             }
-            existing.queryPolicy = queryPolicy;
             // A denied ExitPlanMode leaves Claude in plan mode. Restore only from plan:
             // Auto/default may reflect a policy restriction that forbids restoring bypass.
             if (existing.permissionMode === "plan" && existing.openedPermissionMode !== "plan") {

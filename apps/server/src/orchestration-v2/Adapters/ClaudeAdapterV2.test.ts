@@ -5917,13 +5917,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect.each([
-    { runtimeMode: "auto", modelHasAuto: true, changes: ["auto", "plan"] },
-    { runtimeMode: "full-access", modelHasAuto: true, changes: ["bypassPermissions", "plan"] },
-    // Like the CLI at launch, a model without Auto runs in default.
-    { runtimeMode: "auto", modelHasAuto: false, changes: ["auto", "default", "plan"] },
+    { runtimeMode: "auto", modelHasAuto: true, changes: ["auto", "plan"], asks: false },
+    {
+      runtimeMode: "full-access",
+      modelHasAuto: true,
+      changes: ["bypassPermissions", "plan"],
+      asks: true,
+    },
+    // Like the CLI at launch, a model without Auto runs in default, which asks.
+    { runtimeMode: "auto", modelHasAuto: false, changes: ["auto", "default", "plan"], asks: true },
   ] as const)(
     "switches $runtimeMode Plan in and out on a process running a background shell (Auto: $modelHasAuto)",
-    ({ runtimeMode, modelHasAuto, changes }) =>
+    ({ runtimeMode, modelHasAuto, changes, asks }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const harness = yield* makeWakeHarnessWithOptions({
@@ -5967,6 +5972,31 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.isTrue(yield* harness.hasPendingBackgroundWork);
 
           yield* harness.runtime.startTurn(turn(2, "default"));
+          const decision = yield* Effect.promise(() =>
+            originalOptions!.canUseTool!(
+              "Bash",
+              { command: "git status" },
+              {
+                signal: new AbortController().signal,
+                toolUseID: "tool-after-plan",
+                requestId: "request-after-plan",
+              },
+            ),
+          ).pipe(Effect.forkScoped);
+          const first = yield* Effect.raceFirst(
+            Queue.take(harness.runtimeRequestReceipts).pipe(
+              Effect.map((event) => ({ type: "request", event }) as const),
+            ),
+            Fiber.join(decision).pipe(Effect.map(() => ({ type: "decision" }) as const)),
+          );
+          assert.equal(first.type, asks ? "request" : "decision");
+          if (first.type === "request") {
+            yield* harness.runtime.respondToRuntimeRequest({
+              requestId: first.event.runtimeRequest.id,
+              decision: "decline",
+            });
+            yield* Fiber.join(decision);
+          }
           yield* settle;
           yield* harness.runtime.startTurn(turn(3, "plan"));
           yield* settle;
