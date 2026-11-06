@@ -736,6 +736,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       { discard: true },
     );
 
+  // A unit's .d folder can hold the user's own drop-ins; remove it only once it is empty.
+  const removeIfEmpty = (directory: string) =>
+    fs.readDirectory(directory).pipe(
+      Effect.flatMap((entries) =>
+        entries.length === 0 ? fs.remove(directory, { recursive: true }) : Effect.void,
+      ),
+      Effect.ignore,
+    );
+
   const installedManager = Effect.gen(function* () {
     if (detectedManager === undefined) return undefined;
     if (yield* fs.exists(unitPath)) return detectedManager;
@@ -909,11 +918,22 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ]);
       return { ...plan, handedOff: true };
     }
-    // A started install moves a pre-rename unit to the new name; start=false rewrites it in place.
-    const migrate = legacyInstalled && start;
-    const targetUnitPath = legacyInstalled && !installed && !start ? legacyUnitPath : unitPath;
-    if (installed && start) {
-      yield* runSteps(manager.stop);
+    // A started install moves a pre-rename unit to the new name. start=false, or a launchd job
+    // installing from inside itself (no transient unit to hand off to), rewrites it in place.
+    const inPlace =
+      legacyInstalled &&
+      !installed &&
+      (!start || (runningInsideService && manager.kind === "launchd"));
+    const target = inPlace ? legacyManager! : manager;
+    const targetUnitPath = target.unitPath;
+    const migrate = legacyInstalled && start && !inPlace;
+    const legacyDropIn = path.join(
+      path.dirname(legacyUnitPath),
+      `${LEGACY_BOOT_SERVICE_UNIT_FILE}.d`,
+      "90-t3learn-protect.conf",
+    );
+    if ((installed || inPlace) && start) {
+      yield* runSteps(target.stop);
     }
     if (migrate) {
       yield* runSteps(legacyManager!.stop);
@@ -940,18 +960,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           }
         }
       }
-      if (migrate) {
-        yield* runSteps(legacyManager!.deactivate);
-        const legacyDropIn = path.join(
-          path.dirname(legacyUnitPath),
-          `${LEGACY_BOOT_SERVICE_UNIT_FILE}.d`,
-          "90-t3learn-protect.conf",
-        );
-        yield* fs.remove(legacyDropIn, { force: true });
-        yield* fs.remove(path.dirname(legacyDropIn), { force: true });
-        yield* fs.remove(legacyUnitPath);
-        yield* runSteps(legacyManager!.finalize);
-      }
       yield* fs
         .makeDirectory(path.dirname(unitPath), { recursive: true })
         .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
@@ -976,11 +984,25 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           return yield* new BootServiceUpdatePendingError();
         }
       }
-      yield* writeDurably(targetUnitPath, manager.render({ ...plan, unitPath: targetUnitPath }));
+      yield* writeDurably(targetUnitPath, target.render({ ...plan, unitPath: targetUnitPath }));
+      // `service protect`'s memory protection follows the unit to its new name.
+      if (migrate && (yield* fs.exists(legacyDropIn))) {
+        const dropIn = path.join(`${unitPath}.d`, "90-ominax-protect.conf");
+        yield* fs.makeDirectory(path.dirname(dropIn), { recursive: true });
+        yield* fs.copyFile(legacyDropIn, dropIn);
+      }
 
       if (start) {
-        yield* runSteps(manager.activate);
+        yield* runSteps(target.activate);
         yield* fs.remove(restartPendingPath, { force: true });
+      }
+      // The old unit goes only once the new one is running, so a failure can always fall back to it.
+      if (migrate) {
+        yield* runSteps(legacyManager!.deactivate);
+        yield* fs.remove(legacyDropIn, { force: true });
+        yield* removeIfEmpty(path.dirname(legacyDropIn));
+        yield* fs.remove(legacyUnitPath);
+        yield* runSteps(legacyManager!.finalize);
       }
     }).pipe(
       Effect.mapError((cause) =>
@@ -991,9 +1013,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           if (!start) return;
           // Bring back whichever unit is still on disk, so a refused install leaves the server running.
           if (migrate && (yield* fs.exists(legacyUnitPath))) {
+            yield* runSteps(manager.deactivate).pipe(Effect.ignore);
+            yield* fs.remove(unitPath, { force: true });
+            yield* fs.remove(path.join(`${unitPath}.d`, "90-ominax-protect.conf"), { force: true });
             return yield* runSteps(legacyManager!.restart);
           }
-          if (installed) yield* runSteps(manager.restart);
+          if (installed || inPlace) yield* runSteps(target.restart);
         }).pipe(Effect.ignore),
       ),
     );
@@ -1104,7 +1129,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         "90-t3learn-protect.conf",
       );
       yield* fs.remove(legacyDropIn, { force: true });
-      yield* fs.remove(path.dirname(legacyDropIn), { force: true });
+      yield* removeIfEmpty(path.dirname(legacyDropIn));
       yield* fs.remove(legacyUnitPath);
     }
     if (manager === legacyManager) {
@@ -1114,7 +1139,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         "90-t3learn-protect.conf",
       );
       yield* fs.remove(legacyDropIn, { force: true });
-      yield* fs.remove(path.dirname(legacyDropIn), { force: true });
+      yield* removeIfEmpty(path.dirname(legacyDropIn));
     }
     yield* runSteps(manager.finalize);
     return true;

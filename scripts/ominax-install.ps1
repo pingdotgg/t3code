@@ -19,7 +19,7 @@
   [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
   $repo = "aabdel0181/ominax"
-  $releaseBaseUrl = $env:OMINAX_RELEASE_BASE_URL ?? $env:T3LEARN_RELEASE_BASE_URL
+  $releaseBaseUrl = $(if ($env:OMINAX_RELEASE_BASE_URL) { $env:OMINAX_RELEASE_BASE_URL } else { $env:T3LEARN_RELEASE_BASE_URL })
   $baseUrl = if ($releaseBaseUrl) { $releaseBaseUrl.TrimEnd("/") } else { "https://github.com/$repo/releases/download" }
   $installDir = Join-Path $env:LOCALAPPDATA "Programs\ominax"
   $legacyInstallDir = Join-Path $env:LOCALAPPDATA "Programs\t3learn"
@@ -50,7 +50,7 @@
     $running | Where-Object { -not $_.HasExited } | Stop-Process -Force -ErrorAction SilentlyContinue
   }
 
-  if (($env:OMINAX_UNINSTALL ?? $env:T3LEARN_UNINSTALL) -eq "1") {
+  if (($(if ($env:OMINAX_UNINSTALL) { $env:OMINAX_UNINSTALL } else { $env:T3LEARN_UNINSTALL })) -eq "1") {
     $uninstallerPath = @($uninstaller, $legacyOminaXUninstaller, $oldUninstaller) | Where-Object { Test-Path $_ } | Select-Object -First 1
     if ($uninstallerPath) {
       Stop-T3Learn
@@ -78,7 +78,7 @@
   $work = Join-Path ([IO.Path]::GetTempPath()) ("t3-learn-" + [Guid]::NewGuid().ToString("N"))
   New-Item -ItemType Directory -Path $work | Out-Null
   try {
-    $versionInput = $env:OMINAX_VERSION ?? $env:T3LEARN_VERSION
+    $versionInput = $(if ($env:OMINAX_VERSION) { $env:OMINAX_VERSION } else { $env:T3LEARN_VERSION })
     $sumsUrl = if ($versionInput) {
       "$baseUrl/v$($versionInput.TrimStart('v'))/SHA256SUMS"
     } elseif ($releaseBaseUrl) {
@@ -129,7 +129,7 @@
     if (-not (Test-Path $appExe) -and -not (Test-Path $legacyAppExe) -and -not (Test-Path $oldAppExe)) { Fail "the installer finished but no OminaX executable is present" }
     if (-not (Test-Path $appExe)) { $appExe = if (Test-Path $legacyAppExe) { $legacyAppExe } else { $oldAppExe } }
 
-    if (($env:OMINAX_NO_LAUNCH ?? $env:T3LEARN_NO_LAUNCH) -ne "1") { Start-Process -FilePath $appExe }
+    if (($(if ($env:OMINAX_NO_LAUNCH) { $env:OMINAX_NO_LAUNCH } else { $env:T3LEARN_NO_LAUNCH })) -ne "1") { Start-Process -FilePath $appExe }
   } finally {
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
   }

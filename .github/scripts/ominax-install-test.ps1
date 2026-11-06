@@ -15,7 +15,8 @@ function Fail([string] $message) { throw "FAIL: $message" }
 $legacyData = Join-Path $HOME ".t3-learn"
 $newData = Join-Path $HOME ".ominax"
 function Plant-Learning {
-  $learning = Join-Path $legacyData "userdata"
+  # N-1 keeps its data in ~/.t3-learn; a fresh N install starts in ~/.ominax.
+  $learning = if (Test-Path (Join-Path $newData "userdata")) { Join-Path $newData "userdata" } else { Join-Path $legacyData "userdata" }
   New-Item -ItemType Directory -Force -Path (Join-Path $learning "courses\install-test\units"), (Join-Path $learning "visuals\install-test") | Out-Null
   '[{"topic":"install test","explanation":"kept across updates","buildsOn":[],"doneAt":"2026-11-05T00:00:00.000Z","threadId":"install-test"}]' | Set-Content (Join-Path $learning "knowledge.json")
   '{"title":"install test"}' | Set-Content (Join-Path $learning "courses\install-test\course.json")
@@ -81,6 +82,7 @@ if ($Scenario -eq "fresh") {
   if ($previous -and $previous -ne $Version) {
     Log "Installing the previous release, $previous"
     $env:OMINAX_VERSION = $previous
+    $env:T3LEARN_VERSION = $previous
     $previousCommand = "irm https://github.com/$repo/releases/download/v$previous/install.ps1 | iex"
     powershell -NoProfile -Command $previousCommand
     if ($LASTEXITCODE -ne 0) { Fail "the previous installer failed" }
@@ -100,10 +102,11 @@ $installCommand = "irm https://github.com/$repo/releases/download/v$Version/inst
 powershell -NoProfile -Command $installCommand
 if ($LASTEXITCODE -ne 0) { Fail "the installer failed" }
 
-$learnVersion = Wait-Server (Join-Path $HOME ".t3-learn") $Version
+$learnVersion = Wait-Server $newData $Version
 Log "OminaX $learnVersion is running"
 Start-Sleep -Seconds 5
 Screenshot "t3-learn"
+if (-not $previousRunning) { Plant-Learning }
 
 $learnDir = Join-Path $env:LOCALAPPDATA "Programs\ominax"
 $legacyLearnDir = Join-Path $env:LOCALAPPDATA "Programs\t3learn"
@@ -116,7 +119,10 @@ $uninstallKeys = @(Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersio
 )
 if ($uninstallKeys.Count -ne 1) { Fail "expected one OminaX entry in Installed apps, found $($uninstallKeys.Count)" }
 $legacyDataItem = Get-Item $legacyData -Force -ErrorAction SilentlyContinue
-if (-not (Test-Path (Join-Path $newData "userdata")) -or -not $legacyDataItem -or $legacyDataItem.LinkType -notin @("SymbolicLink", "Junction")) { Fail "OminaX data migration did not create ~/.ominax and a legacy link" }
+if (-not (Test-Path (Join-Path $newData "userdata"))) { Fail "~/.ominax\userdata is missing" }
+if ($previousRunning) {
+  if (-not $legacyDataItem -or $legacyDataItem.LinkType -notin @("SymbolicLink", "Junction")) { Fail "OminaX data migration did not leave a legacy link at ~/.t3-learn" }
+} elseif ($legacyDataItem) { Fail "a fresh install created ~/.t3-learn" }
 Check-Learning
 foreach ($launcherName in @("ominax", "t3-learn")) {
   $launcher = Get-ChildItem $installedDirs[0] -Recurse -File -ErrorAction SilentlyContinue |

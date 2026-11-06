@@ -34,6 +34,8 @@ screenshot() {
 learning="$HOME/.t3-learn/userdata"
 new_learning="$HOME/.ominax/userdata"
 plant_learning() {
+  # N-1 keeps its data in ~/.t3-learn; a fresh N install starts in ~/.ominax.
+  if [ -d "$new_learning" ]; then learning="$new_learning"; fi
   mkdir -p "$learning/courses/install-test/units" "$learning/visuals/install-test" "$artifacts/kept"
   printf '%s\n' '[{"topic":"install test","explanation":"kept across updates","buildsOn":[],"doneAt":"2026-11-05T00:00:00.000Z","threadId":"install-test"}]' >"$learning/knowledge.json"
   printf '%s\n' '{"title":"install test"}' >"$learning/courses/install-test/course.json"
@@ -219,16 +221,18 @@ log "Installing OminaX $version"
 curl -fsSL "https://github.com/$repo/releases/download/v$version/install.sh" |
   env OMINAX_VERSION="$version" OMINAX_FORMAT="$format" sh 2>&1 | tee "$artifacts/install.log"
 
-learn_version="$(wait_for_server "$HOME/.t3-learn" "$version")"
+learn_version="$(wait_for_server "$HOME/.ominax" "$version")"
 log "OminaX $learn_version is running"
 sleep 5
 screenshot t3-learn
 if [ ! -d "$artifacts/kept" ]; then plant_learning; fi
 
-if [ -d "$HOME/.ominax" ] && [ -L "$HOME/.t3-learn" ]; then
+[ -d "$HOME/.ominax" ] && [ ! -L "$HOME/.ominax" ] || fail "~/.ominax is not a folder"
+if [ -n "${previous_running:-}" ]; then
+  [ -L "$HOME/.t3-learn" ] || fail "OminaX data folder migration did not leave ~/.t3-learn as a symlink"
   [ "$(cd "$HOME/.t3-learn" && pwd -P)" = "$(cd "$HOME/.ominax" && pwd -P)" ] || fail "legacy data path does not link to ~/.ominax"
 else
-  fail "OminaX data folder migration did not leave ~/.t3-learn as a symlink"
+  [ ! -e "$HOME/.t3-learn" ] || fail "a fresh install created ~/.t3-learn"
 fi
 for launcher_name in ominax t3-learn; do
   launcher=""

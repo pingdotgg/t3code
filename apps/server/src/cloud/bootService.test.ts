@@ -365,6 +365,11 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const installed = yield* service.install();
       const legacyPath = path.join(path.dirname(installed.unitPath), "t3learn.service");
       yield* fs.rename(installed.unitPath, legacyPath);
+      yield* fs.makeDirectory(`${legacyPath}.d`, { recursive: true });
+      yield* fs.writeFileString(
+        `${legacyPath}.d/90-t3learn-protect.conf`,
+        "[Service]\nOOMScoreAdjust=-900\n",
+      );
       commands.length = 0;
 
       const migrated = yield* makeService();
@@ -373,6 +378,10 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* fs.exists(legacyPath)).toBe(false);
       expect(commands).toContain("systemctl --user disable --now t3learn.service");
       expect(yield* fs.exists(installed.unitPath)).toBe(true);
+      expect(yield* fs.readFileString(`${installed.unitPath}.d/90-ominax-protect.conf`)).toContain(
+        "OOMScoreAdjust=-900",
+      );
+      expect(yield* fs.exists(`${legacyPath}.d`)).toBe(false);
 
       yield* fs.writeFileString(legacyPath, yield* fs.readFileString(installed.unitPath));
       expect(yield* migrated.uninstall).toBe(true);
@@ -408,6 +417,24 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(error._tag).toBe("BootServiceUpdatePendingError");
       expect(yield* fs.exists(legacyPath)).toBe(true);
       expect(yield* fs.exists(installed.unitPath)).toBe(false);
+      expect(commands).toContain("systemctl --user restart t3learn.service");
+    }),
+  );
+
+  it.effect("falls back to the legacy unit when the new one fails to start", () =>
+    Effect.gen(function* () {
+      const { service, fs, commands, control, makeService } = yield* makeHarness();
+      const path = yield* Path.Path;
+      const installed = yield* service.install();
+      const legacyPath = path.join(path.dirname(installed.unitPath), "t3learn.service");
+      yield* fs.rename(installed.unitPath, legacyPath);
+      commands.length = 0;
+      control.failCommand = `systemctl --user restart ${path.basename(installed.unitPath)}`;
+
+      yield* (yield* makeService()).install().pipe(Effect.flip);
+      expect(yield* fs.exists(legacyPath)).toBe(true);
+      expect(yield* fs.exists(installed.unitPath)).toBe(false);
+      expect(commands).not.toContain("systemctl --user disable --now t3learn.service");
       expect(commands).toContain("systemctl --user restart t3learn.service");
     }),
   );
