@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -318,6 +320,53 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           expect(logLinkResult._tag).toBe("Failure");
           expect(memoriesLinkResult._tag).toBe("Failure");
           expect(tmpLinkResult._tag).toBe("Failure");
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "finishes replacing a SQLite family when setup is interrupted mid-move",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+          const shadowHome = path.join(shadowRoot, "shadow");
+          for (const home of [sharedHome, shadowHome]) {
+            yield* writeTextFile(path.join(home, "queue_1.sqlite"), "db");
+            yield* writeTextFile(path.join(home, "queue_1.sqlite-wal"), "wal");
+          }
+          const baseRenameStarted = yield* Deferred.make<void>();
+          const releaseBaseRename = yield* Deferred.make<void>();
+          // The WAL has already moved when the base rename blocks.
+          const blockingFileSystem = FileSystem.FileSystem.of({
+            ...fileSystem,
+            rename: (fromPath, toPath) =>
+              fromPath === path.join(shadowHome, "queue_1.sqlite")
+                ? Deferred.succeed(baseRenameStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseBaseRename)),
+                    Effect.andThen(fileSystem.rename(fromPath, toPath)),
+                  )
+                : fileSystem.rename(fromPath, toPath),
+          });
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          );
+
+          const setup = yield* materializeCodexShadowHome(layout).pipe(
+            Effect.provideService(FileSystem.FileSystem, blockingFileSystem),
+            Effect.forkChild,
+          );
+          yield* Deferred.await(baseRenameStarted);
+          setup.interruptUnsafe();
+          yield* Deferred.succeed(releaseBaseRename, undefined);
+          yield* Fiber.await(setup);
+
+          for (const entryName of ["queue_1.sqlite", "queue_1.sqlite-wal"]) {
+            expect(yield* fileSystem.readLink(path.join(shadowHome, entryName))).toBe(
+              path.join(sharedHome, entryName),
+            );
+          }
         }),
     );
 

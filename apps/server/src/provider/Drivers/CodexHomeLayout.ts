@@ -336,6 +336,7 @@ const replaceConflictGroup = Effect.fn("CodexHomeLayout.replaceConflictGroup")(f
     return failures;
   });
 
+  // Interrupting between moves would skip the restore and split the family.
   return yield* replace.pipe(
     Effect.andThen(
       Effect.forEach(
@@ -372,6 +373,7 @@ const replaceConflictGroup = Effect.fn("CodexHomeLayout.replaceConflictGroup")(f
         return false;
       }),
     ),
+    Effect.uninterruptible,
   );
 });
 
