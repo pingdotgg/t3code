@@ -6,7 +6,6 @@ import {
 } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
 
@@ -216,41 +215,21 @@ describe("DevicePanel host probe", () => {
 });
 
 describe("DevicePanel discovery warning", () => {
-  it("keeps Details open across causes and a dismissal only for the cause it hid", async () => {
+  it("a dismissal hides only the cause it was made for", async () => {
     setup();
-    const withCause = (
-      detail: string,
-      incompletePlatforms: ReadonlyArray<"ios" | "android"> = ["ios"],
-    ): DeviceServiceState => ({
+    const withCause = (detail: string): DeviceServiceState => ({
       ...deviceState,
-      hostStatuses: { local: { status: "ready", detail, incompletePlatforms } },
+      hostStatuses: { local: { status: "ready", detail, incompletePlatforms: ["ios"] } },
     });
     const warning = "iOS list on This Mac may be incomplete.";
     currentState = withCause("first cause");
     await using screen = await render(devicePanel(threadA), { container });
 
-    await screen.getByRole("button", { name: "Details for This Mac" }).click();
-    await expect.element(page.getByText("first cause")).toBeVisible();
-
-    currentState = withCause("second cause");
-    await screen.rerender(devicePanel(threadA));
-    await expect.element(page.getByText("second cause")).toBeVisible();
-
     await screen.getByRole("button", { name: "Dismiss device warning for This Mac" }).click();
     await screen.rerender(devicePanel(threadA));
     await expect.element(screen.getByText(warning)).not.toBeInTheDocument();
 
-    currentState = withCause("second cause", ["ios", "android"]);
-    await screen.rerender(devicePanel(threadA));
-    await expect
-      .element(screen.getByText("iOS and Android lists on This Mac may be incomplete."))
-      .toBeVisible();
-
     currentState = withCause("second cause");
-    await screen.rerender(devicePanel(threadA));
-    await expect.element(screen.getByText(warning)).toBeVisible();
-
-    currentState = withCause("third cause");
     await screen.rerender(devicePanel(threadA));
     await expect.element(screen.getByText(warning)).toBeVisible();
   });

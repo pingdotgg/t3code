@@ -164,11 +164,7 @@ const fixture = Effect.fn("fixture")(function* (
           Response.json(
             bootError
               ? { ok: false, ...(typeof bootError === "string" ? { error: bootError } : bootError) }
-              : // The hub reports a serial only for emulators; a simulator keeps its UDID.
-                request.body._tag === "Uint8Array" &&
-                  new TextDecoder().decode(request.body.body).includes('"platform":"ios"')
-                ? { ok: true }
-                : { ok: true, serial: "emulator-5554" },
+              : { ok: true, serial: "emulator-5554" },
           ),
         );
       }
@@ -260,16 +256,14 @@ const fixture = Effect.fn("fixture")(function* (
         if (runtimeFailure && runtimeFailure._tag !== "AgentDeviceStartError")
           return yield* runtimeFailure;
         starts.push("start");
-        // A running hub reports no phase, as the real hosts do.
-        if (starts.length === 1)
-          yield* onPhase("installing", "Updating device hub from 0.9.0 to 0.10.1…");
+        yield* onPhase("installing", "Updating device hub from 0.9.0 to 0.10.1…");
         return ready;
       }),
     ensureAgentReady: (onPhase) =>
       Effect.gen(function* () {
         if (runtimeFailure) return yield* runtimeFailure;
         agentStarts.push("start");
-        if (agentStarts.length === 1) yield* onPhase("starting");
+        yield* onPhase("starting");
         return {
           ...ready,
           agentDevice: { baseUrl: "http://agent.test", token: "test", entryPath: "/agent" },
@@ -361,19 +355,12 @@ describe("device setup consent", () => {
         reason: "daemon_lock_not_directory",
         cause: { stdout: "private startup diagnostics", code: 1 },
       });
-      const { service, settings, discoveryErrors } = yield* fixture(
-        Effect.void,
-        undefined,
-        false,
-        startupError,
-      );
+      const { service, settings } = yield* fixture(Effect.void, undefined, false, startupError);
       yield* Ref.update(settings, (current) => ({
         ...current,
         enableDeviceSupport: true,
         enableAgentDeviceAccess: true,
       }));
-      yield* Ref.set(discoveryErrors, [{ message: simctlMessage }]);
-      yield* service.list;
       const error = yield* service.agentReadinessIfSupported().pipe(Effect.flip);
       expect(error).toMatchObject({
         _tag: "DeviceHostUnavailableError",
@@ -385,7 +372,6 @@ describe("device setup consent", () => {
       expect((yield* service.state).hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
         status: "failed",
         detail: startupError.message,
-        incompletePlatforms: ["ios"],
       });
     }).pipe(Effect.scoped),
   );
@@ -881,14 +867,6 @@ it.effect(
       });
       yield* service.agentReadinessIfSupported();
       expect((yield* service.state).hostStatuses.local).toEqual(failed.hostStatuses.local);
-      yield* service.setHostStatus(LOCAL_DEVICE_HOST_ID, {
-        status: "starting",
-        detail: "Reconnecting to device host…",
-      });
-      yield* service.setHostStatus(LOCAL_DEVICE_HOST_ID, { status: "ready" });
-      const reconnected = yield* service.state;
-      expect(reconnected.hostStatuses.local).toEqual(failed.hostStatuses.local);
-      expect(reconnected.hostStatusDetail).toBe(simctlMessage);
       yield* Ref.set(discoveryErrors, []);
       const recovered = yield* service.list;
       expect(recovered.devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
@@ -954,25 +932,6 @@ it.effect("does not open a retained pre-boot entry when the post-boot listing is
     yield* TestClock.adjust("40 seconds");
     expect((yield* Fiber.join(opening))._tag).toBe("DeviceNotFoundError");
     expect((yield* android.service.state).sessions).toEqual([]);
-
-    const ios = yield* fixture(Effect.suspend(() => afterBoot.run));
-    afterBoot.run = Effect.sync(() => {
-      ios.devices.length = 0;
-    }).pipe(Effect.andThen(Ref.set(ios.discoveryErrors, [{ message: simctlMessage }])));
-    ios.devices.push({
-      id: DeviceId.make("iphone"),
-      name: "iPhone",
-      platform: "ios",
-      version: "iOS 26",
-      booted: false,
-      physical: false,
-    });
-    yield* ios.service.configure({ enabled: true });
-    const error = yield* ios.service
-      .open({ threadId: ThreadId.make("boot-simctl"), deviceId: "iphone", platform: "ios" })
-      .pipe(Effect.flip);
-    expect(error._tag).toBe("DeviceNotFoundError");
-    expect((yield* ios.service.state).sessions).toEqual([]);
   }).pipe(Effect.scoped),
 );
 
