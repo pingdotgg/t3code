@@ -23,6 +23,7 @@ import {
   CommandShortcut,
 } from "./ui/command";
 import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
+import { MENU_ROW_TEXT_CLASS } from "./ui/menu-row-text";
 import { ProjectPinButton } from "./ProjectPinButton";
 import { SearchMatchHintLine, ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -232,7 +233,13 @@ function CommandPaletteRowContent({ item }: { item: CommandPaletteResultItem }) 
       <CommandPaletteTitleIcon>{item.icon}</CommandPaletteTitleIcon>
       {item.description || item.threadContentMatch || item.matchHint ? (
         <span className={cn("flex min-w-0 flex-1", stacked ? "flex-col" : "items-center gap-2")}>
-          <span className="flex min-w-0 items-center gap-1.5 text-control text-foreground in-data-[active=true]:text-strong-foreground">
+          <span
+            className={cn(
+              "flex min-w-0 items-center gap-1.5",
+              MENU_ROW_TEXT_CLASS,
+              "text-foreground in-data-[active=true]:text-strong-foreground",
+            )}
+          >
             {title}
             <ThreadRowContext item={item} />
           </span>
@@ -247,7 +254,13 @@ function CommandPaletteRowContent({ item }: { item: CommandPaletteResultItem }) 
           ) : null}
         </span>
       ) : (
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-control text-foreground in-data-[active=true]:text-strong-foreground">
+        <span
+          className={cn(
+            "flex min-w-0 flex-1 items-center gap-1.5",
+            MENU_ROW_TEXT_CLASS,
+            "text-foreground in-data-[active=true]:text-strong-foreground",
+          )}
+        >
           {title}
         </span>
       )}
