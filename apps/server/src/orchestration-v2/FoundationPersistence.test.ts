@@ -326,7 +326,7 @@ it.effect("paces scheduled compaction while preserving retention state and fixed
 );
 
 it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
-  it.effect("projects oversized tool bodies before both replay and live RPC retention", () =>
+  it.effect("projects oversized tool bodies once before replay and live RPC retention", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const sink = yield* EventSink.EventSinkV2;
@@ -369,17 +369,25 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             },
           ],
         });
-        const pull = yield* Stream.toPull(
-          sink.stream({
-            threadId: thread.id,
-            afterSequence: created!.sequence,
-            bounded: true,
-          }),
-        );
+        const subscribe = () =>
+          Stream.toPull(
+            sink.stream({
+              threadId: thread.id,
+              afterSequence: created!.sequence,
+              bounded: true,
+            }),
+          );
+        const pull = yield* subscribe();
+        const other = yield* subscribe();
         const replay = yield* pull;
         assert.lengthOf(replay, 1);
+        assert.lengthOf(yield* other, 1);
         assert.equal(replay[0]!.event.type, "turn-item.updated");
         assert.isBelow(Buffer.byteLength(yield* encodeJson(replay)), 4_000);
+        const stringify = yield* Effect.acquireRelease(
+          Effect.sync(() => vi.spyOn(JSON, "stringify")),
+          (spy) => Effect.sync(() => spy.mockRestore()),
+        );
         const [completed] = yield* sink.write({
           events: [
             {
@@ -392,9 +400,16 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           ],
         });
         const live = yield* pull;
+        const otherLive = yield* other;
         assert.deepEqual(
           live.map((stored) => stored.sequence),
           [completed!.sequence],
+        );
+        // Both subscribers get one shared projection, so the live budget sizes it once.
+        assert.strictEqual(otherLive[0], live[0]);
+        assert.lengthOf(
+          stringify.mock.calls.filter(([value]) => value === live[0] || value === otherLive[0]),
+          1,
         );
         assert.isBelow(Buffer.byteLength(yield* encodeJson(live)), 4_000);
         for (const stored of [...replay, ...live]) {
@@ -1860,6 +1875,65 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       assert.isTrue(Option.isSome(cancelled));
       if (Option.isSome(cancelled)) assert.equal(cancelled.value.status, "cancelled");
     }),
+  );
+
+  it.effect("does not resolve awaitSettled waiters until the cancel is signalled", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const commandId = CommandId.make("command:foundation-settle-on-cancel");
+      const threadId = ThreadId.make("thread:foundation-settle-on-cancel");
+      const effectId = "effect:foundation-settle-on-cancel";
+      yield* outbox.enqueue([
+        {
+          id: effectId,
+          commandId,
+          threadId,
+          request: {
+            type: "provider-turn.start",
+            runId: RunId.make("run:foundation-settle-on-cancel"),
+          },
+        },
+      ]);
+
+      const waiterRegistered = yield* Deferred.make<void>();
+      const waiterFiber = yield* Deferred.succeed(waiterRegistered, undefined).pipe(
+        Effect.andThen(outbox.awaitSettled(effectId)),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(waiterRegistered);
+
+      // Padding enqueues keep the waiter running so its row read lands before
+      // the cancel: registration is synchronous and the read dispatches first.
+      // A stronger milestone would need a test-only seam in the service, which
+      // the codebase avoids.
+      const paddingCommandId = CommandId.make("command:foundation-settle-on-cancel:padding");
+      yield* Effect.forEach(
+        Array.from({ length: 100 }, (_, index) => index),
+        (index) =>
+          outbox.enqueue([
+            {
+              id: `effect:foundation-settle-on-cancel:padding-${index}`,
+              commandId: paddingCommandId,
+              threadId: ThreadId.make("thread:foundation-settle-on-cancel:padding"),
+              request: { type: "terminal.cleanup" as const },
+            },
+          ]),
+        { discard: true },
+      );
+
+      const cancelledEffectIds = yield* outbox.cancelUnsettled({
+        threadId,
+        effectTypes: ["provider-turn.start"],
+        reason: "Test settle on cancel.",
+      });
+      assert.deepEqual(cancelledEffectIds, [effectId]);
+      // The cancel runs inside the commit transaction; waiters resolve only via
+      // the post-commit signalCancellations, never from the cancel itself.
+      yield* Effect.yieldNow;
+      assert.isUndefined(waiterFiber.pollUnsafe());
+      yield* outbox.signalCancellations(cancelledEffectIds);
+      yield* Fiber.join(waiterFiber);
+    }).pipe(Effect.provide(Layer.fresh(layerEffectOutboxProvided))),
   );
 
   it.effect("does not start an effect that was cancelled during claim registration", () =>

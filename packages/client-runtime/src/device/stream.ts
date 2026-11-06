@@ -9,7 +9,7 @@ import {
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { createCanvasFrameSink, type DeviceFrameSink } from "./frame.ts";
-import { isAltGraphText } from "@t3tools/shared/keybindings";
+import { isAltGraphText } from "@t3tools/shared/keybindingMatching";
 import { type DeviceHubAccess, withDeviceHubQuery } from "./hubAccess.ts";
 import { iosModifierKeys, usKey, usKeyStrokes, type UsKeyStroke } from "./iosKeyboard.ts";
 import type { DevicePlatform } from "@t3tools/contracts";

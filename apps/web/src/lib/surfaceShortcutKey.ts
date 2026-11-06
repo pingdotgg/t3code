@@ -1,4 +1,4 @@
-import { isAltGraphText } from "@t3tools/shared/keybindings";
+import { isAltGraphText } from "@t3tools/shared/keybindingMatching";
 
 type SurfaceKeyEvent = Pick<KeyboardEvent, "key"> &
   Partial<Pick<KeyboardEvent, "code" | "getModifierState">>;
