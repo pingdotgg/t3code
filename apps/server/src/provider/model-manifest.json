@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-05T22:38:29Z",
+  "updatedAt": "2026-11-06T00:00:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -96,6 +96,15 @@
       "ranges": [
         { "range": ">=0.80.5", "status": "supported" },
         { "range": "<0.80.5", "status": "unsupported" }
+      ]
+    },
+    {
+      "driver": "zeroclaw",
+      "t3CodeRange": ">=0.0.46",
+      "recommendedRange": ">=0.8.7",
+      "ranges": [
+        { "range": ">=0.8.7", "status": "supported" },
+        { "range": "<0.8.7", "status": "unsupported" }
       ]
     },
     {
