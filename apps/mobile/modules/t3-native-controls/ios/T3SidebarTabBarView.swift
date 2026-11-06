@@ -8,7 +8,10 @@ private final class WorkspaceTabBar: UITabBar {
     super.layoutSubviews()
     // iOS 26.6 doesn't copy item identifiers onto its tab buttons; the bar holds no other controls.
     let identified = tabButtons(in: self) { $0.accessibilityIdentifier?.hasPrefix("workspace-tab-") == true }
-    let buttons = identified.isEmpty ? tabButtons(in: self) { _ in true } : identified
+    let candidates = identified.isEmpty ? tabButtons(in: self) { _ in true } : identified
+    // Pressing a tab adds a magnified copy of the row for the glass lens, without identifiers.
+    // Sizing compose from it leaves compose enlarged until the bar lays out again.
+    let buttons = candidates.filter { convert($0.bounds, from: $0).size == $0.bounds.size }
     let row = buttons.reduce(CGRect.null) { $0.union(convert($1.bounds, from: $1)) }
     if !row.isNull { onContentLayout?(row) }
   }
