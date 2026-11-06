@@ -509,7 +509,7 @@ const make = Effect.gen(function* () {
     );
 
   /** A peer's label follows its machine name, so the link takes the one its own address answers with. */
-  const withLabel = (link: PeerLink, label: string) =>
+  const withLabel = <Link extends PeerLink>(link: Link, label: string) =>
     label === link.label
       ? Effect.succeed(link)
       : sql`
