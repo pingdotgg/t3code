@@ -949,6 +949,9 @@ function SpeechModelBrowser(props: {
                     <TranscriptionTest
                       key={model.id}
                       card={card}
+                      onDownload={(download) =>
+                        void run("Could not download the model", download, model.id)
+                      }
                       hidden={!sortedModels.includes(model)}
                       revealModel={() => {
                         setSearch("");
@@ -974,6 +977,7 @@ function SpeechModelBrowser(props: {
 
 function TranscriptionTest(props: {
   readonly card: ModelCardProps;
+  readonly onDownload: (download: () => Promise<void>) => void;
   readonly hidden: boolean;
   readonly revealModel: () => void;
   readonly environmentId: EnvironmentId;
@@ -1096,7 +1100,7 @@ function TranscriptionTest(props: {
         downloading={speech.setup.downloading}
         error={speech.setup.error}
         onOpenChange={speech.setup.setOpen}
-        onDownload={() => void speech.setup.download()}
+        onDownload={() => props.onDownload(speech.setup.download)}
         onCancelDownload={() => void speech.setup.cancelDownload()}
         onStartRecording={() => {
           if (props.hidden) props.revealModel();

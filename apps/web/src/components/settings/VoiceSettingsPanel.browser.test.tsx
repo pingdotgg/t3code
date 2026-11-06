@@ -220,6 +220,7 @@ it("opens the selected model's setup wizard before it is downloaded or listed", 
     wsBaseUrl: "ws://localhost",
   });
   const prepared = { ...target, target, socketUrl: target.wsBaseUrl, httpAuthorization: null };
+  let installed = false;
   const model: EnvironmentSpeechModel = {
     id: "tiny",
     name: "Tiny",
@@ -254,7 +255,10 @@ it("opens the selected model's setup wizard before it is downloaded or listed", 
     if (url.pathname === "/api/voice/models")
       return Promise.resolve(
         Response.json({
-          models: [model, { ...model, id: "both", name: "Bilingual", languages: ["en", "fr"] }],
+          models: [
+            installed ? { ...model, state: "installed", active: true } : model,
+            { ...model, id: "both", name: "Bilingual", languages: ["en", "fr"] },
+          ],
         }),
       );
     return fetch(input, init);
@@ -286,7 +290,10 @@ it("opens the selected model's setup wizard before it is downloaded or listed", 
         downloading: false,
         error: null,
         setOpen,
-        download: async () => setReady(true),
+        download: async () => {
+          installed = true;
+          setReady(true);
+        },
         cancelDownload: async () => {},
         startRecording: async () => {
           input.commitDraft("microphone test", { start: 15, end: 15 });
@@ -319,6 +326,7 @@ it("opens the selected model's setup wizard before it is downloaded or listed", 
   await expect
     .element(screen.getByRole("status", { name: "Test transcript" }))
     .toHaveTextContent("microphone test");
+  await expect.element(screen.getByText("Selected", { exact: true })).toBeVisible();
 });
 
 it("loads the models of a relay-connected destination", async () => {
