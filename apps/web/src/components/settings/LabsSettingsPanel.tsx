@@ -23,6 +23,7 @@ export function LabsSettingsPanel() {
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
         <PromptSuggestionsRow />
+        <SendGitActionFailuresRow />
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
       </SettingsSection>
@@ -184,6 +185,29 @@ function PromptSuggestionsRow() {
             updateSettings({ promptSuggestionsEnabled: Boolean(checked) })
           }
           aria-label="Suggest next prompt"
+        />
+      }
+    />
+  );
+}
+
+function SendGitActionFailuresRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("send-git-action-failures")}
+      settingKeys={["sendGitActionFailuresToAgent"]}
+      description="When Commit, Push, or Create PR fails from a thread, send the error to that thread's agent so it can fix and retry."
+      control={
+        <ScopedSwitch
+          settingKeys={["sendGitActionFailuresToAgent"]}
+          checked={settings.sendGitActionFailuresToAgent}
+          onCheckedChange={(checked) =>
+            updateSettings({ sendGitActionFailuresToAgent: Boolean(checked) })
+          }
+          aria-label="Send git action failures to agent"
         />
       }
     />

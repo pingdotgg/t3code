@@ -57,6 +57,12 @@ export function SettingsLabsRouteScreen() {
           setting="fastWorktreeCheckout"
           description="On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache."
         />
+        <MachineBetaSection
+          title="Send git action failures to agent"
+          icon="arrow.branch"
+          setting="sendGitActionFailuresToAgent"
+          description="When Commit, Push, or Create PR fails from a thread, send the error to that thread's agent so it can fix and retry."
+        />
       </ScrollView>
     </SettingsScreen>
   );
@@ -238,7 +244,10 @@ export function NewThreadSettingsSection() {
   );
 }
 
-type MachineBetaSetting = "linkedEnvironmentsEnabled" | "fastWorktreeCheckout";
+type MachineBetaSetting =
+  | "linkedEnvironmentsEnabled"
+  | "fastWorktreeCheckout"
+  | "sendGitActionFailuresToAgent";
 
 /** One switch per connected machine that offers the beta, since each machine's own setting decides. */
 function MachineBetaSection({
@@ -250,7 +259,7 @@ function MachineBetaSection({
 }: {
   readonly title: string;
   readonly icon: ComponentProps<typeof SettingsSwitchRow>["icon"];
-  readonly capability: "peerLinks" | "fastWorktreeCheckout";
+  readonly capability?: "peerLinks" | "fastWorktreeCheckout";
   readonly setting: MachineBetaSetting;
   readonly description: string;
 }) {
@@ -258,7 +267,9 @@ function MachineBetaSection({
   const supported = environments.filter(
     (environment) =>
       environment.connection.phase === "connected" &&
-      environment.serverConfig?.environment.capabilities[capability] === true,
+      environment.serverConfig !== null &&
+      (capability === undefined ||
+        environment.serverConfig.environment.capabilities[capability] === true),
   );
   const writable = useEnvironmentsWithScope(supported, AuthSettingsWriteScope);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
@@ -287,7 +298,9 @@ function MachineBetaSection({
                     patch:
                       setting === "linkedEnvironmentsEnabled"
                         ? { linkedEnvironmentsEnabled: value }
-                        : { fastWorktreeCheckout: value },
+                        : setting === "fastWorktreeCheckout"
+                          ? { fastWorktreeCheckout: value }
+                          : { sendGitActionFailuresToAgent: value },
                   },
                 })
               }

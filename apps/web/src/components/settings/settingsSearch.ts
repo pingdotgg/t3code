@@ -505,6 +505,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta tab autocomplete predict next message claude codex ghost text"],
   },
   {
+    id: "send-git-action-failures",
+    title: "Send git action failures to agent",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: [
+      "beta git commit push pull request create pr failure error send wake agent fix retry",
+    ],
+  },
+  {
     id: "simlock-hosts",
     title: "Simlock device hosts (alpha)",
     to: "/settings/labs",

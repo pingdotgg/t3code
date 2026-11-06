@@ -292,6 +292,8 @@ and their marks follow the same rules as on web and desktop.
   remotes can require separate setup from the hosting provider's API access.
 - **A review cannot load:** open it on the host website while resolving connectivity, permissions,
   or rate limits.
+- **Send failures to the agent:** turn on **Settings → Labs → Send git action failures to agent** so
+  a failed Commit, Push, or Create PR from a thread wakes that thread's agent with the error.
 
 ## Linked pull requests
 

@@ -5,6 +5,7 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Base64 from "effect/encoding/Base64";
@@ -41,6 +42,7 @@ import {
   type FileManagerRevealKind,
   type OrchestrationV2Command,
   type GitActionProgressEvent,
+  type GitActionProgressPhase,
   type GitManagerServiceError,
   type MessageId,
   type AcpRegistryImportSessionInput,
@@ -214,6 +216,7 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import { refreshPushedPullRequests } from "./git/refreshPushedPullRequests.ts";
 import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
+import { sendGitActionFailureToAgent } from "./git/sendGitActionFailureToAgent.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
@@ -3157,17 +3160,50 @@ export const layerWsRpc = (
             }),
           ),
         [WS_METHODS.gitRunStackedAction]: (input) =>
-          Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
-            gitWorkflow
+          Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) => {
+            let failedPhase: GitActionProgressPhase | null = null;
+            let failedMessage: string | null = null;
+            return gitWorkflow
               .runStackedAction(input, {
                 actionId: input.actionId,
                 progressReporter: {
-                  publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
+                  publish: (event) => {
+                    if (event.kind === "action_failed") {
+                      failedPhase = event.phase;
+                      failedMessage = event.message;
+                    }
+                    return Queue.offer(queue, event).pipe(Effect.asVoid);
+                  },
                 },
               })
               .pipe(
                 Effect.matchCauseEffect({
-                  onFailure: (cause) => Queue.failCause(queue, cause),
+                  onFailure: (cause) => {
+                    const failure = Cause.findErrorOption(cause);
+                    const detail =
+                      failedMessage ??
+                      (Option.isSome(failure) && failure.value instanceof Error
+                        ? failure.value.message
+                        : "Source control action failed.");
+                    return (
+                      input.threadId === undefined
+                        ? Effect.void
+                        : sendGitActionFailureToAgent({
+                            threadId: input.threadId,
+                            action: input.action,
+                            phase: failedPhase,
+                            detail,
+                            commandId: serverCommandId("git-action-failure"),
+                          }).pipe(
+                            Effect.provideService(Orchestrator.OrchestratorV2, orchestrationEngine),
+                            Effect.provideService(
+                              ServerSettings.ServerSettingsService,
+                              serverSettings,
+                            ),
+                            Effect.provideService(SecureRandom.SecureRandom, random),
+                          )
+                    ).pipe(Effect.andThen(Queue.failCause(queue, cause)));
+                  },
                   onSuccess: (result) =>
                     (input.threadId === undefined
                       ? Effect.void
@@ -3194,8 +3230,8 @@ export const layerWsRpc = (
                       Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
                     ),
                 }),
-              ),
-          ),
+              );
+          }),
         [WS_METHODS.gitResolvePullRequest]: (input) => gitWorkflow.resolvePullRequest(input),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           gitWorkflow
