@@ -1005,6 +1005,10 @@ it.effect("bounds streaming recovery reads by candidate runs and preserves messa
         JSON.stringify(plan),
       );
       assert.isFalse(
+        plan.some((row) => /\bSCAN message\b/.test(row.detail)),
+        JSON.stringify(plan),
+      );
+      assert.isFalse(
         plan.some((row) => row.detail.includes("messages_thread_created_idx")),
         JSON.stringify(plan),
       );
