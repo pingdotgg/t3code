@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
+import type * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as Schema from "effect/Schema";
 
-import { RelayDeviceRegistrationRequest } from "./relay.ts";
+import {
+  RelayAgentActivitySnapshotEndpoint,
+  RelayAgentActivitySnapshotResponse,
+  RelayDeviceRegistrationRequest,
+} from "./relay.ts";
 
 const decodeDevice = Schema.decodeUnknownExit(RelayDeviceRegistrationRequest);
 const device = {
@@ -30,5 +35,30 @@ describe("mobile device platforms", () => {
         pushToStartToken: "apple-token",
       })._tag,
     ).toBe("Failure");
+  });
+});
+
+describe("RelayAgentActivitySnapshot", () => {
+  it("decodes an older global snapshot without inventing filter support", () => {
+    const decode = Schema.decodeUnknownSync(RelayAgentActivitySnapshotResponse);
+    expect(decode({ aggregate: null })).toEqual({ aggregate: null });
+    expect(decode({ aggregate: null, excludedEnvironmentIds: [] })).toEqual({
+      aggregate: null,
+      excludedEnvironmentIds: [],
+    });
+  });
+  it("decodes absent, single and repeated exclusion query values", () => {
+    const decode = Schema.decodeUnknownSync(
+      RelayAgentActivitySnapshotEndpoint.query as HttpApiEndpoint.Query<
+        typeof RelayAgentActivitySnapshotEndpoint
+      >,
+    );
+    expect(decode({})).toEqual({});
+    expect(decode({ excludedEnvironmentIds: "local" })).toEqual({
+      excludedEnvironmentIds: ["local"],
+    });
+    expect(decode({ excludedEnvironmentIds: ["local", "other"] })).toEqual({
+      excludedEnvironmentIds: ["local", "other"],
+    });
   });
 });

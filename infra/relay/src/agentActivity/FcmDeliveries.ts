@@ -214,7 +214,7 @@ const make = Effect.gen(function* () {
       let alert: ReturnType<typeof androidAlertForState | typeof androidAlertForAggregate> = null;
       // Deletions update the card but must not consume another thread's pending completion alert.
       let acknowledgeAggregate = job.state !== null || job.replay === true || aggregate === null;
-      if (job.state && preferences.value.notificationsEnabled) {
+      if (job.state && !job.replay && preferences.value.notificationsEnabled) {
         const state = yield* rows.getForUserThread({
           userId: job.userId,
           environmentId: job.state.environmentId,
