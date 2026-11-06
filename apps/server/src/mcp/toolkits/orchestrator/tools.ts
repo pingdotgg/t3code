@@ -366,7 +366,7 @@ const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
 
 const EnvironmentSpawnTool = Tool.make("t3_environment_spawn", {
   description:
-    "Provision one OpenShell worker environment for this managing instance and pair it. Ephemeral workers retire themselves; persistent ones are named lanes. `state` is 'ready' or the call fails, leaving the sandbox for the orphan sweep. Pass `clientRequestId` so a retry converges on the same sandbox.",
+    "Provision one OpenShell worker environment for this managing instance and pair it. Ephemeral workers retire themselves; persistent ones are named lanes. Pass `clientRequestId` so a retry converges on the same sandbox.",
   parameters: OrchestratorMcpEnvironmentSpawnInput,
   success: OrchestratorMcpEnvironmentSpawnResult,
   failure: OrchestratorMcpFailure,
@@ -380,7 +380,7 @@ const EnvironmentSpawnTool = Tool.make("t3_environment_spawn", {
 
 const EnvironmentRemoveTool = Tool.make("t3_environment_remove", {
   description:
-    "Drain one fleet worker environment's threads and worktrees to this managing instance, then delete its sandbox. Refusable: while the drain is incomplete it returns `drain_pending` or `refused` and KEEPS the sandbox: nothing lost outranks cleanup. Retry the same call to resume.",
+    "Drain a fleet worker's threads and worktrees to this instance, then delete its sandbox. Refusable: `drain_pending` or `refused` KEEPS the sandbox, and the same call resumes.",
   parameters: OrchestratorMcpEnvironmentRemoveInput,
   success: OrchestratorMcpEnvironmentRemoveResult,
   failure: OrchestratorMcpFailure,
@@ -394,7 +394,7 @@ const EnvironmentRemoveTool = Tool.make("t3_environment_remove", {
 
 const EnvironmentListTool = Tool.make("t3_environment_list", {
   description:
-    "List this managing instance's fleet worker environments: class, lifecycle state, drain progress, retirement deadline. `workerClass` filters.",
+    "List this instance's fleet workers: class, state, drain progress, retirement deadline.",
   parameters: OrchestratorMcpEnvironmentListInput,
   success: OrchestratorMcpEnvironmentListResult,
   failure: OrchestratorMcpFailure,
