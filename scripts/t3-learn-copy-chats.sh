@@ -169,6 +169,10 @@ INSERT OR IGNORE INTO main.orchestration_events ($event_cols) SELECT $event_cols
      OR (aggregate_kind = 'project' AND stream_id IN (SELECT project_id FROM new_projects))
   ORDER BY sequence;
 $inserts
+-- Marks copies so OminaX blocks their main box; never set it to null, which breaks the thread.
+UPDATE main.orchestration_v2_projection_threads
+  SET payload_json = json_set(payload_json, '\$.t3CodeCopiedAt', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  WHERE thread_id IN (SELECT thread_id FROM new_threads);
 INSERT OR IGNORE INTO main.orchestration_v2_projection_provider_sessions
   SELECT * FROM src.orchestration_v2_projection_provider_sessions
   WHERE provider_session_id IN (SELECT provider_session_id FROM src.orchestration_v2_projection_provider_session_bindings

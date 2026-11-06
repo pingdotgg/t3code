@@ -2024,10 +2024,10 @@ export function AboutSettingsPanel() {
         )}
         <SettingsRow
           {...searchableSetting("welcome-guide")}
-          description="A short tour of side chats, notes and the Map."
+          description="A walk through OminaX: lessons, side chats, quizzes, courses and more."
           control={
             <Button size="sm" variant="outline" onClick={openWelcomeGuide}>
-              Show guide
+              Take the tour
             </Button>
           }
         />
