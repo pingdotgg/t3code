@@ -17,18 +17,20 @@ import {
   proposedPlanTitle,
   stripDisplayedPlanMarkdown,
 } from "@t3tools/shared/proposedPlanText";
-import { useRef, useState, type ReactNode } from "react";
-import { View } from "react-native";
+import type { MenuAction } from "@react-native-menu/menu";
+import { useMemo, useRef, useState, type ReactNode } from "react";
+import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { Button } from "../../components/ui/Button";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
+import { Menu } from "../../components/ui/Menu";
+import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { uuidv4 } from "../../lib/uuid";
 import { projectEnvironment } from "../../state/projects";
 import { readEnvironmentScope } from "../../state/session";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { CopyTextButton } from "./CopyTextButton";
 
 export function ProposedPlanCard(props: {
   readonly environmentId: EnvironmentId;
@@ -53,6 +55,27 @@ export function ProposedPlanCard(props: {
   const [lastPath, setLastPath] = useState("plan.md");
   const contents = `${props.markdown.trimEnd()}\n`;
   const canBuild = canOperate && thread !== null && !threadRuntimeIsActive(thread.runtime);
+  const canSave = canWrite && Boolean(props.workspaceRoot) && !saving && !building;
+  const menuActions = useMemo((): MenuAction[] => {
+    const actions: MenuAction[] = [
+      { id: "copy", title: "Copy to clipboard", image: "doc.on.doc" },
+      {
+        id: "save",
+        title: saving ? "Saving..." : "Save to workspace",
+        image: "square.and.arrow.down",
+        attributes: { disabled: !canSave },
+      },
+    ];
+    if (canOperate) {
+      actions.push({
+        id: "build",
+        title: building ? "Building..." : "Build",
+        image: "hammer",
+        attributes: { disabled: !canBuild || saving || building },
+      });
+    }
+    return actions;
+  }, [building, canBuild, canOperate, canSave, saving]);
 
   const save = async (path: string) => {
     const relativePath = path.trim();
@@ -76,6 +99,22 @@ export function ProposedPlanCard(props: {
       const error = squashAtomCommandFailure(result);
       Dialog.alert("Could not save plan", error instanceof Error ? error.message : String(error));
     }
+  };
+
+  const openSave = () => {
+    if (!canSave) return;
+    Dialog.prompt({
+      title: "Save plan to workspace",
+      // The write replaces an existing file, and the RPC has no create-only mode.
+      message:
+        "Enter a path relative to the thread's workspace. A file already at that path is replaced.",
+      initialValue: lastPath,
+      confirmText: "Save",
+      onConfirm: (path) => {
+        setLastPath(path);
+        void save(path);
+      },
+    });
   };
 
   const build = async () => {
@@ -139,43 +178,45 @@ export function ProposedPlanCard(props: {
     });
   };
 
+  const copy = async () => {
+    if (!(await tryCopyTextWithHaptic(contents))) {
+      Dialog.alert("Could not copy", "Try again.");
+    }
+  };
+
   return (
     <View className="mb-3 gap-3 rounded-[20px] border border-border bg-card-alt p-4">
       <View className="flex-row items-center gap-2">
         <Text accessibilityRole="header" className="flex-1 font-t3-bold text-base text-foreground">
           {proposedPlanTitle(props.markdown) ?? "Proposed plan"}
         </Text>
-        <CopyTextButton accessibilityLabel="Copy plan" text={contents} />
+        <Menu
+          accessible
+          accessibilityLabel="Plan actions"
+          accessibilityRole="button"
+          actions={menuActions}
+          onPressAction={({ nativeEvent }) => {
+            if (nativeEvent.event === "copy") void copy();
+            else if (nativeEvent.event === "save") openSave();
+            else if (nativeEvent.event === "build") void build();
+          }}
+        >
+          <Pressable
+            accessibilityLabel="Plan actions"
+            accessibilityRole="button"
+            hitSlop={8}
+            className="size-[30px] items-center justify-center rounded-[9px] border border-border active:opacity-70"
+          >
+            <SymbolView
+              name={{ ios: "ellipsis", android: "more_vert" }}
+              size={16}
+              tintColorClassName="accent-foreground"
+              type="monochrome"
+            />
+          </Pressable>
+        </Menu>
       </View>
       {props.renderMarkdown(stripDisplayedPlanMarkdown(props.markdown))}
-      <View className="flex-row flex-wrap gap-2">
-        <Button
-          label={saving ? "Saving..." : "Save to workspace"}
-          tone="secondary"
-          disabled={!canWrite || !props.workspaceRoot || saving || building}
-          onPress={() =>
-            Dialog.prompt({
-              title: "Save plan to workspace",
-              // The write replaces an existing file, and the RPC has no create-only mode.
-              message:
-                "Enter a path relative to the thread's workspace. A file already at that path is replaced.",
-              initialValue: lastPath,
-              confirmText: "Save",
-              onConfirm: (path) => {
-                setLastPath(path);
-                void save(path);
-              },
-            })
-          }
-        />
-        <Button
-          label={building ? "Building..." : "Build"}
-          tone="primary"
-          disabled={!canBuild || saving || building}
-          loading={building}
-          onPress={() => void build()}
-        />
-      </View>
     </View>
   );
 }
