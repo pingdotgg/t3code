@@ -34,7 +34,10 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { removeEmptyDirectory } from "../vcs/removeEmptyDirectory.ts";
+import {
+  removeEmptyDirectory,
+  type RemoveEmptyDirectoryError,
+} from "../vcs/removeEmptyDirectory.ts";
 import { isFilesystemRoot, resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import {
   TaskFolderStore,
@@ -299,7 +302,9 @@ const make = Effect.gen(function* () {
   const removeEmptyDirectories: (directory: string) => Effect.Effect<void> = Effect.fn(
     "TaskFolderService.removeEmptyDirectories",
   )(
-    function* (directory: string): Effect.fn.Return<void, PlatformError | Cause.UnknownError> {
+    function* (
+      directory: string,
+    ): Effect.fn.Return<void, PlatformError | Cause.UnknownError | RemoveEmptyDirectoryError> {
       const isLink = yield* fileSystem.readLink(directory).pipe(
         Effect.as(true),
         Effect.orElseSucceed(() => false),

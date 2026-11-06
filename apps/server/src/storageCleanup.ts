@@ -49,7 +49,10 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
-import { removeEmptyDirectory } from "./vcs/removeEmptyDirectory.ts";
+import {
+  removeEmptyDirectory,
+  type RemoveEmptyDirectoryError,
+} from "./vcs/removeEmptyDirectory.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import { TaskFolderStore, type TaskFolderRecord } from "./workspace/TaskFolders.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -890,7 +893,9 @@ const make = Effect.gen(function* () {
   const removeEmptyDirectories: (directory: string) => Effect.Effect<void> = Effect.fn(
     "StorageCleanup.removeEmptyDirectories",
   )(
-    function* (directory: string): Effect.fn.Return<void, PlatformError | Cause.UnknownError> {
+    function* (
+      directory: string,
+    ): Effect.fn.Return<void, PlatformError | Cause.UnknownError | RemoveEmptyDirectoryError> {
       const isLink = yield* fs.readLink(directory).pipe(
         Effect.as(true),
         Effect.orElseSucceed(() => false),

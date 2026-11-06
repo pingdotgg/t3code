@@ -2611,7 +2611,7 @@ it.effect("binds a multi-repo thread to its task folder and names a repo that fa
             completeInputs.push(input);
             return Option.some({ record: taskFolderRecord("t3/task", ["app"]), failed: [] });
           }),
-        renameBranch: () => Effect.never,
+        renameBranch: () => Effect.succeedNone,
       },
     });
     yield* Effect.gen(function* () {

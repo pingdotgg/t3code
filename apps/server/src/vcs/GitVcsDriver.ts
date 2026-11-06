@@ -1394,8 +1394,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const resetIndex = Effect.gen(function* () {
         // On Windows clean can remove './' and exit 0.
         yield* recreateWorkspace;
-        // An unborn branch has no HEAD for reset to read.
-        if (!(yield* hasHeadCommit(input.cwd))) return;
         yield* execute({
           operation,
           cwd: input.cwd,

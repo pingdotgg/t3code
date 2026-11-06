@@ -410,8 +410,7 @@ describe("AntigravityAdapterV2 multi-repo files", () => {
           selfInvocation: undefined as never,
           makeRuntime: () => Effect.die("not spawned in this test"),
           withProcess: (_stop, task) => task,
-          // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-          defaultModel: Effect.succeed(undefined),
+          defaultModel: Effect.undefined,
         }).clientFileSystem;
         if (files === undefined) return yield* Effect.die("Antigravity serves client files");
         const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({

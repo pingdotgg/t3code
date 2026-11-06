@@ -832,6 +832,8 @@ it.effect.each(["restores", "undo", "missing-ref", "plain-home", "git-home-missi
           const record = yield* checkpoints.materializeBaselineCheckpoint({
             scope,
             ordinalWithinScope,
+            nodeId,
+            capturedAt: now,
           });
           if (record !== null) records.push(record);
         });
