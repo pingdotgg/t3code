@@ -416,7 +416,8 @@ export function filterPullRequestList<
     if (controls.projectEnvironmentId && entry.environmentId !== controls.projectEnvironmentId)
       return false;
     const viewerKey = entry.environmentId ? `${entry.environmentId} ${entry.host}` : entry.host;
-    const viewer = viewers[viewerKey];
+    // Projects that pin a GitHub account carry their own viewer.
+    const viewer = viewers[`${viewerKey} ${entry.projectId}`] ?? viewers[viewerKey];
     if (controls.involvement === "reviewing" && !entry.viewerReviewRequested) return false;
     if (
       controls.involvement === "authored" &&
