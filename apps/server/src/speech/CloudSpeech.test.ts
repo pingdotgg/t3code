@@ -2,6 +2,7 @@ import { it } from "@effect/vitest";
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, SecretProviderId } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -124,12 +125,17 @@ it.effect("uploads to OpenRouter only for a listed exact model, as zero-retentio
         .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
     yield* service.setKey("openrouter", Redacted.make("router-key"));
     expect(yield* Effect.flip(transcribe(undefined))).toMatchObject({ provider: "openrouter" });
+    upstream.mockResolvedValueOnce(new Response(null, { status: 503 }));
+    expect(yield* Effect.flip(transcribe("acme/transcribe-2"))).toMatchObject({
+      reason: "unavailable",
+    });
     expect(yield* Effect.flip(transcribe("acme/delisted"))).toMatchObject({
       provider: "openrouter",
     });
     expect(uploads()).toEqual([]);
     expect(yield* transcribe("acme/transcribe-2")).toBe("hello");
     const [[url, init]] = uploads() as [[URL, RequestInit]];
+    expect(new URL(String(upstream.mock.calls[0]![0])).searchParams.get("zdr")).toBe("true");
     expect(String(url)).toBe("https://openrouter.ai/api/v1/audio/transcriptions");
     expect(init.redirect).toBe("error");
     const headers = new Headers(init.headers);
@@ -150,5 +156,45 @@ it.effect("uploads to OpenRouter only for a listed exact model, as zero-retentio
     const wav = Buffer.from(body.input_audio.data, "base64");
     expect(wav.toString("ascii", 0, 4)).toBe("RIFF");
     expect(wav.readInt16LE(46)).toBe(16384);
+  }),
+);
+
+it.effect("removing a key while a catalog read is pending prevents the upload", () =>
+  Effect.gen(function* () {
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(
+        CloudSpeech.layer.pipe(
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+        ),
+      ),
+    );
+    const catalogStarted = Promise.withResolvers<void>();
+    const catalog = Promise.withResolvers<Response>();
+    const uploads: string[] = [];
+    const upstream: typeof fetch = async (input) => {
+      if (new URL(String(input)).pathname.endsWith("/models")) {
+        catalogStarted.resolve();
+        return catalog.promise;
+      }
+      uploads.push(String(input));
+      return Response.json({ text: "unexpected" });
+    };
+    yield* service.setKey("openrouter", Redacted.make("old-key"));
+    const job = yield* service
+      .transcribe(
+        "openrouter",
+        new Uint8Array(4),
+        DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        "acme/voice",
+      )
+      .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream), Effect.forkChild);
+    yield* Effect.promise(() => catalogStarted.promise);
+    yield* service.setKey("openrouter", null);
+    catalog.resolve(Response.json({ data: [{ id: "acme/voice" }] }));
+    const exit = yield* Fiber.await(job);
+    expect(uploads).toEqual([]);
+    expect(exit._tag).toBe("Failure");
   }),
 );

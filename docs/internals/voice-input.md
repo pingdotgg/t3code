@@ -45,8 +45,8 @@ socket or falls back to another provider or the environment's native model.
 
 OpenRouter routes to many upstreams, so its grant also names the exact model and
 the model travels with every upload as a query parameter. The server accepts only
-ids present in OpenRouter's public transcription catalog (`output_modalities=transcription`),
-which it caches for ten minutes and refreshes once before rejecting an unknown id;
+ids present in OpenRouter's public ZDR-eligible transcription catalog,
+which it caches for ten minutes after a successful read;
 router aliases such as `openrouter/auto` or `:nitro` fail schema validation before
 that. Requests set `provider.zdr` and carry no `models` fallback list. OpenRouter
 applies the account's safety-retention policy when choosing an endpoint. The catalog

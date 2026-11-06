@@ -45,6 +45,7 @@ export class CloudSpeechError extends Schema.TaggedError<CloudSpeechError>()(
     provider: CloudSpeechProvider,
     reason: Schema.Literals([
       "missing-key",
+      "key-changed",
       "unreadable-key",
       "rejected-key",
       "rate-limit",
@@ -59,6 +60,8 @@ export class CloudSpeechError extends Schema.TaggedError<CloudSpeechError>()(
     switch (this.reason) {
       case "missing-key":
         return `Add your ${name} API key in Settings → Voice.`;
+      case "key-changed":
+        return `The ${name} key changed before your recording was sent. Try again.`;
       case "unreadable-key":
         return `Couldn’t read the ${name} API key. Unlock the vault on the selected environment or update the key in Settings → Voice. No audio was sent to ${name}.`;
       case "rejected-key":
@@ -66,7 +69,7 @@ export class CloudSpeechError extends Schema.TaggedError<CloudSpeechError>()(
       case "rate-limit":
         return `${name} reached a usage limit. Check the account's quota or try again later.`;
       case "model-unavailable":
-        return `${name} doesn’t offer the selected transcription model. Choose another model in Settings → Voice. No audio was sent to ${name}.`;
+        return `The chosen model isn’t available on ${name}. Choose another model in Settings → Voice.`;
       case "unavailable":
         return `${name} couldn’t transcribe this recording. Try again later.`;
     }
