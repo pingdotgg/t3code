@@ -390,6 +390,8 @@ export const make = Effect.gen(function* () {
   const failedDownloads = new Set<string>();
   // Manual checks can clear downloadedVersion while the native installer stays queued.
   let downloadedInstallerVersion: string | null = null;
+  // electron-updater emits update-downloaded before downloadUpdate resolves.
+  let downloadEventSeen = false;
   const notAppliedVersionRef = yield* Ref.make(Option.none<string>());
   // The release a track switch's database check cleared. A build crosses to another track only
   // through such a switch, and never below that release: version order alone cannot tell whether
@@ -630,8 +632,10 @@ export const make = Effect.gen(function* () {
         environment.platform !== "darwin" && !isDebPackage,
       );
       downloadedInstallerVersion = null;
+      downloadEventSeen = false;
       yield* electronUpdater.downloadUpdate;
-      downloadedInstallerVersion ??= state.availableVersion;
+      // The event handler may have rejected an off-track download; keep its decision.
+      if (!downloadEventSeen) downloadedInstallerVersion ??= state.availableVersion;
       if (downloadedInstallerVersion !== null) failedDownloads.delete(downloadedInstallerVersion);
       return { accepted: true, completed: true };
     }).pipe(
@@ -1118,6 +1122,7 @@ export const make = Effect.gen(function* () {
     yield* decodeUpdateInfo(raw).pipe(
       Effect.flatMap(
         Effect.fn("desktop.updates.applyUpdateDownloaded")(function* (info) {
+          downloadEventSeen = true;
           const state = yield* Ref.get(updateStateRef);
           // A download can finish after its track switch moved on; never offer that build.
           if (!(yield* offerable(info.version, state))) {

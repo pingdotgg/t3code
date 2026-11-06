@@ -715,7 +715,11 @@ describe("DesktopUpdates", () => {
   });
 
   it.effect("ignores a finished download from a track it no longer follows", () => {
-    const harness = makeHarness({ platform: "win32" });
+    const releaseDownload = Deferred.makeUnsafe<void>();
+    const harness = makeHarness({
+      platform: "win32",
+      downloadUpdate: Deferred.await(releaseDownload),
+    });
 
     return Effect.scoped(
       Effect.gen(function* () {
@@ -723,13 +727,17 @@ describe("DesktopUpdates", () => {
         yield* updates.configure;
         harness.emit("update-available", { version: "1.2.4" });
         yield* flushCallbacks;
-        yield* updates.download;
+        const download = yield* Effect.forkChild(updates.download, { startImmediately: true });
+        yield* flushCallbacks;
         assert.equal(harness.autoInstallOnAppQuitCalls.at(-1), true);
         // A backed-out switch's download keeps reporting progress until it finishes.
         harness.emit("download-progress", { percent: 40 });
         yield* flushCallbacks;
+        // electron-updater emits update-downloaded before downloadUpdate resolves.
         harness.emit("update-downloaded", { version: "1.2.4-nightly.20261027.1" });
         yield* flushCallbacks;
+        yield* Deferred.succeed(releaseDownload, undefined);
+        yield* Fiber.join(download);
 
         const state = yield* updates.getState;
         assert.equal(state.downloadedVersion, null);
