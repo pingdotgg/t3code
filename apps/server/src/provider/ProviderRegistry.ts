@@ -1122,6 +1122,11 @@ export const layer = Layer.effect(
       refreshUsageForModelSelection: (primary, fallback) =>
         refreshUsageForModelSelection(primary, fallback).pipe(
           Effect.catchCause(recoverRefreshFailure),
+          // Launches wait at most as long as the client's new-thread bound, then use current snapshots.
+          Effect.timeoutOption(5_000),
+          Effect.flatMap(
+            Option.match({ onNone: () => Ref.get(providersRef), onSome: Effect.succeed }),
+          ),
         ),
       refreshUsage: (instanceId, providers) =>
         refreshUsage(instanceId, providers).pipe(Effect.catchCause(recoverRefreshFailure)),

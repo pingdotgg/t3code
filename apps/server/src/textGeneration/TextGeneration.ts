@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -70,6 +71,9 @@ const resolveInstance = (
 // Review guides investigate the checkout read-only; the other drivers reject that request.
 const INVESTIGATING_DRIVERS = new Set(["codex", "claudeAgent"]);
 
+// Both quota stages share one wait, matching the client's new-thread bound.
+const USAGE_WAIT_MS = 5_000;
+
 /** @public */
 export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
@@ -84,10 +88,15 @@ export const make = Effect.gen(function* () {
     ) => Effect.Effect<A, TextGenerationError>,
   ) {
     const instances = yield* registry.listInstances;
-    yield* (
+    const usageDeadline = (yield* Clock.currentTimeMillis) + USAGE_WAIT_MS;
+    const awaitUsage = <E>(refresh: Effect.Effect<void, E>) =>
+      Effect.flatMap(Clock.currentTimeMillis, (now) =>
+        refresh.pipe(Effect.ignore, Effect.timeoutOption(Math.max(0, usageDeadline - now))),
+      );
+    yield* awaitUsage(
       instances.find((instance) => instance.instanceId === selection.instanceId)?.snapshot
-        .refreshUsage ?? Effect.void
-    ).pipe(Effect.ignore);
+        .refreshUsage ?? Effect.void,
+    );
     const readSnapshots = Effect.forEach(instances, (instance) => instance.snapshot.getSnapshot);
     let snapshots = yield* readSnapshots;
     const now = DateTime.toEpochMillis(yield* DateTime.now);
@@ -118,16 +127,18 @@ export const make = Effect.gen(function* () {
         isProviderAvailable(provider) &&
         isProviderTextGenerationCapable(provider) &&
         (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(provider.driver));
-      yield* Effect.forEach(
-        instances.filter(
-          (instance) =>
-            instance.enabled &&
-            snapshots.some(
-              (provider) => provider.instanceId === instance.instanceId && canServe(provider),
-            ),
+      yield* awaitUsage(
+        Effect.forEach(
+          instances.filter(
+            (instance) =>
+              instance.enabled &&
+              snapshots.some(
+                (provider) => provider.instanceId === instance.instanceId && canServe(provider),
+              ),
+          ),
+          (instance) => (instance.snapshot.refreshUsage ?? Effect.void).pipe(Effect.ignore),
+          { concurrency: "unbounded", discard: true },
         ),
-        (instance) => (instance.snapshot.refreshUsage ?? Effect.void).pipe(Effect.ignore),
-        { concurrency: "unbounded", discard: true },
       );
       snapshots = yield* readSnapshots;
       selection =
