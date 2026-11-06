@@ -181,6 +181,21 @@ describe("decodeMergeRequestDetailJson", () => {
     expect(headSha({ sha: "  " })).toBeUndefined();
   });
 
+  it("reads the diff refs threads are placed against", () => {
+    const diffRefs = (entry: Record<string, unknown>) =>
+      expectSuccess(decodeMergeRequestDetailJson(detailJson(entry))).diffRefs;
+
+    expect(diffRefs({ diff_refs: { base_sha: "b", start_sha: "s", head_sha: "h" } })).toEqual({
+      baseSha: "b",
+      startSha: "s",
+      headSha: "h",
+    });
+    expect(diffRefs({ diff_refs: null })).toBeUndefined();
+    expect(
+      diffRefs({ diff_refs: { base_sha: null, start_sha: "s", head_sha: "h" } }),
+    ).toBeUndefined();
+  });
+
   it("reads either auto-merge field, and says nothing where GitLab named neither", () => {
     const armed = (entry: Record<string, unknown>) =>
       expectSuccess(decodeMergeRequestDetailJson(detailJson(entry))).autoMergeEnabled;

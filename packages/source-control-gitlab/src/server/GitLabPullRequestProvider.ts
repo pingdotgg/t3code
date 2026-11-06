@@ -12,7 +12,7 @@ import type {
 } from "@t3tools/contracts";
 
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
-import type { GitLabMergeRequestListState } from "./gitLabMergeRequestJson.ts";
+import type { GitLabDiffRefs, GitLabMergeRequestListState } from "./gitLabMergeRequestJson.ts";
 import {
   PullRequestProviderError,
   type PullRequestProviderFailure,
@@ -106,6 +106,17 @@ function gitLabProviderFailure(
   if (error._tag === "GitLabMergeRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
 }
+
+// GitLab keeps a thread on the latest diff while its line survives, so older refs mean the code moved.
+const isOutdated = (
+  thread: GitLabDiffRefs | undefined,
+  current: GitLabDiffRefs | undefined,
+): boolean =>
+  thread !== undefined &&
+  current !== undefined &&
+  (thread.baseSha !== current.baseSha ||
+    thread.startSha !== current.startSha ||
+    thread.headSha !== current.headSha);
 
 export const make = Effect.gen(function* () {
   const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
@@ -364,6 +375,7 @@ export const make = Effect.gen(function* () {
           recoverRead(cli.listCommits(input), []),
           recoverRead(cli.listDiscussions(input), {
             threads: [],
+            diffRefsByThreadId: new Map(),
             overviewFindingIds: [],
             truncated: true,
           }),
@@ -373,9 +385,14 @@ export const make = Effect.gen(function* () {
             editedAtByNoteId: new Map<string, string>(),
             botLogins: new Set<string>(),
           }),
-          // Usually cached by the detail read beside this one; web_url holds the real web origin.
+          // Fresh, not the cached detail: refs from before a push would mark every thread outdated.
           recoverRead(
-            mergeRequestDetail(input).pipe(Effect.map((mergeRequest) => mergeRequest.url)),
+            cli.getMergeRequestDetail({ ...input, downstreamChecks: false }).pipe(
+              Effect.map((mergeRequest) => ({
+                url: mergeRequest.url,
+                diffRefs: mergeRequest.diffRefs,
+              })),
+            ),
             null,
           ),
         ],
@@ -383,8 +400,8 @@ export const make = Effect.gen(function* () {
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
         Effect.map(
-          ([notes, commits, discussions, awards, webUrl]): ProviderChangeRequestActivity => {
-            const noteUrl = (id: string) => (webUrl === null ? null : `${webUrl}#note_${id}`);
+          ([notes, commits, discussions, awards, detail]): ProviderChangeRequestActivity => {
+            const noteUrl = (id: string) => (detail === null ? null : `${detail.url}#note_${id}`);
             const findingIds = new Set(discussions.overviewFindingIds);
             const edited = (id: string) => {
               const editedAt = awards.editedAtByNoteId.get(id);
@@ -409,6 +426,10 @@ export const make = Effect.gen(function* () {
               commentsTruncated: notes.truncated || discussions.truncated,
               reviewThreads: discussions.threads.map((thread) => ({
                 ...thread,
+                isOutdated: isOutdated(
+                  discussions.diffRefsByThreadId.get(thread.id),
+                  detail?.diffRefs,
+                ),
                 comments: thread.comments.map((comment) => ({
                   ...comment,
                   ...edited(comment.id),
