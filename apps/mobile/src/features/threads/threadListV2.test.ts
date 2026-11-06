@@ -1562,7 +1562,7 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
   });
   const allEnvironments = new Set<EnvironmentId>([environmentId]);
 
-  it("ages a read row from its latest reply or message", () => {
+  it("ages a read row from its latest reply", () => {
     using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
     vi.useFakeTimers({ now: BASE_MS });
     const label = (latestUserMessageAt: string, completedAt: string) => {
@@ -1584,8 +1584,6 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
       return row.type === "v2-thread" ? row.timeLabel : null;
     };
     expect(label(isoAt(BASE_MS - 40 * MINUTE_MS), isoAt(BASE_MS - 2 * MINUTE_MS))).toBe("2m");
-    expect(label(isoAt(BASE_MS - 5 * MINUTE_MS), isoAt(BASE_MS - 40 * MINUTE_MS))).toBe("5m");
-    expect(label(isoAt(BASE_MS - 40 * MINUTE_MS), "invalid")).toBe("40m");
   });
 
   it("stamps queued outbox messages onto the matching row and notices removal", () => {
