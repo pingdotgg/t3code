@@ -256,7 +256,6 @@ try {
     "apps/desktop/package.json",
     "apps/web/package.json",
     "packages/contracts/package.json",
-    "packages/openshell/package.json",
   ]) {
     assertPackageVersion(NodePath.resolve(tempRoot, relativePath), "9.9.9-smoke.0");
   }
