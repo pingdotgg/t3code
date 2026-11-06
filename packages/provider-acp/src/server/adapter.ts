@@ -1567,11 +1567,13 @@ function acpPostSettleMonitorPromptShouldSuppress(
 }
 
 export function acpCompletedTurnShouldTerminalizeTool(
-  tool: AcpToolCallState,
+  tool: AcpToolCallState & { readonly backgroundCommandTaskId?: string },
   flavor: Pick<AcpAdapterV2Flavor, "extractBackgroundTaskId" | "extractSubagentUpdate">,
 ): boolean {
   const status = toolStatus(tool.status);
   if (status !== "pending" && status !== "running") return false;
+  // Progress output replaces the start ACK, so the registered task id outlives it.
+  if (tool.backgroundCommandTaskId !== undefined) return false;
   if (flavor.extractBackgroundTaskId?.(tool) !== undefined) return false;
   return flavor.extractSubagentUpdate?.(tool) === undefined;
 }
@@ -2228,12 +2230,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         // Grok re-prompts on stale monitor notices; suppress output until a genuine terminal or app turn.
         const suppressPostSettleMonitorPrompt = yield* Ref.make(false);
         const runningBackgroundTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
-        // Completed turns whose background commands still run; their rows stay on that run.
-        const detachedBackgroundCommands = yield* Ref.make<ReadonlyArray<ActiveAcpTurn>>([]);
+        // Background command task id → the completed turn that owns its row. Ended commands stay,
+        // bounded, so a later authoritative terminal still corrects the row on its run.
+        const detachedBackgroundCommands = yield* Ref.make<ReadonlyMap<string, ActiveAcpTurn>>(
+          new Map(),
+        );
+        const endedDetachedBackgroundCommandLimit = 16;
         const detachedBackgroundCommandTurn = (taskId: string) =>
-          Ref.get(detachedBackgroundCommands).pipe(
-            Effect.map((turns) => turns.find((turn) => turn.backgroundCommands.has(taskId))),
-          );
+          Ref.get(detachedBackgroundCommands).pipe(Effect.map((turns) => turns.get(taskId)));
         /** The turn a background task's terminal belongs to: its detached turn, else the live one. */
         const backgroundCommandTurn = Effect.fnUntraced(function* (taskId: string) {
           const detached = yield* detachedBackgroundCommandTurn(taskId);
@@ -2241,15 +2245,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const active = yield* Ref.get(activeTurn);
           return active?.finalized === false ? active : undefined;
         });
-        const pruneDetachedBackgroundCommands = Ref.update(detachedBackgroundCommands, (turns) =>
-          turns.filter((turn) =>
-            [...turn.tools.values()].some((tool) => {
-              if (tool.backgroundCommandTaskId === undefined) return false;
-              const status = toolStatus(tool.status);
-              return status === "pending" || status === "running";
-            }),
-          ),
-        );
+        const detachBackgroundCommands = (context: ActiveAcpTurn) =>
+          Ref.update(detachedBackgroundCommands, (current) => {
+            const next = new Map(current);
+            for (const taskId of context.backgroundCommands.keys()) next.set(taskId, context);
+            const ended = [...next].filter(([taskId, turn]) => {
+              const toolCallId = turn.toolCallIdsByBackgroundTaskId.get(taskId);
+              const tool = toolCallId === undefined ? undefined : turn.tools.get(toolCallId);
+              const status = tool === undefined ? "completed" : toolStatus(tool.status);
+              return status !== "pending" && status !== "running";
+            });
+            for (const [taskId] of ended.slice(0, -endedDetachedBackgroundCommandLimit)) {
+              next.delete(taskId);
+            }
+            return next;
+          });
         // Tombstones prevent mid-stream exit_code 0 and stale monitor events from resurrecting ended tasks.
         const endedBackgroundTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
         const endedBackgroundTaskIdLimit = 128;
@@ -3968,7 +3978,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 });
               }
               yield* emitTool(owner, hydrated);
-              if (owner !== context) yield* pruneDetachedBackgroundCommands;
             }
           }
 
@@ -4698,7 +4707,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             mutation.status,
           );
           yield* rearmDeferredFinalize(context);
-          yield* pruneDetachedBackgroundCommands;
         });
 
         // Output and replays for a detached command land on its row, not in the wake buffer.
@@ -4712,14 +4720,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           if (active?.finalized === false && active.tools.has(update.toolCallId)) return false;
           if (notification.sessionId !== (yield* Ref.get(activeSessionId))) return false;
-          const owner = (yield* Ref.get(detachedBackgroundCommands)).find(
+          const owner = [...(yield* Ref.get(detachedBackgroundCommands)).values()].find(
             (turn) => turn.tools.get(update.toolCallId)?.backgroundCommandTaskId !== undefined,
           );
           if (owner === undefined) return false;
           for (const event of parseSessionUpdateEvent(notification).events) {
             if (event._tag === "ToolCallUpdated") yield* emitTool(owner, event.toolCall);
           }
-          yield* pruneDetachedBackgroundCommands;
           return true;
         });
 
@@ -7140,7 +7147,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* Ref.set(wakeReports, noWakeReports);
                 yield* Ref.set(continuationRequested, false);
                 yield* Ref.set(runningBackgroundTaskIds, new Set());
-                yield* Ref.set(detachedBackgroundCommands, []);
+                yield* Ref.set(detachedBackgroundCommands, new Map());
                 yield* Ref.set(endedBackgroundTaskIds, new Set());
                 yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
                 yield* Ref.set(handledBackgroundTaskIdsInActiveTurn, new Set());
@@ -7617,7 +7624,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(wakeReports, noWakeReports);
               yield* Ref.set(continuationRequested, false);
               yield* Ref.set(runningBackgroundTaskIds, new Set());
-              yield* Ref.set(detachedBackgroundCommands, []);
+              yield* Ref.set(detachedBackgroundCommands, new Map());
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
               yield* Ref.set(carryoverSubagents, null);
               yield* Ref.set(lastTurnRoute, null);
@@ -7788,8 +7795,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           yield* Ref.set(activeTurn, null);
           if (settledStatus === "completed" && !directStopQuarantine) {
-            yield* Ref.update(detachedBackgroundCommands, (turns) => [...turns, context]);
-            yield* pruneDetachedBackgroundCommands;
+            yield* detachBackgroundCommands(context);
           }
           steerInjections.clear();
           if (

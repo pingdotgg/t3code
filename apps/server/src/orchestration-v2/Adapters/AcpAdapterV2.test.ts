@@ -9037,106 +9037,118 @@ describe("AcpAdapterV2", () => {
   );
 
   // A dev server started as a background shell never exits, so it must not hold the root turn.
-  it.effect("completes a settled Grok turn while a background shell keeps running", () =>
-    Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const path = yield* Path.Path;
-      const selfInvocation = yield* resolveSelfInvocation();
-      const mockAgentPath = yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-      );
-      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
-      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
-      const promptStarted = yield* Deferred.make<void>();
-      const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
-      const promptHeld = yield* Deferred.make<void>();
-      const finalizeScheduled = yield* Deferred.make<Duration.Input>();
-      const instanceId = ProviderInstanceId.make("acp-test");
-      const grokFlavor = makeGrokAcpAdapterFlavor(
-        {
-          instanceId,
-          settings: DEFAULT_GROK_SETTINGS,
-          environment: {},
-          hostPlatform: yield* HostProcess.Platform,
-          selfInvocation,
-        },
-        yield* HostProcess.HomeDirectory,
-      );
-      const adapter = yield* makeAcpAdapterV2({
+  const startGrokBackgroundShellTurn = Effect.fnUntraced(function* (name: string) {
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const path = yield* Path.Path;
+    const selfInvocation = yield* resolveSelfInvocation();
+    const mockAgentPath = yield* path.fromFileUrl(
+      new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+    );
+    type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+    let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+    let taskCompleted:
+      | ((payload: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>)
+      | undefined;
+    const promptStarted = yield* Deferred.make<void>();
+    const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+    const promptHeld = yield* Deferred.make<void>();
+    const finalizeScheduled = yield* Deferred.make<Duration.Input>();
+    const instanceId = ProviderInstanceId.make("acp-test");
+    const grokFlavor = makeGrokAcpAdapterFlavor(
+      {
         instanceId,
+        settings: DEFAULT_GROK_SETTINGS,
+        environment: {},
+        hostPlatform: yield* HostProcess.Platform,
         selfInvocation,
-        testHooks: {
-          afterPromptSettledWithBackgroundWork: () =>
-            Deferred.succeed(promptHeld, undefined).pipe(Effect.asVoid),
-          onDeferredFinalizeScheduled: (debounce) =>
-            Deferred.succeed(finalizeScheduled, debounce).pipe(Effect.asVoid),
-        },
-        flavor: {
-          driver: ACP_TEST_DRIVER,
-          capabilities: AcpProviderCapabilitiesV2,
-          enablePostSettleContinuation: true,
-          deferFinalizeForBackgroundWork: grokFlavor.deferFinalizeForBackgroundWork!,
-          normalizeToolCall: grokFlavor.normalizeToolCall!,
-          extractBackgroundTaskId: grokFlavor.extractBackgroundTaskId!,
-          isBackgroundCommandTool: grokFlavor.isBackgroundCommandTool!,
-          isPersistentBackgroundTool: grokFlavor.isPersistentBackgroundTool!,
-          registerExtensions: ({ runtime, applyBackgroundTaskMutation }) =>
-            registerXAiBackgroundTaskTracking(runtime, applyBackgroundTaskMutation),
-          makeRuntime: makeMockRuntime({
-            childProcessSpawner,
-            mockAgentPath,
-            wrapRuntime: (runtime) => ({
-              ...runtime,
-              handleSessionUpdate: (handler) =>
-                Effect.sync(() => {
-                  sessionUpdateHandler = handler;
-                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
-              prompt: () =>
-                Deferred.succeed(promptStarted, undefined).pipe(
-                  Effect.andThen(Deferred.await(promptGate)),
-                ),
-            }),
+      },
+      yield* HostProcess.HomeDirectory,
+    );
+    const adapter = yield* makeAcpAdapterV2({
+      instanceId,
+      selfInvocation,
+      testHooks: {
+        afterPromptSettledWithBackgroundWork: () =>
+          Deferred.succeed(promptHeld, undefined).pipe(Effect.asVoid),
+        onDeferredFinalizeScheduled: (debounce) =>
+          Deferred.succeed(finalizeScheduled, debounce).pipe(Effect.asVoid),
+      },
+      flavor: {
+        driver: ACP_TEST_DRIVER,
+        capabilities: AcpProviderCapabilitiesV2,
+        enablePostSettleContinuation: true,
+        deferFinalizeForBackgroundWork: grokFlavor.deferFinalizeForBackgroundWork!,
+        normalizeToolCall: grokFlavor.normalizeToolCall!,
+        extractBackgroundTaskId: grokFlavor.extractBackgroundTaskId!,
+        isBackgroundCommandTool: grokFlavor.isBackgroundCommandTool!,
+        isPersistentBackgroundTool: grokFlavor.isPersistentBackgroundTool!,
+        registerExtensions: ({ runtime, applyBackgroundTaskMutation }) =>
+          registerXAiBackgroundTaskTracking(runtime, applyBackgroundTaskMutation),
+        makeRuntime: makeMockRuntime({
+          childProcessSpawner,
+          mockAgentPath,
+          wrapRuntime: (runtime) => ({
+            ...runtime,
+            handleSessionUpdate: (handler) =>
+              Effect.sync(() => {
+                sessionUpdateHandler = handler;
+              }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+            handleExtNotification: (method, schema, handler) =>
+              Effect.sync(() => {
+                if (method === "x.ai/task_completed") {
+                  taskCompleted = (payload) => handler(Schema.decodeUnknownSync(schema)(payload));
+                }
+              }).pipe(Effect.andThen(runtime.handleExtNotification(method, schema, handler))),
+            prompt: () =>
+              Deferred.succeed(promptStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(promptGate)),
+              ),
           }),
-        },
+        }),
+      },
+    });
+    const threadId = ThreadId.make(`thread-acp-${name}`);
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: process.cwd(),
+    });
+    const modelSelection = { instanceId, model: "default" } as const;
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make(`provider-session-acp-${name}`),
+      modelSelection,
+      runtimePolicy,
+    });
+    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+    yield* runtime.events.pipe(
+      Stream.runForEach((event) => Queue.offer(events, event)),
+      Effect.forkScoped,
+    );
+    const providerThread = yield* runtime.ensureThread({
+      threadId,
+      modelSelection,
+      runtimePolicy,
+    });
+    const turnInput = makeTurnInput({
+      threadId,
+      providerThread,
+      instanceId,
+      runtimePolicy,
+      now: yield* DateTime.now,
+    });
+    yield* runtime.startTurn(turnInput).pipe(Effect.forkScoped);
+    yield* Deferred.await(promptStarted);
+    assert.isDefined(sessionUpdateHandler);
+    assert.isDefined(taskCompleted);
+    const update = (update: EffectAcpSchema.SessionUpdate) =>
+      sessionUpdateHandler!({ sessionId: "mock-session-1", update });
+    const complete = (taskId: string, snapshot?: { output?: string; exit_code?: number }) =>
+      taskCompleted!({
+        sessionId: "mock-session-1",
+        update: { sessionUpdate: "task_completed", task_id: taskId, task_snapshot: snapshot },
       });
-      const threadId = ThreadId.make("thread-acp-grok-dev-server");
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: process.cwd(),
-      });
-      const modelSelection = { instanceId, model: "default" } as const;
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-acp-grok-dev-server"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-      yield* runtime.events.pipe(
-        Stream.runForEach((event) => Queue.offer(events, event)),
-        Effect.forkScoped,
-      );
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      yield* runtime
-        .startTurn(
-          makeTurnInput({
-            threadId,
-            providerThread,
-            instanceId,
-            runtimePolicy,
-            now: yield* DateTime.now,
-          }),
-        )
-        .pipe(Effect.forkScoped);
-      yield* Deferred.await(promptStarted);
-      assert.isDefined(sessionUpdateHandler);
-      const update = (update: EffectAcpSchema.SessionUpdate) =>
-        sessionUpdateHandler!({ sessionId: "mock-session-1", update });
+    const startDevServer = Effect.gen(function* () {
       yield* update({
         sessionUpdate: "tool_call",
         toolCallId: "call-dev-server",
@@ -9157,19 +9169,23 @@ describe("AcpAdapterV2", () => {
           command: "vp run dev",
         },
       });
-      yield* update({
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text: "The dev server is running." },
-      });
-
+    });
+    /** Settles the prompt and returns the dev server rows emitted up to the turn terminal. */
+    const settle = Effect.gen(function* () {
+      const rows: Array<OrchestrationV2TurnItem> = [];
       const takeTerminal = Effect.gen(function* () {
         while (true) {
           const event = yield* Queue.take(events);
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "call-dev-server"
+          )
+            rows.push(event.turnItem);
           if (event.type === "turn.terminal") return event.status;
         }
       });
       yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
-      const terminalStatus = yield* Effect.raceAll([
+      const status = yield* Effect.raceAll([
         takeTerminal,
         Deferred.await(finalizeScheduled).pipe(
           Effect.flatMap(TestClock.adjust),
@@ -9178,7 +9194,82 @@ describe("AcpAdapterV2", () => {
         // The hold never ends on its own, so report it instead of waiting forever.
         Deferred.await(promptHeld).pipe(Effect.as("held open by the background shell")),
       ]);
-      assert.equal(terminalStatus, "completed");
+      return { status, rows };
+    });
+    /** Dev server rows emitted before a usage update fences them. */
+    const takeRows = Effect.gen(function* () {
+      yield* update({ sessionUpdate: "usage_update", used: 10, size: 100 });
+      const rows: Array<OrchestrationV2TurnItem> = [];
+      while (true) {
+        const event = yield* Queue.take(events);
+        if (event.type === "provider_thread.updated") return rows;
+        if (
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "call-dev-server"
+        )
+          rows.push(event.turnItem);
+      }
+    });
+    return { update, complete, startDevServer, settle, takeRows, runId: turnInput.runId };
+  });
+
+  it.effect("completes a settled Grok turn while a background shell keeps running", () =>
+    Effect.gen(function* () {
+      const harness = yield* startGrokBackgroundShellTurn("grok-dev-server");
+      yield* harness.startDevServer;
+      yield* harness.update({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "The dev server is running." },
+      });
+      assert.equal((yield* harness.settle).status, "completed");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("keeps a streaming Grok background shell running on its run after settling", () =>
+    Effect.gen(function* () {
+      const harness = yield* startGrokBackgroundShellTurn("grok-dev-server-progress");
+      yield* harness.startDevServer;
+      // Progress replaces the BackgroundTaskStarted output that carried the task identity.
+      yield* harness.update({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-dev-server",
+        status: "in_progress",
+        rawOutput: { type: "Text", text: "VITE ready\n" },
+      });
+      const settled = yield* harness.settle;
+      assert.equal(settled.status, "completed");
+      assert.notInclude(
+        settled.rows.map((row) => row.status),
+        "completed",
+        "the running dev server was finalized as a foreground tool",
+      );
+
+      yield* harness.update({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-dev-server",
+        status: "in_progress",
+        rawOutput: { type: "Text", text: "VITE ready\nhmr update\n" },
+      });
+      yield* harness.complete("call-dev-server", { exit_code: 0, output: "DEV_SERVER_DONE\n" });
+      const row = (yield* harness.takeRows).at(-1);
+      assert.equal(row?.status, "completed");
+      assert.equal(row?.runId, harness.runId);
+      assert.equal(row?.type === "command_execution" ? row.output : undefined, "DEV_SERVER_DONE\n");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("applies a richer Grok background shell failure after a sparse completion", () =>
+    Effect.gen(function* () {
+      const harness = yield* startGrokBackgroundShellTurn("grok-dev-server-failure");
+      yield* harness.startDevServer;
+      assert.equal((yield* harness.settle).status, "completed");
+
+      yield* harness.complete("call-dev-server");
+      yield* harness.complete("call-dev-server", { exit_code: 1, output: "EADDRINUSE\n" });
+      const row = (yield* harness.takeRows).at(-1);
+      assert.equal(row?.status, "failed");
+      assert.equal(row?.runId, harness.runId);
+      assert.equal(row?.type === "command_execution" ? row.output : undefined, "EADDRINUSE\n");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
