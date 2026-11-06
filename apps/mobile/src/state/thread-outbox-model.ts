@@ -175,6 +175,22 @@ export function threadOutboxRetryDelayMs(attempt: number): number {
 
 export type ThreadOutboxDeliveryAction = "wait" | "remove" | "send";
 
+/**
+ * Whether a delivered send hands the composer's model pick back to the thread: only a new turn,
+ * which Nadir may route. An "auto" send into an active run steers it and keeps the model.
+ */
+export function releasesComposerModelPick(input: {
+  readonly nadirRouting: boolean;
+  readonly dispatchMode: ComposerDispatchMode | undefined;
+  readonly activeRunId: string | null;
+}): boolean {
+  return (
+    input.nadirRouting &&
+    (input.dispatchMode === undefined || input.dispatchMode === "auto") &&
+    input.activeRunId === null
+  );
+}
+
 export function resolveThreadOutboxDeliveryAction(input: {
   readonly isCreation: boolean;
   readonly threadExists: boolean;

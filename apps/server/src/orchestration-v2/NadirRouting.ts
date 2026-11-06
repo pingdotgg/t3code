@@ -25,7 +25,8 @@ import * as ServerSettings from "../serverSettings.ts";
 /**
  * Nadir routing: before a user's turn starts, ask Nadir (getnadir.com) which model from the
  * selected provider instance's menu should run it, and run that one. The model the user picked
- * stays the ceiling: Nadir never routes above it. Any failure keeps the user's pick.
+ * stays the ceiling: Nadir never routes above it unless the user's Nadir organization pins a
+ * model. Any failure keeps the user's pick.
  */
 
 const NADIR_BUCKET_URL = "https://api.getnadir.com/v1/bucket";
@@ -38,6 +39,9 @@ const failureKind = (cause: unknown): string =>
   typeof cause === "object" && cause !== null && "_tag" in cause && typeof cause._tag === "string"
     ? cause._tag
     : "unknown";
+
+// A retry arrives within moments of its first attempt; older decisions are not needed.
+const MAX_REMEMBERED_DECISIONS = 1_000;
 
 const Ceiling = Schema.Struct({ baseline: ModelSelection, chosen: ModelSelection });
 type Ceiling = typeof Ceiling.Type;
@@ -54,6 +58,9 @@ export class NadirCeilings extends Context.Service<
     readonly save: (threadId: string, ceiling: Ceiling | undefined) => Effect.Effect<void>;
     /** Holds one turn's read, Nadir call and write at a time for each thread. */
     readonly lock: (threadId: string) => Semaphore.Semaphore;
+    /** The selection a command already got, so a retry of it gets the same one. */
+    readonly decided: (commandId: string) => ModelSelection | undefined;
+    readonly decide: (commandId: string, selection: ModelSelection) => void;
   }
 >()("t3/orchestration-v2/NadirRouting/NadirCeilings") {}
 
@@ -65,6 +72,7 @@ export const layerCeilingsFromStore = Layer.effect(
     const store = KeyValueStore.toSchemaStore(yield* KeyValueStore.KeyValueStore, Ceiling);
     const memory = new Map<string, Ceiling | undefined>();
     const locks = new Map<string, Semaphore.Semaphore>();
+    const decisions = new Map<string, ModelSelection>();
     return {
       get: Effect.fn("NadirCeilings.get")(function* (threadId: string) {
         if (memory.has(threadId)) return Option.fromUndefinedOr(memory.get(threadId));
@@ -93,6 +101,14 @@ export const layerCeilingsFromStore = Layer.effect(
           locks.set(threadId, lock);
         }
         return lock;
+      },
+      decided: (commandId) => decisions.get(commandId),
+      decide: (commandId, selection) => {
+        decisions.set(commandId, selection);
+        if (decisions.size > MAX_REMEMBERED_DECISIONS) {
+          const oldest = decisions.keys().next().value;
+          if (oldest !== undefined) decisions.delete(oldest);
+        }
       },
     };
   }),
@@ -292,6 +308,8 @@ const askNadir = Effect.fn("NadirRouting.askNadir")(function* (
 export const chooseModelSelection = Effect.fn("NadirRouting.chooseModelSelection")(
   function* (input: {
     readonly threadId: string;
+    /** A retried command reuses its first decision instead of asking Nadir again. */
+    readonly commandId?: string | undefined;
     readonly text: string;
     readonly selection: ModelSelection;
     readonly cache?: NadirCacheState | undefined;
@@ -311,6 +329,8 @@ export const chooseModelSelection = Effect.fn("NadirRouting.chooseModelSelection
     const store = ceilings.value;
     return yield* store.lock(input.threadId).withPermits(1)(
       Effect.gen(function* () {
+        const earlier = input.commandId === undefined ? undefined : store.decided(input.commandId);
+        if (earlier !== undefined) return earlier;
         const baseline = yield* baselineFor(store, input.threadId, input.selection);
         const text = input.text.trim();
         const judgeable =
@@ -345,6 +365,7 @@ export const chooseModelSelection = Effect.fn("NadirRouting.chooseModelSelection
         const chosen =
           model === baseline.model ? baseline : routedSelection(baseline, model, provider);
         yield* rememberChoice(store, input.threadId, baseline, chosen);
+        if (input.commandId !== undefined) store.decide(input.commandId, chosen);
         if (model !== baseline.model) {
           yield* Effect.logInfo("Nadir routed turn", { from: baseline.model, to: model });
         }

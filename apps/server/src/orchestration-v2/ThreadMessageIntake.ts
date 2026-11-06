@@ -108,10 +108,12 @@ const withNadirModel = Effect.fn("ThreadMessageIntake.withNadirModel")(function*
   // A retried command replays its first receipt; routing again would record a model it never ran.
   const receipts = yield* Effect.serviceOption(CommandReceiptStore.CommandReceiptStoreV2);
   if (Option.isSome(receipts)) {
-    const prior = yield* receipts.value
-      .getByCommandId(command.commandId)
-      .pipe(Effect.orElseSucceed(() => Option.none()));
-    if (Option.isSome(prior)) return command;
+    // A lookup that fails cannot rule a replay out, so the turn keeps its model.
+    const replayed = yield* receipts.value.getByCommandId(command.commandId).pipe(
+      Effect.map(Option.isSome),
+      Effect.orElseSucceed(() => true),
+    );
+    if (replayed) return command;
   }
   const threads = yield* ThreadManagement.ThreadManagementService;
   const shell = yield* threads
@@ -130,6 +132,7 @@ const withNadirModel = Effect.fn("ThreadMessageIntake.withNadirModel")(function*
   const selection = command.modelSelection ?? shell.modelSelection;
   const chosen = yield* NadirRouting.chooseModelSelection({
     threadId: command.threadId,
+    commandId: command.commandId,
     text: command.text,
     selection,
     cache:

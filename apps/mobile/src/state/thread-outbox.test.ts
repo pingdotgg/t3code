@@ -79,6 +79,7 @@ import {
   decodeQueuedThreadMessage,
   encodeQueuedThreadMessage,
   isQueuedThreadCreationSendable,
+  releasesComposerModelPick,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxDispatchStep,
   resolveThreadOutboxFailureAction,
@@ -1094,6 +1095,17 @@ describe("thread outbox", () => {
         serverConfig: { maxFileUploadBytes: 1024 * 1024 },
       }),
     ).toEqual({ step: "send" });
+  });
+
+  it("hands the model pick back only after a new turn Nadir may route", () => {
+    const newTurn = { nadirRouting: true, dispatchMode: "auto", activeRunId: null } as const;
+    expect(releasesComposerModelPick(newTurn)).toBe(true);
+    expect(releasesComposerModelPick({ ...newTurn, dispatchMode: undefined })).toBe(true);
+    // An "auto" send into an active run steers it, and the pick is still the next turn's.
+    expect(releasesComposerModelPick({ ...newTurn, activeRunId: "run-active" })).toBe(false);
+    expect(releasesComposerModelPick({ ...newTurn, dispatchMode: "queue" })).toBe(false);
+    expect(releasesComposerModelPick({ ...newTurn, dispatchMode: "steer" })).toBe(false);
+    expect(releasesComposerModelPick({ ...newTurn, nadirRouting: false })).toBe(false);
   });
 
   it("only removes a missing-thread message after shell synchronization is live", () => {

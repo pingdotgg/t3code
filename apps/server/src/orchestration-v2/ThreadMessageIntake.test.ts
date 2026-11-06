@@ -539,9 +539,11 @@ describe("Nadir routing at intake", () => {
             }),
             Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({
               getByCommandId: (commandId) =>
-                Effect.succeed(
-                  commandId === "send-replayed" ? Option.some({} as never) : Option.none(),
-                ),
+                commandId === "send-lookup-fails"
+                  ? Effect.fail({} as never)
+                  : Effect.succeed(
+                      commandId === "send-replayed" ? Option.some({} as never) : Option.none(),
+                    ),
             }),
             Layer.succeed(
               HttpClient.HttpClient,
@@ -612,12 +614,30 @@ describe("Nadir routing at intake", () => {
           null,
         ],
         ["a retried command", send({ commandId: CommandId.make("send-replayed") }), null],
+        [
+          "a receipt lookup that fails",
+          send({ commandId: CommandId.make("send-lookup-fails") }),
+          null,
+        ],
         ["a send during a run", send(), RunId.make("run-active")],
       ];
       for (const [label, command, activeRunId] of unrouted) {
         const result = yield* run(dispatchCommand(command), activeRunId);
         expect(result, label).toEqual({ requests: 0, dispatched: [undefined] });
       }
+    }).pipe(Effect.provide(layerIntakeTest)),
+  );
+
+  it.effect("asks Nadir once for a command retried while its first attempt routes", () =>
+    Effect.gen(function* () {
+      const twice = Effect.all([dispatchCommand(send()), dispatchCommand(send())], {
+        concurrency: "unbounded",
+        mode: "result",
+      });
+      expect(yield* run(twice, null)).toEqual({
+        requests: 1,
+        dispatched: ["claude-haiku-5-5", "claude-haiku-5-5"],
+      });
     }).pipe(Effect.provide(layerIntakeTest)),
   );
 

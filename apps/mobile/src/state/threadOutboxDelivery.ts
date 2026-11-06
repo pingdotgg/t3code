@@ -59,6 +59,7 @@ import {
 import { removeThreadOutboxMessage } from "./thread-outbox-removal";
 import {
   isQueuedThreadCreationSendable,
+  releasesComposerModelPick,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxDispatchStep,
   resolveThreadOutboxFailureAction,
@@ -949,9 +950,12 @@ export function createThreadOutboxDelivery(): {
     acknowledgedExistingThreadMessageIds.add(persistedMessage.messageId);
     // Nadir may run a new turn on another model; the picker then shows the one that ran.
     if (
-      currentConfig.settings?.nadirRouting === true &&
-      (queuedMessage.dispatchMode === undefined || queuedMessage.dispatchMode === "auto") &&
-      sendSettings.modelSelection !== undefined
+      sendSettings.modelSelection !== undefined &&
+      releasesComposerModelPick({
+        nadirRouting: currentConfig.settings?.nadirRouting === true,
+        dispatchMode: queuedMessage.dispatchMode,
+        activeRunId: thread.runtime?.activeRunId ?? null,
+      })
     ) {
       releaseComposerModelPick(
         scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId),
