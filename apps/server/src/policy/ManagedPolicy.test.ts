@@ -191,6 +191,10 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
         "config.commandArgs",
         "environment",
       ]);
+      assert.deepEqual(providers?.lockedInstanceFields?.[ProviderDriverKind.make("zeroclaw")], [
+        "config.socketPath",
+        "environment",
+      ]);
       // The host variable that replaces Codex's launch arguments is ignored too.
       const host = { PATH: "/usr/bin", T3CODE_CODEX_LAUNCH_ARGS: "-c mcp_servers.x.command=sh" };
       assert.deepEqual(providerHostEnvironment(policy.summary, host), { PATH: "/usr/bin" });
@@ -324,6 +328,43 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
           opencodePinned.summary?.limits?.providers?.lockedInstanceFields?.[opencode] ?? [],
           "config.serverUrl",
         );
+        const zeroclaw = ProviderDriverKind.make("zeroclaw");
+        const zeroclawId = ProviderInstanceId.make("zeroclaw");
+        for (const maxRuntimeMode of [undefined, "auto-accept-edits"] as const) {
+          const socketPolicy = yield* ManagedPolicy.fromDocument("/test/policy.json", {
+            schemaVersion: 1,
+            organization: "Example Corp",
+            limits: {
+              ...(maxRuntimeMode === undefined ? {} : { maxRuntimeMode }),
+              providers: {
+                instances: {
+                  [zeroclaw]: {
+                    locked: true,
+                    environment: [{ name: "ZEROCLAW_SOCKET", value: "/opt/zeroclaw.sock" }],
+                  },
+                },
+              },
+            },
+          });
+          const overridden = {
+            ...DEFAULT_SERVER_SETTINGS,
+            providerInstances: {
+              [zeroclawId]: { driver: zeroclaw, config: { socketPath: "/tmp/other.sock" } },
+            },
+          };
+          assert.deepEqual(
+            socketPolicy.providers.applyLimits(overridden).providerInstances[zeroclawId]?.config,
+            {},
+          );
+          assert.deepEqual(socketPolicy.providers.vetWrite(DEFAULT_SERVER_SETTINGS, overridden), {
+            _tag: "Locked",
+            path: "providerInstances.zeroclaw.config.socketPath",
+          });
+          assert.include(
+            socketPolicy.summary?.limits?.providers?.lockedInstanceFields?.[zeroclaw] ?? [],
+            "config.socketPath",
+          );
+        }
         // The same override from the environment that starts the server is ignored too.
         const host = { PATH: "/usr/bin", T3CODE_CODEX_LAUNCH_ARGS: "--yolo" };
         assert.deepEqual(providerHostEnvironment((yield* policyOn("linux")).summary, host), {

@@ -67,6 +67,7 @@ const PIN_BYPASS_FIELDS: ReadonlyMap<
 > = new Map<ProviderDriverKind, Readonly<Record<string, unknown>>>([
   [ProviderDriverKind.make("codex"), { setupMode: "existing" }],
   [ProviderDriverKind.make("opencode"), { serverUrl: "" }],
+  [ProviderDriverKind.make("zeroclaw"), { socketPath: "" }],
 ]);
 
 /** Drivers this build knows, by the names users see; a policy naming any other is refused. */
@@ -99,6 +100,7 @@ const LAUNCH_CONFIG_FIELDS = [
   "commandPath",
   "commandArgs",
   "serverUrl",
+  "socketPath",
 ] as const;
 
 export type ProviderWriteVerdict =
