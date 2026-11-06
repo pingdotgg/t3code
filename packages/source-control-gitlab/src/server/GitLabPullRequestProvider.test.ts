@@ -531,6 +531,7 @@ describe("optional activity reads", () => {
         checks: [],
         viewerCanMerge: true,
         reviewerIds: [],
+        reviewerUsers: [],
       }),
     listNotes: () => Effect.succeed({ comments: [comment], truncated: false }),
     listCommits: () => Effect.succeed([commit]),
@@ -772,6 +773,7 @@ describe("review decisions", () => {
     checks: [],
     viewerCanMerge: true,
     reviewerIds: [],
+    reviewerUsers: [],
   };
   const providerWith = (
     getReviewDecisions: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["getReviewDecisions"],
