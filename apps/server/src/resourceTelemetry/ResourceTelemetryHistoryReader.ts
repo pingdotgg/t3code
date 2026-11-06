@@ -26,6 +26,8 @@ export const readResourceTelemetryHistory = Effect.fn("ResourceTelemetry.aggrega
     const output = yield* Effect.tryPromise({
       try: (signal) =>
         new Promise<string>((resolve, reject) => {
+          let pipeComplete = Promise.resolve();
+          let pipeFailure: unknown;
           const worker = NodeChildProcess.execFile(
             executable,
             [...(isExecutable ? [] : [entry]), "__resource-telemetry-history"],
@@ -38,7 +40,13 @@ export const readResourceTelemetryHistory = Effect.fn("ResourceTelemetry.aggrega
               windowsHide: true,
               env: { ...environment, ELECTRON_RUN_AS_NODE: "1" },
             },
-            (error, stdout) => (error ? reject(error) : resolve(stdout)),
+            (error, stdout, stderr) => {
+              void pipeComplete.then(() => {
+                if (error) reject(Object.assign(error, { stderr }));
+                else if (pipeFailure !== undefined) reject(pipeFailure);
+                else resolve(stdout);
+              });
+            },
           );
           function* chunks() {
             yield encodeHistoryMetadata(input).slice(0, -1) + ',"snapshots":[';
@@ -48,12 +56,13 @@ export const readResourceTelemetryHistory = Effect.fn("ResourceTelemetry.aggrega
             yield "]}";
           }
           // Pipe backpressure bounds serialization work instead of stringifying all retained records at once.
-          void NodeStreamPromises.pipeline(NodeStream.Readable.from(chunks()), worker.stdin!).catch(
-            (cause) => {
-              worker.kill();
-              reject(cause);
-            },
-          );
+          pipeComplete = NodeStreamPromises.pipeline(
+            NodeStream.Readable.from(chunks()),
+            worker.stdin!,
+          ).catch((cause) => {
+            pipeFailure = cause;
+            worker.kill();
+          });
         }),
       catch: (cause) => new HistoryAggregationError({ cause }),
     });
