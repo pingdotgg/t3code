@@ -6,11 +6,13 @@ import {
   type MessageId,
   type OrchestrationV2SideChatAnchor,
   type OrchestrationV2SideChatOpening,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import {
   splitsSurrogatePair,
   truncateGraphemes,
 } from "@t3tools/provider-core/server/textGenerationUtils";
+import { summarizeTurnItems } from "../ContextHandoffService.ts";
 
 const ELLIPSIS = "…";
 const MARKDOWN_MARKER = /[*_`]/;
@@ -421,6 +423,8 @@ export function readySideChatSummary(opening: OrchestrationV2SideChatOpening): s
 }
 
 const SUMMARY_HEADER = "Summary of the lesson so far:";
+const BUSY_LESSON_DIGEST_MAX_CHARS = 4_000;
+const BUSY_LESSON_HEADER = "The lesson is still answering. So far:";
 
 /** A lesson summary that was not ready for the opening context, sent on its own later. */
 export function buildSideChatLateSummaryText(summary: string): string {
@@ -443,10 +447,18 @@ export function buildSideChatOpeningSummaryText(input: {
   readonly embedTitle?: string | undefined;
   readonly lessonTopic: string | null;
   readonly parentOpeningText: string | null;
+  readonly runningTurnItems?: ReadonlyArray<OrchestrationV2TurnItem> | null;
   readonly sideChatInstructions?: string;
 }): string {
-  const { opening, excerpt, excerptContext, lessonTopic, parentOpeningText, sideChatInstructions } =
-    input;
+  const {
+    opening,
+    excerpt,
+    excerptContext,
+    lessonTopic,
+    parentOpeningText,
+    runningTurnItems,
+    sideChatInstructions,
+  } = input;
   const sections = [sideChatOpeningFraming(sideChatInstructions)];
   if (parentOpeningText !== null) {
     sections.push(`Context from the side chat this one was opened from:\n${parentOpeningText}`);
@@ -455,6 +467,16 @@ export function buildSideChatOpeningSummaryText(input: {
   sections.push(
     summary === null ? lessonSummaryUnavailable(lessonTopic) : `${SUMMARY_HEADER}\n${summary}`,
   );
+  if (runningTurnItems !== undefined && runningTurnItems !== null) {
+    const truncated = "- Earlier items truncated.";
+    const { lines, omitted } = summarizeTurnItems(
+      runningTurnItems,
+      BUSY_LESSON_DIGEST_MAX_CHARS - [BUSY_LESSON_HEADER, truncated].join("\n").length,
+    );
+    if (lines.length > 0) {
+      sections.push([BUSY_LESSON_HEADER, ...(omitted ? [truncated] : []), ...lines].join("\n"));
+    }
+  }
   sections.push(
     referenceBlock(
       input.embedTitle === undefined

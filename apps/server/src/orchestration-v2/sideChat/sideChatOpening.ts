@@ -244,10 +244,20 @@ export const loadSideChatOpeningSources = Effect.fn("loadSideChatOpeningSources"
       : ((yield* projectionStore.getThreadRecords(sideChat.lessonThreadId, ["messages"], {
           messageRoles: ["user"],
         })).messages[0]?.text ?? null);
+  const activeRuns = yield* projectionStore.getThreadRecords(sideChat.lessonThreadId, ["runs"], {
+    runStatuses: ["preparing", "starting", "running", "waiting"],
+  });
+  const runningRun = activeRuns.runs.at(-1);
+  const runningTurnItems =
+    runningRun === undefined
+      ? null
+      : (yield* projectionStore.getThreadRecords(sideChat.lessonThreadId, ["turnItems"], {
+          turnItemRunId: runningRun.id,
+        })).turnItems;
   const parentOpeningText =
     sideChat.anchor.threadId === sideChat.lessonThreadId
       ? null
       : ((yield* projectionStore.getThreadRecords(sideChat.anchor.threadId, [])).thread.sideChat
           ?.opening.text ?? null);
-  return { lessonTopic, parentOpeningText };
+  return { lessonTopic, parentOpeningText, runningTurnItems };
 });

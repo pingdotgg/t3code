@@ -1552,7 +1552,9 @@ export const layer: Layer.Layer<
               threadId: projection.thread.id,
               runId,
               error,
-            }).pipe(Effect.as({ lessonTopic: null, parentOpeningText: null })),
+            }).pipe(
+              Effect.as({ lessonTopic: null, parentOpeningText: null, runningTurnItems: null }),
+            ),
           ),
         );
         lessonSideChatSettings = yield* loadLessonSideChatSettings();

@@ -20,6 +20,8 @@ Preconditions: a lesson with a finished assistant reply (the QA lesson `Replay: 
 - **Selection.** Select a fresh phrase with the SKILL.md `select` snippet (`SCOPE = '[aria-label="Conversation"]'`), then `preview_click` `role=button[name='Ask in side chat']`. The `Side chat` region opens; `[aria-label="Side chat path"]` reads `Lesson > <phrase>` and the panel asks `What do you want to know about “<phrase>”?`.
 - **Shortcut.** Select another fresh phrase, blur the composer (`document.activeElement.blur()` in the same snippet), then `preview_press` `s` with modifiers `["Control","Alt"]` (`Meta` on macOS). The path reads `Lesson > <new phrase>`.
 - **Proof.** `preview_snapshot` with `save: true`; copy the PNG into the evidence directory.
+- **Busy lesson.** With a Haiku check, open a side chat while the lesson is answering and confirm its
+  opening prompt includes `The lesson is still answering. So far:` and a line from the running turn.
 
 ## Gotchas
 
