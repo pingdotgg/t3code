@@ -62,6 +62,8 @@ import {
   GROK_MODEL_SELECTION,
 } from "./fixtures/shared.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
+import { withInlineContext } from "../ContextHandoffDelivery.ts";
+import { providerSwitchNote } from "../ProviderTurnStartService.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -1024,9 +1026,10 @@ describe("orchestration v2 provider switching", () => {
             const text = (yield* Ref.get(capturedTurns)).at(-1)!.text;
             if (
               scenario === "large-current-input" ||
-              scenario === "screenshot-reported-capacity-native"
+              scenario === "screenshot-reported-capacity-native" ||
+              scenario === "screenshot-option-change-retry-native"
             ) {
-              assert.match(text, /^Note: the user moved this thread /);
+              assert.match(text, /^Note: this thread now runs on /);
               assert.isTrue(text.endsWith(`\n\nUser message:\n${current}`));
             } else {
               assert.equal(text, current);
@@ -1179,7 +1182,14 @@ describe("orchestration v2 provider switching", () => {
             yield* wait(3, "completed");
             const retried = yield* orchestrator.getThreadProjection(threadId);
             const lastTurn = (yield* Ref.get(capturedTurns)).at(-1)!;
-            assert.equal(lastTurn.text, retryText);
+            // The failed target turn never reached the provider, so the retry carries the note.
+            assert.equal(
+              lastTurn.text,
+              withInlineContext(
+                providerSwitchNote({ id: "codex" }, { id: "claudeAgent" }),
+                retryText,
+              ),
+            );
             if (failure !== "injection" && failure !== "exhausted-target-retry") {
               const delta = yield* encodeJson(
                 (yield* Ref.get(injectedHistory)).slice(historyBeforeRetry),
@@ -1760,7 +1770,7 @@ describe("orchestration v2 provider switching", () => {
           if (native) {
             assert.match(
               delivered.text,
-              /^Note: the user moved this thread .+\n\nUser message:\nContinue$/s,
+              /^Note: this thread now runs on .+\n\nUser message:\nContinue$/s,
             );
             assert.notInclude(deliveredHistory, '"text":"Continue"');
             assert.include(deliveredHistory, '"role":"assistant"');
@@ -2264,6 +2274,27 @@ describe("orchestration v2 provider switching", () => {
                 occurredAt: now,
                 payload: { ...queued.runs[0]!, status: "completed", completedAt: now },
               },
+              // A real provider records its turn; the held fixture turn stops before that.
+              {
+                id: EventId.make("event:queued-account-switch:first-turn"),
+                type: "provider-turn.updated",
+                threadId: queuedThreadId,
+                runId: queued.runs[0]!.id,
+                nodeId: queued.runs[0]!.rootNodeId!,
+                providerInstanceId: CODEX_MODEL_SELECTION.instanceId,
+                occurredAt: now,
+                payload: {
+                  id: ProviderTurnId.make("provider-turn:queued-account-switch:first"),
+                  providerThreadId: queued.runs[0]!.providerThreadId!,
+                  nodeId: queued.runs[0]!.rootNodeId!,
+                  runAttemptId: queued.runs[0]!.activeAttemptId,
+                  nativeTurnRef: null,
+                  ordinal: 1,
+                  status: "completed",
+                  startedAt: now,
+                  completedAt: now,
+                },
+              },
             ],
           });
           yield* orchestrator.resumeQueuedRuns;
@@ -2314,8 +2345,115 @@ describe("orchestration v2 provider switching", () => {
           (yield* Ref.get(capturedTurns)).map((turn) => turn.text),
           [
             "First account turn",
-            "Note: the user moved this thread from `codex` to `codex-alternate`. Earlier provider choices and usage limits in this conversation may be out of date. To keep subagents on `codex-alternate`, leave `providerInstanceId` unset.\n\nUser message:\nAlternate account turn",
+            "Note: this thread now runs on `codex-alternate`, switched by the user from `codex`.\n\nUser message:\nAlternate account turn",
           ],
+        );
+      }),
+    ),
+  );
+
+  it.live("keeps the account switch note pending after a refused prompt", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("refused-account-switch");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const refuseStarts = yield* Ref.make(0);
+        const alternateSelection: ModelSelection = {
+          ...CLAUDE_MODEL_SELECTION,
+          instanceId: ProviderInstanceId.make("claude-alternate"),
+        };
+        const adapters = [CLAUDE_MODEL_SELECTION, alternateSelection].map((modelSelection) =>
+          makeTestAdapter({
+            instanceId: modelSelection.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            refuseStarts,
+          }),
+        );
+        const layerRegistry = Layer.succeed(
+          ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+          ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
+            get: (instanceId) =>
+              Effect.succeed(adapters.find((adapter) => adapter.instanceId === instanceId)!),
+            list: () => Effect.succeed(adapters.map((adapter) => adapter.instanceId)),
+            getMetadata: () =>
+              Effect.succeed({
+                driver: CLAUDE_DRIVER,
+                continuationKey: "claude:shared-native-account-history",
+                enabled: true,
+                capabilities: ClaudeProviderCapabilitiesV2,
+              }),
+          }),
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const run = Effect.fn("run")(function* (ordinal: number, modelSelection: ModelSelection) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`refused-account-switch:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`refused-account-switch:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text: `Request ${ordinal}`,
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+            return (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status;
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("refused-account-switch:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Refused account switch",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          assert.equal(yield* run(1, CLAUDE_MODEL_SELECTION), "completed");
+          yield* Ref.set(refuseStarts, 1);
+          assert.equal(yield* run(2, alternateSelection), "failed");
+          assert.equal(yield* run(3, alternateSelection), "completed");
+          const turns = yield* Ref.get(capturedTurns);
+          assert.lengthOf(turns, 2);
+          assert.include(
+            turns[1]!.text,
+            "Note: this thread now runs on `claude-alternate`, switched by the user from `claudeAgent`.",
+          );
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "refused-account-switch",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
         );
       }),
     ),

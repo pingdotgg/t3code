@@ -50,6 +50,7 @@ import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
+import { providerSwitchNote } from "../../apps/server/src/orchestration-v2/ProviderTurnStartService.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
@@ -319,6 +320,13 @@ export const McpToolUseCase = Schema.Struct({
     /** The thread is a side chat's first turn: T3 puts the parent's digest ahead of `prompt`. */
     sideChat: Schema.optional(
       Schema.Struct({ parentThreadId: Schema.String, digest: Schema.Array(Schema.String) }),
+    ),
+    /** The user moved the thread to another provider instance: T3 notes it ahead of `prompt`. */
+    providerSwitch: Schema.optional(
+      Schema.Struct({
+        from: Schema.Struct({ id: Schema.String, displayName: Schema.optional(Schema.String) }),
+        to: Schema.Struct({ id: Schema.String, displayName: Schema.optional(Schema.String) }),
+      }),
     ),
   }),
   /** Empty to resume a top-level thread without side-chat context after its last tool result. */
@@ -1021,8 +1029,13 @@ export const buildMessages = (sample: Sample) => {
     testCase.promptContext === undefined
       ? testCase.prompt
       : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
-  const prompt =
-    sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
+  const providerSwitch = testCase.setup.providerSwitch;
+  const prompt = withInlineContext(
+    [sideChatContext, providerSwitch && providerSwitchNote(providerSwitch.from, providerSwitch.to)]
+      .filter((part) => part !== undefined)
+      .join("\n\n"),
+    userText,
+  );
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
   if (testCase.prompt !== "")
     push("user", text(role === "delegated-child" ? childPrompt() : prompt));

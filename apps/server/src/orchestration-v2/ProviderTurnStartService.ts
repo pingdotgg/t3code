@@ -14,7 +14,6 @@ import {
   parseGoalCommand,
   type ProviderInstanceId,
   RunId,
-  type ServerSettings as ServerSettingsValue,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -119,16 +118,11 @@ const refusedBeforePrompt = (error: unknown): boolean =>
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
 // A same-driver account switch resumes the native conversation, so nothing else tells the agent.
-export const providerSwitchNote = (
-  instances: ServerSettingsValue["providerInstances"],
-  from: ProviderInstanceId,
-  to: ProviderInstanceId,
-): string => {
-  const name = (id: ProviderInstanceId) => {
-    const displayName = instances[id]?.displayName;
-    return displayName === undefined ? `\`${id}\`` : `${displayName} (\`${id}\`)`;
-  };
-  return `Note: the user moved this thread from ${name(from)} to ${name(to)}. Earlier provider choices and usage limits in this conversation may be out of date. To keep subagents on ${name(to)}, leave \`providerInstanceId\` unset.`;
+type NamedInstance = { readonly id: string; readonly displayName?: string | undefined };
+export const providerSwitchNote = (from: NamedInstance, to: NamedInstance): string => {
+  const name = ({ id, displayName }: NamedInstance) =>
+    displayName === undefined ? `\`${id}\`` : `${displayName} (\`${id}\`)`;
+  return `Note: this thread now runs on ${name(to)}, switched by the user from ${name(from)}.`;
 };
 
 export interface ProviderTurnStartServiceV2Shape {
@@ -898,11 +892,13 @@ export const layer: Layer.Layer<
           .filter((source) => !commandMessageIds.has(source.userMessageId))
           .map((source) => [source.id, source.ordinal]),
       );
+      // Only a provider turn proves the prompt arrived; a refused prompt keeps the note pending.
+      const acceptedAttemptIds = new Set(projection.providerTurns.map((turn) => turn.runAttemptId));
       const previousAttempt = projection.attempts
         .filter(
           (source) =>
             source.id !== attempt.id &&
-            source.startedAt !== null &&
+            acceptedAttemptIds.has(source.id) &&
             (promptedRuns.get(source.runId) ?? Infinity) <= run.ordinal,
         )
         .toSorted(
@@ -911,18 +907,19 @@ export const layer: Layer.Layer<
             a.attemptOrdinal - b.attemptOrdinal,
         )
         .at(-1);
+      const instances = yield* serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.providerInstances),
+        Effect.orElseSucceed(() => undefined),
+      );
+      const named = (id: ProviderInstanceId) => ({ id, displayName: instances?.[id]?.displayName });
       const switchNote =
         commandMessageIds.has(message.id) ||
         previousAttempt === undefined ||
         previousAttempt.providerInstanceId === run.providerInstanceId
           ? ""
           : providerSwitchNote(
-              yield* serverSettings.getSettings.pipe(
-                Effect.map((settings) => settings.providerInstances),
-                Effect.orElseSucceed(() => ({})),
-              ),
-              previousAttempt.providerInstanceId,
-              run.providerInstanceId,
+              named(previousAttempt.providerInstanceId),
+              named(run.providerInstanceId),
             );
       const turnNote = [
         restartCancelledWork.length === 0

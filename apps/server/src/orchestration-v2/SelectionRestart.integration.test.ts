@@ -991,7 +991,7 @@ it.live.each(["active", "idle", "selection-command", "pooled", "separate-home"] 
             { instanceId: targetId, nativeId: originalThread.nativeThreadRef?.nativeId },
           ]);
           const switched = (from: typeof targetId, to: typeof targetId, text: string) =>
-            withInlineContext(providerSwitchNote({}, from, to), text);
+            withInlineContext(providerSwitchNote({ id: from }, { id: to }), text);
           assert.deepEqual(messages, ["first", switched(providerInstanceId, targetId, "second")]);
           assert.equal((yield* Ref.get(state)).closedSessionCount, mode === "pooled" ? 0 : 1);
           if (mode === "pooled") {
