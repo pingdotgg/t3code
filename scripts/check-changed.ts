@@ -108,7 +108,14 @@ const CacheEntry = Schema.fromJsonString(
 const decodeCacheEntry = Schema.decodeEffect(CacheEntry);
 const encodeCacheEntry = Schema.encodeEffect(CacheEntry);
 const decodeRootPackageJson = Schema.decodeEffect(
-  Schema.fromJsonString(Schema.Struct({ scripts: Schema.Struct({ "knip:check": Schema.String }) })),
+  Schema.fromJsonString(
+    Schema.Struct({
+      scripts: Schema.Struct({
+        "knip:check:files": Schema.String,
+        "knip:check:exports": Schema.String,
+      }),
+    }),
+  ),
 );
 
 const collectBytes = (stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>) =>
@@ -370,14 +377,16 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   const runKnip = files.some(
     (file) => CODE.test(file) || path.basename(file) === "package.json" || file === "knip.jsonc",
   );
-  // CI runs knip:check as one script of `knip ... && knip ...` passes. The passes
+  // CI runs knip:check as a task that depends on one script per pass. The passes
   // do not depend on each other, so they run side by side here.
   const rootPackage = yield* fs
     .readFileString(inRoot("package.json"))
     .pipe(Effect.flatMap(decodeRootPackageJson), Effect.orDie);
-  const knipCheck = rootPackage.scripts["knip:check"];
   const knipPasses: Array<Array<string>> = [];
-  for (const command of knipCheck.split(" && ")) {
+  for (const command of [
+    rootPackage.scripts["knip:check:files"],
+    rootPackage.scripts["knip:check:exports"],
+  ]) {
     const [bin, ...args] = command.trim().split(/\s+/);
     if (bin !== "knip" || /["'$\\|;&<>]/.test(command)) {
       return yield* Effect.fail(`check:changed cannot split knip:check: ${command}`);
