@@ -1,3 +1,4 @@
+import { isCommitSha, normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
@@ -44,11 +45,15 @@ import {
   type PullRequestPreview,
 } from "@t3tools/contracts";
 
+import * as GitHubAppAccess from "./GitHubAppAccess.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
 import { PullRequestBatchesGraphQLGroup } from "./pullRequestBatches.graphql.ts";
-import { PullRequestMutationsGraphQLGroup } from "./pullRequestMutations.graphql.ts";
+import {
+  PullRequestMutationsGraphQLGroup,
+  type PullRequestActionSummary,
+} from "./pullRequestMutations.graphql.ts";
 import { PullRequestReadsGraphQLGroup } from "./pullRequestReads.graphql.ts";
 import { PullRequestReviewsGraphQLGroup } from "./pullRequestReviews.graphql.ts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
@@ -67,11 +72,11 @@ import {
   LenientPullRequestSearch,
   pageRows,
   pullRequestLookup,
-  toActorAvatars,
   toLabelCandidates,
   toRepositoryAuthors,
   toRepositoryLabels,
   toPullRequestActivityPage,
+  toPullRequestActionSummary,
   toPullRequestCommitStats,
   toPullRequestCheckContextsPage,
   toPullRequestCore,
@@ -136,19 +141,6 @@ export class GitHubViewerLoginUnavailableError extends Schema.TaggedError<GitHub
 ) {
   override get message(): string {
     return "GitHub returned no login for the authenticated account.";
-  }
-}
-
-export class GitHubPullRequestUpdatedAtUnavailableError extends Schema.TaggedError<GitHubPullRequestUpdatedAtUnavailableError>()(
-  "GitHubPullRequestUpdatedAtUnavailableError",
-  {
-    cwd: Schema.String,
-    repository: Schema.String,
-    number: Schema.Int,
-  },
-) {
-  override get message(): string {
-    return `Pull request ${this.repository}#${this.number} reported no update time.`;
   }
 }
 
@@ -317,8 +309,7 @@ export type GitHubPullRequestApiError =
   | GitHubWorkflowApprovalHeadUnavailableError
   | GitHubWorkflowApprovalHeadChangedError
   | SourceControlRateLimit.SourceControlRateLimitPausedError
-  | GitHubViewerLoginUnavailableError
-  | GitHubPullRequestUpdatedAtUnavailableError;
+  | GitHubViewerLoginUnavailableError;
 
 const isGraphQlClientError = (error: unknown): error is GraphQLClientError.GraphQLClientError =>
   GraphQLClientError.isGraphQLClientError(error);
@@ -419,7 +410,7 @@ export class GitHubPullRequestApi extends Context.Service<
   GitHubPullRequestApi,
   {
     readonly withVerifiedCredential: <A, E, R>(
-      input: { readonly cwd: string; readonly host: string },
+      input: { readonly cwd: string; readonly host: string; readonly repository?: string },
       use: (identity: {
         readonly accountId: string;
         readonly viewer: string;
@@ -588,13 +579,6 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly number: number;
     }) => Effect.Effect<GitHubReviewThreadComments, GitHubPullRequestApiError>;
 
-    readonly listActorAvatars: (input: {
-      readonly cwd: string;
-      readonly repository: string;
-      readonly host: string;
-      readonly ids: ReadonlyArray<string>;
-    }) => Effect.Effect<ReadonlyMap<string, string>, GitHubPullRequestApiError>;
-
     readonly getReviewThreadComments: (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -678,7 +662,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly removeAgentCreditsOnMerge?: boolean;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly updateMethod?: PullRequestUpdateMethod;
-    }) => Effect.Effect<void, GitHubPullRequestApiError>;
+    }) => Effect.Effect<ProviderChangeRequestSummary | void, GitHubPullRequestApiError>;
 
     readonly commentOnPullRequest: (input: {
       readonly cwd: string;
@@ -725,6 +709,7 @@ export class GitHubPullRequestApi extends Context.Service<
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
 
     readonly updatePullRequest: (input: {
+      readonly maintainerCanModify?: boolean | undefined;
       readonly cwd: string;
       readonly repository: string;
       readonly host: string;
@@ -756,10 +741,6 @@ function parseRepositorySelector(value: string): {
 /** Bound decimal length to prevent exponential notation in request paths. */
 function diffCursorPage(cursor: string): number | null {
   return /^[1-9][0-9]{0,6}$/.test(cursor) ? Number(cursor) : null;
-}
-
-function isCommitSha(value: string): boolean {
-  return /^[0-9a-f]{7,64}$/i.test(value);
 }
 
 /** Quote user text so GitHub cannot interpret it as qualifiers that widen the listing. */
@@ -886,6 +867,13 @@ const decodeRevisionRefs = Schema.decodeUnknownOption(
   ),
 );
 
+/** Where a pull request's head forked off its base, the commit its patch is computed from. */
+const decodeMergeBase = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({ merge_base_commit: Schema.Struct({ sha: Schema.String }) }),
+  ),
+);
+
 const GRAPHQL_MERGE_METHODS = {
   merge: "MERGE",
   squash: "SQUASH",
@@ -911,6 +899,7 @@ interface RestReadInput<A> {
 /** @public */
 export const make = Effect.gen(function* () {
   const api = yield* GitHubRest.GitHubRest;
+  const appAccess = yield* GitHubAppAccess.GitHubAppAccess;
   const policy = yield* GitHubRequestPolicy.GitHubRequestPolicy;
   const httpClient = yield* HttpClient.HttpClient;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
@@ -934,10 +923,18 @@ export const make = Effect.gen(function* () {
   const decodeRoutingIdentity = Schema.decodeUnknownEffect(Schema.fromJsonString(RoutingIdentity));
   const decodeViewerIdentity = Schema.decodeUnknownEffect(RoutingIdentity);
   const captureVerifiedCredential = Effect.fn("GitHubPullRequestApi.captureVerifiedCredential")(
-    function* (input: { readonly cwd: string; readonly host: string }) {
+    function* (input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly repository?: string;
+    }) {
       const unavailable = () => new GitHubViewerLoginUnavailableError({ cwd: input.cwd });
       const host = input.host.toLowerCase();
-      const { token, fingerprint: key } = yield* api.credential(host);
+      // A pinned credential is never handed on to another, so pick one that reaches the repository.
+      const { token, fingerprint: key } =
+        input.repository === undefined
+          ? yield* api.credential(host)
+          : yield* appAccess.credentialFor(host, input.repository);
       const credential = { host, token, credentialFingerprint: key };
       return yield* Effect.acquireUseRelease(
         Effect.sync(() => {
@@ -1058,7 +1055,7 @@ export const make = Effect.gen(function* () {
       value === null
         ? Effect.fail(
             new GitHubRequestPolicy.GitHubApiNotFoundError({
-              host: GitHubRequestPolicy.normalizeHost(input.host),
+              host: normalizeHost(input.host),
               operation: input.operation,
             }),
           )
@@ -1189,7 +1186,7 @@ export const make = Effect.gen(function* () {
   const revalidatedRestRead = Effect.fn("GitHubPullRequestApi.revalidatedRestRead")(function* <A>(
     input: RestReadInput<A>,
   ) {
-    const host = GitHubRequestPolicy.normalizeHost(input.host);
+    const host = normalizeHost(input.host);
     const { token, fingerprint } = yield* api.credential(host);
     const key = `${fingerprint}\0${host}\0${input.path}`;
     const previous = yield* Cache.get(validators, key);
@@ -1313,6 +1310,29 @@ export const make = Effect.gen(function* () {
           ...(input.commit === undefined ? {} : { commit: input.commit }),
         });
       }
+      // A pull request's patch runs from the merge base, and the base branch may have moved on
+      // since, so its old side is read there. Page 2 of a compare leaves out the file list; a
+      // failed read falls back to the base branch tip.
+      const oldRef =
+        input.commit === undefined && input.changeType !== "new"
+          ? yield* api
+              .rest({
+                host: input.host,
+                operation: "getPullRequestDiffFileContents",
+                path: `repos/${owner}/${name}/compare/${baseRef}...${headRef}?per_page=1&page=2`,
+                timeout: DIFF_TIMEOUT,
+              })
+              .pipe(
+                Effect.map((response) =>
+                  decodeMergeBase(response.body).pipe(
+                    Option.map((compare) => compare.merge_base_commit.sha),
+                    Option.filter(isCommitSha),
+                    Option.getOrElse(() => baseRef ?? ""),
+                  ),
+                ),
+                Effect.orElseSucceed(() => baseRef ?? ""),
+              )
+          : (baseRef ?? "");
 
       const readFile = (revision: string, filePath: string) =>
         api
@@ -1343,7 +1363,7 @@ export const make = Effect.gen(function* () {
 
       const [oldContents, newContents] = yield* Effect.all(
         [
-          input.changeType === "new" ? Effect.succeed("") : readFile(baseRef ?? "", input.oldPath),
+          input.changeType === "new" ? Effect.succeed("") : readFile(oldRef, input.oldPath),
           input.changeType === "deleted" ? Effect.succeed("") : readFile(headRef, input.newPath),
         ],
         { concurrency: 2 },
@@ -1362,49 +1382,61 @@ export const make = Effect.gen(function* () {
   const readAllCheckContexts = Effect.fn("GitHubPullRequestApi.readAllCheckContexts")(function* (
     input: Parameters<GitHubPullRequestApi["Service"]["getPullRequestDetail"]>[0],
     allowReserve: boolean,
+    first: NonNullable<ReturnType<typeof toPullRequestCheckContextsPage>>,
   ) {
     const { owner, name } = parseRepositorySelector(input.repository);
     const target = { ...input, operation: "getPullRequestDetail", allowReserve };
-    let headSha: string | null = null;
-    const { pages, truncated } = yield* readPages(
-      GraphQLClient.pages(client.PullRequestCheckContexts, {
-        variables: { owner, name, number: input.number, required: asksRequired(input.host) },
-        connection: (result) => {
-          const page = toPullRequestCheckContextsPage(result);
-          if (page === null) return null;
-          headSha ??= page.headSha;
-          return {
-            ...page,
-            // Past the first page a different head is a push mid-walk.
-            changed: page.headSha !== headSha,
-            pageInfo: { hasNextPage: page.nextCursor !== null, endCursor: page.nextCursor },
-          };
-        },
-      }).pipe(
-        Stream.mapEffect((page) =>
-          page.changed
-            ? Effect.fail(
-                readError(
-                  input.cwd,
-                  "getPullRequestDetail",
-                  new Error("Pull request head changed while reading checks."),
-                ),
-              )
-            : Effect.succeed(page),
-        ),
-      ),
-      {
-        ...target,
-        maxPages: CHECK_CONTEXT_PAGES,
-        hasNextPage: (page) => page.nextCursor !== null,
-      },
-    ).pipe(graphql(target));
-    return {
-      headSha: pages[0]?.headSha ?? null,
-      contexts: pages.flatMap((page) => page.contexts),
-      truncated,
-    };
+    const contexts = [...first.contexts];
+    let after = first.nextCursor;
+    for (let page = 1; after !== null && page < CHECK_CONTEXT_PAGES; page++) {
+      const result = yield* client
+        .PullRequestCheckContexts({
+          owner,
+          name,
+          number: input.number,
+          required: asksRequired(input.host),
+          after,
+        })
+        .pipe(graphql(target));
+      const next = toPullRequestCheckContextsPage(result);
+      if (next === null || next.headSha !== first.headSha) {
+        return yield* readError(
+          input.cwd,
+          "getPullRequestDetail",
+          new Error("Pull request head changed while reading checks."),
+        );
+      }
+      if (next.nextCursor === after) return { contexts, truncated: true };
+      contexts.push(...next.contexts);
+      after = next.nextCursor;
+    }
+    return { contexts, truncated: first.nextCursor === null || after !== null };
   });
+
+  // GitHub refuses a requested-reviewer list holding a team the viewer cannot see. Remember the
+  // refusal so later reads of that pull request skip straight to the read without reviewers.
+  const refusedReviewers = yield* Cache.make({
+    capacity: 512,
+    timeToLive: "10 minutes",
+    lookup: (_key: string) => Effect.void,
+  });
+  const readRequestedReviewers = Effect.fn("GitHubPullRequestApi.readRequestedReviewers")(
+    function* <A, E, R>(
+      input: { readonly host: string; readonly repository: string; readonly number: number },
+      wanted: number,
+      read: (requestedReviewers: number) => Effect.Effect<A, E, R>,
+    ) {
+      const host = normalizeHost(input.host);
+      const { fingerprint } = yield* api.credential(host);
+      const key = `${fingerprint}\0${host}\0${input.repository.toLowerCase()}\0${input.number}`;
+      if (yield* Cache.has(refusedReviewers, key)) return yield* read(0);
+      return yield* read(wanted).pipe(
+        Effect.catchIf(isRefusedRequestedReviewersOnly, () =>
+          Cache.set(refusedReviewers, key, undefined).pipe(Effect.andThen(read(0))),
+        ),
+      );
+    },
+  );
 
   const getPullRequestDetail: GitHubPullRequestApi["Service"]["getPullRequestDetail"] = (input) => {
     const { owner, name } = parseRepositorySelector(input.repository);
@@ -1420,32 +1452,26 @@ export const make = Effect.gen(function* () {
       });
     return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((allowReserve) =>
-        read(100).pipe(
-          Effect.catchIf(isRefusedRequestedReviewersOnly, () => read(0)),
+        readRequestedReviewers(input, 100, read).pipe(
           graphql({ ...input, operation, allowReserve }),
-          Effect.map(toPullRequestCore),
-          Effect.flatMap(found({ ...input, operation })),
-          // Past a hundred checks the first page would let the rest imply success, so the whole
-          // rollup is walked instead.
-          Effect.filterOrElse(
-            (core) => !core.checksTruncated,
-            (core) =>
-              readAllCheckContexts(input, allowReserve).pipe(
-                Effect.filterOrFail(
-                  (all) => all.headSha === core.headSha,
-                  () =>
-                    readError(
-                      input.cwd,
-                      operation,
-                      new Error("Pull request head changed while reading checks."),
-                    ),
-                ),
-                Effect.map((all) => ({
-                  ...core,
-                  ...pullRequestChecksFromContexts(all.contexts),
-                  checksTruncated: all.truncated,
-                })),
+          Effect.flatMap((result) =>
+            found({ ...input, operation })(toPullRequestCore(result)).pipe(
+              Effect.filterOrElse(
+                (core) => !core.checksTruncated,
+                (core) =>
+                  readAllCheckContexts(
+                    input,
+                    allowReserve,
+                    toPullRequestCheckContextsPage(result)!,
+                  ).pipe(
+                    Effect.map((all) => ({
+                      ...core,
+                      ...pullRequestChecksFromContexts(all.contexts),
+                      checksTruncated: all.truncated,
+                    })),
+                  ),
               ),
+            ),
           ),
         ),
       ),
@@ -1596,16 +1622,38 @@ export const make = Effect.gen(function* () {
 
   const simpleActionMutations = {
     "disable-auto-merge": (pullRequestId: string) =>
-      client.DisablePullRequestAutoMerge({ pullRequestId }).pipe(Effect.asVoid),
+      client
+        .DisablePullRequestAutoMerge({ pullRequestId })
+        .pipe(Effect.map((result) => result.disablePullRequestAutoMerge?.pullRequest)),
     ready: (pullRequestId: string) =>
-      client.MarkPullRequestReadyForReview({ pullRequestId }).pipe(Effect.asVoid),
+      client
+        .MarkPullRequestReadyForReview({ pullRequestId })
+        .pipe(Effect.map((result) => result.markPullRequestReadyForReview?.pullRequest)),
     draft: (pullRequestId: string) =>
-      client.ConvertPullRequestToDraft({ pullRequestId }).pipe(Effect.asVoid),
+      client
+        .ConvertPullRequestToDraft({ pullRequestId })
+        .pipe(Effect.map((result) => result.convertPullRequestToDraft?.pullRequest)),
     close: (pullRequestId: string) =>
-      client.ClosePullRequest({ pullRequestId }).pipe(Effect.asVoid),
+      client
+        .ClosePullRequest({ pullRequestId })
+        .pipe(Effect.map((result) => result.closePullRequest?.pullRequest)),
     reopen: (pullRequestId: string) =>
-      client.ReopenPullRequest({ pullRequestId }).pipe(Effect.asVoid),
+      client
+        .ReopenPullRequest({ pullRequestId })
+        .pipe(Effect.map((result) => result.reopenPullRequest?.pullRequest)),
   } satisfies Partial<Record<PullRequestAction, unknown>>;
+
+  /** The mutation already landed, so a reply that does not decode only loses the summary. */
+  const actionSummary = <E, R>(
+    effect: Effect.Effect<PullRequestActionSummary | null | undefined, E, R>,
+  ) =>
+    effect.pipe(
+      Effect.map(toPullRequestActionSummary),
+      Effect.catchIf(
+        (error) => isGraphQlClientError(error) && error.reason._tag === "DecodeError",
+        () => Effect.void,
+      ),
+    );
 
   /** Preserve policy errors; map not-found per lookup and other failures to read errors. */
   const batchedRead = <A, E, R>(
@@ -1830,7 +1878,7 @@ export const make = Effect.gen(function* () {
         );
       // Unindexed repositories silently return no search rows; fall back to the repository listing.
       const hasQuery = (input.query?.trim().length ?? 0) > 0;
-      return read(true).pipe(
+      const listed = read(true).pipe(
         Effect.filterOrElse(
           (batch) => batch.items.length > 0 || input.cursor !== undefined || hasQuery,
           () => read(false),
@@ -1869,6 +1917,24 @@ export const make = Effect.gen(function* () {
               }),
               Effect.map((items) => ({ ...batch, items })),
             ),
+        ),
+      );
+      // GitHub answers a private repository the token cannot see as missing, and its error names
+      // the credential that request carried. A personal credential is pinned for the whole
+      // read, so a token changed mid-read does not split it; the app keeps the policy's fallback.
+      const host = normalizeHost(input.host);
+      return api.credential(host).pipe(
+        Effect.flatMap(({ token, fingerprint, source }) =>
+          source === undefined || source === "app"
+            ? listed
+            : listed.pipe(
+                Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+                  host,
+                  token,
+                  credentialFingerprint: fingerprint,
+                  source,
+                }),
+              ),
         ),
       );
     }),
@@ -1997,7 +2063,9 @@ export const make = Effect.gen(function* () {
         let withComments = true;
         let withReviews = true;
         const target = { ...input, operation: "getPullRequestActivity" };
-        for (let page = 0; page < REVIEW_THREAD_PAGES && (withComments || withReviews); page++) {
+        const readPage = Effect.fn("GitHubPullRequestApi.readActivityPage")(function* (
+          page: number,
+        ) {
           const read: GitHubPullRequestActivityPage = yield* client
             .PullRequestActivity({
               owner,
@@ -2024,16 +2092,28 @@ export const make = Effect.gen(function* () {
           reviewsAfter = read.nextReviewsCursor;
           withComments = withComments && commentsAfter !== null;
           withReviews = withReviews && reviewsAfter !== null;
-        }
+        });
+        yield* readPage(0);
+        const laterPages = Effect.gen(function* () {
+          for (let page = 1; page < REVIEW_THREAD_PAGES; page++) {
+            if (!withComments && !withReviews) return;
+            yield* readPage(page);
+          }
+        });
         const emptyStats = toPullRequestCommitStats({ nodes: [] });
-        const commitStats =
-          nonMergeCommitIds.length === 0
-            ? emptyStats
-            : yield* client.PullRequestCommitStats({ ids: nonMergeCommitIds }).pipe(
-                graphql(target),
-                Effect.map(toPullRequestCommitStats),
-                Effect.orElseSucceed(() => emptyStats),
-              );
+        const [, commitStats] = yield* Effect.all(
+          [
+            laterPages,
+            nonMergeCommitIds.length === 0
+              ? Effect.succeed(emptyStats)
+              : client.PullRequestCommitStats({ ids: nonMergeCommitIds }).pipe(
+                  graphql(target),
+                  Effect.map(toPullRequestCommitStats),
+                  Effect.orElseSucceed(() => emptyStats),
+                ),
+          ],
+          { concurrency: 2 },
+        );
         return {
           author,
           comments: remarks.toSorted((left, right) =>
@@ -2123,25 +2203,12 @@ export const make = Effect.gen(function* () {
       function* (input) {
         const { owner, name } = parseRepositorySelector(input.repository);
         const target = { ...input, operation: "listReviewThreadComments" };
-        let requestedReviewers = 50;
         const threadPage = (
           after: string | null,
-        ): Effect.Effect<GitHubReviewThreadPage, GitHubPullRequestApiError> => {
-          const read = () =>
-            client.ReviewThreads({ owner, name, number: input.number, after, requestedReviewers });
-          return read().pipe(
-            Effect.catchIf(
-              (error) => requestedReviewers > 0 && isRefusedRequestedReviewersOnly(error),
-              () => {
-                requestedReviewers = 0;
-                return read();
-              },
-            ),
-            graphql(target),
-            Effect.map(toReviewThreadPage),
-            Effect.flatMap(found(target)),
-          );
-        };
+        ): Effect.Effect<GitHubReviewThreadPage, GitHubPullRequestApiError> =>
+          readRequestedReviewers(input, 50, (requestedReviewers) =>
+            client.ReviewThreads({ owner, name, number: input.number, after, requestedReviewers }),
+          ).pipe(graphql(target), Effect.map(toReviewThreadPage), Effect.flatMap(found(target)));
         const entries: GitHubReviewThreadEntry[] = [];
         const avatarsByLogin = new Map<string, string>();
         const botLogins = new Set<string>();
@@ -2228,15 +2295,6 @@ export const make = Effect.gen(function* () {
         };
       },
     ),
-
-    listActorAvatars: Effect.fn("GitHubPullRequestApi.listActorAvatars")(function (input) {
-      if (input.ids.length === 0) {
-        return Effect.succeed(new Map<string, string>());
-      }
-      return client
-        .ActorAvatars({ ids: input.ids })
-        .pipe(graphql({ ...input, operation: "listActorAvatars" }), Effect.map(toActorAvatars));
-    }),
 
     getViewerAccess: Effect.fn("GitHubPullRequestApi.getViewerAccess")(function (input) {
       const { owner, name } = parseRepositorySelector(input.repository);
@@ -2425,6 +2483,7 @@ export const make = Effect.gen(function* () {
       if (input.stackNumber !== undefined)
         return runGitHubStackAction({ ...input, stackNumber: input.stackNumber }).pipe(
           Effect.provideService(GitHubRest.GitHubRest, api),
+          Effect.provideService(GitHubAppAccess.GitHubAppAccess, appAccess),
           Effect.provideService(GitHubRequestPolicy.GitHubRequestPolicy, policy),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.provideService(SourceControlHost.SourceControlHost, sourceControlHost),
@@ -2524,7 +2583,9 @@ export const make = Effect.gen(function* () {
         const mutate = simpleActionMutations[action as keyof typeof simpleActionMutations];
         return pullRequestNodeId({ ...input, operation: "runPullRequestAction" }).pipe(
           Effect.flatMap((pullRequestId) =>
-            mutate(pullRequestId).pipe(graphql({ ...input, operation: "runPullRequestAction" })),
+            actionSummary(mutate(pullRequestId)).pipe(
+              graphql({ ...input, operation: "runPullRequestAction" }),
+            ),
           ),
         );
       }
@@ -2552,7 +2613,11 @@ export const make = Effect.gen(function* () {
               expectedHeadOid: state.headRefOid,
               updateMethod: input.updateMethod === "rebase" ? "REBASE" : "MERGE",
             })
-            .pipe(graphql(target), Effect.asVoid);
+            .pipe(
+              Effect.map((result) => result.updatePullRequestBranch?.pullRequest),
+              actionSummary,
+              graphql(target),
+            );
         }
         let body: string | undefined;
         let expectedHead: string | undefined;
@@ -2590,10 +2655,14 @@ export const make = Effect.gen(function* () {
           ...(expectedHead === undefined ? {} : { expectedHeadOid: expectedHead }),
           ...(body === undefined ? {} : { commitBody: body }),
         };
-        yield* (
+        return yield* actionSummary(
           auto
-            ? client.EnablePullRequestAutoMerge({ input: merge }).pipe(Effect.asVoid)
-            : client.MergePullRequest({ input: merge }).pipe(Effect.asVoid)
+            ? client
+                .EnablePullRequestAutoMerge({ input: merge })
+                .pipe(Effect.map((result) => result.enablePullRequestAutoMerge?.pullRequest))
+            : client
+                .MergePullRequest({ input: merge })
+                .pipe(Effect.map((result) => result.mergePullRequest?.pullRequest)),
         ).pipe(graphql(target));
       });
     }),
@@ -2763,6 +2832,9 @@ export const make = Effect.gen(function* () {
           client
             .UpdatePullRequest({
               pullRequestId,
+              ...(input.maintainerCanModify === undefined
+                ? {}
+                : { maintainerCanModify: input.maintainerCanModify }),
               ...(input.title === undefined ? {} : { title: input.title }),
               ...(input.body === undefined ? {} : { body: input.body }),
             })

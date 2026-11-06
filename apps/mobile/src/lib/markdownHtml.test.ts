@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  markdownForNativeRendering,
   markdownHtmlContent,
   markdownWithHtml,
   markdownWithFileEmbeds,
@@ -9,6 +10,7 @@ import {
 import { markdownImageSources } from "./markdownImageSources";
 import { markdownFileEmbedLabel, resolveMarkdownMediaPreview } from "./markdownMedia";
 import { resolveMarkdownLinkPresentation } from "./markdownLinks";
+import { ENRICHED_INLINE_FILE_LINK_REGEX } from "./enrichedLinkPresentation";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
 
@@ -73,6 +75,16 @@ describe("HTML in native Markdown", () => {
     expect(result).toContain('`<img src="inline.png">`');
   });
 
+  it("treats an unclosed fence in an HTML block as code through the end", () => {
+    // Sized so the quadratic rescan cannot finish within the test timeout.
+    const fences = Array.from({ length: 40_000 }, () => "```x y").join("\n");
+    const markdown = `<details>\n<img src="before.png">\n${fences}\n<img src="after.png">\n</details>`;
+    const result = markdownHtmlContent(markdown);
+    expect(result).toContain("![](<before.png>)");
+    expect(result).not.toContain("<details>");
+    expect(result).toContain('<img src="after.png">\n</details>');
+  });
+
   it("links HTML anchors in a table cell without breaking the row at <br>", () => {
     const document = parseMarkdownDocument(
       "| Status | Preview URL |\n| - | - |\n| Done | <a href='https://commit.example.com'>Commit</a><br><a href='https://branch.example.com'>Branch</a> |",
@@ -103,6 +115,35 @@ describe("HTML in native Markdown", () => {
 
   it("keeps anchor text unlinked for unsafe hrefs", () => {
     expect(markdownWithHtml('Run <a href="javascript:alert(1)">this</a> now')).toBe("Run this now");
+  });
+
+  it("keeps anchor labels and escaped bangs intact across nested formatting and table cells", () => {
+    const markdown =
+      '> **!<a href="https://x.test">[one]</a>** and <span>tail</span>\n\n| A |\n| - |\n| !<a href="https://x.test">x[y]</a><br><img src="x.png"> |';
+    expect(markdownWithHtml(markdown)).toBe(
+      "> **\\![\\[one\\]](<https://x.test>)** and tail\n\n| A |\n| - |\n| \\![x\\[y\\]](<https://x.test>) ![](<x.png>) |",
+    );
+    expect(
+      markdownWithHtml(
+        String.raw`Before \!<a href="https://x.test">escaped</a> \\!<a href="mailto:a@b">even</a>`,
+      ),
+    ).toBe(String.raw`Before \![escaped](<https://x.test>) \\\![even](<mailto:a@b>)`);
+  });
+
+  it("converts separated HTML without changing code examples or an unfinished tag", () => {
+    const literal = '`<br>`\n\n```html\n<img src="literal.png">\n```\n\n<broken';
+    expect(markdownWithHtml(literal)).toBe(literal);
+    const rows = Array.from(
+      { length: 100 },
+      (_, index) => `row ${index} <span>text</span><br>!<a href="https://x.test/${index}">go</a>`,
+    );
+    const expected = Array.from(
+      { length: 100 },
+      (_, index) => `row ${index} text  \n\\![go](<https://x.test/${index}>)`,
+    );
+    expect(markdownWithHtml(rows.join("\n\n") + "\n\n" + literal)).toBe(
+      expected.join("\n\n") + "\n\n" + literal,
+    );
   });
 });
 
@@ -295,4 +336,44 @@ describe("file embeds in native thread and file Markdown", () => {
     expect(converted.markdown).toContain("```md\n![sheet](./fenced.csv)\n```");
     expect(converted.fileHrefs.has(href)).toBe(true);
   });
+});
+
+describe("Windows paths in native Markdown", () => {
+  // regression: #23722 Markdown escapes ate the separator before `.t3` and `_build`
+  it("keeps backslashes in Windows image and link destinations", async () => {
+    const image = String.raw`C:\work\.t3\_build\shot.png`;
+    const link = String.raw`\\server\share\.t3\notes.md`;
+    const markdown = [
+      `![shot](${image} "Shot")`,
+      String.raw`![paren](C:\a\)b.png)`,
+      `[notes](<${link}>)`,
+      `<img src="${image}">`,
+      String.raw`![amp](C:\R&D\.t3\a&amp;b.png)`,
+      String.raw`<img src="C:\R&amp;D\.t3\b.png">`,
+      "> ![quoted](\n> " + image + ")",
+    ].join("\n\n");
+
+    const native = await parseMarkdown(
+      markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+    );
+    const urls: string[] = [];
+    const collect = (node: { attributes?: { url?: string }; children?: unknown[] }) => {
+      if (node.attributes?.url) urls.push(node.attributes.url);
+      node.children?.forEach((child) => collect(child as typeof node));
+    };
+    collect(native);
+    const paren = String.raw`C:\a\)b.png`;
+    const amp = String.raw`C:\R&D\.t3\a&b.png`;
+    const htmlAmp = String.raw`C:\R&D\.t3\b.png`;
+    expect(urls).toEqual([image, paren, link, image, amp, htmlAmp, image]);
+    expect(markdownImageSources(markdown)).toEqual([image, paren, amp, htmlAmp]);
+  });
+});
+
+it("keeps backslashes in drive paths in mobile Markdown prose", () => {
+  const path = String.raw`Saved to C:\Users\me\.t3\_build\shot.png and C:/work\.config.`;
+
+  expect(parseMarkdownDocument(String.raw`${path} Then \*this\*.`).children).toMatchObject([
+    { type: "paragraph", children: [{ type: "text", value: `${path} Then *this*.` }] },
+  ]);
 });
