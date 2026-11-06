@@ -1,5 +1,9 @@
 import { AuthProvidersManageScope, PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
-import { settlePromise } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { useRef, useState } from "react";
 
 import { useEnvironmentProviders, useEnvironments } from "~/state/environments";
@@ -23,18 +27,41 @@ export function useCheckProviderUpdates() {
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
-  return () =>
-    Promise.all(
+  const inFlight = useRef<Promise<void> | null>(null);
+
+  const check = async () => {
+    const failures = await Promise.all(
       environments
         .filter(
           (environment) =>
             environment.connection.phase === "connected" &&
             manageableIds.has(environment.environmentId),
         )
-        .map(({ environmentId }) =>
-          refreshProviders({ environmentId, input: { refreshModels: true } }),
-        ),
+        .map(async ({ environmentId, label }) => {
+          const result = await refreshProviders({ environmentId, input: { refreshModels: true } });
+          if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return [];
+          const error = squashAtomCommandFailure(result);
+          return [`${label}: ${error instanceof Error ? error.message : "Refresh failed."}`];
+        }),
     );
+    const lines = failures.flat();
+    if (lines.length === 0) return;
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Could not check provider updates",
+        description: <span className="whitespace-pre-line">{lines.join("\n")}</span>,
+      }),
+    );
+  };
+
+  // A repeat click must not start a second model rediscovery while one is running.
+  return () => {
+    inFlight.current ??= check().finally(() => {
+      inFlight.current = null;
+    });
+    return inFlight.current;
+  };
 }
 
 export function useProviderUpdates() {
