@@ -1,4 +1,6 @@
+import { ComposerContextId } from "@t3tools/contracts";
 import { formatAssistantCitationHref } from "@t3tools/shared/assistantCitations";
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveThreadQueueRowControls } from "./threadQueueControlPresentation";
@@ -45,6 +47,45 @@ describe("threadQueueControlPresentation", () => {
     expect(controls.displayText).toBe(
       "Retry the sync after the lock clears. Can we add a backoff here?",
     );
+  });
+
+  it("shows mention and file chips by their labels, and drops image chips beside thumbnails", () => {
+    const environment = formatComposerContextReference({
+      kind: "environment",
+      contextId: ComposerContextId.make("environment_mac"),
+      label: "MacBook",
+    });
+    const file = formatComposerContextReference({
+      kind: "file",
+      contextId: ComposerContextId.make("report"),
+      label: "report.pdf",
+    });
+    const image = formatComposerContextReference({
+      kind: "image",
+      contextId: ComposerContextId.make("screenshot"),
+      label: "screenshot.png",
+    });
+    const text = `Check ${environment} for ${file} ${image} `;
+    const row = (showsImageThumbnails: boolean) =>
+      resolveThreadQueueRowControls({
+        busy: false,
+        canPromoteToSteer: true,
+        canSendNow: false,
+        showsImageThumbnails,
+        text,
+      }).displayText;
+
+    expect(row(true)).toBe("Check MacBook for report.pdf");
+    expect(row(false)).toBe("Check MacBook for report.pdf screenshot.png");
+    expect(
+      resolveThreadQueueRowControls({
+        busy: false,
+        canPromoteToSteer: true,
+        canSendNow: false,
+        showsImageThumbnails: true,
+        text: `${image} `,
+      }).displayText,
+    ).toBe("");
   });
 
   it("keeps the row already open in the composer from being reopened or steered", () => {
