@@ -9,6 +9,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   isOrchestrationV2WorkActive,
+  ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -469,6 +470,11 @@ export const make = Effect.gen(function* () {
         });
       }
       for (const run of runs) {
+        const preparationThread =
+          run.status === "preparing" && projection.thread.forkWorkspacePreparation !== undefined
+            ? projection.providerThreads.find((thread) => thread.id === run.providerThreadId)
+            : undefined;
+        const terminalStatus = preparationThread === undefined ? "cancelled" : "failed";
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",
@@ -476,8 +482,53 @@ export const make = Effect.gen(function* () {
           runId: run.id,
           providerInstanceId: run.providerInstanceId,
           occurredAt: now,
-          payload: { ...run, status: "cancelled", queuePosition: null, completedAt: now },
+          payload: { ...run, status: terminalStatus, queuePosition: null, completedAt: now },
         });
+        if (preparationThread !== undefined) {
+          events.push({
+            id: yield* allocateEventId(),
+            type: "turn-item.updated",
+            threadId: projection.thread.id,
+            runId: run.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: ids.derive.turnItemFromProviderItem({
+                driver: preparationThread.driver,
+                nativeItemId: `workspace-preparation-failure:${run.id}`,
+              }),
+              threadId: projection.thread.id,
+              runId: run.id,
+              nodeId: run.rootNodeId,
+              providerThreadId: preparationThread.id,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: yield* projections.getNextTurnItemOrdinal(projection.thread.id).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderRuntimeRecoveryError({
+                      operation: "read-projections",
+                      threadId: projection.thread.id,
+                      cause,
+                    }),
+                ),
+              ),
+              type: "error",
+              status: "failed",
+              title: "Workspace preparation failed",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "unknown",
+                code: ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
+                message: `The server ${trigger === "startup" ? "restarted" : "shut down"} before the fork's workspace was ready. Retry workspace setup to continue the original message.`,
+                retryable: false,
+              },
+            },
+          });
+        }
         for (const attempt of projection.attempts.filter(
           (candidate) =>
             candidate.runId === run.id &&
@@ -491,7 +542,7 @@ export const make = Effect.gen(function* () {
             nodeId: attempt.rootNodeId,
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: { ...attempt, status: "cancelled", completedAt: now },
+            payload: { ...attempt, status: terminalStatus, completedAt: now },
           });
         }
         for (const node of projection.nodes.filter(
@@ -511,7 +562,7 @@ export const make = Effect.gen(function* () {
             nodeId: node.id,
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: { ...node, status: "cancelled", completedAt: now },
+            payload: { ...node, status: terminalStatus, completedAt: now },
           });
         }
         for (const providerTurn of projection.providerTurns.filter(
@@ -530,7 +581,7 @@ export const make = Effect.gen(function* () {
             nodeId: providerTurn.nodeId,
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: { ...providerTurn, status: "cancelled", completedAt: now },
+            payload: { ...providerTurn, status: terminalStatus, completedAt: now },
           });
         }
         for (const message of projection.messages.filter(
@@ -570,7 +621,7 @@ export const make = Effect.gen(function* () {
             ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: cancelledItem(item, now),
+            payload: { ...cancelledItem(item, now), status: terminalStatus },
           });
         }
       }
