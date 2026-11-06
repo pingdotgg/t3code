@@ -49,3 +49,9 @@ node_modules/
 
 # pnpm content-addressable store; never belongs in the repo.
 .pnpm-store/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+/.metadata_never_index
+/t3code-upstream-merge/
