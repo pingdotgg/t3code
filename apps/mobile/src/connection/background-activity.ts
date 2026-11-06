@@ -56,6 +56,7 @@ export const layerReporter = Layer.effectDiscard(
     const requestReport = () => Queue.offerUnsafe(reportRequests, undefined);
     let appState = AppState.currentState;
     yield* mobileInteraction.record;
+    const runSync = Effect.runSyncWith(yield* Effect.context<never>());
 
     const report = Effect.gen(function* () {
       const observedAtMs = yield* Clock.currentTimeMillis;
@@ -96,8 +97,7 @@ export const layerReporter = Layer.effectDiscard(
       Effect.sync(() => {
         const removeScopeListener = onRetainedMobileBackgroundScopesChange(requestReport);
         const subscription = AppState.addEventListener("change", (nextState) => {
-          if (nextState === "active" && appState !== "active")
-            Effect.runSync(mobileInteraction.record);
+          if (nextState === "active" && appState !== "active") runSync(mobileInteraction.record);
           appState = nextState;
           requestReport();
         });
