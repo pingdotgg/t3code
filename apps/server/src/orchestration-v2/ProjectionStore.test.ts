@@ -6694,6 +6694,19 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             candidateLookups.some((lookup) => lookup.parent === row.parent),
         );
         assert.deepEqual(sortedCandidates, []);
+
+        // A turn-start guard needs one run, not the thread's whole recovery projection.
+        const runRead = traceSqlStatements();
+        const run = yield* projectionStore
+          .getRun(threadId, RunId.make(`run:${suffix}:2`))
+          .pipe(Effect.withTracer(runRead.tracer));
+        assert.equal(run?.ordinal, 2);
+        assert.isFalse(
+          runRead.statements.some((query) => /turn_items|projection_nodes|messages/.test(query)),
+        );
+        assert.isUndefined(
+          yield* projectionStore.getRun(threadId, RunId.make(`run:${suffix}:absent`)),
+        );
       }),
   );
 
