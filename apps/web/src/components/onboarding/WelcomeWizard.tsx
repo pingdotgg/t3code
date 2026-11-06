@@ -1246,6 +1246,9 @@ function ImportStep({
         ...candidate,
         environmentId: scan.environmentId,
         key: onboardingProjectKey(scan.environmentId, candidate.path),
+        importWindowDays: environments.find(
+          (environment) => environment.environmentId === scan.environmentId,
+        )?.serverConfig?.settings.agentSessionImport.windowDays,
       })),
     ),
   );
