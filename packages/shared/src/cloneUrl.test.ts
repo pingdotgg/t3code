@@ -159,6 +159,15 @@ describe("cloneUrlForProtocol", () => {
     expect(cloneUrlForProtocol("[2001:db8::1]:/srv/repo.git", "https")).toBeNull();
     expect(cloneUrlForProtocol("/srv/git/repo.git", "https")).toBeNull();
     expect(cloneUrlProtocol("file:///srv/git/repo.git")).toBeNull();
+    for (const path of [
+      "C:\\repos\\project.git",
+      " C:\\repos\\project.git ",
+      "D:/repos/project.git",
+    ]) {
+      expect(cloneUrlProtocol(path)).toBeNull();
+      expect(cloneUrlForProtocol(path, "ssh")).toBeNull();
+      expect(cloneUrlForProtocol(path, "https")).toBeNull();
+    }
   });
 });
 
