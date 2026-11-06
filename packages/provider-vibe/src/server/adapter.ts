@@ -579,6 +579,12 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         // Confine reads/writes to the session checkout: resolve and reject paths outside it.
         const path = yield* Path.Path;
         const fileSystem = yield* FileSystem.FileSystem;
+        const outsideWorkspace = () =>
+          new VibeAppServerError.VibeAppServerRequestError({
+            method,
+            code: "invalid_params",
+            detail: "path is outside the workspace",
+          });
         const root = yield* fileSystem
           .realPath(cwd)
           .pipe(Effect.orElseSucceed(() => path.resolve(cwd)));
@@ -588,26 +594,31 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           return !relative.startsWith("..") && !path.isAbsolute(relative);
         };
         if (!isInside(absolute)) {
+          return yield* outsideWorkspace();
+        }
+        // Canonicalize the parent directory so a symlinked ancestor cannot redirect the I/O
+        // outside the checkout, then contain-check the canonical target. The canonical path is
+        // what gets read/written, so the check and the I/O cannot diverge.
+        const parent = yield* fileSystem
+          .realPath(path.dirname(absolute))
+          .pipe(Effect.orElseSucceed(() => path.dirname(absolute)));
+        const candidate = path.join(parent, path.basename(absolute));
+        const resolvedOption = yield* Effect.option(fileSystem.realPath(candidate));
+        const resolved = Option.getOrElse(resolvedOption, () => candidate);
+        // A dangling symlink at the final component resolves nowhere: reject it explicitly.
+        const linkOption = yield* Effect.option(fileSystem.readLink(candidate));
+        if (Option.isSome(linkOption) && Option.isNone(resolvedOption)) {
           return yield* new VibeAppServerError.VibeAppServerRequestError({
             method,
             code: "invalid_params",
-            detail: "path is outside the workspace",
+            detail: "path is a dangling symlink",
           });
         }
-        // Re-check against the filesystem-resolved path so symlinks cannot bypass containment;
-        // targets that do not exist yet fall back to the lexically resolved path.
-        const resolved = yield* fileSystem
-          .realPath(absolute)
-          .pipe(Effect.orElseSucceed(() => absolute));
-        if (resolved !== absolute && !isInside(resolved)) {
-          return yield* new VibeAppServerError.VibeAppServerRequestError({
-            method,
-            code: "invalid_params",
-            detail: "path is outside the workspace",
-          });
+        if (!isInside(resolved)) {
+          return yield* outsideWorkspace();
         }
         if (method === "clientTool/readTextFile") {
-          const content = yield* fileSystem.readFileString(absolute).pipe(
+          const content = yield* fileSystem.readFileString(resolved).pipe(
             Effect.mapError(
               (cause) =>
                 new VibeAppServerError.VibeAppServerRequestError({
@@ -628,7 +639,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
             detail: "content is required",
           });
         }
-        yield* fileSystem.writeFileString(absolute, content).pipe(
+        yield* fileSystem.writeFileString(resolved, content).pipe(
           Effect.mapError(
             (cause) =>
               new VibeAppServerError.VibeAppServerRequestError({
