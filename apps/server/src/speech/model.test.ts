@@ -1,169 +1,64 @@
-// @effect-diagnostics nodeBuiltinImport:off - exercises sparse native model files without downloading a model.
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import * as NodeCrypto from "node:crypto";
-import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
+import { expect, it } from "vite-plus/test";
+
+import catalog from "./catalog.json" with { type: "json" };
 import {
-  downloadSpeechModel,
+  DEFAULT_SPEECH_MODEL_ID,
   effectiveSpeechLanguage,
-  findInstalledSpeechModel,
+  getSpeechModel,
   SPEECH_MODELS,
 } from "./model.ts";
 
-afterEach(() => vi.unstubAllGlobals());
-
-describe("speech model catalog", () => {
-  it("contains unique ids and filenames", () => {
-    expect(new Set(SPEECH_MODELS.map((model) => model.id)).size).toBe(SPEECH_MODELS.length);
-    expect(new Set(SPEECH_MODELS.map((model) => model.filename)).size).toBe(SPEECH_MODELS.length);
-  });
-
-  it("offers Handy's complete pinned catalog with five recommended models", () => {
-    expect(SPEECH_MODELS).toHaveLength(69);
-    expect(SPEECH_MODELS.filter((model) => model.recommended)).toHaveLength(5);
-    for (const model of SPEECH_MODELS) {
-      expect(model.revision).toMatch(/^[0-9a-f]{40}$/);
-      expect(model.sha256).toMatch(/^[0-9a-f]{64}$/);
-      expect(model.filename).toMatch(/\.gguf$/);
-      expect(model.size).toBeGreaterThan(0);
-      expect(model.languages.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("preserves Handy's translation capabilities without advertising streaming translation", () => {
-    expect(
-      SPEECH_MODELS.find((model) => model.name === "Whisper Medium")?.supportsTranslation,
-    ).toBe(true);
-    expect(
-      SPEECH_MODELS.find((model) => model.name === "Parakeet Unified EN 0.6B")?.supportsTranslation,
-    ).toBe(false);
-    expect(
-      SPEECH_MODELS.filter((model) => model.supportsStreaming && model.supportsTranslation),
-    ).toEqual([]);
-  });
-});
-
-it("resolves Auto only for models that can detect language", () => {
-  const canary = SPEECH_MODELS.find((model) => model.name === "Canary 180M Flash")!;
-  const whisper = SPEECH_MODELS.find((model) => model.name === "Whisper Medium")!;
-  expect(effectiveSpeechLanguage(canary, "auto")).toBe("en");
-  expect(effectiveSpeechLanguage(canary, "es")).toBe("es");
-  expect(effectiveSpeechLanguage(whisper, "auto")).toBe("auto");
-  expect(effectiveSpeechLanguage(whisper, "fr")).toBe("fr");
-});
-
-it("finds an installed model across directories without reading its contents", async () => {
-  const first = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-status-a-"));
-  const second = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-status-b-"));
-  try {
-    const speechModel = SPEECH_MODELS[0]!;
-    const firstPath = NodePath.join(first, speechModel.filename);
-    const secondPath = NodePath.join(second, speechModel.filename);
-    expect(await findInstalledSpeechModel([first, second], speechModel)).toBeUndefined();
-    await NodeFSP.writeFile(secondPath, "");
-    await NodeFSP.truncate(secondPath, speechModel.size);
-    expect(await findInstalledSpeechModel([first, second], speechModel)).toBe(secondPath);
-    await NodeFSP.writeFile(firstPath, "");
-    await NodeFSP.truncate(firstPath, 1);
-    expect(await findInstalledSpeechModel([first, second], speechModel)).toBe(secondPath);
-    await NodeFSP.truncate(firstPath, speechModel.size);
-    expect(await findInstalledSpeechModel([first, second], speechModel)).toBe(firstPath);
-  } finally {
-    await NodeFSP.rm(first, { recursive: true, force: true });
-    await NodeFSP.rm(second, { recursive: true, force: true });
+it("offers the full eligible catalog through one canonical registry", () => {
+  const ids = new Set(SPEECH_MODELS.map((model) => model.id));
+  expect(ids).toEqual(new Set(catalog.models.map((model) => model.id)));
+  expect(ids.size).toBe(SPEECH_MODELS.length);
+  expect(new Set(SPEECH_MODELS.map((model) => model.filename)).size).toBe(SPEECH_MODELS.length);
+  expect(getSpeechModel(DEFAULT_SPEECH_MODEL_ID)).toBeDefined();
+  for (const id of ["parakeet-ultra", "orukeet", "granite-speech-5.0-470m-turboctc"]) {
+    expect(getSpeechModel(`handy-computer/${id}-gguf`)).toBeDefined();
+  }
+  for (const id of [
+    "canary-1b",
+    "granite-speech-5.0-470m-turboctc-nc",
+    "lang-id-voxlingua107-ecapa",
+    "silero-vad-v6.2",
+    "diar_streaming_sortformer_4spk-v2.1",
+  ]) {
+    expect(getSpeechModel(`handy-computer/${id}-gguf`)).toBeUndefined();
   }
 });
 
-it("resumes a model download after the response ends early", async () => {
-  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-download-"));
-  const bytes = Buffer.from("a verified speech model");
-  const model = {
-    ...SPEECH_MODELS[0]!,
-    filename: "test.gguf",
-    size: bytes.length,
-    sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
-  };
-  let requests = 0;
-  const fetchModel = vi.fn(async (_url: string, options?: RequestInit) => {
-    requests += 1;
-    if (requests === 1) {
-      return new Response(bytes.subarray(0, 8), {
-        headers: { "content-length": String(bytes.length) },
-      });
-    }
-    expect(options?.headers).toEqual({ Range: "bytes=8-" });
-    return new Response(bytes.subarray(8), {
-      status: 206,
-      headers: {
-        "content-length": String(bytes.length - 8),
-        "content-range": `bytes 8-${bytes.length - 1}/${bytes.length}`,
-      },
-    });
+it("uses refreshed default files and preserves forced language choices", () => {
+  expect(getSpeechModel("handy-computer/canary-180m-flash-gguf")).toMatchObject({
+    revision: "46b86384d1db59108d6e060a0fc00924cb58499f",
+    size: 218447648,
+    sha256: "f942ab746040b531a29ab78ca3afc8dc9564efd8e4c942b5541e53644be9c408",
   });
-  vi.stubGlobal("fetch", fetchModel);
-  try {
-    const path = await downloadSpeechModel(directory, model);
-    expect(await NodeFSP.readFile(path)).toEqual(bytes);
-    expect(fetchModel).toHaveBeenCalledTimes(2);
-    expect(await NodeFSP.readdir(directory)).toEqual([model.filename]);
-  } finally {
-    await NodeFSP.rm(directory, { recursive: true, force: true });
-  }
+  expect(getSpeechModel("handy-computer/canary-1b-v2-gguf")?.filename).toBe(
+    "canary-1b-v2-Q8_0.gguf",
+  );
+  expect(getSpeechModel("handy-computer/canary-qwen-2.5b-gguf")?.filename).toBe(
+    "canary-qwen-2.5b-Q8_0.gguf",
+  );
+  expect(getSpeechModel("handy-computer/canary-1b-flash-gguf")?.filename).toBe(
+    "canary-1b-flash-Q8_0.gguf",
+  );
+  expect(
+    getSpeechModel("handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf"),
+  ).toMatchObject({
+    revision: "d9ed2931bc10058f79809bd88139a27c2ef09a53",
+    size: 873443456,
+    sha256: "cf83cedc6777d2528a4d2a8a4bf476174ef7e5c65b86bc6c955f4cc9f5951ac5",
+  });
+  expect(getSpeechModel("handy-computer/granite-speech-5.0-470m-turboctc-gguf")).toMatchObject({
+    languages: ["en"],
+    supportsStreaming: false,
+    supportsLanguageDetection: false,
+    supportsTranslation: false,
+  });
+  const nemotron = getSpeechModel("handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf")!;
+  expect(effectiveSpeechLanguage(nemotron, "fr")).toBe("fr");
+  expect(effectiveSpeechLanguage(nemotron, "en")).toBe("en");
+  expect(effectiveSpeechLanguage(nemotron, "auto")).toBe("auto");
+  expect(nemotron.languages.filter((language) => language === "fr")).toHaveLength(1);
 });
-
-it("retries a terminated model connection", async () => {
-  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-retry-"));
-  const bytes = Buffer.from("speech model");
-  const model = {
-    ...SPEECH_MODELS[0]!,
-    filename: "retry.gguf",
-    size: bytes.length,
-    sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
-  };
-  const fetchModel = vi
-    .fn()
-    .mockRejectedValueOnce(new TypeError("terminated"))
-    .mockResolvedValueOnce(
-      new Response(bytes, { headers: { "content-length": String(bytes.length) } }),
-    );
-  vi.stubGlobal("fetch", fetchModel);
-  try {
-    expect(await NodeFSP.readFile(await downloadSpeechModel(directory, model))).toEqual(bytes);
-    expect(fetchModel).toHaveBeenCalledTimes(2);
-  } finally {
-    await NodeFSP.rm(directory, { recursive: true, force: true });
-  }
-});
-
-it.each([false, true])(
-  "cancels verification without publishing a model, during read=%s",
-  async (duringRead) => {
-    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-cancel-"));
-    const bytes = Buffer.from("speech model");
-    const model = {
-      ...SPEECH_MODELS[0]!,
-      filename: "cancel.gguf",
-      size: bytes.length,
-      sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
-    };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response(bytes)),
-    );
-    const controller = new AbortController();
-    const onVerifying = vi.fn(() => {
-      if (duringRead) queueMicrotask(() => controller.abort());
-      else controller.abort();
-    });
-    try {
-      await expect(
-        downloadSpeechModel(directory, model, controller.signal, undefined, onVerifying),
-      ).rejects.toMatchObject({ name: "AbortError" });
-      expect(onVerifying).toHaveBeenCalledOnce();
-      expect(await NodeFSP.readdir(directory)).toEqual([]);
-    } finally {
-      await NodeFSP.rm(directory, { recursive: true, force: true });
-    }
-  },
-);

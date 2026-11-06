@@ -19,12 +19,9 @@ import {
   sanitizeThreadTitle,
 } from "./textGenerationUtils.ts";
 
-export type Operation = keyof ProviderTextGeneration;
+export const TranscriptionPostProcessingOutput = Schema.Struct({ transcription: Schema.String });
 
-/** The structured reply every provider returns for voice transcript cleanup. */
-export const TranscriptionPostProcessingOutput = Schema.Struct({
-  transcription: Schema.String,
-});
+export type Operation = keyof ProviderTextGeneration;
 
 export interface Request<S extends Schema.Top> {
   readonly operation: Operation;
@@ -170,6 +167,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
         modelSelection: input.modelSelection,
       });
     });
+
   const generateReviewGuide: ProviderTextGeneration["generateReviewGuide"] = Effect.fn(
     `${name}.generateReviewGuide`,
   )(function* (input) {
@@ -187,7 +185,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
-    generateTranscriptionPostProcessing,
     generateReviewGuide,
+    generateTranscriptionPostProcessing,
   } satisfies ProviderTextGeneration;
 }
