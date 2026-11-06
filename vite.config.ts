@@ -754,7 +754,6 @@ export default defineConfig({
         "apps/web/src/components/sidebar/SidebarUpdateReleaseNotes.tsx": 1,
         "apps/web/src/components/ThreadStatusIndicators.tsx": 1,
         "apps/web/src/components/usage/UsageLimitsPooled.tsx": 1,
-        "apps/web/src/components/chat/ComposerModelEffort.tsx": 1,
         "apps/web/src/components/settings/MicrophoneTest.tsx": 1,
         "apps/web/src/components/settings/SpeechModelComparison.tsx": 1,
         "apps/web/src/components/settings/TextGeneratorsSettings.tsx": 2,
