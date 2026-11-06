@@ -731,6 +731,43 @@ it.effect(
 );
 
 layer("GitHubPullRequestApi.layer", (it) => {
+  it.effect("keeps recent references when the typed number does not exist", () =>
+    Effect.gen(function* () {
+      const search = {
+        pageInfo: { hasNextPage: false },
+        nodes: [{ __typename: "Issue", number: 7, title: "Seven", issueState: "OPEN" }],
+      };
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          output(
+            encodeJson(
+              call.kind === "graphql" && call.variables?.["exact"] === true
+                ? {
+                    data: { search, repository: { issueOrPullRequest: null } },
+                    errors: [
+                      {
+                        type: "NOT_FOUND",
+                        path: ["repository", "issueOrPullRequest"],
+                        message: "Could not resolve to an issue or pull request.",
+                      },
+                    ],
+                  }
+                : { data: { search } },
+            ),
+          ),
+        ),
+      );
+      const api = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const result = yield* api.searchRepositoryReferences({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        query: "99",
+      });
+      expect(result.items.map((item) => item.reference)).toEqual(["#7"]);
+    }),
+  );
+
   it.effect("turns maintainer edits off without rewriting the pull request's text", () =>
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
@@ -3960,6 +3997,54 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual([
         ["octocat", true],
         ["hubot", false],
+      ]);
+    }),
+  );
+
+  it.effect("asks GitHub to search everyone assignable when the reviewer menu has a query", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                repository: {
+                  assignableUsers: {
+                    pageInfo: { hasNextPage: false },
+                    nodes: [{ login: "octocat", name: null, avatarUrl: "https://avatars/octocat" }],
+                  },
+                  pullRequest: {
+                    author: { __typename: "User", login: "bilal" },
+                    reviewRequests: {
+                      nodes: ["octocat", "unrelated"].map((login) => ({
+                        requestedReviewer: {
+                          __typename: "User",
+                          login,
+                          name: null,
+                          avatarUrl: "https://avatars/user",
+                        },
+                      })),
+                    },
+                  },
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const list = yield* cli.listReviewerCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        query: "octo",
+      });
+
+      expect(varsAt(0)).toMatchObject({ owner: "acme", name: "web", number: 7, query: "octo" });
+      expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual([
+        ["octocat", true],
       ]);
     }),
   );
