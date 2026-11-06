@@ -14,7 +14,7 @@ import {
   type SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 
-import { act, render } from "../../test/render";
+import { act, render, stubGlobal } from "../../test/render";
 import type { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
 import {
@@ -422,29 +422,37 @@ function catalogModel(
 }
 
 it.each([
-  ["the browser prefers German", ["de-DE"], "auto"],
-  ["German is the chosen Voice language", ["en-US"], "de"],
-])("offers and downloads a German-capable model when %s", async (_, languages, speechLanguage) => {
-  setup({ destination: "env-a" });
-  mocks.settings = { speechLanguage };
-  using _languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(languages);
-  const englishDefault = "handy-computer/parakeet-unified-en-0.6b-gguf";
-  const german = "handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf";
-  mocks.modelState = "missing-model";
-  mocks.statusModelId = englishDefault;
-  mocks.models = [
-    { ...catalogModel(englishDefault, ["en"], true), active: true },
-    catalogModel(german, ["en", "de", "fr"], true),
-    catalogModel("handy-computer/canary-180m-flash-gguf", ["en", "de", "es", "fr"], true),
-  ];
-  mocks.download.mockResolvedValue(undefined);
-  await using _screen = await render(<Probe />);
-  await act(() => mocks.voice.start());
-  expect(mocks.voice.setup.open).toBe(true);
-  await act(() => mocks.voice.setup.download());
-  expect(mocks.download).toHaveBeenCalledExactlyOnceWith(german);
-  expect(mocks.voice.setup.model?.id).toBe(german);
-});
+  ["the browser prefers German", ["de-DE"], undefined, "auto"],
+  ["the desktop OS prefers German", ["en-US"], ["de-DE"], "auto"],
+  ["German is the chosen Voice language", ["en-US"], undefined, "de"],
+])(
+  "offers and downloads a German-capable model when %s",
+  async (_, languages, systemLanguages, speechLanguage) => {
+    setup({ destination: "env-a" });
+    mocks.settings = { speechLanguage };
+    using _languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(languages);
+    using _bridge = stubGlobal(
+      "desktopBridge",
+      systemLanguages && { getPreferredSystemLanguages: () => systemLanguages },
+    );
+    const englishDefault = "handy-computer/parakeet-unified-en-0.6b-gguf";
+    const german = "handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf";
+    mocks.modelState = "missing-model";
+    mocks.statusModelId = englishDefault;
+    mocks.models = [
+      { ...catalogModel(englishDefault, ["en"], true), active: true },
+      catalogModel(german, ["en", "de", "fr"], true),
+      catalogModel("handy-computer/canary-180m-flash-gguf", ["en", "de", "es", "fr"], true),
+    ];
+    mocks.download.mockResolvedValue(undefined);
+    await using _screen = await render(<Probe />);
+    await act(() => mocks.voice.start());
+    expect(mocks.voice.setup.open).toBe(true);
+    await act(() => mocks.voice.setup.download());
+    expect(mocks.download).toHaveBeenCalledExactlyOnceWith(german);
+    expect(mocks.voice.setup.model?.id).toBe(german);
+  },
+);
 
 it.each([
   ["selects the offered model once its download installed it", "installed", ["german"]],
