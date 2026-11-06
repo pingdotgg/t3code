@@ -13,7 +13,7 @@ import {
   WELCOME_GUIDE_SEEN_STORAGE_KEY,
 } from "./WelcomeGuideDialog";
 import { environmentPresentations } from "~/state/presentation";
-import { resolveWhatsNewGuides, type WhatsNewGuide } from "./whatsNewGuides";
+import { resolveWhatsNewGuides, whatsNewGuides, type WhatsNewGuide } from "./whatsNewGuides";
 import { useClientSettings } from "~/hooks/useSettings";
 import { Button } from "../ui/button";
 import { Dialog, DialogDescription } from "../ui/dialog";
@@ -64,13 +64,12 @@ export function WhatsNewHost({ hostedStatic }: { readonly hostedStatic: boolean 
     chatSyncAvailable,
   });
 
+  const seedNewInstall = resolved.seed !== null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- seed the guide record once for new installs.
   useEffect(() => {
-    if (seen === null && resolved.seed !== null) {
-      // Seed new installs so the welcome tour remains their only first-run introduction.
-      setSeen(resolved.seed.slice());
-    }
-  }, [resolved.seed, seen, setSeen]);
+    // New installs get only the welcome tour.
+    if (seedNewInstall) setSeen(whatsNewGuides.map((guide) => guide.id));
+  }, [seedNewInstall, setSeen]);
 
   const autoOpen =
     !requested &&
@@ -79,9 +78,7 @@ export function WhatsNewHost({ hostedStatic }: { readonly hostedStatic: boolean 
     welcomeSeenAt !== null &&
     (hostedStatic || setupDone) &&
     sideChatsAvailable;
-  const guides = requested
-    ? resolveWhatsNewGuides({ seen: [], existingInstall: true, chatSyncAvailable }).guides
-    : resolved.guides;
+  const guides = requested ? resolved.available : resolved.guides;
   if (!requested && !autoOpen) return null;
   if (guides.length === 0) return null;
 
@@ -90,7 +87,7 @@ export function WhatsNewHost({ hostedStatic }: { readonly hostedStatic: boolean 
     setDismissed(true);
     setSeen((current) => [...new Set([...(current ?? []), ...guides.map((guide) => guide.id)])]);
   };
-  return <WhatsNewDialog guides={guides} onClose={close} />;
+  return <WhatsNewDialog key={requested ? "all" : "unseen"} guides={guides} onClose={close} />;
 }
 
 function WhatsNewDialog({
@@ -112,7 +109,7 @@ function WhatsNewDialog({
   const runAction = () => {
     onClose();
     queueMicrotask(() => {
-      switch (guide.action) {
+      switch (guide.id) {
         case "new-lesson":
         case "quiz-cards": {
           const button = document.querySelector<HTMLButtonElement>('[aria-label="New lesson"]');
@@ -167,7 +164,11 @@ function WhatsNewDialog({
           <Button
             variant="outline"
             className={index === 0 ? "invisible" : undefined}
-            onClick={() => setStep(index - 1)}
+            onClick={() => {
+              // Back hides on the first step and would drop keyboard focus onto the popup.
+              if (index === 1) nextRef.current?.focus();
+              setStep(index - 1);
+            }}
           >
             Back
           </Button>
@@ -211,18 +212,21 @@ function GuideClip({
         <source src={`/whats-new/${guide.id}.webm`} type="video/webm" />
         <source src={`/whats-new/${guide.id}.mp4`} type="video/mp4" />
       </video>
-      {reducedMotion && !playing ? (
-        <div className="absolute inset-0 grid place-items-center">
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            onClick={() => void videoRef.current?.play()}
-          >
-            Play preview
-          </Button>
-        </div>
-      ) : null}
+      {/* Always offered: a looping clip needs a pause, and reduced motion starts on the still. */}
+      <div className="absolute right-2 bottom-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          onClick={() => {
+            const video = videoRef.current;
+            if (video?.paused) void video.play();
+            else video?.pause();
+          }}
+        >
+          {playing ? "Pause" : "Play"}
+        </Button>
+      </div>
     </div>
   );
 }
