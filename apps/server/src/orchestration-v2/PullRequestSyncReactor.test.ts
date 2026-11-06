@@ -1565,6 +1565,31 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
+  it.effect("reads a backed-off link at once when a refresh asks, then keeps backing off", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("one", { pullRequests: [failingGitLabLink] })]),
+          summary: () => Effect.fail(gitLabCliFailure),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* sweepFor(fixture, reactor, 4);
+          const backedOffReads = (yield* Ref.get(fixture.summaryCalls)).length;
+
+          yield* reactor.requestSync(failingGitLabLink);
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, backedOffReads + 1);
+
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, backedOffReads + 1);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("backs off reading a newly linked pull request whose host read keeps failing", () =>
     Effect.scoped(
       Effect.gen(function* () {
