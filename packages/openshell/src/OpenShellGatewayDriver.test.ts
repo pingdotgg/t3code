@@ -50,6 +50,8 @@ interface FakeClientOptions {
   execResult?: () => OpenShellExecResult;
   deleteOutcome?: "completed" | "accepted" | "already_absent";
   deleteError?: Error;
+  /** Fails every setPolicy call, e.g. a gateway that refuses the policy. */
+  policyError?: Error;
   /** Sandboxes the gateway already holds. */
   sandboxes?: OpenShellSandboxView[];
 }
@@ -118,6 +120,7 @@ const fakeClient = (options: FakeClientOptions = {}) => {
     },
     setPolicy: async (name, policy) => {
       recording.policyCalls.push({ name, policy });
+      if (options.policyError !== undefined) throw options.policyError;
     },
     listTemplates: async () => [],
     createTemplate: async (spec) => {
@@ -274,6 +277,53 @@ describe("OpenShellGatewayDriver.spawn", () => {
     expect(recording.policyCalls[0]?.policy).toEqual(
       sandboxPolicyForRuntimeMode("approval-required"),
     );
+  });
+
+  it("deletes a sandbox it just created when the policy fails", async () => {
+    const { client, recording, sandboxes } = fakeClient({
+      policyError: new Error("policy rejected"),
+    });
+    const driver = makeDriver({ client, settings: DEFAULT_SETTINGS });
+    await expect(spawnEphemeral(driver)).rejects.toMatchObject({ reason: "gateway" });
+    expect(recording.deleteCalls.map((call) => call.name)).toHaveLength(1);
+    expect(sandboxes.size).toBe(0);
+  });
+
+  it("reports a failed cleanup of a new sandbox in the error cause", async () => {
+    const { client } = fakeClient({
+      policyError: new Error("policy rejected"),
+      deleteError: new Error("gateway unreachable"),
+    });
+    const driver = makeDriver({ client, settings: DEFAULT_SETTINGS });
+    const error = await spawnEphemeral(driver).then(
+      () => {
+        throw new Error("expected the spawn to fail");
+      },
+      (cause: { cause?: unknown }) => cause,
+    );
+    expect(error.cause).toHaveProperty("deleteFailure");
+  });
+
+  it("keeps a pre-existing sandbox and its row when a repeated spawn fails at the policy", async () => {
+    const fake = fakeClient();
+    const index = memoryFleetWorkerIndex();
+    const first = makeDriver({ client: fake.client, settings: DEFAULT_SETTINGS, index });
+    await spawnEphemeral(first, "req-1");
+    expect((await index.list()).length).toBe(1);
+    const driver = makeDriver({
+      client: {
+        ...fake.client,
+        setPolicy: async () => {
+          throw new Error("policy rejected");
+        },
+      },
+      settings: DEFAULT_SETTINGS,
+      index,
+    });
+    await expect(spawnEphemeral(driver, "req-1")).rejects.toMatchObject({ reason: "gateway" });
+    expect(fake.recording.deleteCalls).toHaveLength(0);
+    expect(fake.sandboxes.size).toBe(1);
+    expect((await index.list()).length).toBe(1);
   });
 
   it("registers the worker and exchanges the bootstrap credential after ready", async () => {
