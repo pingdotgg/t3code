@@ -1,3 +1,34 @@
+import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
+
+export function getMobileReplyTypography(themeId: string, baseFontSize = 16) {
+  if (BUILT_IN_THEMES.find((theme) => theme.id === themeId)?.typography !== "absolutely")
+    return null;
+  const scale = baseFontSize / 16;
+  return {
+    fontSize: 15 * scale,
+    lineHeight: 22 * scale,
+    codeBlockFontSize: 14 * scale,
+    codeBlockLineHeight: 22.75 * scale,
+    headingLineHeightMultiplier: 1.25,
+    headingFontSizes: [26.25, 20.625, 16.875, 15, 13.125, 13.125].map((size) => size * scale),
+    fontFamily: "SourceSerif4-Regular",
+    headingFontFamily: "SourceSerif4-Semibold",
+    boldFontFamily: "SourceSerif4-Semibold",
+  };
+}
+
+export function getMobileUserTypography(themeId: string, baseFontSize = 16) {
+  const reply = getMobileReplyTypography(themeId, baseFontSize);
+  return reply
+    ? {
+        fontSize: reply.fontSize,
+        lineHeight: (20 * baseFontSize) / 16,
+        codeBlockFontSize: reply.codeBlockFontSize,
+        codeBlockLineHeight: reply.codeBlockLineHeight,
+      }
+    : null;
+}
+
 export const MOBILE_TYPOGRAPHY = {
   micro: { fontSize: 11, lineHeight: 14 },
   caption: { fontSize: 12, lineHeight: 16 },

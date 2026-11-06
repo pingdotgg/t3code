@@ -35,6 +35,7 @@ import {
   subscribeDraftThreadPromotion,
   useComposerDraftStore,
 } from "./composerDraftStore";
+import { getRenderedTypography, subscribeRenderedAppearance } from "./hooks/useTheme";
 import { startDefaultThemeAdoption } from "./hooks/useDefaultTheme";
 import { startEnvironmentThemeRepaint } from "./hooks/useEnvironmentTheme";
 import { startThemeBackground } from "./themeBackground";
@@ -71,8 +72,10 @@ function startClientAppearance(): void {
   const root = document.documentElement;
   let applied: ClientSettings | null = null;
   let appliedSeparateFonts: boolean | null = null;
+  let appliedTypography: ReturnType<typeof getRenderedTypography>;
   const apply = () => {
     const settings = getClientSettings();
+    const typography = getRenderedTypography();
     const previous = applied;
     applied = settings;
     const separateFonts = readLocalStorageValue(
@@ -100,6 +103,8 @@ function startClientAppearance(): void {
       }
     }
     if (
+      appliedTypography !== typography ||
+      previous?.fontFamilyReply !== settings.fontFamilyReply ||
       previous?.fontFamilySans !== settings.fontFamilySans ||
       previous.fontFamilyCode !== settings.fontFamilyCode ||
       previous.fontFamilyComposer !== settings.fontFamilyComposer ||
@@ -109,7 +114,10 @@ function startClientAppearance(): void {
       previous.fontSmoothing !== settings.fontSmoothing ||
       previousSeparateFonts !== separateFonts
     ) {
+      appliedTypography = typography;
       applyAppearanceFontVariables(root, {
+        typography,
+        reply: settings.fontFamilyReply,
         sans: settings.fontFamilySans,
         code: settings.fontFamilyCode,
         composer: settings.fontFamilyComposer,
@@ -123,6 +131,7 @@ function startClientAppearance(): void {
   };
   subscribeClientSettings(apply);
   subscribeLocalStorageKey(TYPOGRAPHY_ADVANCED_STORAGE_KEY, apply);
+  subscribeRenderedAppearance(apply);
   apply();
 }
 

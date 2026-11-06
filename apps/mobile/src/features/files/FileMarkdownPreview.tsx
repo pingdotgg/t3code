@@ -9,9 +9,8 @@ import { ScrollView, View } from "react-native";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
-import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import { resolveNativeMarkdownTypography } from "../../lib/appearancePreferences";
-import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { useUniwindTheme, useThemeFontFamilies } from "../../lib/useUniwindTheme";
 import {
   ThreadMarkdownImage,
   ThreadMarkdownImageView,
@@ -50,8 +49,11 @@ export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
   const codeBackground = theme["--color-md-code-bg"];
   const codeText = theme["--color-md-code-text"];
   const horizontalRule = theme["--color-md-hr"];
-  const regularFontFamily = FONT_FAMILIES.regular;
-  const boldFontFamily = FONT_FAMILIES.bold;
+  const {
+    regular: regularFontFamily,
+    bold: boldFontFamily,
+    code: codeFontFamily,
+  } = useThemeFontFamilies();
 
   return {
     nativeTextStyle: {
@@ -72,6 +74,7 @@ export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
       fontFamily: regularFontFamily,
       headingFontFamily: boldFontFamily,
       boldFontFamily,
+      codeFontFamily,
     },
   };
 }

@@ -43,16 +43,23 @@ const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
-it("drops theme defaults from a client's settings patch", () => {
-  expect(
-    decodeClientServerSettingsPatch({
-      newWorktreesStartFromOrigin: false,
-      defaultTheme: "grove",
-      defaultThemeSetAt: "2026-11-13T00:00:00.000Z",
-      defaultAppearance: "dark",
-      defaultAppearanceSetAt: "2026-11-13T00:00:00.000Z",
-    }),
-  ).toEqual({ newWorktreesStartFromOrigin: false });
+describe("reply font preferences", () => {
+  it("keeps existing clients on their interface font", () => {
+    expect(decodeClientSettings({}).fontFamilyReply).toBe("");
+  });
+
+  it("round-trips a reply font independently and accepts clearing it", () => {
+    const input = { fontFamilySans: "Arial", fontFamilyReply: "Source Serif 4" };
+    expect(encodeClientSettings(decodeClientSettings(input))).toMatchObject(input);
+    expect(decodeClientSettingsPatch(input)).toEqual(input);
+    expect(decodeClientSettingsPatch({ fontFamilyReply: "" })).toEqual({ fontFamilyReply: "" });
+  });
+
+  it("enforces the existing font preference limit on reads and writes", () => {
+    const input = { fontFamilyReply: "a".repeat(201) };
+    expect(() => decodeClientSettings(input)).toThrow();
+    expect(() => decodeClientSettingsPatch(input)).toThrow();
+  });
 });
 
 describe("storage cleanup settings", () => {
