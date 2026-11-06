@@ -17,7 +17,7 @@ export function acknowledgeComposerNativeEvent(
 ): number | null {
   if (
     !Number.isSafeInteger(incomingEventCount) ||
-    incomingEventCount < mostRecentEventCount ||
+    incomingEventCount <= mostRecentEventCount ||
     // Events from before the editor applied a parent reset describe text the parent replaced.
     incomingResetGeneration < resetGeneration
   ) {
