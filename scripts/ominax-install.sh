@@ -21,7 +21,8 @@ repo="aabdel0181/ominax"
 base_url="${OMINAX_RELEASE_BASE_URL:-${T3LEARN_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}}"
 app_name="OminaX"
 old_app_name="T3 Learn"
-bundle_id="io.github.aabdel0181.t3learn"
+# The app before and after the OminaX rename (REL-45).
+bundle_ids="io.github.aabdel0181.ominax io.github.aabdel0181.t3learn"
 data_dir="$HOME/.ominax"
 legacy_data_dir="$HOME/.t3-learn"
 # The Linux executable, WM class and deb package, like upstream's t3code.
@@ -131,7 +132,7 @@ uninstall() {
     dest="$(mac_app_dir)"
     for app in "${dest}/${app_name}.app" "${dest}/${old_app_name}.app"; do
       [ -d "$app" ] || continue
-      osascript -e "tell application id \"${bundle_id}\" to quit" >/dev/null 2>&1 || true
+      for id in $bundle_ids; do osascript -e "tell application id \"${id}\" to quit" >/dev/null 2>&1 || true; done
       rm -rf "$app"
       say "Removed ${app}."
     done
@@ -231,7 +232,7 @@ if [ "$platform" = mac ]; then
   dest="$(mac_app_dir)"
   if pgrep -f "${dest}/(${app_name}|${old_app_name})\.app/Contents/MacOS/" >/dev/null 2>&1; then
     step "Closing OminaX to update it..."
-    osascript -e "tell application id \"${bundle_id}\" to quit" >/dev/null 2>&1 || true
+    for id in $bundle_ids; do osascript -e "tell application id \"${id}\" to quit" >/dev/null 2>&1 || true; done
     tries=0
     while pgrep -f "${dest}/(${app_name}|${old_app_name})\.app/Contents/MacOS/" >/dev/null 2>&1; do
       tries=$((tries + 1))
