@@ -269,6 +269,16 @@ it.effect("waitForThread follows a restart continuation instead of the cut run",
   }),
 );
 
+/** The message that started `run`, as a person sent it unless `fields` say otherwise. */
+const startedBy = (run: OrchestrationV2Run, fields: object = {}) => ({
+  id: run.userMessageId,
+  role: "user",
+  runId: run.id,
+  createdBy: "user",
+  creationSource: "web",
+  ...fields,
+});
+
 it.effect("waitForThread with afterRunId waits for a later run that is not its restart", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:wait-after");
@@ -282,8 +292,17 @@ it.effect("waitForThread with afterRunId waits for a later run that is not its r
       ordinal: number;
       status: OrchestrationV2Run["status"];
       startedAt: DateTime.Utc;
+      userMessageId: MessageId;
       restartContinuationOfRunId?: RunId;
-    }> = [{ id: runId, ordinal: 1, status: "completed", startedAt: startedAt(1) }];
+    }> = [
+      {
+        id: runId,
+        ordinal: 1,
+        status: "completed",
+        startedAt: startedAt(1),
+        userMessageId: MessageId.make("message:thread-management:wait-after:1"),
+      },
+    ];
     const stored = (sequence: number, event: object) =>
       ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
     const layerTest = ThreadManagementService.layer.pipe(
@@ -304,6 +323,7 @@ it.effect("waitForThread with afterRunId waits for a later run that is not its r
                 ({
                   thread: { id: threadId, projectId, deletedAt: null },
                   runs,
+                  messages: runs.map((run) => startedBy(run as unknown as OrchestrationV2Run)),
                 }) as unknown as OrchestrationV2ThreadProjection,
             ),
         }),
@@ -325,12 +345,14 @@ it.effect("waitForThread with afterRunId waits for a later run that is not its r
       restartContinuationOfRunId: runId,
       status: "completed" as const,
       startedAt: startedAt(2),
+      userMessageId: MessageId.make("message:thread-management:wait-after:restart"),
     };
     const later = {
       id: RunId.make("run:thread-management:wait-after:later"),
       ordinal: 3,
       status: "running" as const,
       startedAt: startedAt(3),
+      userMessageId: MessageId.make("message:thread-management:wait-after:later"),
     };
     runs = [...runs, restart, later];
     yield* Queue.offer(events, stored(1, { type: "run.updated", payload: restart }));
@@ -360,7 +382,9 @@ it.effect("waitForThread with afterRunId skips a later run that never started", 
         id: RunId.make(id),
         ordinal,
         status,
+        requestedAt: DateTime.makeUnsafe(ordinal),
         startedAt: started ? DateTime.makeUnsafe(ordinal * 1_000) : null,
+        userMessageId: MessageId.make(`message:${id}`),
         ...(status === "queued" ? { queueHeld: true } : {}),
       }) as unknown as OrchestrationV2Run;
     // A message queued there behind a held queue is no run yet.
@@ -388,6 +412,7 @@ it.effect("waitForThread with afterRunId skips a later run that never started", 
                 ({
                   thread: { id: threadId, projectId, deletedAt: null },
                   runs,
+                  messages: runs.map((run) => startedBy(run)),
                 }) as unknown as OrchestrationV2ThreadProjection,
             ),
         }),
@@ -518,6 +543,7 @@ const timedRun = (
     id: RunId.make(id),
     ordinal,
     status,
+    userMessageId: MessageId.make(`message:${id}`),
     requestedAt: DateTime.makeUnsafe(ordinal),
     startedAt: startedAt === null ? null : DateTime.makeUnsafe(startedAt * 1_000),
     completedAt: completedAt === null ? null : DateTime.makeUnsafe(completedAt * 1_000),
@@ -533,14 +559,20 @@ it.effect("waitForThread with afterRunId follows runs in the order they started"
       timedRun("run:r3", 3, "completed", 20),
       timedRun("run:r4", 4, "completed", 10),
     ];
-    const service = yield* settledRunsService(projectId, threadId, () => runs);
+    const r5 = timedRun("run:r5", 5, "running", 30);
+    const service = yield* settledRunsService(
+      projectId,
+      threadId,
+      () => runs,
+      [...runs, r5].map((run) => startedBy(run)),
+    );
     const after = (runId: string) =>
       service.waitForThread({ projectId, threadId, afterRunId: RunId.make(runId), timeoutMs: 1 });
 
     expect(yield* after("run:r2")).toMatchObject({ timedOut: false, run: { id: "run:r4" } });
     expect(yield* after("run:r4")).toMatchObject({ timedOut: false, run: { id: "run:r3" } });
     expect(yield* after("run:r3")).toMatchObject({ timedOut: true, run: { id: "run:r3" } });
-    runs = [...runs, timedRun("run:r5", 5, "running", 30)];
+    runs = [...runs, r5];
     expect(yield* after("run:r3")).toMatchObject({ timedOut: false, run: { id: "run:r5" } });
   }),
 );
@@ -554,7 +586,12 @@ it.effect("waitForThread with afterRunId finds a run started past a held queued 
       { ...timedRun("run:r2", 2, "queued", null), queueHeld: true },
       timedRun("run:r3", 3, "completed", 5),
     ];
-    const service = yield* settledRunsService(projectId, threadId, () => runs);
+    const service = yield* settledRunsService(
+      projectId,
+      threadId,
+      () => runs,
+      runs.map((run) => startedBy(run)),
+    );
 
     expect(
       yield* service.waitForThread({
@@ -572,7 +609,12 @@ it.effect("waitForThread with afterRunId counts a run that failed to start", () 
     const projectId = ProjectId.make("project:thread-management:wait-after-failed");
     const threadId = ThreadId.make("thread:thread-management:wait-after-failed");
     const runs = [timedRun("run:r1", 1, "completed", 1), timedRun("run:r2", 2, "failed", null, 5)];
-    const service = yield* settledRunsService(projectId, threadId, () => runs);
+    const service = yield* settledRunsService(
+      projectId,
+      threadId,
+      () => runs,
+      runs.map((run) => startedBy(run)),
+    );
 
     expect(
       yield* service.waitForThread({
@@ -590,7 +632,13 @@ it.effect("waitForThread with afterRunId skips a rolled-back run for the one aft
     const projectId = ProjectId.make("project:thread-management:wait-after-rolled-back");
     const threadId = ThreadId.make("thread:thread-management:wait-after-rolled-back");
     let runs = [timedRun("run:r1", 1, "completed", 1), timedRun("run:r2", 2, "rolled_back", 5)];
-    const service = yield* settledRunsService(projectId, threadId, () => runs);
+    const r3 = timedRun("run:r3", 3, "completed", 10);
+    const service = yield* settledRunsService(
+      projectId,
+      threadId,
+      () => runs,
+      [...runs, r3].map((run) => startedBy(run)),
+    );
     const afterR1 = service.waitForThread({
       projectId,
       threadId,
@@ -599,8 +647,70 @@ it.effect("waitForThread with afterRunId skips a rolled-back run for the one aft
     });
 
     expect(yield* afterR1).toMatchObject({ timedOut: true, run: { id: "run:r1" } });
-    runs = [...runs, timedRun("run:r3", 3, "completed", 10)];
+    runs = [...runs, r3];
     expect(yield* afterR1).toMatchObject({ timedOut: false, run: { id: "run:r3" } });
+  }),
+);
+
+it.effect("waitForThread with afterRunId skips runs a monitor or scheduled task started", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:wait-after-followup");
+    const threadId = ThreadId.make("thread:thread-management:wait-after-followup");
+    const r1 = timedRun("run:r1", 1, "completed", 1);
+    const scheduled = timedRun("run:scheduled", 2, "completed", 5);
+    const monitor = timedRun("run:monitor", 3, "completed", 10);
+    const user = timedRun("run:user", 4, "running", 20);
+    let runs = [r1, scheduled];
+    const messages = [
+      startedBy(r1),
+      startedBy(monitor, {
+        createdBy: "agent",
+        creationSource: "server",
+        notification: { source: { kind: "monitor" } },
+      }),
+      startedBy(scheduled, { scheduledTaskId: "scheduled:daily" }),
+      startedBy(user),
+    ];
+    const service = yield* settledRunsService(projectId, threadId, () => runs, messages);
+    const afterR1 = service.waitForThread({
+      projectId,
+      threadId,
+      afterRunId: RunId.make("run:r1"),
+      timeoutMs: 1,
+    });
+
+    expect(yield* afterR1).toMatchObject({ timedOut: true, run: { id: "run:r1" } });
+    runs = [...runs, monitor];
+    expect(yield* afterR1).toMatchObject({ timedOut: true, run: { id: "run:r1" } });
+    runs = [...runs, user];
+    expect(yield* afterR1).toMatchObject({ timedOut: false, run: { id: "run:user" } });
+  }),
+);
+
+it.effect("waitForThread with afterRunId counts a run a delegated task's result started", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:wait-after-wake");
+    const threadId = ThreadId.make("thread:thread-management:wait-after-wake");
+    const r1 = timedRun("run:r1", 1, "completed", 1);
+    const wake = timedRun("run:wake", 2, "running", 5);
+    const messages = [
+      startedBy(r1),
+      startedBy(wake, {
+        createdBy: "agent",
+        creationSource: "server",
+        notification: { source: { kind: "delegated_task" } },
+      }),
+    ];
+    const service = yield* settledRunsService(projectId, threadId, () => [r1, wake], messages);
+
+    expect(
+      yield* service.waitForThread({
+        projectId,
+        threadId,
+        afterRunId: RunId.make("run:r1"),
+        timeoutMs: 1,
+      }),
+    ).toMatchObject({ timedOut: false, run: { id: "run:wake" } });
   }),
 );
 

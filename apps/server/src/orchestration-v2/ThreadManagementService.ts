@@ -177,8 +177,9 @@ export interface ThreadManagementWaitInput {
    */
   readonly untilDelegatedWorkSettled?: boolean;
   /**
-   * Instead wait for a run after this one that is not its restart continuation, returned
-   * as soon as it starts; on timeout, this one's latest.
+   * Instead wait for the next run after this one that a message able to start a finished
+   * child's follow-up work started, as a person's does and a monitor's or scheduled task's
+   * does not, returned as soon as it starts; on timeout, this one's latest.
    */
   readonly afterRunId?: RunId;
 }
@@ -961,6 +962,20 @@ const make = Effect.gen(function* () {
     return { dispatch: dispatched, projection, message, run, turnItem, delivery };
   });
 
+  /** The user messages that started runs after `after`, read only when there are any. */
+  const messagesStartingRunsAfter = (
+    input: { readonly projectId: ProjectId; readonly threadId: ThreadId },
+    runs: ReadonlyArray<OrchestrationV2Run>,
+    after: OrchestrationV2Run,
+  ) => {
+    const later = runs.filter((run) => runBeganAfter(run, after));
+    if (later.length === 0) return Effect.succeed([]);
+    return getProjectThreadRecords(input, ["messages"], {
+      messageRoles: ["user"],
+      messageIds: later.map((run) => run.userMessageId),
+    }).pipe(Effect.map(({ messages }) => messages));
+  };
+
   // Runs inside waitForThread, which already traces it.
   const waitForLaterRun = Effect.fnUntraced(function* (
     input: ThreadManagementWaitInput,
@@ -968,20 +983,36 @@ const make = Effect.gen(function* () {
     initialRuns: ReadonlyArray<OrchestrationV2Run>,
     afterSequence: number,
   ) {
-    const evaluate = (runs: ReadonlyArray<OrchestrationV2Run>) => {
+    const evaluate = Effect.fnUntraced(function* (runs: ReadonlyArray<OrchestrationV2Run>) {
       const after = runs.find((candidate) => candidate.id === afterRunId);
       if (after === undefined) {
-        return Effect.fail(
-          new ThreadManagementRunNotFoundError({ threadId: input.threadId, runId: afterRunId }),
-        );
+        return yield* new ThreadManagementRunNotFoundError({
+          threadId: input.threadId,
+          runId: afterRunId,
+        });
       }
-      const later = laterRun(runs, after);
-      return Effect.succeed({
+      const messages = new Map(
+        (yield* messagesStartingRunsAfter(input, runs, after)).map((message) => [
+          message.id,
+          message,
+        ]),
+      );
+      const later = laterRun(runs, after, (run) => {
+        const message = messages.get(run.userMessageId);
+        return (
+          message !== undefined &&
+          Orchestrator.mayStartSubagentFollowup({
+            ...message,
+            restartContinuationOfRunId: run.restartContinuationOfRunId,
+          })
+        );
+      });
+      return {
         threadId: input.threadId,
         run: later ?? latestRestartContinuation(runs, after),
         timedOut: later === undefined,
-      });
-    };
+      };
+    });
     const initial = yield* evaluate(initialRuns);
     if (!initial.timedOut) return initial;
     const waited = yield* Stream.mergeAll(
@@ -1069,12 +1100,7 @@ const make = Effect.gen(function* () {
       runs: ReadonlyArray<OrchestrationV2Run>,
       selected: OrchestrationV2Run,
     ) {
-      const later = runs.filter((run) => runBeganAfter(run, selected));
-      if (later.length === 0) return runs;
-      const { messages } = yield* getProjectThreadRecords(input, ["messages"], {
-        messageRoles: ["user"],
-        messageIds: later.map((run) => run.userMessageId),
-      });
+      const messages = yield* messagesStartingRunsAfter(input, runs, selected);
       const byMessage = new Set(
         messages.filter((message) => message.notification === undefined).map(({ id }) => id),
       );
