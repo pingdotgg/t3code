@@ -50,6 +50,7 @@ export function secretProviderUses(
           ? [
               {
                 id: `${ownerId}:${field}:${key ?? ""}`,
+                // oxlint-disable-next-line t3code/no-dot-separated-text -- Main's secret usage label; the redesign restyles it later.
                 label: `${owner} · ${key ?? labels.get(field) ?? field}`,
               },
             ]
@@ -68,6 +69,7 @@ export function secretProviderUses(
             ? [
                 {
                   id: `provider:${instanceId}:env:${variable.name}`,
+                  // oxlint-disable-next-line t3code/no-dot-separated-text -- Main's secret usage label; the redesign restyles it later.
                   label: `${owner} · ${variable.name}`,
                 },
               ]
