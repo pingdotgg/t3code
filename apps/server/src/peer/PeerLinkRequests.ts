@@ -23,7 +23,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -84,7 +84,7 @@ export class PeerLinkRequests extends Context.Service<
 const make = Effect.gen(function* () {
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const peerLinks = yield* PeerLinks.PeerLinks;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
 
   const readCard = (threadId: ThreadId, turnItemId: TurnItemId) =>
     threadManagement
@@ -230,7 +230,7 @@ const make = Effect.gen(function* () {
           } as const;
         }
       }
-      const key = input.clientRequestId ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+      const key = input.clientRequestId ?? (yield* random.uuidV4());
       // A retry with the same clientRequestId finds this card and records nothing.
       const turnItemId = cardId(threadId, scope.requestNamespace, key);
       if (input.clientRequestId !== undefined) {
