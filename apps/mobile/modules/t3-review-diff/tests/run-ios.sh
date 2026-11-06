@@ -12,6 +12,10 @@ from pathlib import Path
 module = Path(sys.argv[1])
 source = (module / "ios/T3ReviewDiffView.swift").read_text()
 source = source.replace("import ExpoModulesCore\n", "")
+# Count entry into the real decoder without replacing the production queue or lifecycle.
+row_decode = "try JSONDecoder().decode([ReviewDiffNativeRow].self, from: data)"
+assert source.count(row_decode) == 1
+source = source.replace(row_decode, "try decodeRowsForTest(data)")
 # Instrument the real full-token decoder and accepted publication only.
 start = source.index("        let decodedTokens = try JSONDecoder().decode(")
 end = source.index("        DispatchQueue.main.async", start)
@@ -43,6 +47,7 @@ final class EventDispatcher {
 Path(sys.argv[2]).write_text(source + "\n" + stubs + "\n"
                             + (module / "tests/ios/main.swift").read_text() + "\n"
                             + (module / "tests/ios/anchor.swift").read_text() + "\n"
+                            + (module / "tests/ios/row-decode.swift").read_text() + "\n"
                             + (module / "tests/ios/token-decode.swift").read_text() + "\n"
                             + (module / "tests/ios/geometry.swift").read_text())
 PYTHON
