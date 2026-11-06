@@ -1,9 +1,11 @@
 import { useLayoutEffect } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
+import { getEnvironmentSpeechModels } from "@t3tools/client-runtime/voice-input";
 import {
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
@@ -139,11 +141,12 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
       if (mocks.selectionFails) throw new Error("selection failed");
       return { models: mocks.models };
     }),
-  getEnvironmentSpeechModels: () =>
+  getEnvironmentSpeechModels: vi.fn(() =>
     Effect.sync(() => {
       if (mocks.catalogOffline) throw new Error("Catalog offline");
       return { models: mocks.models };
     }),
+  ),
   postProcessEnvironmentTranscript: (
     prepared: PreparedConnection,
     transcript: string,
@@ -488,6 +491,29 @@ it.each([
     expect(mocks.voice.setup.model?.id).toBe(german);
   },
 );
+
+it("closes setup when dictation is cancelled during a catalog read", async () => {
+  setup({ destination: "env-a" });
+  mocks.modelState = "missing-model";
+  mocks.settings = { speechLanguage: "en" };
+  mocks.models = [catalogModel("current", ["en"], true)];
+  const response = Deferred.makeUnsafe<{ models: EnvironmentSpeechModel[] }>();
+  vi.mocked(getEnvironmentSpeechModels).mockReturnValueOnce(Deferred.await(response));
+  await using _screen = await render(<Probe showWizard />);
+  let firstStart!: Promise<void>;
+  await act(() => {
+    firstStart = mocks.voice.start();
+  });
+  await expect.element(page.getByText("Loading transcription models…")).toBeVisible();
+  await act(() => mocks.voice.cancel());
+  expect(mocks.voice.setup.open).toBe(false);
+
+  await act(() => mocks.voice.start());
+  Deferred.doneUnsafe(response, Effect.succeed({ models: [catalogModel("stale", ["en"], true)] }));
+  await act(() => firstStart);
+  await expect.element(page.getByRole("heading", { name: "current" })).toBeVisible();
+  expect(mocks.microphoneRequests).toEqual([]);
+});
 
 it.each([true, false])(
   "never downloads the English default when no German recommendation is available (catalog offline: %s)",

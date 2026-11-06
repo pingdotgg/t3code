@@ -638,6 +638,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       pendingSubmissionRef.current = null;
       startRequestRef.current += 1;
       setQueuedStart(null);
+      setSetup(INITIAL_SETUP);
       controllerRef.current?.cancel();
     }),
     skipPostProcessing: useStableCallback(() => controllerRef.current?.skipPostProcessing()),
