@@ -2382,20 +2382,28 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect.each(["failed", "interrupted", "Stop"] as const)(
-    "settles unfinished compaction on %s without changing completed compaction",
-    (outcome) =>
+  it.effect.each([
+    { itemType: "contextCompaction", outcome: "failed" },
+    { itemType: "contextCompaction", outcome: "interrupted" },
+    { itemType: "contextCompaction", outcome: "Stop" },
+    { itemType: "webSearch", outcome: "completed" },
+    { itemType: "webSearch", outcome: "failed" },
+    { itemType: "webSearch", outcome: "interrupted" },
+    { itemType: "webSearch", outcome: "Stop" },
+  ] as const)(
+    "settles unfinished $itemType on $outcome without changing completed items",
+    ({ itemType, outcome }) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const nativeThreadId = "compact-thread";
-          const nativeTurnId = "compact-turn";
+          const nativeThreadId = "unfinished-item-thread";
+          const nativeTurnId = "unfinished-item-turn";
           const error = {
-            message: "Remote compaction stream disconnected",
+            message: "Remote item stream disconnected",
             codexErrorInfo: "other",
             additionalDetails: null,
           };
           const transcript = makeCodexReplayTranscript({
-            scenario: `automatic-compaction-${outcome}`,
+            scenario: `unfinished-${itemType}-${outcome}`,
             entries: [
               ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
               ...(
@@ -2412,7 +2420,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   params: {
                     threadId: nativeThreadId,
                     turnId: nativeTurnId,
-                    item: { type: "contextCompaction", id },
+                    item: {
+                      type: itemType,
+                      id,
+                      ...(itemType === "webSearch" ? { query: "T3 Code", action: null } : {}),
+                    },
                     ...timestamps,
                   },
                 },
@@ -2452,13 +2464,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   ]),
             ],
           });
-          const compactionStarted = yield* Deferred.make<ProviderTurnId>();
+          const itemStarted = yield* Deferred.make<ProviderTurnId>();
           const harness = yield* makeCodexReplayHarness(transcript, (event) =>
             event.type === "turn_item.updated" &&
             event.turnItem.nativeItemRef?.nativeId === "unfinished-item" &&
             event.turnItem.status === "running" &&
             event.turnItem.providerTurnId !== null
-              ? Deferred.succeed(compactionStarted, event.turnItem.providerTurnId)
+              ? Deferred.succeed(itemStarted, event.turnItem.providerTurnId)
               : Effect.void,
           );
           yield* TestClock.setTime(1782622445000);
@@ -2467,12 +2479,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               threadId: harness.threadId,
               providerThread: harness.providerThread,
               now: yield* DateTime.now,
-              attemptId: RunAttemptId.make(`compact-${outcome}-attempt`),
+              attemptId: RunAttemptId.make(`unfinished-${itemType}-${outcome}-attempt`),
               text: "Continue.",
             }),
           );
           if (outcome === "Stop") {
-            const providerTurnId = yield* Deferred.await(compactionStarted);
+            const providerTurnId = yield* Deferred.await(itemStarted);
             const interrupt = yield* harness.runtime
               .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
               .pipe(Effect.exit);
@@ -2480,7 +2492,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           }
           yield* harness.firstTerminal;
           const items = harness.events.flatMap((event) =>
-            event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === (itemType === "webSearch" ? "web_search" : "compaction")
               ? [event.turnItem]
               : [],
           );
@@ -2490,13 +2503,26 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           const unfinished = items.filter(
             (item) => item.nativeItemRef?.nativeId === "unfinished-item",
           );
-          const status = outcome === "failed" ? "failed" : "interrupted";
+          const status =
+            outcome === "completed" ? "cancelled" : outcome === "failed" ? "failed" : "interrupted";
           assert.deepEqual(
             unfinished.map((item) => item.status),
             ["running", status],
           );
           assert.equal(unfinished[0]?.id, unfinished[1]?.id);
           assert.deepEqual(unfinished[1]?.startedAt, DateTime.makeUnsafe(1782622443000));
+          if (unfinished[1]?.type === "web_search") {
+            assert.deepEqual(unfinished[1].patterns, ["T3 Code"]);
+            assert.deepEqual(
+              harness.events.flatMap((event) =>
+                event.type === "node.updated" &&
+                event.node.nativeItemRef?.nativeId === "unfinished-item"
+                  ? [event.node.status]
+                  : [],
+              ),
+              ["running", status],
+            );
+          }
           assert.deepEqual(
             unfinished[1]?.completedAt,
             DateTime.makeUnsafe(outcome === "Stop" ? 1782622445000 : 1782622450000),
@@ -2506,8 +2532,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ["running", "completed"],
           );
           assert.deepEqual(completed[1]?.startedAt, DateTime.makeUnsafe(1782622441000));
-          assert.deepEqual(completed[1]?.completedAt, DateTime.makeUnsafe(1782622442000));
-          assert.equal(harness.terminalEvents()[0]?.status, status);
+          assert.deepEqual(
+            completed[1]?.completedAt,
+            DateTime.makeUnsafe(itemType === "webSearch" ? 1782622445000 : 1782622442000),
+          );
+          assert.equal(
+            harness.terminalEvents()[0]?.status,
+            outcome === "Stop" ? "interrupted" : outcome,
+          );
           if (outcome === "failed") {
             assert.equal(harness.terminalEvents()[0]?.failure?.message, error.message);
           }
