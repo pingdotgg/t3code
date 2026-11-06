@@ -363,6 +363,7 @@ export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
   readonly checks: ReadonlyArray<PullRequestCheck>;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
+  readonly isInMergeQueue?: boolean;
 }
 
 export interface GitHubWorkflowRunApproval {
@@ -763,6 +764,7 @@ interface DetailFields extends ListItemFields {
     | { readonly mergeMethod?: string | null | undefined }
     | null
     | undefined;
+  readonly isInMergeQueue?: boolean | undefined;
 }
 
 function toDetail(raw: DetailFields): GitHubPullRequestDetail {
@@ -783,6 +785,7 @@ function toDetail(raw: DetailFields): GitHubPullRequestDetail {
       ? {}
       : { autoMergeEnabled: raw.autoMergeRequest !== null }),
     ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
+    ...(raw.isInMergeQueue === undefined ? {} : { isInMergeQueue: raw.isInMergeQueue }),
   };
 }
 

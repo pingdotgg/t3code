@@ -334,7 +334,9 @@ no reviewer requested changes. CodeRabbit is never waited for. It waits until th
 it stops watching and tells you, or with **Fix and merge when ready** it merges with your project's
 merge method, or the first one the repository allows. It merges only the commit it judged, so only
 GitHub merges this way: other hosts cannot refuse a commit that landed after the check, and those
-pull requests are reported ready instead. So are stacked reviews and ones you lack write access to.
+pull requests are reported ready instead. So are ones you lack write access to. With a merge queue,
+it adds the pull request to the queue, and the agent is told if it leaves without merging. On a
+stacked review, it lands that layer and every open one below it, once each of them is ready too.
 If the host refuses, such as for a missing approval or an out-of-date branch, the agent is told why,
 and T3 Code tries again after a new push or review.
 

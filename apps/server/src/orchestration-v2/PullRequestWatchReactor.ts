@@ -38,6 +38,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import {
   agentMergeBlockedMessage,
+  agentMergeLeftQueueMessage,
   agentMergeGate,
   agentMergeMessagePrefix,
   agentMergeReadyMessage,
@@ -197,7 +198,8 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     left.wakes === right.wakes &&
     left.checksAwaitedSince === right.checksAwaitedSince &&
     left.blockedHead === right.blockedHead &&
-    left.mergeHead === right.mergeHead
+    left.mergeHead === right.mergeHead &&
+    left.queuedHead === right.queuedHead
   );
 }
 
@@ -491,6 +493,51 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // Landing a layer lands every open layer below it, so each must pass the same gate. Null means
+  // a layer is undecided or the read failed, and the next sweep looks again.
+  const judgeStack = Effect.fn("PullRequestWatchReactor.judgeStack")(
+    function* (reference: PullRequestRef, head: string) {
+      const stack = yield* pullRequests.stack(reference);
+      const index = stack?.layers.findIndex((layer) => layer.number === reference.number) ?? -1;
+      if (stack == null || index < 0 || stack.layers[index]?.headSha !== head) return null;
+      const open = stack.layers.slice(0, index + 1).filter((layer) => layer.state !== "merged");
+      const lower = open.slice(0, -1);
+      const gates = yield* Effect.forEach(lower, (layer) =>
+        Effect.gen(function* () {
+          const ref = { ...reference, number: layer.number };
+          yield* pullRequests.invalidate({ reference: ref });
+          const [layerDetail, layerActivity, summary] = yield* Effect.all(
+            [
+              pullRequests.detail({ ...ref, allowStale: false }),
+              pullRequests.activity(ref),
+              pullRequests.summary(ref),
+            ],
+            { concurrency: "unbounded" },
+          );
+          const gate = agentMergeGate(
+            "merge",
+            layerDetail,
+            layerActivity.reviewThreads,
+            summary.reviewDecision,
+          );
+          return gate === null
+            ? null
+            : gate.blockers.map((blocker) => `#${layer.number}: ${blocker}`);
+        }),
+      );
+      const heads = open.flatMap(({ number, headSha }) =>
+        headSha === undefined ? [] : [{ number, headSha }],
+      );
+      if (gates.includes(null) || heads.length !== open.length) return null;
+      return { number: stack.number, heads, blockers: gates.flatMap((gate) => gate ?? []) };
+    },
+    Effect.catchCause((cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.interrupt
+        : Effect.logDebug("pull request stack read failed", { cause }).pipe(Effect.as(null)),
+    ),
+  );
+
   const readGroup = Effect.fn("PullRequestWatchReactor.readGroup")(function* (
     group: WatchGroup,
     fingerprint: ProviderChangeRequestWatchFingerprint | null,
@@ -622,6 +669,24 @@ export const make = Effect.gen(function* () {
           );
           return;
         }
+        const head = report.next.headSha;
+        // While the host holds the merge there is nothing to decide, and a retry would be refused.
+        if (mode === "merge" && head !== null) {
+          if (detail.isInMergeQueue === true || detail.autoMergeEnabled === true) {
+            const next = { ...report.next, queuedHead: head };
+            if (!watchesEqual(next, target.watch)) yield* record(target, next);
+            return;
+          }
+          if (target.watch.queuedHead === head) {
+            const { queuedHead: _queuedHead, ...next } = report.next;
+            yield* record(
+              target,
+              next,
+              agentMergeLeftQueueMessage({ number: target.link.number }),
+            ).pipe(Effect.tap(() => woke(target)));
+            return;
+          }
+        }
         const judge = (reviewDecision: PullRequestReviewDecision | null | undefined) =>
           mode === undefined || remarks === null || !Option.isSome(activity)
             ? null
@@ -636,7 +701,6 @@ export const make = Effect.gen(function* () {
           if (!watchesEqual(report.next, target.watch)) yield* record(target, report.next);
           return;
         }
-        const head = report.next.headSha;
         // The snapshot can predate a review, so a pass that would act on it reads the host first.
         const gate =
           snapshotGate.blockers.length > 0 || mode === "checks" || target.watch.mergeHead === head
@@ -655,22 +719,21 @@ export const make = Effect.gen(function* () {
           if (!watchesEqual(report.next, target.watch)) yield* record(target, report.next);
           return;
         }
-        if (gate.blockers.length > 0) {
-          if (head === null || target.watch.blockedHead === head) {
-            if (!watchesEqual(report.next, target.watch)) yield* record(target, report.next);
-            return;
-          }
-          yield* record(
-            target,
-            { ...report.next, blockedHead: head },
-            agentMergeBlockedMessage({ number: target.link.number, blockers: gate.blockers }),
-          ).pipe(Effect.tap(() => woke(target)));
-          return;
-        }
+        const hold = (blockers: ReadonlyArray<string>) =>
+          head === null || target.watch.blockedHead === head
+            ? watchesEqual(report.next, target.watch)
+              ? Effect.void
+              : record(target, report.next)
+            : record(
+                target,
+                { ...report.next, blockedHead: head },
+                agentMergeBlockedMessage({ number: target.link.number, blockers }),
+              ).pipe(Effect.tap(() => woke(target)));
+        if (gate.blockers.length > 0) return yield* hold(gate.blockers);
         const merges =
           mode === "merge" &&
           head !== null &&
-          target.link.stack === null &&
+          (target.link.stack === null || detail.capabilities.stackActions === true) &&
           detail.capabilities.mergePinsHead === true &&
           detail.viewerPermissions.actions.includes("merge");
         if (!merges) {
@@ -689,6 +752,12 @@ export const make = Effect.gen(function* () {
           if (!watchesEqual(report.next, target.watch)) yield* record(target, report.next);
           return;
         }
+        const stack = target.link.stack === null ? null : yield* judgeStack(reference, head);
+        if (target.link.stack !== null && stack === null) {
+          if (!watchesEqual(report.next, target.watch)) yield* record(target, report.next);
+          return;
+        }
+        if (stack !== null && stack.blockers.length > 0) return yield* hold(stack.blockers);
         // Recording first fails if the user stopped the watch during this read.
         yield* record(target, { ...report.next, mergeHead: head });
         const merged = yield* Effect.exit(
@@ -696,6 +765,7 @@ export const make = Effect.gen(function* () {
             ...reference,
             headSha: head,
             mergeCapabilities: detail.mergeCapabilities,
+            ...(stack === null ? {} : { stack: { number: stack.number, heads: stack.heads } }),
           }),
         );
         lastReads.delete(group.key);

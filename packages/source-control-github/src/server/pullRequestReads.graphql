@@ -111,6 +111,7 @@ query PullRequestCore(
       autoMergeRequest {
         mergeMethod
       }
+      isInMergeQueue
       viewerCanUpdate
       viewerDidAuthor
       viewerCanUpdateBranch

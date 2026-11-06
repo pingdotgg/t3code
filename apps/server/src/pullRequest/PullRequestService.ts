@@ -27,6 +27,7 @@ import {
   type PullRequestCommentInput,
   type PullRequestCommentUpdateInput,
   type PullRequestDetail,
+  type PullRequestStackHead,
   type PullRequestMergeMethod,
   type PullRequestPreview,
   type PullRequestChecks,
@@ -272,6 +273,11 @@ export class PullRequestService extends Context.Service<
       input: PullRequestRef & {
         readonly headSha: string;
         readonly mergeCapabilities: PullRequestDetail["mergeCapabilities"];
+        /** Lands this layer and every open one below it, while each head is still as given. */
+        readonly stack?: {
+          readonly number: number;
+          readonly heads: ReadonlyArray<PullRequestStackHead>;
+        };
       },
     ) => Effect.Effect<void, PullRequestError>;
     readonly update: (input: PullRequestUpdateInput) => Effect.Effect<void, PullRequestError>;
@@ -1867,6 +1873,9 @@ export const make = Effect.gen(function* () {
             ...(changeRequest.autoMergeMethod === undefined
               ? {}
               : { autoMergeMethod: changeRequest.autoMergeMethod }),
+            ...(changeRequest.isInMergeQueue === undefined
+              ? {}
+              : { isInMergeQueue: changeRequest.isInMergeQueue }),
             ...(changeRequest.maintainerCanModify === undefined
               ? {}
               : { maintainerCanModify: changeRequest.maintainerCanModify }),
@@ -3688,7 +3697,7 @@ export const make = Effect.gen(function* () {
 
   const mergeHead: PullRequestService["Service"]["mergeHead"] = Effect.fn(
     "PullRequestService.mergeHead",
-  )(function* ({ headSha, mergeCapabilities, ...ref }) {
+  )(function* ({ headSha, mergeCapabilities, stack, ...ref }) {
     const settings = yield* serverSettings.getSettings.pipe(
       Effect.mapError(
         () =>
@@ -3705,7 +3714,9 @@ export const make = Effect.gen(function* () {
     yield* runActionAndInvalidate({
       ...ref,
       action: "merge",
-      expectedHeadSha: headSha,
+      ...(stack === undefined
+        ? { expectedHeadSha: headSha }
+        : { stackNumber: stack.number, expectedStackHeads: stack.heads }),
       ...(mergeMethod === undefined ? {} : { mergeMethod }),
     });
   });

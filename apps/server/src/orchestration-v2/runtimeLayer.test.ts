@@ -27,6 +27,7 @@ import {
   ProjectId,
   type PullRequestDetail,
   type PullRequestComment,
+  type PullRequestStack,
   type PullRequestSummary,
   PullRequestOperationError,
   ProviderDriverKind,
@@ -3288,9 +3289,22 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         refuse: false,
         rateLimited: false,
         pinsHead: true,
+        stackActions: true,
+        queued: false,
+        stack: null as PullRequestStack | null,
+        layerThreads: {} as Record<
+          number,
+          ReadonlyArray<PullRequestActivity["reviewThreads"][number]>
+        >,
         reviewDecision: null as PullRequestSummary["reviewDecision"],
         beforeRead: Effect.void as Effect.Effect<void>,
-        merges: [] as Array<{ readonly headSha: string }>,
+        merges: [] as Array<{
+          readonly headSha: string;
+          readonly stack?: {
+            readonly number: number;
+            readonly heads: ReadonlyArray<{ readonly number: number; readonly headSha: string }>;
+          };
+        }>,
       };
       const reactor = yield* PullRequestWatchReactor.make.pipe(
         Effect.provide(
@@ -3313,7 +3327,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                         at: "2026-10-02T12:00:00.000Z",
                       }).capabilities,
                       mergePinsHead: host.pinsHead,
+                      stackActions: host.stackActions,
                     },
+                    isInMergeQueue: host.queued,
                     viewerPermissions: {
                       actions: ["merge" as const],
                       comment: true,
@@ -3335,14 +3351,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                     ],
                   }),
                 ),
-              activity: () =>
+              activity: (input) =>
                 Effect.sync(() => ({
                   comments: [],
                   commentCount: 0,
                   commentsTruncated: false,
-                  reviewThreads: host.reviewThreads,
+                  reviewThreads: host.layerThreads[input.number] ?? host.reviewThreads,
                   commits: [],
                 })),
+              stack: () => Effect.sync(() => host.stack),
               summary: () =>
                 Effect.sync(() => ({ reviewDecision: host.reviewDecision }) as PullRequestSummary),
               invalidate: () => Effect.void,
@@ -3472,6 +3489,106 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* settle;
       yield* reactor.sweep;
       assert.equal(host.merges.at(-1)?.headSha, "bbbbbbb");
+      yield* stop;
+    }),
+  );
+
+  it.effect("a merge queue holds agent merge, and leaving it unmerged wakes the agent once", () =>
+    Effect.gen(function* () {
+      const { host, reactor, settle, finishRuns, summaries, watched, stop } =
+        yield* agentMergeFixture("queue", "merge");
+
+      yield* settle;
+      yield* reactor.sweep;
+      assert.lengthOf(host.merges, 1);
+      host.queued = true;
+      yield* reactor.sweep;
+      yield* reactor.sweep;
+      assert.lengthOf(host.merges, 1);
+      assert.equal((yield* watched)?.queuedHead, "aaaaaaa");
+
+      host.queued = false;
+      yield* reactor.sweep;
+      yield* finishRuns;
+      yield* reactor.sweep;
+      assert.lengthOf(host.merges, 1);
+      assert.lengthOf(
+        (yield* summaries).filter((summary) => summary === "#7: left the merge queue"),
+        1,
+      );
+
+      host.headSha = "bbbbbbb";
+      yield* settle;
+      yield* reactor.sweep;
+      assert.equal(host.merges.at(-1)?.headSha, "bbbbbbb");
+      yield* stop;
+    }),
+  );
+
+  it.effect("agent merge lands a stack only once every layer below it is ready", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { host, reactor, settle, finishRuns, summaries, threadId, key, stop } =
+        yield* agentMergeFixture("stack", "merge");
+      const layers = [
+        { number: 5, headBranch: "layer-5", state: "merged" as const, headSha: "fffffff" },
+        { number: 6, headBranch: "layer-6", state: "open" as const, headSha: "ccccccc" },
+        { number: 7, headBranch: "layer-7", state: "open" as const, headSha: "aaaaaaa" },
+      ];
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-link.sync",
+        commandId: CommandId.make("agent-merge-gate-stack-sync"),
+        threadId,
+        ...key,
+        snapshot: {
+          state: "open",
+          title: "Layer 7",
+          headBranch: "layer-7",
+          baseBranch: "layer-6",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-10-02T12:00:00.000Z",
+        },
+        stack: {
+          kind: "native",
+          id: "stack-3",
+          number: 3,
+          url: "https://github.com/pingdotgg/t3code/stacks/3",
+          base: "main",
+          layers: layers.map(({ headSha: _headSha, ...layer }) => layer),
+        },
+      });
+      host.stack = { number: 3, base: "main", layers } as unknown as PullRequestStack;
+      host.layerThreads = {
+        6: [
+          {
+            id: "thread-6",
+            path: "src/index.ts",
+            line: 1,
+            side: "right",
+            isResolved: false,
+            isOutdated: false,
+            comments: [],
+          },
+        ],
+      };
+
+      yield* settle;
+      yield* reactor.sweep;
+      yield* finishRuns;
+      assert.deepEqual(host.merges, []);
+      assert.include(yield* summaries, "#7: waiting on #6: 1 unresolved review thread");
+
+      host.layerThreads = { 6: [] };
+      yield* reactor.sweep;
+      assert.lengthOf(host.merges, 1);
+      assert.deepEqual(host.merges[0]?.stack, {
+        number: 3,
+        heads: [
+          { number: 6, headSha: "ccccccc" },
+          { number: 7, headSha: "aaaaaaa" },
+        ],
+      });
       yield* stop;
     }),
   );

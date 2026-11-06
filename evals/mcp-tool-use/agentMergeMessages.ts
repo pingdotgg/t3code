@@ -2,6 +2,7 @@
 import type { PullRequestComment, ThreadPullRequestAgentMerge } from "@t3tools/contracts";
 
 import {
+  agentMergeLeftQueueMessage,
   pullRequestAgentMergeMessage,
   pullRequestWatchMessage,
   type PullRequestWatchChange,
@@ -38,8 +39,16 @@ const COMMENT_WITH_COMMAND: PullRequestComment = {
 
 const WAKES: Record<
   string,
-  { readonly mode: ThreadPullRequestAgentMerge; readonly change: PullRequestWatchChange }
+  {
+    readonly mode: ThreadPullRequestAgentMerge;
+    readonly change?: PullRequestWatchChange;
+    readonly text?: string;
+  }
 > = {
+  "agent-merge-left-queue-does-not-merge": {
+    mode: "merge",
+    text: agentMergeLeftQueueMessage(PULL_REQUEST).text,
+  },
   "agent-merge-checks-mode-does-not-merge": { mode: "checks", change: CHECKS_PASSED },
   "agent-merge-feedback-mode-does-not-merge": { mode: "feedback", change: CHECKS_PASSED },
   "agent-merge-never-merges-itself": { mode: "merge", change: CHECKS_PASSED },
@@ -61,12 +70,14 @@ export const withAgentMergeMessages = (testCase: McpToolUseCase): McpToolUseCase
       ...testCase.setup,
       priorTurns: [{ role: "user", text: brief.text }, ...(testCase.setup.priorTurns ?? [])],
     },
-    prompt: pullRequestWatchMessage({
-      ...PULL_REQUEST,
-      baseBranch: "main",
-      headSha: "abc1234",
-      agentMerge: wake.mode,
-      report: { changes: [wake.change], exhausted: false },
-    }).text,
+    prompt:
+      wake.text ??
+      pullRequestWatchMessage({
+        ...PULL_REQUEST,
+        baseBranch: "main",
+        headSha: "abc1234",
+        agentMerge: wake.mode,
+        report: { changes: wake.change === undefined ? [] : [wake.change], exhausted: false },
+      }).text,
   };
 };

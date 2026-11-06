@@ -109,6 +109,8 @@ export const ThreadPullRequestWatch = Schema.Struct({
   blockedHead: Schema.optional(TrimmedNonEmptyString),
   /** The head T3 Code tried to merge, so a refusal or a merge queue is not retried. */
   mergeHead: Schema.optional(TrimmedNonEmptyString),
+  /** The head seen waiting on the host's merge, so leaving the queue unmerged wakes the agent. */
+  queuedHead: Schema.optional(TrimmedNonEmptyString),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 

@@ -163,6 +163,7 @@ export function evaluatePullRequestWatch(
       ...(watch.blockedHead !== undefined && { blockedHead: watch.blockedHead }),
       // A review can be what a refused merge was missing, so it earns another try.
       ...(watch.mergeHead !== undefined && fresh.length === 0 && { mergeHead: watch.mergeHead }),
+      ...(watch.queuedHead !== undefined && { queuedHead: watch.queuedHead }),
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };
@@ -338,6 +339,20 @@ export function agentMergeRefusedMessage(input: {
       source: { kind: "monitor" },
       outcome: "failed",
       summary: `#${input.number}: merge refused`,
+    },
+  };
+}
+
+export function agentMergeLeftQueueMessage(input: { readonly number: number }): {
+  readonly text: string;
+  readonly notification: OrchestrationV2Notification;
+} {
+  return {
+    text: `Pull request #${input.number} left the merge queue without merging. Find out why and fix it if you can, such as a failed queue check. A new push or review lets T3 Code try again. ${AGENT_MERGE_CLOSING}`,
+    notification: {
+      source: { kind: "monitor" },
+      outcome: "failed",
+      summary: `#${input.number}: left the merge queue`,
     },
   };
 }
