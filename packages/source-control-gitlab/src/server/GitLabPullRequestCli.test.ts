@@ -388,7 +388,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads REST for a cursor REST handed out, and when a first GraphQL read fails", () =>
+  it.effect("reads REST for a REST cursor, and when a first GraphQL read or command fails", () =>
     Effect.gen(function* () {
       mockedExecute
         .mockReturnValueOnce(Effect.succeed(output(mergeRequests(1, 1))))
@@ -398,7 +398,18 @@ layer("GitLabPullRequestCli.layer", (it) => {
           ),
         )
         .mockReturnValueOnce(Effect.succeed(output(mergeRequests(1, 1))))
-        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify({ errors: [] }))));
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify({ errors: [] }))))
+        .mockReturnValueOnce(
+          Effect.fail(
+            new GitLabCli.GitLabCliCommandError({
+              operation: "execute",
+              command: "glab",
+              cwd: "/w",
+              cause: new Error("502 Bad Gateway"),
+            }),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(mergeRequests(1, 2))));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
       const list = (cursor?: { updatedBefore: string; delivered: number; resumeAfter?: string }) =>
         cli.listMergeRequests({
@@ -419,6 +430,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
       const resumed = yield* Effect.result(
         list({ updatedBefore: "2026-07-03T00:00:00Z", delivered: 10, resumeAfter: "c1" }),
       );
+      const commandFailed = yield* list();
 
       expect(fellBack.items.map((item) => item.number)).toEqual([1]);
       expect(fellBack).not.toHaveProperty("resumeAfter");
@@ -427,7 +439,10 @@ layer("GitLabPullRequestCli.layer", (it) => {
         "graphql",
         "projects/acme%2Fweb/merge_requests",
         "graphql",
+        "graphql",
+        "projects/acme%2Fweb/merge_requests",
       ]);
+      expect(commandFailed.items.map((item) => item.number)).toEqual([2]);
       expect(resumed).toMatchObject({
         _tag: "Failure",
         failure: { _tag: "GitLabMergeRequestReadError" },

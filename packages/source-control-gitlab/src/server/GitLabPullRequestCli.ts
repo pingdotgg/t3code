@@ -1544,13 +1544,17 @@ export const make = Effect.gen(function* () {
       // GraphQL counts only filtered rows, so its `delivered` is no REST offset once resumed.
       if (input.cursor !== undefined) return graphql;
       return graphql.pipe(
-        Effect.catchTags({
-          GitLabMergeRequestReadError: (error) =>
+        Effect.catchIf(
+          (cause) =>
+            cause._tag !== "GitLabCliUnavailableError" &&
+            cause._tag !== "GitLabCliAuthenticationError" &&
+            cause._tag !== "GitLabCliRateLimitError",
+          (cause) =>
             Effect.logWarning("GitLab GraphQL merge request list failed; reading REST instead", {
               repository: input.repository,
-              reason: error._tag,
+              reason: cause._tag,
             }).pipe(Effect.andThen(rest)),
-        }),
+        ),
       );
     }),
 

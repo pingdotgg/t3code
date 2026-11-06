@@ -659,14 +659,18 @@ describe("review decisions", () => {
     () =>
       Effect.gen(function* () {
         const graphqlFlags: Array<boolean | undefined> = [];
-        const listedWith = (
+        let versionReads = 0;
+        const providerReading = (
           supportsGraphqlList: Effect.Effect<
             boolean,
             GitLabPullRequestCli.GitLabPullRequestCliError
           >,
         ) =>
           providerWith(() => Effect.die("a GraphQL page carries its own states"), {
-            supportsGraphqlList: () => supportsGraphqlList,
+            supportsGraphqlList: () => {
+              versionReads += 1;
+              return supportsGraphqlList;
+            },
             listMergeRequests: (input) => {
               graphqlFlags.push(input.graphql);
               return Effect.succeed({
@@ -679,15 +683,24 @@ describe("review decisions", () => {
                 ]),
               });
             },
-          }).pipe(Effect.flatMap((provider) => provider.listChangeRequests(listing)));
+          });
+        const listedWith = (
+          supportsGraphqlList: Effect.Effect<
+            boolean,
+            GitLabPullRequestCli.GitLabPullRequestCliError
+          >,
+        ) =>
+          providerReading(supportsGraphqlList).pipe(
+            Effect.flatMap((provider) => provider.listChangeRequests(listing)),
+          );
 
         const listed = yield* listedWith(Effect.succeed(true));
         expect(listed).toMatchObject({ resumeAfter: "eyJpZCI6IjcifQ", truncated: true });
         expect(listed).not.toHaveProperty("listStates");
         expect(listed.items[0]?.reviewDecision).toBe("changes-requested");
 
-        // An unreadable version leaves the list on REST rather than failing it.
-        yield* listedWith(
+        // An unreadable version leaves the list on REST rather than failing it, and stays known.
+        const unreadable = yield* providerReading(
           Effect.fail(
             new GitLabPullRequestCli.GitLabMergeRequestReadError({
               command: "glab",
@@ -697,7 +710,11 @@ describe("review decisions", () => {
             }),
           ),
         );
-        expect(graphqlFlags).toEqual([true, false]);
+        versionReads = 0;
+        yield* unreadable.listChangeRequests(listing);
+        yield* unreadable.listChangeRequests(listing);
+        expect(graphqlFlags).toEqual([true, false, false]);
+        expect(versionReads).toBe(1);
       }),
   );
 

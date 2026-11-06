@@ -117,7 +117,16 @@ export const make = Effect.gen(function* () {
   const graphqlListSupport = yield* Cache.makeWith(
     (key: string) => {
       const [cwd, host] = JSON.parse(key) as [string, string | undefined];
-      return cli.supportsGraphqlList({ cwd, host });
+      // A host whose version read fails keeps failing it; remember REST rather than ask each poll.
+      return cli.supportsGraphqlList({ cwd, host }).pipe(
+        Effect.catchIf(
+          (cause) =>
+            cause._tag !== "GitLabCliUnavailableError" &&
+            cause._tag !== "GitLabCliAuthenticationError" &&
+            cause._tag !== "GitLabCliRateLimitError",
+          () => Effect.succeed(false),
+        ),
+      );
     },
     {
       capacity: READ_CACHE_CAPACITY,
