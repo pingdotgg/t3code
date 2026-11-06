@@ -599,7 +599,7 @@ export const make = Effect.gen(function* () {
     function* (threadId: ThreadId) {
       const settled = yield* projections.getThread(threadId);
       if (settled.settledOverride !== "settled") return;
-      yield* terminals.closeIdle({ threadId });
+      yield* terminals.closeOnSettle({ threadId });
       const worktreePath = settled.worktreePath;
       if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
       // Recheck after closing and worktree I/O; re-engaged threads must not be cleaned up.
