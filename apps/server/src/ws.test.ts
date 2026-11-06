@@ -1498,6 +1498,7 @@ it.effect.each(["all", "single"] as const)(
         assert.equal(response._tag, "Failure");
         if (response._tag === "Failure") {
           assert.match(Cause.pretty(response.cause), /Model refresh failed/);
+          assert.match(Cause.pretty(response.cause), /ProviderDriverError/);
         }
         assert.equal(yield* Ref.get(maxRefreshes), 0);
         return;

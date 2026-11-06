@@ -718,6 +718,7 @@ export const layer = Layer.effect(
                   instanceId: instance.instanceId,
                   operation: "refresh-models",
                   detail: error.detail,
+                  cause: error,
                 }),
             ),
             Effect.andThen(
