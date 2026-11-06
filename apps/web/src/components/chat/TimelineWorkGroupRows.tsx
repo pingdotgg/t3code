@@ -25,7 +25,7 @@ import {
   failedToolIconClassName,
   toolIconAcceptsTint,
 } from "./TimelineToolActivityIcon";
-import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
+import { toolGroupSummaryIconName, workEntryIconName } from "./TimelineWorkEntryRow.logic";
 import {
   ReasoningTraceContent,
   SimpleWorkEntryRow,
@@ -676,6 +676,8 @@ export function WorkGroupToggleTimelineRow({
   return (
     <WorkGroupHeader
       label={row.summary}
+      iconName={row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)}
+      toolIcon={row.toolIcon}
       failed={row.hasFailure}
       expanded={row.expanded}
       onToggle={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
@@ -685,21 +687,28 @@ export function WorkGroupToggleTimelineRow({
 
 function WorkGroupHeader(props: {
   label: string;
+  iconName: WorkEntryIconName;
+  toolIcon?: ToolActivityIcon | undefined;
   failed?: boolean | undefined;
   expanded: boolean;
   onToggle: () => void;
 }) {
   return (
-    <div className={WORKING_BAR_CLASS_NAME}>
-      <WorkFoldToggle
-        togglable
-        expanded={props.expanded}
-        tone={props.failed ? "error" : "neutral"}
+    <div className="pb-2">
+      <WorkLogButton
         aria-label={props.failed ? `${props.label}, tool call failed` : props.label}
+        aria-expanded={props.expanded}
         onClick={props.onToggle}
-      >
-        <span className="min-w-0 truncate">{props.label}</span>
-      </WorkFoldToggle>
+        icon={
+          <ToolActivityIconView
+            icon={props.toolIcon}
+            fallbackName={props.iconName}
+            className="size-3.5 shrink-0 stroke-2 text-muted-foreground"
+            muted
+          />
+        }
+        label={<span className="block truncate text-secondary-label">{props.label}</span>}
+      />
     </div>
   );
 }
