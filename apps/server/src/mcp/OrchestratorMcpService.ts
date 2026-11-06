@@ -2185,9 +2185,17 @@ const make = Effect.gen(function* () {
     readonly outsideProjectMessage: (where: string) => string;
   }) {
     const { project, checkoutPath } = input;
+    const cwd = checkoutPath ?? project.workspaceRoot;
     const base = yield* gitDriver
-      .resolveCommit({ cwd: checkoutPath ?? project.workspaceRoot, revision: "HEAD" })
-      .pipe(Effect.mapError(() => failure("invalid_request", input.unresolvedMessage)));
+      .resolveCommit({ cwd, revision: "HEAD" })
+      .pipe(
+        Effect.mapError(() =>
+          failure(
+            "invalid_request",
+            `${input.unresolvedMessage} Git could not read HEAD in ${cwd}.`,
+          ),
+        ),
+      );
     // Launch preparation creates the worktree from the project root, so a
     // checkout in another repository (such as a Git folder inside Scratch)
     // would hand it a commit it cannot find.

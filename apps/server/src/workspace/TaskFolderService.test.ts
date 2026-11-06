@@ -627,6 +627,16 @@ it.live("recreates a removed folder home first, then its repos", () =>
       assert.equal(yield* out(`${home}/app`, ["branch", "--show-current"]), "task");
       assert.equal(yield* out(`${home}/packages/lib`, ["branch", "--show-current"]), "task");
       assert.isFalse(yield* service.repair(`${base}/not-a-folder`));
+
+      // Home lost its checkout but still holds its repos, as after an interrupted removal.
+      yield* fs.remove(`${home}/.git`);
+      yield* fs.remove(`${home}/README.md`);
+      yield* git(fixture.home, ["worktree", "prune"]);
+      assert.isTrue(yield* service.repair(home));
+      assert.equal(yield* out(home, ["branch", "--show-current"]), "task");
+      assert.isTrue(yield* fs.exists(`${home}/README.md`));
+      assert.equal(yield* out(`${home}/app`, ["branch", "--show-current"]), "task");
+      assert.isFalse(yield* fs.exists(`${home}.t3-repair`));
     }),
   ),
 );

@@ -445,6 +445,11 @@ export class GitVcsDriver extends Context.Service<
     readonly pruneWorktrees: (input: {
       readonly cwd: string;
     }) => Effect.Effect<void, GitCommandError>;
+    /** Points the repository's record of a moved worktree at `path`. */
+    readonly repairWorktree: (input: {
+      readonly cwd: string;
+      readonly path: string;
+    }) => Effect.Effect<void, GitCommandError>;
     readonly listWorktreePaths: (cwd: string) => Effect.Effect<string[], GitCommandError>;
     readonly deleteLocalBranch: (
       input: GitDeleteLocalBranchInput,

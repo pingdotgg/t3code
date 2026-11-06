@@ -819,6 +819,7 @@ const make = Effect.gen(function* () {
 
   const recreateRow = Effect.fn("TaskFolderService.recreateRow")(function* (
     row: TaskFolderRepositoryRow,
+    worktreePath = row.worktreePath,
   ) {
     yield* git.pruneWorktrees({ cwd: row.originalPath });
     if (row.branch === null) {
@@ -828,7 +829,7 @@ const make = Effect.gen(function* () {
       yield* git.createWorktree({
         cwd: row.originalPath,
         refName: row.branch,
-        path: row.worktreePath,
+        path: worktreePath,
       });
       return;
     }
@@ -837,19 +838,45 @@ const make = Effect.gen(function* () {
       refName: row.baseRef,
       newRefName: row.branch,
       baseRefName: row.baseRef,
-      path: row.worktreePath,
+      path: worktreePath,
     });
+  });
+
+  // Git only adds a worktree into an empty folder, and a home that lost its checkout still holds
+  // its repos, so check it out beside the folder and move it in around them.
+  const recreateHomeInPlace = Effect.fn("TaskFolderService.recreateHomeInPlace")(function* (
+    row: TaskFolderRepositoryRow,
+  ) {
+    const staging = `${row.worktreePath}.t3-repair`;
+    yield* fileSystem.remove(staging, { recursive: true, force: true });
+    yield* recreateRow(row, staging);
+    for (const name of yield* fileSystem.readDirectory(staging)) {
+      const target = path.join(row.worktreePath, name);
+      if (!(yield* fileSystem.exists(target))) {
+        yield* fileSystem.rename(path.join(staging, name), target);
+      }
+    }
+    yield* fileSystem.remove(staging, { recursive: true, force: true });
+    yield* gitDriver.repairWorktree({ cwd: row.originalPath, path: row.worktreePath });
   });
 
   const repair: TaskFolderService["Service"]["repair"] = Effect.fn("TaskFolderService.repair")(
     function* (worktreePath) {
       const existing = yield* find(worktreePath);
       if (Option.isNone(existing)) return false;
+      // A folder without `.git` lost its checkout even when it still holds nested repos.
       const missing = yield* Effect.filter(existing.value.repositories, (row) =>
-        fileSystem.exists(row.worktreePath).pipe(Effect.map((exists) => !exists)),
+        fileSystem
+          .exists(path.join(row.worktreePath, ".git"))
+          .pipe(Effect.map((exists) => !exists)),
       ).pipe(mapFailure("repair"));
       const home = missing.find((row) => row.kind === "home");
-      if (home !== undefined) yield* recreateRow(home).pipe(mapFailure("repair"));
+      if (home !== undefined) {
+        const folderExists = yield* fileSystem.exists(home.worktreePath).pipe(mapFailure("repair"));
+        yield* (folderExists ? recreateHomeInPlace(home) : recreateRow(home)).pipe(
+          mapFailure("repair"),
+        );
+      }
       const children = missing.filter((row) => row.kind === "repository");
       for (const wave of waves(children, (row) => row.worktreePath)) {
         yield* Effect.forEach(
