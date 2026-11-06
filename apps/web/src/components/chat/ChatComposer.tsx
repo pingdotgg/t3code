@@ -248,6 +248,7 @@ import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
+import { useEnvironmentDisconnectDelay } from "../../hooks/useEnvironmentDisconnectDelay";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { Kbd } from "../ui/kbd";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
@@ -585,6 +586,11 @@ export function ChatComposer(props: ChatComposerProps) {
     editingQueuedAttachments,
     onRemoveEditingQueuedAttachment,
   } = props;
+  // The first connect after a load is not a disconnect: hold the placeholder as the banner does.
+  const environmentDisconnected = useEnvironmentDisconnectDelay(
+    environmentUnavailable === null ? null : environmentId,
+  );
+
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
   const {
@@ -3579,7 +3585,7 @@ export function ChatComposer(props: ChatComposerProps) {
                             ? "Choose a project above to start a thread"
                             : showProviderUnavailable
                               ? "Enable a provider in Settings to send a message"
-                              : environmentUnavailable !== null
+                              : environmentDisconnected
                                 ? DISCONNECTED_COMPOSER_PLACEHOLDER
                                 : (offeredPromptSuggestion ??
                                   "Ask anything, @tag files/folders, $use skills, or / for commands")
@@ -3598,7 +3604,7 @@ export function ChatComposer(props: ChatComposerProps) {
                       offeredPromptSuggestion === null &&
                       !projectSelectionRequired &&
                       !showProviderUnavailable &&
-                      environmentUnavailable === null
+                      !environmentDisconnected
                         ? "Ask anything…"
                         : undefined
                     }
@@ -3706,7 +3712,7 @@ export function ChatComposer(props: ChatComposerProps) {
             {speechInput.preview ? (
               <div
                 aria-label="Live transcription"
-                className="mx-3 mb-3 max-h-32 overflow-y-auto rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm leading-relaxed break-words whitespace-pre-wrap sm:mx-4"
+                className="mx-3 mb-3 max-h-32 overflow-y-auto rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-body leading-relaxed break-words whitespace-pre-wrap sm:mx-4"
               >
                 <span>{speechInput.preview.committed}</span>
                 <span className="text-muted-foreground">{speechInput.preview.tentative}</span>

@@ -221,13 +221,7 @@ export function ComposerReasoningPicker(props: {
         </TooltipTrigger>
         <TooltipPopup side="top">{display.detail}</TooltipPopup>
       </Tooltip>
-      <MenuPopup
-        side="top"
-        align="end"
-        width="wide"
-        spacing="compact"
-        {...composerFloatingLayerProps}
-      >
+      <MenuPopup side="top" align="end" width="wide" {...composerFloatingLayerProps}>
         <TraitsMenuContent {...props.traits} reasoningOnly />
       </MenuPopup>
     </Menu>
