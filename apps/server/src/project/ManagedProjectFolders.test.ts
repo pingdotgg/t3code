@@ -411,15 +411,25 @@ it.effect("creates lesson projects under lessons with the requested id", () =>
       TEST_IDENTITY,
       Effect.gen(function* () {
         const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const projects = yield* ProjectService.ProjectService;
+        const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const projectId = ProjectId.make("lesson-project:lesson:test");
-        const result = yield* folders.createNamedProject({
+        const create = folders.createNamedProject({
           name: "Ohm's law",
           root: "lessons",
           projectId,
         });
-        assert.equal(result.projectId, projectId);
-        assert.equal(result.workspaceRoot, path.join(baseDir, "lessons", "ohm-s-law"));
+        const results = yield* Effect.all([create, create], { concurrency: "unbounded" });
+        assert.deepEqual(
+          results.map((result) => result.projectId),
+          [projectId, projectId],
+        );
+        const project = yield* projects.getById(projectId);
+        const folder = path.join(baseDir, "lessons", "ohm-s-law");
+        assert.isTrue(Option.exists(project, (owner) => owner.workspaceRoot.startsWith(folder)));
+        // The losing concurrent call must not leave its folder behind.
+        assert.equal((yield* fileSystem.readDirectory(path.join(baseDir, "lessons"))).length, 1);
       }),
     ),
   ),

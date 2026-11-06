@@ -437,6 +437,10 @@ const make = Effect.gen(function* () {
     ]).pipe(Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : removeFolder)));
     const [commitError, projectId] = prepared;
     const commandId = CommandId.make(`named-project:${projectId}`);
+    const removeIfUnowned = projects.getByWorkspaceRoot(workspaceRoot).pipe(
+      Effect.flatMap((owner) => (Option.isNone(owner) ? removeFolder : Effect.void)),
+      Effect.ignore,
+    );
     const project = yield* projects
       .create({
         commandId,
@@ -447,13 +451,10 @@ const make = Effect.gen(function* () {
       .pipe(
         // Re-check ownership before deleting rejected creations; interruption after commit or conflicts can leave an owner.
         Effect.tapError((error) =>
-          error._tag === "ProjectConflictError"
-            ? Effect.void
-            : projects.getByWorkspaceRoot(workspaceRoot).pipe(
-                Effect.flatMap((owner) => (Option.isNone(owner) ? removeFolder : Effect.void)),
-                Effect.ignore,
-              ),
+          error._tag === "ProjectConflictError" ? Effect.void : removeIfUnowned,
         ),
+        // A concurrent call with the same projectId may commit first, leaving this folder unowned.
+        Effect.tap(() => (input.projectId === undefined ? Effect.void : removeIfUnowned)),
         Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause })),
       );
     return {

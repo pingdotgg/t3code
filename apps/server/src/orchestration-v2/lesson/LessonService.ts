@@ -121,9 +121,6 @@ const make = Effect.gen(function* () {
           projectId = created.projectId;
         }
       }
-      if (projectId === undefined) {
-        return yield* new LessonCreateError({ message: "Lesson project was not created." });
-      }
       const launched = yield* threadLaunch
         .launch({
           commandId: input.commandId,
