@@ -773,8 +773,6 @@ export default defineConfig({
         "apps/web/src/components/sidebar/SidebarUpdateReleaseNotes.tsx": 1,
         "apps/web/src/components/ThreadStatusIndicators.tsx": 1,
         "apps/web/src/components/usage/UsageLimitsPooled.tsx": 1,
-        "apps/web/src/components/settings/MicrophoneTest.tsx": 1,
-        "apps/web/src/components/settings/SpeechModelComparison.tsx": 1,
       }).map(([file, maxOccurrences]) => {
         const rule: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
         return { files: [file], rules: { "t3code/no-styled-raw-controls": rule } };
@@ -1011,15 +1009,8 @@ export default defineConfig({
         "apps/web/src/components/sidebar/SidebarChrome.tsx": 1,
         "apps/web/src/components/sidebar/SidebarProviderUpdatePill.tsx": 1,
         "apps/web/src/components/ThreadCommandSubtitle.tsx": 1,
-        "apps/web/src/components/chat/ComposerSpeechButton.tsx": 2,
-        "apps/web/src/components/chat/VoiceInputErrorPill.tsx": 1,
-        "apps/web/src/components/chat/VoiceInputSetup.tsx": 8,
-        "apps/web/src/components/settings/MicrophoneTest.tsx": 4,
         "apps/web/src/components/settings/SecretsSettings.tsx": 1,
-        "apps/web/src/components/settings/SpeechModelComparison.tsx": 5,
         "apps/web/src/components/settings/CloudVoiceConfiguration.tsx": 8,
-        "apps/web/src/components/settings/VoiceSettingsPanel.tsx": 19,
-        "apps/web/src/speech/useTextFieldSpeech.tsx": 1,
       }).map(([file, maxOccurrences]) => {
         const rule: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
         return { files: [file], rules: { "t3code/no-raw-type-classes": rule } };
