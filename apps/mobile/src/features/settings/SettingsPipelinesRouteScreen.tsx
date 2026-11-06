@@ -40,10 +40,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { RUNTIME_MODE_CHOICES } from "../threads/thread-settings-options";
-import {
-  AndroidSettingsEnvironmentFilter,
-  SettingsEnvironmentFilterHeader,
-} from "./components/SettingsEnvironmentFilterHeader";
+import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
 import {
   describePipelineSteps,
@@ -90,6 +87,7 @@ export function SettingsPipelinesRouteScreen() {
   const { startEditor, resetEditor, startFromStarter, pipelineTargets } = usePipelineEditor();
   const navigation = useNavigation<NativeStackNavigationProp<PipelineRoutes>>();
   const insets = useSafeAreaInsets();
+  const environmentMenu = useSettingsEnvironmentMenu();
   const newPipeline = (starter: PipelineStarter | null) => {
     if (pipelineTargets.length === 0) return;
     if (starter) startFromStarter(starter);
@@ -98,103 +96,65 @@ export function SettingsPipelinesRouteScreen() {
   };
 
   return (
-    <>
-      <SettingsEnvironmentFilterHeader
-        trailingItems={[
-          withNativeGlassHeaderItem({
-            type: "menu",
-            label: "",
-            accessibilityLabel: "New pipeline",
-            icon: { type: "sfSymbol", name: "plus" } as const,
-            disabled: pipelineTargets.length === 0,
-            menu: {
-              title: "New pipeline",
-              items: [
-                {
-                  type: "action" as const,
-                  label: "Blank pipeline",
-                  onPress: () => newPipeline(null),
-                },
-                ...PIPELINE_STARTERS.map((starter) => ({
-                  type: "action" as const,
-                  label: starter.name,
-                  description: starter.description,
-                  onPress: () => newPipeline(starter),
-                })),
-              ],
+    <SettingsScreen
+      title="Pipelines"
+      menus={[
+        environmentMenu,
+        {
+          title: "New pipeline",
+          icon: "plus",
+          items: [
+            {
+              id: BLANK_PIPELINE_ACTION,
+              title: "Blank pipeline",
+              disabled: pipelineTargets.length === 0,
+              onPress: () => newPipeline(null),
             },
-          }),
-        ]}
-      />
-      <SettingsScreen
-        title="Pipelines"
-        trailing={
-          <View className="flex-row items-center">
-            <AndroidSettingsEnvironmentFilter />
-            <Menu
-              title="New pipeline"
-              actions={[
-                { id: BLANK_PIPELINE_ACTION, title: "Blank pipeline" },
-                ...PIPELINE_STARTERS.map((starter) => ({
-                  id: starter.key,
-                  title: starter.name,
-                  subtitle: starter.description,
-                })),
-              ]}
-              onPressAction={({ nativeEvent }) =>
-                newPipeline(
-                  PIPELINE_STARTERS.find((starter) => starter.key === nativeEvent.event) ?? null,
-                )
-              }
-            >
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="New pipeline"
-                accessibilityState={{ disabled: pipelineTargets.length === 0 }}
-                disabled={pipelineTargets.length === 0}
-                className="size-11 items-center justify-center rounded-full disabled:opacity-50"
-              >
-                <SymbolView name="plus" size={22} tintColorClassName="accent-icon" />
-              </Pressable>
-            </Menu>
-          </View>
-        }
+            ...PIPELINE_STARTERS.map((starter) => ({
+              id: starter.key,
+              title: starter.name,
+              subtitle: starter.description,
+              disabled: pipelineTargets.length === 0,
+              onPress: () => newPipeline(starter),
+            })),
+          ],
+        },
+      ]}
+    >
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+        className="flex-1"
+        contentContainerClassName="gap-5 px-5 pt-4"
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          contentInsetAdjustmentBehavior="automatic"
-          showsVerticalScrollIndicator={false}
-          className="flex-1"
-          contentContainerClassName="gap-5 px-5 pt-4"
-          contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
-        >
-          {selectedTargets.length > 0 ? (
-            selectedTargets.map((environment) => (
-              <EnvironmentPipelines
-                key={environment.environmentId}
-                environment={environment}
-                onEdit={(pipeline) => {
-                  startEditor({
-                    environmentId: environment.environmentId,
-                    environmentLabel: environment.label,
-                    draft: pipelineToDraft(pipeline, uuidv4),
-                    modelStepId: null,
-                  });
-                  navigation.navigate("SettingsPipelineEdit");
-                }}
-              />
-            ))
-          ) : (
-            <Text className="px-2 text-base text-foreground-muted">
-              {availableTargets.length === 0
-                ? "Connect an environment to view and create pipelines."
-                : "No environments match these filters. Change the filter above."}
-            </Text>
-          )}
-        </ScrollView>
-      </SettingsScreen>
-    </>
+        {selectedTargets.length > 0 ? (
+          selectedTargets.map((environment) => (
+            <EnvironmentPipelines
+              key={environment.environmentId}
+              environment={environment}
+              onEdit={(pipeline) => {
+                startEditor({
+                  environmentId: environment.environmentId,
+                  environmentLabel: environment.label,
+                  draft: pipelineToDraft(pipeline, uuidv4),
+                  modelStepId: null,
+                });
+                navigation.navigate("SettingsPipelineEdit");
+              }}
+            />
+          ))
+        ) : (
+          <Text className="px-2 text-base text-foreground-muted">
+            {availableTargets.length === 0
+              ? "Connect an environment to view and create pipelines."
+              : "No environments match these filters. Change the filter above."}
+          </Text>
+        )}
+      </ScrollView>
+    </SettingsScreen>
   );
 }
 

@@ -321,31 +321,19 @@ const SETTINGS_SCREENS = {
   SettingsPipelines: createNativeStackScreen({
     screen: SettingsPipelinesRouteScreen,
     linking: "settings/pipelines",
-    options: {
-      ...SETTINGS_PAGE_OPTIONS,
-      title: "Pipelines",
-      headerTitleStyle: { fontSize: 16, fontWeight: "800" },
-    },
+    options: settingsPage("Pipelines"),
   }),
   SettingsPipelineNew: createNativeStackScreen({
     screen: SettingsPipelineNewRouteScreen,
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "New pipeline" },
+    options: settingsPage("New pipeline"),
   }),
   SettingsPipelineEdit: createNativeStackScreen({
     screen: SettingsPipelineEditRouteScreen,
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Edit pipeline" },
+    options: settingsPage("Edit pipeline"),
   }),
   SettingsPipelineStepModel: createNativeStackScreen({
     screen: PipelineStepModelPickerRouteScreen,
-    options: {
-      ...SETTINGS_PAGE_OPTIONS,
-      headerShown: false,
-      ...(Platform.OS === "android"
-        ? { presentation: "card" as const }
-        : {
-            ...THREAD_SETTINGS_SHEET_OPTIONS,
-          }),
-    },
+    options: THREAD_SETTINGS_ROUTE,
   }),
   SettingsClientStorage: createNativeStackScreen({
     screen: SettingsClientStorageRouteScreen,
@@ -716,20 +704,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
     }),
     PipelineCoordinator: createNativeStackScreen({
       screen: PipelineCoordinatorRouteScreen,
-      options: {
-        ...HORIZONTAL_FORM_SHEET_OPTIONS,
-        headerShown: false,
-        sheetAllowedDetents: formSheetDetents(0.9),
-        sheetGrabberVisible: true,
-      },
+      options: sheetRoute({ detent: 0.9, header: "none" }),
     }),
     PipelineFeedback: createNativeStackScreen({
       screen: PipelineFeedbackSheet,
-      options: {
-        ...HORIZONTAL_FORM_SHEET_OPTIONS,
-        sheetAllowedDetents: formSheetDetents(0.7),
-        sheetGrabberVisible: true,
-      },
+      options: sheetRoute({ detent: 0.7 }),
     }),
     GitOverview: createNativeStackScreen({
       screen: GitOverviewSheet,
