@@ -516,6 +516,8 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
             {controls?.effort?.descriptor.label ?? (controls?.others.length ? "Options" : "Effort")}
           </span>
           <span
+            // A new label must not keep the last one's title while the pointer stays.
+            key={picker.modelLabel}
             className="ms-auto min-w-0 truncate text-muted-foreground text-xs"
             onPointerEnter={titleWhenTruncated(picker.modelLabel)}
           >

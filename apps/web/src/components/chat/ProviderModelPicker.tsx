@@ -390,6 +390,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           {props.isComposerOwned ? (
             // The composer trigger has no hover tooltip; a cut-off name still shows in full.
             <span
+              // A new label must not keep the last one's title while the pointer stays.
+              key={props.triggerLabel ?? allModelNames ?? triggerLabel}
               {...triggerTextProps}
               onPointerEnter={titleWhenTruncated(
                 props.triggerLabel ?? allModelNames ?? triggerLabel,
