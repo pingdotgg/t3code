@@ -217,8 +217,8 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
   const fail = (id: JsonRpcId, code: number, message: string) =>
     post({ jsonrpc: "2.0", id, error: { code, message } });
 
-  // Responses to the app's own calls wait for it, so a slow image load cannot overwrite newer data.
-  let toolResultDelivered: Promise<void> = Promise.resolve();
+  // App tool calls answer after it, so a slow image load cannot overwrite newer data.
+  let toolResultDelivered: Promise<void> | undefined;
   const sendToolResult = (result: McpAppCallToolResult) => {
     const hydrating = hydrateMcpAppToolResultImages(result, options.loadToolOutputImage);
     if (hydrating === undefined) {
@@ -248,16 +248,14 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
     }
     pending += 1;
     void run().then(
-      (result) =>
-        toolResultDelivered.then(() => {
-          pending -= 1;
-          respond(id, result);
-        }),
-      (error: unknown) =>
-        toolResultDelivered.then(() => {
-          pending -= 1;
-          fail(id, -32000, errorMessage(error));
-        }),
+      (result) => {
+        pending -= 1;
+        respond(id, result);
+      },
+      (error: unknown) => {
+        pending -= 1;
+        fail(id, -32000, errorMessage(error));
+      },
     );
   };
 
@@ -306,9 +304,10 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
           return;
         }
         answer(id, () =>
-          options
-            .callTool({ name, arguments: args as Record<string, unknown> })
-            .then(normalizeMcpAppToolResult),
+          options.callTool({ name, arguments: args as Record<string, unknown> }).then((result) => {
+            const normalized = normalizeMcpAppToolResult(result);
+            return toolResultDelivered?.then(() => normalized) ?? normalized;
+          }),
         );
         return;
       }

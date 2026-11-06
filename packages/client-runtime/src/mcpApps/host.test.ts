@@ -201,16 +201,18 @@ describe("makeMcpAppHost", () => {
     ).toEqual(["ui/notifications/tool-input", "ui/notifications/tool-result"]);
   });
 
-  it("answers the app's own tool call only after the stored screenshot it was opened with", async () => {
+  it("answers the app's tool call, not its other requests, after the stored screenshot", async () => {
     const image = Promise.withResolvers<Uint8Array>();
     const called = Promise.withResolvers<void>();
     const answered = Promise.withResolvers<void>();
+    const read = Promise.withResolvers<void>();
     const sent: Array<Record<string, unknown>> = [];
     const { host } = setup({
       post: (message) => {
         const record = message as Record<string, unknown>;
         sent.push(record);
         if (record.id === 9) answered.resolve();
+        if (record.id === 10) read.resolve();
       },
       callTool: async () => {
         called.resolve();
@@ -224,8 +226,9 @@ describe("makeMcpAppHost", () => {
     });
     initialize(host);
     host.receive({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "refresh" } });
+    host.receive({ jsonrpc: "2.0", id: 10, method: "resources/read", params: { uri: "ui://x" } });
     await called.promise;
-    await flush();
+    await read.promise;
     expect(sent.some((m) => m.id === 9)).toBe(false);
     image.resolve(new Uint8Array([1, 2, 3]));
     await answered.promise;
@@ -253,7 +256,7 @@ describe("makeMcpAppHost", () => {
         result: { content: [{ type: "image", mimeType: "image/png" }] },
       });
       initialize(host);
-      host.receive({ jsonrpc: "2.0", id: 9, method: "resources/read", params: { uri: "ui://x" } });
+      host.receive({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "refresh" } });
       await vi.advanceTimersByTimeAsync(15_000);
       await answered.promise;
     } finally {
