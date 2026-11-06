@@ -195,7 +195,8 @@ export function evaluatePullRequestWatch(
     detail.mergeability === "unknown" ? toldConflict : detail.mergeability === "conflicting";
 
   // Like a conflict, a push resets what was told. An unknown count still wakes once.
-  let behindBy = watch.behindBy;
+  // A watch that didn't ask keeps no count, so opting in tells the current one.
+  let behindBy: number | undefined;
   if (watch.wakeOnBaseMove === true) {
     const told = headMoved ? 0 : (watch.behindBy ?? 0);
     behindBy = told;

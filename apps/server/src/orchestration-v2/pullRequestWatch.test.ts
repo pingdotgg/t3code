@@ -567,6 +567,18 @@ describe("evaluatePullRequestWatch", () => {
       evaluatePullRequestWatch(watch(), behind(2), noRemarks),
       evaluatePullRequestWatch(watch(), detail(), noRemarks),
     );
+    // Opting out drops the count, so opting in again tells a branch already behind.
+    const optedOut = evaluatePullRequestWatch(
+      { ...first.next, wakeOnBaseMove: false },
+      behind(2),
+      noRemarks,
+    );
+    assert.isUndefined(optedOut.next.behindBy);
+    assert.deepEqual(
+      evaluatePullRequestWatch({ ...optedOut.next, wakeOnBaseMove: true }, behind(2), noRemarks)
+        .changes,
+      [{ kind: "behind", behindBy: 2 }],
+    );
 
     const message = (behindBy: number | null) =>
       pullRequestWatchMessage({
