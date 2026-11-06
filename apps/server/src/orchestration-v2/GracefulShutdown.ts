@@ -22,6 +22,7 @@ import * as Schema from "effect/Schema";
 import * as ServerSettings from "../serverSettings.ts";
 import { isActiveRun } from "./CommandPolicy.ts";
 import * as GracefulShutdownGate from "./GracefulShutdownGate.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 const isGracefulShutdownError = Schema.is(GracefulShutdownError);
@@ -69,17 +70,33 @@ function shellInScope(shell: OrchestrationV2ThreadShell, scope: GracefulShutdown
 const make = Effect.fn("GracefulShutdown.make")(function* () {
   const gate = yield* GracefulShutdownGate.GracefulShutdownGate;
   const threads = yield* ThreadManagementService.ThreadManagementService;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
   const settings = yield* ServerSettings.ServerSettingsService;
   const shutdownSequence = yield* Ref.make(0);
+
+  const listShutdownShells = Effect.fn("GracefulShutdown.listShutdownShells")(function* () {
+    const snapshot = yield* threads.getShellSnapshot({ location: "active" });
+    return snapshot.threads.filter(
+      (shell) => shell.archivedAt === null && shell.deletedAt === null,
+    );
+  });
+
+  const clearIfShutdown = Effect.fn("GracefulShutdown.clearIfShutdown")(function* (
+    shutdownId: GracefulShutdownId,
+  ) {
+    const state = yield* gate.getState;
+    if (state.shutdownId === shutdownId) {
+      yield* gate.clear;
+    }
+  });
 
   const countActiveInScope = Effect.fn("GracefulShutdown.countActiveInScope")(function* (
     scope: GracefulShutdownScope,
   ) {
     if (scope.type === "session") {
-      const shells = yield* threads.listProjectThreads({ includeSubagents: true });
+      const shells = yield* listShutdownShells();
       let count = 0;
       for (const shell of shells) {
-        if (shell.archivedAt !== null || shell.deletedAt !== null) continue;
         const records = yield* threads.getThreadRecords(shell.id, [
           "runs",
           "providerSessions",
@@ -103,8 +120,28 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
       return count;
     }
 
-    const shells = yield* threads.listProjectThreads({ includeSubagents: true });
+    const shells = yield* listShutdownShells();
     return shells.filter((shell) => shellInScope(shell, scope) && shellHasActiveRun(shell)).length;
+  });
+
+  const countPendingSaveWork = Effect.fn("GracefulShutdown.countPendingSaveWork")(function* (
+    messageIds: ReadonlySet<MessageId>,
+  ) {
+    if (messageIds.size === 0) return 0;
+    const shells = yield* listShutdownShells();
+    let count = 0;
+    for (const shell of shells) {
+      const records = yield* threads.getThreadRecords(shell.id, ["runs"]);
+      if (
+        records.runs.some(
+          (run) =>
+            messageIds.has(run.userMessageId) && (run.status === "queued" || isActiveRun(run)),
+        )
+      ) {
+        count += 1;
+      }
+    }
+    return count;
   });
 
   const status = Effect.gen(function* () {
@@ -122,11 +159,9 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
   }) {
     const messageIds = new Set<MessageId>();
     const threadIds = new Set<ThreadId>();
-    const shells = yield* threads.listProjectThreads({ includeSubagents: true });
+    const shells = yield* listShutdownShells();
 
     for (const shell of shells) {
-      if (shell.archivedAt !== null || shell.deletedAt !== null) continue;
-
       const records = yield* threads.getThreadRecords(shell.id, [
         "runs",
         "providerSessions",
@@ -145,8 +180,7 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
             const providerId = input.scope.providerInstanceId;
             return (
               (activeRun !== undefined && activeRun.providerInstanceId === providerId) ||
-              liveSessions.some((session) => session.providerInstanceId === providerId) ||
-              shell.providerInstanceId === providerId
+              liveSessions.some((session) => session.providerInstanceId === providerId)
             );
           }
           case "session": {
@@ -163,10 +197,8 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
       const commandId = CommandId.make(
         `command:graceful-shutdown-save:${input.shutdownId}:${shell.id}`,
       );
-      messageIds.add(messageId);
-      threadIds.add(shell.id);
 
-      yield* threads
+      const accepted = yield* threads
         .dispatch({
           type: "message.dispatch",
           commandId,
@@ -180,19 +212,22 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
             detail: SAVE_WORK_PROMPT,
           },
           attachments: [],
-          dispatchMode: { type: "start_immediately" },
-          deliveryIntent: "auto",
+          dispatchMode: { type: "queue_after_active" },
           createdBy: "agent",
           creationSource: "server",
         })
         .pipe(
+          Effect.as(true),
           Effect.catch((error) =>
             Effect.logWarning("graceful-shutdown.save-work-failed", {
               threadId: shell.id,
               error: String(error),
-            }),
+            }).pipe(Effect.as(false)),
           ),
         );
+      if (!accepted) continue;
+      messageIds.add(messageId);
+      threadIds.add(shell.id);
     }
 
     return { messageIds, threadIds };
@@ -228,13 +263,11 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
 
       if (shouldPrompt) {
         // Register privileged message ids before dispatch so the queue gate admits them.
-        const plannedShells = yield* threads
-          .listProjectThreads({ includeSubagents: true })
-          .pipe(
-            Effect.mapError(
-              mapShutdownError("Could not list threads for graceful shutdown save prompts."),
-            ),
-          );
+        const plannedShells = yield* listShutdownShells().pipe(
+          Effect.mapError(
+            mapShutdownError("Could not list threads for graceful shutdown save prompts."),
+          ),
+        );
         for (const shell of plannedShells) {
           saveWorkMessageIds.add(
             MessageId.make(`message:graceful-shutdown-save:${shutdownId}:${shell.id}`),
@@ -254,65 +287,85 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
         saveWorkThreadIds,
       });
 
-      if (shouldPrompt) {
-        const prompted = yield* promptSaveWork({ shutdownId, scope: input.scope }).pipe(
-          Effect.mapError(
-            mapShutdownError("Could not prompt agents to save work before shutdown."),
-          ),
-        );
-        saveWorkMessageIds = prompted.messageIds;
-        saveWorkThreadIds = prompted.threadIds;
-        yield* gate.setState({
-          phase: "draining",
-          shutdownId,
-          scope: input.scope,
-          reason: input.reason ?? null,
-          startedAt: DateTime.formatIso(started),
-          deadlineAt: DateTime.formatIso(deadline),
-          saveWorkPrompted: true,
-          saveWorkMessageIds,
-          saveWorkThreadIds,
-        });
-      }
-
-      const waitQuiesced = Effect.gen(function* () {
-        while (true) {
-          const active = yield* countActiveInScope(input.scope).pipe(
+      const drainBody = Effect.gen(function* () {
+        if (shouldPrompt) {
+          const prompted = yield* promptSaveWork({ shutdownId, scope: input.scope }).pipe(
             Effect.mapError(
-              mapShutdownError("Could not inspect in-scope runs during graceful shutdown."),
+              mapShutdownError("Could not prompt agents to save work before shutdown."),
             ),
           );
-          if (active === 0) return "quiesced" as const;
-          yield* Effect.sleep(Duration.millis(250));
+          saveWorkMessageIds = prompted.messageIds;
+          saveWorkThreadIds = prompted.threadIds;
+          const current = yield* gate.getState;
+          if (current.shutdownId === shutdownId) {
+            yield* gate.setState({
+              phase: "draining",
+              shutdownId,
+              scope: input.scope,
+              reason: input.reason ?? null,
+              startedAt: DateTime.formatIso(started),
+              deadlineAt: DateTime.formatIso(deadline),
+              saveWorkPrompted: true,
+              saveWorkMessageIds,
+              saveWorkThreadIds,
+            });
+          }
         }
+
+        const waitQuiesced = Effect.gen(function* () {
+          while (true) {
+            const active = yield* countActiveInScope(input.scope).pipe(
+              Effect.mapError(
+                mapShutdownError("Could not inspect in-scope runs during graceful shutdown."),
+              ),
+            );
+            const pendingSave = yield* countPendingSaveWork(saveWorkMessageIds).pipe(
+              Effect.mapError(
+                mapShutdownError("Could not inspect save-work turns during graceful shutdown."),
+              ),
+            );
+            if (active === 0 && pendingSave === 0) return "quiesced" as const;
+            yield* Effect.sleep(Duration.millis(250));
+          }
+        });
+
+        const outcome = yield* Effect.race(
+          waitQuiesced,
+          Effect.sleep(Duration.millis(timeoutMs)).pipe(Effect.as("timed_out" as const)),
+        );
+
+        const finished = yield* DateTime.now;
+        const activeRunCount = yield* countActiveInScope(input.scope).pipe(
+          Effect.orElseSucceed(() => 0),
+        );
+        const phase = outcome === "quiesced" ? ("quiesced" as const) : ("timed_out" as const);
+        const state = yield* gate.getState;
+        if (state.shutdownId === shutdownId) {
+          yield* gate.setState({
+            ...state,
+            phase,
+          });
+        }
+
+        return {
+          shutdownId,
+          phase,
+          scope: input.scope,
+          timedOut: outcome === "timed_out",
+          activeRunCount,
+          saveWorkPrompted: shouldPrompt,
+          saveWorkTurnCount: saveWorkMessageIds.size,
+          elapsedMs: Math.max(
+            0,
+            DateTime.toEpochMillis(finished) - DateTime.toEpochMillis(started),
+          ),
+        } satisfies GracefulShutdownResult;
       });
 
-      const outcome = yield* Effect.race(
-        waitQuiesced,
-        Effect.sleep(Duration.millis(timeoutMs)).pipe(Effect.as("timed_out" as const)),
+      return yield* drainBody.pipe(
+        Effect.onInterrupt(() => clearIfShutdown(shutdownId)),
+        Effect.onError(() => clearIfShutdown(shutdownId)),
       );
-
-      const finished = yield* DateTime.now;
-      const activeRunCount = yield* countActiveInScope(input.scope).pipe(
-        Effect.orElseSucceed(() => 0),
-      );
-      const phase = outcome === "quiesced" ? ("quiesced" as const) : ("timed_out" as const);
-      const state = yield* gate.getState;
-      yield* gate.setState({
-        ...state,
-        phase,
-      });
-
-      return {
-        shutdownId,
-        phase,
-        scope: input.scope,
-        timedOut: outcome === "timed_out",
-        activeRunCount,
-        saveWorkPrompted: shouldPrompt,
-        saveWorkTurnCount: saveWorkMessageIds.size,
-        elapsedMs: Math.max(0, DateTime.toEpochMillis(finished) - DateTime.toEpochMillis(started)),
-      } satisfies GracefulShutdownResult;
     },
     (effect) =>
       effect.pipe(
@@ -336,24 +389,18 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
           reason: "That graceful shutdown is no longer active.",
         });
       }
+      // Drain only blocks startNextQueuedRun; it never sets queueHeld. Kick the
+      // queue without queue.resume so pre-existing manual holds stay held.
       yield* gate.clear;
-      const shells = yield* threads
-        .listProjectThreads({ includeSubagents: true })
-        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<OrchestrationV2ThreadShell>));
-      for (const shell of shells) {
-        if (shell.archivedAt !== null || shell.deletedAt !== null) continue;
-        const records = yield* threads
-          .getThreadRecords(shell.id, ["runs"])
-          .pipe(Effect.orElseSucceed(() => ({ runs: [] as const })));
-        if (!records.runs.some((run) => run.status === "queued")) continue;
-        yield* threads
-          .dispatch({
-            type: "queue.resume",
-            commandId: CommandId.make(`command:graceful-shutdown-resume:${shell.id}`),
-            threadId: shell.id,
-          })
-          .pipe(Effect.ignore({ log: true }));
-      }
+      yield* orchestrator.resumeQueuedRuns.pipe(
+        Effect.mapError(
+          (cause) =>
+            new GracefulShutdownError({
+              reason: "Could not resume queued turns after graceful shutdown.",
+              cause,
+            }),
+        ),
+      );
     },
     (effect) =>
       effect.pipe(

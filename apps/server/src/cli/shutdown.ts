@@ -154,16 +154,30 @@ const formatResult = (result: GracefulShutdownResult) =>
 
 const stopServerProcess = Effect.fn("cli.shutdown.stopServerProcess")(function* (flags: {
   readonly baseDir: Option.Option<string>;
+  readonly json: boolean;
 }) {
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
   const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
-  if (Option.isNone(runtimeState)) return;
+  if (Option.isNone(runtimeState)) return null;
   const pid = runtimeState.value.pid;
-  if (typeof pid === "number" && isProcessAlive(pid)) {
-    process.kill(pid, "SIGTERM");
+  if (typeof pid !== "number" || !isProcessAlive(pid)) return null;
+  yield* Effect.try({
+    try: () => {
+      process.kill(pid, "SIGTERM");
+    },
+    catch: (cause) =>
+      new ShutdownCliError({
+        reason:
+          cause instanceof Error
+            ? `Could not send SIGTERM to server process ${pid}: ${cause.message}`
+            : `Could not send SIGTERM to server process ${pid}.`,
+      }),
+  });
+  if (!flags.json) {
     yield* Console.log(`Sent SIGTERM to server process ${pid}.`);
   }
+  return pid;
 });
 
 export const shutdownCommand = Command.make("shutdown", {
@@ -211,6 +225,12 @@ export const shutdownCommand = Command.make("shutdown", {
       }
 
       const scope = yield* parseScope(flags);
+      if (flags.stop && scope.type !== "environment") {
+        return yield* new ShutdownCliError({
+          reason: "--stop is only valid for an environment-wide drain.",
+        });
+      }
+
       const timeoutMs = Math.max(1_000, flags.timeout * 1000);
       const input: GracefulShutdownInput = {
         scope,
@@ -238,32 +258,37 @@ export const shutdownCommand = Command.make("shutdown", {
         ),
       );
 
+      if (result.timedOut) {
+        if (flags.json) {
+          yield* printJson(result);
+        } else {
+          yield* Console.log(formatResult(result));
+          if (result.saveWorkPrompted) {
+            yield* Console.log(`Save-work turns prompted: ${result.saveWorkTurnCount}.`);
+          }
+          yield* Console.log(
+            "Drain remains active so new turns stay queued. Run `t3 shutdown --complete` to resume, or restart the server.",
+          );
+        }
+        return yield* new ShutdownCliError({
+          reason: formatResult(result),
+        });
+      }
+
+      const stoppedPid = flags.stop ? yield* stopServerProcess(flags) : null;
+
       if (flags.json) {
-        yield* printJson(result);
+        yield* printJson(stoppedPid === null ? result : { ...result, stoppedPid });
       } else {
         yield* Console.log(formatResult(result));
         if (result.saveWorkPrompted) {
           yield* Console.log(`Save-work turns prompted: ${result.saveWorkTurnCount}.`);
         }
-      }
-
-      if (flags.stop) {
-        if (scope.type !== "environment") {
-          return yield* new ShutdownCliError({
-            reason: "--stop is only valid for an environment-wide drain.",
-          });
+        if (!flags.stop) {
+          yield* Console.log(
+            "Drain remains active so new turns stay queued. Run `t3 shutdown --complete` to resume, or restart the server.",
+          );
         }
-        yield* stopServerProcess(flags);
-      } else if (!flags.json) {
-        yield* Console.log(
-          "Drain remains active so new turns stay queued. Run `t3 shutdown --complete` to resume, or restart the server.",
-        );
-      }
-
-      if (result.timedOut) {
-        return yield* new ShutdownCliError({
-          reason: formatResult(result),
-        });
       }
     }),
   ),

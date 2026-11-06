@@ -2,11 +2,7 @@ import { AuthEnvironmentMaintainScope, EnvironmentHttpApi } from "@t3tools/contr
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
-import {
-  annotateEnvironmentRequest,
-  failEnvironmentInternal,
-  requireEnvironmentScope,
-} from "../auth/http.ts";
+import { annotateEnvironmentRequest, requireEnvironmentScope } from "../auth/http.ts";
 import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
 import * as GracefulShutdown from "./GracefulShutdown.ts";
 
@@ -22,13 +18,7 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.maintain.gracefulShutdown")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthEnvironmentMaintainScope);
-          return yield* gracefulShutdown.beginAndAwait(args.payload).pipe(
-            traceLocalHandlerWork,
-            Effect.catchTags({
-              GracefulShutdownError: (error) => Effect.fail(error),
-            }),
-            Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)),
-          );
+          return yield* gracefulShutdown.beginAndAwait(args.payload).pipe(traceLocalHandlerWork);
         }),
       )
       .handle(
@@ -44,13 +34,7 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.maintain.gracefulShutdownComplete")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthEnvironmentMaintainScope);
-          yield* gracefulShutdown.complete(args.payload.shutdownId).pipe(
-            traceLocalHandlerWork,
-            Effect.catchTags({
-              GracefulShutdownError: (error) => Effect.fail(error),
-            }),
-            Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)),
-          );
+          yield* gracefulShutdown.complete(args.payload.shutdownId).pipe(traceLocalHandlerWork);
           return {};
         }),
       );

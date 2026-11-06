@@ -10,6 +10,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
+import type { GracefulShutdownId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -176,7 +177,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       if (unsafeCrossing !== null) return yield* failWith(unsafeCrossing);
       if (desktopAppUpdate.available) {
         yield* reportProgress("draining");
-        yield* gracefulShutdown
+        const drain = yield* gracefulShutdown
           .beginAndAwait({
             scope: { type: "environment" },
             reason: "server-update",
@@ -192,12 +193,18 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
                 : Effect.void,
             ),
           );
-        return yield* desktopAppUpdate.run(
-          reportProgress,
-          input.channel === undefined
-            ? undefined
-            : { channel: input.channel, targetVersion: input.targetVersion },
-        );
+        return yield* desktopAppUpdate
+          .run(
+            reportProgress,
+            input.channel === undefined
+              ? undefined
+              : { channel: input.channel, targetVersion: input.targetVersion },
+          )
+          .pipe(
+            Effect.onError(() =>
+              gracefulShutdown.complete(drain.shutdownId).pipe(Effect.ignore({ log: true })),
+            ),
+          );
       }
       return yield* failWith(
         "This server is managed by the T3 Code desktop app on its machine; update the desktop app to update it.",
@@ -221,148 +228,164 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
 
     return yield* Effect.gen(function* () {
       yield* reportProgress("draining");
+      const drainShutdownId = yield* Ref.make<GracefulShutdownId | null>(null);
       const drainFiber = yield* gracefulShutdown
         .beginAndAwait({
           scope: { type: "environment" },
           reason: "server-update",
         })
-        .pipe(Effect.forkChild);
+        .pipe(
+          Effect.tap((result) => Ref.set(drainShutdownId, result.shutdownId)),
+          Effect.forkChild,
+        );
 
-      yield* reportProgress("downloading");
-      const paths = yield* ensurePinnedRuntimeInstalled({
-        baseDir: serverConfig.baseDir,
-        version: targetVersion,
-        fs,
-        path,
-        runner,
-        httpClient,
-        platform,
-        arch,
-        releaseBaseUrl,
-        requirePublishedRelease: mirror !== undefined,
-        validate: (runtime) =>
-          runner
-            .run({
-              command: pinnedRuntimeCommand(runtime).command,
-              args: [
-                ...pinnedRuntimeCommand(runtime).args,
-                "__service-preflight",
-                "--database-path",
-                serverConfig.dbPath,
-                "--launcher-protocol",
-                String(SERVICE_LAUNCHER_PROTOCOL),
-              ],
-              timeout: PREFLIGHT_TIMEOUT,
-            })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PinnedRuntimeInstallError({
-                    step: "running the staged service preflight",
-                    cause,
-                  }),
-              ),
-              Effect.flatMap(
-                (
-                  result,
-                ): Effect.Effect<
-                  void,
-                  PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError
-                > => {
-                  if (result.code !== 0) {
-                    return Effect.fail(
-                      new PinnedRuntimeInstallError({
-                        step: "running the staged service preflight",
-                        exitCode: Number(result.code),
-                        stdoutLength: result.stdout.length,
-                        stderrLength: result.stderr.length,
-                      }),
-                    );
-                  }
-                  let parsed: unknown;
-                  try {
-                    parsed = JSON.parse(result.stdout.trim());
-                  } catch (cause) {
-                    return Effect.fail(
-                      new PinnedRuntimeInstallError({
-                        step: "decoding the staged service preflight",
-                        cause,
-                      }),
-                    );
-                  }
-                  const preflight = decodeServicePreflightResult(parsed);
-                  if (preflight === undefined || preflight.version !== targetVersion) {
-                    return Effect.fail(
-                      new PinnedRuntimeInstallError({
-                        step: "verifying the staged service preflight",
-                      }),
-                    );
-                  }
-                  return preflight.status === "ready"
-                    ? Effect.void
-                    : Effect.fail(
-                        new PinnedRuntimePreflightBlockedError({
-                          version: targetVersion,
-                          reason: preflight.reason,
+      return yield* Effect.gen(function* () {
+        yield* reportProgress("downloading");
+        const paths = yield* ensurePinnedRuntimeInstalled({
+          baseDir: serverConfig.baseDir,
+          version: targetVersion,
+          fs,
+          path,
+          runner,
+          httpClient,
+          platform,
+          arch,
+          releaseBaseUrl,
+          requirePublishedRelease: mirror !== undefined,
+          validate: (runtime) =>
+            runner
+              .run({
+                command: pinnedRuntimeCommand(runtime).command,
+                args: [
+                  ...pinnedRuntimeCommand(runtime).args,
+                  "__service-preflight",
+                  "--database-path",
+                  serverConfig.dbPath,
+                  "--launcher-protocol",
+                  String(SERVICE_LAUNCHER_PROTOCOL),
+                ],
+                timeout: PREFLIGHT_TIMEOUT,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new PinnedRuntimeInstallError({
+                      step: "running the staged service preflight",
+                      cause,
+                    }),
+                ),
+                Effect.flatMap(
+                  (
+                    result,
+                  ): Effect.Effect<
+                    void,
+                    PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError
+                  > => {
+                    if (result.code !== 0) {
+                      return Effect.fail(
+                        new PinnedRuntimeInstallError({
+                          step: "running the staged service preflight",
+                          exitCode: Number(result.code),
+                          stdoutLength: result.stdout.length,
+                          stderrLength: result.stderr.length,
                         }),
                       );
-                },
+                    }
+                    let parsed: unknown;
+                    try {
+                      parsed = JSON.parse(result.stdout.trim());
+                    } catch (cause) {
+                      return Effect.fail(
+                        new PinnedRuntimeInstallError({
+                          step: "decoding the staged service preflight",
+                          cause,
+                        }),
+                      );
+                    }
+                    const preflight = decodeServicePreflightResult(parsed);
+                    if (preflight === undefined || preflight.version !== targetVersion) {
+                      return Effect.fail(
+                        new PinnedRuntimeInstallError({
+                          step: "verifying the staged service preflight",
+                        }),
+                      );
+                    }
+                    return preflight.status === "ready"
+                      ? Effect.void
+                      : Effect.fail(
+                          new PinnedRuntimePreflightBlockedError({
+                            version: targetVersion,
+                            reason: preflight.reason,
+                          }),
+                        );
+                  },
+                ),
               ),
-            ),
-      }).pipe(
-        Effect.mapError((error) => {
-          if (error._tag === "PinnedRuntimePreflightBlockedError") {
-            return failWith(error.reason, error);
-          }
-          if (mirror !== undefined && isUnpublishedRelease(error)) {
+        }).pipe(
+          Effect.mapError((error) => {
+            if (error._tag === "PinnedRuntimePreflightBlockedError") {
+              return failWith(error.reason, error);
+            }
+            if (mirror !== undefined && isUnpublishedRelease(error)) {
+              return failWith(
+                `${mirror.organization}'s update mirror has no t3@${targetVersion} for this machine.`,
+                error,
+              );
+            }
+            const downloadFailure = [
+              error.httpStatus === undefined ? undefined : `HTTP ${error.httpStatus}`,
+              error.downloadHost === undefined ? undefined : `from ${error.downloadHost}`,
+            ]
+              .filter((part) => part !== undefined)
+              .join(" ");
             return failWith(
-              `${mirror.organization}'s update mirror has no t3@${targetVersion} for this machine.`,
+              `Could not prepare t3@${targetVersion} while ${error.step}${downloadFailure ? ` (${downloadFailure})` : ""}.`,
               error,
             );
-          }
-          const downloadFailure = [
-            error.httpStatus === undefined ? undefined : `HTTP ${error.httpStatus}`,
-            error.downloadHost === undefined ? undefined : `from ${error.downloadHost}`,
-          ]
-            .filter((part) => part !== undefined)
-            .join(" ");
-          return failWith(
-            `Could not prepare t3@${targetVersion} while ${error.step}${downloadFailure ? ` (${downloadFailure})` : ""}.`,
-            error,
-          );
-        }),
-      );
-
-      yield* reportProgress("installing");
-      const drainResult = yield* Fiber.join(drainFiber).pipe(
-        Effect.mapError((error) => failWith(error.reason, error)),
-      );
-      if (drainResult.timedOut) {
-        yield* Effect.logWarning(
-          "Graceful shutdown timed out before server update handoff; continuing.",
-          { activeRunCount: drainResult.activeRunCount },
+          }),
         );
-      }
-      const updateId = yield* Effect.uninterruptible(
-        launcher.requestUpdate({ targetVersion, dbPath: serverConfig.dbPath }).pipe(
-          Effect.mapError((error) =>
-            failWith(
-              error._tag === "ServiceLauncherRejectedError"
-                ? error.reason
-                : "Could not ask the service launcher to activate the prepared update.",
-              error,
+
+        yield* reportProgress("installing");
+        const drainResult = yield* Fiber.join(drainFiber).pipe(
+          Effect.mapError((error) => failWith(error.reason, error)),
+        );
+        if (drainResult.timedOut) {
+          yield* Effect.logWarning(
+            "Graceful shutdown timed out before server update handoff; continuing.",
+            { activeRunCount: drainResult.activeRunCount },
+          );
+        }
+        const updateId = yield* Effect.uninterruptible(
+          launcher.requestUpdate({ targetVersion, dbPath: serverConfig.dbPath }).pipe(
+            Effect.mapError((error) =>
+              failWith(
+                error._tag === "ServiceLauncherRejectedError"
+                  ? error.reason
+                  : "Could not ask the service launcher to activate the prepared update.",
+                error,
+              ),
             ),
+            Effect.tap(() => onHandoffAccepted()),
           ),
-          Effect.tap(() => onHandoffAccepted()),
+        );
+
+        yield* Effect.logInfo("Server update prepared; handing off to the service launcher.", {
+          updateId,
+          targetVersion,
+          runtimePath: paths.entryPath,
+        });
+        return { targetVersion, method: "boot-service" as const, updateId };
+      }).pipe(
+        Effect.onError(() =>
+          Effect.gen(function* () {
+            yield* Fiber.interrupt(drainFiber);
+            const shutdownId = yield* Ref.get(drainShutdownId);
+            if (shutdownId !== null) {
+              yield* gracefulShutdown.complete(shutdownId).pipe(Effect.ignore({ log: true }));
+            }
+          }).pipe(Effect.ignore({ log: true })),
         ),
       );
-
-      yield* Effect.logInfo("Server update prepared; handing off to the service launcher.", {
-        updateId,
-        targetVersion,
-        runtimePath: paths.entryPath,
-      });
-      return { targetVersion, method: "boot-service" as const, updateId };
     }).pipe(Effect.onError(() => Ref.set(inFlight, false)));
   });
 
