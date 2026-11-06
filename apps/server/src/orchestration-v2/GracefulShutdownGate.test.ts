@@ -151,4 +151,43 @@ it.layer(layer)("GracefulShutdownGate", (it) => {
       assert.strictEqual((yield* gate.getState).shutdownId, "shutdown-second");
     }),
   );
+
+  it.effect("updates and completes only the matching shutdown id", () =>
+    Effect.gen(function* () {
+      const gate = yield* GracefulShutdownGate.GracefulShutdownGate;
+      yield* gate.clear;
+      assert.strictEqual(yield* gate.tryComplete(), "idle");
+
+      assert.isTrue(
+        yield* gate.tryBegin({
+          phase: "draining",
+          shutdownId: "shutdown-a",
+          scope: { type: "environment" },
+          reason: null,
+          startedAt: "2026-01-01T00:00:00.000Z",
+          deadlineAt: "2026-01-01T00:02:00.000Z",
+          saveWorkPrompted: false,
+          saveWorkMessageIds: new Set(),
+          saveWorkThreadIds: new Set(),
+        }),
+      );
+      assert.isFalse(
+        yield* gate.updateIfShutdown("shutdown-b", (state) => ({
+          ...state,
+          phase: "quiesced",
+        })),
+      );
+      assert.isTrue(
+        yield* gate.updateIfShutdown("shutdown-a", (state) => ({
+          ...state,
+          phase: "quiesced",
+        })),
+      );
+      assert.strictEqual((yield* gate.getState).phase, "quiesced");
+      assert.strictEqual(yield* gate.tryComplete("shutdown-b"), "mismatch");
+      assert.strictEqual((yield* gate.getState).phase, "quiesced");
+      assert.strictEqual(yield* gate.tryComplete("shutdown-a"), "cleared");
+      assert.strictEqual((yield* gate.getState).phase, "idle");
+    }),
+  );
 });

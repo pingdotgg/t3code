@@ -48,6 +48,20 @@ export class GracefulShutdownGate extends Context.Service<
     readonly setState: (state: GracefulShutdownGateState) => Effect.Effect<void>;
     /** Atomically install drain state when idle; false if a drain is already active. */
     readonly tryBegin: (state: GracefulShutdownGateState) => Effect.Effect<boolean>;
+    /** Atomically replace state when it still belongs to `shutdownId`. */
+    readonly updateIfShutdown: (
+      shutdownId: GracefulShutdownId,
+      update: (current: GracefulShutdownGateState) => GracefulShutdownGateState,
+    ) => Effect.Effect<boolean>;
+    /** Atomically clear when the active drain matches `shutdownId`. */
+    readonly clearIfShutdown: (shutdownId: GracefulShutdownId) => Effect.Effect<boolean>;
+    /**
+     * Atomically clear an active drain. Optional `shutdownId` must match when provided.
+     * Resume queued runs only after `"cleared"`.
+     */
+    readonly tryComplete: (
+      shutdownId?: GracefulShutdownId,
+    ) => Effect.Effect<"cleared" | "idle" | "mismatch">;
     readonly clear: Effect.Effect<void>;
     readonly isSaveWorkMessage: (messageId: MessageId) => Effect.Effect<boolean>;
     /** True when new turns for this thread must queue (steers still allowed). */
@@ -70,6 +84,27 @@ const make = Effect.fn("GracefulShutdownGate.make")(function* () {
     Ref.modify(stateRef, (current) => {
       if (isDrainActive(current)) return [false, current] as const;
       return [true, state] as const;
+    });
+  const updateIfShutdown = (
+    shutdownId: GracefulShutdownId,
+    update: (current: GracefulShutdownGateState) => GracefulShutdownGateState,
+  ) =>
+    Ref.modify(stateRef, (current) => {
+      if (current.shutdownId !== shutdownId) return [false, current] as const;
+      return [true, update(current)] as const;
+    });
+  const clearIfShutdown = (shutdownId: GracefulShutdownId) =>
+    Ref.modify(stateRef, (current) => {
+      if (current.shutdownId !== shutdownId) return [false, current] as const;
+      return [true, IDLE_STATE] as const;
+    });
+  const tryComplete = (shutdownId?: GracefulShutdownId) =>
+    Ref.modify(stateRef, (current) => {
+      if (!isDrainActive(current)) return ["idle" as const, current];
+      if (shutdownId !== undefined && current.shutdownId !== shutdownId) {
+        return ["mismatch" as const, current];
+      }
+      return ["cleared" as const, IDLE_STATE];
     });
   const clear = Ref.set(stateRef, IDLE_STATE);
 
@@ -122,6 +157,9 @@ const make = Effect.fn("GracefulShutdownGate.make")(function* () {
     getState,
     setState,
     tryBegin,
+    updateIfShutdown,
+    clearIfShutdown,
+    tryComplete,
     clear,
     isSaveWorkMessage,
     shouldQueueNewTurns,

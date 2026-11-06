@@ -1,5 +1,6 @@
 import { describe, it, assert } from "@effect/vitest";
 import {
+  GracefulShutdownError,
   GracefulShutdownId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -229,6 +230,8 @@ function makeRegistry(
   });
 }
 
+const TEST_PROVIDER_SHUTDOWN_ID = GracefulShutdownId.make("test-shutdown");
+
 const makeTestRunner = (
   registry: ProviderRegistry.ProviderRegistry["Service"],
   manifest: ModelManifest.ModelManifestData = {
@@ -242,6 +245,8 @@ const makeTestRunner = (
   },
   latestVersions: Layer.Layer<ProviderLatestVersions.ProviderLatestVersions> = ProviderLatestVersions.layer,
   drainBegins?: Ref.Ref<number>,
+  completedShutdownIds?: Ref.Ref<ReadonlyArray<GracefulShutdownId | undefined>>,
+  drainFailureReason?: string,
 ) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
     Effect.provide(
@@ -271,18 +276,25 @@ const makeTestRunner = (
                     ? Effect.void
                     : Ref.update(drainBegins, (count) => count + 1)
                   ).pipe(
-                    Effect.as({
-                      shutdownId: GracefulShutdownId.make("test-shutdown"),
-                      phase: "quiesced" as const,
-                      scope: { type: "environment" as const },
-                      timedOut: false,
-                      activeRunCount: 0,
-                      saveWorkPrompted: false,
-                      saveWorkTurnCount: 0,
-                      elapsedMs: 0,
-                    }),
+                    Effect.flatMap(() =>
+                      drainFailureReason === undefined
+                        ? Effect.succeed({
+                            shutdownId: TEST_PROVIDER_SHUTDOWN_ID,
+                            phase: "quiesced" as const,
+                            scope: { type: "environment" as const },
+                            timedOut: false,
+                            activeRunCount: 0,
+                            saveWorkPrompted: false,
+                            saveWorkTurnCount: 0,
+                            elapsedMs: 0,
+                          })
+                        : Effect.fail(new GracefulShutdownError({ reason: drainFailureReason })),
+                    ),
                   ),
-                complete: () => Effect.void,
+                complete: (shutdownId) =>
+                  completedShutdownIds === undefined
+                    ? Effect.void
+                    : Ref.update(completedShutdownIds, (ids) => [...ids, shutdownId]),
               }),
             ),
           ),
@@ -708,6 +720,142 @@ describe("providerMaintenanceRunner", () => {
       assert.deepStrictEqual(
         (yield* Ref.get(updateStatesRef)).map((state) => state.status),
         ["queued", "running", "failed"],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.0.0"),
+          layerMockSpawner((command) => {
+            calls.push(command);
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("records a failed update state when the pre-install drain fails", () =>
+    Effect.gen(function* () {
+      const drainBegins = yield* Ref.make(0);
+      const completedShutdownIds = yield* Ref.make<ReadonlyArray<GracefulShutdownId | undefined>>(
+        [],
+      );
+      const { registry, updateStatesRef } = yield* makeRegistry(baseNativeCliProvider);
+      const updater = yield* makeTestRunner(
+        registry,
+        undefined,
+        undefined,
+        drainBegins,
+        completedShutdownIds,
+        "A graceful shutdown is already in progress.",
+      );
+
+      const result = yield* updater.updateProvider(NATIVE_CLI_DRIVER);
+      assert.strictEqual(yield* Ref.get(drainBegins), 1);
+      assert.deepStrictEqual(yield* Ref.get(completedShutdownIds), []);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "failed");
+      assert.strictEqual(
+        result.providers[0]?.updateState?.message,
+        "Provider update failed for nativeCli: A graceful shutdown is already in progress.",
+      );
+      assert.deepStrictEqual(
+        (yield* Ref.get(updateStatesRef)).map((state) => [state.status, state.message]),
+        [
+          ["queued", "Waiting for another provider update to finish."],
+          ["running", "Checking for the latest version"],
+          ["running", "Waiting for agents to finish before updating"],
+          [
+            "failed",
+            "Provider update failed for nativeCli: A graceful shutdown is already in progress.",
+          ],
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.0.0"),
+          layerMockSpawner(() => ({ stdout: "updated" })),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("completes the drain after success and after a post-drain installation change", () => {
+    const calls: Array<string> = [];
+    return Effect.gen(function* () {
+      const drainBegins = yield* Ref.make(0);
+      const completedShutdownIds = yield* Ref.make<ReadonlyArray<GracefulShutdownId | undefined>>(
+        [],
+      );
+      const { registry: successRegistry, updateStatesRef: successStates } =
+        yield* makeRegistry(baseNativeCliProvider);
+      const successUpdater = yield* makeTestRunner(
+        successRegistry,
+        undefined,
+        undefined,
+        drainBegins,
+        completedShutdownIds,
+      );
+      const success = yield* successUpdater.updateProvider(NATIVE_CLI_DRIVER);
+      assert.strictEqual(success.providers[0]?.updateState?.status, "succeeded");
+      assert.strictEqual(yield* Ref.get(drainBegins), 1);
+      assert.deepStrictEqual(yield* Ref.get(completedShutdownIds), [TEST_PROVIDER_SHUTDOWN_ID]);
+      assert.isTrue(
+        (yield* Ref.get(successStates)).some(
+          (state) => state.message === "Waiting for agents to finish before updating",
+        ),
+      );
+
+      yield* Ref.set(drainBegins, 0);
+      yield* Ref.set(completedShutdownIds, []);
+      calls.length = 0;
+      let freshChecks = 0;
+      const { registry: changedRegistry, updateStatesRef: changedStates } =
+        yield* makeRegistry(baseProvider);
+      const changedUpdater = yield* makeTestRunner(
+        {
+          ...changedRegistry,
+          getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider, options) => {
+            if (options?.fresh !== true) return Effect.succeed(lifecycleFor(provider));
+            freshChecks += 1;
+            // First fresh check is pre-drain ownership/version; second is post-drain.
+            return Effect.succeed(
+              freshChecks === 1
+                ? lifecycleFor(provider)
+                : makeProviderMaintenanceCapabilities({
+                    provider,
+                    packageName: "@openai/codex",
+                    updateExecutable: null,
+                    updateArgs: [],
+                    updateLockKey: null,
+                  }),
+            );
+          },
+        },
+        undefined,
+        undefined,
+        drainBegins,
+        completedShutdownIds,
+      );
+      const changed = yield* changedUpdater.updateProvider(CODEX_DRIVER);
+      assert.deepStrictEqual(calls, []);
+      assert.strictEqual(yield* Ref.get(drainBegins), 1);
+      assert.deepStrictEqual(yield* Ref.get(completedShutdownIds), [TEST_PROVIDER_SHUTDOWN_ID]);
+      assert.strictEqual(changed.providers[0]?.updateState?.status, "failed");
+      assert.strictEqual(
+        changed.providers[0]?.updateState?.message,
+        "Provider installation changed. Refresh and try again.",
+      );
+      assert.deepStrictEqual(
+        (yield* Ref.get(changedStates)).map((state) => [state.status, state.message]),
+        [
+          ["queued", "Waiting for another provider update to finish."],
+          ["running", "Checking for the latest version"],
+          ["running", "Waiting for agents to finish before updating"],
+          ["failed", "Provider installation changed. Refresh and try again."],
+        ],
       );
     }).pipe(
       Effect.provide(
