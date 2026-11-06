@@ -45,6 +45,7 @@ import {
   vibeAgentForRuntimeMode,
   vibeWorktreeInputForCwd,
 } from "./appServerSupport.ts";
+import { vibeEffectSettled, vibeHistoryTurnItem } from "./historyItems.ts";
 
 const VibeProviderCapabilitiesV2 = {
   sessions: {
@@ -284,6 +285,32 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       threadId: ThreadId,
     ) {
       if (!state.thread) return;
+      if (entry["type"] !== "message") {
+        const timestamp = yield* DateTime.now;
+        const turnItem = vibeHistoryTurnItem(
+          {
+            id: idAllocator.derive.turnItemFromProviderItem({
+              driver: VIBE_PROVIDER,
+              nativeItemId,
+            }),
+            threadId,
+            runId: state.currentRun?.runId ?? null,
+            nodeId: state.currentRun?.rootNodeId ?? null,
+            providerThreadId: state.thread.id,
+            providerTurnId: state.activeTurn?.providerTurnId ?? null,
+            nativeItemRef: nativeRef(nativeItemId),
+            parentItemId: null,
+            ordinal: 0,
+            startedAt: null,
+            completedAt:
+              entry["type"] === "reasoning" || vibeEffectSettled(entry) ? timestamp : null,
+            updatedAt: timestamp,
+          },
+          entry,
+        );
+        if (turnItem) yield* emit({ type: "turn_item.updated", driver: VIBE_PROVIDER, turnItem });
+        return;
+      }
       const role = str(entry["role"]);
       // User input is echoed back as a history entry and the app already owns it; system
       // entries are not conversation. Only assistant entries become messages.
