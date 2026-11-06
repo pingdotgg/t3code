@@ -55,6 +55,7 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     return {
       id: `usage-limit-recovery:${runId}`,
       variant: "warning",
+      group: "environment",
       icon: <GaugeIcon />,
       title: "Usage limit reached",
       description: resetDescription,
@@ -65,6 +66,7 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
   return {
     id: `usage-limit-recovery:${runId}`,
     variant: "warning",
+    group: "environment",
     icon: <OpenAI aria-hidden="true" />,
     title: "ChatGPT usage limit reached",
     description: workspaceLimit
