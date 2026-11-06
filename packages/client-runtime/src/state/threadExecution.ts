@@ -1,4 +1,5 @@
 import {
+  latestExecutedRun,
   latestRootProviderFailure,
   latestUnheldRun,
   threadErrorSummary,
@@ -12,17 +13,25 @@ import {
   type OrchestrationV2NotificationSource,
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderGoal,
+  type ServerProvider,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ThreadProjection,
   orchestrationV2RunWorkStartedAt,
+  type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { getProviderOptionCurrentLabel, getProviderOptionStatedValue } from "@t3tools/shared/model";
+import {
+  getModelSelectionStringOptionValue,
+  getProviderOptionCurrentLabel,
+  getProviderOptionStatedValue,
+  resolveSelectableModel,
+  withLegacyUltracodeEffort,
+} from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 
@@ -33,6 +42,7 @@ import {
   type ThreadStructure,
   type ThreadStructureRuntime,
 } from "./models.ts";
+import { commandDisplayText } from "../work-log/commandLabel.ts";
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
@@ -161,21 +171,45 @@ export function formatModelSelectionEffort(
 ): string | null {
   const caps = models.find((model) => model.slug === selection.model)?.capabilities;
   if (!caps) return null;
+  const options = withLegacyUltracodeEffort(caps.optionDescriptors, selection.options);
+  const current = options ? { ...selection, options } : selection;
   for (const id of REASONING_EFFORT_OPTION_IDS) {
     const descriptor = caps.optionDescriptors?.find((candidate) => candidate.id === id);
     if (descriptor?.type !== "select") continue;
-    const value = getProviderOptionStatedValue(id, selection, reportedSelection);
+    const value = getProviderOptionStatedValue(id, current, reportedSelection);
     if (value === undefined && id !== "variant") continue;
     if (typeof value === "boolean") continue;
     // Bypass picker normalization so an obsolete choice cannot become a catalog default.
     const label = getProviderOptionCurrentLabel(
       { ...descriptor, currentValue: value },
-      selection,
+      current,
       reportedSelection,
     );
     if (label) return label;
   }
   return null;
+}
+
+/** A reported model the picker catalog does not know, such as `claude-opus-5[1m]`, keeps its raw effort. */
+export function formatSubagentEffort(input: {
+  readonly modelSlug: string | null;
+  readonly modelSelection: ModelSelection | undefined;
+  readonly provider: Pick<ServerProvider, "driver" | "models"> | undefined;
+}): string | null {
+  const { modelSlug, modelSelection: selection, provider } = input;
+  if (!provider || !selection || !modelSlug) return null;
+  const selectionSlug =
+    resolveSelectableModel(provider.driver, selection.model, provider.models) ??
+    selection.model.trim();
+  if (selectionSlug !== modelSlug) return null;
+  if (provider.models.some((model) => model.slug === modelSlug)) {
+    return formatModelSelectionEffort({ ...selection, model: modelSlug }, provider.models);
+  }
+  return (
+    REASONING_EFFORT_OPTION_IDS.map((id) => getModelSelectionStringOptionValue(selection, id)).find(
+      Boolean,
+    ) ?? null
+  );
 }
 
 const SUBAGENT_STATUS_LABELS: Record<OrchestrationV2ExecutionNode["status"], string> = {
@@ -207,6 +241,20 @@ export function formatProviderSubagentStatus(
   if (!Number.isFinite(start) || !Number.isFinite(end)) return label;
   const elapsed = formatDuration(Math.max(1_000, Math.floor((end - start) / 1_000) * 1_000));
   return live ? `${label} ${elapsed}` : `${label} in ${elapsed}`;
+}
+
+/** The run a manual continuation resumes; the server holds the queue until it does. */
+export function deriveResumableRunId(
+  projection: Pick<ThreadStructure, "runs" | "turnItems">,
+  runtime: Pick<ThreadStructureRuntime, "lastErrorClass"> | null,
+): RunId | null {
+  const run = latestExecutedRun(projection.runs);
+  if (run?.status === "interrupted") return run.id;
+  return run?.status === "failed" &&
+    runtime?.lastErrorClass === "usage_limit" &&
+    latestRootProviderFailure(run, projection.turnItems)?.class === "usage_limit"
+    ? run.id
+    : null;
 }
 
 export function deriveThreadRuntime(
@@ -361,6 +409,26 @@ function joinWithAnd(parts: ReadonlyArray<string>): string {
   return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
+// The Claude adapter forces a stuck query closed after 10 seconds.
+export const BACKGROUND_WORK_STOP_RETRY_AFTER_MS = 10_000;
+
+export interface BackgroundWorkStopRequest {
+  readonly threadKey: string;
+  readonly taskIds: ReadonlyArray<string>;
+  readonly retryAt: number | null;
+}
+
+/** Acceptance does not end the tasks, so an accepted Stop stays pending while they are listed. */
+export function isBackgroundWorkStopPending(
+  request: BackgroundWorkStopRequest | null,
+  threadKey: string,
+  tasks: ReadonlyArray<Pick<OrchestrationV2PendingBackgroundTask, "taskId">>,
+  retryExpired: boolean,
+): boolean {
+  if (request === null || request.threadKey !== threadKey || retryExpired) return false;
+  return request.retryAt === null || tasks.some((task) => request.taskIds.includes(task.taskId));
+}
+
 export function presentPendingBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
 ): PendingBackgroundWorkPresentation | null {
@@ -370,9 +438,13 @@ export function presentPendingBackgroundWork(
     .map((task): PendingBackgroundWorkItem => {
       const description = task.description?.trim();
       const label =
-        task.kind === "subagent" && description !== undefined
-          ? formatSubagentDisplayTitle(description).trim()
-          : description;
+        description === undefined
+          ? undefined
+          : task.kind === "subagent"
+            ? formatSubagentDisplayTitle(description).trim()
+            : task.kind === "command" || task.kind === "monitor"
+              ? commandDisplayText(description)
+              : description;
       return {
         taskId: task.taskId,
         kind: task.kind,
@@ -392,12 +464,10 @@ export function presentPendingBackgroundWork(
   if (items.length === 1 && only !== undefined) {
     const noun = BACKGROUND_WORK_KINDS[only.kind].singular;
     const named = only.label !== noun;
-    const title = waiting
-      ? named
-        ? `${only.kind === "monitor" ? "" : `Waiting on ${noun} `}${only.label}`
-        : `Waiting on a ${noun}`
-      : named
-        ? `Running: ${only.label}`
+    const title = named
+      ? `${waiting ? "Waiting" : "Running"} · ${only.label}`
+      : waiting
+        ? `Waiting on a ${noun}`
         : `Running a ${noun}`;
     return { title, items, waiting };
   }
@@ -428,7 +498,8 @@ const PROVIDER_GOAL_TITLES: Record<OrchestrationV2ProviderGoal["status"], string
 
 function formatGoalTokens(tokens: number): string {
   if (tokens < 1_000) return `${tokens}`;
-  if (tokens < 1_000_000) return `${Math.round(tokens / 1_000)}k`;
+  const thousands = Math.round(tokens / 1_000);
+  if (thousands < 1_000) return `${thousands}k`;
   return `${(tokens / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
 }
 

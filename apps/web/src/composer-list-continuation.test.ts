@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   listContinuationForEnter,
   listIndentForTab,
+  listOutdentForTab,
   nextOrderedMarkerText,
 } from "./composer-list-continuation";
 
@@ -85,6 +86,30 @@ describe("composer list indentation", () => {
     const value = "1. parent\n   1. first\n2. second";
     const edit = listIndentForTab(value, value.length, value.length)!;
     expect(applyEdit(value, edit)).toBe("1. parent\n   1. first\n   2. second");
+  });
+
+  it.each(["- parent\n- child", "1. parent\n2. child", "  7. child"])(
+    "undoes Tab on %j with Shift+Tab and keeps the caret on its text",
+    (value) => {
+      const cursor = value.lastIndexOf("child") + 2;
+      const nest = listIndentForTab(value, cursor, cursor)!;
+      const nested = applyEdit(value, nest);
+      const edit = listOutdentForTab(nested, nest.cursorAfter, nest.cursorAfter)!;
+      expect(applyEdit(nested, edit)).toBe(value);
+      expect(edit.cursorAfter).toBe(cursor);
+    },
+  );
+
+  it.each([
+    ["1. a\n   1. b\n2. c", "1. a\n2. b\n3. c"],
+    ["- a\n  5. b", "- a\n5. b"],
+  ])("outdents %j to %j and renumbers only within the parent's list", (value, expected) => {
+    const edit = listOutdentForTab(value, value.indexOf("b"), value.indexOf("b"))!;
+    expect(applyEdit(value, edit)).toBe(expected);
+  });
+
+  it("leaves a top-level item alone so Shift+Tab can still switch Build/Plan", () => {
+    expect(listOutdentForTab("- item", 6, 6)).toBeNull();
   });
 });
 

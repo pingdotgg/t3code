@@ -47,12 +47,18 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
     reason: Schema.Literals([
       "missing-tool",
       "unauthenticated",
+      "forbidden",
       "rate-limited",
       "not-found",
       "failed",
     ]),
     detail: Schema.String,
     retryAt: Schema.optional(Schema.Number),
+    /**
+     * Why the host would not return a repository and what to change, in the reader's terms.
+     * Shown beside that repository in the list; `detail` is about the failed call instead.
+     */
+    accessHint: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -69,6 +75,7 @@ export interface ProviderChangeRequestWatchFingerprint {
 export interface PullRequestProviderFailure {
   readonly reason: PullRequestProviderError["reason"];
   readonly retryAt?: number | undefined;
+  readonly accessHint?: string | undefined;
 }
 
 export interface ProviderChangeRequest {
@@ -115,6 +122,10 @@ export interface ProviderChangeRequestSummary {
   readonly mergeability?: PullRequestMergeability | undefined;
   /** Null means no stack; absent means not requested. */
   readonly stack?: PullRequestStackMembership | null | undefined;
+  readonly headSha?: string | undefined;
+  /** Absent means the read did not report auto-merge state, not that it is off. */
+  readonly autoMergeEnabled?: boolean | undefined;
+  readonly autoMergeMethod?: PullRequestMergeMethod | undefined;
 }
 
 export interface ProviderChangeRequestStackLayer {
@@ -302,6 +313,11 @@ export interface PullRequestProviderApi {
    * definition's `publicHost` can be read from a project with no checkout of its repository.
    */
   readonly readsPublicHostWithoutCheckout?: boolean;
+  /**
+   * Absent means every host detected as this kind is read. A host it refuses is listed as one that
+   * cannot be browsed here, and nothing is sent for it.
+   */
+  readonly servesHost?: (host: string) => boolean;
 
   readonly getViewer: (input: {
     readonly cwd: string;
@@ -458,6 +474,7 @@ export interface PullRequestProviderApi {
     },
   ) => Effect.Effect<ProviderFileRevisions, PullRequestProviderError>;
 
+  /** Returns the change request as the host's reply left it, or void when the reply lacks it. */
   readonly runAction: (
     input: ProviderRepositoryRef & {
       readonly number: number;
@@ -468,7 +485,7 @@ export interface PullRequestProviderApi {
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly updateMethod?: PullRequestUpdateMethod;
     },
-  ) => Effect.Effect<void, PullRequestProviderError>;
+  ) => Effect.Effect<ProviderChangeRequestSummary | void, PullRequestProviderError>;
 
   /** Requires edit capability and at least one field. */
   readonly updateChangeRequest?: (

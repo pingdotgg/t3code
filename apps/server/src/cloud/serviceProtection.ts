@@ -240,7 +240,10 @@ const runPrivileged = Effect.fn("ServiceProtection.runPrivileged")(function* (sc
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const exitCode = yield* spawner
     .exitCode(
+      // Effect detaches children on POSIX by default; sudo then has no controlling
+      // terminal and cannot ask for a password.
       ChildProcess.make("sudo", ["/bin/sh", "-c", script], {
+        detached: false,
         stdin: "inherit",
         stdout: "inherit",
         stderr: "inherit",
