@@ -731,6 +731,43 @@ it.effect(
 );
 
 layer("GitHubPullRequestApi.layer", (it) => {
+  it.effect("keeps recent references when the typed number does not exist", () =>
+    Effect.gen(function* () {
+      const search = {
+        pageInfo: { hasNextPage: false },
+        nodes: [{ __typename: "Issue", number: 7, title: "Seven", issueState: "OPEN" }],
+      };
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          output(
+            encodeJson(
+              call.kind === "graphql" && call.variables?.["exact"] === true
+                ? {
+                    data: { search, repository: { issueOrPullRequest: null } },
+                    errors: [
+                      {
+                        type: "NOT_FOUND",
+                        path: ["repository", "issueOrPullRequest"],
+                        message: "Could not resolve to an issue or pull request.",
+                      },
+                    ],
+                  }
+                : { data: { search } },
+            ),
+          ),
+        ),
+      );
+      const api = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const result = yield* api.searchRepositoryReferences({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        query: "99",
+      });
+      expect(result.items.map((item) => item.reference)).toEqual(["#7"]);
+    }),
+  );
+
   it.effect("turns maintainer edits off without rewriting the pull request's text", () =>
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
