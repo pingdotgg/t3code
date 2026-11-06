@@ -411,6 +411,9 @@ export const makeZeroClawAdapterV2 = Effect.fn("makeZeroClawAdapterV2")((
         );
       }),
       startTurn: Effect.fn("ZeroClawAdapter.startTurn")(function* (turnInput) {
+        if (turnInput.message.attachments.length > 0) {
+          return yield* protocolError("ZeroClaw does not support message attachments.");
+        }
         const sessionId = sessionIdOf(turnInput.providerThread);
         const thread = sessionId === undefined ? undefined : threads.get(sessionId);
         if (thread === undefined) return yield* protocolError("Thread is not open.");
@@ -462,7 +465,7 @@ export const makeZeroClawAdapterV2 = Effect.fn("makeZeroClawAdapterV2")((
             runId: turnInput.runId,
             nodeId: turnInput.rootNodeId,
             providerTurnId: providerTurn.id,
-            ordinal: turnInput.providerTurnOrdinal,
+            ordinal: turnInput.runOrdinal,
             appThread: turnInput.appThread,
             modelSelection: turnInput.modelSelection,
           },
@@ -515,6 +518,9 @@ export const makeZeroClawAdapterV2 = Effect.fn("makeZeroClawAdapterV2")((
           );
       }),
       steerTurn: Effect.fn("ZeroClawAdapter.steerTurn")(function* (steerInput) {
+        if (steerInput.message.attachments.length > 0) {
+          return yield* protocolError("ZeroClaw does not support message attachments.");
+        }
         const sessionId = sessionIdOf(steerInput.providerThread);
         if (sessionId === undefined) return yield* protocolError("Thread is not open.");
         yield* request("session/steer", {

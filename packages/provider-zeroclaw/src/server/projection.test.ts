@@ -1,5 +1,6 @@
 import {
   NodeId,
+  ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
@@ -285,8 +286,46 @@ describe("sessionUpdateToEvents", () => {
     expect(project({ type: "future_event", session_id: "s1" })).toEqual({ events: [] });
   });
 
-  it("opens a subagent for a foreground spawn and settles it on the result", () => {
-    const current = state();
+  it.each([
+    ["completed", "looks good"],
+    ["failed", "review failed"],
+  ] as const)("retains subagent metadata and child transcript on %s", (status, result) => {
+    const initial = state();
+    const modelSelection = { instanceId: initial.identity.providerInstanceId, model: "default" };
+    const current: ProjectionState = {
+      ...initial,
+      identity: {
+        ...initial.identity,
+        modelSelection,
+        appThread: {
+          createdBy: "user",
+          creationSource: "web",
+          id: initial.identity.threadId,
+          projectId: ProjectId.make("project-1"),
+          title: "Parent",
+          providerInstanceId: initial.identity.providerInstanceId,
+          modelSelection,
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: initial.identity.threadId,
+          },
+          forkedFrom: null,
+          createdAt: initial.now,
+          updatedAt: initial.now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      },
+    };
     const opened = project(
       {
         type: "tool_call",
@@ -298,16 +337,55 @@ describe("sessionUpdateToEvents", () => {
     );
     expect(opened.events.map((event) => event.type)).toEqual([
       "turn_item.updated",
+      "app_thread.created",
+      "message.updated",
+      "turn_item.updated",
       "subagent.updated",
     ]);
+    const opening = opened.events.find((event) => event.type === "subagent.updated")!;
+    current.now = DateTime.makeUnsafe(1_000);
     const settled = project(
-      { type: "tool_result", tool_call_id: "c1", name: "spawn_subagent", raw_output: "looks good" },
+      {
+        type: "tool_result",
+        tool_call_id: "c1",
+        name: "spawn_subagent",
+        status,
+        raw_output: result,
+      },
       current,
     );
     expect(settled.events[1]).toMatchObject({
       type: "subagent.updated",
-      subagent: { status: "completed", result: "looks good" },
+      subagent: {
+        ...opening.subagent,
+        status,
+        result,
+        completedAt: current.now,
+        updatedAt: current.now,
+      },
     });
+    expect(settled.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "message.updated",
+          message: expect.objectContaining({
+            threadId: opening.subagent.childThreadId,
+            role: "assistant",
+            text: result,
+            streaming: false,
+          }),
+        }),
+        expect.objectContaining({
+          type: "turn_item.updated",
+          turnItem: expect.objectContaining({
+            threadId: opening.subagent.childThreadId,
+            type: "assistant_message",
+            text: result,
+            ordinal: 101,
+          }),
+        }),
+      ]),
+    );
   });
 
   it("does not open a subagent for a background delegate", () => {

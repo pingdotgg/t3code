@@ -60,6 +60,7 @@ const unsupportedTextGeneration: ProviderTextGeneration = {
 function warningSnapshot(
   instanceId: ProviderInstance["instanceId"],
   message: string,
+  checkedAt: string,
 ): ServerProvider {
   return {
     instanceId,
@@ -70,7 +71,7 @@ function warningSnapshot(
     version: null,
     status: "warning",
     auth: { status: "unknown" },
-    checkedAt: "1970-01-01T00:00:00.000Z",
+    checkedAt,
     message,
     models: [],
     slashCommands: [],
@@ -85,10 +86,11 @@ function warningSnapshot(
 function readySnapshot(input: {
   readonly instanceId: ProviderInstance["instanceId"];
   readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly checkedAt: string;
   readonly version: string | undefined;
 }): ServerProvider {
   return {
-    ...warningSnapshot(input.instanceId, ""),
+    ...warningSnapshot(input.instanceId, "", input.checkedAt),
     status: "ready",
     installed: true,
     version: input.version ?? null,
@@ -109,17 +111,20 @@ export const probeZeroClaw = Effect.fn("probeZeroClaw")(function* (input: {
   readonly instanceId: ProviderInstance["instanceId"];
   readonly cache: { current: CatalogCache | undefined };
 }) {
+  const now = yield* DateTime.now;
+  const checkedAt = DateTime.formatIso(now);
   if (input.socketPath.length === 0) {
     return warningSnapshot(
       input.instanceId,
       "No ZeroClaw socket is configured. Set the daemon socket path or start `zeroclaw daemon`.",
+      checkedAt,
     );
   }
-  const now = yield* DateTime.now;
   const cached = input.cache.current;
   if (cached !== undefined && DateTime.toEpochMillis(now) - cached.at < CATALOG_TTL_MS) {
     return readySnapshot({
       instanceId: input.instanceId,
+      checkedAt,
       models: cached.models,
       version: cached.version,
     });
@@ -185,6 +190,7 @@ export const probeZeroClaw = Effect.fn("probeZeroClaw")(function* (input: {
         snapshot: warningSnapshot(
           input.instanceId,
           `ZeroClaw daemon is not reachable at ${input.socketPath}: ${cause.message}`,
+          checkedAt,
         ),
       }),
       onSuccess: (ready) => ready,
@@ -199,6 +205,7 @@ export const probeZeroClaw = Effect.fn("probeZeroClaw")(function* (input: {
   };
   return readySnapshot({
     instanceId: input.instanceId,
+    checkedAt,
     models: probed.models,
     version: probed.version,
   });
@@ -250,7 +257,11 @@ export const ZeroClawDriver: ProviderDriver<ZeroClawSettings, ZeroClawDriverEnv>
     const check = input.enabled
       ? probeZeroClaw({ socketPath, instanceId: input.instanceId, cache })
       : Effect.succeed({
-          ...warningSnapshot(input.instanceId, "ZeroClaw is disabled."),
+          ...warningSnapshot(
+            input.instanceId,
+            "ZeroClaw is disabled.",
+            DateTime.formatIso(yield* DateTime.now),
+          ),
           status: "disabled" as const,
         });
     const snapshot = yield* SubscriptionRef.make(stampSnapshot(yield* check));

@@ -19,6 +19,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2Subagent,
   type ProviderApprovalDecision,
 } from "@t3tools/contracts";
 import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
@@ -162,7 +163,10 @@ export interface ProjectionState {
       readonly startedAt: DateTime.Utc;
     }
   >;
-  readonly subagents: Map<string, { readonly id: NodeId; readonly childThreadId: ThreadId }>;
+  readonly subagents: Map<
+    string,
+    { readonly record: OrchestrationV2Subagent; readonly hasChildThread: boolean }
+  >;
   /** Cumulative text per streamed row; session/update chunks arrive as deltas. */
   readonly text: { assistant: string; reasoning: string };
   nextOrdinal: number;
@@ -334,7 +338,6 @@ function subagentEvents(
   const modelSelection = state.identity.modelSelection;
   const subagentId = NodeId.make(`zc-subagent-${toolCallId}`);
   const childThreadId = ThreadId.make(`zc-child-${toolCallId}`);
-  state.subagents.set(toolCallId, { id: subagentId, childThreadId });
   const subagent = {
     id: subagentId,
     threadId: state.identity.threadId,
@@ -356,6 +359,10 @@ function subagentEvents(
     completedAt: null,
     updatedAt: state.now,
   };
+  state.subagents.set(toolCallId, {
+    record: subagent,
+    hasChildThread: appThread !== undefined && modelSelection !== undefined,
+  });
   if (appThread === undefined || modelSelection === undefined) {
     return [{ type: "subagent.updated", driver: ZEROCLAW_PROVIDER, subagent }];
   }
@@ -559,32 +566,48 @@ export function sessionUpdateToEvents(
           type: "subagent.updated",
           driver: ZEROCLAW_PROVIDER,
           subagent: {
-            id: subagent.id,
-            threadId: identity.threadId,
-            runId: identity.runId,
-            parentNodeId: identity.nodeId,
-            origin: "provider_native",
-            createdBy: "agent",
-            driver: ZEROCLAW_PROVIDER,
-            providerInstanceId: identity.providerInstanceId,
-            providerThreadId: identity.providerThreadId,
-            childThreadId: subagent.childThreadId,
-            nativeTaskRef: {
-              driver: ZEROCLAW_PROVIDER,
-              nativeId: update.toolCallId,
-              strength: "strong",
-            },
-            prompt: "",
-            title: null,
-            model: null,
-            status: outcome.status,
+            ...subagent.record,
+            status: failed ? "failed" : outcome.status,
             result: outcome.result,
-            startedAt: state.now,
             completedAt: state.now,
             updatedAt: state.now,
-            promptOmitted: true,
           },
         });
+        if (
+          subagent.hasChildThread &&
+          subagent.record.childThreadId !== null &&
+          outcome.result !== null
+        ) {
+          const resultArtifacts = makeSubagentConversationArtifacts({
+            messageId: MessageId.make(`zc-subresult-${subagent.record.id}`),
+            turnItemId: TurnItemId.make(`zc-subresult-${subagent.record.id}`),
+            threadId: subagent.record.childThreadId,
+            rootNodeId: identity.nodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: {
+              driver: ZEROCLAW_PROVIDER,
+              nativeId: `${update.toolCallId}:result`,
+              strength: "weak",
+            },
+            role: "assistant",
+            text: outcome.result,
+            ordinal: SUBAGENT_PROMPT_ORDINAL + 1,
+            now: state.now,
+          });
+          events.push(
+            {
+              type: "message.updated",
+              driver: ZEROCLAW_PROVIDER,
+              message: resultArtifacts.message,
+            },
+            {
+              type: "turn_item.updated",
+              driver: ZEROCLAW_PROVIDER,
+              turnItem: resultArtifacts.turnItem,
+            },
+          );
+        }
       }
       return { events };
     }

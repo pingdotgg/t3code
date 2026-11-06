@@ -205,7 +205,7 @@ function openRuntime(socketPath: string, scope?: Scope.Scope, config = settings(
       threadId: ThreadId.make("thread-1"),
       providerSessionId: ProviderSessionId.make("psession-1"),
       modelSelection: selection("default"),
-      runtimePolicy: { runtimeMode: "approval-required", interactionMode: "default" },
+      runtimePolicy: { runtimeMode: "approval-required", interactionMode: "default", cwd: "/w" },
     } as ProviderAdapter.ProviderAdapterV2OpenSessionInput);
     return yield* scope === undefined
       ? opened.pipe(Effect.scoped)
@@ -297,7 +297,7 @@ describe("ZeroClaw adapter prompt lifetime", () => {
       const call = {
         threadId: ThreadId.make("thread-1"),
         runId: RunId.make("run-1"),
-        runOrdinal: 1,
+        runOrdinal: 7,
         providerTurnOrdinal: 1,
         attemptId: RunAttemptId.make("attempt-1"),
         rootNodeId: NodeId.make("node-1"),
@@ -317,6 +317,16 @@ describe("ZeroClaw adapter prompt lifetime", () => {
           cwd: "/w",
         },
       };
+      const withAttachment = {
+        ...call,
+        message: { ...call.message, attachments: [{ type: "file" }] },
+      } as unknown as ProviderAdapter.ProviderAdapterV2TurnInput;
+      const rejected = yield* runtime.startTurn(withAttachment).pipe(Effect.flip);
+      expect(rejected.message).toContain("attachments");
+      const rejectedSteer = yield* runtime
+        .steerTurn(withAttachment as unknown as ProviderAdapter.ProviderAdapterV2SteerInput)
+        .pipe(Effect.flip);
+      expect(rejectedSteer.message).toContain("attachments");
       yield* runtime
         .startTurn(call as ProviderAdapter.ProviderAdapterV2TurnInput)
         .pipe(Effect.provideService(Scope.Scope, runScope));
@@ -344,6 +354,7 @@ describe("ZeroClaw adapter prompt lifetime", () => {
       yield* completeTurn;
       expect(yield* Queue.take(emitted)).toMatchObject({
         type: "turn.terminal",
+        runOrdinal: 7,
         status: "completed",
       });
       const dropped = new ZeroClawRpcError({ operation: "read", detail: "Connection closed" });
@@ -362,6 +373,7 @@ describe("ZeroClaw adapter prompt lifetime", () => {
       yield* completeTurn;
       expect(yield* Queue.take(emitted)).toMatchObject({
         type: "turn.terminal",
+        runOrdinal: 7,
         status: "completed",
       });
 
@@ -396,7 +408,11 @@ describe("ZeroClaw adapter turn start", () => {
           const thread = yield* initial.ensureThread({
             threadId: ThreadId.make("thread-1"),
             modelSelection: selection("default", "coder"),
-            runtimePolicy: { runtimeMode: "approval-required", interactionMode: "default" },
+            runtimePolicy: {
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              cwd: "/w",
+            },
           } as ProviderAdapter.ProviderAdapterV2EnsureThreadInput);
           const resumed = yield* openRuntime(socketPath, scope, {
             ...settings(),
@@ -427,7 +443,11 @@ describe("ZeroClaw adapter turn start", () => {
         const thread = yield* runtime.ensureThread({
           threadId: ThreadId.make("thread-1"),
           modelSelection: selection("default", "coder"),
-          runtimePolicy: { runtimeMode: "approval-required", interactionMode: "default" },
+          runtimePolicy: {
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            cwd: "/w",
+          },
         } as ProviderAdapter.ProviderAdapterV2EnsureThreadInput);
         const error = yield* runtime
           .startTurn({
@@ -437,9 +457,21 @@ describe("ZeroClaw adapter turn start", () => {
             attemptId: RunAttemptId.make("attempt-1"),
             rootNodeId: NodeId.make("node-1"),
             providerThread: thread,
-            message: { text: "hi" },
+            appThread: {} as never,
+            runOrdinal: 1,
+            message: {
+              text: "hi",
+              attachments: [],
+              messageId: "m" as never,
+              createdBy: "user",
+              creationSource: "web",
+            },
             modelSelection: selection("default", "reviewer"),
-            runtimePolicy: { runtimeMode: "approval-required", interactionMode: "default" },
+            runtimePolicy: {
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              cwd: "/w",
+            },
           } as ProviderAdapter.ProviderAdapterV2TurnInput)
           .pipe(Effect.flip);
         expect(error.message).toContain(AGENT_MISMATCH_MESSAGE("coder", "reviewer"));
@@ -456,7 +488,11 @@ describe("ZeroClaw adapter turn start", () => {
         const thread = yield* runtime.ensureThread({
           threadId: ThreadId.make("thread-1"),
           modelSelection: selection("default"),
-          runtimePolicy: { runtimeMode: "approval-required", interactionMode: "default" },
+          runtimePolicy: {
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            cwd: "/w",
+          },
         } as ProviderAdapter.ProviderAdapterV2EnsureThreadInput);
         const turn = {
           threadId: ThreadId.make("thread-1"),
@@ -465,8 +501,20 @@ describe("ZeroClaw adapter turn start", () => {
           attemptId: RunAttemptId.make("attempt-1"),
           rootNodeId: NodeId.make("node-1"),
           providerThread: thread,
-          message: { text: "hi" },
-          runtimePolicy: { runtimeMode: "approval-required", interactionMode: "default" },
+          appThread: {} as never,
+          runOrdinal: 1,
+          message: {
+            text: "hi",
+            attachments: [],
+            messageId: "m" as never,
+            createdBy: "user",
+            creationSource: "web",
+          },
+          runtimePolicy: {
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            cwd: "/w",
+          },
         };
         yield* runtime.startTurn({
           ...turn,
