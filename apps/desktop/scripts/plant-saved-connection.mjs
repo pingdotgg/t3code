@@ -97,13 +97,14 @@ function windowsKey(userData) {
   if (!NodeFS.existsSync(localState)) return null;
   const encrypted = JSON.parse(NodeFS.readFileSync(localState, "utf8")).os_crypt?.encrypted_key;
   if (typeof encrypted !== "string") throw new Error("Local State has no os_crypt key");
+  // -Command splices trailing arguments into the script, so the key goes in on stdin.
   const script =
-    "$b=[Convert]::FromBase64String($args[0]);$b=$b[5..($b.Length-1)];[Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Unprotect($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser))";
+    "Add-Type -AssemblyName System.Security;$b=[Convert]::FromBase64String([Console]::In.ReadToEnd().Trim());$b=$b[5..($b.Length-1)];[Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Unprotect($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser))";
   return Buffer.from(
     NodeChildProcess.execFileSync(
       "powershell.exe",
-      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script, "--", encrypted],
-      { encoding: "utf8" },
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      { encoding: "utf8", input: encrypted },
     ).trim(),
     "base64",
   );
