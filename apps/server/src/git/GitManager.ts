@@ -1447,7 +1447,7 @@ export const make = Effect.gen(function* () {
       aheadCount: shippedByMergedPr && !details.hasUpstream ? 0 : details.aheadCount,
       behindCount: details.behindCount,
       aheadOfDefaultCount: shippedByMergedPr ? 0 : details.aheadOfDefaultCount,
-      pr,
+      pr: pr && details.branch ? { ...pr, localRefName: details.branch } : null,
     } satisfies VcsStatusRemoteResult;
   });
   const remoteStatusResultCache = yield* Cache.makeWith((cwd: string) => readRemoteStatus(cwd), {

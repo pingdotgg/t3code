@@ -2,9 +2,13 @@ import type {
   GitRunStackedActionResult,
   GitStackedAction,
   VcsStatusResult,
+  ProjectId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
-import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
+import {
+  sourceControlClients,
+  type ChangeRequestTerminology,
+} from "@t3tools/client-runtime/source-control-clients";
 import {
   changeRequestTerminologyFor,
   type DefaultBranchActionDialogCopy,
@@ -452,4 +456,21 @@ export function resolveChangesTotals(
     deletions: selected.deletions,
     baseRef: selected.baseRef,
   };
+}
+
+export function resolveChangesPullRequest(
+  status: VcsStatusResult | null | undefined,
+  projectId: ProjectId | null | undefined,
+) {
+  const pr = status?.pr;
+  if (!projectId || pr?.state !== "open" || pr.localRefName !== status?.refName) return null;
+  const parsed = sourceControlClients.parseChangeRequestUrl(pr.url);
+  return parsed
+    ? {
+        projectId,
+        host: parsed.link.host,
+        repository: parsed.link.repository,
+        number: parsed.link.number,
+      }
+    : null;
 }

@@ -1,10 +1,11 @@
-import { SourceControlProviderKind, type VcsStatusResult } from "@t3tools/contracts";
+import { ProjectId, SourceControlProviderKind, type VcsStatusResult } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildMenuItems,
   requiresDefaultBranchConfirmation,
+  resolveChangesPullRequest,
   resolveChangesTotals,
   resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
@@ -296,5 +297,41 @@ describe("resolveChangesTotals", () => {
       ),
       { insertions: 2, deletions: 0 },
     );
+  });
+});
+
+describe("resolveChangesPullRequest", () => {
+  it("selects only the open PR for the checked-out branch", () => {
+    const projectId = ProjectId.make("project-1");
+    const pr = {
+      number: 42,
+      title: "Change",
+      url: "https://github.com/example/repo/pull/42",
+      baseRef: "release",
+      headRef: "feature/test",
+      localRefName: "feature/test",
+      state: "open" as const,
+    };
+    assert.deepEqual(resolveChangesPullRequest(status({ pr }), projectId), {
+      projectId,
+      host: "github.com",
+      repository: "example/repo",
+      number: 42,
+    });
+    for (const localRefName of ["t3code/pr-42/feature/test", "my-local-alias"]) {
+      assert.equal(
+        resolveChangesPullRequest(
+          status({ pr: { ...pr, localRefName }, refName: localRefName }),
+          projectId,
+        )?.number,
+        42,
+      );
+      assert.isNull(resolveChangesPullRequest(status({ pr, refName: localRefName }), projectId));
+    }
+    assert.isNull(resolveChangesPullRequest(status({ pr, refName: "other" }), projectId));
+    assert.isNull(resolveChangesPullRequest(status({ pr: { ...pr, state: "merged" } }), projectId));
+    assert.isNull(resolveChangesPullRequest(status({ pr: { ...pr, state: "closed" } }), projectId));
+    assert.isNull(resolveChangesPullRequest(status({ pr }), null));
+    assert.isNull(resolveChangesPullRequest(status({ pr: { ...pr, url: "invalid" } }), projectId));
   });
 });

@@ -15,6 +15,7 @@ import {
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import {
+  ChangesComparison,
   DEFAULT_UNIFIED_SETTINGS,
   type DiffLayout,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
@@ -132,6 +133,12 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const CHANGES_COMPARISON_LABELS: Record<ChangesComparison, string> = {
+  all: "All changes, including local work",
+  committed: "Current PR or committed branch",
+};
+const isChangesComparison = Schema.is(ChangesComparison);
 
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
   stacked: "Stacked",
@@ -514,6 +521,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
       ? ["Diff whitespace changes"]
       : []),
+    ...(settings.changesComparison !== DEFAULT_UNIFIED_SETTINGS.changesComparison
+      ? ["Changes comparison"]
+      : []),
     ...(settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? ["Diff layout"] : []),
     ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
       ? ["Open pull requests and changes panels proactively"]
@@ -639,6 +649,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
+      changesComparison: DEFAULT_UNIFIED_SETTINGS.changesComparison,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
@@ -1297,6 +1308,41 @@ export function DiffsSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="diffs" title="Diffs">
+        <SettingsRow
+          {...searchableSetting("changes-comparison")}
+          description="Choose what Changes compares. In committed mode, local edits appear separately under Uncommitted."
+          resetAction={
+            settings.changesComparison !== DEFAULT_UNIFIED_SETTINGS.changesComparison ? (
+              <SettingResetButton
+                label="changes comparison"
+                onClick={() =>
+                  updateSettings({ changesComparison: DEFAULT_UNIFIED_SETTINGS.changesComparison })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.changesComparison}
+              onValueChange={(value) => {
+                if (isChangesComparison(value)) {
+                  updateSettings({ changesComparison: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-64" aria-label="Changes comparison">
+                <SelectValue>{CHANGES_COMPARISON_LABELS[settings.changesComparison]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup>
+                {Object.entries(CHANGES_COMPARISON_LABELS).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
         <SettingsRow
           {...searchableSetting("diff-layout")}
           description="Show diffs stacked or side by side. The toggle in the diff toolbar changes this too."
