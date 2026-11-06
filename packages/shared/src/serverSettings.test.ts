@@ -7,6 +7,7 @@ import {
   SecretProviderKind,
   ServerSettings,
   ServerSettingsPatch,
+  OpenShellGatewaySettings,
   UsageLimitSourceId,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -29,6 +30,7 @@ import {
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+const decodeServerSettingsBlock = Schema.decodeUnknownSync(OpenShellGatewaySettings);
 
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
@@ -38,12 +40,60 @@ describe("openshell gateway patch", () => {
       openshellEnabled: true,
       openshell: { gatewayUrl: "https://gateway.example.com", managingInstance: true },
     });
-    const next = applyServerSettingsPatch(current, {
+    const decodedPatch = decodeServerSettingsPatch({
       openshell: { gatewayUrl: "https://other.example.com" },
     });
+    // Decoding must not insert a managing-instance default over the saved role.
+    expect(decodedPatch.openshell?.managingInstance).toBeUndefined();
+    const next = applyServerSettingsPatch(current, decodedPatch);
 
     expect(next.openshell.managingInstance).toBe(true);
     expect(next.openshell.gatewayUrl).toBe("https://other.example.com");
+  });
+
+  it("keeps a saved worker class when a partial workerDefaults patch only sets ttlMs", () => {
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      openshell: { workerDefaults: { workerClass: "persistent" } },
+    });
+    const next = applyServerSettingsPatch(current, {
+      openshell: { workerDefaults: { ttlMs: Duration.minutes(1) } },
+    });
+
+    expect(next.openshell.workerDefaults?.workerClass).toBe("persistent");
+    expect(Duration.toMillis(next.openshell.workerDefaults?.ttlMs ?? 0)).toBe(60_000);
+  });
+
+  it("keeps saved shared cache fields when a partial patch only enables the cache", () => {
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      openshell: {
+        sharedCache: { mode: "rwx-pvc", mountPath: "/opt/t3cache" },
+      },
+    });
+    const next = applyServerSettingsPatch(current, {
+      openshell: { sharedCache: { enabled: true } },
+    });
+
+    expect(next.openshell.sharedCache?.enabled).toBe(true);
+    expect(next.openshell.sharedCache?.mode).toBe("rwx-pvc");
+    expect(next.openshell.sharedCache?.mountPath).toBe("/opt/t3cache");
+  });
+
+  it("lets the full schema default a newly created openshell block after a patch", () => {
+    const { openshell: _omit, ...withoutOpenshell } = decodeServerSettings({});
+    const next = applyServerSettingsPatch(withoutOpenshell as ServerSettings, {
+      openshell: {
+        gatewayUrl: "https://gateway.example.com",
+        workerDefaults: {},
+        sharedCache: {},
+      },
+    });
+    const decoded = decodeServerSettingsBlock(next.openshell);
+
+    expect(decoded.workerDefaults?.workerClass).toBe("ephemeral");
+    expect(decoded.sharedCache?.mode).toBe("none");
+    expect(decoded.sharedCache?.mountPath).toBe("/opt/t3cache");
+    expect(decoded.sharedCache?.enabled).toBe(false);
+    expect(decoded.managingInstance).toBe(false);
   });
 });
 
