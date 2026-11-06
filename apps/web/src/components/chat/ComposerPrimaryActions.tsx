@@ -59,6 +59,8 @@ interface ComposerPrimaryActionsProps {
   canResume?: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
   isEditingQueuedMessage?: boolean;
+  /** The dictation mic: a slot in the send and stop pill, a quiet icon before the other actions. */
+  renderSpeechAction?: ((inPill: boolean) => ReactNode) | undefined;
   onSubmitMessage?: MouseEventHandler<HTMLButtonElement>;
   onResume?: () => void;
   onPreviousPendingQuestion: () => void;
@@ -130,6 +132,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   canResume = false,
   preserveComposerFocusOnPointerDown = false,
   isEditingQueuedMessage = false,
+  renderSpeechAction,
   onSubmitMessage,
   onResume,
   onPreviousPendingQuestion,
@@ -156,6 +159,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   // The stop square sits in the same pill as send, so the pill never changes shape.
   const renderStopGenerationButton = (insidePendingAction: boolean) => (
     <ComposerSendPill key="interrupt" className={cn(insidePendingAction && "sm:h-7")}>
+      {insidePendingAction ? null : renderSpeechAction?.(true)}
       <Tooltip>
         <TooltipTrigger
           render={
@@ -185,6 +189,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   if (pendingAction) {
     return (
       <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
+        {renderSpeechAction?.(false)}
         {canInterrupt ? renderStopGenerationButton(true) : null}
         {pendingAction.questionIndex > 0 ? (
           compact ? (
@@ -242,28 +247,33 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 
   if (showPlanFollowUpPrompt && onImplementPlanInNewThread) {
     return (
-      <Group data-chat-composer-implement-actions="true">
-        <Button
-          type="submit"
-          size="sm"
-          variant="default"
-          disabled={isSendBusy || isSendDisabled || isEnvironmentUnavailable}
-        >
-          {isSendBusy ? "Sending…" : promptHasText ? "Refine" : "Implement"}
-        </Button>
-        <GroupSeparator />
-        <Menu>
-          <MenuTrigger
+      <>
+        {renderSpeechAction?.(false)}
+        <Group data-chat-composer-implement-actions="true">
+          <Button
+            type="submit"
+            size="sm"
+            variant="default"
             disabled={isSendBusy || isSendDisabled || isEnvironmentUnavailable}
-            render={<Button size="icon-sm" variant="default" aria-label="Implementation actions" />}
           >
-            <ChevronDownIcon />
-          </MenuTrigger>
-          <MenuPopup side="top" align="end" {...composerFloatingLayerProps}>
-            <MenuItem onClick={onImplementPlanInNewThread}>Implement in a new thread</MenuItem>
-          </MenuPopup>
-        </Menu>
-      </Group>
+            {isSendBusy ? "Sending…" : promptHasText ? "Refine" : "Implement"}
+          </Button>
+          <GroupSeparator />
+          <Menu>
+            <MenuTrigger
+              disabled={isSendBusy || isSendDisabled || isEnvironmentUnavailable}
+              render={
+                <Button size="icon-sm" variant="default" aria-label="Implementation actions" />
+              }
+            >
+              <ChevronDownIcon />
+            </MenuTrigger>
+            <MenuPopup side="top" align="end" {...composerFloatingLayerProps}>
+              <MenuItem onClick={onImplementPlanInNewThread}>Implement in a new thread</MenuItem>
+            </MenuPopup>
+          </Menu>
+        </Group>
+      </>
     );
   }
   const showResume = canResume && !hasSendableContent && !isEditingQueuedMessage;
@@ -346,6 +356,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 
   const submit = (
     <ComposerSendPill>
+      {renderSpeechAction?.(true)}
       <Tooltip>
         {/* A span trigger keeps the tooltip reachable while send is disabled. */}
         <TooltipTrigger render={<span className="flex h-full" />}>{sendButton}</TooltipTrigger>
@@ -403,3 +414,11 @@ function ComposerSendPill({ className, children }: { className?: string; childre
     </span>
   );
 }
+
+// A 32px button slot of the send pill for the dictation mic and the collapsed row's send.
+export const COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME =
+  "relative isolate flex h-full w-8 items-center justify-center overflow-hidden rounded-md text-foreground outline-none transition-colors duration-150 enabled:cursor-pointer enabled:hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 [&_svg]:pointer-events-none";
+export const COMPOSER_PILL_SLOT_BUTTON_UNAVAILABLE_CLASS_NAME = cn(
+  COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME,
+  "opacity-64 enabled:cursor-default enabled:hover:bg-transparent",
+);
