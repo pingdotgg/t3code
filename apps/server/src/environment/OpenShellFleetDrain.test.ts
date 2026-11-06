@@ -214,6 +214,7 @@ describe("fleet drain", () => {
       const outcome = yield* drain(dependencies);
 
       expect(outcome.state).toBe("failed");
+      expect(outcome.finishedAt).toBeNull();
       expect(outcome.threads.failed).toBe(1);
       expect(dependencies.written).toHaveLength(0);
     }),
