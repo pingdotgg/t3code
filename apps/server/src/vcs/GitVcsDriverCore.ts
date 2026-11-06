@@ -3647,7 +3647,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       const dirty = status ? yield* status : new Set<string>();
       const possiblePaths = modulePaths.filter(
-        (value) => !file || paths.some((candidate) => candidate.startsWith(`${value}/`)),
+        (value) =>
+          !file ||
+          paths.some((candidate) => candidate === value || candidate.startsWith(`${value}/`)),
       );
       const [before, after] = yield* Effect.all(
         [
@@ -3667,6 +3669,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         candidates,
         (modulePath) =>
           Effect.gen(function* () {
+            if (file?.path === modulePath) return null;
             const moduleCwd = yield* resolveReviewSubmodule(cwd, modulePath);
             if (!moduleCwd || !before.has(modulePath) || !after.has(modulePath)) return null;
             const base = before.get(modulePath)!;
@@ -3685,6 +3688,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             if (available.some((result) => result.exitCode !== 0)) return null;
             const child = yield* readReviewComparison({
               ...options,
+              metadataOnly,
               completeFilesOnly: true,
               cwd: moduleCwd,
               baseRef: base,

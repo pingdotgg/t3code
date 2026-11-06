@@ -3199,6 +3199,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
               [modulePath],
             );
             if (!metadataOnly) assert.include(fallback.sources[0]!.diff, "Subproject commit");
+            const pointer = yield* driver.getReviewDiffPreview({
+              cwd,
+              commitSha: missingCommit,
+              file: { path: modulePath, previousPath: null, sourceKind: "commit" },
+            });
+            assert.deepStrictEqual(pointer.sources[0]!.files, fallback.sources[0]!.files);
+            assert.include(pointer.sources[0]!.diff, "Subproject commit");
           }
         }),
       ),
@@ -3209,7 +3216,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         Effect.gen(function* () {
           const cwd = yield* makeTmpDir();
           const inner = yield* makeTmpDir();
-          yield* initRepoWithCommit(cwd);
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
           yield* initRepoWithCommit(inner);
           yield* git(cwd, ["submodule", "add", inner, "mod"]);
           yield* git(cwd, ["commit", "-am", "add module"]);
@@ -3257,9 +3264,40 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
               source.files!.reduce((n, f) => n + f.deletions, 0),
             );
           }
+          for (const [key, value] of [
+            ["diff.ignoreSubmodules", "dirty"],
+            ["submodule.mod.ignore", "all"],
+          ] as const) {
+            yield* git(cwd, ["config", key, value]);
+            const pointer = yield* driver.getReviewDiffPreview({
+              cwd,
+              file: { path: "mod", previousPath: null, sourceKind: "working-tree" },
+            });
+            assert.deepStrictEqual(
+              pointer.sources[0]!.files?.map((file) => file.path),
+              ["mod"],
+            );
+            assert.include(pointer.sources[0]!.diff, "Subproject commit");
+            yield* git(cwd, ["config", "--unset", key]);
+          }
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           yield* fileSystem.rename(path.join(cwd, "mod/build"), path.join(cwd, "build"));
+          yield* writeTextFile(cwd, "mod/README.md", "# module edit\n");
+          for (const sourceKind of ["working-tree", "branch-range"] as const) {
+            const preview = yield* driver.getReviewDiffPreview({
+              cwd,
+              baseRef: initialBranch,
+              sourceKind,
+              metadataOnly: true,
+            });
+            const source = preview.sources[0]!;
+            assert.isUndefined(source.files);
+            assert.isTrue(source.truncated);
+            assert.include(source.diff, "+# parent edit");
+            assert.include(source.diff, "diff --git a/mod/README.md");
+            assert.include(source.diff, "+# module edit");
+          }
           const start = commands.length;
           const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
           assert.isUndefined(status.branchChanges);

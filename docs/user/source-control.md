@@ -30,8 +30,8 @@ Review includes declared submodules even when Git's submodule ignore settings hi
 
 Initialize submodules and fetch their recorded commits to review their file contents. When those
 are unavailable, or a comparison adds or removes a submodule, it shows the submodule commit pointer.
-If a submodule has too many untracked files to list, its pointer remains and the comparison is marked
-as truncated. Files in the parent and other submodules remain available. Turn diffs, checkpoint restore,
+If a submodule has too many untracked files to list, the review shows its pointer instead of its files.
+Files in the parent and other submodules remain available. Turn diffs, checkpoint restore,
 staging, and committing still operate on the thread's repository. Commit submodule changes inside each
 submodule before recording the updated pointer in the parent.
 
