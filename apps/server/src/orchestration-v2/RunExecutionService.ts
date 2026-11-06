@@ -32,9 +32,11 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
@@ -1072,6 +1074,10 @@ export const layer: Layer.Layer<
           ReadonlySet<OrchestrationV2TurnItem["id"]>
         >(new Set(inheritedBackgroundTurnItemsById.keys()));
         const openRunOwnedSubagents = yield* Ref.make(emptyOpenRunOwnedSubagentProjection());
+        const assistantStreaming = makeAssistantStreamingFilter(responseStreamingMode);
+        // Set when ingestion ends or finalization settles the run's open items, which a later
+        // streaming snapshot must not reopen.
+        let idleFlushClosed = false;
         const finalizeRootRun = Effect.fn("RunExecutionService.finalizeRootRun")(function* (
           terminal: ProviderTerminalEvent,
         ) {
@@ -1114,6 +1120,7 @@ export const layer: Layer.Layer<
           );
           if (isRunOwnedSubagentTerminalStatus(terminal.status) && !childTurnsContinue(terminal)) {
             yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
+            idleFlushClosed = true;
           }
           yield* Ref.set(rootRunFinalized, true);
         });
@@ -1314,7 +1321,6 @@ export const layer: Layer.Layer<
           }
           return true;
         });
-        const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
         // Held text writes nothing, so its item would take a position only
         // when finally written, behind every item that began after it.
         const reservedHeldTurnItemIds = new Set<TurnItemId>();
@@ -1397,6 +1403,137 @@ export const layer: Layer.Layer<
           }
           return { event, accepted };
         });
+        const ingestDelivered = Effect.fnUntraced(function* (
+          event: ProviderAdapter.ProviderAdapterV2Event,
+          deliveredEvent: ProviderAdapter.ProviderAdapterV2Event,
+        ) {
+          const rootTerminalAlreadySeen = yield* Ref.get(rootTerminalSeen);
+          const isRootProviderThreadUpdate =
+            event.type === "provider_thread.updated" &&
+            event.providerThread.id === input.providerThread.id;
+          const nativeChildTurn =
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.providerThreadId !== input.providerThread.id;
+          if (event.type === "provider_turn.updated" && !nativeChildTurn) {
+            firstRootProviderTurnId ??= event.providerTurn.id;
+          }
+          const storedEvents = yield* providerEventIngestor.ingestNormalized({
+            analyticsContext: nativeChildTurn
+              ? {
+                  ...analyticsContext,
+                  origin: NATIVE_SUBAGENT_TURN_ORIGIN,
+                  segment: "native_child",
+                }
+              : {
+                  ...analyticsContext,
+                  segment:
+                    event.type === "provider_turn.updated" &&
+                    event.providerTurn.id !== firstRootProviderTurnId
+                      ? "continuation"
+                      : input.attempt.reason,
+                },
+            providerSessionId: input.providerSessionId,
+            providerInstanceId: input.run.providerInstanceId,
+            threadId: input.run.threadId,
+            runId: input.run.id,
+            nodeId: input.rootNode.id,
+            event: deliveredEvent,
+            ...(isRootProviderThreadUpdate
+              ? rootTerminalAlreadySeen
+                ? {
+                    writeIfProviderThreadOwner: {
+                      providerThreadId: input.providerThread.id,
+                      runId: input.run.id,
+                      activeAttemptId: input.attempt.id,
+                      expectedLastRunOrdinal: input.run.ordinal,
+                    },
+                  }
+                : {
+                    writeIfRunCurrent: {
+                      runId: input.run.id,
+                      activeAttemptId: input.attempt.id,
+                      expectedStatus: "running" as const,
+                    },
+                  }
+              : {}),
+          });
+          if (isRootProviderThreadUpdate && rootTerminalAlreadySeen && storedEvents.length === 0) {
+            yield* Ref.set(providerThreadOwnerLost, true);
+          }
+          return storedEvents.length;
+        });
+        // The timer only wakes ingestion. The flush runs as an ingestion step outside any provider
+        // batch, so it stays ordered with routing and snapshots, and a write has committed when
+        // it returns.
+        const idleFlushTick = { type: "idle_flush" } as const;
+        const idleFlushTicks = yield* Queue.dropping<typeof idleFlushTick>(1);
+        let idleFlushWake: { readonly at: number; readonly fiber: Fiber.Fiber<void> } | undefined;
+        const scheduleIdleFlush = Effect.suspend(() => {
+          const at = assistantStreaming.nextIdleFlushAt();
+          if (
+            idleFlushClosed ||
+            at === null ||
+            (idleFlushWake !== undefined && idleFlushWake.at <= at)
+          )
+            return Effect.void;
+          const previous = idleFlushWake?.fiber;
+          return Effect.gen(function* () {
+            if (previous !== undefined) yield* Fiber.interrupt(previous);
+            const now = DateTime.toEpochMillis(yield* DateTime.now);
+            const fiber = yield* Effect.sleep(Duration.millis(Math.max(0, at - now))).pipe(
+              Effect.andThen(Queue.offer(idleFlushTicks, idleFlushTick)),
+              Effect.asVoid,
+              Effect.forkDetach,
+            );
+            idleFlushWake = { at, fiber };
+          });
+        });
+        const closeIdleFlush = Effect.suspend(() => {
+          idleFlushClosed = true;
+          const wake = idleFlushWake;
+          idleFlushWake = undefined;
+          return wake === undefined ? Effect.void : Fiber.interrupt(wake.fiber);
+        });
+        // A failed idle write keeps its text held and retries with backoff while provider events
+        // keep ingesting. The provider's next update still writes, and fails ingestion, the normal way.
+        let idleFlushFailures = 0;
+        let nextIdleFlushWarningAt = Number.NEGATIVE_INFINITY;
+        const flushIdleAssistantText = Effect.gen(function* () {
+          const now = DateTime.toEpochMillis(yield* DateTime.now);
+          // A wake due by now has fired; a later deadline needs a new one.
+          if (idleFlushWake !== undefined && idleFlushWake.at <= now) idleFlushWake = undefined;
+          if (idleFlushClosed) return;
+          const due = assistantStreaming.dueIdleFlushes(now);
+          for (const [index, flush] of due.entries()) {
+            // The held text's child may have been handed to another run since it arrived.
+            if (!routeProviderEvent(flush.event, routeIdentity, yield* Ref.get(eventRouting))[0]) {
+              flush.discard();
+              continue;
+            }
+            const written = yield* Effect.exit(ingestDelivered(flush.event, flush.event));
+            if (Exit.isFailure(written)) {
+              if (Cause.hasInterruptsOnly(written.cause)) return yield* written;
+              idleFlushFailures += 1;
+              const failedAt = DateTime.toEpochMillis(yield* DateTime.now);
+              if (failedAt >= nextIdleFlushWarningAt) {
+                yield* Effect.logWarning("orchestration V2 idle assistant text flush failed", {
+                  runId: input.run.id,
+                  failures: idleFlushFailures,
+                  cause: written.cause,
+                });
+                nextIdleFlushWarningAt = failedAt + 10 * 60_000;
+              }
+              const retryAt = failedAt + Math.min(1_000 * 2 ** (idleFlushFailures - 1), 30_000);
+              for (const pending of due.slice(index)) pending.retryAt(retryAt);
+              break;
+            }
+            idleFlushFailures = 0;
+            nextIdleFlushWarningAt = Number.NEGATIVE_INFINITY;
+            flush.delivered(now);
+            yield* trackChildLifecycle(flush.event, true);
+          }
+          yield* scheduleIdleFlush;
+        });
         const ingestEvent = Effect.fnUntraced(function* ({
           event,
           accepted,
@@ -1413,65 +1550,12 @@ export const layer: Layer.Layer<
             yield* Ref.set(latestRootProviderTurn, event.providerTurn);
           }
           let storedEventCount = 0;
-          const deliveredEvent = filterAssistantEvent(
+          const deliveredEvent = assistantStreaming.filter(
             event,
             DateTime.toEpochMillis(yield* DateTime.now),
           );
           if (deliveredEvent) {
-            const rootTerminalAlreadySeen = yield* Ref.get(rootTerminalSeen);
-            const isRootProviderThreadUpdate =
-              event.type === "provider_thread.updated" &&
-              event.providerThread.id === input.providerThread.id;
-            const nativeChildTurn =
-              event.type === "provider_turn.updated" &&
-              event.providerTurn.providerThreadId !== input.providerThread.id;
-            if (event.type === "provider_turn.updated" && !nativeChildTurn) {
-              firstRootProviderTurnId ??= event.providerTurn.id;
-            }
-            const storedEvents = yield* providerEventIngestor.ingestNormalized({
-              analyticsContext: nativeChildTurn
-                ? {
-                    ...analyticsContext,
-                    origin: NATIVE_SUBAGENT_TURN_ORIGIN,
-                    segment: "native_child",
-                  }
-                : {
-                    ...analyticsContext,
-                    segment:
-                      event.type === "provider_turn.updated" &&
-                      event.providerTurn.id !== firstRootProviderTurnId
-                        ? "continuation"
-                        : input.attempt.reason,
-                  },
-              providerSessionId: input.providerSessionId,
-              providerInstanceId: input.run.providerInstanceId,
-              threadId: input.run.threadId,
-              runId: input.run.id,
-              nodeId: input.rootNode.id,
-              event: deliveredEvent,
-              ...(isRootProviderThreadUpdate
-                ? rootTerminalAlreadySeen
-                  ? {
-                      writeIfProviderThreadOwner: {
-                        providerThreadId: input.providerThread.id,
-                        runId: input.run.id,
-                        activeAttemptId: input.attempt.id,
-                        expectedLastRunOrdinal: input.run.ordinal,
-                      },
-                    }
-                  : {
-                      writeIfRunCurrent: {
-                        runId: input.run.id,
-                        activeAttemptId: input.attempt.id,
-                        expectedStatus: "running" as const,
-                      },
-                    }
-                : {}),
-            });
-            storedEventCount = storedEvents.length;
-            if (isRootProviderThreadUpdate && rootTerminalAlreadySeen && storedEventCount === 0) {
-              yield* Ref.set(providerThreadOwnerLost, true);
-            }
+            storedEventCount = yield* ingestDelivered(event, deliveredEvent);
           } else if (
             event.type === "turn_item.updated" &&
             (event.turnItem.type === "assistant_message" || event.turnItem.type === "reasoning") &&
@@ -1511,14 +1595,19 @@ export const layer: Layer.Layer<
             }
           }
           yield* trackChildLifecycle(event, deliveredEvent !== null);
+          yield* scheduleIdleFlush;
         });
         const providerEventFiber = yield* eventSink
           .consumeProviderEvents(
-            eventSubscription.events,
+            eventSubscription.events.pipe(
+              Stream.merge(Stream.fromQueue(idleFlushTicks), { haltStrategy: "left" }),
+            ),
             (event) =>
-              Effect.gen(function* () {
-                yield* ingestEvent(yield* routeEvent(event));
-              }),
+              event.type === "idle_flush"
+                ? flushIdleAssistantText
+                : Effect.gen(function* () {
+                    yield* ingestEvent(yield* routeEvent(event));
+                  }),
             Effect.gen(function* () {
               if (yield* agentTurnsSettled) yield* endPreviewActivity;
               return yield* shouldStopProviderEventIngestion;
@@ -1526,6 +1615,7 @@ export const layer: Layer.Layer<
             Ref.get(rootTerminalSeen).pipe(Effect.map((seen) => !seen)),
           )
           .pipe(
+            Effect.ensuring(closeIdleFlush),
             Effect.mapError((cause) => new RunExecutionIngestError({ runId: input.run.id, cause })),
             Effect.flatMap(() =>
               Effect.gen(function* () {
