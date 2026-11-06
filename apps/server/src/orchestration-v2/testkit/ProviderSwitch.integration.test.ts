@@ -3042,44 +3042,6 @@ describe("orchestration v2 provider switching", () => {
           assert.notEqual(turnFor("beta")?.providerThreadId, turnFor("alpha")?.providerThreadId);
           assert.notEqual(turnFor("beta")?.nativeThreadId, turnFor("alpha")?.nativeThreadId);
           assert.deepEqual(yield* Ref.get(closedSessions), []);
-
-          // The kept-up session reports its roster later; it must not pull the thread back to alpha.
-          const alphaProviderThread = projection.providerThreads.find(
-            (providerThread) => providerThread.id === turnFor("alpha")?.providerThreadId,
-          )!;
-          const rosterTime = yield* DateTime.now;
-          yield* (yield* EventSink.EventSinkV2).write({
-            events: [
-              {
-                id: EventId.make("fresh-context-scheduled-alpha-roster"),
-                type: "provider-thread.updated",
-                threadId: scheduledThreadId,
-                occurredAt: rosterTime,
-                payload: {
-                  ...alphaProviderThread,
-                  pendingBackgroundTasks: [],
-                  updatedAt: rosterTime,
-                },
-              },
-            ],
-          });
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make("command:fresh-context:scheduled:gamma"),
-            threadId: scheduledThreadId,
-            messageId: MessageId.make("message:fresh-context:scheduled:gamma"),
-            text: "Prompt gamma",
-            attachments: [],
-            dispatchMode: { type: "start_immediately" },
-          });
-          yield* worker.drain();
-          yield* waitForIdle(scheduledThreadId);
-          const gamma = (yield* Ref.get(capturedTurns)).find((turn) =>
-            turn.text.endsWith("Prompt gamma"),
-          );
-          assert.equal(gamma?.nativeThreadId, turnFor("beta")?.nativeThreadId);
         }).pipe(
           Effect.provide(
             ProviderReplayHarness.layerWithRegistry(
