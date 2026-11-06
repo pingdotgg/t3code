@@ -816,6 +816,19 @@ function isQueuedProviderThreadPlaceholder(providerThread: OrchestrationV2Provid
   );
 }
 
+// A kept-up older session still reports its roster; that must not resume its earlier context.
+function providerThreadUpdateMovesActive(
+  active: Pick<OrchestrationV2ProviderThread, "id" | "lastRunOrdinal"> | undefined,
+  update: OrchestrationV2ProviderThread,
+): boolean {
+  return (
+    !isQueuedProviderThreadPlaceholder(update) &&
+    (active === undefined ||
+      active.id === update.id ||
+      (update.lastRunOrdinal ?? 0) >= (active.lastRunOrdinal ?? 0))
+  );
+}
+
 export function applyToProjection(
   projection: OrchestrationV2ThreadProjection,
   event: OrchestrationV2DomainEvent,
@@ -936,7 +949,12 @@ export function applyToProjection(
         ...base,
         thread:
           event.payload.appThreadId === base.thread.id &&
-          !isQueuedProviderThreadPlaceholder(event.payload)
+          providerThreadUpdateMovesActive(
+            base.providerThreads.find(
+              (providerThread) => providerThread.id === base.thread.activeProviderThreadId,
+            ),
+            event.payload,
+          )
             ? {
                 ...base.thread,
                 activeProviderThreadId: event.payload.id,
@@ -2420,8 +2438,30 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               `;
                 const threadRow = threadRows[0];
-                if (threadRow !== undefined) {
-                  const thread = yield* decodeThreadPayload(threadRow.payload_json);
+                const thread =
+                  threadRow === undefined
+                    ? undefined
+                    : yield* decodeThreadPayload(threadRow.payload_json);
+                const activeProviderThreadId = thread?.activeProviderThreadId ?? null;
+                const activeRows =
+                  activeProviderThreadId === null || activeProviderThreadId === event.payload.id
+                    ? []
+                    : yield* sql<{ readonly last_run_ordinal: number | null }>`
+                      SELECT last_run_ordinal
+                      FROM orchestration_v2_projection_provider_threads
+                      WHERE provider_thread_id = ${activeProviderThreadId}
+                      LIMIT 1
+                    `;
+                const activeRow = activeRows[0];
+                if (
+                  thread !== undefined &&
+                  providerThreadUpdateMovesActive(
+                    activeRow === undefined || activeProviderThreadId === null
+                      ? undefined
+                      : { id: activeProviderThreadId, lastRunOrdinal: activeRow.last_run_ordinal },
+                    event.payload,
+                  )
+                ) {
                   const updatedThread = {
                     ...thread,
                     activeProviderThreadId: event.payload.id,
