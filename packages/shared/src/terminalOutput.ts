@@ -268,11 +268,20 @@ function escapeLength(input: string, index: number): number {
     }
     return -1;
   }
-  // Charset designations take three bytes; other sequences take two.
-  if (next === "(" || next === ")" || next === "*" || next === "+") {
-    return index + 2 < input.length ? 3 : -1;
+  // ECMA-35: any intermediate bytes (0x20-0x2F, e.g. charset designations, DECALN) precede one final byte.
+  let cursor = index + 1;
+  while (
+    cursor < input.length &&
+    input.charCodeAt(cursor) >= 0x20 &&
+    input.charCodeAt(cursor) <= 0x2f
+  ) {
+    cursor += 1;
   }
-  return 2;
+  if (cursor >= input.length) return -1;
+  // After intermediates, a control or ESC is not a final byte; end before it so it is still processed.
+  const final = input.charCodeAt(cursor);
+  if (cursor > index + 1 && (final < 0x30 || final > 0x7e)) return cursor - index;
+  return cursor - index + 1;
 }
 
 const penTransitions = new Map<string, string>();

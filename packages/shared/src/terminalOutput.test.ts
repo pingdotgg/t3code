@@ -131,6 +131,24 @@ describe("appendTerminalOutput under adversarial output", () => {
     }
   });
 
+  it("drops escape sequences with intermediate bytes without printing their final byte", () => {
+    for (const sequence of ["#8", "#6", "%G", " F", "-A", ".A", "(%5", "(B"]) {
+      const input = `a\u001b${sequence}b`;
+      expect(feed([input]).text).toBe("ab");
+      for (let cut = 1; cut < input.length; cut += 1) {
+        expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe("ab");
+      }
+    }
+    for (const [interrupted, expected] of [
+      ["a\u001b#\u001b[31mb", feed(["a\u001b[31mb"]).text],
+      ["a\u001b#\n8b", "a\n8b"],
+    ] as const) {
+      for (let cut = 0; cut < interrupted.length; cut += 1) {
+        expect(feed([interrupted.slice(0, cut), interrupted.slice(cut)]).text).toBe(expected);
+      }
+    }
+  });
+
   it("gives the same result however the output is split into chunks", () => {
     const input =
       "abcdef\rX\u001b[31mred\u001b[0m\nnext line\r\u001b[2Kdone\n" +
