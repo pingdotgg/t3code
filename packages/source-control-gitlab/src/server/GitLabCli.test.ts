@@ -48,6 +48,20 @@ it.effect.each([
     mapped: false,
     configFailure: "recover",
   },
+  {
+    operation: "api",
+    requestedHost: "gitlab.example.test:8443",
+    mapped: false,
+    configFailure: "recover",
+    requestedApiHost: "gitlab.example.test:8443",
+  },
+  {
+    operation: "api",
+    requestedHost: "gitlab.example.test:8443",
+    mapped: false,
+    configFailure: "recover",
+    requestedApiHost: "api.example.test:8443",
+  },
   { operation: "api", requestedHost: "other.gitlab.example.test:8443", mapped: false },
   { operation: "api", requestedHost: "gitlab.example.test:9443", mapped: false },
   {
@@ -57,7 +71,7 @@ it.effect.each([
     apiHost: "https://user:password@gitlab.example.test:8443",
   },
 ] as const)(
-  "routes $operation for $requestedHost using the configured host (mapped: $mapped, failed query: $configFailure)",
+  "routes $operation for $requestedHost using the configured host (mapped: $mapped, failed query: $configFailure, requested API host: $requestedApiHost)",
   (scenario) =>
     Effect.gen(function* () {
       const { operation, requestedHost, mapped } = scenario;
@@ -128,7 +142,9 @@ it.effect.each([
                     processOutput(
                       candidate === cliHost
                         ? `${"apiHost" in scenario ? scenario.apiHost : webHost}\n`
-                        : "",
+                        : "requestedApiHost" in scenario
+                          ? `${scenario.requestedApiHost}\n`
+                          : "",
                     ),
                   );
                 }

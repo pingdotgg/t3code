@@ -508,7 +508,10 @@ export const make = Effect.gen(function* () {
       const apiHost = gitLabApiHost(result.value.stdout);
       const webHost = apiHost ?? cliHost.toLowerCase();
       if (cliHost.toLowerCase() === host.toLowerCase() || webHost === host.toLowerCase()) {
-        return { route: { cliHost, webHost }, settled: apiHost !== null || settled };
+        return {
+          route: { cliHost, webHost },
+          settled: settled || cliHost.toLowerCase() !== host.toLowerCase(),
+        };
       }
     }
     return { route: { cliHost: fallbackHost, webHost: host.toLowerCase() }, settled };
