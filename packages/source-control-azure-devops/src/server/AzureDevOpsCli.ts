@@ -410,7 +410,8 @@ export const make = Effect.gen(function* () {
           "--detect",
           "true",
           "--source-branch",
-          SourceControlProvider.sourceBranch(input),
+          // az puts this in the query string unescaped; a `#` would cut the request.
+          encodeURIComponent(SourceControlProvider.sourceBranch(input)),
           "--status",
           toAzureStatus(input.state),
           "--top",
