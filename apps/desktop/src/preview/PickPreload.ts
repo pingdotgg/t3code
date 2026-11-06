@@ -750,10 +750,15 @@ function startAnnotation(
     voiceButton.title =
       !voiceSettings && state.shortcutLabel ? `${label} (${state.shortcutLabel})` : label;
     voiceButton.setAttribute("aria-label", label);
-    voiceRow.hidden = state.phase === "idle";
+    // An active dictation takes the textarea's place; it stays focused (sr-only) so Enter still attaches.
+    voiceRow.hidden = state.phase === "idle" || active;
+    comment.classList.toggle("sr-only", active);
+    if (active) comment.after(voicePill);
+    else voiceRow.appendChild(voicePill);
     voicePill.className = active
-      ? "flex h-9 w-64 min-w-0 items-center gap-2 rounded-full border border-border bg-background p-1"
+      ? "flex h-8 min-w-0 flex-1 items-center gap-2 rounded-full border border-border bg-background px-0.5"
       : "flex min-w-0 items-center gap-1";
+    if (phaseChanged) queueEditorLayout();
     voiceCancel.title =
       state.phase === "error" ? "Dismiss voice input error" : "Cancel voice input";
     voiceCancel.setAttribute("aria-label", voiceCancel.title);
