@@ -189,9 +189,14 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(layerProcess));
   });
 
-  it.live.each(["launch", "pairing"] as const)(
-    "separates the %s response from profile output without a newline",
-    (operation) =>
+  it.live.each([
+    ["launch", ""],
+    ["pairing", ""],
+    ["launch", '{"remotePort":9999}'],
+    ["pairing", '{"credential":"exit-log"}'],
+  ] as const)(
+    "separates the %s response from profile output and EXIT output %j",
+    ([operation, exitOutput]) =>
       Effect.gen(function* () {
         const nativeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const spawner = ChildProcessSpawner.make((command) =>
@@ -200,7 +205,7 @@ describe("ssh tunnel scripts", () => {
             const lines = script.trimEnd().split("\n");
             const response =
               operation === "launch"
-                ? lines.at(-1)!
+                ? lines.slice(lines.findLastIndex((line) => line === "fi") + 1).join("\n")
                 : lines
                     .slice(lines.findLastIndex((line) => line.startsWith("PAIRING_BASE_DIR=")) + 1)
                     .join("\n");
@@ -210,7 +215,7 @@ describe("ssh tunnel scripts", () => {
                 "git",
                 [
                   "-c",
-                  `alias.t3-ssh-response=!printf '%s' "$T3_TEST_PROFILE"; t3_pairing_fixture() { printf '%s\\n' "$T3_TEST_PAIRING"; }; ${response}`,
+                  `alias.t3-ssh-response=!trap 'printf "\\n%s\\n" "$T3_TEST_EXIT_OUTPUT"' 0; printf '%s' "$T3_TEST_PROFILE"; t3_pairing_fixture() { printf '%s\\n' "$T3_TEST_PAIRING"; }; ${response}`,
                   "t3-ssh-response",
                 ],
                 {
@@ -218,6 +223,7 @@ describe("ssh tunnel scripts", () => {
                   extendEnv: true,
                   env: {
                     T3_TEST_PROFILE: "loaded nvm {default}",
+                    T3_TEST_EXIT_OUTPUT: exitOutput,
                     T3_TEST_PAIRING: '{"credential":"fixture-credential"}',
                     REMOTE_PORT: "3774",
                     REMOTE_MANAGED: "managed",
