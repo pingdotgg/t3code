@@ -26,14 +26,16 @@ alchemy
 │                      # manage credentials and accounts (bare `profile` opens the dashboard)
 │
 ├─ state list|read|delete        # inspect and manage the state store (bare `state` opens the explorer)
+├─ state bootstrap|teardown|logs # provision, delete, or debug a provider's state store (--backend)
 │
 └─ provider
    ├─ check-env           # CI preflight: verify required provider env vars are set
-   ├─ aws bootstrap|teardown
-   └─ cloudflare bootstrap|teardown|token|state logs
+   ├─ aws bootstrap|teardown         # the deploy assets bucket
+   ├─ cloudflare token
+   └─ prisma generate
 ```
 
-Each command has its own page: [deploy](/cli/deploy), [plan](/cli/plan), [destroy](/cli/destroy), [drift](/cli/drift), [unsafe nuke](/cli/nuke), [dev](/cli/dev), [logs](/cli/logs), [profile](/cli/profile), [state](/cli/state), [AWS provider commands](/cli/aws), and [Cloudflare provider commands](/cli/cloudflare). The workflow guides cover [adopting resources](/cli/adopting-resources) and [inspecting state](/cli/inspecting-state).
+Each command has its own page: [deploy](/cli/deploy), [plan](/cli/plan), [destroy](/cli/destroy), [drift](/cli/drift), [unsafe nuke](/cli/nuke), [dev](/cli/dev), [logs](/cli/logs), [profile](/cli/profile), [state](/cli/state), [AWS provider commands](/cli/aws), and [Cloudflare provider commands](/cli/cloudflare). The workflow guides cover [adopting resources](/cli/adopting-resources) and [inspecting state](/cli/inspecting-state). To run the same operations from a script, see the [Programmatic API](/cli/api).
 
 ## Common options
 
@@ -45,6 +47,7 @@ Each command has its own page: [deploy](/cli/deploy), [plan](/cli/plan), [destro
 | `--yes`             | Yes to all prompts.                                                                                                                       |
 | `--no-input`        | Disable prompts and the interactive TUI. Commands that would need input fail instead of hanging.                                          |
 | `--config, -c <file>` | Stack entrypoint. Defaults to `alchemy.run.ts`; must exist.                                                                            |
+| `--fast-distilled`  | Under Node, load each distilled SDK operation on first use. This lowers the CLI's memory and startup time for stacks that import whole providers. Same as `ALCHEMY_FAST_DISTILLED=1`. |
 
 Use `--profile` with `deploy`, `plan`, `destroy`, `dev`, `logs`, `drift`, or `state`.
 
@@ -64,6 +67,43 @@ The `--no-input` flag and environment variables override the detection, in this 
 Interactive terminals use the animated TUI; redirected and non-interactive runs use append-only output.
 
 Plain mode never prompts — it prints the plan, makes no changes, and fails with `error: Cannot approve this operation without terminal input. Pass --yes to continue.` In CI, always pass `--yes`.
+
+## Log output
+
+Every log line is a record. Output from child processes (dev servers, workerd, the local provider sidecar) is captured as records too, so it can be shown either way:
+
+| Option | Description |
+| --- | --- |
+| `--log-format pretty\|json` | `pretty` (default) prints lines; `json` prints one record per line on stderr, with child output as written. Also `$ALCHEMY_LOG_FORMAT`. |
+| `--log-level <level>` | Lowest level printed. Defaults to `info`. Also `$ALCHEMY_LOG_LEVEL`. |
+
+Every record has the same keys:
+
+| Key | Value |
+| --- | --- |
+| `time` | Unix time in milliseconds |
+| `level` | `trace`, `debug`, `info`, `warn`, `error` or `fatal` |
+| `kind` | `log`, `event`, `output` or `run` (see below) |
+| `process` | The alchemy process that produced it: `cli`, `exec` (the `alchemy dev` worker) or `sidecar` |
+| `scope` | `project` or `global` |
+| `trace` | `{ traceId, spanId }` of the span it was logged in, or of the process outside any span. Child processes and sidecar calls join their caller's trace. |
+| `attributes` | Annotations on the record, including `fqn` when it is about a resource |
+| `data` | Depends on `kind` |
+
+| `kind` | `data` |
+| --- | --- |
+| `log` | `{ message, cause }`: a line alchemy logged |
+| `event` | A typed event, as `Alchemist.onEvent` receives it |
+| `output` | `{ stream, text }`: a line a child process wrote, exactly as written, ANSI styling included |
+| `run` | `{ version, pid, cwd, argv }`: the first line of a run log |
+
+```json
+{"time":1793186948542,"level":"info","kind":"output","process":"sidecar","scope":"project","trace":{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"00f067aa0ba902b7"},"attributes":{"fqn":"Web"},"data":{"stream":"stdout","text":"\u001b[32mready\u001b[39m on http://localhost:4321"}}
+```
+
+Each run also writes its records at debug level to a run log, one record per line. Project work goes to the project's `.alchemy/log/<time>-pid<pid>.ndjson`; account-level work (the state store, auth and credentials, `profile` and `provider` commands) goes to `~/.alchemy/logs/<time>-pid<pid>.ndjson`. A file is created only when a record goes to it. Child processes send their records through the CLI, so `jq` filters such as `select(.kind == "output" and .attributes.fqn == "Api")` find any of them.
+
+Logs never leave your machine. Telemetry sends only usage spans and metrics; when reporting a problem, attach the run log.
 
 ## Exit codes
 

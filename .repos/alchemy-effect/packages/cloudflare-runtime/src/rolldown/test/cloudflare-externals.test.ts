@@ -1,6 +1,6 @@
-import { createMiniflareFromRolldown } from "../../../../cloudflare-test-tools/src/miniflare/miniflare.ts";
 import type { ResolveIdResult } from "rolldown";
 import { describe, expect, it } from "vitest";
+import { createMiniflareFromRolldown } from "../../../../cloudflare-test-tools/src/miniflare/miniflare.ts";
 import { cloudflareExternalsPlugin } from "../plugins/cloudflare-externals.ts";
 import { buildFixture } from "./utils/build-fixture.ts";
 
@@ -38,9 +38,7 @@ describe("cloudflare externals", () => {
     });
 
     const result = await miniflare.fetchJson<Record<string, string>>("/");
-    expect(result["(cloudflare:workers) WorkerEntrypoint.name"]).toBe(
-      "WorkerEntrypoint",
-    );
+    expect(result["(cloudflare:workers) WorkerEntrypoint.name"]).toBe("WorkerEntrypoint");
     expect(["DurableObject", "DurableObjectBase"]).toContain(
       result["(cloudflare:workers) DurableObject.name"],
     );
@@ -56,8 +54,7 @@ describe("cloudflare externals", () => {
       compatibilityDate: "2025-07-01",
     });
 
-    const result =
-      await miniflare.fetchJson<Record<string, string>>("/external");
+    const result = await miniflare.fetchJson<Record<string, string>>("/external");
     expect(["DurableObject", "DurableObjectBase"]).toContain(
       result["(EXTERNAL) (cloudflare:workers) DurableObject.name"],
     );
