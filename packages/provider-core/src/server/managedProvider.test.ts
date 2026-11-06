@@ -190,11 +190,20 @@ describe("makeManagedServerProvider", () => {
       ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
-  it.effect.each(["auth-type", "first-sign-in", "first-discovery", "usage-credentials"] as const)(
-    "resets usage on account transition: %s",
+  it.effect.each([
+    "auth-type",
+    "first-sign-in",
+    "first-discovery",
+    "usage-credentials",
+    "unused-credentials",
+    "unverified-credentials",
+  ] as const)(
+    "keeps quota ownership across authentication changes and local credential changes: %s",
     (transition) =>
       Effect.scoped(
         Effect.gen(function* () {
+          const usageOnly =
+            transition === "unused-credentials" || transition === "unverified-credentials";
           const signedIn = {
             status: "authenticated",
             type: "chatgpt",
@@ -203,13 +212,15 @@ describe("makeManagedServerProvider", () => {
           const auth = yield* Ref.make<ServerProvider["auth"]>(
             transition === "auth-type"
               ? { ...signedIn, workspaceId: "ws-a" }
-              : transition === "usage-credentials"
+              : transition === "usage-credentials" || usageOnly
                 ? { ...signedIn, usageRefreshKey: "local-a" }
                 : { status: transition === "first-sign-in" ? "unauthenticated" : "unknown" },
           );
           const reads = yield* Ref.make(0);
           const limits = {
             checkedAt: refreshedSnapshot.checkedAt,
+            credentialFingerprint:
+              transition === "unverified-credentials" ? undefined : "quota-owner",
             windows: [{ id: "primary", kind: "session", label: "Session", usedPercent: 20 }],
           } as const;
           const provider = yield* makeManagedServerProvider({
@@ -218,6 +229,7 @@ describe("makeManagedServerProvider", () => {
             streamSettings: Stream.empty,
             haveSettingsChanged: () => false,
             initialSnapshot: () => Effect.succeed(initialSnapshot),
+            getUsageRefreshKey: Ref.get(auth).pipe(Effect.map((value) => value.usageRefreshKey)),
             checkProvider: Effect.gen(function* () {
               const currentAuth = yield* Ref.get(auth);
               const polling = yield* UsagePolling;
@@ -229,7 +241,14 @@ describe("makeManagedServerProvider", () => {
                   ? {
                       usageLimits:
                         currentAuth.status === "authenticated"
-                          ? limits
+                          ? usageOnly && currentAuth.usageRefreshKey === "local-b"
+                            ? {
+                                checkedAt: limits.checkedAt,
+                                credentialFingerprint: limits.credentialFingerprint,
+                                windows: [],
+                                unavailable: { reason: "probeFailed" as const },
+                              }
+                            : limits
                           : {
                               checkedAt: refreshedSnapshot.checkedAt,
                               windows: [],
@@ -244,18 +263,36 @@ describe("makeManagedServerProvider", () => {
           yield* provider.refreshUsage!;
           assert.strictEqual(yield* Ref.get(reads), 1);
           const unchanged = yield* provider.refresh;
-          if (transition === "auth-type") {
+          if (transition === "auth-type" || usageOnly) {
             assert.deepStrictEqual(unchanged.usageLimits, { ...limits, refreshAfter: 300_000 });
-            assert.strictEqual(unchanged.auth.workspaceId, "ws-a");
+            if (transition === "auth-type") assert.strictEqual(unchanged.auth.workspaceId, "ws-a");
           }
+          if (usageOnly) yield* TestClock.adjust("1 minute");
           yield* Ref.set(
             auth,
             transition === "auth-type"
               ? { status: "authenticated", type: "apiKey" }
-              : transition === "usage-credentials"
+              : transition === "usage-credentials" || usageOnly
                 ? { ...signedIn, usageRefreshKey: "local-b" }
                 : signedIn,
           );
+          if (usageOnly) {
+            yield* provider.refreshUsage!;
+            const retained = yield* provider.getSnapshot;
+            if (transition === "unused-credentials") {
+              assert.deepStrictEqual(retained.usageLimits, {
+                ...limits,
+                stale: true,
+                refreshAfter: 360_000,
+              });
+            } else {
+              assert.deepStrictEqual(retained.usageLimits?.windows, []);
+              assert.strictEqual(retained.usageLimits?.unavailable?.reason, "probeFailed");
+            }
+            assert.strictEqual(retained.auth.usageRefreshKey, "local-b");
+            assert.strictEqual(yield* Ref.get(reads), 2);
+            return;
+          }
           const switched = yield* provider.refresh;
           assert.strictEqual(switched.usageLimits, undefined);
           assert.strictEqual(switched.auth.workspaceId, undefined);

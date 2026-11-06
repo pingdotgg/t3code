@@ -164,11 +164,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     }
 
     const current = (yield* Ref.get(snapshotStateRef)).snapshot;
-    const accountReset =
-      (yield* UsageAccountReset) ||
+    const accountReset = yield* UsageAccountReset;
+    if (
+      accountReset ||
       (options?.usageRefreshKey !== undefined &&
-        options.usageRefreshKey !== current.auth.usageRefreshKey);
-    if (accountReset) usageRefreshAfter = 0;
+        options.usageRefreshKey !== current.auth.usageRefreshKey)
+    )
+      usageRefreshAfter = 0;
     const now = yield* Clock.currentTimeMillis;
     const pollingUsage =
       (yield* UsagePolling) &&
@@ -203,11 +205,16 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         const previous = state.snapshot.auth;
         const differs = (a: string | undefined, b: string | undefined) =>
           a !== undefined && b !== undefined && a !== b;
+        const sameQuotaOwner =
+          state.snapshot.usageLimits?.credentialFingerprint !== undefined &&
+          state.snapshot.usageLimits.credentialFingerprint ===
+            probedSnapshot.usageLimits?.credentialFingerprint;
         const switchedAccount =
           accountReset ||
           (probedSnapshot.auth.status === "authenticated" && previous.status !== "authenticated") ||
           differs(probedSnapshot.auth.type, previous.type) ||
-          differs(probedSnapshot.auth.usageRefreshKey, previous.usageRefreshKey) ||
+          (differs(probedSnapshot.auth.usageRefreshKey, previous.usageRefreshKey) &&
+            (!pollingUsage || !sameQuotaOwner)) ||
           differs(probedSnapshot.auth.email?.toLowerCase(), previous.email?.toLowerCase()) ||
           (probedSnapshot.auth.workspaceId !== undefined &&
             probedSnapshot.auth.workspaceId !== previous.workspaceId);
