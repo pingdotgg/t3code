@@ -3141,6 +3141,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           readonly work_last_ordinal?: number | null;
           readonly work_item_count?: number | null;
         };
+        const byTypeOnly =
+          filter?.turnItemTypes !== undefined &&
+          filter.turnItemRunId === undefined &&
+          filter.turnItemRunIds === undefined &&
+          filter.turnItemNodeIds === undefined;
         const boundedTurnItemRows: ReadonlyArray<WindowPayloadRow> =
           (fields !== undefined && !fields.includes("turnItems")) ||
           (window === undefined &&
@@ -3158,13 +3163,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_turn_items
                 ${
                   // The ordinal index would read every item of the thread to find these types.
-                  filter?.turnItemTypes === undefined
-                    ? sql``
-                    : sql`INDEXED BY orchestration_v2_projection_turn_items_thread_type_idx`
+                  // Run and node filters keep their narrower indexes.
+                  byTypeOnly
+                    ? sql`INDEXED BY orchestration_v2_projection_turn_items_thread_type_idx`
+                    : sql``
                 }
-                WHERE ${filter?.turnItemTypes === undefined ? sql`thread_id = ${threadId}` : sql`(thread_id || '') = ${threadId}`}
+                WHERE ${byTypeOnly ? sql`(thread_id || '') = ${threadId}` : sql`thread_id = ${threadId}`}
                   ${filter?.turnItemRequestIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.requestId') IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRequestIds)}))`}
-                  ${filter?.turnItemTypes === undefined ? sql`` : sql`AND (type || '') IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
+                  ${filter?.turnItemTypes === undefined ? sql`` : byTypeOnly ? sql`AND (type || '') IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
                   ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
                   ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
                   ${filter?.turnItemNodeIds === undefined ? sql`` : sql`AND node_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemNodeIds)}))`}

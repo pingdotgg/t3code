@@ -6795,6 +6795,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           omitSettledSubagents: true,
         })
         .pipe(Effect.withTracer(tracer));
+      yield* projectionStore
+        .getThreadRecords(threadId, ["turnItems"], {
+          turnItemTypes: ["command_execution"],
+          turnItemRunId: RunId.make(`run:${suffix}`),
+        })
+        .pipe(Effect.withTracer(tracer));
       yield* projectionStore.getThreadShell(threadId).pipe(Effect.withTracer(tracer));
       const planOf = Effect.fnUntraced(function* (marker: string) {
         const statement = statements.find((query) => query.includes(marker));
@@ -6809,6 +6815,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           marker: "(type || '') IN (SELECT value FROM json_each",
           uses: "turn_items_thread_type_idx (<expr>=? AND <expr>=?)",
           avoids: "turn_items_thread_ordinal_idx",
+        },
+        {
+          marker: "AND type IN (SELECT value FROM json_each",
+          uses: "SEARCH orchestration_v2_projection_turn_items USING INDEX",
+          avoids: "turn_items_thread_type_idx",
         },
         {
           marker: "MIN(ordinal) AS ordinal",
