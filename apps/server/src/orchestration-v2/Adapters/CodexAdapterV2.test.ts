@@ -225,21 +225,27 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
-  it.effect("sends only a cyber access program Codex accepts", () =>
+  it.effect("sends the chosen cyber access program, else the model's default", () =>
     Effect.gen(function* () {
-      const build = (cyberAccessProgram?: string) =>
+      const build = (value?: string, defaultCyberAccessProgram?: string) =>
         CodexAdapterV2.buildCodexTurnStartParams({
           nativeThreadId: "native-cyber",
           codexInput: [{ type: "text", text: "test" }],
           runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
-          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-          cyberAccessProgram,
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+            ...(value === undefined ? {} : { options: [{ id: "cyberAccessProgram", value }] }),
+          },
+          defaultCyberAccessProgram,
         });
 
       // Custom models have no catalog entry, so Codex keeps its own treatment.
       assert.notProperty(yield* build(), "cyberAccessProgram");
-      assert.notProperty(yield* build("automatic"), "cyberAccessProgram");
-      assert.equal((yield* build("daybreakBlue")).cyberAccessProgram, "daybreakBlue");
+      assert.equal((yield* build(undefined, "standard")).cyberAccessProgram, "standard");
+      assert.equal((yield* build("automatic", "standard")).cyberAccessProgram, "standard");
+      assert.equal((yield* build("daybreakBlue", "standard")).cyberAccessProgram, "daybreakBlue");
+      assert.equal((yield* build("standard", "daybreakBlue")).cyberAccessProgram, "standard");
     }),
   );
 

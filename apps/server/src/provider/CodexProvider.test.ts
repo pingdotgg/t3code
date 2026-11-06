@@ -1,21 +1,13 @@
 import { assert, it } from "@effect/vitest";
-import { ProviderInstanceId, type ServerProviderModel } from "@t3tools/contracts";
 
 import {
   appendCustomCodexModels,
   applyPreferredCodexDefaultModel,
   applyConfiguredCodexCyberAccess,
   codexApiKeyCyberAccessProgramsDisabled,
-  codexCyberAccessProgram,
+  codexDefaultCyberAccessProgram,
   mapCodexModelCapabilities,
 } from "./CodexProvider.ts";
-
-const cyberProgram = (models: ReadonlyArray<ServerProviderModel>, model: string, value?: string) =>
-  codexCyberAccessProgram(models, {
-    instanceId: ProviderInstanceId.make("codex"),
-    model,
-    ...(value === undefined ? {} : { options: [{ id: "cyberAccessProgram", value }] }),
-  });
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
@@ -202,7 +194,7 @@ it("defaults cyber access to Standard when the catalog offers it", () => {
   assert.deepInclude(cyber(["daybreakBlue"]), { currentValue: "daybreakBlue" });
 });
 
-it("resolves the cyber access program against the model's catalog entry", () => {
+it("finds the default cyber access program for a model", () => {
   const capabilities = mapCodexModelCapabilities({
     additionalSpeedTiers: [],
     availableAccessPrograms: { cyber: ["standard", "daybreakBlue"] },
@@ -216,12 +208,8 @@ it("resolves the cyber access program against the model's catalog entry", () => 
     supportedReasoningEfforts: [],
   });
   const models = [{ slug: "gpt-test", name: "GPT Test", isCustom: false, capabilities }];
-  assert.strictEqual(cyberProgram(models, "gpt-test"), "standard");
-  assert.strictEqual(cyberProgram(models, "gpt-test", "daybreakBlue"), "daybreakBlue");
-  // A selection kept from another model, or a value the model does not offer.
-  assert.strictEqual(cyberProgram(models, "gpt-test", "daybreakRed"), "standard");
-  assert.strictEqual(cyberProgram(models, "gpt-test", "automatic"), "standard");
-  assert.strictEqual(cyberProgram(models, "my-model", "daybreakBlue"), undefined);
+  assert.strictEqual(codexDefaultCyberAccessProgram(models, "gpt-test"), "standard");
+  assert.strictEqual(codexDefaultCyberAccessProgram(models, "my-model"), undefined);
 });
 
 it("follows Codex's daybreak setting for the default program", () => {
@@ -257,15 +245,14 @@ it("follows Codex's daybreak setting for the default program", () => {
     daybreakEnabled: true,
     apiKeyProgramsDisabled: false,
   });
-  assert.strictEqual(cyberProgram(on, "both"), "daybreakBlue");
-  assert.strictEqual(cyberProgram(on, "standard"), "standard");
+  assert.strictEqual(codexDefaultCyberAccessProgram(on, "both"), "daybreakBlue");
+  assert.strictEqual(codexDefaultCyberAccessProgram(on, "standard"), "standard");
 
   const disabled = applyConfiguredCodexCyberAccess(models, {
     daybreakEnabled: false,
     apiKeyProgramsDisabled: true,
   });
-  assert.strictEqual(cyberProgram(disabled, "both"), undefined);
-  assert.strictEqual(cyberProgram(disabled, "both", "daybreakBlue"), undefined);
+  assert.strictEqual(codexDefaultCyberAccessProgram(disabled, "both"), undefined);
 });
 
 it("treats an unread config as disabling API-key cyber access programs", () => {
