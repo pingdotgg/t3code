@@ -31,6 +31,15 @@ const settings = Schema.decodeSync(ServerSettings)({
   easDeviceHosts: [
     { kind: "eas", id: "eas", label: "EAS Simulator", accessToken: personal("op://expo") },
   ],
+  simlockDeviceHosts: [
+    {
+      kind: "simlock",
+      id: "pool",
+      label: "Simlock Pool",
+      gatewayUrl: "https://simlock.test",
+      agentToken: personal("op://simlock"),
+    },
+  ],
 });
 
 it.each([
@@ -42,6 +51,7 @@ it.each([
       "GitHub · github.com",
       "https://hub.test · Management Key",
       "EAS Simulator · Access Token",
+      "Simlock Pool · Agent Token",
     ],
   ],
   ["work", ["Antigravity Work · OTHER_TOKEN", "GitHub · ghe.acme.test"]],
