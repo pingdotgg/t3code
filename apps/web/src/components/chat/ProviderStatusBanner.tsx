@@ -96,9 +96,12 @@ export function getProviderStatusMessage(status: ServerProvider): string {
 export function getProviderStatusTitle(status: ServerProvider): string {
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   const incompatible = getIncompatibleVersion(status);
+  if (incompatible?.status === "broken") {
+    return `${providerName} ${status.version ?? ""} is known to be broken`;
+  }
   if (status.auth.status === "unauthenticated") return `Sign in to ${providerName}`;
   return incompatible
-    ? `${providerName} ${status.version ?? ""} is ${incompatible.status === "broken" ? "known to be broken" : "unsupported"}`
+    ? `${providerName} ${status.version ?? ""} is unsupported`
     : `${providerName} provider status`;
 }
 

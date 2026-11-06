@@ -123,4 +123,20 @@ describe("provider status title", () => {
       }),
     ).toBe("Sign in to Codex");
   });
+
+  it("keeps broken-version recovery guidance ahead of the sign-in title", () => {
+    expect(
+      getProviderStatusTitle({
+        ...provider,
+        displayName: "Codex",
+        status: "warning",
+        auth: { status: "unauthenticated" },
+        compatibilityAdvisory: {
+          ...provider.compatibilityAdvisory!,
+          status: "broken",
+          message: "This version is broken. Use 2.0.0.",
+        },
+      }),
+    ).toBe("Codex 1.0.0 is known to be broken");
+  });
 });
