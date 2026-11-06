@@ -41,7 +41,11 @@ export function SidebarProviderUsage({ onClick }: { readonly onClick: () => void
     });
 
   return (
-    <SidebarMenuItem className="min-w-8 flex-1" ref={observeWidth}>
+    <SidebarMenuItem
+      className="min-w-8 flex-initial"
+      ref={observeWidth}
+      style={{ width: Math.max(32, entries.length * 36 - 4) }}
+    >
       <div className="flex min-w-0 items-center gap-1" data-provider-usage>
         {entries.length === 0 || capacity === 0 ? (
           <Tooltip>
