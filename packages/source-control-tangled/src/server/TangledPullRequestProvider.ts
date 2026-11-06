@@ -184,7 +184,7 @@ export const make = Effect.gen(function* () {
           changeRequest: toChangeRequest(entry, number, input.repository),
         }));
     }
-    const offset = yield* offsets.lookup(input.repository);
+    const offset = yield* Cache.get(offsets, input.repository);
     if (offset === null) {
       // A repository may gain enough rows to resolve its numbering on the next attempt.
       yield* Cache.invalidate(offsets, input.repository);

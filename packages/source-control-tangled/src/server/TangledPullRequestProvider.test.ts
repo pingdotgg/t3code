@@ -184,6 +184,7 @@ it.effect("reads a closed PR's activity and details through its list number and 
       ],
     );
     assert.strictEqual(calls.filter((args) => args[1] === "view" && args[2] === "b").length, 2);
+    assert.strictEqual(pageReads, 2);
   }).pipe(
     Effect.provide(Cli.layer.pipe(Layer.provideMerge(host))),
     Effect.provideService(HttpClient.HttpClient, client),
