@@ -5,6 +5,7 @@ import type {
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
+import { canStopNativeSubagent } from "@t3tools/contracts";
 import {
   latestExecutedRun,
   latestRootProviderFailure,
@@ -5931,6 +5932,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection,
       command.dispatchMode,
       command.deliveryIntent,
+      {
+        hasAttachments: command.attachments.length > 0,
+        switchesProvider: modelSelection.instanceId !== projection.thread.providerInstanceId,
+      },
     );
     if (dispatchMode.type === "steer_active") {
       const targetRunId = dispatchMode.targetRunId;
@@ -11579,10 +11584,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       subagent === undefined ||
       subagent.runId !== command.runId ||
-      subagent.origin !== "provider_native" ||
-      subagent.driver !== "claudeAgent" ||
-      subagent.nativeTaskRef?.strength !== "strong" ||
-      subagent.nativeTaskRef.nativeId === null
+      !canStopNativeSubagent(subagent) ||
+      subagent.nativeTaskRef?.nativeId == null
     ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,

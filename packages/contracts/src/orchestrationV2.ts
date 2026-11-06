@@ -934,6 +934,19 @@ export const OrchestrationV2Subagent = Schema.Struct({
 });
 export type OrchestrationV2Subagent = typeof OrchestrationV2Subagent.Type;
 
+/** A strong task ref is how a provider says this task can be stopped without ending its run. */
+export function canStopNativeSubagent(
+  subagent: Pick<OrchestrationV2Subagent, "origin" | "driver" | "runId" | "nativeTaskRef">,
+): boolean {
+  return (
+    subagent.origin === "provider_native" &&
+    (subagent.driver === "claudeAgent" || subagent.driver === "githubCopilot") &&
+    subagent.runId != null &&
+    subagent.nativeTaskRef?.strength === "strong" &&
+    subagent.nativeTaskRef.nativeId !== null
+  );
+}
+
 export function isOrchestrationV2WorkActive(
   status: OrchestrationV2ExecutionNode["status"],
 ): boolean {
