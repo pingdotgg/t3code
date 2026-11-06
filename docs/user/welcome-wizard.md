@@ -96,8 +96,8 @@ Import works through each project in batches of up to 100 conversation files
 and 4 GiB, and starts the next batch until nothing is left. It skips a
 conversation with more than 100,000 input records, and completed conversations
 are not imported again. Select **Stop importing** to finish setup after the
-current batch, then select **Continue import** on the summary, or open
-`/welcome`, to import the rest. A computer running an older T3 Code version
+current batch. **Continue import** on the summary reopens setup with the
+unfinished projects selected. A computer running an older T3 Code version
 imports one batch per run.
 
 You can continue without configuring agents or importing projects, or return to an earlier step

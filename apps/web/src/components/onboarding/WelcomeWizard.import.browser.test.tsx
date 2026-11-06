@@ -487,3 +487,41 @@ it("counts each project's last batch and treats servers without deferred counts 
   expect(state.importThreads).toHaveBeenCalledTimes(3);
   expectImportSummary({ imported: 6, failed: 2, deferred: 0, stopped: false }, false);
 });
+
+it("reopens setup on the unfinished projects through Continue import", async () => {
+  using _now = setup();
+  // Fewer than three conversations keeps a project out of the default selection.
+  state.candidates = [
+    candidate("/projects/first"),
+    { ...candidate("/projects/lonely"), threadCount: 1 },
+  ];
+  state.importThreads
+    .mockResolvedValueOnce(AsyncResult.success({ importedCount: 1, skippedCount: 0 }))
+    .mockResolvedValueOnce(
+      AsyncResult.success({ importedCount: 1, skippedCount: 3, deferredCount: 3 }),
+    )
+    .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("offline"))));
+  await using screen = await mountImport();
+  expect(pageText()).toContain("1 of 2 selected");
+  await click("Select all");
+  await click("Import 2 projects");
+  await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+  const [toast] = state.toast.mock.calls.at(-1) ?? [];
+  await act(async () => toast?.actionProps?.onClick());
+
+  await screen.rerender(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <WelcomeWizard key="reopened" localAvailable onDone={state.onDone} />
+    </RegistryContext.Provider>,
+  );
+  expect(pageText()).toContain("Import your projects");
+  expect(pageText()).toContain("1 of 2 selected");
+  await click("Import 1 project");
+  await vi.waitFor(() => expect(state.importThreads).toHaveBeenCalledTimes(4));
+  expect(state.importThreads).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      input: expect.objectContaining({ expectedWorkspaceRoot: "/projects/lonely" }),
+    }),
+  );
+  expect(state.createProject).toHaveBeenCalledTimes(2);
+});

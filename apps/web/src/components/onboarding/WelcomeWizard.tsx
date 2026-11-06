@@ -1,6 +1,6 @@
 import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import type {
   AgentSessionImportResult,
   AgentSessionProjectCandidate,
@@ -119,6 +119,18 @@ const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
 const ONBOARDING_STAGES = ["Connect", "Agents", "Projects"] as const;
 const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations may be missing.";
 
+/** The projects an interrupted import left unfinished, reopened by Continue import. */
+interface ImportResume {
+  readonly environmentIds: ReadonlyArray<EnvironmentId>;
+  readonly keys: ReadonlyArray<string>;
+}
+
+declare module "@tanstack/react-router" {
+  interface HistoryState {
+    onboardingImport?: ImportResume;
+  }
+}
+
 export function WelcomeWizard({
   localAvailable,
   onDone,
@@ -128,15 +140,22 @@ export function WelcomeWizard({
   readonly resumeEnvironmentId?: EnvironmentId | undefined;
   readonly onDone: (projectRef?: ScopedProjectRef) => void | Promise<void>;
 }) {
-  const [step, setStep] = useState<WizardStep>(resumeEnvironmentId ? "agents" : "connection");
+  const resumeImport = useLocation({ select: (location) => location.state.onboardingImport });
+  const [step, setStep] = useState<WizardStep>(
+    resumeImport ? "import" : resumeEnvironmentId ? "agents" : "connection",
+  );
   const { environments } = useEnvironments();
   const [selection, setSelection] = useState<ReadonlySet<EnvironmentId> | null>(null);
   // Share the registry for the wizard's lifetime so unchecked computers are not auto-selected again.
   const [autoSelectedComputers] = useState(() => new Set<EnvironmentId>());
   const [setupIds, setSetupIds] = useState<readonly EnvironmentId[]>(
-    resumeEnvironmentId ? [resumeEnvironmentId] : [],
+    resumeImport?.environmentIds ?? (resumeEnvironmentId ? [resumeEnvironmentId] : []),
   );
-  const [importSelection, setImportSelection] = useState<ImportSelection | null>(null);
+  const [importSelection, setImportSelection] = useState<ImportSelection | null>(() =>
+    resumeImport === undefined
+      ? null
+      : { environmentIds: new Set(resumeImport.environmentIds), keys: new Set(resumeImport.keys) },
+  );
   const [isImporting, setIsImporting] = useState(false);
   const finishingPromiseRef = useRef<Promise<boolean> | null>(null);
   const completionErrorToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
@@ -179,7 +198,7 @@ export function WelcomeWizard({
     projectRef?: ScopedProjectRef,
     importWarning?: string,
     importedThreadCount = 0,
-    canContinueImport = false,
+    resume?: ImportResume,
   ) => {
     if (finishingPromiseRef.current !== null) return finishingPromiseRef.current;
     if (completionErrorToastIdRef.current !== null) {
@@ -200,13 +219,13 @@ export function WelcomeWizard({
             title: "Some history was not imported",
             description: importWarning,
             timeout: 0,
-            ...(canContinueImport
+            ...(resume
               ? {
                   actionProps: {
                     children: "Continue import",
                     onClick: () => {
                       toastManager.close(toastId);
-                      void navigate({ to: "/welcome" });
+                      void navigate({ to: "/welcome", state: { onboardingImport: resume } });
                     },
                   },
                 }
@@ -1234,7 +1253,7 @@ function ImportStep({
     projectRef?: ScopedProjectRef,
     importWarning?: string,
     importedThreadCount?: number,
-    canContinueImport?: boolean,
+    resume?: ImportResume,
   ) => Promise<boolean>;
 }) {
   const { environments } = useEnvironments();
@@ -1243,7 +1262,7 @@ function ImportStep({
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
   const importWarningRef = useRef("");
   const importedThreadCountRef = useRef(0);
-  const canContinueImportRef = useRef(false);
+  const resumeRef = useRef<ImportResume | undefined>(undefined);
   const importedProjectsRef = useRef(new Map<string, ScopedProjectRef>());
   const projectsWithImportedHistoryRef = useRef(new Map<string, ScopedProjectRef>());
   const lastImportSelectionRef = useRef<ReadonlyArray<string>>([]);
@@ -1313,7 +1332,7 @@ function ImportStep({
         undefined,
         importWarningRef.current,
         importedThreadCountRef.current,
-        canContinueImportRef.current,
+        resumeRef.current,
       );
       return;
     }
@@ -1332,7 +1351,7 @@ function ImportStep({
           landing,
           importWarningRef.current,
           importedThreadCountRef.current,
-          canContinueImportRef.current,
+          resumeRef.current,
         );
         if (!completed) setIsImporting(false);
       });
@@ -1363,7 +1382,7 @@ function ImportStep({
     setIsStopping(false);
     importWarningRef.current = "";
     importedThreadCountRef.current = 0;
-    canContinueImportRef.current = false;
+    resumeRef.current = undefined;
     lastImportSelectionRef.current = selection.map((candidate) => candidate.key);
     const importGeneration = importGenerationRef.current;
     const importedProjects = importedProjectsRef.current;
@@ -1507,7 +1526,13 @@ function ImportStep({
         deferred: deferredThreadCount,
         stopped,
       });
-      canContinueImportRef.current = stopped || deferredThreadCount > 0;
+      const unfinished = selection.filter((candidate) => !importedProjects.has(candidate.key));
+      if (unfinished.length > 0 && (stopped || deferredThreadCount > 0)) {
+        resumeRef.current = {
+          environmentIds: [...new Set(unfinished.map((candidate) => candidate.environmentId))],
+          keys: unfinished.map((candidate) => candidate.key),
+        };
+      }
     }
     finishAfterImport();
   };
