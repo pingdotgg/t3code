@@ -13,11 +13,6 @@ import * as Schema from "effect/Schema";
 
 import type { PendingOrchestrationEffectV2 } from "../../orchestration-v2/EffectOutbox.ts";
 
-/**
- * The extraction job for one settled run, or nothing when the project has not opted in. The
- * effect id is derived from the run, so a second finalization of the same run coalesces into
- * the job already queued.
- */
 export function assistedLearningEffects(input: {
   readonly settings: ServerSettings;
   readonly projectId: ProjectId;

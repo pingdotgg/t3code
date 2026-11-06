@@ -3259,6 +3259,7 @@ function captureRootRunTermination(input: {
             ingestNormalized: input.ingestNormalized ?? (() => Effect.succeed([])),
           }),
           ServerSettings.layerTest({
+            enableAssistedLearning: false,
             enableModelEvaluations: input.enableModelEvaluations ?? false,
           }),
           Layer.succeed(RunFinalizationService.RunFinalizationObserver, {

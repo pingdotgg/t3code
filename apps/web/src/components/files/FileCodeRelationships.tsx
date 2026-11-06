@@ -511,7 +511,6 @@ function DecisionPages(props: {
             <li key={fact.id} className="flex flex-col gap-0.5 rounded-sm px-2 py-1 text-xs">
               <span className="flex items-baseline gap-2 text-2xs text-muted-foreground">
                 <span className="font-medium text-foreground">{fact.kind}</span>
-                {fact.status === "proposed" ? <span>proposed</span> : null}
                 <span className="min-w-0 flex-1 truncate">
                   {match.by === "path"
                     ? `matched by path ${match.label}`

@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { reconcileV2PreviewMigration } from "./reconcileV2PreviewMigration.ts";
 import { reconcileProjectKnowledgePreviewMigration } from "./reconcileProjectKnowledgePreviewMigration.ts";
+import { reconcileSavedKnowledgePreviewMigration } from "./reconcileSavedKnowledgePreviewMigration.ts";
 
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
 import Migration0002 from "./Migrations/002_OrchestrationCommandReceipts.ts";
@@ -95,6 +96,8 @@ import Migration0087 from "./Migrations/087_DropOrchestrationEventCorrelationInd
 import Migration0088 from "./Migrations/088_ModelEvaluations.ts";
 import Migration0089 from "./Migrations/089_DelegatedRecoveryIndexes.ts";
 import Migration0090 from "./Migrations/090_ScheduledTaskThreadMode.ts";
+import Migration0091 from "./Migrations/091_DropProjectLoomIndexes.ts";
+import Migration0092 from "./Migrations/092_ProjectKnowledgeSavedLifecycle.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -188,6 +191,8 @@ const migrationEntries = [
   [88, "ModelEvaluations", Migration0088],
   [89, "DelegatedRecoveryIndexes", Migration0089],
   [90, "ScheduledTaskThreadMode", Migration0090],
+  [91, "DropProjectLoomIndexes", Migration0091],
+  [92, "ProjectKnowledgeSavedLifecycle", Migration0092],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -252,12 +257,17 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     toMigrationInclusive === undefined || toMigrationInclusive >= 80
       ? yield* reconcileProjectKnowledgePreviewMigration(migrationManifest)
       : [];
+  const savedKnowledgePreviewMigrations =
+    toMigrationInclusive === undefined || toMigrationInclusive >= 92
+      ? yield* reconcileSavedKnowledgePreviewMigration(migrationManifest)
+      : [];
   if (includesV2) {
     yield* assertV2MigrationsCanRun(toMigrationInclusive);
   }
   const executedMigrations = [
     ...previewMigrations,
     ...knowledgePreviewMigrations,
+    ...savedKnowledgePreviewMigrations,
     ...(yield* run({ loader: makeMigrationLoader(toMigrationInclusive) })),
   ];
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);

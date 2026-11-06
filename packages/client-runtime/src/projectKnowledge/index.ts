@@ -154,20 +154,19 @@ export function knowledgeOriginLabel(origin: KnowledgeOrigin): string {
       return `Agent observation from ${origin.label}`;
     case "assisted":
       return origin.runOutcome === "completed"
-        ? "Suggested from a finished run"
-        : `Suggested from a run that ${origin.runOutcome === "failed" ? "failed" : "was interrupted"}`;
+        ? "Learned from a finished run"
+        : `Learned from a run that ${origin.runOutcome === "failed" ? "failed" : "was interrupted"}`;
     case "unknown":
       return "Origin not recognized by this version";
   }
 }
 
-/** One plain line for the project's latest assisted learning outcome. */
 export function assistedLearningRunLabel(run: AssistedLearningRun): string {
   switch (run.result) {
     case "ran":
-      return run.proposed === 0
-        ? `Last run: nothing proposed.${run.reason ? ` ${run.reason}` : ""}`
-        : `Last run: proposed ${run.proposed}${run.suggested > 0 ? ` (${run.suggested} as updates to existing facts)` : ""}.${run.reason ? ` ${run.reason}` : ""}`;
+      return run.saved === 0
+        ? `Last run: nothing saved.${run.reason ? ` ${run.reason}` : ""}`
+        : `Last run: saved ${run.saved}.${run.reason ? ` ${run.reason}` : ""}`;
     case "skipped":
       return `Last run skipped. ${run.reason ?? ""}`.trim();
     case "failed":

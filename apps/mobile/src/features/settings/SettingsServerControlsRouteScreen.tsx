@@ -202,8 +202,8 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     unsupportedAssistedLearning.length === 0
       ? null
       : unsupportedAssistedLearning.length < targets.length
-        ? `Assisted learning is supported on only some selected environments. Update T3 Code on ${unsupportedAssistedLearning.map((target) => target.environment.label).join(", ")}, or select a supported environment.`
-        : `Assisted learning is not supported on ${unsupportedAssistedLearning.map((target) => target.environment.label).join(", ")}. Update T3 Code on ${unsupportedAssistedLearning.length === 1 ? "that environment" : "those environments"}.`;
+        ? `Automatic memory is supported on only some selected environments. Update T3 Code on ${unsupportedAssistedLearning.map((target) => target.environment.label).join(", ")}, or select a supported environment.`
+        : `Automatic memory is not supported on ${unsupportedAssistedLearning.map((target) => target.environment.label).join(", ")}. Update T3 Code on ${unsupportedAssistedLearning.length === 1 ? "that environment" : "those environments"}.`;
   const [pendingWrites, setPendingWrites] = useState(0);
   const writeInFlight = useRef(false);
   // Closing views can save after controls disable; queue those patches behind the pending write.
@@ -424,10 +424,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                 <SettingsSection title="Project memory">
                   <SettingsSwitchRow
                     icon="brain"
-                    label="Suggest facts from finished runs"
+                    label="Save facts from finished runs"
                     subtitle={
                       assistedLearningUnavailableReason ??
-                      "After each run, your text generation model proposes up to three cited facts for review. Each run costs one model call."
+                      "After each run, your text generation model saves up to three cited facts. Each run costs one model call."
                     }
                     value={uniform("enableAssistedLearning")}
                     disabled={

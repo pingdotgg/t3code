@@ -11,6 +11,7 @@ import {
   ProjectFact,
   ProjectFactHistoryEntry,
   ProjectFactId,
+  ProjectFactStatus,
   ProjectId,
   ProjectKnowledgeDelivery,
   ProjectKnowledgeDeliveryBudget,
@@ -23,6 +24,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import { normalizeFactContent } from "./knowledgeConflicts.ts";
 
 const encodeDeliveryBudget = Schema.encodeEffect(
   Schema.fromJsonString(ProjectKnowledgeDeliveryBudget),
@@ -56,7 +58,7 @@ const encodeSearchReceipt = Schema.encodeSync(Schema.fromJsonString(SearchReceip
 const FactRow = Schema.Struct({
   ...ActiveProjectFact.fields,
   content: Schema.NullOr(Schema.String),
-  status: Schema.Literals(["proposed", "confirmed", "forgotten"]),
+  status: ProjectFactStatus,
   forgottenAt: Schema.NullOr(Schema.String),
   entities: Schema.fromJsonString(ActiveProjectFact.fields.entities),
   tags: Schema.fromJsonString(ActiveProjectFact.fields.tags),
@@ -172,8 +174,7 @@ export const makeStore = Effect.gen(function* () {
   });
   const list = Effect.fn("ProjectKnowledgeStore.list")(function* (
     projectId: ProjectId,
-    // null lists proposed and confirmed together.
-    status: ProjectFact["status"] | null,
+    status: ProjectFact["status"],
     afterId: string | null,
     limit: number,
     includeSuperseded: boolean,
@@ -184,7 +185,7 @@ export const makeStore = Effect.gen(function* () {
     return yield* sql`
       SELECT ${columns} FROM project_knowledge_facts
       WHERE project_id = ${projectId}
-        AND ${status === null ? sql`status IN ('confirmed', 'proposed')` : sql`status = ${status}`}
+        AND status = ${status}
         AND (${afterId} IS NULL OR id > ${afterId})
         AND (${includeSuperseded ? 1 : 0} = 1 OR status = 'forgotten' OR superseded_by_id IS NULL)
         AND ${onlyIds === null ? sql`1 = 1` : sql.in("id", onlyIds)}
@@ -272,7 +273,7 @@ export const makeStore = Effect.gen(function* () {
     minTrust: number,
     includeSuperseded: boolean,
   ) {
-    const recallable = sql`f.status IN ('confirmed', 'proposed') AND f.trust >= ${minTrust}
+    const recallable = sql`f.status = 'saved' AND f.trust >= ${minTrust}
       AND (${includeSuperseded ? 1 : 0} = 1 OR f.superseded_by_id IS NULL)`;
     const ftsQuery = terms
       .map((term) => `"${term.replaceAll('"', '""')}"${Buffer.byteLength(term) >= 4 ? "*" : ""}`)
@@ -304,6 +305,26 @@ export const makeStore = Effect.gen(function* () {
       partial: ids.length > 1000,
     };
   });
+  const hasDuplicateContent = Effect.fn("ProjectKnowledgeStore.hasDuplicateContent")(function* (
+    projectId: ProjectId,
+    content: string,
+  ) {
+    type ContentRow = { readonly id: ProjectFactId; readonly content: string };
+    const normalized = normalizeFactContent(content);
+    let afterId: ProjectFactId | null = null;
+    // Automatic saves need exact matching across all current facts, including text that the
+    // lexical tokenizer cannot index. Page only content so this does not hydrate every fact.
+    while (true) {
+      const rows: ReadonlyArray<ContentRow> = yield* sql<ContentRow>`
+        SELECT id, content FROM project_knowledge_facts
+        WHERE project_id = ${projectId} AND status = 'saved' AND superseded_by_id IS NULL
+          AND content IS NOT NULL AND id > ${afterId ?? ""}
+        ORDER BY id ASC LIMIT 100`;
+      if (rows.some((row) => normalizeFactContent(row.content) === normalized)) return true;
+      if (rows.length < 100) return false;
+      afterId = rows.at(-1)!.id;
+    }
+  });
   // Lexical neighbours for duplicate and conflict hints; bounded so a write stays cheap.
   const similar = Effect.fn("ProjectKnowledgeStore.similar")(function* (
     projectId: ProjectId,
@@ -315,7 +336,7 @@ export const makeStore = Effect.gen(function* () {
     const rows = yield* sql<{ id: ProjectFactId }>`
       SELECT f.id FROM project_knowledge_fts JOIN project_knowledge_facts f ON f.rowid = project_knowledge_fts.rowid
       WHERE project_knowledge_fts MATCH ${ftsQuery} AND f.project_id = ${projectId}
-        AND f.status IN ('confirmed', 'proposed') AND f.superseded_by_id IS NULL
+        AND f.status = 'saved' AND f.superseded_by_id IS NULL
         AND ${excludeIds.length === 0 ? sql`1 = 1` : sql`f.id NOT IN ${sql.in(excludeIds)}`}
       ORDER BY bm25(project_knowledge_fts) ASC, f.id ASC LIMIT 40`;
     return yield* findMany(
@@ -365,7 +386,6 @@ export const makeStore = Effect.gen(function* () {
     factId: ProjectFactId,
     revision: number,
   ) {
-    // Confirmation and feedback change a revision without replacing its content or citations.
     const rows = yield* sql<{ readonly sources: string }>`
       SELECT sources_json AS sources FROM project_knowledge_fact_history
       WHERE project_id = ${projectId} AND fact_id = ${factId} AND revision <= ${revision}
@@ -378,8 +398,7 @@ export const makeStore = Effect.gen(function* () {
     recallThreshold: number,
   ) {
     const [facts] = yield* sql<{
-      readonly proposed: number;
-      readonly confirmed: number;
+      readonly saved: number;
       readonly superseded: number;
       readonly forgotten: number;
       readonly low: number;
@@ -391,14 +410,11 @@ export const makeStore = Effect.gen(function* () {
     }>`
       WITH recallable AS (
         SELECT trust FROM project_knowledge_facts
-        WHERE project_id = ${projectId} AND status IN ('confirmed', 'proposed')
+        WHERE project_id = ${projectId} AND status = 'saved'
           AND superseded_by_id IS NULL
       )
       SELECT
-        (SELECT COUNT(*) FROM project_knowledge_facts WHERE project_id = ${projectId}
-          AND status = 'proposed' AND superseded_by_id IS NULL) AS proposed,
-        (SELECT COUNT(*) FROM project_knowledge_facts WHERE project_id = ${projectId}
-          AND status = 'confirmed' AND superseded_by_id IS NULL) AS confirmed,
+        (SELECT COUNT(*) FROM recallable) AS saved,
         (SELECT COUNT(*) FROM project_knowledge_facts WHERE project_id = ${projectId}
           AND status != 'forgotten' AND superseded_by_id IS NOT NULL) AS superseded,
         (SELECT COUNT(*) FROM project_knowledge_facts WHERE project_id = ${projectId}
@@ -422,14 +438,14 @@ export const makeStore = Effect.gen(function* () {
   /** Citations of active facts, for whole-project source checks. */
   const citedFacts = Effect.fn("ProjectKnowledgeStore.citedFacts")(function* (
     projectId: ProjectId,
-    status: ProjectFact["status"] | null,
+    status: ProjectFact["status"],
     includeSuperseded: boolean,
     limit: number,
   ) {
     const rows = yield* sql<{ readonly id: ProjectFactId; readonly sources: string }>`
       SELECT id, sources_json AS sources FROM project_knowledge_facts
       WHERE project_id = ${projectId}
-        AND ${status === null ? sql`status IN ('confirmed', 'proposed')` : sql`status = ${status}`}
+        AND status = ${status}
         AND (${includeSuperseded ? 1 : 0} = 1 OR superseded_by_id IS NULL)
         AND sources_json LIKE '%"message"%'
       ORDER BY id ASC LIMIT ${limit}`;
@@ -443,7 +459,7 @@ export const makeStore = Effect.gen(function* () {
   ) {
     if (ids.length === 0) return;
     yield* sql`UPDATE project_knowledge_facts SET retrieval_count = retrieval_count + 1
-      WHERE project_id = ${projectId} AND status IN ('confirmed', 'proposed') AND ${sql.in("id", ids)}`;
+      WHERE project_id = ${projectId} AND status = 'saved' AND ${sql.in("id", ids)}`;
   });
   // A sent record is final: a later re-preparation of the same attempt cannot rewrite what
   // the provider already received. Only a preparation writes excerpts; a status change keeps the
@@ -680,10 +696,10 @@ export const makeStore = Effect.gen(function* () {
     run: AssistedLearningRun,
   ) {
     yield* sql`INSERT INTO project_knowledge_assisted_runs (
-      run_id, project_id, thread_id, run_outcome, result, reason, proposed, suggested, completed_at
+      run_id, project_id, thread_id, run_outcome, result, reason, saved, completed_at
     ) VALUES (
       ${run.runId}, ${projectId}, ${run.threadId}, ${run.runOutcome}, ${run.result}, ${run.reason},
-      ${run.proposed}, ${run.suggested}, ${run.at}
+      ${run.saved}, ${run.at}
     ) ON CONFLICT (run_id) DO NOTHING`;
   });
   const assistedStatus = Effect.fn("ProjectKnowledgeStore.assistedStatus")(function* (
@@ -691,14 +707,10 @@ export const makeStore = Effect.gen(function* () {
   ) {
     const runs = yield* sql`
       SELECT thread_id AS "threadId", run_id AS "runId", run_outcome AS "runOutcome", result,
-        reason, proposed, suggested, completed_at AS at
+        reason, saved, completed_at AS at
       FROM project_knowledge_assisted_runs WHERE project_id = ${projectId}
       ORDER BY completed_at DESC, run_id DESC LIMIT 1`.pipe(Effect.flatMap(decodeAssistedRuns));
-    const [counts] = yield* sql<{ readonly suggested: number }>`
-      SELECT COUNT(*) AS suggested FROM project_knowledge_facts
-      WHERE project_id = ${projectId} AND status = 'proposed' AND superseded_by_id IS NULL
-        AND json_extract(origin_json, '$.kind') = 'assisted'`;
-    return { suggested: counts?.suggested ?? 0, lastRun: runs[0] ?? null };
+    return { lastRun: runs[0] ?? null };
   });
   return {
     assistedRunRecorded,
@@ -714,6 +726,7 @@ export const makeStore = Effect.gen(function* () {
     recordSearch,
     candidates,
     similar,
+    hasDuplicateContent,
     recordHistory,
     eraseHistory,
     history,

@@ -52,7 +52,7 @@ const layerRecoveryTest = ProviderRuntimeRecovery.layer.pipe(
       ),
     ),
   ),
-  Layer.provide(ServerSettings.layerTest()),
+  Layer.provide(ServerSettings.layerTest({ enableAssistedLearning: false })),
 );
 const providerInstanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId: providerInstanceId, model: "gpt-5.4" };

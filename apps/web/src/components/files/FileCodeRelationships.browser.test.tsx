@@ -305,7 +305,7 @@ const fact = (id: string, entities: ReadonlyArray<string>, content: string): Pro
   entities: [...entities],
   tags: [],
   sources: [],
-  status: "confirmed",
+  status: "saved",
   forgottenAt: null,
 });
 

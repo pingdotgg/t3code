@@ -154,8 +154,8 @@ export function scopedAssistedLearningUnavailableReason(
   if (unsupported.length === 0) return null;
   const labels = unsupported.map((environment) => environment.label).join(", ");
   return unsupported.length < environments.length
-    ? `Assisted learning is supported on only some selected environments. Update T3 Code on ${labels}, or select a supported environment.`
-    : `Assisted learning is not supported on ${labels}. Update T3 Code on ${unsupported.length === 1 ? "that environment" : "those environments"}.`;
+    ? `Automatic memory is supported on only some selected environments. Update T3 Code on ${labels}, or select a supported environment.`
+    : `Automatic memory is not supported on ${labels}. Update T3 Code on ${unsupported.length === 1 ? "that environment" : "those environments"}.`;
 }
 
 /**

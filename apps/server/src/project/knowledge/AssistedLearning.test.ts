@@ -45,9 +45,11 @@ const threadId = ThreadId.make("learning-thread");
 const runId = RunId.make("learning-run");
 const providerInstanceId = ProviderInstanceId.make("codex");
 const at = DateTime.makeUnsafe(Date.UTC(2026, 9, 1));
-const optedIn = { projectSettingsOverrides: { [projectId]: { enableAssistedLearning: true } } };
 
-const makeLayer = (generate: Generate, settings: Parameters<typeof ServerSettings.layerTest>[0]) =>
+const makeLayer = (
+  generate: Generate,
+  settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
+) =>
   AssistedLearning.layerRunner.pipe(
     Layer.provide(
       Layer.mock(TextGeneration.TextGeneration)({ generateKnowledgeCandidates: generate }),
@@ -208,15 +210,26 @@ const snakeCase = {
   citations: ["M1", "M2"],
 };
 
-it("schedules one coalesced job per run only for opted-in projects", () => {
+it("schedules one coalesced job per run unless the environment or project opted out", () => {
   const input = { projectId, threadId, runId, status: "completed" as const };
-  assert.deepEqual(assistedLearningEffects({ ...input, settings: DEFAULT_SERVER_SETTINGS }), []);
-  const otherProject = {
-    ...DEFAULT_SERVER_SETTINGS,
-    projectSettingsOverrides: { [ProjectId.make("other")]: { enableAssistedLearning: true } },
-  };
-  assert.deepEqual(assistedLearningEffects({ ...input, settings: otherProject }), []);
-  const settings = { ...DEFAULT_SERVER_SETTINGS, ...optedIn };
+  const settings = DEFAULT_SERVER_SETTINGS;
+  assert.deepEqual(
+    assistedLearningEffects({
+      ...input,
+      settings: { ...DEFAULT_SERVER_SETTINGS, enableAssistedLearning: false },
+    }),
+    [],
+  );
+  assert.deepEqual(
+    assistedLearningEffects({
+      ...input,
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: { [projectId]: { enableAssistedLearning: false } },
+      },
+    }),
+    [],
+  );
   const [effect] = assistedLearningEffects({ ...input, settings });
   assert.equal(effect?.id, `effect:project-knowledge.extract:${runId}`);
   assert.deepEqual(effect?.request, {
@@ -230,7 +243,7 @@ it("schedules one coalesced job per run only for opted-in projects", () => {
   );
 });
 
-it.effect("turns a settled run into cited proposals exactly once", () => {
+it.effect("saves a settled run's cited facts exactly once, recallable without review", () => {
   const model = scripted([
     { candidates: [snakeCase, { ...snakeCase, content: "Invented.", citations: ["M9"] }] },
   ]);
@@ -249,10 +262,10 @@ it.effect("turns a settled run into cited proposals exactly once", () => {
         ["M2", "assistant"],
       ],
     );
-    const { facts } = yield* knowledge.list({ projectId, status: "proposed", origin: "assisted" });
+    const { facts } = yield* knowledge.list({ projectId, status: "saved", origin: "assisted" });
     assert.equal(facts.length, 1);
     const fact = facts[0]!;
-    assert.equal(fact.status, "proposed");
+    assert.equal(fact.status, "saved");
     assert.equal(fact.content, snakeCase.content);
     assert.deepEqual(fact.origin, { kind: "assisted", threadId, runId, runOutcome: "completed" });
     assert.deepEqual(fact.sources, [
@@ -270,20 +283,18 @@ it.effect("turns a settled run into cited proposals exactly once", () => {
       },
     ]);
     const status = yield* knowledge.status({ projectId });
-    assert.equal(status.assistedLearning?.suggested, 1);
     assert.deepEqual(
       status.assistedLearning?.lastRun && {
         result: status.assistedLearning.lastRun.result,
-        proposed: status.assistedLearning.lastRun.proposed,
+        saved: status.assistedLearning.lastRun.saved,
         reason: status.assistedLearning.lastRun.reason,
       },
       {
         result: "ran",
-        proposed: 1,
+        saved: 1,
         reason: "1 candidate dropped: citations did not verify or exceeded the limit.",
       },
     );
-    // Unreviewed model text stays out of agent recall.
     const recalled = yield* knowledge.search({
       projectId,
       query: "snake_case API responses",
@@ -291,9 +302,14 @@ it.effect("turns a settled run into cited proposals exactly once", () => {
     });
     assert.deepEqual(
       recalled.facts.state === "available" ? recalled.facts.matches.map((m) => m.fact.id) : [],
-      [],
+      [fact.id],
     );
-  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+    const { history } = yield* knowledge.readFact({ projectId, factId: fact.id });
+    assert.deepEqual(
+      history.map((entry) => entry.event),
+      ["created"],
+    );
+  }).pipe(Effect.provide(makeLayer(model.generate)));
 });
 
 it.effect("marks candidates from a failed run with that outcome", () => {
@@ -304,81 +320,141 @@ it.effect("marks candidates from a failed run with that outcome", () => {
     const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
     yield* runner.extractRun({ threadId, runId, runOutcome: "failed" });
     assert.equal(model.calls[0]!.runOutcome, "failed");
-    const { facts } = yield* knowledge.list({ projectId, status: "proposed" });
+    const { facts } = yield* knowledge.list({ projectId, status: "saved" });
     assert.deepEqual(
       facts.map((fact) => [fact.status, fact.origin.kind === "assisted" && fact.origin.runOutcome]),
-      [["proposed", "failed"]],
+      [["saved", "failed"]],
     );
-  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  }).pipe(Effect.provide(makeLayer(model.generate)));
 });
 
-it.effect("suggests replacing a near duplicate instead of duplicating it", () => {
-  const model = scripted([
-    {
-      candidates: [
-        { ...snakeCase, content: "API responses use snake_case keys for every public endpoint." },
-        { ...snakeCase, content: "Tests run with vp test." },
-      ],
-    },
-  ]);
-  return Effect.gen(function* () {
-    yield* seedRun;
-    const runner = yield* AssistedLearningRunner;
-    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
-    const existing = yield* knowledge.mutate(
+it.effect(
+  "skips exact duplicates and saves different facts without replacing existing ones",
+  () => {
+    const conflict = "The primary database store switched to Postgres instead of MySQL.";
+    const model = scripted([
       {
-        action: "create",
-        commandId: CommandId.make("existing"),
+        candidates: [
+          { ...snakeCase, content: "API responses use snake_case keys for every public endpoint." },
+          { ...snakeCase, content: "Tests run with vp test." },
+          { ...snakeCase, content: conflict },
+        ],
+      },
+    ]);
+    return Effect.gen(function* () {
+      yield* seedRun;
+      const runner = yield* AssistedLearningRunner;
+      const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+      const create = (id: string, content: string) => ({
+        action: "create" as const,
+        commandId: CommandId.make(id),
         projectId,
-        factId: ProjectFactId.make("existing"),
-        content: "API responses use snake_case keys for every endpoint.",
+        factId: ProjectFactId.make(id),
+        content,
         entities: [],
         tags: [],
-        kind: "convention",
-        sources: [{ kind: "user" }],
-      },
-      { kind: "user" },
-    );
-    yield* knowledge.mutate(
-      {
-        action: "create",
-        commandId: CommandId.make("exact"),
+        kind: "convention" as const,
+        sources: [{ kind: "user" as const }],
+      });
+      const seed = (id: string, content: string) =>
+        knowledge.mutate(create(id, content), { kind: "user" });
+      const nearDuplicate = yield* seed(
+        "near",
+        "API responses use snake_case keys for every endpoint.",
+      );
+      yield* seed("exact", "Tests run with vp test.");
+      const database = yield* seed("database", "The primary database store is MySQL or Postgres.");
+      yield* runner.extractRun({ threadId, runId, runOutcome: "completed" });
+      const { facts } = yield* knowledge.list({ projectId, status: "saved", origin: "assisted" });
+      assert.deepEqual(
+        facts.map((fact) => [fact.content, fact.supersedes ?? null]).toSorted(),
+        [
+          ["API responses use snake_case keys for every public endpoint.", null],
+          [conflict, null],
+        ].toSorted(),
+      );
+      const { lastRun } = (yield* knowledge.status({ projectId })).assistedLearning!;
+      assert.deepEqual([lastRun?.saved, lastRun?.reason], [2, "1 duplicate skipped."]);
+      for (const existing of [nearDuplicate, database]) {
+        const { fact } = yield* knowledge.readFact({ projectId, factId: existing.id });
+        assert.equal(fact.supersededBy ?? null, null);
+        assert.equal(fact.revision, 1);
+      }
+      // Exact matching cannot depend on the three UI hints or the forty lexical neighbours.
+      for (let index = 0; index < 101; index++) {
+        yield* seed(
+          `crowded-${String(index).padStart(3, "0")}`,
+          `workers restart then services deploy${"!".repeat(index + 1)}`,
+        );
+      }
+      yield* seed("z-crowded-exact", "deploy services then restart workers");
+      yield* seed("unicode-exact", "测试需要先运行单元测试。");
+      for (const [index, content] of [
+        "  DEPLOY   services then RESTART workers\n",
+        "测试需要先运行单元测试。",
+      ].entries()) {
+        const result = yield* knowledge.saveAutomatic(
+          { ...create(`crowded-auto-${index}`, content), sources: facts[0]!.sources },
+          { kind: "assisted", threadId, runId, runOutcome: "completed" },
+        );
+        assert.equal(result.outcome, "duplicate");
+      }
+      const recalled = yield* knowledge.search({
         projectId,
-        factId: ProjectFactId.make("exact"),
-        content: "Tests run with vp test.",
-        entities: [],
-        tags: [],
-        kind: "convention",
-        sources: [{ kind: "user" }],
-      },
-      { kind: "user" },
-    );
-    yield* runner.extractRun({ threadId, runId, runOutcome: "completed" });
-    const { facts } = yield* knowledge.list({ projectId, status: "proposed", origin: "assisted" });
-    // The exact duplicate created nothing; the near duplicate names what it would replace.
-    assert.deepEqual(
-      facts.map((fact) => [fact.content, fact.supersedes]),
-      [["API responses use snake_case keys for every public endpoint.", existing.id]],
-    );
-    assert.equal((yield* knowledge.status({ projectId })).assistedLearning?.lastRun?.suggested, 1);
-    // The existing fact stays recalled until a user accepts the replacement.
-    const before = (yield* knowledge.readFact({ projectId, factId: existing.id })).fact;
-    assert.equal(before.supersededBy ?? null, null);
-    const suggestion = facts[0]!;
-    yield* knowledge.mutate(
-      {
-        action: "confirm",
-        commandId: CommandId.make("accept"),
-        projectId,
-        factId: suggestion.id,
-        expectedRevision: suggestion.revision,
-      },
-      { kind: "user" },
-    );
-    const after = (yield* knowledge.readFact({ projectId, factId: existing.id })).fact;
-    assert.equal(after.supersededBy, suggestion.id);
-  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
-});
+        query: "primary database store",
+        requestId: CommandId.make("recall-conflict"),
+      });
+      assert.deepEqual(
+        recalled.facts.state === "available"
+          ? recalled.facts.matches.map((match) => match.fact.id).toSorted()
+          : [],
+        [database.id, facts.find((fact) => fact.content === conflict)!.id].toSorted(),
+      );
+
+      const positive = yield* seed(
+        "positive",
+        "API responses use snake_case keys for every public endpoint.",
+      );
+      yield* seed("retries", "The worker pool never retries failed jobs.");
+      yield* seed("approval", "Deploys require a manual approval step.");
+      yield* seed("blocked", "The worker is not idle but is blocked.");
+      yield* seed("enabled", "The worker pool is enabled for every public endpoint.");
+      const negated = "API responses do not use snake_case keys for every public endpoint.";
+      const outcomes = yield* Effect.forEach(
+        [
+          negated,
+          negated,
+          "API responses do not use snake_case keys for every single public endpoint.",
+          "The worker pool retries failed jobs.",
+          "Deploys don't require a manual approval step.",
+          "The worker is idle but is not blocked.",
+          "The worker pool is disabled for every public endpoint.",
+        ],
+        (content, index) =>
+          knowledge
+            .saveAutomatic(
+              { ...create(`negation-${index}`, content), sources: facts[0]!.sources },
+              { kind: "assisted", threadId, runId, runOutcome: "completed" },
+            )
+            .pipe(Effect.map((result) => result.outcome)),
+      );
+      assert.deepEqual(outcomes, [
+        "saved",
+        "duplicate",
+        "saved",
+        "saved",
+        "saved",
+        "saved",
+        "saved",
+      ]);
+      const { fact: kept } = yield* knowledge.readFact({ projectId, factId: positive.id });
+      assert.deepEqual(
+        [kept.revision, kept.supersededBy ?? null, kept.supersedes ?? null],
+        [1, null, null],
+      );
+    }).pipe(Effect.provide(makeLayer(model.generate)));
+  },
+);
 
 const testsCommand = {
   kind: "convention" as const,
@@ -387,7 +463,7 @@ const testsCommand = {
   citations: ["M2"],
 };
 
-it.effect("does not bring back a forgotten proposal when the job runs again", () => {
+it.effect("does not bring back a forgotten fact when the job runs again", () => {
   // The retried model call returns the same candidate at a different position.
   const model = scripted([{ candidates: [snakeCase] }, { candidates: [testsCommand, snakeCase] }]);
   return Effect.gen(function* () {
@@ -396,14 +472,14 @@ it.effect("does not bring back a forgotten proposal when the job runs again", ()
     const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
     const sql = yield* SqlClient.SqlClient;
     yield* runner.extractRun({ threadId, runId, runOutcome: "completed" });
-    const [proposal] = (yield* knowledge.list({ projectId, status: "proposed" })).facts;
+    const [saved] = (yield* knowledge.list({ projectId, status: "saved" })).facts;
     yield* knowledge.mutate(
       {
         action: "forget",
-        commandId: CommandId.make("forget-proposal"),
+        commandId: CommandId.make("forget-saved"),
         projectId,
-        factId: proposal!.id,
-        expectedRevision: proposal!.revision,
+        factId: saved!.id,
+        expectedRevision: saved!.revision,
       },
       { kind: "user" },
     );
@@ -412,24 +488,24 @@ it.effect("does not bring back a forgotten proposal when the job runs again", ()
     yield* runner.extractRun({ threadId, runId, runOutcome: "completed" });
     assert.equal(model.calls.length, 2);
     assert.deepEqual(
-      (yield* knowledge.list({ projectId, status: "proposed" })).facts.map((fact) => fact.content),
+      (yield* knowledge.list({ projectId, status: "saved" })).facts.map((fact) => fact.content),
       [testsCommand.content],
     );
     assert.deepEqual(
       (yield* knowledge.list({ projectId, status: "forgotten" })).facts.map((fact) => fact.id),
-      [proposal!.id],
+      [saved!.id],
     );
-  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  }).pipe(Effect.provide(makeLayer(model.generate)));
 });
 
-it.effect("commits a run's proposals only together with its outcome", () => {
+it.effect("commits a run's facts only together with its outcome", () => {
   const model = scripted([{ candidates: [snakeCase, testsCommand] }]);
   return Effect.gen(function* () {
     yield* seedRun;
     const runner = yield* AssistedLearningRunner;
     const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
     const sql = yield* SqlClient.SqlClient;
-    const proposals = Effect.map(knowledge.list({ projectId, status: "proposed" }), (listed) =>
+    const savedContent = Effect.map(knowledge.list({ projectId, status: "saved" }), (listed) =>
       listed.facts.map((fact) => fact.content).toSorted(),
     );
     yield* sql`CREATE TEMP TRIGGER lose_outcome BEFORE INSERT ON project_knowledge_assisted_runs
@@ -438,16 +514,16 @@ it.effect("commits a run's proposals only together with its outcome", () => {
       .extractRun({ threadId, runId, runOutcome: "completed" })
       .pipe(Effect.result);
     assert.isTrue(Result.isFailure(lost));
-    // Nothing a user could review, and so forget, exists without the outcome.
-    assert.deepEqual(yield* proposals, []);
+    // Nothing a user could edit or forget exists without the outcome.
+    assert.deepEqual(yield* savedContent, []);
     yield* sql`DROP TRIGGER lose_outcome`;
     yield* runner.extractRun({ threadId, runId, runOutcome: "completed" });
-    assert.deepEqual(yield* proposals, [snakeCase.content, testsCommand.content].toSorted());
-    assert.equal((yield* knowledge.status({ projectId })).assistedLearning?.lastRun?.proposed, 2);
-  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+    assert.deepEqual(yield* savedContent, [snakeCase.content, testsCommand.content].toSorted());
+    assert.equal((yield* knowledge.status({ projectId })).assistedLearning?.lastRun?.saved, 2);
+  }).pipe(Effect.provide(makeLayer(model.generate)));
 });
 
-it.effect("proposes nothing for a run another attempt finished while the model ran", () => {
+it.effect("saves nothing for a run another attempt finished while the model ran", () => {
   let finishElsewhere: Effect.Effect<void> = Effect.void;
   const generate: Generate = () =>
     Effect.suspend(() => finishElsewhere).pipe(Effect.as({ candidates: [snakeCase] }));
@@ -462,14 +538,13 @@ it.effect("proposes nothing for a run another attempt finished while the model r
         runOutcome: "completed",
         result: "ran",
         reason: null,
-        proposed: 0,
-        suggested: 0,
+        saved: 0,
         at: DateTime.formatIso(at),
       })
       .pipe(Effect.orDie);
     yield* runner.extractRun({ threadId, runId, runOutcome: "completed" });
-    assert.deepEqual((yield* knowledge.list({ projectId, status: "proposed" })).facts, []);
-  }).pipe(Effect.provide(makeLayer(generate, optedIn)));
+    assert.deepEqual((yield* knowledge.list({ projectId, status: "saved" })).facts, []);
+  }).pipe(Effect.provide(makeLayer(generate)));
 });
 
 it.effect("drops a candidate citing more messages than a fact may carry", () => {
@@ -488,18 +563,18 @@ it.effect("drops a candidate citing more messages than a fact may carry", () => 
     const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
     yield* runner.extractRun({ threadId, runId, runOutcome: "completed" });
     assert.deepEqual(
-      (yield* knowledge.list({ projectId, status: "proposed" })).facts.map((fact) => fact.content),
+      (yield* knowledge.list({ projectId, status: "saved" })).facts.map((fact) => fact.content),
       [testsCommand.content],
     );
     const lastRun = (yield* knowledge.status({ projectId })).assistedLearning?.lastRun;
     assert.deepEqual(
-      [lastRun?.result, lastRun?.proposed, lastRun?.reason],
+      [lastRun?.result, lastRun?.saved, lastRun?.reason],
       ["ran", 1, "1 candidate dropped: citations did not verify or exceeded the limit."],
     );
-  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  }).pipe(Effect.provide(makeLayer(model.generate)));
 });
 
-it.effect("records skipped and failed outcomes without proposing anything", () => {
+it.effect("records skipped and failed outcomes without saving anything", () => {
   const failing = scripted([
     new TextGenerationError({ operation: "generateKnowledgeCandidates", detail: "Rate limited." }),
   ]);
@@ -510,11 +585,11 @@ it.effect("records skipped and failed outcomes without proposing anything", () =
     yield* runner.extractRun({ threadId, runId, runOutcome: "completed" });
     const lastRun = (yield* knowledge.status({ projectId })).assistedLearning?.lastRun;
     assert.deepEqual([lastRun?.result, lastRun?.reason], ["failed", "Rate limited."]);
-    assert.deepEqual((yield* knowledge.list({ projectId, status: "proposed" })).facts, []);
-  }).pipe(Effect.provide(makeLayer(failing.generate, optedIn)));
+    assert.deepEqual((yield* knowledge.list({ projectId, status: "saved" })).facts, []);
+  }).pipe(Effect.provide(makeLayer(failing.generate)));
 });
 
-it.effect("skips a run whose project turned assisted learning off before it ran", () => {
+it.effect("skips a run whose project turned automatic memory off before it ran", () => {
   const model = scripted([{ candidates: [snakeCase] }]);
   return Effect.gen(function* () {
     yield* seedRun;
@@ -526,5 +601,11 @@ it.effect("skips a run whose project turned assisted learning off before it ran"
       (yield* knowledge.status({ projectId })).assistedLearning?.lastRun?.result,
       "skipped",
     );
-  }).pipe(Effect.provide(makeLayer(model.generate, {})));
+  }).pipe(
+    Effect.provide(
+      makeLayer(model.generate, {
+        projectSettingsOverrides: { [projectId]: { enableAssistedLearning: false } },
+      }),
+    ),
+  );
 });

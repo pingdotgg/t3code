@@ -23,7 +23,6 @@ const reactTests = [
   "src/components/ProjectFavicon.test.tsx",
   "src/components/ui/Dialog.android.test.tsx",
   "src/features/files/FileCodeRelationships.test.tsx",
-  "src/features/loom/ProjectLoomRouteScreen.test.tsx",
   "src/features/pull-requests/usePullRequestList.test.tsx",
   "src/features/pull-requests/usePullRequestLiveChecks.test.tsx",
   "src/components/ui/AppBar.android.test.tsx",

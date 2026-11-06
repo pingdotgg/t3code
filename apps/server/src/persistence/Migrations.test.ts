@@ -8,6 +8,8 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
+import ProjectLoomTimeIndexes from "./Migrations/075_ProjectLoomTimeIndexes.ts";
+import ProjectLoomBoundedReads from "./Migrations/077_ProjectLoomBoundedReads.ts";
 
 const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
 const newerMigrationId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
@@ -22,6 +24,8 @@ const correlationIndexMigration = [87, "DropOrchestrationEventCorrelationIndex"]
 const modelEvaluationMigration = [88, "ModelEvaluations"] as const;
 const delegatedRecoveryMigration = [89, "DelegatedRecoveryIndexes"] as const;
 const scheduledTaskThreadModeMigration = [90, "ScheduledTaskThreadMode"] as const;
+const dropProjectLoomIndexesMigration = [91, "DropProjectLoomIndexes"] as const;
+const savedLifecycleMigration = [92, "ProjectKnowledgeSavedLifecycle"] as const;
 
 it.effect("upgrades attempt receipts atomically and preserves distinct steering messages", () =>
   Effect.gen(function* () {
@@ -47,6 +51,8 @@ it.effect("upgrades attempt receipts atomically and preserves distinct steering 
       modelEvaluationMigration,
       delegatedRecoveryMigration,
       scheduledTaskThreadModeMigration,
+      dropProjectLoomIndexesMigration,
+      savedLifecycleMigration,
     ]);
     assert.deepStrictEqual(yield* sql`SELECT * FROM project_knowledge_deliveries`, before);
     yield* sql`INSERT INTO project_knowledge_deliveries (
@@ -62,6 +68,281 @@ it.effect("upgrades attempt receipts atomically and preserves distinct steering 
       ],
     );
     assert.deepStrictEqual(yield* runMigrations(), []);
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+);
+
+it.effect("rebuilds knowledge facts as saved or forgotten, atomically and in place", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* runMigrations({ toMigrationInclusive: 91 });
+    const insertFact = (fact: {
+      readonly rowid: number;
+      readonly id: string;
+      readonly status: string;
+      readonly origin: string;
+      readonly projectId?: string;
+      readonly supersedes?: string;
+      readonly supersededBy?: string;
+    }) => {
+      const forgotten = fact.status === "forgotten";
+      return sql`
+        INSERT INTO project_knowledge_facts (
+          rowid, id, project_id, status, revision, content, entities_json, tags_json, kind, trust,
+          retrieval_count, created_at, updated_at, forgotten_at, sources_json, origin_json,
+          supersedes_id, superseded_by_id
+        ) VALUES (
+          ${fact.rowid}, ${fact.id}, ${fact.projectId ?? "project"}, ${fact.status},
+          ${fact.rowid + 1}, ${forgotten ? null : `lifecycle word${fact.id}`}, '[]', '[]',
+          'decision', 0.65, ${fact.rowid * 2}, '2026-01-01T00:00:00.000Z',
+          '2026-02-02T00:00:00.000Z', ${forgotten ? "2026-03-03T00:00:00.000Z" : null},
+          ${forgotten ? "[]" : '[{"kind":"user"}]'}, ${fact.origin},
+          ${fact.supersedes ?? null}, ${fact.supersededBy ?? null}
+        )
+      `;
+    };
+    const user = '{"kind":"user"}';
+    const agent = '{"kind":"agent-client","sessionId":"session","label":"Agent"}';
+    const assisted = '{"kind":"assisted","threadId":"thread","runId":"run","runOutcome":"failed"}';
+    yield* insertFact({
+      rowid: 3,
+      id: "replaced",
+      status: "confirmed",
+      origin: user,
+      supersededBy: "replacer",
+    });
+    yield* insertFact({
+      rowid: 7,
+      id: "replacer",
+      status: "proposed",
+      origin: assisted,
+      supersedes: "replaced",
+    });
+    yield* insertFact({
+      rowid: 11,
+      id: "edited-pending",
+      status: "proposed",
+      origin: user,
+      supersedes: "target",
+    });
+    yield* insertFact({
+      rowid: 15,
+      id: "assisted-pending",
+      status: "proposed",
+      origin: assisted,
+      supersedes: "target",
+    });
+    yield* insertFact({ rowid: 19, id: "target", status: "confirmed", origin: agent });
+    yield* insertFact({
+      rowid: 23,
+      id: "dangling",
+      status: "confirmed",
+      origin: agent,
+      supersedes: "missing",
+    });
+    yield* insertFact({
+      rowid: 27,
+      id: "forgotten-pending",
+      status: "forgotten",
+      origin: agent,
+      supersedes: "target",
+    });
+    yield* insertFact({
+      rowid: 31,
+      id: "cross-project",
+      status: "proposed",
+      origin: agent,
+      projectId: "other",
+      supersedes: "foreign",
+    });
+    yield* insertFact({
+      rowid: 35,
+      id: "foreign",
+      status: "confirmed",
+      origin: user,
+      supersededBy: "cross-project",
+    });
+    yield* sql`
+      INSERT INTO project_knowledge_fact_history (
+        project_id, fact_id, revision, event, actor_json, sources_json, trust_after, created_at
+      ) VALUES ('project', 'target', 20, 'confirmed', ${user}, '[]', 0.65, '2026-02-02T00:00:00.000Z')
+    `;
+    yield* sql`
+      INSERT INTO project_knowledge_commands (
+        command_id, project_id, fact_id, request_digest, search_json
+      ) VALUES ('command', 'project', 'target', 'digest', '{"rootRequestId":"command"}')
+    `;
+    yield* sql`
+      INSERT INTO project_knowledge_assisted_runs (
+        run_id, project_id, thread_id, run_outcome, result, reason, proposed, suggested, completed_at
+      ) VALUES ('run', 'project', 'thread', 'failed', 'ran', 'kept', 2, 1, '2026-02-02T00:00:00.000Z')
+    `;
+    const facts = sql<Record<string, unknown>>`
+      SELECT rowid, * FROM project_knowledge_facts ORDER BY rowid
+    `;
+    const history = sql`SELECT * FROM project_knowledge_fact_history ORDER BY sequence`;
+    const commands = sql`SELECT * FROM project_knowledge_commands ORDER BY command_id`;
+    const before = yield* facts;
+    const historyBefore = yield* history;
+    const commandsBefore = yield* commands;
+    const schema = sql`SELECT name, sql FROM sqlite_master ORDER BY name`;
+    const schemaBefore = yield* schema;
+
+    yield* sql`CREATE VIEW project_knowledge_facts_saved AS SELECT 1`;
+    const failedSchema = yield* schema;
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(runMigrations())));
+    assert.deepStrictEqual(yield* facts, before);
+    assert.deepStrictEqual(yield* schema, failedSchema);
+    yield* sql`DROP VIEW project_knowledge_facts_saved`;
+    assert.deepStrictEqual(yield* schema, schemaBefore);
+
+    assert.deepStrictEqual(yield* runMigrations(), [savedLifecycleMigration]);
+
+    const cleared = new Set([
+      "edited-pending",
+      "assisted-pending",
+      "dangling",
+      "forgotten-pending",
+      "cross-project",
+    ]);
+    assert.deepStrictEqual(
+      yield* facts,
+      before.map((row) => ({
+        ...row,
+        status: row.status === "forgotten" ? "forgotten" : "saved",
+        supersedes_id: cleared.has(String(row.id)) ? null : row.supersedes_id,
+      })),
+    );
+    assert.deepStrictEqual(yield* history, historyBefore);
+    assert.deepStrictEqual(yield* commands, commandsBefore);
+    assert.deepStrictEqual(yield* sql`SELECT * FROM project_knowledge_assisted_runs`, [
+      {
+        run_id: "run",
+        project_id: "project",
+        thread_id: "thread",
+        run_outcome: "failed",
+        result: "ran",
+        reason: "kept",
+        saved: 2,
+        completed_at: "2026-02-02T00:00:00.000Z",
+      },
+    ]);
+    assert.deepStrictEqual(
+      yield* sql`
+        SELECT name FROM sqlite_master
+        WHERE tbl_name = 'project_knowledge_facts' AND type IN ('index', 'trigger')
+          AND name NOT LIKE 'sqlite_autoindex%'
+        ORDER BY name
+      `,
+      [
+        { name: "project_knowledge_delete" },
+        { name: "project_knowledge_facts_project" },
+        { name: "project_knowledge_insert" },
+        { name: "project_knowledge_update" },
+      ],
+    );
+
+    const matches = (term: string) =>
+      sql<{ id: string }>`
+        SELECT f.id FROM project_knowledge_fts
+        JOIN project_knowledge_facts f ON f.rowid = project_knowledge_fts.rowid
+        WHERE project_knowledge_fts MATCH ${term} ORDER BY f.id
+      `.pipe(Effect.map((rows) => rows.map((row) => row.id)));
+    assert.deepStrictEqual(yield* matches("wordtarget"), ["target"]);
+    assert.lengthOf(yield* matches("lifecycle"), 8);
+    yield* sql`UPDATE project_knowledge_facts SET content = 'renamed' WHERE id = 'target'`;
+    assert.deepStrictEqual(yield* matches("wordtarget"), []);
+    assert.deepStrictEqual(yield* matches("renamed"), ["target"]);
+    yield* sql`DELETE FROM project_knowledge_facts WHERE id = 'target'`;
+    assert.deepStrictEqual(yield* matches("renamed"), []);
+    yield* insertFact({ rowid: 40, id: "fresh", status: "saved", origin: user });
+    assert.deepStrictEqual(yield* matches("wordfresh"), ["fresh"]);
+
+    for (const status of ["proposed", "confirmed"]) {
+      assert.isTrue(
+        Exit.isFailure(
+          yield* Effect.exit(insertFact({ rowid: 50, id: `old-${status}`, status, origin: user })),
+        ),
+      );
+      assert.isTrue(
+        Exit.isFailure(
+          yield* Effect.exit(
+            sql`UPDATE project_knowledge_facts SET status = ${status} WHERE id = 'fresh'`,
+          ),
+        ),
+      );
+    }
+    assert.isTrue(
+      Exit.isFailure(
+        yield* Effect.exit(
+          sql`UPDATE project_knowledge_assisted_runs SET saved = -1 WHERE run_id = 'run'`,
+        ),
+      ),
+    );
+    assert.deepStrictEqual(yield* runMigrations(), []);
+
+    // The published preview recorded this same saved schema at 91, before Loom cleanup.
+    const savedFacts = yield* facts;
+    const savedHistory = yield* history;
+    const savedCommands = yield* commands;
+    const savedRuns = yield* sql`SELECT * FROM project_knowledge_assisted_runs`;
+    const savedSchema = yield* schema;
+    yield* ProjectLoomTimeIndexes;
+    yield* ProjectLoomBoundedReads;
+    yield* previewLoomIndexes;
+    yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 91`;
+    yield* sql`UPDATE effect_sql_migrations SET migration_id = 91 WHERE migration_id = 92`;
+    const migrations = sql<{
+      readonly migration_id: number;
+      readonly name: string;
+      readonly created_at: string;
+    }>`SELECT migration_id, name, created_at FROM effect_sql_migrations ORDER BY migration_id`;
+    const previewHistory = yield* migrations;
+    const previewSchema = yield* schema;
+
+    yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (93, 'UnknownPreview')`;
+    const unknownHistory = yield* migrations;
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(runMigrations())));
+    assert.deepStrictEqual(yield* migrations, unknownHistory);
+    assert.deepStrictEqual(yield* schema, previewSchema);
+    yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 93`;
+
+    yield* sql`ALTER TABLE project_knowledge_assisted_runs RENAME COLUMN saved TO proposed`;
+    const incompleteSchema = yield* schema;
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(runMigrations())));
+    assert.deepStrictEqual(yield* migrations, previewHistory);
+    assert.deepStrictEqual(yield* schema, incompleteSchema);
+    yield* sql`ALTER TABLE project_knowledge_assisted_runs RENAME COLUMN proposed TO saved`;
+
+    yield* sql`
+      CREATE TRIGGER reject_saved_preview_receipt BEFORE UPDATE ON effect_sql_migrations
+      WHEN new.migration_id = 92 BEGIN
+        SELECT RAISE(ABORT, 'receipt update failed');
+      END
+    `;
+    const rollbackSchema = yield* schema;
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(runMigrations())));
+    assert.deepStrictEqual(yield* migrations, previewHistory);
+    assert.deepStrictEqual(yield* schema, rollbackSchema);
+    yield* sql`DROP TRIGGER reject_saved_preview_receipt`;
+
+    assert.deepStrictEqual(yield* runMigrations(), [dropProjectLoomIndexesMigration]);
+    assert.deepStrictEqual(yield* facts, savedFacts);
+    assert.deepStrictEqual(yield* history, savedHistory);
+    assert.deepStrictEqual(yield* commands, savedCommands);
+    assert.deepStrictEqual(yield* sql`SELECT * FROM project_knowledge_assisted_runs`, savedRuns);
+    assert.deepStrictEqual(yield* schema, savedSchema);
+    const reconciledHistory = yield* migrations;
+    assert.deepStrictEqual(
+      reconciledHistory.map(({ migration_id, name }) => [migration_id, name] as const),
+      migrationManifest,
+    );
+    assert.deepStrictEqual(
+      reconciledHistory.find(({ migration_id }) => migration_id === 92),
+      { ...previewHistory.find(({ migration_id }) => migration_id === 91), migration_id: 92 },
+    );
+    assert.deepStrictEqual(yield* matches("wordfresh"), ["fresh"]);
+    assert.deepStrictEqual(yield* runMigrations(), []);
+    assert.deepStrictEqual(yield* migrations, reconciledHistory);
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
 
@@ -175,12 +456,20 @@ const assertConsolidatedSchema = Effect.gen(function* () {
   `;
   for (const name of [
     "orchestration_v2_projection_turn_items_stop_request_idx",
-    "orchestration_v2_projection_turn_items_run_updated_idx",
-    "orchestration_v2_projection_turn_items_run_command_at_idx",
-    "orchestration_v2_projection_turn_items_run_command_updated_idx",
     "orchestration_v2_projection_turn_items_waiting_link_idx",
+    "orchestration_v2_projection_threads_project_linked_idx",
   ]) {
     assert.ok(indexes.some((index) => index.name === name));
+  }
+  for (const name of [
+    "orchestration_v2_projection_runs_thread_requested_idx",
+    "orchestration_v2_projection_runs_thread_completed_idx",
+    "orchestration_v2_projection_checkpoints_thread_captured_idx",
+    "orchestration_v2_projection_turn_items_run_command_updated_idx",
+    "orchestration_v2_projection_turn_items_run_updated_idx",
+    "orchestration_v2_projection_turn_items_run_command_at_idx",
+  ]) {
+    assert.notOk(indexes.some((index) => index.name === name));
   }
   const peerColumns = yield* sql<{
     readonly name: string;
@@ -385,6 +674,8 @@ describe("runMigrations", () => {
             modelEvaluationMigration,
             delegatedRecoveryMigration,
             scheduledTaskThreadModeMigration,
+            dropProjectLoomIndexesMigration,
+            savedLifecycleMigration,
           ],
         );
         yield* assertConsolidatedSchema;
@@ -426,6 +717,8 @@ describe("runMigrations", () => {
           modelEvaluationMigration,
           delegatedRecoveryMigration,
           scheduledTaskThreadModeMigration,
+          dropProjectLoomIndexesMigration,
+          savedLifecycleMigration,
         ],
       );
       assert.deepStrictEqual(yield* runMigrations(), [
@@ -440,6 +733,8 @@ describe("runMigrations", () => {
         modelEvaluationMigration,
         delegatedRecoveryMigration,
         scheduledTaskThreadModeMigration,
+        dropProjectLoomIndexesMigration,
+        savedLifecycleMigration,
       ]);
       yield* assertConsolidatedSchema;
       assert.deepStrictEqual(
@@ -476,6 +771,8 @@ describe("runMigrations", () => {
           modelEvaluationMigration,
           delegatedRecoveryMigration,
           scheduledTaskThreadModeMigration,
+          dropProjectLoomIndexesMigration,
+          savedLifecycleMigration,
         ]);
 
         yield* assertConsolidatedSchema;
@@ -582,6 +879,8 @@ describe("runMigrations", () => {
         modelEvaluationMigration,
         delegatedRecoveryMigration,
         scheduledTaskThreadModeMigration,
+        dropProjectLoomIndexesMigration,
+        savedLifecycleMigration,
       ]);
       yield* assertConsolidatedSchema;
       assert.deepStrictEqual(yield* sql`SELECT secret_name, fenced FROM peer_environment_links`, [
@@ -637,6 +936,8 @@ describe("runMigrations", () => {
           modelEvaluationMigration,
           delegatedRecoveryMigration,
           scheduledTaskThreadModeMigration,
+          dropProjectLoomIndexesMigration,
+          savedLifecycleMigration,
         ]);
         assert.deepStrictEqual(yield* history, migrationManifest);
         assert.deepStrictEqual(
@@ -697,6 +998,8 @@ describe("runMigrations", () => {
           modelEvaluationMigration,
           delegatedRecoveryMigration,
           scheduledTaskThreadModeMigration,
+          dropProjectLoomIndexesMigration,
+          savedLifecycleMigration,
         ]);
         assert.deepStrictEqual(yield* history, migrationManifest);
         assert.deepStrictEqual(yield* sql`SELECT * FROM cross_environment_launches`, routes);

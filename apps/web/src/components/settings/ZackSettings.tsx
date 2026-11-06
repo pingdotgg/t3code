@@ -63,21 +63,26 @@ function AssistedLearningRow() {
       description={
         unavailableReason ??
         (isProjectScope
-          ? "After each run in this project, your text generation model proposes up to three cited facts for review in Project memory. Each run costs one model call."
-          : "After each run, your text generation model proposes up to three cited facts for review in Project memory. Each run costs one model call. Projects can override it.")
+          ? "After each run in this project, your text generation model saves up to three cited facts to Project memory. Each run costs one model call."
+          : "After each run, your text generation model saves up to three cited facts to Project memory. Each run costs one model call. Projects can override it.")
       }
       resetAction={
-        unavailableReason === null && settings.enableAssistedLearning ? (
+        unavailableReason === null &&
+        settings.enableAssistedLearning !== DEFAULT_SERVER_SETTINGS.enableAssistedLearning ? (
           <SettingResetButton
-            label="assisted learning"
-            tooltip="Reset assisted learning to off"
-            onClick={() => updateSettings({ enableAssistedLearning: false })}
+            label="automatic memory"
+            tooltip="Reset automatic memory to on"
+            onClick={() =>
+              updateSettings({
+                enableAssistedLearning: DEFAULT_SERVER_SETTINGS.enableAssistedLearning,
+              })
+            }
           />
         ) : null
       }
       control={
         <Switch
-          aria-label="Suggest facts from finished runs"
+          aria-label="Save facts from finished runs"
           disabled={unavailableReason !== null}
           mixed={mixed}
           checked={mixed ? false : settings.enableAssistedLearning}

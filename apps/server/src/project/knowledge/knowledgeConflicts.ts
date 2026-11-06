@@ -26,7 +26,8 @@ function containsStateChangeCue(text: string): boolean {
   return STATE_CHANGE_CUES.some((cue) => lower.includes(cue));
 }
 
-const normalize = (text: string) => text.split(/\s+/).filter(Boolean).join(" ").toLowerCase();
+export const normalizeFactContent = (text: string) =>
+  text.split(/\s+/).filter(Boolean).join(" ").toLowerCase();
 
 /** Dice coefficient over the same tokens recall uses. */
 function lexicalSimilarity(left: string, right: string): number {
@@ -53,7 +54,7 @@ export function conflictHints(
       revision: candidate.revision,
       excerpt: candidate.content.slice(0, 320),
     };
-    if (normalize(content) === normalize(candidate.content)) {
+    if (normalizeFactContent(content) === normalizeFactContent(candidate.content)) {
       hints.push({ ...base, kind: "duplicate", similarity: 1 });
       continue;
     }

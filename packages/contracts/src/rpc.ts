@@ -8,7 +8,6 @@ import {
   ConversationSummaryListInput,
   ConversationSummaryRead,
 } from "./conversationSummaries.ts";
-import { LoomWindow, LoomWindowInput, ProjectLoomError } from "./projectLoom.ts";
 import {
   ModelEvaluationClearInput,
   ModelEvaluationError,
@@ -484,7 +483,6 @@ export const WS_METHODS = {
   conversationSummariesExpand: "conversationSummaries.expand",
   modelEvaluationsList: "modelEvaluations.list",
   modelEvaluationsClear: "modelEvaluations.clear",
-  projectReadLoomWindow: "project.readLoomWindow",
   projectsList: "projects.list",
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
@@ -2179,14 +2177,6 @@ export const WsProjectKnowledgeRpcGroup = RpcGroup.make(
   WsProjectKnowledgeStatusRpc,
 ).middleware(RpcScopeAuthorization);
 
-export const WsProjectLoomRpcGroup = RpcGroup.make(
-  Rpc.make(WS_METHODS.projectReadLoomWindow, {
-    payload: LoomWindowInput,
-    success: LoomWindow,
-    error: Schema.Union([ProjectLoomError, EnvironmentAuthorizationError]),
-  }),
-).middleware(RpcScopeAuthorization);
-
 // Transport opt-in: old protocol-2 clients cannot decode tool/range sources or follow
 // intra-source text cursors. MCP and the domain service always use the current format.
 const ConversationSummaryRpcSourceFormat = {
@@ -2476,5 +2466,4 @@ export const WsRpcGroup = RpcGroup.make(
   .merge(WsConversationSummariesRpcGroup)
   .merge(WsModelEvaluationsRpcGroup)
   .merge(WsExternalHistoryRpcGroup)
-  .merge(WsProjectLoomRpcGroup)
   .merge(WsProjectCodeRpcGroup);

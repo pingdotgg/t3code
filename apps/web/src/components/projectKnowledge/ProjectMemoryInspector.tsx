@@ -22,7 +22,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { projectKnowledge } from "../../state/projectKnowledge";
 import { ProjectFactHistory, ProjectFactRelations } from "./ProjectFactDetail";
 import type { EditableFact } from "./ProjectFactEditor";
-import { factStatusBadge, isPendingReplacement, shortFactId } from "./projectMemoryLabels";
+import { factStatusBadge, shortFactId } from "./projectMemoryLabels";
 
 export type SourceRef = {
   readonly threadId: KnowledgeMessageRef["threadId"];
@@ -95,11 +95,7 @@ export function FactInspector(props: {
   readonly canMutate: boolean;
   readonly busy: boolean;
   readonly onEdit: (fact: EditableFact, supersede: boolean) => void;
-  readonly onRevise: (
-    fact: ProjectFact,
-    action: "confirm" | "forget" | "feedback",
-    helpful?: boolean,
-  ) => void;
+  readonly onRevise: (fact: ProjectFact, action: "forget" | "feedback", helpful?: boolean) => void;
   readonly onOpenSource: (source: KnowledgeMessageRef) => void;
   readonly onOpenFact: (factId: ProjectFactId) => void;
   readonly onBackToResults: () => void;
@@ -156,9 +152,7 @@ export function FactInspector(props: {
             <Badge variant="secondary">Superseded by {shortFactId(fact.supersededBy)}</Badge>
           ) : null}
           {fact.supersedes ? (
-            <Badge variant="outline">
-              {`${isPendingReplacement(fact) ? "Would replace" : "Supersedes"} ${shortFactId(fact.supersedes)}`}
-            </Badge>
+            <Badge variant="outline">Supersedes {shortFactId(fact.supersedes)}</Badge>
           ) : null}
         </div>
       </div>
@@ -174,19 +168,9 @@ export function FactInspector(props: {
           ))}
         </ul>
       ) : null}
-      {isPendingReplacement(fact) && fact.supersedes ? (
-        <p className="text-sm">
-          Confirming replaces fact {shortFactId(fact.supersedes)}; forgetting leaves it as it is.
-        </p>
-      ) : null}
       {fact.status !== "forgotten" ? (
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap gap-2">
-            {fact.status === "proposed" && !superseded ? (
-              <Button disabled={locked} size="sm" onClick={() => props.onRevise(fact, "confirm")}>
-                Confirm
-              </Button>
-            ) : null}
             {/* The server rejects revisions of a superseded fact; its replacement is the one to change. */}
             {!superseded ? (
               <Button

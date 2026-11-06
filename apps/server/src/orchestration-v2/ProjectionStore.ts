@@ -6254,6 +6254,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT secret.payload_json
                 -- Keep runs outermost so completed history is never scanned for a pending secret.
                 FROM orchestration_v2_projection_runs r
+                  INDEXED BY orchestration_v2_projection_runs_thread_status_idx
                 CROSS JOIN orchestration_v2_projection_turn_items secret
                   INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx
                 WHERE r.thread_id = t.thread_id

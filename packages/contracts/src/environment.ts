@@ -81,7 +81,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   projectKnowledgeHistory: Schema.optionalKey(Schema.Boolean),
   /** projectKnowledge.readDeliveries and the recorded copy delivered with sent messages. */
   projectKnowledgeDeliveries: Schema.optionalKey(Schema.Boolean),
-  /** Assisted proposals from settled runs, the origin list filter and status.assistedLearning. */
+  /** Automatic facts from settled runs, the origin list filter and status.assistedLearning. */
   projectKnowledgeAssistedLearning: Schema.optionalKey(Schema.Boolean),
   projectCode: Schema.optionalKey(Schema.Boolean),
   /** Extended queries are absent from servers that only advertise the original code index. */
@@ -97,8 +97,6 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Ranged/tool sources, literal summary search and intra-source expansion cursors. */
   conversationSummarySourceFormat: Schema.optionalKey(Schema.Literal(2)),
   externalHistory: Schema.optionalKey(Schema.Literal(1)),
-  /** project.readLoomWindow and the project Loom view. */
-  projectLoom: Schema.optionalKey(Schema.Boolean),
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
   attachmentUploads: Schema.optionalKey(Schema.Boolean),

@@ -126,7 +126,7 @@ export function ProjectFactInspector(props: {
   readonly onReadSource: (ref: KnowledgeMessageRef) => void;
   readonly onOpenFact: OpenFact;
   readonly onEdit: (mode: "edit" | "supersede") => void;
-  readonly onRevise: (action: "confirm" | "forget") => void;
+  readonly onForget: () => void;
   readonly onFeedback: (helpful: boolean) => void;
   readonly onDismissHints: () => void;
 }) {
@@ -162,13 +162,6 @@ export function ProjectFactInspector(props: {
         <AppText className="text-xs text-foreground-muted">
           Trust signal {fact.trust.toFixed(2)} · revision {fact.revision}
         </AppText>
-        {fact.status === "proposed" &&
-        fact.origin.kind === "assisted" &&
-        fact.supersedes != null ? (
-          <AppText className="text-xs">
-            Confirming replaces fact {fact.supersedes.slice(0, 8)}; forgetting leaves it as it is.
-          </AppText>
-        ) : null}
       </View>
 
       <View className="gap-2">
@@ -202,14 +195,6 @@ export function ProjectFactInspector(props: {
 
       {active ? (
         <View className="flex-row flex-wrap gap-2">
-          {fact.status === "proposed" && !superseded ? (
-            <Button
-              label="Confirm"
-              tone="secondary"
-              disabled={!mutable}
-              onPress={() => props.onRevise("confirm")}
-            />
-          ) : null}
           {!superseded ? (
             <Button
               label="Edit"
@@ -238,12 +223,7 @@ export function ProjectFactInspector(props: {
             disabled={!mutable}
             onPress={() => props.onFeedback(false)}
           />
-          <Button
-            label="Forget"
-            tone="danger"
-            disabled={!mutable}
-            onPress={() => props.onRevise("forget")}
-          />
+          <Button label="Forget" tone="danger" disabled={!mutable} onPress={props.onForget} />
         </View>
       ) : null}
       {!props.canMutate && active ? (
@@ -358,9 +338,9 @@ export function KnowledgeHealthRow(props: {
   return (
     <View className="gap-1">
       <AppText className="text-xs text-foreground-muted">
-        {status.counts.confirmed} confirmed · {status.counts.proposed} proposed ·{" "}
-        {status.counts.superseded} superseded · {status.belowRecallThreshold} below recall ·{" "}
-        {status.feedback.helpful} helpful · {status.feedback.unhelpful} unhelpful
+        {status.counts.saved} saved · {status.counts.superseded} superseded ·{" "}
+        {status.belowRecallThreshold} below recall · {status.feedback.helpful} helpful ·{" "}
+        {status.feedback.unhelpful} unhelpful
       </AppText>
       {lost > 0 ? (
         <Button

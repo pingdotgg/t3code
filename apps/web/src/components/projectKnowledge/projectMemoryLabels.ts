@@ -10,13 +10,8 @@ export const selectionKey = (selection: KnowledgeSelection) =>
   selection.kind === "fact" ? factRowKey(selection.factId) : messageRowKey(selection);
 
 const STATUS_BADGE = {
-  confirmed: { label: "Confirmed", variant: "success" },
-  proposed: { label: "Proposed", variant: "info" },
+  saved: { label: "Saved", variant: "success" },
   forgotten: { label: "Forgotten", variant: "secondary" },
 } as const;
 
 export const factStatusBadge = (fact: ProjectFact) => STATUS_BADGE[fact.status];
-
-// A pending assisted replacement names its target before the target is marked superseded.
-export const isPendingReplacement = (fact: ProjectFact) =>
-  fact.status === "proposed" && fact.origin.kind === "assisted" && fact.supersedes != null;

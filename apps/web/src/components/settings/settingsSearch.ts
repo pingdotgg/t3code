@@ -782,12 +782,10 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "assisted-learning",
-    title: "Suggest facts from finished runs",
+    title: "Save facts from finished runs",
     to: "/settings/labs",
     scope: "project-defaults",
-    searchTerms: [
-      "zack assisted learning project memory knowledge facts extract suggestions model",
-    ],
+    searchTerms: ["zack automatic assisted learning project memory knowledge facts extract model"],
   },
   {
     id: "conversation-summaries",
