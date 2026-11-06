@@ -17,10 +17,13 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { readGrokAccount, readGrokCredential } from "./usageLimits.ts";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
@@ -292,6 +295,72 @@ function displayNameFromGrokModelSlug(slug: string): string {
     .join(" ");
 }
 
+const decodeUnknownJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+
+const readGrokCachedModels = Effect.fn("GrokProviderStatus.readGrokCachedModels")(
+  function* (environment: NodeJS.ProcessEnv) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home =
+      environment.GROK_HOME?.trim() ||
+      path.join(environment.HOME || environment.USERPROFILE || "", ".grok");
+    const cachePath = path.join(home, "models_cache.json");
+    const content = yield* fs.readFileString(cachePath).pipe(
+      Effect.catchTags({
+        PlatformError: () => Effect.succeed("{}"),
+      }),
+    );
+    const parsed = Option.getOrUndefined(decodeUnknownJson(content)) as
+      | { models?: unknown }
+      | undefined;
+    if (
+      parsed &&
+      typeof parsed.models === "object" &&
+      parsed.models !== null &&
+      !Array.isArray(parsed.models)
+    ) {
+      const models: ServerProviderModel[] = [];
+      const modelMap = parsed.models as Record<string, unknown>;
+      const keys = Object.keys(modelMap);
+      for (let i = 0; i < keys.length; i++) {
+        const slug = keys[i];
+        if (!slug) continue;
+        models.push({
+          slug,
+          name: displayNameFromGrokModelSlug(slug),
+          isCustom: false,
+          ...(i === 0 ? { isDefault: true } : {}),
+          capabilities: EMPTY_CAPABILITIES,
+        });
+      }
+      return models;
+    }
+    return [];
+  },
+  Effect.orElseSucceed(() => []),
+);
+
+const readGrokCachedVersion = Effect.fn("GrokProviderStatus.readGrokCachedVersion")(
+  function* (environment: NodeJS.ProcessEnv) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home =
+      environment.GROK_HOME?.trim() ||
+      path.join(environment.HOME || environment.USERPROFILE || "", ".grok");
+    const cachePath = path.join(home, "models_cache.json");
+    const content = yield* fs.readFileString(cachePath).pipe(
+      Effect.catchTags({
+        PlatformError: () => Effect.succeed("{}"),
+      }),
+    );
+    const parsed = Option.getOrUndefined(decodeUnknownJson(content)) as
+      | { grok_version?: unknown }
+      | undefined;
+    return typeof parsed?.grok_version === "string" ? parsed.grok_version : null;
+  },
+  Effect.orElseSucceed(() => null),
+);
+
 const runGrokCliCommand = Effect.fn("GrokProviderStatus.runGrokCliCommand")(function* (
   grokSettings: GrokSettings,
   args: ReadonlyArray<string>,
@@ -401,7 +470,11 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom
+  | ChildProcessSpawner.ChildProcessSpawner
+  | SecureRandom.SecureRandom
+  | FileSystem.FileSystem
+  | Path.Path
+  | HttpClient.HttpClient
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = grokModelsFromSettings(grokSettings.customModels);
@@ -436,6 +509,54 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     yield* Effect.logWarning("Grok CLI health check failed.", {
       errorTag: error._tag,
     });
+
+    const credentialOption = yield* Effect.option(
+      readGrokCredential(probeEnvironment).pipe(Effect.timeout("5 seconds")),
+    );
+    const credential = Option.getOrUndefined(credentialOption);
+    const hasCachedAuth = Boolean(credential?.key);
+
+    if (hasCachedAuth || apiKey) {
+      const email = credential?.email?.trim() || undefined;
+      const auth: ServerProviderAuth = apiKey
+        ? { status: "authenticated", type: "api_key", label: "xAI API key" }
+        : {
+            status: "authenticated",
+            type: "cached_token",
+            label: "Grok account",
+            ...(email ? { email } : {}),
+          };
+
+      const cachedModelsList = yield* readGrokCachedModels(probeEnvironment);
+      const models =
+        cachedModelsList.length > 0
+          ? grokModelsFromSettings(grokSettings.customModels, cachedModelsList)
+          : fallbackModels;
+      const cachedVersion = yield* readGrokCachedVersion(probeEnvironment);
+
+      const accountOption = yield* Effect.option(
+        readGrokAccount(probeEnvironment).pipe(Effect.timeout("5 seconds")),
+      );
+      const account = Option.getOrUndefined(accountOption);
+
+      return buildServerProvider({
+        presentation: GROK_PRESENTATION,
+        enabled: grokSettings.enabled,
+        checkedAt,
+        models,
+        probe: {
+          installed: !isCommandMissingCause(error),
+          version: isCommandMissingCause(error) ? null : cachedVersion,
+          status: isCommandMissingCause(error) ? "warning" : "error",
+          auth,
+          ...(account?.usageLimits ? { usageLimits: account.usageLimits } : {}),
+          message: isCommandMissingCause(error)
+            ? "Grok account is linked, but Grok CLI (`grok`) is not installed or not on PATH."
+            : "Failed to execute Grok CLI health check.",
+        },
+      });
+    }
+
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
@@ -503,13 +624,29 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     }
   }
 
-  const auth: ServerProviderAuth = apiKey
+  let auth: ServerProviderAuth = apiKey
     ? { status: "authenticated", type: "api_key", label: "xAI API key" }
     : cliModels.authenticated === true
       ? { status: "authenticated", type: "cached_token", label: "Grok account" }
       : cliModels.authenticated === false
         ? { status: "unauthenticated" }
         : { status: "unknown" };
+
+  if (!apiKey && cliModels.authenticated === null) {
+    const credentialOption = yield* Effect.option(
+      readGrokCredential(probeEnvironment).pipe(Effect.timeout("5 seconds")),
+    );
+    const credential = Option.getOrUndefined(credentialOption);
+    if (credential?.key) {
+      const email = credential.email?.trim() || undefined;
+      auth = {
+        status: "authenticated",
+        type: "cached_token",
+        label: "Grok account",
+        ...(email ? { email } : {}),
+      };
+    }
+  }
 
   const skills = yield* discoverGrokSkills(grokSettings, environment, cwd).pipe(
     Effect.tapError((cause) => Effect.logDebug("Grok skill discovery failed.", { cause })),

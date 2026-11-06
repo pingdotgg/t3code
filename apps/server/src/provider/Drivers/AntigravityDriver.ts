@@ -17,6 +17,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -41,6 +42,7 @@ import {
   isAntigravitySignInRequiredError,
   prepareAntigravityProfile,
   resolveAntigravityInstanceDirectories,
+  syncAntigravityGlobalCredentials,
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
 import {
@@ -76,6 +78,21 @@ import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./Antigra
 const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
+
+const AntigravityTokenSchema = Schema.Struct({
+  client_id: Schema.String,
+  refresh_token: Schema.String,
+});
+const decodeAntigravityToken = Schema.decodeUnknownOption(
+  Schema.fromJsonString(AntigravityTokenSchema),
+);
+
+const AntigravityAccountsSchema = Schema.Struct({
+  active: Schema.String,
+});
+const decodeAntigravityAccounts = Schema.decodeUnknownOption(
+  Schema.fromJsonString(AntigravityAccountsSchema),
+);
 
 export type AntigravityDriverEnv =
   | AntigravityInstallation.AntigravityInstallation
@@ -359,10 +376,16 @@ export const AntigravityDriver: ProviderDriver<
       makeRuntime: makeDisposableRuntime,
       // A new sign-in may be another account; drop any in-flight quota read first.
       onAuthenticated: (started, runtime) =>
-        Effect.suspend(() => provider.onSignedIn).pipe(
-          Effect.andThen(publishCatalog(started, runtime)),
-        ),
-      onSignedOut: Effect.suspend(() => provider.onSignedOut),
+        fileSystem
+          .remove(path.join(profileDirectory, ".signed_out"))
+          .pipe(
+            Effect.ignore,
+            Effect.andThen(Effect.suspend(() => provider.onSignedIn)),
+            Effect.andThen(publishCatalog(started, runtime)),
+          ),
+      onSignedOut: fileSystem
+        .writeFileString(path.join(profileDirectory, ".signed_out"), "signed_out")
+        .pipe(Effect.ignore, Effect.andThen(Effect.suspend(() => provider.onSignedOut))),
       usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
     });
 
@@ -414,12 +437,126 @@ export const AntigravityDriver: ProviderDriver<
       Effect.provideService(Digest.Digest, digest),
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
+    const probeAuth = Effect.gen(function* () {
+      switch (auth.authMethod) {
+        case "gemini-api-key": {
+          const authenticated = Boolean(auth.apiKey && auth.apiKey.trim().length > 0);
+          return {
+            authenticated,
+            type: "gemini-api-key",
+            label: antigravityAuthLabel("gemini-api-key"),
+          };
+        }
+        case "agent-platform": {
+          const authenticated = Boolean(
+            (auth.apiKey && auth.apiKey.trim().length > 0) ||
+            (auth.gcpProject &&
+              auth.gcpProject.trim().length > 0 &&
+              auth.gcpLocation &&
+              auth.gcpLocation.trim().length > 0),
+          );
+          return {
+            authenticated,
+            type: "agent-platform",
+            label: antigravityAuthLabel("agent-platform"),
+          };
+        }
+        case "oauth-personal":
+        case "oauth-business": {
+          const isSignedOut = yield* fileSystem
+            .exists(path.join(profileDirectory, ".signed_out"))
+            .pipe(Effect.orElseSucceed(() => false));
+          if (!isSignedOut) {
+            yield* syncAntigravityGlobalCredentials({ profileDirectory, userHome }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.ignore,
+            );
+          }
+          const profileTokenPath = path.join(profileDirectory, "antigravity-acp", "acp_token.json");
+          const userTokenPath = path.join(userHome, ".gemini", "antigravity-acp", "acp_token.json");
+          const profileAccountsPath = path.join(profileDirectory, "google_accounts.json");
+          const userAccountsPath = path.join(userHome, ".gemini", "google_accounts.json");
+
+          let tokenPath: string | null = null;
+          if (yield* fileSystem.exists(profileTokenPath).pipe(Effect.orElseSucceed(() => false))) {
+            tokenPath = profileTokenPath;
+          } else if (
+            !isSignedOut &&
+            (yield* fileSystem.exists(userTokenPath).pipe(Effect.orElseSucceed(() => false)))
+          ) {
+            tokenPath = userTokenPath;
+          }
+
+          if (!tokenPath) {
+            return isSignedOut
+              ? {
+                  authenticated: false,
+                  type: auth.authMethod,
+                  label: antigravityAuthLabel(auth.authMethod),
+                }
+              : undefined;
+          }
+
+          const tokenContent = yield* fileSystem
+            .readFileString(tokenPath)
+            .pipe(Effect.orElseSucceed(() => ""));
+          const parsedToken = Option.getOrUndefined(decodeAntigravityToken(tokenContent));
+          const hasValidToken = Boolean(
+            parsedToken &&
+            parsedToken.client_id.trim().length > 0 &&
+            parsedToken.refresh_token.trim().length > 0,
+          );
+
+          if (!hasValidToken) {
+            return {
+              authenticated: false,
+              type: auth.authMethod,
+              label: antigravityAuthLabel(auth.authMethod),
+            };
+          }
+
+          let email: string | undefined = undefined;
+          let accountsPath: string | null = null;
+          if (
+            yield* fileSystem.exists(profileAccountsPath).pipe(Effect.orElseSucceed(() => false))
+          ) {
+            accountsPath = profileAccountsPath;
+          } else if (
+            yield* fileSystem.exists(userAccountsPath).pipe(Effect.orElseSucceed(() => false))
+          ) {
+            accountsPath = userAccountsPath;
+          }
+
+          if (accountsPath) {
+            const accountsContent = yield* fileSystem
+              .readFileString(accountsPath)
+              .pipe(Effect.orElseSucceed(() => ""));
+            const parsedAccounts = Option.getOrUndefined(
+              decodeAntigravityAccounts(accountsContent),
+            );
+            if (parsedAccounts && parsedAccounts.active.trim().length > 0) {
+              email = parsedAccounts.active.trim();
+            }
+          }
+
+          return {
+            authenticated: true,
+            type: auth.authMethod,
+            label: antigravityAuthLabel(auth.authMethod),
+            ...(email ? { email } : {}),
+          };
+        }
+      }
+    });
+
     const provider = yield* makeAntigravityProvider(settings, {
       stampIdentity: classifyModels,
       probe,
       probeUsage: usage.probe,
       clearUsage: usage.clear,
       auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
+      probeAuth,
       supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),

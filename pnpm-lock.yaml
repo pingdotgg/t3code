@@ -846,6 +846,9 @@ importers:
       '@napi-rs/keyring':
         specifier: ^1.3.0
         version: 1.3.0
+      '@t3tools/client-runtime':
+        specifier: workspace:*
+        version: link:../../packages/client-runtime
       '@t3tools/provider-acp':
         specifier: workspace:*
         version: link:../../packages/provider-acp

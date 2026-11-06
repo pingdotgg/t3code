@@ -910,7 +910,7 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
 
-    it.effect("keeps git when PATH has another git or the host is not macOS", () =>
+    it.effect("keeps git when PATH has another git or resolves to Linux git", () =>
       Effect.gen(function* () {
         const homebrew = setup({ gitOnPath: "/opt/homebrew/bin/git", xcrunGit: XCODE_GIT });
         expect(yield* homebrew.resolve).toBe("git");
@@ -962,6 +962,52 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
         shell: false,
       });
     }),
+  );
+
+  it.effect("resolves relative PATH candidates against the supplied child cwd", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const platform = yield* HostProcess.Platform;
+        const dirA = yield* fs.makeTempDirectoryScoped({ prefix: "t3-spawn-cwd-a-" });
+        const dirB = yield* fs.makeTempDirectoryScoped({ prefix: "t3-spawn-cwd-b-" });
+        const binDirA = path.join(dirA, "node_modules", ".bin");
+        const binDirB = path.join(dirB, "node_modules", ".bin");
+        yield* fs.makeDirectory(binDirA, { recursive: true });
+        yield* fs.makeDirectory(binDirB, { recursive: true });
+        const binaryName = platform === "win32" ? "opencode.exe" : "opencode";
+        const exeA = path.join(binDirA, binaryName);
+        const exeB = path.join(binDirB, binaryName);
+        yield* fs.writeFileString(exeA, "#!/bin/sh\n");
+        yield* fs.writeFileString(exeB, "#!/bin/sh\n");
+        if (platform !== "win32") {
+          yield* fs.chmod(exeA, 0o755);
+          yield* fs.chmod(exeB, 0o755);
+        }
+
+        const cache = new Map();
+        const env = {
+          PATH: path.join("node_modules", ".bin"),
+          PATHEXT: ".EXE",
+          HOME: dirA,
+          LOCALAPPDATA: dirA,
+          APPDATA: dirA,
+        };
+
+        const resolvedA = yield* resolveSpawnCommand(binaryName, ["--version"], {
+          env,
+          cwd: dirA,
+        }).pipe(Effect.provideService(CommandResolutionCache, cache));
+        const resolvedB = yield* resolveSpawnCommand(binaryName, ["--version"], {
+          env,
+          cwd: dirB,
+        }).pipe(Effect.provideService(CommandResolutionCache, cache));
+
+        expect(resolvedA.command).toBe(exeA);
+        expect(resolvedB.command).toBe(exeB);
+      }),
+    ),
   );
 });
 

@@ -74,12 +74,165 @@ export type SpawnExecutableResolver = (
   command: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
+  cwd?: string,
 ) => string | undefined;
+
+function resolveWellKnownToolCandidate(
+  command: string,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+  isExecutable: (candidate: string) => boolean,
+): string | undefined {
+  const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
+  const baseName = path.basename(command).toLowerCase();
+  const normalizedCommand =
+    baseName.endsWith(".exe") || baseName.endsWith(".cmd")
+      ? baseName.slice(0, baseName.lastIndexOf("."))
+      : baseName;
+
+  if (normalizedCommand === "opencode" || normalizedCommand === "opencode-cli") {
+    if (platform === "win32") {
+      const localAppData = env.LOCALAPPDATA?.trim();
+      const appData = env.APPDATA?.trim();
+      const candidates: string[] = [];
+      if (localAppData) {
+        candidates.push(
+          path.join(
+            localAppData,
+            "Programs",
+            "@opencode-aidesktop",
+            "resources",
+            "opencode-cli.exe",
+          ),
+          path.join(localAppData, "OpenCode", "opencode-cli.exe"),
+          path.join(localAppData, "OpenCode", "opencode.exe"),
+          path.join(localAppData, "Programs", "OpenCode", "resources", "opencode-cli.exe"),
+          path.join(localAppData, "Programs", "OpenCode", "opencode-cli.exe"),
+          path.join(localAppData, "npm", "opencode.cmd"),
+        );
+      }
+      if (appData) {
+        candidates.push(path.join(appData, "npm", "opencode.cmd"));
+        const cliDir = path.join(appData, "ai.opencode.desktop", "cli");
+        try {
+          if (NodeFS.existsSync(cliDir)) {
+            for (const sub of NodeFS.readdirSync(cliDir)) {
+              candidates.push(path.join(cliDir, sub, "opencode-cli.exe"));
+            }
+          }
+        } catch {}
+      }
+
+      for (const candidate of candidates) {
+        if (isExecutable(candidate)) return candidate;
+      }
+    } else if (platform === "darwin") {
+      const home = env.HOME?.trim();
+      const candidates = [
+        "/Applications/OpenCode.app/Contents/Resources/opencode-cli",
+        "/Applications/OpenCode AI.app/Contents/Resources/opencode-cli",
+        ...(home
+          ? [
+              path.join(
+                home,
+                "Applications",
+                "OpenCode.app",
+                "Contents",
+                "Resources",
+                "opencode-cli",
+              ),
+              path.join(home, ".local", "bin", "opencode"),
+            ]
+          : []),
+        "/usr/local/bin/opencode",
+        "/opt/homebrew/bin/opencode",
+      ];
+      for (const candidate of candidates) {
+        if (isExecutable(candidate)) return candidate;
+      }
+    } else if (platform === "linux") {
+      const home = env.HOME?.trim();
+      const candidates = [
+        ...(home ? [path.join(home, ".local", "bin", "opencode")] : []),
+        "/usr/local/bin/opencode",
+        "/opt/OpenCode/resources/opencode-cli",
+      ];
+      for (const candidate of candidates) {
+        if (isExecutable(candidate)) return candidate;
+      }
+    }
+  }
+
+  if (normalizedCommand === "grok") {
+    if (platform === "win32") {
+      const localAppData = env.LOCALAPPDATA?.trim();
+      const appData = env.APPDATA?.trim();
+      const userProfile = env.USERPROFILE?.trim() || env.HOME?.trim();
+      const candidates: string[] = [];
+      if (localAppData) {
+        candidates.push(
+          path.join(
+            localAppData,
+            "Programs",
+            "Grok Bot",
+            "resources",
+            "app.asar.unpacked",
+            "dist",
+            "native",
+            "grok.exe",
+          ),
+          path.join(localAppData, "Programs", "grok", "grok.exe"),
+          path.join(localAppData, "npm", "grok.cmd"),
+        );
+      }
+      if (appData) {
+        candidates.push(path.join(appData, "npm", "grok.cmd"));
+      }
+      if (userProfile) {
+        candidates.push(
+          path.join(userProfile, ".grok", "bin", "grok.exe"),
+          path.join(userProfile, ".local", "bin", "grok.exe"),
+        );
+      }
+      for (const candidate of candidates) {
+        if (isExecutable(candidate)) return candidate;
+      }
+    } else if (platform === "darwin") {
+      const home = env.HOME?.trim();
+      const candidates = [
+        "/Applications/Grok.app/Contents/Resources/grok",
+        "/Applications/Grok Bot.app/Contents/Resources/grok",
+        ...(home
+          ? [path.join(home, ".grok", "bin", "grok"), path.join(home, ".local", "bin", "grok")]
+          : []),
+        "/opt/homebrew/bin/grok",
+        "/usr/local/bin/grok",
+      ];
+      for (const candidate of candidates) {
+        if (isExecutable(candidate)) return candidate;
+      }
+    } else if (platform === "linux") {
+      const home = env.HOME?.trim();
+      const candidates = [
+        ...(home
+          ? [path.join(home, ".grok", "bin", "grok"), path.join(home, ".local", "bin", "grok")]
+          : []),
+        "/usr/local/bin/grok",
+      ];
+      for (const candidate of candidates) {
+        if (isExecutable(candidate)) return candidate;
+      }
+    }
+  }
+
+  return undefined;
+}
 
 function resolveSpawnExecutableWithNode(
   command: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
+  cwd?: string,
 ): string | undefined {
   const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
   const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
@@ -89,6 +242,8 @@ function resolveSpawnExecutableWithNode(
     windowsPathExtensions,
     path.extname,
   );
+  const resolveAgainstCwd = (candidate: string) =>
+    cwd && !path.isAbsolute(candidate) ? path.resolve(cwd, candidate) : candidate;
   const isExecutable = (candidate: string) => {
     try {
       if (!NodeFS.statSync(candidate).isFile()) return false;
@@ -102,18 +257,22 @@ function resolveSpawnExecutableWithNode(
   };
 
   if (command.includes("/") || command.includes("\\")) {
-    return candidates.find(isExecutable);
+    for (const candidate of candidates) {
+      const resolvedCandidate = resolveAgainstCwd(candidate);
+      if (isExecutable(resolvedCandidate)) return resolvedCandidate;
+    }
+    return undefined;
   }
 
   for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
     const normalizedPathEntry = stripWrappingQuotes(pathEntry.trim());
     if (normalizedPathEntry.length === 0) continue;
     for (const candidate of candidates) {
-      const candidatePath = path.join(normalizedPathEntry, candidate);
+      const candidatePath = resolveAgainstCwd(path.join(normalizedPathEntry, candidate));
       if (isExecutable(candidatePath)) return candidatePath;
     }
   }
-  return undefined;
+  return resolveWellKnownToolCandidate(command, platform, env, isExecutable);
 }
 
 export const SpawnExecutableResolution = Context.Reference<SpawnExecutableResolver>(
@@ -823,6 +982,7 @@ const resolveMacosGit = Effect.fnUntraced(function* (
 });
 
 export interface SpawnCommandOptions extends CommandAvailabilityOptions {
+  readonly cwd?: string;
   /** Bypass npm cmd-shims; see npmShimExecutable for process-lifetime semantics. */
   readonly bypassNpmShim?: boolean;
 }
@@ -874,7 +1034,15 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
 ): Effect.fn.Return<ResolvedSpawnCommand> {
   const platform = yield* HostProcess.Platform;
   const isMacosGit = platform === "darwin" && command === "git";
-  if (platform !== "win32" && !isMacosGit) {
+  const normalizedBaseName = (platform === "win32" ? NodePath.win32 : NodePath.posix)
+    .basename(command)
+    .toLowerCase()
+    .replace(/\.(exe|cmd)$/u, "");
+  const isWellKnownTool =
+    normalizedBaseName === "opencode" ||
+    normalizedBaseName === "opencode-cli" ||
+    normalizedBaseName === "grok";
+  if (platform !== "win32" && !isMacosGit && !isWellKnownTool) {
     return { command, args: [...args], shell: false };
   }
 
@@ -905,7 +1073,12 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
     platform,
     resolvePathEnvironmentVariable(env),
     resolveWindowsPathExtensions(env).join(";"),
+    env.HOME ?? "",
+    env.USERPROFILE ?? "",
+    env.LOCALAPPDATA ?? "",
+    env.APPDATA ?? "",
     env.MSYSTEM ? "msystem" : "",
+    options.cwd ?? "",
     command,
   ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
   const nowNanos = yield* Clock.currentTimeNanos;
@@ -914,13 +1087,21 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
   if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
     resolvedExecutable = cached.resolvedPath;
   } else {
-    const found = resolveExecutable(command, platform, env);
-    resolvedExecutable = found === undefined ? null : preferGitForWindowsBinary(found, env);
+    const found = resolveExecutable(command, platform, env, options.cwd);
+    resolvedExecutable =
+      found === undefined
+        ? null
+        : platform === "win32"
+          ? preferGitForWindowsBinary(found, env)
+          : found;
     if (!explicitPath && resolvedExecutable !== null) {
       cacheCommandResolution(cache, cacheKey, resolvedExecutable, nowNanos);
     }
   }
   const resolvedCommand = resolvedExecutable ?? command;
+  if (platform !== "win32") {
+    return { command: resolvedCommand, args: [...args], shell: false };
+  }
   const extension = NodePath.win32.extname(resolvedCommand).toLowerCase();
   if (extension !== ".cmd" && extension !== ".bat") {
     return { command: resolvedCommand, args: [...args], shell: false };

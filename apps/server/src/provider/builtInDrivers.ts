@@ -16,6 +16,13 @@ import type {
   ProviderUsageReaderEnv,
 } from "@t3tools/provider-core/server/driver";
 import { KiroDriver, type KiroDriverEnv } from "@t3tools/provider-kiro/server";
+import {
+  BedrockDriver,
+  CloudflareDriver,
+  OllamaDriver,
+  ZedDriver,
+  type StandaloneDriverEnv,
+} from "./Drivers/StandaloneDriver.ts";
 
 export type BuiltInDriversEnv =
   | AcpRegistryDriverEnv
@@ -28,7 +35,8 @@ export type BuiltInDriversEnv =
   | KiroDriverEnv
   | OpenCodeDriverEnv
   | PiDriverEnv
-  | MuseDriverEnv;
+  | MuseDriverEnv
+  | StandaloneDriverEnv;
 
 export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv>> = [
   CodexDriver,
@@ -41,6 +49,10 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   KiroDriver,
   PiDriver,
   MuseDriver,
+  OllamaDriver,
+  ZedDriver,
+  CloudflareDriver,
+  BedrockDriver,
   AcpRegistryDriver,
 ];
 

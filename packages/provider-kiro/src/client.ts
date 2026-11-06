@@ -17,7 +17,7 @@ const black = { light: "#000000", dark: "#000000" };
 export const kiroClient = defineProviderClient({
   driverKind: ProviderDriverKind.make("kiro"),
   label: "Kiro",
-  featured: false,
+  featured: true,
   badgeLabel: "Early Access",
   settingsSchema: KiroSettings,
   environmentFields: [

@@ -135,6 +135,12 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     readonly enabled?: boolean;
     readonly safe?: boolean;
     readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
+    readonly probeAuth?: Effect.Effect<{
+      readonly authenticated: boolean;
+      readonly type?: string;
+      readonly label?: string;
+      readonly email?: string;
+    }>;
   } = {},
 ) {
   const initialProbe = yield* Deferred.make<EffectAcpSchema.InitializeResponse, ProbeError>();
@@ -150,6 +156,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
       stampIdentity: (snapshot) => Effect.succeed({ ...snapshot, instanceId, driver }),
       ...(options.auth ? { auth: options.auth } : {}),
       ...(options.probeUsage ? { probeUsage: options.probeUsage } : {}),
+      ...(options.probeAuth ? { probeAuth: options.probeAuth } : {}),
       probe: Ref.update(probeCalls, (count) => count + 1).pipe(
         Effect.andThen(Ref.get(probe)),
         Effect.flatten,
@@ -394,11 +401,75 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     ),
   );
 
+  it.effect(
+    "updates status, email, and text generation when probeAuth transitions from authenticated to unauthenticated",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const probeAuthRef = yield* Ref.make<
+            Effect.Effect<{
+              readonly authenticated: boolean;
+              readonly type?: string;
+              readonly label?: string;
+              readonly email?: string;
+            }>
+          >(
+            Effect.succeed({
+              authenticated: true,
+              type: "oauth-personal",
+              label: "Google account",
+              email: "user@example.com",
+            }),
+          );
+          const harness = yield* makeHarness({
+            probeAuth: Effect.flatten(Ref.get(probeAuthRef)),
+          });
+          yield* harness.initialize;
+
+          const authenticatedSnapshot = yield* harness.provider.snapshot.getSnapshot;
+          expect(authenticatedSnapshot).toMatchObject({
+            installed: true,
+            status: "ready",
+            auth: {
+              status: "authenticated",
+              type: "oauth-personal",
+              label: "Google account",
+              email: "user@example.com",
+            },
+            supportsTextGeneration: true,
+          });
+
+          // Transition to unauthenticated
+          yield* Ref.set(
+            probeAuthRef,
+            Effect.succeed({
+              authenticated: false,
+              type: "oauth-personal",
+              label: "Google account",
+            }),
+          );
+          const unauthenticatedSnapshot = yield* harness.provider.snapshot.refresh;
+          expect(unauthenticatedSnapshot).toMatchObject({
+            installed: true,
+            status: "warning",
+            auth: {
+              status: "unauthenticated",
+            },
+            supportsTextGeneration: false,
+          });
+          expect(unauthenticatedSnapshot.auth).not.toHaveProperty("email");
+        }),
+      ),
+  );
+
   it.effect("clears all account metadata on sign-out and authentication failure", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const auth = { type: "gemini-api-key", label: "Gemini API key" };
-        const harness = yield* makeHarness({ auth });
+        const harness = yield* makeHarness({
+          auth,
+          probeAuth: Effect.succeed({ authenticated: false }),
+        });
         yield* harness.initialize;
         for (const clear of [harness.provider.onSignedOut, harness.provider.onAuthRequired]) {
           yield* harness.provider.onSessionStarted(started, "/workspace");
