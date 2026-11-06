@@ -147,7 +147,7 @@ current model's limits without leaving the conversation. The result opens above 
 closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh
 anything. The command is offered only for providers that appear under **Usage → Limits**.
 
-When a thread stops at a usage limit and the provider gave no reset time, choose **Check limits** on the notice above the composer. It refreshes your providers and opens the same limits view, so you can see when a window resets.
+When a thread stops at a usage limit and the provider gave no reset time, choose **Check limits** on the notice above the composer. ChatGPT limit notices keep their own actions instead. It refreshes your providers and opens the same limits view, so you can see when a window resets.
 
 To keep them in view on web and desktop, turn on **Usage limits** in **Settings → Appearance → Thread details**, or right-click the thread details card.
 The bottom of the thread details card then shows how much is left in each limit window of the

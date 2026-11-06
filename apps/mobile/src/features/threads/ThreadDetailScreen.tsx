@@ -1006,11 +1006,14 @@ function ThreadDetailBody(
       refreshProviders({ environmentId: props.environmentId, input: {} }),
     );
     if (result?._tag !== "Success") return "Could not check usage limits.";
-    // Read the response: the config stream may not have rendered yet. A stale key closes itself.
+    // Read the response and the registry: the config stream may not have rendered yet.
     const report = collectProviderUsageLimits(
       props.selectedThread.modelSelection.instanceId,
       result.value.providers,
-      props.serverConfig?.usageLimitSources ?? [],
+      appAtomRegistry.get(serverEnvironment.configValueAtom(props.environmentId))
+        ?.usageLimitSources ??
+        props.serverConfig?.usageLimitSources ??
+        [],
       Date.now(),
     );
     showUsageLimits(report);
