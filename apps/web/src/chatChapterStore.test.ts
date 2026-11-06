@@ -60,6 +60,10 @@ describe("chat chapters", () => {
     const second = useChatChapterStore.getState().revealRequest;
     expect(first?.messageId).toBe(MessageId.make("m1"));
     expect(second?.nonce).toBe((first?.nonce ?? 0) + 1);
+
+    useChatChapterStore.getState().unpin(threadRef, MessageId.make("m1"));
+    requestReveal(threadRef, MessageId.make("m2"));
+    expect(useChatChapterStore.getState().revealRequest?.nonce).toBe((second?.nonce ?? 0) + 1);
   });
 
   it("clears a matching reveal request when the chapter is unpinned", () => {

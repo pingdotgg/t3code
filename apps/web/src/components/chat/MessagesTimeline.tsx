@@ -1258,7 +1258,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       }
     }
   }
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the list to a chapter chosen from the chapters menu, loading earlier history while it is missing
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- syncs the list to a chapter reveal request held in the chapter store, which has no callback into this component; the target row can be missing until earlier history loads, so the effect re-runs as rows change and scrolls once the row exists
   useEffect(() => {
     if (
       !chapterReveal ||
