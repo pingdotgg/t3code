@@ -241,7 +241,8 @@ function SidebarStatusLabel(props: {
     >
       <status.Icon aria-hidden className={props.compact ? "size-3 shrink-0" : "size-4 shrink-0"} />
       {props.label ?? status.label}
-      {!props.compact && (props.kind === "working" || props.kind === "preparing" || props.kind === "waiting") ? (
+      {!props.compact &&
+      (props.kind === "working" || props.kind === "preparing" || props.kind === "waiting") ? (
         <span aria-hidden>
           <WorkingDuration startedAt={props.workingStartedAt} />
         </span>
