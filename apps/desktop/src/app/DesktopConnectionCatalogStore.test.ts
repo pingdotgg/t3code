@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - native-format fixtures exercise Chromium AES-GCM interoperability.
-import * as NodeCryptoModule from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { beforeEach, vi } from "vite-plus/test";
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
@@ -106,7 +106,7 @@ function layerFor(
     layerEnvironment,
     layerSafeStorage,
     NodeServices.layer,
-    NodeCrypto.layer,
+    NodeCryptoLayer.layer,
     fileSystemLayer,
   );
   const layerSavedEnvironments = DesktopSavedEnvironments.layer.pipe(
@@ -334,7 +334,7 @@ describe("DesktopConnectionCatalogStore", () => {
 
 const seal = (value: string, key: Buffer) => {
   const nonce = Buffer.alloc(12, 4);
-  const cipher = NodeCryptoModule.createCipheriv("aes-256-gcm", key, nonce);
+  const cipher = NodeCrypto.createCipheriv("aes-256-gcm", key, nonce);
   return Buffer.concat([
     Buffer.from("v10"),
     nonce,
@@ -346,7 +346,7 @@ const seal = (value: string, key: Buffer) => {
 const open = (bytes: Uint8Array, key: Buffer) => {
   const data = Buffer.from(bytes);
   assert.equal(data.subarray(0, 3).toString("ascii"), "v10");
-  const decipher = NodeCryptoModule.createDecipheriv("aes-256-gcm", key, data.subarray(3, 15));
+  const decipher = NodeCrypto.createDecipheriv("aes-256-gcm", key, data.subarray(3, 15));
   decipher.setAuthTag(data.subarray(-16));
   return Buffer.concat([decipher.update(data.subarray(15, -16)), decipher.final()]).toString(
     "utf8",
