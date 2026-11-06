@@ -125,6 +125,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerSecretStor
     }).pipe(Effect.provide(layerServerSecretStore())),
   );
 
+  it.effect("replaces an empty persisted secret with a fresh random one", () =>
+    Effect.gen(function* () {
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      yield* secretStore.set("session-signing-key", new Uint8Array());
+
+      const secret = yield* secretStore.getOrCreateRandom("session-signing-key", 32);
+      const persisted = yield* secretStore.get("session-signing-key");
+
+      assert.equal(secret.byteLength, 32);
+      assert.deepEqual(Array.from(Option.getOrThrow(persisted)), Array.from(secret));
+    }).pipe(Effect.provide(layerServerSecretStore())),
+  );
+
   it.effect("returns the persisted secret when concurrent creators race", () =>
     Effect.gen(function* () {
       const secretStore = yield* ServerSecretStore.ServerSecretStore;
