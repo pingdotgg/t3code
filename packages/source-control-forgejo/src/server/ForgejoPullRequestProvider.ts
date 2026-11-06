@@ -49,6 +49,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   search: false,
   reactions: true,
   mentions: true,
+  referenceSigils: [],
   labels: true,
   // Forgejo's public API has no thread replies/resolution or draft conversion endpoint.
   review: {
@@ -57,7 +58,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     resolve: false,
     verdicts: ["comment", "approve", "request-changes"],
   },
-  reviewers: { request: true, listCandidates: true },
+  reviewers: { request: true, listCandidates: true, searchCandidates: false },
   edit: { changeRequest: true, comment: true },
 };
 const USER_SEARCH_LIMIT = 50;
