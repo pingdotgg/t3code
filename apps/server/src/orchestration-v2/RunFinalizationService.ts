@@ -13,6 +13,7 @@ import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as ModelEvaluations from "../modelEvaluations/ModelEvaluations.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as WorktreeBranches from "./WorktreeBranches.ts";
 
 export class RunFinalizationError extends Schema.TaggedError<RunFinalizationError>()(
   "RunFinalizationError",
@@ -57,6 +58,7 @@ const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const observer = yield* RunFinalizationObserver;
   const modelEvaluations = yield* ModelEvaluations.ModelEvaluations;
+  const worktreeBranches = yield* WorktreeBranches.WorktreeBranches;
 
   const finalize: RunFinalizationService["Service"]["finalize"] = Effect.fn(
     "RunFinalizationService.finalize",
@@ -94,6 +96,20 @@ const make = Effect.gen(function* () {
         );
     }
     if (cwd !== undefined) {
+      yield* projections.getThreadShell(input.threadId).pipe(
+        Effect.flatMap((thread) =>
+          // An exact match excludes project-root threads and nested-repo checkpoint scopes.
+          thread?.worktreePath === cwd
+            ? worktreeBranches.sync({ worktreePath: cwd, runId: input.runId })
+            : Effect.void,
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to sync worktree branch after checkpoint capture", {
+            ...input,
+            cause,
+          }),
+        ),
+      );
       // Retrying a display refresh after the checkpoint is durable blocks the next turn.
       yield* observer.refresh({ cwd, threadId: input.threadId, runId: input.runId }).pipe(
         Effect.catchTags({

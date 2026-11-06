@@ -295,6 +295,7 @@ function makeLocalCommandHarness(input: {
   readonly resolveKnowledge?: ProjectKnowledge.ProjectKnowledge["Service"]["resolveForTurn"];
   readonly readSentDeliveries?: ProjectKnowledge.ProjectKnowledge["Service"]["readSentDeliveries"];
   readonly worktreePath?: string;
+  readonly branch?: string;
   readonly worktreesDir?: string;
   readonly workspaceRoot?: string;
   readonly gitWorkflow?: GitWorkflow.GitWorkflowService["Service"];
@@ -396,7 +397,7 @@ function makeLocalCommandHarness(input: {
       id: threadId,
       activeProviderThreadId: providerThreadId,
       projectId: ProjectId.make("project-native-account-command"),
-      branch: input.worktreePath === undefined ? null : "feature/restore",
+      branch: input.worktreePath === undefined ? null : (input.branch ?? "feature/restore"),
       worktreePath: input.worktreePath ?? null,
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
     } as OrchestrationV2ThreadProjection["thread"],
@@ -1315,6 +1316,53 @@ effectIt.effect(
         expect(harness.projection().runs.at(-1)?.status).toBe("running");
       }
     }).pipe(Effect.scoped, Effect.provide(layerRealGit)),
+);
+
+effectIt.effect("recreates a rebound thread on the branch its agent switched to", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const gitWorkflow = yield* GitWorkflow.GitWorkflowService;
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-recreate-rebound-" });
+    const workspaceRoot = path.join(root, "project");
+    const worktreesDir = path.join(root, "worktrees");
+    const worktreePath = path.join(worktreesDir, "project", "restore");
+    yield* fileSystem.makeDirectory(workspaceRoot);
+    const git = (cwd: string, args: ReadonlyArray<string>) =>
+      driver
+        .execute({ operation: "test.worktreeRebound", cwd, args })
+        .pipe(Effect.map((result) => result.stdout.trim()));
+    yield* git(workspaceRoot, ["init", "-b", "main"]);
+    yield* git(workspaceRoot, ["config", "user.name", "Test"]);
+    yield* git(workspaceRoot, ["config", "user.email", "test@example.com"]);
+    yield* git(workspaceRoot, ["commit", "--allow-empty", "-m", "base"]);
+    yield* git(workspaceRoot, ["worktree", "add", "-b", "feature/restore", worktreePath]);
+    yield* git(worktreePath, ["switch", "-c", "agent/work"]);
+    yield* git(worktreePath, ["commit", "--allow-empty", "-m", "agent work"]);
+    const agentTip = yield* git(worktreePath, ["rev-parse", "HEAD"]);
+    yield* fileSystem.remove(worktreePath, { recursive: true });
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      branch: "agent/work",
+      workspaceRoot,
+      worktreePath,
+      worktreesDir,
+      fileSystem,
+      gitWorkflow,
+      failReadsAfterRunning: true,
+    });
+    const open = harness.open.getMockImplementation()!;
+    harness.open.mockImplementation(() =>
+      Effect.gen(function* () {
+        expect(yield* git(worktreePath, ["branch", "--show-current"])).toBe("agent/work");
+        expect(yield* git(worktreePath, ["rev-parse", "HEAD"])).toBe(agentTip);
+        return yield* open();
+      }).pipe(Effect.orDie),
+    );
+    yield* harness.start;
+    expect(harness.open).toHaveBeenCalledOnce();
+  }).pipe(Effect.scoped, Effect.provide(layerRealGit)),
 );
 
 effectIt.effect(

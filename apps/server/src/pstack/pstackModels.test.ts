@@ -89,7 +89,10 @@ it.effect("leaves speed to the provider unless the models file sets it", () =>
       {
         providerInstanceId: "claudeAgent",
         model: "claude-opus-5-5",
-        options: [{ id: "effort", value: "xhigh" }],
+        options: [
+          { id: "effort", value: "xhigh" },
+          { id: "ultracode", value: false },
+        ],
       },
       {
         providerInstanceId: "codex",
