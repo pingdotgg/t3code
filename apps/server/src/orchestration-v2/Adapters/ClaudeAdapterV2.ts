@@ -3395,6 +3395,9 @@ const decodeClaudePersistedBashResult = Schema.decodeUnknownOption(
   }),
 );
 
+/** Leaves room for the omission marker within the 256 KiB a detail read returns. */
+const PERSISTED_COMMAND_OUTPUT_TAIL_BYTES = 255 * 1024;
+
 /** Over 30,000 characters, Claude keeps only the head in `stdout` and saves the whole
  * output, stderr included, to a file. Rows show its end, marked when earlier output is cut. */
 const withPersistedClaudeCommandOutput = Effect.fn("ClaudeAdapterV2.persistedCommandOutput")(
@@ -3404,14 +3407,17 @@ const withPersistedClaudeCommandOutput = Effect.fn("ClaudeAdapterV2.persistedCom
     if (result === undefined) return output;
     const path = yield* Path.Path;
     const tail = path.isAbsolute(result.persistedOutputPath)
-      ? yield* readClaudeOutputFileTail(result.persistedOutputPath).pipe(
+      ? yield* readClaudeOutputFileTail(
+          result.persistedOutputPath,
+          PERSISTED_COMMAND_OUTPUT_TAIL_BYTES,
+        ).pipe(
           Effect.tapError((cause) =>
             Effect.logWarning("Failed to read Claude's saved command output.", { cause }),
           ),
           Effect.orElseSucceed(() => Option.none()),
         )
       : Option.none();
-    if (Option.isSome(tail)) {
+    if (Option.isSome(tail) && tail.value.text.length > 0) {
       const { text, omittedBytes } = tail.value;
       return {
         type: "structured_tool_use_result",
