@@ -8902,9 +8902,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               providerSessionId: session.id,
             })
             .pipe(Effect.orElseSucceed(() => null));
-          return model === null
-            ? undefined
-            : canonicalClaudeSubagentModel(subagentModelCatalog, model);
+          return model === null ? undefined : canonicalClaudeSubagentModel(modelCatalog, model);
         });
 
         const recoverForkModel = Effect.fnUntraced(function* (input: {
