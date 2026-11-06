@@ -26,6 +26,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
+import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -1061,6 +1062,32 @@ it.effect.each(sideChatPermissionCases)(
         ),
       ),
     ),
+);
+
+it.effect("a limited caller cannot open a side chat above its limit", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const parentId = ThreadId.make("side-chat-limit-parent");
+    const sideChatId = ThreadId.make("side-chat-limit-child");
+    yield* createParent(parentId, "approval-required");
+    const refused = yield* forkSideChat("side-chat-limit-fork", parentId, sideChatId).pipe(
+      Effect.provideService(DispatchModeLimit, {
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+      }),
+      Effect.flip,
+    );
+    assert.equal(refused._tag, "OrchestratorThreadAboveModeLimitError");
+    assert.isNull(yield* orchestrator.getThreadShell(sideChatId));
+  }).pipe(
+    Effect.provide(
+      ProviderReplayHarness.layerWithRegistry(
+        { name: "side-chat-limit" },
+        ProviderAdapterRegistry.layerFromAdapters([forkCases[0]!.adapter]),
+        { runEffectWorker: false, settings: { sideChatRuntimeMode: "full-access" } },
+      ),
+    ),
+  ),
 );
 
 it.effect("a side chat of an idle parent still starts with the framing note", () =>
