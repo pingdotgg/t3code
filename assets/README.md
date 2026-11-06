@@ -1,6 +1,6 @@
 # Brand icons
 
-OminaX: the tracked PNG, ICO and Android files below are the OminaX "Nest" icon, copied from the brand kit, and the mobile app's iOS icon points at the PNG. The Icon Composer projects still draw the T3 mark, so `icons:export`, `icons:export:android` and `icons:check` would bring T3 back. Don't run them until the projects are redrawn.
+OminaX: the three Icon Composer projects draw the Nest logo from the brand kit (same art in every variant). The tracked PNG, ICO and Android files are still the brand kit's own exports, so `icons:check` reports them as changed until someone runs `icons:export` on a Mac; the result is Icon Composer's rendering of the same Nest icon.
 
 The three Icon Composer projects are the source of truth for full application icons:
 
@@ -8,7 +8,7 @@ The three Icon Composer projects are the source of truth for full application ic
 - `nightly/app-icon.icon`
 - `prod/app-icon.icon`
 
-Each project uses `text.svg` for the T3 mark and `background.svg` when the background is a vector layer. Additional layers use semantic names that describe their role and placement.
+Each project has two layers: `nest.svg` for the mark and `background.svg` for the gradient.
 
 Run `vp run icons:export` from the repository root to regenerate the tracked iOS, Linux, Windows, and web assets. The development web exports are also copied to `apps/web/public` for the browser favicon and splash screen. Run `vp run icons:check` to verify that the generated assets and public copies match their sources without changing files.
 
@@ -55,13 +55,12 @@ Do not edit the generated PNG or ICO files directly.
 
 Android masks the central 72dp of a 108dp adaptive canvas, and the Android 12+ splash screen masks
 the central two thirds of a 288dp canvas, so the Icon Composer exports cannot be used directly:
-their rounded-square silhouette gets framed again and the wordmark is cropped. The Android artwork
+their rounded-square silhouette gets framed again and the mark is cropped. The Android artwork
 is instead rendered from the same Icon Composer SVG sources by `vp run icons:export:android`:
 
-- `apps/mobile/assets/android-icon-foreground.png`: the shared transparent wordmark, sized to stay
+- `apps/mobile/assets/android-icon-foreground.png`: the transparent Nest mark, sized to stay
   inside the safe zone
-- `apps/mobile/assets/android-icon-background-dev.png` and `-nightly.png`: full-bleed variant
-  artwork (blueprint grid and annotations; night sky and clouds). Production uses a solid color.
+- `apps/mobile/assets/android-icon-background-dev.png` and `-nightly.png`: the full-bleed gradient
 - `apps/mobile/assets/android-splash-icon-*.png`: the two layers composed into one 288dp image, so
   the splash mask reproduces the launcher icon's framing.
 
