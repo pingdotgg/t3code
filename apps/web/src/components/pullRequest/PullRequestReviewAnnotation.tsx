@@ -7,7 +7,13 @@ import type {
   PullRequestThreadCommentsResult,
   PullRequestThreadComment,
 } from "@t3tools/contracts";
-import { CheckIcon, FileCodeIcon, HammerIcon, Trash2Icon } from "lucide-react";
+import {
+  CheckIcon,
+  FileCodeIcon,
+  HammerIcon,
+  MessageSquarePlusIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { Circle, CircleCheck } from "lucide";
 import { useRef, useState } from "react";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -28,12 +34,17 @@ import { Badge } from "../ui/badge";
 import {
   editPullRequestThreadComment,
   mergePullRequestThreadComments,
+  visibleBody,
 } from "./pullRequestDetail.logic";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import type { PendingReviewComment } from "./pullRequestReviewStore";
+import {
+  PullRequestMarkdownTextarea,
+  type PullRequestCompletionScope,
+} from "./PullRequestMarkdownTextarea";
 
 /** Inset under the code like the thread diff's comments, on the same raised card. */
 const CARD_CLASS = `mx-2.5 mt-1.5 mb-2 p-2.5 text-sm ${COMMENT_CARD_CLASS}`;
@@ -169,10 +180,12 @@ export function ReviewThreadCard({
   canReact,
   environmentId,
   reference,
+  completionScope,
   pending,
   fixPending,
   fixLabel = "Fix in a thread",
   onFix,
+  onAddToChat,
   onReply,
   onLoadMore,
   canEditComment,
@@ -192,10 +205,16 @@ export function ReviewThreadCard({
   canReact: boolean;
   environmentId: EnvironmentId;
   reference: PullRequestRef;
+  completionScope: PullRequestCompletionScope | null;
   pending: boolean;
   fixPending?: boolean;
   fixLabel?: string;
   onFix?: () => void;
+  /**
+   * Absent where there is no composer beside the panel to add the conversation to. Handed the
+   * thread with every comment the reader has loaded, not only the first page.
+   */
+  onAddToChat?: (thread: PullRequestReviewThread) => void;
   onReply: (body: string) => Promise<boolean>;
   onLoadMore: (cursor: string) => Promise<PullRequestThreadCommentsResult | null>;
   canEditComment: (comment: PullRequestThreadComment) => boolean;
@@ -311,6 +330,7 @@ export function ReviewThreadCard({
                   value={comment.body}
                   cwd={workspaceRoot}
                   environmentId={environmentId}
+                  completionScope={completionScope}
                   label="Edit comment"
                   saving={savingEdit}
                   onSave={(body) => void saveEdit(comment.id, body)}
@@ -425,11 +445,22 @@ export function ReviewThreadCard({
             {fixPending ? "Preparing..." : fixLabel}
           </Button>
         ) : null}
-        {canResolve && !resolveBesideReply ? (
+        {onAddToChat && comments.some((comment) => visibleBody(comment.body) !== null) ? (
           <Button
             size="xs"
             variant="ghost"
             className={onFix ? undefined : "ml-auto"}
+            onClick={() => onAddToChat({ ...thread, comments })}
+          >
+            <MessageSquarePlusIcon className="size-3" />
+            Add to chat
+          </Button>
+        ) : null}
+        {canResolve && !resolveBesideReply ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            className={onFix || onAddToChat ? undefined : "ml-auto"}
             disabled={pending}
             onClick={onToggleResolved}
           >
@@ -455,6 +486,7 @@ export function ReviewThreadCard({
                     value={comment.body}
                     cwd={workspaceRoot}
                     environmentId={environmentId}
+                    completionScope={completionScope}
                     label="Edit comment"
                     saving={savingEdit}
                     onSave={(body) => void saveEdit(comment.id, body)}
@@ -516,15 +548,16 @@ export function ReviewThreadCard({
               >
                 {(speech) => (
                   <div className="mt-2 border-t border-border pt-2">
-                    <Textarea
+                    <PullRequestMarkdownTextarea
                       ref={replyRef}
                       readOnly={speech.freezesEditor}
                       autoFocus
                       size="sm"
+                      completionScope={completionScope}
                       value={reply}
                       placeholder="Reply…"
                       aria-label="Reply to this conversation"
-                      onChange={(event) => setReply(event.target.value)}
+                      onValueChange={setReply}
                       onKeyDown={submitKeys({
                         value: reply,
                         pending,
