@@ -45,11 +45,13 @@ import {
   resetHeldThreadTimeline,
   resolveThreadSwitchTimeline,
   timelineHasEphemeralPreviewUrls,
+  composerSendControlBusy,
   createLocalDispatchSnapshot,
   deriveCommittedServerUserMessageIds,
   deriveComposerSendState,
   deriveLockedProvider,
   hasServerAcknowledgedLocalDispatch,
+  sendHoldsLocalDispatch,
   waitForRevertedMessage,
 } from "./ChatView.logic";
 
@@ -1139,6 +1141,101 @@ describe("planComposerTurn", () => {
       turnDispatchMode: "queue",
       shouldQueueBehindActiveRun: true,
     });
+  });
+
+  it("queues ordinary follow-ups while compacting, including before the turn reads as running", () => {
+    expect(
+      planComposerTurn({
+        ...base,
+        isServerThread: true,
+        activeMessageCount: 3,
+        phase: "connecting",
+        dispatchMode: "steer",
+        isCompacting: true,
+      }),
+    ).toMatchObject({
+      turnDispatchMode: "queue",
+      shouldQueueBehindActiveRun: true,
+    });
+    expect(
+      planComposerTurn({
+        ...base,
+        messageText: "/compact",
+        isServerThread: true,
+        activeMessageCount: 3,
+        phase: "connecting",
+        isCompacting: true,
+      }),
+    ).toMatchObject({
+      turnDispatchMode: "auto",
+      shouldQueueBehindActiveRun: false,
+    });
+  });
+
+  it("queues follow-ups while waiting on awaited commands or subagents, even when phase is ready", () => {
+    expect(
+      planComposerTurn({
+        ...base,
+        isServerThread: true,
+        activeMessageCount: 3,
+        phase: "ready",
+        dispatchMode: "steer",
+        isWaitingOnBackgroundWork: true,
+      }),
+    ).toMatchObject({
+      turnDispatchMode: "queue",
+      shouldQueueBehindActiveRun: true,
+    });
+  });
+});
+
+describe("sendHoldsLocalDispatch", () => {
+  it("releases the composer for sends that only join the queue", () => {
+    expect(
+      sendHoldsLocalDispatch({ sendQueuesBehindSetup: false, shouldQueueBehindActiveRun: false }),
+    ).toBe(true);
+    expect(
+      sendHoldsLocalDispatch({ sendQueuesBehindSetup: true, shouldQueueBehindActiveRun: false }),
+    ).toBe(false);
+    expect(
+      sendHoldsLocalDispatch({ sendQueuesBehindSetup: false, shouldQueueBehindActiveRun: true }),
+    ).toBe(false);
+  });
+});
+
+describe("composerSendControlBusy", () => {
+  const idle = {
+    isSendBusy: false,
+    sendQueuesBehindSetup: false,
+    isCompacting: false,
+    setupQueueSendActive: false,
+    queuedRunEditSaving: false,
+    isResuming: false,
+  };
+
+  it("spins while a local dispatch is in flight, except during compaction, background wait, or setup queueing", () => {
+    expect(composerSendControlBusy({ ...idle, isSendBusy: true })).toBe(true);
+    expect(
+      composerSendControlBusy({ ...idle, isSendBusy: true, sendQueuesBehindSetup: true }),
+    ).toBe(false);
+    expect(composerSendControlBusy({ ...idle, isSendBusy: true, isCompacting: true })).toBe(false);
+    expect(
+      composerSendControlBusy({ ...idle, isSendBusy: true, isWaitingOnBackgroundWork: true }),
+    ).toBe(false);
+  });
+
+  it("still spins for an in-flight queue RPC, queued edit save, or resume", () => {
+    expect(composerSendControlBusy({ ...idle, setupQueueSendActive: true })).toBe(true);
+    expect(composerSendControlBusy({ ...idle, queuedRunEditSaving: true })).toBe(true);
+    expect(composerSendControlBusy({ ...idle, isResuming: true })).toBe(true);
+    expect(
+      composerSendControlBusy({
+        ...idle,
+        isSendBusy: true,
+        isCompacting: true,
+        setupQueueSendActive: true,
+      }),
+    ).toBe(true);
   });
 });
 

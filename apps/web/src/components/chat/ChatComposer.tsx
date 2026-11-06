@@ -365,6 +365,8 @@ export interface ChatComposerProps {
   sendDisabledReason: string | null;
   isPreparingWorktree: boolean;
   isCompacting: boolean;
+  /** Awaited commands/subagents; follow-ups queue and steers are refused. */
+  isWaitingOnBackgroundWork?: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
   resumeCompactionTokens: number | null;
   keepFullHistory: boolean;
@@ -510,6 +512,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     sendDisabledReason: externalSendDisabledReason,
     isPreparingWorktree,
     isCompacting,
+    isWaitingOnBackgroundWork = false,
     environmentUnavailable,
     activePendingApproval: incomingPendingApproval,
     pendingApprovals,
@@ -1197,8 +1200,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     : null;
   const showResumeAction =
     canResume && !composerDraftHasUserContent(composerDraft) && !isEditingQueuedMessage;
+  const composerTurnHoldsFollowUps =
+    phase === "running" || isCompacting || isWaitingOnBackgroundWork;
+  const canSteerFollowUp = !isCompacting && !isWaitingOnBackgroundWork;
   const collapsedComposerPrimaryActionDisabled =
-    phase === "running" ||
+    composerTurnHoldsFollowUps ||
     isSendBusy ||
     isSendDisabled ||
     noProviderAvailable ||
@@ -2065,7 +2071,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       isSendDisabled ||
       noProviderAvailable ||
       environmentUnavailable !== null ||
-      phase === "running"
+      composerTurnHoldsFollowUps
     ) {
       return false;
     }
@@ -2127,10 +2133,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           sendEvent,
           dispatchMode ??
             resolveComposerDispatchMode({
-              running: phase === "running",
+              running: composerTurnHoldsFollowUps,
               alternateModifier: false,
               activeTurnDefault: followUpBehavior,
-              canSteer: !isCompacting,
+              canSteer: canSteerFollowUp,
             }),
           submissionIntent,
         );
@@ -2158,7 +2164,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         keybindings,
         isSoftwareKeyboardOpen,
         isDraftThread: routeKind === "draft",
-        isRunning: phase === "running",
+        isRunning: composerTurnHoldsFollowUps,
         sendShortcut: settings.sendShortcut,
         prompt: promptRef.current,
       });
@@ -2168,9 +2174,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       submitComposer(
         undefined,
         resolveComposerDispatchMode({
-          running: phase === "running",
+          running: composerTurnHoldsFollowUps,
           alternateModifier: intent === "alternate",
-          canSteer: !isCompacting,
+          canSteer: canSteerFollowUp,
           activeTurnDefault: followUpBehavior,
         }),
         intent,
@@ -2182,10 +2188,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     submitComposer(
       event,
       resolveComposerDispatchMode({
-        running: phase === "running",
+        running: composerTurnHoldsFollowUps,
         alternateModifier: event.metaKey || event.ctrlKey,
         activeTurnDefault: followUpBehavior,
-        canSteer: !isCompacting,
+        canSteer: canSteerFollowUp,
       }),
     );
   };
@@ -2194,10 +2200,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     submitComposer(
       undefined,
       resolveComposerDispatchMode({
-        running: phase === "running",
+        running: composerTurnHoldsFollowUps,
         alternateModifier: false,
         activeTurnDefault: followUpBehavior,
-        canSteer: !isCompacting,
+        canSteer: canSteerFollowUp,
       }),
     );
   };
@@ -2217,7 +2223,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       noProviderAvailable ||
       activePendingApproval !== null ||
       pendingUserInputs.length > 0 ||
-      phase === "running" ||
+      composerTurnHoldsFollowUps ||
       isSendBusy ||
       !activeThreadId
     ) {
@@ -2278,6 +2284,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       routeKind,
       phase,
       isCompacting,
+      isWaitingOnBackgroundWork,
       followUpBehavior,
       isSoftwareKeyboardOpen,
       isLiteralPendingAnswer,
@@ -3569,10 +3576,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}
                     pendingAction={pendingPrimaryAction}
-                    isRunning={phase === "running"}
+                    isRunning={composerTurnHoldsFollowUps}
                     canInterrupt={canInterrupt}
                     followUpBehavior={followUpBehavior}
-                    canSteer={!isCompacting}
+                    canSteer={canSteerFollowUp}
                     alternateShortcutLabel={shortcutLabelForCommand(
                       keybindings,
                       "composer.sendAlternate",

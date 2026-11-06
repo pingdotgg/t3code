@@ -39,6 +39,7 @@ import {
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 import { restoreAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
 import { uuidv4 } from "../lib/uuid";
 
@@ -358,8 +359,14 @@ export function useThreadComposerState(input: {
           item.status === "cancelled"),
     );
   })();
-  // A compacting turn cannot take steering input, so follow-ups queue meanwhile.
-  const canSteerActiveTurn = queueWorkflow?.canPromoteToSteer === true && !isCompacting;
+  // Awaited commands/subagents park runtime at idle while the banner still says
+  // Waiting; treat that like an active turn so follow-ups queue instead of starting.
+  const isWaitingOnBackgroundWork = backgroundWorkHoldsCompletion(
+    selectedThreadShell?.pendingBackgroundTasks ?? [],
+  );
+  // Compaction and awaited background work cannot take steering input, so follow-ups queue.
+  const canSteerActiveTurn =
+    queueWorkflow?.canPromoteToSteer === true && !isCompacting && !isWaitingOnBackgroundWork;
   // A stop or a restart holds the queue, completion wakes included, until it
   // is resumed; the queue sheet lists only the user's own messages.
   const queueHeld = queueWorkflow?.isHeld === true;
@@ -387,7 +394,8 @@ export function useThreadComposerState(input: {
     ? deriveProviderSubagentStatus(selectedThreadProjection.projection)
     : null;
 
-  const activeThreadBusy = threadRuntimeIsActive(selectedThreadRuntime);
+  const activeThreadBusy =
+    threadRuntimeIsActive(selectedThreadRuntime) || isCompacting || isWaitingOnBackgroundWork;
   const interruptibleRunId = threadRuntimeHasInterruptibleRun(selectedThreadRuntime)
     ? (selectedThreadRuntime?.activeRunId ?? null)
     : null;
@@ -703,9 +711,10 @@ export function useThreadComposerState(input: {
     // An approval redirect must steer the waiting turn instead of queueing behind it.
     const activeTurnDefault = beforeDispatch !== undefined ? "steer" : followUpBehavior;
     const followUpAction = resolveComposerDispatchMode({
-      running: activeThreadBusy && canSteerActiveTurn,
+      running: activeThreadBusy,
       alternateModifier: followUpOverride !== undefined && followUpOverride !== activeTurnDefault,
       activeTurnDefault,
+      canSteer: canSteerActiveTurn,
     });
     const setupRunning = [selectedThreadActivityRun?.status, selectedThreadRuntime?.status].some(
       (status) => status === "preparing" || status === "starting",
@@ -736,10 +745,7 @@ export function useThreadComposerState(input: {
         settings: serverConfig.settings,
         text,
         threadIdle:
-          !activeThreadBusy &&
-          !runlessWorkActive &&
-          !isCompacting &&
-          selectedThreadQueuedMessages.length === 0,
+          !activeThreadBusy && !runlessWorkActive && selectedThreadQueuedMessages.length === 0,
         now: metadata.createdAt,
       });
     const messageId = MessageId.make(metadata.messageId);

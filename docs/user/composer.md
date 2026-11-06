@@ -89,6 +89,8 @@ other action for a single message. From a hardware keyboard, `Cmd+Return`
 (`Ctrl+Return` on Android) uses the other action, or `Cmd+Shift+Return`
 (`Ctrl+Shift+Return`) when Return inserts a new line. The button only offers
 Steer when the running agent supports it.
+Follow-ups also queue while the provider is compacting, or while the thread is
+waiting on an awaited command or subagent; Steer is unavailable in those states.
 
 ## Queue messages offline on mobile
 

@@ -1307,6 +1307,13 @@ export function planComposerTurn(input: {
   readonly dispatchMode: ComposerDispatchMode;
   /** The turn starts a new provider session, so it neither compacts first nor steers. */
   readonly freshContext: boolean;
+  /** Compaction refuses steers; follow-ups join the queue even while phase is still connecting. */
+  readonly isCompacting?: boolean;
+  /**
+   * Awaited commands/subagents park the runtime at idle while the banner still says
+   * Waiting; follow-ups must join the queue rather than start or steer.
+   */
+  readonly isWaitingOnBackgroundWork?: boolean;
 }) {
   const isFirstMessage =
     !input.sendQueuesBehindSetup && (!input.isServerThread || input.activeMessageCount === 0);
@@ -1324,6 +1331,9 @@ export function planComposerTurn(input: {
     input.freshContext && (input.dispatchMode === "steer" || input.dispatchMode === "restart")
       ? "queue"
       : input.dispatchMode;
+  const queueBehindCompaction =
+    input.isCompacting === true && !COMPACT_COMMAND_PATTERN.test(input.messageText);
+  const queueBehindBackgroundWait = input.isWaitingOnBackgroundWork === true;
   return {
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
@@ -1331,12 +1341,54 @@ export function planComposerTurn(input: {
     baseBranchForWorktree: shouldCreateWorktree ? input.activeThreadBranch : null,
     compactBeforeSend,
     turnDispatchMode:
-      compactBeforeSend || input.sendQueuesBehindSetup ? ("queue" as const) : dispatchMode,
+      compactBeforeSend ||
+      input.sendQueuesBehindSetup ||
+      queueBehindCompaction ||
+      queueBehindBackgroundWait
+        ? ("queue" as const)
+        : dispatchMode,
     shouldQueueBehindActiveRun:
       compactBeforeSend ||
       input.sendQueuesBehindSetup ||
+      queueBehindCompaction ||
+      queueBehindBackgroundWait ||
       (input.phase === "running" && dispatchMode === "queue"),
   };
+}
+
+/**
+ * A send that only joins the queue should not hold the composer busy for the
+ * active turn (setup, compaction, or any other running work). Those sends use a
+ * short-lived busy flag cleared when the dispatch RPC settles.
+ */
+export function sendHoldsLocalDispatch(input: {
+  readonly sendQueuesBehindSetup: boolean;
+  readonly shouldQueueBehindActiveRun: boolean;
+}): boolean {
+  return !input.sendQueuesBehindSetup && !input.shouldQueueBehindActiveRun;
+}
+
+/**
+ * Whether the composer send control should spin. A stuck local dispatch from the
+ * compaction or background-wait turn itself must not block follow-ups that only
+ * need to join the queue.
+ */
+export function composerSendControlBusy(input: {
+  readonly isSendBusy: boolean;
+  readonly sendQueuesBehindSetup: boolean;
+  readonly isCompacting: boolean;
+  readonly isWaitingOnBackgroundWork?: boolean;
+  readonly setupQueueSendActive: boolean;
+  readonly queuedRunEditSaving: boolean;
+  readonly isResuming: boolean;
+}): boolean {
+  const followUpsJoinQueue = input.isCompacting || input.isWaitingOnBackgroundWork === true;
+  return (
+    (input.isSendBusy && !input.sendQueuesBehindSetup && !followUpsJoinQueue) ||
+    input.setupQueueSendActive ||
+    input.queuedRunEditSaving ||
+    input.isResuming
+  );
 }
 
 /**

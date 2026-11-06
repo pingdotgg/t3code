@@ -10,6 +10,7 @@ import {
   formatOutgoingPrompt,
   optimisticMessageAttachments,
   planComposerTurn,
+  sendHoldsLocalDispatch,
   sendTitleFallbackLabels,
   snapshotComposerSend,
   withMessageContext,
@@ -194,6 +195,8 @@ interface ComposerSendInput {
   readonly threadDetailLoading: boolean;
   readonly activeEnvironmentUnavailable: boolean;
   readonly isSendBusy: boolean;
+  readonly isCompacting: boolean;
+  readonly isWaitingOnBackgroundWork: boolean;
   readonly sendQueuesBehindSetup: boolean;
   readonly isDraftHeroState: boolean;
   readonly panelAnimationsActive: boolean;
@@ -288,6 +291,8 @@ export function useComposerSend(input: ComposerSendInput) {
     threadDetailLoading,
     activeEnvironmentUnavailable,
     isSendBusy,
+    isCompacting,
+    isWaitingOnBackgroundWork,
     sendQueuesBehindSetup,
     isDraftHeroState,
     panelAnimationsActive,
@@ -403,7 +408,7 @@ export function useComposerSend(input: ComposerSendInput) {
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       !activeThread ||
-      (isSendBusy && !sendQueuesBehindSetup) ||
+      (isSendBusy && !sendQueuesBehindSetup && !isCompacting && !isWaitingOnBackgroundWork) ||
       isRevertingCheckpoint ||
       !clientSettingsHydrated ||
       threadDetailLoading ||
@@ -758,6 +763,8 @@ export function useComposerSend(input: ComposerSendInput) {
       phase,
       dispatchMode,
       freshContext: freshArm !== undefined,
+      isCompacting,
+      isWaitingOnBackgroundWork,
     });
     if (missingWorktreeBaseBranch) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
@@ -1027,9 +1034,12 @@ export function useComposerSend(input: ComposerSendInput) {
         return;
       }
     }
-    if (sendQueuesBehindSetup) {
-      setSetupQueueSendThreadKey(activeThreadKey);
-    } else {
+    if (
+      sendHoldsLocalDispatch({
+        sendQueuesBehindSetup,
+        shouldQueueBehindActiveRun,
+      })
+    ) {
       beginLocalDispatch({
         preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
         submissionIntent:
@@ -1042,6 +1052,10 @@ export function useComposerSend(input: ComposerSendInput) {
           ? { environmentId: activeThread.environmentId, threadId: threadIdForSend }
           : null,
       );
+    } else {
+      // Queued follow-ups (including during compaction or worktree setup) only need a
+      // short busy pulse for the dispatch RPC, not a hold for the whole active turn.
+      setSetupQueueSendThreadKey(activeThreadKey);
     }
 
     const turnAttachmentsPromise = prepareTurnAttachments({
@@ -1386,7 +1400,14 @@ export function useComposerSend(input: ComposerSendInput) {
       setDockedDraftHeroThreadKey((currentThreadKey) =>
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
       );
-      if (!sendQueuesBehindSetup) resetLocalDispatch();
+      if (
+        sendHoldsLocalDispatch({
+          sendQueuesBehindSetup,
+          shouldQueueBehindActiveRun,
+        })
+      ) {
+        resetLocalDispatch();
+      }
     }
   };
 

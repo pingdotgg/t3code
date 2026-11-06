@@ -1,6 +1,7 @@
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
@@ -8,6 +9,7 @@ import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
 import { configuredHostedAppUrl } from "../hostedPairing";
 import { announcedRun, isDetailBehindShell } from "./chat/threadActivityAnnouncement";
 import {
+  composerSendControlBusy,
   deriveAvailableRevertTurnCounts,
   deriveThreadPendingBackgroundTasks,
   presentThreadShellFromProjection,
@@ -1433,14 +1435,21 @@ export default function ChatView(props: ChatViewProps) {
   const isCompacting =
     (isSendBusy || phase === "connecting" || phase === "running") &&
     (compactionRunning || (compactRequestIsActive && !compactionSettled));
+  const pendingBackgroundTasks = deriveThreadPendingBackgroundTasks(serverProjection);
+  // Awaited background work parks runtime at idle; treat it like an active turn for
+  // follow-up queueing so the composer does not look ready or hold a stuck send spinner.
+  const isWaitingOnBackgroundWork = backgroundWorkHoldsCompletion(pendingBackgroundTasks);
   const isWorking =
-    phase === "running" || isSendBusy || isCompacting || runlessWorkStartedAt !== null;
+    phase === "running" ||
+    isSendBusy ||
+    isCompacting ||
+    isWaitingOnBackgroundWork ||
+    runlessWorkStartedAt !== null;
   const activeContextWindow = deriveLatestContextWindowSnapshot(
     serverVisibleTurnItems ?? [],
     activeThreadLiveTokenUsage,
     activeProviderThread,
   );
-  const pendingBackgroundTasks = deriveThreadPendingBackgroundTasks(serverProjection);
   const activeWorkStartedAt =
     deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
     runlessWorkStartedAt;
@@ -2898,6 +2907,8 @@ export default function ChatView(props: ChatViewProps) {
     threadDetailLoading,
     activeEnvironmentUnavailable,
     isSendBusy,
+    isCompacting,
+    isWaitingOnBackgroundWork,
     sendQueuesBehindSetup,
     isDraftHeroState,
     panelAnimationsActive,
@@ -3584,14 +3595,19 @@ export default function ChatView(props: ChatViewProps) {
                                 }
                                 phase={phase}
                                 isCompacting={isCompacting}
+                                isWaitingOnBackgroundWork={isWaitingOnBackgroundWork}
                                 canInterrupt={canInterruptRunningThread}
-                                isSendBusy={
-                                  (isSendBusy && !sendQueuesBehindSetup) ||
-                                  (setupQueueSendThreadKey !== null &&
-                                    setupQueueSendThreadKey === activeThreadKey) ||
-                                  queuedRunEdit.isSaving ||
-                                  isResuming
-                                }
+                                isSendBusy={composerSendControlBusy({
+                                  isSendBusy,
+                                  sendQueuesBehindSetup,
+                                  isCompacting,
+                                  isWaitingOnBackgroundWork,
+                                  setupQueueSendActive:
+                                    setupQueueSendThreadKey !== null &&
+                                    setupQueueSendThreadKey === activeThreadKey,
+                                  queuedRunEditSaving: queuedRunEdit.isSaving,
+                                  isResuming,
+                                })}
                                 canResume={resumableRunId !== null || hasHeldQueuedRuns}
                                 isRevertingCheckpoint={isRevertingCheckpoint}
                                 sendDisabledReason={
