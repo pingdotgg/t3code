@@ -291,7 +291,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           )}
         </>
       )}
-      <SidebarThreadUndoNotice />
+      <SidebarThreadUndoNotice reserveActionSpace={showProviderUsage && !isOnUtilityPage} />
       <SidebarUpdatePill />
     </SidebarMenu>
   );
