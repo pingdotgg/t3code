@@ -33,7 +33,7 @@ const operations = (simctl: { stdout: string; code: number }) =>
           ? { ...simctl, stderr: "" }
           : { stdout: "", stderr: "", code: 1 },
       ),
-    androidAvailable: Effect.succeed(false),
+    platformAvailable: () => Effect.succeed(false),
   });
 
 it.effect("names a renamed simulator's hardware from its device type", () =>
