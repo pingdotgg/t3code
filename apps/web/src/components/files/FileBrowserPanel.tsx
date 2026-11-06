@@ -4,7 +4,13 @@ import type {
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
-import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
+import {
+  FileTree,
+  type UseFileTreeResult,
+  useFileTree,
+  useFileTreeSearch,
+  useFileTreeSelector,
+} from "@pierre/trees/react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
@@ -62,6 +68,52 @@ function treePath(entry: ProjectEntry): string {
 }
 
 const FILE_BROWSER_SORT_STORAGE_KEY = "t3code:file-browser-sort";
+
+/** `try`/`finally` stays outside the component because React Compiler cannot compile it. */
+function resetTreeKeepingViewState(
+  model: UseFileTreeResult["model"],
+  treePaths: readonly string[],
+  directoryPaths: readonly string[],
+  query: string,
+  resettingTreeRef: { current: boolean },
+) {
+  const expandedDirectoryPaths: string[] = [];
+  const collapsedDirectoryPaths: string[] = [];
+  for (const path of directoryPaths) {
+    const item = model.getItem(path);
+    if (item === null || !("isExpanded" in item)) continue;
+    (item.isExpanded() ? expandedDirectoryPaths : collapsedDirectoryPaths).push(path);
+  }
+  const searchOpen = model.isSearchOpen();
+  const focusedPath = model.getFocusedPath();
+  // The reset briefly closes folders; keep `loadExpanded` from reading that as a user collapse.
+  resettingTreeRef.current = true;
+  try {
+    model.resetPaths(treePaths);
+    if (searchOpen) {
+      // A reset keeps the previous search matches, and setting the same query is a no-op.
+      // Reopening the search also restores the folders that were open before it.
+      model.closeSearch();
+      model.setSearch(query);
+    } else {
+      // A reset closes every folder, and `initialExpandedPaths` assumes default sibling order,
+      // so under a custom sort it misses folders. Reopening through item handles works in any
+      // order, but also opens ancestors, so close again the folders that were closed.
+      for (const path of expandedDirectoryPaths) {
+        const item = model.getItem(path);
+        if (item && "expand" in item) item.expand();
+      }
+      for (const path of collapsedDirectoryPaths) {
+        const item = model.getItem(path);
+        if (item && "collapse" in item) item.collapse();
+      }
+    }
+    // While a folder is closed the reset moves focus to it; return focus to the row it was on.
+    if (focusedPath !== null) model.focusPath(focusedPath);
+  } finally {
+    resettingTreeRef.current = false;
+  }
+}
 
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
   return (
@@ -492,47 +544,12 @@ export default function FileBrowserPanel({
       return;
     }
     if (resort) {
-      const expandedDirectoryPaths: string[] = [];
-      const collapsedDirectoryPaths: string[] = [];
-      for (const path of directoryPaths) {
-        const item = model.getItem(path);
-        if (item === null || !("isExpanded" in item)) continue;
-        (item.isExpanded() ? expandedDirectoryPaths : collapsedDirectoryPaths).push(path);
-      }
-      const searchOpen = model.isSearchOpen();
-      const focusedPath = model.getFocusedPath();
-      // The reset briefly closes folders; keep `loadExpanded` from reading that as a user collapse.
-      resettingTreeRef.current = true;
-      try {
-        model.resetPaths(treePaths);
-        if (searchOpen) {
-          // A reset keeps the previous search matches, and setting the same query is a no-op.
-          // Reopening the search also restores the folders that were open before it.
-          model.closeSearch();
-          model.setSearch(query);
-        } else {
-          // A reset closes every folder, and `initialExpandedPaths` assumes default sibling order,
-          // so under a custom sort it misses folders. Reopening through item handles works in any
-          // order, but also opens ancestors, so close again the folders that were closed.
-          for (const path of expandedDirectoryPaths) {
-            const item = model.getItem(path);
-            if (item && "expand" in item) item.expand();
-          }
-          for (const path of collapsedDirectoryPaths) {
-            const item = model.getItem(path);
-            if (item && "collapse" in item) item.collapse();
-          }
-        }
-        // While a folder is closed the reset moves focus to it; return focus to the row it was on.
-        if (focusedPath !== null) model.focusPath(focusedPath);
-      } finally {
-        resettingTreeRef.current = false;
-      }
+      resetTreeKeepingViewState(model, treePaths, directoryPaths, query, resettingTreeRef);
       return;
     }
     const updates = buildFileTreePathUpdates(previousTreePaths, treePaths);
     if (updates.length > 0) model.batch(updates);
-  }, [ready, entryKinds, model, treePaths, directoryPaths, mtimes, sortKey, sortDirection]);
+  }, [ready, entryKinds, model, treePaths, directoryPaths, mtimes, sortKey, sortDirection, query]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands every directory in the Pierre tree model while expand-all is on and no search is active
   useEffect(() => {
