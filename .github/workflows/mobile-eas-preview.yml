@@ -9,6 +9,7 @@ jobs:
     name: EAS Preview
     # Fork PRs deploy one reviewed commit per label through mobile-eas-preview-fork.yml.
     if: |
+      github.repository == 'pingdotgg/t3code' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       contains(github.event.pull_request.labels.*.name, '🚀 Mobile Continuous Deployment') &&
       (github.event.action != 'labeled' || github.event.label.name == '🚀 Mobile Continuous Deployment')
