@@ -77,6 +77,17 @@ describe("git action copy", () => {
         hasOriginRemote: true,
       }),
     ).toBe("No local commits to include in an MR.");
+    const dirtyItems = buildMenuItems(status({ ...gitLab, hasWorkingTreeChanges: true }), false);
+    expect(dirtyItems.find((item) => item.id === "pr")).toMatchObject({
+      disabled: false,
+      action: "commit_push_pr",
+      label: "Commit, push & create MR",
+    });
+    expect(dirtyItems.find((item) => item.id === "push")).toMatchObject({
+      disabled: false,
+      action: "commit_push",
+      label: "Commit & push",
+    });
   });
 
   it("names the host's change request in the default-branch dialog", () => {

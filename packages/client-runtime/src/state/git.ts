@@ -1,5 +1,6 @@
 import { WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
+import * as Effect from "effect/Effect";
 
 import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -15,6 +16,10 @@ export function createGitEnvironmentAtoms<R, E>(
   const startCommitWorkflow = createEnvironmentRpcCommand(runtime, {
     label: "environment-data:git:start-commit-workflow",
     tag: WS_METHODS.gitStartCommitWorkflow,
+    onSettled: ({ environmentId, input }, registry) =>
+      input.scope.type === "working_tree_new_branch"
+        ? invalidateCachedVcsRefs(registry, { environmentId, cwd: input.cwd })
+        : Effect.void,
   });
   return {
     cancelCommitWorkflow: createEnvironmentRpcCommand(runtime, {

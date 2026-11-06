@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
+import { GitStartCommitWorkflowInput } from "./gitCommitWorkflow.ts";
 import {
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
@@ -79,6 +80,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
+const decodeCommitWorkflow = Schema.decodeUnknownSync(GitStartCommitWorkflowInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
 
 export function clientRpcRequiredScopes(
@@ -88,6 +90,11 @@ export function clientRpcRequiredScopes(
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)
+      return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
+  }
+  if (method === WS_METHODS.gitStartCommitWorkflow && input !== undefined) {
+    const payload = decodeCommitWorkflow(input);
+    if (payload.scope.type === "working_tree_new_branch")
       return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
   }
   if (method === WS_METHODS.gitRunStackedAction && input !== undefined) {

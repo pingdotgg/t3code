@@ -103,11 +103,12 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       : !gitStatus.data?.refName ||
         isDefaultRef ||
         gitStatus.data?.hasWorkingTreeChanges !== false);
-  const runWorkflow = async () => {
+  const runWorkflow = async (featureBranch = false) => {
     if (
       !selectedThread ||
       !selectedThreadCwd ||
       !canStartWorkflow ||
+      (featureBranch && (!canChangeThreadBranch || rewriteHistory)) ||
       submittedWorkflow.current ||
       workflowUnavailable ||
       !gitStatus.data
@@ -121,7 +122,9 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
         workflowScope === "branch"
           ? { type: "branch" as const, ...(baseRef.trim() ? { baseRef: baseRef.trim() } : {}) }
           : {
-              type: "working_tree" as const,
+              type: featureBranch
+                ? ("working_tree_new_branch" as const)
+                : ("working_tree" as const),
               ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
             },
       ...(workflowInstructions.trim() ? { instructions: workflowInstructions.trim() } : {}),
@@ -464,14 +467,28 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             )}
           </View>
           {isWorkflow ? (
-            <Button
-              label={rewriteHistory ? "Rebuild history" : "Create logical commits"}
-              icon="arrow.branch"
-              tone="primary"
-              fullWidth
-              disabled={!canStartWorkflow || workflowUnavailable || busy}
-              onPress={() => void runWorkflow()}
-            />
+            <View className="gap-2">
+              <Button
+                label={rewriteHistory ? "Rebuild history" : "Create logical commits"}
+                icon="arrow.branch"
+                tone="primary"
+                fullWidth
+                disabled={!canStartWorkflow || workflowUnavailable || busy}
+                onPress={() => void runWorkflow()}
+              />
+              {!rewriteHistory ? (
+                <Button
+                  label="Commit on a new branch"
+                  icon="arrow.branch"
+                  tone="text"
+                  fullWidth
+                  disabled={
+                    !canStartWorkflow || !canChangeThreadBranch || workflowUnavailable || busy
+                  }
+                  onPress={() => void runWorkflow(true)}
+                />
+              ) : null}
+            </View>
           ) : (
             <View className="gap-2">
               <Button

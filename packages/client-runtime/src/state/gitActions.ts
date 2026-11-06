@@ -16,6 +16,7 @@ export interface GitActionMenuItem {
   icon: GitActionIconName;
   kind: "open_dialog" | "open_pr";
   dialogAction?: GitDialogAction;
+  action?: GitStackedAction;
 }
 
 export interface GitQuickAction {
@@ -66,14 +67,15 @@ export function buildMenuItems(
   const canPush =
     !isBusy &&
     hasBranch &&
-    !hasChanges &&
-    gitStatus.aheadCount > 0 &&
-    (isBehind ? gitStatus.hasUpstream : gitStatus.hasUpstream || canPushWithoutUpstream);
+    (gitStatus.aheadCount > 0 || hasChanges) &&
+    (isBehind
+      ? !hasChanges && gitStatus.hasUpstream
+      : gitStatus.hasUpstream || canPushWithoutUpstream);
   const canCreatePr =
     !isBusy &&
     hasBranch &&
     !hasOpenPr &&
-    (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0 &&
+    ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0 || hasChanges) &&
     !isBehind &&
     (gitStatus.hasUpstream || canPushWithoutUpstream);
   const canOpenPr = !isBusy && hasOpenPr;
@@ -89,7 +91,8 @@ export function buildMenuItems(
     },
     {
       id: "push",
-      label: "Push",
+      label: hasChanges ? "Commit & push" : "Push",
+      action: "commit_push",
       disabled: !canPush,
       icon: "push",
       kind: "open_dialog",
@@ -105,7 +108,10 @@ export function buildMenuItems(
         }
       : {
           id: "pr",
-          label: `Create ${terminology.shortLabel}`,
+          label: hasChanges
+            ? `Commit, push & create ${terminology.shortLabel}`
+            : `Create ${terminology.shortLabel}`,
+          action: "commit_push_pr",
           disabled: !canCreatePr,
           icon: "pr",
           kind: "open_dialog",
@@ -289,9 +295,6 @@ export function getGitActionDisabledReason(input: {
     if (!hasBranch) {
       return "Detached HEAD: checkout a branch before pushing.";
     }
-    if (hasChanges) {
-      return "Commit or stash local changes before pushing.";
-    }
     if (isBehind) {
       return "Branch is behind upstream. Pull/rebase before pushing.";
     }
@@ -313,7 +316,7 @@ export function getGitActionDisabledReason(input: {
   if (!gitStatus.hasUpstream && !hasOriginRemote) {
     return `Add an "origin" remote before creating ${terminology.shortLabelWithArticle}.`;
   }
-  if ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) <= 0) {
+  if (!hasChanges && (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) <= 0) {
     return `No local commits to include in ${terminology.shortLabelWithArticle}.`;
   }
   if (isBehind) {

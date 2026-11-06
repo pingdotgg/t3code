@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { CommandId, type ScopedThreadRef } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, CommandId, type ScopedThreadRef } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useRef, useState, type ReactNode } from "react";
 import { Button } from "./ui/button";
@@ -9,6 +9,7 @@ import { Textarea } from "./ui/textarea";
 import { gitEnvironment } from "~/state/git";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { randomUUID } from "~/lib/utils";
+import { useEnvironmentScope } from "~/state/session";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 
 export function CommitWorkflowForm(props: {
@@ -27,6 +28,10 @@ export function CommitWorkflowForm(props: {
     gitEnvironment.startCommitWorkflow.permissionAtom(props.threadRef.environmentId),
   );
   const start = useAtomCommand(gitEnvironment.startCommitWorkflow, { reportFailure: false });
+  const canOperateThread = useEnvironmentScope(
+    props.threadRef.environmentId,
+    AuthOrchestrationOperateScope,
+  );
   const scope = props.scope;
   const [baseRef, setBaseRef] = useState("");
   const [instructions, setInstructions] = useState("");
@@ -36,8 +41,14 @@ export function CommitWorkflowForm(props: {
       ? !props.hasChanges || props.filePaths?.length === 0
       : props.hasChanges || props.isDefaultRef || props.branch === null;
 
-  const submit = () => {
-    if (!canStart || unavailable || submitted.current) return;
+  const submit = (featureBranch = false) => {
+    if (
+      !canStart ||
+      unavailable ||
+      submitted.current ||
+      (featureBranch && (!canOperateThread || scope !== "working_tree"))
+    )
+      return;
     const payload = {
       threadId: props.threadRef.threadId,
       cwd: props.cwd,
@@ -46,7 +57,9 @@ export function CommitWorkflowForm(props: {
         scope === "branch"
           ? { type: "branch" as const, ...(baseRef.trim() ? { baseRef: baseRef.trim() } : {}) }
           : {
-              type: "working_tree" as const,
+              type: featureBranch
+                ? ("working_tree_new_branch" as const)
+                : ("working_tree" as const),
               ...(props.filePaths ? { filePaths: props.filePaths } : {}),
             },
       ...(instructions.trim() ? { instructions: instructions.trim() } : {}),
@@ -138,7 +151,17 @@ export function CommitWorkflowForm(props: {
         <Button variant="outline" size="sm" onClick={props.onClose}>
           Cancel
         </Button>
-        <Button size="sm" disabled={!canStart || unavailable} onClick={submit}>
+        {scope === "working_tree" ? (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!canStart || !canOperateThread || unavailable}
+            onClick={() => submit(true)}
+          >
+            Commit on new branch
+          </Button>
+        ) : null}
+        <Button size="sm" disabled={!canStart || unavailable} onClick={() => submit()}>
           {scope === "branch" ? "Rebuild history" : "Create logical commits"}
         </Button>
       </DialogFooter>

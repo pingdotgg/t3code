@@ -20,6 +20,7 @@ import { v2PullRequestThread } from "../orchestration-v2/testkit/pullRequestFixt
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as CommitWorkflow from "./CommitWorkflowService.ts";
 import * as Runner from "./CommitWorkflowRunner.ts";
+import * as GitManager from "./GitManager.ts";
 import { buildCommitWorkflowPrompt } from "./commitWorkflowPrompt.ts";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -101,12 +102,15 @@ function harness(
       ? options.run(request)
       : Effect.succeed({ summary: "Created logical commits; backup: refs/t3/backup/test" }),
   );
+  const createFeatureBranch = vi.fn(() => Effect.succeed("feature/logical-commits"));
+  const dispatch = vi.fn(() => Effect.succeed({ sequence: 1, storedEvents: [] }));
   const gitStatus = vi.fn(() => Effect.succeed({ ...status, ...options.status }));
   const layer = CommitWorkflow.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: () => Effect.succeed(thread),
+          dispatch,
         }),
         Layer.mock(ProjectStore.ProjectStoreV2)({
           get: () =>
@@ -132,6 +136,7 @@ function harness(
             ),
         }),
         Layer.mock(Runner.CommitWorkflowRunner)({ run }),
+        Layer.mock(GitManager.GitManager)({ createFeatureBranch }),
         ServerSettingsService.layerTest({
           providerInstances: {
             [ProviderInstanceId.make("generation-writer")]: {
@@ -159,7 +164,7 @@ function harness(
       ),
     ),
   );
-  return { layer, run, gitStatus };
+  return { layer, run, gitStatus, createFeatureBranch, dispatch };
 }
 
 describe("agent commit workflow", () => {
@@ -216,6 +221,46 @@ describe("agent commit workflow", () => {
       );
     }).pipe(Effect.provide(h.layer));
   });
+
+  it.effect(
+    "splits selected changes on a new branch without committing on the source branch",
+    () => {
+      const h = harness({ status: { refName: "main", isDefaultRef: true } });
+      return Effect.gen(function* () {
+        const service = yield* CommitWorkflow.CommitWorkflowService;
+        const request = {
+          ...input,
+          expectedBranch: "main",
+          scope: { ...input.scope, type: "working_tree_new_branch" as const },
+        };
+        yield* service.start(request);
+        expect(h.createFeatureBranch).toHaveBeenCalledWith(
+          expect.objectContaining({
+            cwd: input.cwd,
+            expectedBranch: "main",
+            filePaths: input.scope.type === "working_tree" ? input.scope.filePaths : undefined,
+          }),
+        );
+        expect(h.dispatch).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: "thread.metadata.update",
+            threadId,
+            branch: "feature/logical-commits",
+            expectedBranch: "feature",
+            expectedWorktreePath: "/worktree",
+          }),
+        );
+        expect(h.run.mock.calls[0]![0].request).toEqual({
+          ...request,
+          expectedBranch: "feature/logical-commits",
+          scope: input.scope,
+        });
+        yield* service.start(request);
+        expect(h.createFeatureBranch).toHaveBeenCalledTimes(1);
+        expect(h.run).toHaveBeenCalledTimes(1);
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
 
   it.effect("starts independently of the source thread's Plan mode", () => {
     const h = harness({ planMode: true });
@@ -284,10 +329,13 @@ describe("agent commit workflow", () => {
     const h = harness({ status: { refName: target.refName } });
     return Effect.gen(function* () {
       const service = yield* CommitWorkflow.CommitWorkflowService;
-      const error = yield* service
-        .start({ ...input, expectedBranch: target.expectedBranch })
-        .pipe(Effect.flip);
-      expect(error.message).toContain("branch changed");
+      for (const type of ["working_tree", "working_tree_new_branch"] as const) {
+        const error = yield* service
+          .start({ ...input, expectedBranch: target.expectedBranch, scope: { type } })
+          .pipe(Effect.flip);
+        expect(error.message).toContain("branch changed");
+      }
+      expect(h.createFeatureBranch).not.toHaveBeenCalled();
       expect(h.run).not.toHaveBeenCalled();
     }).pipe(Effect.provide(h.layer));
   });

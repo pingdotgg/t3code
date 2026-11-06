@@ -99,7 +99,9 @@ export function resolveRegeneratePullRequestCandidates(
 ): ReadonlyArray<RegeneratePullRequestCandidate> {
   const candidates = new Map<string, RegeneratePullRequestCandidate>();
   const branchPr = gitStatus?.pr;
-  const branchReference = branchPr ? sourceControlClients.parseChangeRequestUrl(branchPr.url)?.link : null;
+  const branchReference = branchPr
+    ? sourceControlClients.parseChangeRequestUrl(branchPr.url)?.link
+    : null;
   if (branchPr?.state === "open" && branchReference) {
     candidates.set(threadPullRequestKeyOf(branchReference), {
       url: branchPr.url,
@@ -193,7 +195,7 @@ export function buildMenuItems(
   const canPush =
     !isBusy &&
     hasBranch &&
-    gitStatus.aheadCount > 0 &&
+    (gitStatus.aheadCount > 0 || hasChanges) &&
     (isBehind
       ? !hasChanges && gitStatus.hasUpstream
       : gitStatus.hasUpstream || canPushWithoutUpstream);
@@ -201,7 +203,7 @@ export function buildMenuItems(
     !isBusy &&
     hasBranch &&
     !hasOpenPr &&
-    hasDefaultBranchDelta &&
+    (hasDefaultBranchDelta || hasChanges) &&
     !isBehind &&
     (gitStatus.hasUpstream || canPushWithoutUpstream);
 
@@ -264,7 +266,8 @@ export function buildMenuItems(
 
   const pushItem: GitActionMenuItem = {
     id: "push",
-    label: "Push",
+    label: hasChanges ? "Commit & push" : "Push",
+    action: "commit_push",
     disabled: !canPush,
     icon: "push",
     kind: "open_dialog",
@@ -280,7 +283,10 @@ export function buildMenuItems(
     pushItem,
     {
       id: "pr",
-      label: `Create ${terminology.shortLabel}`,
+      label: hasChanges
+        ? `Commit, push & create ${terminology.shortLabel}`
+        : `Create ${terminology.shortLabel}`,
+      action: "commit_push_pr",
       disabled: !canCreatePr,
       icon: "pr",
       kind: "open_dialog",

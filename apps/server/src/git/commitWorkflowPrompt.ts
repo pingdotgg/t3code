@@ -22,7 +22,7 @@ export function buildCommitWorkflowPrompt(
           `Selected paths (literal paths, not Git pathspec patterns): ${JSON.stringify(scope.filePaths)}. Commit only these paths; preserve every other file and its staged/unstaged state.`,
         ]
       : []),
-    "This is a standalone source-control task. Do not read or reuse other conversations for context. Read the source checkout's AGENTS.md and .t3code/commit-message.md, including local/untracked instructions.",
+    "This is a standalone source-control task. Do not read or reuse other conversations for context. Read and follow the source checkout's AGENTS.md and .t3code/commit-message.md when present, including local/untracked instructions. Both files are optional: if either is missing, continue with the available repository instructions, Source Control writing settings, and recent commit conventions. Do not stop or create an instruction file merely because one is absent.",
     style.mode === "conventional_commits"
       ? "Write Conventional Commits subjects with an appropriate type and optional scope."
       : style.mode === "custom"

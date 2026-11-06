@@ -95,10 +95,22 @@ describe("when: ref is clean, up to date, and has no open PR", () => {
     const items = buildMenuItems(syncedFeature, false);
     assert.equal(items.find((item) => item.id === "pr")?.disabled, false);
 
-    const dirtyFeature = { ...syncedFeature, hasWorkingTreeChanges: true };
-    assert.equal(
-      buildMenuItems(dirtyFeature, false).find((item) => item.id === "pr")?.disabled,
-      false,
+    const dirtyFeature = { ...syncedFeature, aheadOfDefaultCount: 0, hasWorkingTreeChanges: true };
+    assert.deepInclude(
+      buildMenuItems(dirtyFeature, false).find((item) => item.id === "pr"),
+      {
+        disabled: false,
+        action: "commit_push_pr",
+        label: "Commit, push & create PR",
+      },
+    );
+    assert.deepInclude(
+      buildMenuItems(dirtyFeature, false).find((item) => item.id === "push"),
+      {
+        disabled: false,
+        action: "commit_push",
+        label: "Commit & push",
+      },
     );
   });
 });

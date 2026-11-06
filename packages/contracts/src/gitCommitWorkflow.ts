@@ -3,7 +3,7 @@ import { CommandId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const GitCommitWorkflowScope = Schema.Union([
   Schema.Struct({
-    type: Schema.Literal("working_tree"),
+    type: Schema.Literals(["working_tree", "working_tree_new_branch"]),
     filePaths: Schema.optional(
       Schema.Array(Schema.String.check(Schema.isNonEmpty())).check(Schema.isMinLength(1)),
     ),

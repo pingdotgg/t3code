@@ -1512,51 +1512,68 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
-  it.effect("featureBranch honors project branch naming config", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      const configDir = NodePath.join(repoDir, ".t3code");
-      NodeFS.mkdirSync(configDir, { recursive: true });
-      NodeFS.writeFileSync(
-        NodePath.join(configDir, "vcs.json"),
-        JSON.stringify({
-          branchNaming: {
-            defaultPrefix: null,
-            preserveNamespaces: true,
+  it.effect.each(["commit", "prepare"] as const)(
+    "featureBranch honors project branch naming config: %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const configDir = NodePath.join(repoDir, ".t3code");
+        NodeFS.mkdirSync(configDir, { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(configDir, "vcs.json"),
+          JSON.stringify({
+            branchNaming: {
+              defaultPrefix: null,
+              preserveNamespaces: true,
+            },
+          }),
+        );
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nconfigured-branch\n");
+
+        const { manager } = yield* makeManager({
+          textGeneration: {
+            generateCommitMessage: (input) =>
+              Effect.succeed({
+                subject: "Respect project branch naming",
+                body: "",
+                ...(input.includeBranch
+                  ? { branch: "feature/jm/bugfix/externe-budgetgrenze-abrechnungsart" }
+                  : {}),
+              }),
           },
-        }),
-      );
-      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nconfigured-branch\n");
-
-      const { manager } = yield* makeManager({
-        textGeneration: {
-          generateCommitMessage: (input) =>
-            Effect.succeed({
-              subject: "Respect project branch naming",
-              body: "",
-              ...(input.includeBranch
-                ? { branch: "feature/jm/bugfix/externe-budgetgrenze-abrechnungsart" }
-                : {}),
-            }),
-        },
-      });
-      const result = yield* runStackedAction(manager, {
-        cwd: repoDir,
-        action: "commit",
-        featureBranch: true,
-      });
-
-      expect(result.branch).toEqual({
-        status: "created",
-        name: "jm/bugfix/externe-budgetgrenze-abrechnungsart",
-      });
-      expect(
-        yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"]).pipe(
-          Effect.map((output) => output.stdout.trim()),
-        ),
-      ).toBe("jm/bugfix/externe-budgetgrenze-abrechnungsart");
-    }),
+        });
+        const headBefore = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        const branch =
+          mode === "commit"
+            ? (yield* runStackedAction(manager, {
+                cwd: repoDir,
+                action: "commit",
+                featureBranch: true,
+              })).branch.name
+            : yield* manager.createFeatureBranch({
+                cwd: repoDir,
+                expectedBranch: "main",
+                filePaths: ["README.md"],
+                settings: {
+                  modelSelection: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+                  style: DEFAULT_SERVER_SETTINGS.sourceControlWritingStyle,
+                },
+              });
+        expect(branch).toBe("jm/bugfix/externe-budgetgrenze-abrechnungsart");
+        if (mode === "prepare") {
+          expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(headBefore);
+          expect((yield* runGit(repoDir, ["diff", "--cached"])).stdout).toBe("");
+          expect((yield* runGit(repoDir, ["diff", "--", "README.md"])).stdout).toContain(
+            "configured-branch",
+          );
+        }
+        expect(
+          yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"]).pipe(
+            Effect.map((output) => output.stdout.trim()),
+          ),
+        ).toBe("jm/bugfix/externe-budgetgrenze-abrechnungsart");
+      }),
   );
 
   it.effect("local status refines an unknown remote through the provider registry", () =>

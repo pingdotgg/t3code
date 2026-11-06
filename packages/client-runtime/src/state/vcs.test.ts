@@ -3,6 +3,9 @@ import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
   AuthSourceControlWriteScope,
+  AuthOrchestrationOperateScope,
+  CommandId,
+  ThreadId,
   WS_METHODS,
   VcsProcessExitError,
   type VcsListRefsInput,
@@ -318,6 +321,7 @@ describe("cached VCS refs", () => {
         const client = {
           [WS_METHODS.vcsPull]: () => Effect.fail(expectedError),
           [WS_METHODS.vcsRefreshStatus]: () => Effect.void,
+          [WS_METHODS.gitStartCommitWorkflow]: () => Effect.fail(expectedError),
           [WS_METHODS.gitPreparePullRequestThread]: () =>
             Effect.succeed({ branch: "feature/pr", worktreePath: null }),
         } as unknown as WsRpcProtocolClient;
@@ -389,6 +393,23 @@ describe("cached VCS refs", () => {
         expect(AsyncResult.isSuccess(prepareResult)).toBe(true);
         expect(yield* Ref.get(clears)).toBe(3);
         expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(3);
+        const split = createGitEnvironmentAtoms(
+          runtime,
+          createVcsActionManager(runtime).track,
+        ).startCommitWorkflow;
+        const splitInput = {
+          commandId: CommandId.make("split"),
+          cwd: "/repo",
+          threadId: ThreadId.make("thread"),
+          expectedBranch: "main",
+          scope: { type: "working_tree_new_branch" as const },
+        };
+        const splitResult = yield* Effect.promise(() =>
+          split.run(registry, { environmentId: TARGET.environmentId, input: splitInput }),
+        );
+        expect(AsyncResult.isFailure(splitResult)).toBe(true);
+        expect(yield* Ref.get(clears)).toBe(4);
+        expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(4);
       }),
     ),
   );
@@ -727,7 +748,7 @@ const grantedSessions = Atom.family((_id: EnvironmentId) =>
         sessionMethods: [],
         sessionCookieName: "test",
       },
-      scopes: [AuthSourceControlWriteScope],
+      scopes: [AuthSourceControlWriteScope, AuthOrchestrationOperateScope],
     }),
   ),
 );

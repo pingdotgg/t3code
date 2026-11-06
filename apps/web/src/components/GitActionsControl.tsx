@@ -255,9 +255,6 @@ function getMenuActionDisabledReason({
     if (!hasBranch) {
       return "Detached HEAD: check out a branch before pushing.";
     }
-    if (hasChanges) {
-      return "Commit or stash local changes before pushing.";
-    }
     if (isBehind) {
       return "Branch is behind upstream. Pull/rebase before pushing.";
     }
@@ -276,7 +273,7 @@ function getMenuActionDisabledReason({
   if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
     return `Add an "origin" remote before creating a ${terminology.singular}.`;
   }
-  if ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) <= 0) {
+  if (!hasChanges && (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) <= 0) {
     return `No local commits to include in a ${terminology.singular}.`;
   }
   if (isBehind) {
@@ -1530,11 +1527,11 @@ export default function GitActionsControl({
         setIsForcePushDialogOpen(true);
         return;
       }
-      void runGitActionWithToast({ action: "push" });
+      void runGitActionWithToast({ action: item.action ?? "commit_push" });
       return;
     }
     if (item.dialogAction === "create_pr") {
-      void runGitActionWithToast({ action: "create_pr" });
+      void runGitActionWithToast({ action: item.action ?? "commit_push_pr" });
       return;
     }
     setExcludedFiles(new Set());

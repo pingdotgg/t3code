@@ -1,5 +1,6 @@
 import {
   GitManagerError,
+  CommandId,
   GitStartCommitWorkflowInput,
   type GitStartCommitWorkflowResult,
   type GitCancelCommitWorkflowInput,
@@ -19,6 +20,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Runner from "./CommitWorkflowRunner.ts";
+import * as GitManager from "./GitManager.ts";
 
 const isGitManagerError = Schema.is(GitManagerError);
 const encodeRequest = Schema.encodeSync(Schema.fromJsonString(GitStartCommitWorkflowInput));
@@ -47,6 +49,7 @@ export const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const fs = yield* FileSystem.FileSystem;
   const runner = yield* Runner.CommitWorkflowRunner;
+  const gitManager = yield* GitManager.GitManager;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const providers = yield* ProviderRegistry.ProviderRegistry;
   const jobs = new Map<string, Job>();
@@ -94,8 +97,32 @@ export const make = Effect.gen(function* () {
                 yield* providers.getProviders,
                 thread.projectId,
               );
+        let request = input;
+        if (input.scope.type === "working_tree_new_branch") {
+          if (!status.hasWorkingTreeChanges)
+            return yield* fail("There are no uncommitted changes to split on a new branch.");
+          const branch = yield* gitManager.createFeatureBranch({
+            cwd,
+            expectedBranch: input.expectedBranch,
+            ...(input.scope.filePaths ? { filePaths: input.scope.filePaths } : {}),
+            settings: { modelSelection, style: settings.sourceControlWritingStyle },
+          });
+          yield* threads.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(`${input.commandId}:feature-branch`),
+            threadId: input.threadId,
+            branch,
+            expectedBranch: thread.branch,
+            expectedWorktreePath: thread.worktreePath,
+          });
+          request = {
+            ...input,
+            expectedBranch: branch,
+            scope: { ...input.scope, type: "working_tree" },
+          };
+        }
         return yield* runner.run({
-          request: input,
+          request,
           projectId: thread.projectId,
           modelSelection,
           style: settings.sourceControlWritingStyle,
