@@ -4,7 +4,7 @@ import {
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { getDisplayModelName, type ModelEsque } from "./providerIconUtils";
-import type { ContextWindowSnapshot } from "../../lib/contextWindow";
+import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 
 /** Cache and reasoning are subsets of input and output, respectively. Unclassified
  * context stays visible when a provider reports only part of the breakdown. */
