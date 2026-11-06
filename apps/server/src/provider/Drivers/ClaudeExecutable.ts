@@ -19,6 +19,39 @@ const NPM_PACKAGE_ENTRY_CANDIDATES = [
   ["node_modules", "@anthropic-ai", "claude-code", "cli.js"],
 ] as const;
 
+const WINGET_PACKAGE_ENTRY = [
+  "Microsoft",
+  "WinGet",
+  "Packages",
+  "Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe",
+  "claude.exe",
+] as const;
+
+function resolveWinGetExecutablePath(shimPath: string, environment: NodeJS.ProcessEnv) {
+  const localAppData = Object.entries(environment).find(
+    ([key]) => key.toUpperCase() === "LOCALAPPDATA",
+  )?.[1];
+  if (!localAppData || !NodePath.win32.isAbsolute(localAppData)) return undefined;
+  const launcherPath = NodePath.win32.join(
+    localAppData,
+    "Microsoft",
+    "WinGet",
+    "Links",
+    "claude.cmd",
+  );
+  if (NodePath.win32.normalize(shimPath).toLowerCase() !== launcherPath.toLowerCase())
+    return undefined;
+
+  try {
+    const launcher = NodeFS.readFileSync(shimPath, "utf8").replaceAll("\r\n", "\n").trim();
+    const expectedLauncher = `@echo off\n"%LOCALAPPDATA%\\${WINGET_PACKAGE_ENTRY.join("\\")}" %*`;
+    if (launcher.toLowerCase() !== expectedLauncher.toLowerCase()) return undefined;
+    return NodePath.win32.join(localAppData, ...WINGET_PACKAGE_ENTRY);
+  } catch {
+    return undefined;
+  }
+}
+
 export type ExecutableFileCheck = (filePath: string) => boolean;
 
 function isExistingFile(filePath: string): boolean {
@@ -60,8 +93,13 @@ export const resolveClaudeSdkExecutablePath = Effect.fn("resolveClaudeSdkExecuta
       }
     }
 
+    const winGetExecutable = resolveWinGetExecutablePath(resolved, environment);
+    if (winGetExecutable && isFile(winGetExecutable)) {
+      return winGetExecutable;
+    }
+
     yield* Effect.logWarning(
-      "Claude launcher shim resolved but no known package entry was found next to it; the Claude Agent SDK cannot spawn launcher scripts directly.",
+      "Claude launcher shim resolved but no known package entry was found; the Claude Agent SDK cannot spawn launcher scripts directly.",
       { binaryPath, resolvedShimPath: resolved },
     );
     return binaryPath;
