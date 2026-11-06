@@ -1683,6 +1683,20 @@ function claudeLiveSelectionFlagSettings(
   };
 }
 
+// Policy can refuse bypass and some models lack Auto; like the CLI at launch, fall back to
+// default, which asks for every approval and which every process accepts.
+function setClaudeLivePermissionMode(live: ClaudeLiveQueryContext, mode: PermissionMode) {
+  return live.query.setPermissionMode(mode).pipe(
+    Effect.as(mode),
+    Effect.catchTags({
+      ClaudeAgentSdkQueryRunnerError: (error) =>
+        mode === "bypassPermissions" || mode === "auto"
+          ? live.query.setPermissionMode("default").pipe(Effect.as("default" as const))
+          : Effect.fail(error),
+    }),
+  );
+}
+
 // A delegated child is its own SDK session, so Claude Code gives it the main-conversation cache
 // TTL. When the user sets Claude's subagentPromptCacheTtl, the child follows it like a native
 // subagent would. An explicit CLAUDE_CODE_PROMPT_CACHE_TTL on the instance still wins.
@@ -2800,9 +2814,15 @@ function readOnlyPolicyAllowsGlobalReads(
 function permissionModeForClaudeRuntimePolicy(
   runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
 ): PermissionMode {
-  if (runtimePolicy.interactionMode === "plan") {
-    return "plan";
-  }
+  return runtimePolicy.interactionMode === "plan"
+    ? "plan"
+    : basePermissionModeForClaudeRuntimePolicy(runtimePolicy);
+}
+
+// The mode the thread returns to when it leaves Plan.
+function basePermissionModeForClaudeRuntimePolicy(
+  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+): PermissionMode {
   if (runtimePolicy.approvalPolicy === "never") {
     switch (sandboxPolicyKindForClaudeRuntimePolicy(runtimePolicy)) {
       case "readOnly":
@@ -2896,6 +2916,11 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
       permissionMode,
       ...(readOnlyTools === undefined ? {} : { tools: readOnlyTools }),
       ...(allowedTools === undefined ? {} : { allowedTools }),
+      // Bypass can only be entered live by a process launched with this flag.
+      ...(basePermissionModeForClaudeRuntimePolicy(runtimePolicy) === "bypassPermissions" &&
+      !availability.bypassDisabled
+        ? { allowDangerouslySkipPermissions: true }
+        : {}),
       // Claude routes Plan-mode writes to the callback even in Auto or Full access.
       installPermissionCallback: true,
     };
@@ -3008,13 +3033,12 @@ function requiresClaudeApproval(context: ActiveClaudeTurnContext): boolean {
   return policy.installPermissionCallback || policy.permissionMode === "bypassPermissions";
 }
 
+// Only what a process fixes at launch; the permission mode and callback policy change live.
 function claudeRuntimeQueryPolicyKey(policy: ClaudeRuntimeQueryPolicy): string {
   return JSON.stringify({
-    permissionMode: policy.permissionMode,
     tools: policy.tools,
     allowedTools: policy.allowedTools,
     allowDangerouslySkipPermissions: policy.allowDangerouslySkipPermissions,
-    installPermissionCallback: policy.installPermissionCallback,
   });
 }
 
@@ -4423,7 +4447,7 @@ interface ActiveClaudeSubagent {
 }
 
 interface ClaudeLiveQueryContext {
-  readonly queryPolicy: ClaudeRuntimeQueryPolicy;
+  queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly nativeThreadId: string;
   readonly settingsCwd: string | null;
   readonly launchArgSettings: ClaudeSdkSettings | undefined;
@@ -5169,7 +5193,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
         ) {
           if (
-            permissionModeForClaudeRuntimePolicy(turnInput.runtimePolicy) !== "bypassPermissions"
+            basePermissionModeForClaudeRuntimePolicy(turnInput.runtimePolicy) !==
+            "bypassPermissions"
           ) {
             return claudeRuntimeQueryPolicyForRuntimePolicy(turnInput.runtimePolicy);
           }
@@ -10849,22 +10874,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             !existing.stopping &&
             existing.selection.queryIdentity === compiledSelection.queryIdentity
           ) {
+            // Switch Plan and the permission mode live, so a background agent survives the change.
+            // Record the mode Claude accepted, as the init frame does for a fresh process.
+            if (existing.queryPolicy.permissionMode !== queryPolicy.permissionMode) {
+              existing.permissionMode = yield* setClaudeLivePermissionMode(
+                existing,
+                queryPolicy.permissionMode,
+              );
+              existing.openedPermissionMode = existing.permissionMode;
+            }
+            existing.queryPolicy = queryPolicy;
             // A denied ExitPlanMode leaves Claude in plan mode. Restore only from plan:
             // Auto/default may reflect a policy restriction that forbids restoring bypass.
             if (existing.permissionMode === "plan" && existing.openedPermissionMode !== "plan") {
-              existing.permissionMode = yield* existing.query
-                .setPermissionMode(existing.openedPermissionMode)
-                .pipe(
-                  Effect.as(existing.openedPermissionMode),
-                  Effect.catchTags({
-                    ClaudeAgentSdkQueryRunnerError: (error) =>
-                      existing.openedPermissionMode === "bypassPermissions"
-                        ? existing.query
-                            .setPermissionMode("default")
-                            .pipe(Effect.as("default" as const))
-                        : Effect.fail(error),
-                  }),
-                );
+              existing.permissionMode = yield* setClaudeLivePermissionMode(
+                existing,
+                existing.openedPermissionMode,
+              );
             }
             return existing;
           }
