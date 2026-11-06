@@ -156,6 +156,16 @@ describe("workspace root navigation", () => {
     expect(shouldRestoreNativeSearch(initialWorkspaceTabsState().tabs.threads, true)).toBe(false);
   });
 
+  it("cancelling an active search clears the query and rests the search mode", () => {
+    let state = workspaceTabsReducer(initialWorkspaceTabsState(), { type: "search" });
+    state = workspaceTabsReducer(state, { type: "query", query: "t3" });
+    expect(state.tabs.threads).toMatchObject({ query: "t3", searchMode: "active" });
+
+    state = workspaceTabsReducer(state, { type: "cancel" });
+    expect(state.tabs.threads).toMatchObject({ query: "", searchMode: "resting" });
+    expect(shouldRestoreNativeSearch(state.tabs.threads, false)).toBe(false);
+  });
+
   it("returns from Usage without losing list state", () => {
     let state = workspaceTabsReducer(initialWorkspaceTabsState(), {
       type: "query",
