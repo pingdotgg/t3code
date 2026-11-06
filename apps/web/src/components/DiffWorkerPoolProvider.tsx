@@ -36,7 +36,7 @@ function currentDiffThemeName() {
   return getDiffThemeNames()[getRenderedAppearance()];
 }
 
-function applyDiffWorkerTheme(pool: WorkerPoolManager) {
+export function applyDiffWorkerTheme(pool: WorkerPoolManager) {
   const themeName = currentDiffThemeName();
   let operation: DiffWorkerError["operation"] = "get-render-options";
   void (async () => {
