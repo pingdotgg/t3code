@@ -394,6 +394,7 @@ function MenuSubPopup({
   ...props
 }: MenuPrimitive.Popup.Props & {
   variant?: "default" | "scope";
+  keepMounted?: boolean;
   align?: MenuPrimitive.Positioner.Props["align"];
   sideOffset?: MenuPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];

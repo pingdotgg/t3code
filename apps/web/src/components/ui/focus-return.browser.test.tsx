@@ -2,7 +2,15 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import { Dialog, DialogPopup, DialogTitle, DialogTrigger } from "./dialog";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "./menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./tooltip";
 
 it("returns dialog focus without reopening the trigger tooltip, then allows Tab focus", async () => {
@@ -52,3 +60,34 @@ it.each([undefined, true])(
     await expect.element(screen.getByRole("textbox", { name: "Outside input" })).toHaveFocus();
   },
 );
+
+it("returns menu focus without reopening the tooltip after selecting a submenu item", async () => {
+  await using screen = await render(
+    <TooltipProvider>
+      <Menu>
+        <Tooltip>
+          <TooltipTrigger render={<MenuTrigger />}>Open menu</TooltipTrigger>
+          <TooltipPopup>Menu help</TooltipPopup>
+        </Tooltip>
+        <MenuPopup keepMounted>
+          <MenuSub>
+            <MenuSubTrigger>More actions</MenuSubTrigger>
+            <MenuSubPopup keepMounted>
+              <MenuItem>Nested action</MenuItem>
+            </MenuSubPopup>
+          </MenuSub>
+        </MenuPopup>
+      </Menu>
+    </TooltipProvider>,
+  );
+  await screen.getByRole("button", { name: "Open menu" }).click();
+  await page.getByRole("menuitem", { name: "More actions" }).click();
+  await userEvent.keyboard("{ArrowRight}");
+  await expect.element(page.getByRole("menuitem", { name: "Nested action" })).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+  await expect
+    .element(screen.getByRole("button", { name: "Open menu" }))
+    .toHaveAttribute("aria-expanded", "false");
+  await expect.element(screen.getByRole("button", { name: "Open menu" })).toHaveFocus();
+  await vi.waitFor(() => expect(document.querySelector('[data-slot="tooltip-popup"]')).toBeNull());
+});

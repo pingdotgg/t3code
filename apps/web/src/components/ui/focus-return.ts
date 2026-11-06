@@ -19,11 +19,12 @@ export function tooltipSafeFinalFocus(
 ): FinalFocusHandler {
   const handleFinalFocus: FinalFocusHandler = (closeType) => {
     const popup = document.getElementById(popupId);
+    const focusContainer = popup?.closest("[data-base-ui-portal]") ?? popup;
     const activeElement = document.activeElement;
     if (
       (finalFocus === undefined || typeof finalFocus === "boolean") &&
       activeElement !== document.body &&
-      !popup?.contains(activeElement)
+      !focusContainer?.contains(activeElement)
     ) {
       return false;
     }
