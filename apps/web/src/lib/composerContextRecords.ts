@@ -117,9 +117,12 @@ export function pullRequestContextKindLabel(comment: ReviewCommentPresentation):
 export function previewAnnotationContextLabel(annotation: PreviewAnnotationPayload): string {
   const comment = annotation.comment.trim().replace(/\s+/g, " ");
   if (comment) {
-    return comment.length > PREVIEW_LABEL_MAX_CHARS
-      ? `${comment.slice(0, PREVIEW_LABEL_MAX_CHARS - 1)}…`
-      : comment;
+    if (comment.length <= PREVIEW_LABEL_MAX_CHARS) return comment;
+    let end = PREVIEW_LABEL_MAX_CHARS - 1;
+    const previous = comment.charCodeAt(end - 1);
+    const next = comment.charCodeAt(end);
+    if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) end -= 1;
+    return `${comment.slice(0, end)}…`;
   }
   return annotation.pageTitle?.trim() || "Preview annotation";
 }
