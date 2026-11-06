@@ -913,8 +913,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const { gitCommonDir, indexPath, headExists } = yield* resolveCaptureRepository(input.cwd);
       const indexId = yield* random.uuidV4();
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
+      const hostEnv = yield* HostProcess.Environment;
       const commitEnv: NodeJS.ProcessEnv = {
-        ...process.env,
+        ...hostEnv,
         GIT_INDEX_FILE: tempIndexPath,
         GIT_AUTHOR_NAME: "T3 Code",
         GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
@@ -1207,7 +1208,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 );
                 if (candidates.length > CHECKPOINT_RECOVERY_MAX_CANDIDATES) return yield* error;
                 const nestedRepoEnv: NodeJS.ProcessEnv = {
-                  ...process.env,
+                  ...hostEnv,
                   GIT_DIR: undefined,
                   GIT_WORK_TREE: undefined,
                   GIT_COMMON_DIR: undefined,
