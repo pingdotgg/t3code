@@ -845,6 +845,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
     };
     const gate = Deferred.makeUnsafe<void>();
     const resolver = Layer.succeed(SecretResolver.SecretResolver, {
+      label: (provider) => Effect.succeed(provider),
       read: (references) =>
         Deferred.await(gate).pipe(
           Effect.andThen(
