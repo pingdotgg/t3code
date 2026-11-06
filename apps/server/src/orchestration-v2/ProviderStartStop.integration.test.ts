@@ -420,6 +420,20 @@ it.effect.each([
         }
         if (scenario === "before-ownership") {
           yield* Deferred.await(beforeOwnership);
+          const pending = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+          const missing = yield* execution
+            .interruptOwnedStart({
+              threadId,
+              runId: pending.id,
+              attemptId: pending.activeAttemptId!,
+            })
+            .pipe(Effect.flip);
+          assert.isFalse(missing.unresponsive);
+          assert.nestedPropertyVal(missing, "cause._tag", "NativeStartOwnershipError");
+          assert.nestedPropertyVal(missing, "cause.state", "missing");
+          assert.nestedPropertyVal(missing, "cause.threadId", threadId);
+          assert.nestedPropertyVal(missing, "cause.runId", pending.id);
+          assert.nestedPropertyVal(missing, "cause.attemptId", pending.activeAttemptId);
           yield* orchestrator.dispatch({
             type: "thread.stop",
             commandId: CommandId.make("stop"),

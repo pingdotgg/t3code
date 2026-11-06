@@ -608,6 +608,22 @@ type StartInterruptTarget = {
   readonly providerTurnId: ProviderTurnId;
 };
 
+class NativeStartOwnershipError extends Schema.TaggedError<NativeStartOwnershipError>()(
+  "NativeStartOwnershipError",
+  {
+    threadId: ThreadId,
+    runId: RunId,
+    attemptId: RunAttemptId,
+    state: Schema.Literals(["missing", "superseded"]),
+  },
+) {
+  override get message(): string {
+    return this.state === "missing"
+      ? "Missing unresolved native-start owner"
+      : "Native-start binding was superseded";
+  }
+}
+
 export class RunExecutionInterruptError extends Schema.TaggedError<RunExecutionInterruptError>()(
   "RunExecutionInterruptError",
   {
@@ -1001,7 +1017,7 @@ export const layer: Layer.Layer<
                 .every((turn) => isTerminalProviderTurnStatus(turn.status))
             )
               return;
-            return yield* Effect.fail("Missing unresolved native-start owner");
+            return yield* new NativeStartOwnershipError({ ...key, state: "missing" });
           }
           const accepted = yield* Deferred.await(owner.accepted).pipe(
             Effect.raceFirst(Deferred.await(owner.terminal).pipe(Effect.as(undefined))),
@@ -1023,7 +1039,7 @@ export const layer: Layer.Layer<
             binding.nativeThreadRef?.nativeId !==
               owner.input.providerThread.nativeThreadRef?.nativeId
           ) {
-            return yield* Effect.fail("Native-start binding was superseded");
+            return yield* new NativeStartOwnershipError({ ...key, state: "superseded" });
           }
           if (yield* Deferred.isDone(owner.terminal)) return;
           const turn = owner.turn ?? accepted;
