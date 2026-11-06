@@ -36,7 +36,10 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
+import { useAtomValue } from "@effect/atom-react";
+
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { shortcutLabelForCommand } from "../../keybindings";
 import { listBrowserMicrophones, type BrowserMicrophone } from "../../speech/browserMicrophones";
 import {
   chooseAudioDestination,
@@ -52,7 +55,7 @@ import {
 import { providerInstanceEntriesFor } from "../../providerInstances";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
-import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { EMPTY_SERVER_PROVIDERS, primaryServerKeybindingsAtom } from "../../state/server";
 import {
   useEnvironmentSpeechInput,
   useVoiceTranscriptionDestination,
@@ -1003,6 +1006,8 @@ function TranscriptionTest(props: {
 export function VoiceSettingsPanel() {
   const cleanupEnabled = useCleanupGrant() !== null;
   const settings = useClientSettings();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const dictationShortcut = shortcutLabelForCommand(keybindings, "composer.dictation");
   const settingsScope = useOptionalSettingsScope();
   const destination = useVoiceTranscriptionDestination();
   const { environments } = useEnvironments();
@@ -1113,7 +1118,11 @@ export function VoiceSettingsPanel() {
         <SettingsRow
           {...searchableSetting("dictation-shortcut-mode")}
           title="Dictation shortcut"
-          description="How the dictation shortcut starts and stops recording."
+          description={
+            dictationShortcut
+              ? `${dictationShortcut} starts and stops dictation. This sets press, hold, or toggle.`
+              : "How the dictation shortcut starts and stops recording."
+          }
           control={
             <Select
               value={settings.voiceShortcutMode}

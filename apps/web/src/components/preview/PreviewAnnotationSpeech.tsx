@@ -14,6 +14,7 @@ import { useComposerDraftStore } from "~/composerDraftStore";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useDictationShortcut, type DictationKeyHandlers } from "~/speech/useDictationShortcut";
 import { useEnvironmentSpeechInput } from "~/speech/useEnvironmentSpeechInput";
+import { useOpenVoiceDestinationSettings, voiceEntryAction } from "~/speech/voiceEntry";
 import { useProject, useThreadShell } from "~/state/entities";
 import { previewBridge } from "./previewBridge";
 
@@ -71,6 +72,8 @@ export function PreviewAnnotationSpeech({
       void publish(current.current.voiceState, { text: next, cursor: selection.start });
     },
   });
+  const openVoiceSettings = useOpenVoiceDestinationSettings();
+  const voiceEntry = voiceEntryAction(speech.available, speech.promptSetup);
   const subscribeKeys = useStableCallback((handlers: DictationKeyHandlers) => {
     keys.current = handlers;
     return () => {
@@ -86,14 +89,17 @@ export function PreviewAnnotationSpeech({
     previewFocus: true,
     ownsFocus: () => guestFocused.current,
     subscribeKeys,
+    ...(voiceEntry === "setup" ? { onNeedsSetup: openVoiceSettings } : {}),
   });
-  const { available, state, preview, freezesEditor, blocksSubmission, level } = speech;
+  const { state, preview, freezesEditor, blocksSubmission, level } = speech;
   const voiceState = {
     tabId,
     sessionId: config.sessionId,
-    available,
+    // The guest shows its microphone from `available`. Before a destination is chosen
+    // that flag is the setup entry, and a click opens settings instead of recording.
+    available: voiceEntry !== "hidden",
     phase: state.phase,
-    errorAction: state.errorAction,
+    errorAction: voiceEntry === "setup" ? "settings" : state.errorAction,
     status: resolveSpeechPresentation(state, null).status,
     preview: preview ? preview.committed + preview.tentative : null,
     level,
@@ -101,10 +107,10 @@ export function PreviewAnnotationSpeech({
     freezesEditor,
     blocksSubmission,
   };
-  const current = useRef({ speech, voiceState });
+  const current = useRef({ speech, voiceState, voiceEntry, openVoiceSettings });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed speech actions and state to the desktop IPC listener
   useEffect(() => {
-    current.current = { speech, voiceState };
+    current.current = { speech, voiceState, voiceEntry, openVoiceSettings };
   });
   const publish = useStableCallback(
     async (voice: typeof voiceState, nextDraft: { text: string; cursor: number } | null) => {
@@ -146,7 +152,8 @@ export function PreviewAnnotationSpeech({
               void publish(current.current.voiceState, null);
               break;
             case "start":
-              void value.start();
+              if (current.current.voiceEntry === "setup") current.current.openVoiceSettings();
+              else void value.start();
               break;
             case "stop":
               void value.stop();
@@ -156,7 +163,8 @@ export function PreviewAnnotationSpeech({
               break;
             case "settings":
               value.cancel();
-              void navigate({ to: "/settings/voice" });
+              if (current.current.voiceEntry === "setup") current.current.openVoiceSettings();
+              else void navigate({ to: "/settings/voice" });
               break;
             case "skip":
               value.skipPostProcessing();

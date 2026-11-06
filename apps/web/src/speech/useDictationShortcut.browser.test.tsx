@@ -5,13 +5,20 @@ import { useDictationShortcut } from "./useDictationShortcut";
 
 vi.mock("../hooks/useSettings", () => ({ useClientSettings: () => "hold" }));
 
-function Probe({ speech }: { speech: Parameters<typeof useDictationShortcut>[0]["speech"] }) {
+function Probe({
+  speech,
+  onNeedsSetup,
+}: {
+  speech: Parameters<typeof useDictationShortcut>[0]["speech"];
+  onNeedsSetup?: () => void;
+}) {
   useDictationShortcut({
     keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
     speech,
     disabled: false,
     terminalOpen: false,
     modelPickerOpen: false,
+    ...(onNeedsSetup ? { onNeedsSetup } : {}),
   });
   return null;
 }
@@ -44,6 +51,17 @@ it("leaves the browser shortcut alone when dictation is off", async () => {
   await using _screen = await render(<Probe speech={speech} />);
   expect(press()).toBe(true);
   expect(speech.start).not.toHaveBeenCalled();
+});
+
+it("opens setup from the dictation chord before a session exists", async () => {
+  const speech = actions(false);
+  const onNeedsSetup = vi.fn();
+  await using _screen = await render(<Probe speech={speech} onNeedsSetup={onNeedsSetup} />);
+  expect(press()).toBe(false);
+  expect(onNeedsSetup).toHaveBeenCalledOnce();
+  expect(speech.start).not.toHaveBeenCalled();
+  press(true);
+  expect(onNeedsSetup).toHaveBeenCalledOnce();
 });
 
 it("stops on a new press when the OS omitted keyup, but ignores autorepeat", async () => {

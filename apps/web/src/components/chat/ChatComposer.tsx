@@ -140,6 +140,7 @@ import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
 import { useDictationShortcut } from "../../speech/useDictationShortcut";
 import { useDictationSubmissionShortcut } from "../../speech/useDictationSubmissionShortcut";
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
+import { useOpenVoiceDestinationSettings, voiceEntryAction } from "../../speech/voiceEntry";
 import { ComposerSpeechButton, ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { shortcutLabelForCommand } from "../../keybindings";
@@ -1879,6 +1880,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   });
   const { blocksSubmission: voiceInputActive, submitAfterDictation } = speechInput;
+  const openVoiceSettings = useOpenVoiceDestinationSettings();
+  const voiceEntry = voiceEntryAction(speechInput.available, speechInput.promptSetup);
   const voiceSendDisabledReason =
     sendDisabledReason ?? (speechInput.preparing ? "Preparing voice input" : null);
   const dictationShortcutLabel = useDictationShortcut({
@@ -1888,6 +1891,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     terminalOpen,
     modelPickerOpen: isComposerModelPickerOpen,
     ...(backgroundThread ? { targetRef: composerFormRef } : {}),
+    ...(voiceEntry === "setup" ? { onNeedsSetup: openVoiceSettings } : {}),
   });
 
   const resolveActiveComposerTrigger = (): {
@@ -3679,7 +3683,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ? { onCompactContext: compactThreadContextStable }
                       : {})}
                   >
-                    {speechInput.available ? (
+                    {voiceEntry !== "hidden" ? (
                       <>
                         <ComposerSpeechRecordingPill
                           state={speechInput.state}
@@ -3697,8 +3701,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           state={speechInput.state}
                           progress={null}
                           shortcutLabel={dictationShortcutLabel}
+                          {...(voiceEntry === "setup" ? { idleLabel: "Set up voice input" } : {})}
                           disabled={dictationDisabled}
-                          onStart={() => void speechInput.start()}
+                          onStart={() => {
+                            if (voiceEntry === "setup") openVoiceSettings();
+                            else void speechInput.start();
+                          }}
                           onCancel={() => speechInput.cancel()}
                         />
                       </>

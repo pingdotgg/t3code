@@ -112,6 +112,7 @@ it("preserves the model test transcript when its model is filtered out", async (
           preview: null,
           level: 0,
           preparing: false,
+          promptSetup: false,
           blocksSubmission: false,
           freezesEditor: false,
           start: async () => {

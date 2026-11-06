@@ -10,6 +10,7 @@ import { VoiceInputSetup } from "~/components/chat/VoiceInputSetup";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useDictationShortcut } from "./useDictationShortcut";
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
+import { useOpenVoiceDestinationSettings, voiceEntryAction } from "./voiceEntry";
 
 /** Binds dictation to a plain textarea draft; the shortcut targets it only while it has focus. */
 export function useTextFieldSpeech(input: {
@@ -51,6 +52,8 @@ export function useTextFieldSpeech(input: {
       });
     },
   });
+  const openVoiceSettings = useOpenVoiceDestinationSettings();
+  const voiceEntry = voiceEntryAction(speech.available, speech.promptSetup);
   const shortcutLabel = useDictationShortcut({
     keybindings,
     speech,
@@ -58,8 +61,9 @@ export function useTextFieldSpeech(input: {
     terminalOpen: false,
     modelPickerOpen: false,
     targetRef: input.textareaRef,
+    ...(voiceEntry === "setup" ? { onNeedsSetup: openVoiceSettings } : {}),
   });
-  return { ...speech, shortcutLabel };
+  return { ...speech, shortcutLabel, voiceEntry, openVoiceSettings };
 }
 
 export type TextFieldSpeech = ReturnType<typeof useTextFieldSpeech>;
@@ -92,13 +96,17 @@ export function TextFieldSpeechControls({
           onCancel={speech.cancel}
           onSkipPostProcessing={speech.skipPostProcessing}
         />
-        {speech.available ? (
+        {speech.voiceEntry !== "hidden" ? (
           <ComposerSpeechButton
             state={speech.state}
             progress={null}
             shortcutLabel={speech.shortcutLabel}
+            {...(speech.voiceEntry === "setup" ? { idleLabel: "Set up voice input" } : {})}
             disabled={disabled}
-            onStart={() => void speech.start()}
+            onStart={() => {
+              if (speech.voiceEntry === "setup") speech.openVoiceSettings();
+              else void speech.start();
+            }}
             onCancel={speech.cancel}
           />
         ) : null}

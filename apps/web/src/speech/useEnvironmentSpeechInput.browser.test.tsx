@@ -15,6 +15,7 @@ import {
 
 import { act, render } from "../../test/render";
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
+import { browserCanCaptureSpeech, voiceEntryAction } from "./voiceEntry";
 import { chooseAudioDestination, chooseTranscriptCleanup, bindAudioGrant } from "./voiceConsent";
 import { writeBrowserClientSettings } from "../clientPersistenceStorage";
 
@@ -239,7 +240,24 @@ it.each([
   expectNoAudioSent();
   expect(mocks.committed).not.toHaveBeenCalled();
   expect(mocks.voice.available).toBe(false);
+  expect(mocks.voice.promptSetup).toBe(false);
+  expect(voiceEntryAction(mocks.voice.available, mocks.voice.promptSetup)).toBe("hidden");
+  expect(voiceEntryAction(true, true)).toBe("record");
   expect(mocks.voice.transcriptionEnvironmentId).toBeNull();
+});
+
+it("offers setup before a destination exists and still sends no audio", async () => {
+  setup();
+  window.localStorage.removeItem("t3code:voice-audio-grant:v1");
+  window.localStorage.removeItem("t3code:voice-audio-declined:v1");
+  await using _screen = await render(<Probe />);
+  expect(browserCanCaptureSpeech()).toBe(true);
+  expect(mocks.voice.promptSetup).toBe(true);
+  expect(mocks.voice.available).toBe(false);
+  expect(voiceEntryAction(mocks.voice.available, mocks.voice.promptSetup)).toBe("setup");
+  await act(() => mocks.voice.start());
+  expectNoAudioSent();
+  expect(mocks.committed).not.toHaveBeenCalled();
 });
 
 it.each([true, false])(

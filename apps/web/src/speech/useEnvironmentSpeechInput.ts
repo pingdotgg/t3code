@@ -37,6 +37,7 @@ import { runtime } from "../lib/runtime";
 import { useEnvironment } from "../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../state/session";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
+import { useVoiceEntryPrompt } from "./voiceEntry";
 import { bindAudioGrant, readCleanupGrant, useAudioGrant } from "./voiceConsent";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
@@ -119,6 +120,7 @@ export function useVoiceTranscriptionDestination() {
 }
 
 export function useEnvironmentSpeechInput(input: HookInput) {
+  const promptSetup = useVoiceEntryPrompt();
   const destination = useVoiceTranscriptionDestination();
   const prepared = destination.prepared;
   const grantId = destination.grantId;
@@ -512,6 +514,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   });
 
   return {
+    /** Ready to record. Stays false until this device has granted a destination. */
     available:
       prepared !== null &&
       status?.prepared === prepared &&
@@ -519,6 +522,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       typeof navigator !== "undefined" &&
       Boolean(navigator.mediaDevices?.getUserMedia) &&
       typeof AudioWorkletNode !== "undefined",
+    /** Show the microphone and shortcut before a destination has been chosen. */
+    promptSetup,
     status: currentStatus,
     transcriptionEnvironmentId: destination.environmentId,
     transcriptionEnvironmentLabel: destination.label,

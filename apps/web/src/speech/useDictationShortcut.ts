@@ -33,6 +33,8 @@ type ShortcutInput = {
   disabled: boolean;
   terminalOpen: boolean;
   modelPickerOpen: boolean;
+  /** First visit: the chord opens setup and does not start a recording. */
+  onNeedsSetup?: () => void;
   /** Resolve the chord as if the preview had focus; the keys arrive relayed from its guest. */
   previewFocus?: boolean;
   /** When set, the chord targets this editor only while it has focus. */
@@ -126,7 +128,15 @@ export function useDictationShortcut(input: ShortcutInput) {
       });
       if (command !== "composer.dictation") return;
       const canStart = speech.state.phase === "idle" || speech.state.phase === "error";
-      if (canStart && (!speech.available || disabled)) return;
+      if (canStart && (!speech.available || disabled)) {
+        const prompt = current.current.onNeedsSetup;
+        if (!disabled && !speech.available && prompt) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!event.repeat) prompt();
+        }
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       if (event.repeat || (!canStart && speech.state.phase !== "recording")) return;

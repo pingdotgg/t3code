@@ -178,12 +178,14 @@ export function ComposerSpeechButton(props: {
   state: VoiceInputState;
   progress: { downloaded: number; total: number } | null;
   shortcutLabel?: string | null;
+  /** Idle label. First-run setup uses a different one; recording still says start. */
+  idleLabel?: string;
   disabled?: boolean;
   onStart(): void;
   onCancel(): void;
 }) {
   const presentation = resolveSpeechPresentation(props.state, props.progress);
-  const label = "Start voice input";
+  const label = props.idleLabel ?? "Start voice input";
 
   if (presentation.showsConfirm || props.state.phase === "error") return null;
 

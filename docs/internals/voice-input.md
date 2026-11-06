@@ -15,8 +15,12 @@ capture and `finish` replaces the file-based `transcribe`.
 
 ## Where audio may go
 
-Only an explicit audio grant authorizes off-device transcription. On mobile the
-grant is stored in device-bound secure storage, outside preference backups. The
+Only an explicit audio grant authorizes off-device transcription. On web and
+desktop the microphone and dictation shortcut are visible before that grant
+exists; activating them opens Voice settings and does not capture or upload
+audio. Choosing Off is stored separately from a missing grant, so those
+controls hide again. On mobile the grant is stored in device-bound secure
+storage, outside preference backups. The
 recorder is the same for both destinations; only a finished recording can be
 uploaded, and its grant is checked again after native decoding and before dispatch.
 The [web grant](../../apps/web/src/speech/voiceConsent.ts) lives outside the preferences snapshot so another

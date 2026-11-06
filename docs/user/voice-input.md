@@ -13,12 +13,14 @@ to a named environment on that phone, open **Settings → Voice → Transcribe o
 ## Choose where audio goes
 
 On web and desktop, transcription runs on one of your T3 Code environments.
-Nothing is sent until you choose one: open **Settings → Voice** and set
-**Send microphone audio to** the environment that should transcribe for you.
-Microphone audio recorded on this device is sent to that environment over your
-authenticated connection, transcribed there, and discarded. The choice is saved
-on this device only, so every computer and browser you use asks for it once.
-Set it back to **Off** at any time; a recording in progress is discarded.
+The composer microphone is visible before you choose one. Press it, or the
+dictation shortcut, to open **Settings → Voice** and set **Send microphone
+audio to** the environment that should transcribe for you. Nothing is sent
+until you choose one. Microphone audio recorded on this device is sent to that
+environment over your authenticated connection, transcribed there, and discarded.
+The choice is saved on this device only, so every computer and browser you use
+asks for it once. Set it back to **Off** to hide the microphone and shortcut;
+a recording in progress is discarded.
 
 If the chosen environment goes offline, voice input waits for it. T3 Code never
 substitutes another environment.
