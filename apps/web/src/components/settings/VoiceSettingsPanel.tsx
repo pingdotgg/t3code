@@ -261,7 +261,7 @@ function ModelCard(props: ModelCardProps) {
             <XIcon className="size-3.5" />
           </Button>
         ) : model.state === "downloadable" ? (
-          <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onDownload}>
+          <Button size="sm" variant="secondary" disabled={props.busy} onClick={props.onDownload}>
             <DownloadIcon className="mr-1.5 size-3.5" />
             Download
           </Button>
@@ -271,7 +271,7 @@ function ModelCard(props: ModelCardProps) {
             Selected
           </Button>
         ) : (
-          <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onSelect}>
+          <Button size="sm" variant="secondary" disabled={props.busy} onClick={props.onSelect}>
             Use model
           </Button>
         )}
@@ -1031,7 +1031,7 @@ function TranscriptionTest(props: {
               speech.state.phase === "idle" ? (
                 <Button
                   size="sm"
-                  variant="outline"
+                  variant="secondary"
                   onClick={() => {
                     setShowTranscript(true);
                     void speech.start();
