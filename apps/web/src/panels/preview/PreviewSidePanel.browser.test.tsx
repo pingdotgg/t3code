@@ -69,6 +69,9 @@ vi.mock("~/components/preview/PreviewUnreachable", () => ({
   PreviewUnreachable: () => null,
   PreviewFileNotShown: () => null,
 }));
+vi.mock("~/components/preview/PreviewAnnotationSpeech", () => ({
+  PreviewAnnotationSpeech: () => null,
+}));
 vi.mock("~/components/preview/ZoomIndicator", () => ({ ZoomIndicator: () => null }));
 vi.mock("~/components/preview/AgentBrowserCursor", () => ({
   AgentBrowserCursor: () => null,
@@ -149,6 +152,7 @@ vi.mock("~/previewMiniPlayerStore", () => ({
 vi.mock("~/rightPanelStore", () => ({
   rightPanelHostRef: (ref: ScopedThreadRef) => ref,
   selectSelectedRightPanelSurface: () => null,
+  selectThreadRightPanelState: () => ({ isOpen: false, activeSurfaceId: null, surfaces: [] }),
   useRightPanelStore: { getState: () => ({ close: vi.fn() }) },
 }));
 vi.mock("~/state/environments", () => ({
@@ -279,7 +283,10 @@ describe("registered Preview side panel", () => {
     const hostA = hostFor(threadA);
     await render(screen, hostA);
     const pick = await startPick();
-    expect(mocks.pickElement).toHaveBeenCalledWith(previewRuntimeTabId(threadA, null, "tab-1"));
+    expect(mocks.pickElement).toHaveBeenCalledWith(
+      previewRuntimeTabId(threadA, null, "tab-1"),
+      expect.anything(),
+    );
 
     const hostB = hostFor(threadB);
     await render(screen, hostB);
