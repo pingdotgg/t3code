@@ -1,6 +1,6 @@
 import { RegistryContext } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { draftModelPickMatchesThread, threadModelPickAppliesNow } from "@t3tools/shared/model";
+import { threadModelPickAppliesNow } from "@t3tools/shared/model";
 import { useContext } from "react";
 
 import { type ComposerThreadTarget, useComposerDraftStore } from "../../composerDraftStore";
@@ -21,11 +21,6 @@ export function useApplyThreadModelPick() {
     const pick = draft.modelSelectionByProvider[draft.activeProvider];
     const thread = registry.get(environmentThreadShells.threadShellAtom(target));
     if (!pick || !thread || store.draftThreadsByThreadKey[scopedThreadKey(target)]) return;
-    // Left in the draft, a pick of the shown model would override a later change from elsewhere.
-    if (draftModelPickMatchesThread(pick, thread.modelSelection)) {
-      store.releaseModelSelection(target, pick);
-      return;
-    }
     if (!threadModelPickAppliesNow(pick, thread.modelSelection)) return;
     const result = await setModelSelection({
       environmentId: target.environmentId,

@@ -108,7 +108,7 @@ describe("descriptor helpers", () => {
     expect(threadModelPickAppliesNow(otherEffort, thread)).toBe(true);
     expect(
       threadModelPickAppliesNow({ ...thread, options: [{ id: "fastMode", value: false }] }, thread),
-    ).toBe(false);
+    ).toBe(true);
     // Another instance replaces the live session, which may hold an open question.
     expect(
       threadModelPickAppliesNow(

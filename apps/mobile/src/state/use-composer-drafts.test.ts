@@ -530,27 +530,25 @@ describe("mobile composer drafts", () => {
     const codex = ProviderInstanceId.make("codex");
     modelCommandMocks.runs.length = 0;
     modelCommandMocks.canOperate = true;
-    modelCommandMocks.thread = {
+    const initialThread = {
       ...v2ThreadShell,
       id: threadId,
       environmentId,
       modelSelection: { instanceId: codex, model: "gpt-5.4" },
     };
+    modelCommandMocks.thread = initialThread;
     setComposerDraftText(key, "keep this unsent follow-up");
     const first = { instanceId: codex, model: "gpt-5.5" };
-    const latest = {
-      instanceId: codex,
-      model: "gpt-5.4",
-      options: [{ id: "fastMode", value: true }],
-    };
+    const latest = { ...first };
     selectThreadModel({ environmentId, threadId }, first, []);
+    modelCommandMocks.thread = { ...initialThread, modelSelection: first };
     selectThreadModel({ environmentId, threadId }, latest, []);
     expect(modelCommandMocks.runs.map((run) => run.value)).toEqual([
       { environmentId, input: { threadId, modelSelection: first } },
       { environmentId, input: { threadId, modelSelection: latest } },
     ]);
 
-    modelCommandMocks.runs[0]!.settle({ _tag: "Success" });
+    modelCommandMocks.runs[0]!.settle({ _tag: "Failure" });
     await Promise.resolve();
     expect(getComposerDraftSnapshot(key).modelSelection).toEqual(latest);
     modelCommandMocks.runs[1]!.settle({ _tag: "Success" });
@@ -559,6 +557,10 @@ describe("mobile composer drafts", () => {
     expect(getComposerDraftSnapshot(key).modelSelection).toBeUndefined();
 
     // A rejected pick stays the composer's choice, as before.
+    modelCommandMocks.thread = {
+      ...initialThread,
+      modelSelection: { instanceId: codex, model: "gpt-5.4" },
+    };
     selectThreadModel({ environmentId, threadId }, first, []);
     modelCommandMocks.runs[2]!.settle({ _tag: "Failure" });
     await Promise.resolve();
@@ -572,11 +574,6 @@ describe("mobile composer drafts", () => {
     selectThreadModel({ environmentId, threadId }, latest, []);
     expect(modelCommandMocks.runs).toHaveLength(3);
     expect(getComposerDraftSnapshot(key).modelSelection).toEqual(latest);
-
-    // A pick of the model the thread shows has nothing to apply and leaves the draft.
-    selectThreadModel({ environmentId, threadId }, { instanceId: codex, model: "gpt-5.4" }, []);
-    expect(modelCommandMocks.runs).toHaveLength(3);
-    expect(getComposerDraftSnapshot(key).modelSelection).toBeUndefined();
   });
 
   it("releases an inactive thread pick only after its queued model becomes durable", () => {

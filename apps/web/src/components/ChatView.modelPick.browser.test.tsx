@@ -58,18 +58,23 @@ it("a model picked for an existing thread reaches the server before any message 
   const modelSets = () =>
     dispatchedCommands().filter((command) => command.type === "thread.model-selection.set");
 
-  // Picking the model the thread shows sends nothing and leaves no pick to override others.
+  // Every explicit pick waits for acceptance, even when the optimistic shell already shows it.
   await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
   await page.getByRole("option", { name: /GPT-5\.4/ }).click();
   await vi.waitFor(() =>
     expect(useComposerDraftStore.getState().draftsByThreadKey[threadKey]).toBeUndefined(),
   );
-  expect(modelSets()).toEqual([]);
+  expect(modelSets()).toEqual([
+    expect.objectContaining({
+      threadId: thread.id,
+      modelSelection: expect.objectContaining({ instanceId: "codex", model: "gpt-5.4" }),
+    }),
+  ]);
 
   // The picker stays open after a pick.
   await page.getByRole("option", { name: /GPT-5\.5/ }).click();
   await vi.waitFor(() =>
-    expect(modelSets()).toEqual([
+    expect(modelSets().slice(1)).toEqual([
       expect.objectContaining({
         threadId: thread.id,
         modelSelection: expect.objectContaining({ instanceId: "codex", model: "gpt-5.5" }),

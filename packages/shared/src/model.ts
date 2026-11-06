@@ -136,7 +136,7 @@ export function draftModelPickMatchesThread(pick: ModelSelection, thread: ModelS
  * live session, so that pick still waits for a sent message.
  */
 export function threadModelPickAppliesNow(pick: ModelSelection, thread: ModelSelection): boolean {
-  return pick.instanceId === thread.instanceId && !draftModelPickMatchesThread(pick, thread);
+  return pick.instanceId === thread.instanceId;
 }
 
 function resolveDescriptorChoiceValue(

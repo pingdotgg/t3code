@@ -7,7 +7,7 @@ import {
   type ServerProvider,
   type ThreadId,
 } from "@t3tools/contracts";
-import { draftModelPickMatchesThread, threadModelPickAppliesNow } from "@t3tools/shared/model";
+import { threadModelPickAppliesNow } from "@t3tools/shared/model";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { appAtomRegistry } from "./atom-registry";
@@ -37,11 +37,6 @@ export function selectThreadModel(
   });
   const thread = appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
   if (!thread) return;
-  // Left in the draft, a pick of the shown model would override a later change from elsewhere.
-  if (draftModelPickMatchesThread(pick, thread.modelSelection)) {
-    releaseComposerDraftModelSelection(threadKey, pick);
-    return;
-  }
   if (
     !threadModelPickAppliesNow(pick, thread.modelSelection) ||
     !readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope)
