@@ -122,8 +122,8 @@ function useHintPlacement() {
       : anchor?.parentElement?.querySelector<HTMLElement>(
           `[data-layout-empty-workspace="${CSS.escape(focusedWorkspaceId)}"]`,
         );
-    const composer = pane?.querySelector('[data-chat-composer-stack="true"]');
     const place = () => {
+      const composer = pane?.querySelector('[data-chat-composer-stack="true"]');
       const lift =
         pane && composer
           ? pane.getBoundingClientRect().bottom - composer.getBoundingClientRect().top + HINT_GAP_PX
@@ -137,7 +137,23 @@ function useHintPlacement() {
     };
     place();
     if (!pane) return;
-    return observeResize([pane, ...(composer ? [composer] : [])], place);
+    const composer = pane.querySelector('[data-chat-composer-stack="true"]');
+    const stopResize = observeResize([pane, ...(composer ? [composer] : [])], place);
+    if (composer) return stopResize;
+    let stopComposerResize = () => {};
+    const observer = new MutationObserver(() => {
+      const composer = pane.querySelector('[data-chat-composer-stack="true"]');
+      if (!composer) return;
+      stopComposerResize = observeResize(composer, place);
+      observer.disconnect();
+      place();
+    });
+    observer.observe(pane, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      stopComposerResize();
+      stopResize();
+    };
   }, [anchor, focusedTabId, focusedWorkspaceId]);
   return {
     anchorRef: setAnchor,
