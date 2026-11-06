@@ -1006,7 +1006,6 @@ export default defineConfig({
         "apps/web/src/components/sidebar/SidebarChrome.tsx": 1,
         "apps/web/src/components/sidebar/SidebarProviderUpdatePill.tsx": 1,
         "apps/web/src/components/ThreadCommandSubtitle.tsx": 1,
-        "apps/web/src/components/pullRequest/PullRequestMarkdownTextarea.tsx": 4,
         "apps/web/src/components/chat/ComposerSpeechButton.tsx": 2,
         "apps/web/src/components/chat/VoiceInputErrorPill.tsx": 1,
         "apps/web/src/components/chat/VoiceInputSetup.tsx": 8,
