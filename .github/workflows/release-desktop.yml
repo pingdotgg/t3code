@@ -77,6 +77,12 @@ on:
         required: false
         default: ""
         type: string
+      # Whether this job saves the workspace pnpm store. Release's two Macs
+      # install the same store on the same runner type, so only one saves it.
+      save_pnpm_store:
+        required: false
+        default: true
+        type: boolean
       version:
         required: true
         type: string
@@ -160,6 +166,7 @@ jobs:
         uses: ./.github/actions/setup-ci-deps
         with:
           install-args: --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+          save-pnpm-store: ${{ inputs.save_pnpm_store }}
         env:
           pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
 
