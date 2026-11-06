@@ -801,7 +801,7 @@ export const AWARD_EMOJI_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!, $
       awardEmoji { nodes { name user { username } } }
       notes(first: 100, after: $cursor) {
         pageInfo { hasNextPage endCursor }
-        nodes { id author { username bot } awardEmoji { nodes { name user { username } } } }
+        nodes { id author { username bot } lastEditedAt lastEditedBy { username } resolved awardEmoji { nodes { name user { username } } } }
       }
     }
   }
@@ -853,6 +853,15 @@ const RawAwardEmojiPageSchema = Schema.Struct({
                     Schema.NullOr(
                       Schema.Struct({
                         id: Schema.optional(Schema.NullOr(Schema.String)),
+                        lastEditedAt: Schema.optional(Schema.NullOr(Schema.String)),
+                        lastEditedBy: Schema.optional(
+                          Schema.NullOr(
+                            Schema.Struct({
+                              username: Schema.optional(Schema.NullOr(Schema.String)),
+                            }),
+                          ),
+                        ),
+                        resolved: Schema.optional(Schema.NullOr(Schema.Boolean)),
                         // REST note authors carry no bot flag; GraphQL's does.
                         author: Schema.optional(
                           Schema.NullOr(
@@ -916,6 +925,7 @@ function noteIdOf(gid: string | null | undefined): string | null {
 export interface GitLabAwardEmojiPage {
   readonly reactions: ReadonlyArray<PullRequestReaction>;
   readonly reactionsByNoteId: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
+  readonly editedAtByNoteId: ReadonlyMap<string, string>;
   readonly botLogins: ReadonlySet<string>;
   readonly nextCursor: string | null;
 }
@@ -931,6 +941,7 @@ export function decodeAwardEmojiJson(
   const viewer = trimmed(data.currentUser?.username);
   const mergeRequest = data.project?.mergeRequest;
   const reactionsByNoteId = new Map<string, ReadonlyArray<PullRequestReaction>>();
+  const editedAtByNoteId = new Map<string, string>();
   const botLogins = new Set<string>();
   for (const node of mergeRequest?.notes?.nodes ?? []) {
     const author = trimmed(node?.author?.username);
@@ -939,11 +950,22 @@ export function decodeAwardEmojiJson(
     if (id === null) continue;
     const reactions = toReactions(node?.awardEmoji, viewer);
     if (reactions.length > 0) reactionsByNoteId.set(id, reactions);
+    // Resolving a thread moves lastEditedAt on every note in it; only lastEditedBy marks a
+    // text edit, and a resolved note's stamp may be the resolve rather than that edit.
+    const editedAt = trimmed(node?.lastEditedAt);
+    if (
+      editedAt !== null &&
+      trimmed(node?.lastEditedBy?.username) !== null &&
+      node?.resolved !== true
+    ) {
+      editedAtByNoteId.set(id, editedAt);
+    }
   }
   const pageInfo = mergeRequest?.notes?.pageInfo;
   return Result.succeed({
     reactions: toReactions(mergeRequest?.awardEmoji, viewer),
     reactionsByNoteId,
+    editedAtByNoteId,
     botLogins,
     nextCursor: pageInfo?.hasNextPage === true ? (trimmed(pageInfo.endCursor) ?? null) : null,
   });
