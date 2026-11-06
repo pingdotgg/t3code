@@ -19,18 +19,19 @@
   }
 }
 
-/* State colours keep their hue and chroma; only lightness is clamped to hold 4.5:1 on these rows. */
+/* Lightness is clamped to hold 4.5:1. On light themes chroma stays inside sRGB at that lightness, or the browser clips the hue: amber turns red. */
 @utility sidebar-variant-tokens {
   --contrast-secondary-label: color-mix(in srgb, var(--foreground) 72%, transparent);
   --row-muted: color-mix(in srgb, var(--foreground) 80%, transparent);
   --row-state-floor: 0.75;
   --row-dot-dim: 0.6;
-  --variant-warning: oklch(from var(--warning-foreground) min(l, 0.38) c h);
-  --variant-success: oklch(from var(--success-foreground) min(l, 0.38) c h);
+  --variant-warning: oklch(from var(--warning-foreground) min(l, 0.38) min(c, 0.1) h);
+  --variant-success: oklch(from var(--success-foreground) min(l, 0.38) min(c, 0.078) h);
   --variant-info: oklch(from var(--info-foreground) min(l, 0.38) c h);
-  --variant-error: oklch(from var(--error-foreground) min(l, 0.38) c h);
-  --variant-guest: oklch(from var(--guest-foreground) min(l, 0.38) c h);
-  --variant-input: oklch(from var(--color-indigo-600) min(l, 0.38) c h);
+  --variant-error: oklch(from var(--error-foreground) min(l, 0.38) min(c, 0.15) h);
+  --variant-guest: oklch(from var(--guest-foreground) min(l, 0.38) min(c, 0.18) h);
+  --input-state: var(--color-indigo-600);
+  --variant-input: oklch(from var(--input-state) min(l, 0.38) c h);
 
   .dark & {
     --variant-warning: oklch(from var(--warning-foreground) max(l, var(--row-state-floor)) c h);
@@ -38,7 +39,8 @@
     --variant-info: oklch(from var(--info-foreground) max(l, var(--row-state-floor)) c h);
     --variant-error: oklch(from var(--error-foreground) max(l, var(--row-state-floor)) c h);
     --variant-guest: oklch(from var(--guest-foreground) max(l, var(--row-state-floor)) c h);
-    --variant-input: oklch(from var(--color-indigo-300) max(l, var(--row-state-floor)) c h);
+    --input-state: var(--color-indigo-300);
+    --variant-input: oklch(from var(--input-state) max(l, var(--row-state-floor)) c h);
   }
 
   /* These dark themes have lighter surfaces, so their colours need a higher floor to pass. */
@@ -57,29 +59,36 @@
   }
 
   & .text-warning-foreground {
+    --pill-state: var(--warning-foreground);
     color: var(--variant-warning);
   }
   & .text-success-foreground {
+    --pill-state: var(--success-foreground);
     color: var(--variant-success);
   }
   & .text-info-foreground {
+    --pill-state: var(--info-foreground);
     color: var(--variant-info);
   }
   & .text-error-foreground {
+    --pill-state: var(--error-foreground);
     color: var(--variant-error);
   }
   & .text-muted-foreground {
     color: var(--row-muted);
   }
   & .text-guest-foreground {
+    --pill-state: var(--guest-foreground);
     color: var(--variant-guest);
   }
   & .text-indigo-600,
   & .sidebar-input-mark {
+    --pill-state: var(--input-state);
     color: var(--variant-input);
   }
   /* The pill's dark: colour would otherwise outrank the token. */
   && [class*="dark:text-indigo-300"] {
+    --pill-state: var(--input-state);
     color: var(--variant-input);
   }
 }
@@ -161,7 +170,7 @@
 @utility sidebar-row-pill {
   height: 1.03125rem;
   padding-inline: 0.4375rem;
-  background-color: color-mix(in srgb, currentColor 14%, transparent);
+  background-color: color-mix(in srgb, var(--pill-state, currentColor) 14%, transparent);
 }
 
 /* Centres the capitals in the pill in any font, whatever fraction the row lands on. */
@@ -183,7 +192,8 @@
 @utility sidebar-row-look {
   --row-fill: transparent;
   --row-state: transparent;
-  --row-tint: color-mix(in srgb, var(--row-state) 10%, transparent);
+  --row-tint-state: transparent;
+  --row-tint: color-mix(in srgb, var(--row-tint-state) 10%, transparent);
   background-color: var(--row-fill);
   background-image: linear-gradient(var(--row-tint), var(--row-tint));
 
@@ -222,22 +232,27 @@
 
   &[data-attention="warning"] {
     --row-state: var(--variant-warning);
+    --row-tint-state: var(--warning-foreground);
   }
 
   &[data-attention="input"] {
     --row-state: var(--variant-input);
+    --row-tint-state: var(--input-state);
   }
 
   &[data-attention="guest"] {
     --row-state: var(--variant-guest);
+    --row-tint-state: var(--guest-foreground);
   }
 
   &[data-attention="error"] {
     --row-state: var(--variant-error);
+    --row-tint-state: var(--error-foreground);
   }
 
   &[data-attention="success"] {
     --row-state: var(--variant-success);
+    --row-tint-state: var(--success-foreground);
   }
 
   &[data-attention]::after {
