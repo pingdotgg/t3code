@@ -796,9 +796,7 @@ jobs:
         with:
           install-args: --filter=@t3tools/scripts...
 
-      # Play's optional internal APK downloads in the background, beside the
-      # artifact downloads, into a directory outside release-assets. fd 9 holds
-      # the lock until the fetch exits. Only this process gets the Play key.
+      # The fetch holds an exclusive lock on its log until it exits.
       - name: Start nightly Android APK download
         if: needs.preflight.outputs.release_channel == 'nightly'
         continue-on-error: true
@@ -808,12 +806,12 @@ jobs:
           APK_OUTPUT_DIR: ${{ runner.temp }}/android-apk
         run: |
           if [ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]; then
-            exec 9> "$RUNNER_TEMP/android-apk.lock"
+            exec 9> "$RUNNER_TEMP/android-apk.log"
             flock -n 9
-            # shellcheck disable=SC2016 # the child shell expands these
-            setsid bash -c 'node .github/scripts/mirror-play-apk.cjs; echo "$?" > "$RUNNER_TEMP/android-apk.status"' \
-              < /dev/null > "$RUNNER_TEMP/android-apk.log" 2>&1 &
-            echo "$!" > "$RUNNER_TEMP/android-apk.pid"
+            (
+              timeout --kill-after=5s 5m node .github/scripts/mirror-play-apk.cjs &&
+                touch "$RUNNER_TEMP/android-apk.ok"
+            ) < /dev/null >&9 2>&1 &
           fi
 
       - name: Download all desktop artifacts
@@ -893,28 +891,18 @@ jobs:
             fi
           done
 
-      # Waits for the background fetch from "Start nightly Android APK download".
-      # Only a fetch that exited 0 on its own adds its APK. A timed-out one is
-      # killed and its directory is never read again.
       - name: Add nightly Android APK
         if: needs.preflight.outputs.release_channel == 'nightly'
         continue-on-error: true
         timeout-minutes: 6
         shell: bash
         run: |
-          lock="$RUNNER_TEMP/android-apk.lock"
-          # No lock means no Play key, so the download never started.
-          [[ -e "$lock" ]] || exit 0
-          status="timed out"
-          if flock -w 300 "$lock" true; then
-            status="$(cat "$RUNNER_TEMP/android-apk.status" 2>/dev/null || true)"
-          else
-            kill -- "-$(cat "$RUNNER_TEMP/android-apk.pid")" || true
-          fi
-          cat "$RUNNER_TEMP/android-apk.log" || true
-          if [[ "$status" != 0 ]]; then
-            echo "Android APK download failed (${status:-no exit status})." >&2
-            exit 1
+          log="$RUNNER_TEMP/android-apk.log"
+          [[ -f "$log" ]] || exit 0
+          flock "$log" cat "$log"
+          if [[ ! -f "$RUNNER_TEMP/android-apk.ok" ]]; then
+            echo "::warning::Skipping the APK because the Play download failed or timed out."
+            exit 0
           fi
           shopt -s nullglob
           apks=("$RUNNER_TEMP"/android-apk/*.apk)
