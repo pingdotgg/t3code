@@ -304,7 +304,7 @@ const SETTINGS_SCREENS = {
   }),
   SettingsWorktreeBaseBranch: createNativeStackScreen({
     screen: WorktreeBaseBranchPickerRouteScreen,
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Base branch" },
+    options: settingsPage("Base branch"),
   }),
   SettingsScheduledTaskModel: createNativeStackScreen({
     screen: ScheduledTaskModelPickerRouteScreen,
