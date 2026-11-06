@@ -1,9 +1,14 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { buildRemoteSshTerminalRemoteCommand } from "@t3tools/contracts";
+import {
+  buildRemoteSshTerminalRemoteCommand,
+  DesktopOpenRemoteTerminalInputSchema,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -229,5 +234,44 @@ describe("Windows launch argv", () => {
     // Typographic ’ is doubled so it cannot close the ArgumentList literal.
     assert.match(script, /ArgumentList '-t -- "box\u2019\u2019 ; Start-Process calc; #" remote'/);
     assert.isFalse(script.includes(`box\u2019 ; Start-Process`));
+  });
+});
+
+describe("DesktopOpenRemoteTerminalInputSchema", () => {
+  const decode = Schema.decodeUnknownExit(DesktopOpenRemoteTerminalInputSchema);
+
+  it("accepts ordinary host and username segments", () => {
+    assert.isTrue(
+      Exit.isSuccess(
+        decode({
+          host: "sol",
+          username: "theo",
+          absolutePath: "/work/project",
+        }),
+      ),
+    );
+  });
+
+  it("rejects a leading-dash host that would look like an SSH option", () => {
+    assert.isTrue(
+      Exit.isFailure(
+        decode({
+          host: "-oProxyCommand=touch,/tmp/pwned",
+          absolutePath: "/work/project",
+        }),
+      ),
+    );
+  });
+
+  it("rejects a leading-dash username", () => {
+    assert.isTrue(
+      Exit.isFailure(
+        decode({
+          host: "sol",
+          username: "-oProxyCommand=touch,/tmp/pwned",
+          absolutePath: "/work/project",
+        }),
+      ),
+    );
   });
 });
