@@ -49,9 +49,12 @@ export interface DesktopSettingsChange {
 }
 
 const DEFAULT_TAILSCALE_SERVE_PORT = T3_LEARN_TAILSCALE_SERVE_PORT;
-const MIN_MAIN_WINDOW_SIZE = {
-  width: 840,
-  height: 620,
+// Fits half and third tiles of common scaled displays (down to 480x432 DIP) on
+// Wayland, where Electron's client-side frame adds 32x42 DIP to the enforced
+// minimum. The web layout already handles phone widths.
+export const MIN_MAIN_WINDOW_SIZE = {
+  width: 400,
+  height: 360,
 } as const;
 export const DesktopWindowBoundsSchema = Schema.Struct({
   x: Schema.Int,

@@ -23,6 +23,7 @@ import * as ServerConfig from "../config.ts";
 import { databaseMigrationHead } from "../persistence/databaseMigrationHead.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ChatSync from "../chatSync.ts";
+import { isSpeechPlatformSupported } from "../speech/platform.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
 
@@ -191,6 +192,7 @@ export const make = Effect.gen(function* () {
   const chatSyncAvailable = (yield* ChatSync.ChatSync).available;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const identity = yield* ServerEnvironmentIdentity;
+  const hostLibc = hostPlatform === "linux" ? yield* HostProcess.LinuxLibc : undefined;
   const environmentId = yield* identity.getEnvironmentId;
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
   const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
@@ -271,7 +273,10 @@ export const make = Effect.gen(function* () {
       ignoredFileListing: true,
       triage: true,
       oneTimeSchedules: true,
+      freshContext: true,
+      scheduledTaskThreadModes: true,
       npmReleaseLookup: true,
+      voiceTranscription: isSpeechPlatformSupported(hostPlatform, hostArchitecture, hostLibc),
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverInstallation === null ? {} : { serverInstallation }),
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate

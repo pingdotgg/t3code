@@ -6,6 +6,7 @@ import {
   type OrchestrationV2Checkpoint,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ContextHandoff,
+  type OrchestrationV2StoredEvent,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
@@ -326,6 +327,35 @@ export function projectDomainEventForWire(
       : event.type === "checkpoint.captured"
         ? { ...event, payload: capCheckpointFiles(event.payload) }
         : event;
+}
+
+// Keyed on the stored event PubSub hands every subscriber, so all of them share one projection
+// and LiveStreamBudget sizes it once. Consumers must not mutate the shared result.
+const projectedStoredEvents = new WeakMap<OrchestrationV2StoredEvent, OrchestrationV2StoredEvent>();
+
+export function projectStoredEventForWire(
+  stored: OrchestrationV2StoredEvent,
+): OrchestrationV2StoredEvent {
+  const cached = projectedStoredEvents.get(stored);
+  if (cached !== undefined) return cached;
+  const event = projectDomainEventForWire(stored.event);
+  if (event === stored.event) return stored;
+  const projected = { ...stored, event };
+  projectedStoredEvents.set(stored, projected);
+  return projected;
+}
+
+type ThreadStreamEvent = Extract<OrchestrationV2ThreadStreamItem, { readonly kind: "event" }>;
+
+const threadStreamEvents = new WeakMap<OrchestrationV2StoredEvent, ThreadStreamEvent>();
+
+/** For an event already projected for the wire; subscribers share the item and its cached size. */
+export function threadStreamEventItem(stored: OrchestrationV2StoredEvent): ThreadStreamEvent {
+  const cached = threadStreamEvents.get(stored);
+  if (cached !== undefined) return cached;
+  const item = { kind: "event" as const, sequence: stored.sequence, event: stored.event };
+  threadStreamEvents.set(stored, item);
+  return item;
 }
 
 const LIVE_DEDUPE_MEMORY = 32;
