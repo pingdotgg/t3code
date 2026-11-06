@@ -86,7 +86,9 @@ export const ChatHeader = memo(function ChatHeader({
   onFindInThread,
 }: ChatHeaderProps) {
   const t = useT();
-  const activeProjectName = activeProject?.isScratch ? "No project" : activeProject?.title;
+  const activeProjectName = activeProject?.isScratch
+    ? t("chat.header.noProject")
+    : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const interfaceFont = useClientSettings((settings) => settings.fontFamilySans);
   const breadcrumbContainerRef = useRef<HTMLDivElement>(null);
