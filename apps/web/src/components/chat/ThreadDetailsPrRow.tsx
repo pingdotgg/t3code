@@ -401,16 +401,18 @@ export function ThreadDetailsPrRow({
               size="sm"
               part={part}
               tone="muted"
+              className="group/watch"
               aria-label={`Watch #${number}`}
               onClick={watchToggle.onToggle}
             />
           }
         >
-          <EyeOffIcon aria-hidden className={iconSize(part)} />
+          <EyeOffIcon aria-hidden className={cn(iconSize(part), "group-hover/watch:hidden")} />
+          <EyeIcon aria-hidden className={cn(iconSize(part), "hidden group-hover/watch:block")} />
         </TooltipTrigger>
         <TooltipPopup side="top">
-          Not watching. Click to wake the agent when checks finish, someone comments, or the branch
-          conflicts.
+          Not watching. Click to watch: the agent wakes when checks finish, someone comments, or the
+          branch conflicts.
         </TooltipPopup>
       </Tooltip>
     );

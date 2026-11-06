@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
   addToast: vi.fn(),
   updateToast: vi.fn(),
   runCommand: vi.fn(),
+  settledAt: null as string | null,
 }));
 
 vi.mock(import("~/state/entities"), async (importOriginal) => ({
@@ -26,6 +27,16 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
         { environment: { capabilities: { pullRequests: true, threadPullRequestWatch: true } } },
       ],
     ])) as never,
+  useQuietThreadShell: (() => ({
+    archivedAt: null,
+    settledAt: state.settledAt,
+    settledOverride: null,
+    lineage: { relationshipToParent: null },
+  })) as never,
+}));
+vi.mock(import("~/state/session"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironmentScope: () => true,
 }));
 const queryData = () => ({
   projectId: ProjectId.make("project"),
@@ -111,32 +122,32 @@ import { useUiStateStore } from "~/uiStateStore";
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
 import { ThreadDetailsPrRows } from "./ThreadDetailsPrRows";
 
-it("offers to start watching an open pull request that is not watched", async () => {
-  await using screen = await setup();
-  const link = {
-    host: "github.com",
-    repository: "owner/repo",
-    number: 1,
-    url: "https://github.com/owner/repo/pull/1",
-    source: "manual",
-    linkedAt: "2026-01-01T00:00:00.000Z",
-    snapshot: null,
-    stack: null,
-  } as const;
-  await act(async () => {
+const unwatchedLink = {
+  host: "github.com",
+  repository: "owner/repo",
+  number: 1,
+  url: "https://github.com/owner/repo/pull/1",
+  source: "manual",
+  linkedAt: "2026-01-01T00:00:00.000Z",
+  snapshot: null,
+  stack: null,
+} as const;
+
+const renderRows = (screen: Awaited<ReturnType<typeof setup>>) =>
+  act(async () => {
     await screen.rerender(
       <ThreadDetailsPrRows
         threadRef={{
           environmentId: EnvironmentId.make("environment"),
           threadId: ThreadId.make("thread"),
         }}
-        links={[link]}
-        currentLink={link}
+        links={[unwatchedLink]}
+        currentLink={unwatchedLink}
         onOpenLink={vi.fn()}
         environmentId={EnvironmentId.make("environment")}
         pr={null}
         number={1}
-        reference={link}
+        reference={unwatchedLink}
         status={null}
         project={{ id: ProjectId.make("project"), repositoryIdentity: null } as never}
         label="Test PR"
@@ -145,6 +156,10 @@ it("offers to start watching an open pull request that is not watched", async ()
       />,
     );
   });
+
+it("offers to start watching an open pull request that is not watched", async () => {
+  await using screen = await setup();
+  await renderRows(screen);
 
   const startWatching = screen.getByRole("button", { name: /^watch #1\b/i });
   await expect.element(startWatching).toBeInTheDocument();
@@ -160,6 +175,15 @@ it("offers to start watching an open pull request that is not watched", async ()
       watching: true,
     },
   });
+});
+
+it("does not offer a watch the server refuses on a settled thread", async () => {
+  await using screen = await setup();
+  state.settledAt = "2026-01-02T00:00:00.000Z";
+  await renderRows(screen);
+
+  await expect.element(screen.getByRole("button", { name: "Merge" })).toBeInTheDocument();
+  expect(screen.container.querySelector('[aria-label="Watch #1"]')).toBeNull();
 });
 
 it("merges with the last selected merge method", async () => {
@@ -246,6 +270,7 @@ async function setup() {
   state.addToast.mockReset().mockReturnValue("checkout-toast");
   state.updateToast.mockReset();
   state.runCommand.mockReset();
+  state.settledAt = null;
 
   state.status = "success";
   state.extraStatus = null;
