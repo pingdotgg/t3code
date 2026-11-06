@@ -440,6 +440,8 @@ function ProjectKnowledgeSheet(
         <ScrollView
           className="flex-1"
           contentInsetAdjustmentBehavior="automatic"
+          automaticallyAdjustKeyboardInsets
+          keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ padding: 20, gap: 14 }}
         >
@@ -502,18 +504,17 @@ function ProjectKnowledgeSheet(
                   if (inspectedFact.status !== "forgotten")
                     push({ kind: "editor", mode: { kind, fact: inspectedFact } });
                 }}
-                onRevise={(action) => {
-                  const revise = () => void apply({ action, ...factMutation(inspectedFact) });
-                  if (action !== "forget") return revise();
+                onForget={() =>
                   Dialog.confirm({
                     title: "Forget this fact permanently?",
                     message:
                       "Its content, history and every copy sent to agents are removed and cannot be restored. If the fact changed rather than became wrong, supersede it instead.",
                     confirmText: "Forget",
                     destructive: true,
-                    onConfirm: revise,
-                  });
-                }}
+                    onConfirm: () =>
+                      void apply({ action: "forget", ...factMutation(inspectedFact) }),
+                  })
+                }
                 onFeedback={(helpful) =>
                   void apply({ action: "feedback", helpful, ...factMutation(inspectedFact) })
                 }

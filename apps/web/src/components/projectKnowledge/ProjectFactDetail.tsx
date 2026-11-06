@@ -227,8 +227,7 @@ export function ProjectFactHistory(props: {
 export function KnowledgeHealthStrip(props: { readonly status: ProjectKnowledgeStatus }) {
   const { status } = props;
   const counters = [
-    ["Confirmed", status.counts.confirmed],
-    ["Proposed", status.counts.proposed],
+    ["Saved", status.counts.saved],
     ["Superseded", status.counts.superseded],
     ["Below recall threshold", status.belowRecallThreshold],
     ["Retrievals", status.retrievals],

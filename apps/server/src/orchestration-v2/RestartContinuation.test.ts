@@ -250,6 +250,7 @@ it.effect.each([
           Layer.mergeAll(
             ServerSettings.layerTest({
               continueThreadsAfterServerUpdate: enabled,
+              enableAssistedLearning: false,
               projectSettingsOverrides:
                 projectOverride === undefined
                   ? {}
@@ -386,7 +387,10 @@ it.effect.each(["running", "waiting"])(
       const recovery = yield* ProviderRuntimeRecovery.make.pipe(
         Effect.provide(
           Layer.mergeAll(
-            ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+            ServerSettings.layerTest({
+              continueThreadsAfterServerUpdate: true,
+              enableAssistedLearning: false,
+            }),
             Layer.mock(ProjectionStore.ProjectionStoreV2)({
               getRecoveryThreadIds: () => Effect.succeed([threadId]),
               getRuntimeRecoveryProjection: () => Effect.succeed(projection),
@@ -633,7 +637,10 @@ it.effect.each([
         const recovery = yield* ProviderRuntimeRecovery.make.pipe(
           Effect.provide(
             Layer.mergeAll(
-              ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+              ServerSettings.layerTest({
+                continueThreadsAfterServerUpdate: true,
+                enableAssistedLearning: false,
+              }),
               Layer.mock(ProjectionStore.ProjectionStoreV2)({
                 getRecoveryThreadIds: () => Effect.succeed([threadId]),
                 getRuntimeRecoveryProjection: () => Effect.succeed(projection),

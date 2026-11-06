@@ -143,10 +143,9 @@ To save a fact from the conversation, choose **Remember for this project** on a
 message. Project memory opens that message; choose **Save as
 fact** to start a fact prefilled from it and citing it.
 
-Agents can save observations for later recall. These remain marked as proposed
-until you confirm them. Confirmation is optional; proposed observations can still
-be recalled. You can edit or forget a fact, and its origin shows who recorded the
-current assertion. Forgetting removes the fact's content everywhere T3 kept it,
+Agents can save observations for later recall. They are saved immediately, with
+no approval step. You can edit or forget a fact, and its origin shows who recorded
+the current assertion. Forgetting removes the fact's content everywhere T3 kept it,
 including its earlier revisions and the copy recorded as sent with past messages.
 
 When knowledge changes, **Supersede** the old fact instead of forgetting it. The
@@ -155,23 +154,27 @@ up in recall unless you show superseded facts. After you save, T3 points out
 existing facts that look like duplicates or possible contradictions so you can
 compare them; it never merges or replaces them on its own.
 
-To have T3 suggest facts for you, turn on **Suggest facts from finished runs** under
-**Memory health** in Project memory, or in **Settings → Labs → Zack** for one project or
-every project.
-It is off by default because each finished run in that project costs one call to
-your text generation model. After a run finishes, fails, or is stopped, T3 reads
-that run's messages and proposes up to three decisions, constraints, or
-conventions, each citing the messages it came from. Suggestions appear under
-**Suggested**, are never confirmed for you, and agents do not recall them until
-you confirm them. Suggestions from a run that failed or was stopped say so. A
-suggestion that resembles an existing fact is offered as its replacement:
-confirming it supersedes the existing fact, and forgetting it leaves that fact as
-it is. A forgotten suggestion is not proposed again for the same run. Project
-memory shows what the last run did, including why it was skipped or failed.
+T3 also saves facts from finished runs on its own. After a run finishes, fails, or
+is stopped, your text generation model reads that run's messages and saves up to
+three decisions, constraints, or conventions, each citing the messages it came
+from. Each run costs one model call. To turn this off, use **Save facts from
+finished runs** under **Memory health** in Project memory, or in **Settings → Labs →
+Zack** for one project or every project. The **Automatic** filter lists these facts,
+and a fact from a run that failed or was stopped says so.
 
-A fact's details show its history: when it was created, edited, confirmed,
-superseded, and rated helpful or unhelpful, with the trust change from each
-rating. **Memory health** counts facts by status. When facts lose their cited
+An exact duplicate of an existing fact is skipped. Different facts are saved
+separately, even when they look similar or may conflict. Both can come up in recall
+until you supersede one.
+Agents find saved facts by searching; nothing is added to their prompts on its own.
+A fact's trust rating, age, and how often it is recalled all affect its rank, and a
+fact rated below the recall threshold stops coming up. Facts are not deleted
+automatically.
+A fact you forget is not saved again from the same run, but a later run can learn it
+again. Project memory shows what the last run did, including why it was skipped or
+failed.
+
+A fact's details show its history: when it was created, edited, superseded, and
+rated helpful or unhelpful, with the trust change from each rating. **Memory health** counts facts by status. When facts lose their cited
 source, the **Lost source** filter lists them; on mobile, select the lost-source
 count in the memory summary.
 

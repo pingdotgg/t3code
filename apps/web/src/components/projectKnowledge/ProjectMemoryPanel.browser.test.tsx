@@ -128,7 +128,7 @@ const fact: ProjectFact = {
   tags: [],
   kind: "constraint",
   sources: [source],
-  status: "proposed",
+  status: "saved",
   revision: 1,
   trust: 0.5,
   retrievalCount: 0,
@@ -137,7 +137,7 @@ const fact: ProjectFact = {
   forgottenAt: null,
 };
 const healthStatus: ProjectKnowledgeStatus = {
-  counts: { proposed: 1, confirmed: 4, superseded: 1, forgotten: 0 },
+  counts: { saved: 5, superseded: 1, forgotten: 0 },
   trustBands: { low: 0, guarded: 1, steady: 3, high: 1 },
   recallThreshold: 0.3,
   belowRecallThreshold: 0,
@@ -268,7 +268,6 @@ it.each([false, true])("lists only real citations under user origin (cited: %s)"
   const asserted: ProjectFact = {
     ...fact,
     origin: { kind: "user" },
-    status: "confirmed",
     sources: [{ kind: "user" }, ...(cited ? [source] : [])],
   };
   state.list = Atom.make(AsyncResult.success({ facts: [asserted], nextCursor: null }));
@@ -348,38 +347,8 @@ it("refreshes the inspected fact and uses its latest revision for the next mutat
   currentFact = { ...fact, content: "Updated on another client.", revision: 2 };
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect.element(inspector().getByText(currentFact.content!)).toBeVisible();
-  await inspector().getByRole("button", { name: "Confirm", exact: true }).click();
-  expect(state.mutate).toHaveBeenCalledWith({
-    environmentId: scope.environmentId,
-    input: expect.objectContaining({ action: "confirm", expectedRevision: 2 }),
-  });
-});
-
-it("refreshes confirmed fact detail even after it leaves the proposed results", async () => {
-  const registry = await setup();
-  let currentFact: ProjectFact = fact;
-  state.detail = Atom.make(() => AsyncResult.success(factDetail(currentFact)));
-  state.list = Atom.make(() =>
-    AsyncResult.success({
-      facts: currentFact.status === "proposed" ? [currentFact] : [],
-      nextCursor: null,
-    }),
-  );
-  state.mutate.mockImplementation(async () => {
-    currentFact = { ...fact, status: "confirmed", revision: 2 };
-    return { _tag: "Success", value: currentFact };
-  });
-  await using screen = await mount(registry);
-  await openMemory(screen);
-  await page.getByRole("button", { name: "Proposed", exact: true }).click();
-  await factRow(fact.content!).click();
-  await inspector().getByRole("button", { name: "Confirm", exact: true }).click();
-  await expect.element(inspector().getByRole("heading", { name: /Confirmed/ })).toBeVisible();
-  await expect
-    .element(inspector().getByRole("button", { name: "Confirm", exact: true }))
-    .not.toBeInTheDocument();
   await inspector().getByRole("button", { name: "Helpful", exact: true }).click();
-  expect(state.mutate).toHaveBeenLastCalledWith({
+  expect(state.mutate).toHaveBeenCalledWith({
     environmentId: scope.environmentId,
     input: expect.objectContaining({ action: "feedback", expectedRevision: 2 }),
   });
@@ -710,7 +679,7 @@ it("stacks list and inspector on narrow screens and returns focus to the inspect
   await using screen = await mount(registry);
   await openMemory(screen);
   await factRow(fact.content!).click();
-  await expect.element(inspector().getByRole("heading", { name: /Proposed/ })).toHaveFocus();
+  await expect.element(inspector().getByRole("heading", { name: /Saved/ })).toHaveFocus();
   // Hidden columns leave the accessibility tree, so only one of the two is reachable.
   await expect.element(factList()).not.toBeInTheDocument();
   await page.getByRole("button", { name: "Back to list" }).click();
@@ -788,7 +757,7 @@ it("disables writes for a read-only connection", async () => {
   await openMemory(screen);
   await factRow(fact.content!).click();
   await expect.element(page.getByRole("button", { name: "Forget", exact: true })).toBeDisabled();
-  await expect.element(page.getByRole("button", { name: "Confirm", exact: true })).toBeDisabled();
+  await expect.element(page.getByRole("button", { name: "Edit", exact: true })).toBeDisabled();
   await expect.element(page.getByRole("button", { name: "New fact" })).toBeDisabled();
   expect(state.mutate).not.toHaveBeenCalled();
 });
@@ -1100,7 +1069,7 @@ it("marks superseded facts read-only and filters to facts that lost their source
   const replacement = ProjectFactId.make("replacement-fact-id");
   state.list = Atom.make(
     AsyncResult.success({
-      facts: [{ ...fact, status: "confirmed", supersededBy: replacement }],
+      facts: [{ ...fact, supersededBy: replacement }],
       nextCursor: null,
     }),
   );
@@ -1127,7 +1096,7 @@ it("marks superseded facts read-only and filters to facts that lost their source
     projectId: scope.projectId,
     sourceState: "unavailable",
   });
-  await page.getByRole("button", { name: "Confirmed", exact: true }).click();
+  await page.getByRole("button", { name: "Saved", exact: true }).click();
   await expect.element(lost).toHaveAttribute("aria-pressed", "false");
   expect(state.listRequest.mock.lastCall![0].input).not.toHaveProperty("sourceState");
 });
@@ -1181,15 +1150,14 @@ it("supersedes a fact and surfaces the conflict hints the server returns", async
   await expect.element(notice).not.toBeInTheDocument();
 });
 
-it("reviews assisted suggestions with their citations and controls the project opt-in", async () => {
+it("shows automatic facts as saved, with citations and the project switch", async () => {
   const registry = await setup();
   const runId = RunId.make("run");
-  const suggestion: ProjectFact = {
+  const automatic: ProjectFact = {
     ...fact,
     id: ProjectFactId.make("assisted:run:0"),
     origin: { kind: "assisted", threadId: scope.threadId, runId, runOutcome: "failed" },
     content: "Cache keys include tenant and region IDs.",
-    supersedes: ProjectFactId.make("existing-fact"),
   };
   state.config = Atom.make({
     environment: {
@@ -1203,7 +1171,7 @@ it("reviews assisted suggestions with their citations and controls the project o
     settings: {
       ...DEFAULT_SERVER_SETTINGS,
       projectSettingsOverrides: {
-        [scope.projectId]: { defaultAutoPull: true, enableAssistedLearning: true },
+        [scope.projectId]: { defaultAutoPull: true },
       },
     },
   });
@@ -1211,56 +1179,44 @@ it("reviews assisted suggestions with their citations and controls the project o
     AsyncResult.success({
       ...healthStatus,
       assistedLearning: {
-        suggested: 1,
         lastRun: {
           threadId: scope.threadId,
           runId,
           runOutcome: "failed",
           result: "ran",
           reason: null,
-          proposed: 1,
-          suggested: 1,
+          saved: 1,
           at: fact.createdAt,
         },
       },
     } satisfies ProjectKnowledgeStatus),
   );
-  state.list = Atom.make(AsyncResult.success({ facts: [suggestion], nextCursor: null }));
+  state.list = Atom.make(AsyncResult.success({ facts: [automatic], nextCursor: null }));
   await using screen = await mount(registry);
   await openMemory(screen);
   await page.getByRole("button", { name: "Memory health" }).click();
-  const optIn = page.getByRole("switch", { name: "Suggest facts from finished runs" });
-  await expect.element(optIn).toBeChecked();
-  await expect
-    .element(page.getByText("Last run: proposed 1 (1 as updates to existing facts)."))
-    .toBeVisible();
+  const toggle = page.getByRole("switch", { name: "Save facts from finished runs" });
+  await expect.element(toggle).toBeChecked();
+  await expect.element(page.getByText("Last run: saved 1.")).toBeVisible();
 
-  await page.getByRole("button", { name: "Suggested (1)" }).click();
+  await page.getByRole("button", { name: "Automatic", exact: true }).click();
   expect(state.listRequest).toHaveBeenLastCalledWith({
     environmentId: scope.environmentId,
-    input: { projectId: scope.projectId, status: "proposed", origin: "assisted" },
+    input: { projectId: scope.projectId, status: "saved", origin: "assisted" },
   });
-  const row = factRow(suggestion.content!);
-  await expect.element(row.getByText("Suggested", { exact: true })).toBeVisible();
+  const row = factRow(automatic.content!);
+  await expect.element(row.getByText("Saved", { exact: true })).toBeVisible();
+  await expect.element(row.getByText("Automatic", { exact: true })).toBeVisible();
   await row.click();
-  await expect.element(inspector().getByText("Suggested from a run that failed")).toBeVisible();
-  await expect.element(inspector().getByText("Would replace existing")).toBeVisible();
+  await expect.element(inspector().getByText("Learned from a run that failed")).toBeVisible();
   await inspector().getByRole("button", { name: "Message evidence" }).click();
   await expect.element(page.getByText("Exact canonical evidence.")).toBeVisible();
   await page.getByRole("button", { name: "Back to fact" }).click();
-  await inspector().getByRole("button", { name: "Confirm", exact: true }).click();
-  expect(state.mutate).toHaveBeenCalledWith({
-    environmentId: scope.environmentId,
-    input: {
-      action: "confirm",
-      commandId: expect.any(String),
-      projectId: scope.projectId,
-      factId: suggestion.id,
-      expectedRevision: 1,
-    },
-  });
+  await expect
+    .element(inspector().getByRole("button", { name: "Confirm", exact: true }))
+    .not.toBeInTheDocument();
 
-  await optIn.click();
+  await toggle.click();
   // Other overrides for the project survive the write, which replaces the whole entry.
   expect(state.updateSettings).toHaveBeenCalledWith({
     environmentId: scope.environmentId,

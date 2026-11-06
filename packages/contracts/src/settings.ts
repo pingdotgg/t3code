@@ -1351,8 +1351,8 @@ export const ServerSettings = Schema.Struct({
   pstackEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Off by default: turning it on moves skill folders out of the user's Claude and Codex homes. */
   skillsLibraryEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  /** Off by default: each settled run in an opted-in project costs a text generation call. */
-  enableAssistedLearning: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** On by default: each settled run costs a text generation call unless its project opts out. */
+  enableAssistedLearning: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Off by default: summarizing older history costs text generation calls. */
   enableConversationSummaries: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),

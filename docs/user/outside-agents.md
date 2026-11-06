@@ -97,9 +97,8 @@ Agents without OAuth support cannot connect.
 
 Connected agents can search a project's conversations and recall saved facts.
 With permission to make changes, they can record observations for later work.
-An observation keeps the agent's identity
-and remains marked as proposed until you confirm it. Use **Project memory** in
-T3 Code to inspect, edit, or forget these facts.
+An observation is saved immediately and keeps the agent's identity. Use **Project
+memory** in T3 Code to inspect, edit, or forget these facts.
 
 Agents can also query symbols, callers, references, dependencies, and likely
 change impact in a registered project's codebase. Selecting a thread uses that

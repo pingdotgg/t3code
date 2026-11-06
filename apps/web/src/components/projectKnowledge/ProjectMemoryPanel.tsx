@@ -101,7 +101,6 @@ function useProjectMemoryHistoryAvailable(environmentId: EnvironmentId): boolean
   return config?.environment.capabilities.projectKnowledgeHistory === true;
 }
 
-// Older servers lack assisted proposals and the origin filter.
 function useProjectMemoryAssistedAvailable(environmentId: EnvironmentId): boolean {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   return config?.environment.capabilities.projectKnowledgeAssistedLearning === true;
@@ -158,7 +157,7 @@ export function ProjectMemoryDialogHost(props: Scope) {
         <DialogHeader>
           <DialogTitle>Project memory</DialogTitle>
           <DialogDescription>
-            Review project facts and their evidence, and choose what belongs in this draft.
+            Browse saved project facts and their evidence, and choose what belongs in this draft.
           </DialogDescription>
         </DialogHeader>
         {active ? (
@@ -174,11 +173,10 @@ export function ProjectMemoryDialogHost(props: Scope) {
   );
 }
 
-type ListFilter = "confirmed" | "proposed" | "suggested" | "forgotten" | "lost";
+type ListFilter = "saved" | "automatic" | "forgotten" | "lost";
 const FILTER_LABEL: Record<Exclude<ListFilter, "lost">, string> = {
-  confirmed: "Confirmed",
-  proposed: "Proposed",
-  suggested: "Suggested",
+  saved: "Saved",
+  automatic: "Automatic",
   forgotten: "Forgotten",
 };
 
@@ -212,7 +210,7 @@ function MemoryContents(
         }
       : null,
   );
-  const [filter, setFilter] = useState<ListFilter>("confirmed");
+  const [filter, setFilter] = useState<ListFilter>("saved");
   const [afterId, setAfterId] = useState<ProjectFactId | undefined>();
   const [includeArchived, setIncludeArchived] = useState(false);
   const [includeSuperseded, setIncludeSuperseded] = useState(false);
@@ -256,12 +254,11 @@ function MemoryContents(
       environmentId: props.environmentId,
       input: {
         projectId: props.projectId,
-        // The lost-source filter spans proposed and confirmed, matching the health count.
         ...(historyAvailable && filter === "lost"
           ? { sourceState: "unavailable" as const }
-          : filter === "suggested"
-            ? { status: "proposed" as const, origin: "assisted" as const }
-            : { status: filter === "lost" ? ("confirmed" as const) : filter }),
+          : filter === "automatic"
+            ? { status: "saved" as const, origin: "assisted" as const }
+            : { status: filter === "lost" ? ("saved" as const) : filter }),
         ...(afterId ? { afterId } : {}),
         ...(showSuperseded ? { includeSuperseded: true } : {}),
       },
@@ -410,11 +407,7 @@ function MemoryContents(
     }
     refresh([input.factId, ...(result._tag === "Success" ? [result.value.id] : [])]);
   };
-  const revise = async (
-    fact: ProjectFact,
-    action: "confirm" | "forget" | "feedback",
-    helpful = true,
-  ) => {
+  const revise = async (fact: ProjectFact, action: "forget" | "feedback", helpful = true) => {
     if (action === "forget") {
       const message = `Forget this fact permanently?\n${FORGET_CONFIRM_DETAIL}`;
       const confirmed =
@@ -481,20 +474,16 @@ function MemoryContents(
   const pending = searchInput ? search.isPending : list.isPending;
   const listError = searchInput ? search.error : list.error;
   const lostCount = health.data?.unavailableSources ?? 0;
-  const suggestedCount = health.data?.assistedLearning?.suggested ?? 0;
   const filters: ReadonlyArray<ListFilter> = [
-    "confirmed",
-    "proposed",
-    ...(assistedAvailable ? (["suggested"] as const) : []),
+    "saved",
+    ...(assistedAvailable ? (["automatic"] as const) : []),
     "forgotten",
     ...(historyAvailable && (lostCount > 0 || filter === "lost") ? (["lost"] as const) : []),
   ];
   const filterLabel = (value: ListFilter) =>
     value === "lost"
       ? `Lost source (${health.data?.unavailableSourcesCoverage === "partial" ? "at least " : ""}${lostCount})`
-      : value === "suggested" && suggestedCount > 0
-        ? `Suggested (${suggestedCount})`
-        : FILTER_LABEL[value];
+      : FILTER_LABEL[value];
   const resultSummary = pending
     ? "Reading project knowledge…"
     : searchInput

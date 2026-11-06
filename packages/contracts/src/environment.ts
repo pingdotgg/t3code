@@ -81,7 +81,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   projectKnowledgeHistory: Schema.optionalKey(Schema.Boolean),
   /** projectKnowledge.readDeliveries and the recorded copy delivered with sent messages. */
   projectKnowledgeDeliveries: Schema.optionalKey(Schema.Boolean),
-  /** Assisted proposals from settled runs, the origin list filter and status.assistedLearning. */
+  /** Automatic facts from settled runs, the origin list filter and status.assistedLearning. */
   projectKnowledgeAssistedLearning: Schema.optionalKey(Schema.Boolean),
   projectCode: Schema.optionalKey(Schema.Boolean),
   /** Extended queries are absent from servers that only advertise the original code index. */

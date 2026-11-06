@@ -80,9 +80,9 @@ export function ProjectMemoryFactList(props: {
                     <Badge size="sm" variant={status.variant}>
                       {status.label}
                     </Badge>
-                    {fact.origin.kind === "assisted" && fact.status === "proposed" ? (
+                    {fact.origin.kind === "assisted" ? (
                       <Badge size="sm" variant="outline">
-                        Suggested
+                        Automatic
                       </Badge>
                     ) : null}
                     <span className="text-muted-foreground">{fact.kind}</span>

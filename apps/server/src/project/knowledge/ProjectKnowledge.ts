@@ -123,15 +123,14 @@ export class ProjectKnowledge extends Context.Service<
       readonly afterId?: string | undefined;
     }) => Effect.Effect<string | null, ProjectKnowledgeError>;
     /**
-     * Creates an assisted proposal through the normal create path. An exact duplicate of an
-     * active fact creates nothing; a near duplicate or possible conflict is created as a pending
-     * replacement of that fact, which only takes effect when a user confirms it.
+     * Saves an automatically learned fact through the normal create path. An exact duplicate
+     * creates nothing; lexical similarities never block saving or replace an existing fact.
      */
-    readonly proposeAssisted: (
+    readonly saveAutomatic: (
       input: Extract<ProjectKnowledgeMutation, { readonly action: "create" }>,
       actor: Extract<KnowledgeOrigin, { readonly kind: "assisted" }>,
     ) => Effect.Effect<
-      { readonly outcome: "proposed" | "suggested" | "duplicate" | "existing" },
+      { readonly outcome: "saved" | "duplicate" | "existing" },
       ProjectKnowledgeError
     >;
     readonly hasAssistedRun: (
@@ -389,8 +388,7 @@ const make = Effect.gen(function* () {
     function* (input) {
       yield* requireProject(input.projectId);
       const limit = input.limit ?? 50;
-      // The lost-source filter matches the health count, which spans both active statuses.
-      const status = input.status ?? (input.sourceState === "unavailable" ? null : "confirmed");
+      const status = input.status ?? "saved";
       const includeSuperseded = input.includeSuperseded ?? false;
       const onlyIds =
         input.sourceState === "unavailable"
@@ -458,13 +456,6 @@ const make = Effect.gen(function* () {
                   factId,
                 });
               return replayed;
-            }
-            if (input.action === "confirm" && actor.kind !== "user") {
-              return yield* new ProjectKnowledgeError({
-                reason: "user_confirmation_required",
-                projectId,
-                factId,
-              });
             }
             if (
               input.action === "create" ||
@@ -560,7 +551,7 @@ const make = Effect.gen(function* () {
                 kind: input.kind,
                 sources: input.sources,
                 origin: actor,
-                status: actor.kind === "user" ? "confirmed" : "proposed",
+                status: "saved",
                 revision: 1,
                 trust: 0.5,
                 retrievalCount: 0,
@@ -601,7 +592,7 @@ const make = Effect.gen(function* () {
                 kind: input.kind,
                 sources: input.sources,
                 origin: actor,
-                status: actor.kind === "user" ? "confirmed" : "proposed",
+                status: "saved",
                 revision: 1,
                 trust: 0.5,
                 retrievalCount: 0,
@@ -622,10 +613,7 @@ const make = Effect.gen(function* () {
                 });
               if (existing.status === "forgotten")
                 return yield* new ProjectKnowledgeError({ reason: "forgotten", projectId, factId });
-              if (
-                existing.supersededBy != null &&
-                (input.action === "edit" || input.action === "confirm")
-              )
+              if (existing.supersededBy != null && input.action === "edit")
                 return yield* new ProjectKnowledgeError({
                   reason: "superseded",
                   projectId,
@@ -649,45 +637,8 @@ const make = Effect.gen(function* () {
                     kind: input.kind,
                     sources: input.sources,
                     origin: actor,
-                    status: actor.kind !== "user" ? "proposed" : existing.status,
                   };
                   break;
-                case "confirm": {
-                  if (!(yield* sourcesAvailable(existing, true)))
-                    return yield* new ProjectKnowledgeError({
-                      reason: "invalid_source",
-                      projectId,
-                      factId,
-                    });
-                  fact = { ...fact, status: "confirmed" };
-                  // An assisted suggestion names the fact it would replace without touching it;
-                  // confirming completes that replacement, or drops the link once the target is
-                  // gone or already replaced.
-                  const target =
-                    existing.supersedes == null
-                      ? null
-                      : yield* store.find(projectId, existing.supersedes);
-                  if (target !== null && target.supersededBy !== existing.id) {
-                    if (target.status === "forgotten" || target.supersededBy != null) {
-                      fact = { ...fact, supersedes: null };
-                    } else {
-                      const replaced: ProjectFact = {
-                        ...target,
-                        revision: target.revision + 1,
-                        updatedAt: now,
-                        supersededBy: existing.id,
-                      };
-                      if (!(yield* store.update(replaced, target.revision)))
-                        return yield* new ProjectKnowledgeError({
-                          reason: "conflict",
-                          projectId,
-                          factId: target.id,
-                        });
-                      yield* history(replaced, "superseded", { relatedFactId: existing.id });
-                    }
-                  }
-                  break;
-                }
                 case "forget":
                   fact = {
                     ...fact,
@@ -711,9 +662,6 @@ const make = Effect.gen(function* () {
               switch (input.action) {
                 case "edit":
                   yield* history(fact, "edited");
-                  break;
-                case "confirm":
-                  yield* history(fact, "confirmed");
                   break;
                 case "forget":
                   yield* store.eraseHistory(projectId, factId);
@@ -923,8 +871,6 @@ const make = Effect.gen(function* () {
           (fact): fact is typeof ActiveProjectFact.Type =>
             fact.status !== "forgotten" &&
             fact.content !== null &&
-            // Model-extracted text reaches agents only after a user confirms it.
-            !(fact.status === "proposed" && fact.origin.kind === "assisted") &&
             (entities.length === 0 ||
               (input.entityMatch === "all"
                 ? entities.every((entity) =>
@@ -1351,28 +1297,18 @@ const make = Effect.gen(function* () {
       [fact.id, fact.supersedes, fact.supersededBy].filter((id): id is ProjectFactId => id != null),
     );
   });
-  const proposeAssisted: ProjectKnowledge["Service"]["proposeAssisted"] = Effect.fn(
-    "ProjectKnowledge.proposeAssisted",
+  const saveAutomatic: ProjectKnowledge["Service"]["saveAutomatic"] = Effect.fn(
+    "ProjectKnowledge.saveAutomatic",
   )(function* (input, actor) {
     return yield* sql
       .withTransaction(
         Effect.gen(function* () {
-          // A retry reuses the same fact id, so a forgotten or reviewed proposal stays as it is.
           if ((yield* store.find(input.projectId, input.factId)) !== null)
             return { outcome: "existing" as const };
-          const hints = yield* hintsForContent(input.projectId, input.content, [input.factId]);
-          if (hints.some((hint) => hint.kind === "duplicate"))
+          if (yield* store.hasDuplicateContent(input.projectId, input.content))
             return { outcome: "duplicate" as const };
-          const created = yield* mutate(input, actor);
-          const target = hints[0];
-          if (target === undefined) return { outcome: "proposed" as const };
-          if (!(yield* store.update({ ...created, supersedes: target.factId }, created.revision)))
-            return yield* new ProjectKnowledgeError({
-              reason: "conflict",
-              projectId: input.projectId,
-              factId: input.factId,
-            });
-          return { outcome: "suggested" as const };
+          yield* mutate(input, actor);
+          return { outcome: "saved" as const };
         }),
       )
       .pipe(Effect.mapError(storageError(input.projectId)));
@@ -1446,15 +1382,19 @@ const make = Effect.gen(function* () {
       return yield* Effect.gen(function* () {
         const counts = yield* store.statusCounts(input.projectId, RECALL_THRESHOLD);
         const assistedLearning = yield* store.assistedStatus(input.projectId);
-        const cited = yield* store.citedFacts(input.projectId, null, false, SOURCE_CHECK_LIMIT + 1);
+        const cited = yield* store.citedFacts(
+          input.projectId,
+          "saved",
+          false,
+          SOURCE_CHECK_LIMIT + 1,
+        );
         const unavailable = yield* unavailableSources(
           input.projectId,
           cited.slice(0, SOURCE_CHECK_LIMIT),
         );
         return {
           counts: {
-            proposed: counts.proposed,
-            confirmed: counts.confirmed,
+            saved: counts.saved,
             superseded: counts.superseded,
             forgotten: counts.forgotten,
           },
@@ -1494,7 +1434,7 @@ const make = Effect.gen(function* () {
     markDeliveryUncertain,
     readSentDeliveries,
     scrubDeliveryPage,
-    proposeAssisted,
+    saveAutomatic,
     hasAssistedRun,
     recordAssistedRun,
   });

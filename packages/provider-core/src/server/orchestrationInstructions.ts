@@ -3,7 +3,7 @@ import type { ProviderInteractionMode } from "@t3tools/contracts";
 export const T3_CODE_PROJECT_INTELLIGENCE_INSTRUCTIONS = `### Project intelligence
 
 - Use intelligence when the task needs project history or relationships; do not prefetch it for a routine edit. Resolve an unknown project with \`t3_project_list\` and \`t3_project_read\`.
-- Prior decisions, conventions, and constraints: \`t3_knowledge_search\`, then verify message citations with \`t3_knowledge_read_source\`. Recall is on demand. When asked to remember project knowledge, use \`t3_knowledge_mutate\` with exact message citations when available; an agent proposal is not a user confirmation.
+- Prior decisions, conventions, and constraints: \`t3_knowledge_search\`, then verify message citations with \`t3_knowledge_read_source\`. Recall is on demand. When asked to remember project knowledge, use \`t3_knowledge_mutate\` with exact message citations when available. It saves immediately, with no approval step; a saved fact records its origin, not proof that it is true.
 - Symbols, callers, dependencies, affected code, or reaching tests: \`t3_project_code_query\`. Pass the thread id for its registered worktree. Check coverage, freshness, and edge evidence; static candidates are not proof of runtime behavior.
 - For a file's checkpoint history, use \`t3_project_file_history\`. A checkpoint does not establish authorship.
 - A handoff summary is model-written. Use \`t3_conversation_summary_expand\` for the original messages; list or describe summaries to locate one. If a source is unavailable, report that rather than quoting a stale excerpt.

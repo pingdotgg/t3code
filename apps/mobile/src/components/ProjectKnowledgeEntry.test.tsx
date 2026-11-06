@@ -245,7 +245,7 @@ const fact: ProjectFact = {
   tags: [],
   kind: "note",
   sources: [],
-  status: "proposed",
+  status: "saved",
   revision: 1,
   trust: 0.5,
   retrievalCount: 0,
@@ -486,7 +486,6 @@ it("shows user origin once without treating the assertion as a citation", async 
   const asserted: ProjectFact = {
     ...fact,
     origin: { kind: "user" },
-    status: "confirmed",
     sources: [{ kind: "user" }],
   };
   state.list = { facts: [asserted], nextCursor: null };
@@ -681,7 +680,6 @@ it("marks a superseded fact read-only and lists superseded facts on request", as
   await screen.click(`Inspect fact: ${fact.content}`);
   const labels = [...screen.container.querySelectorAll("button")].map((item) => item.textContent);
   expect(labels).not.toContain("Edit");
-  expect(labels).not.toContain("Confirm");
   expect(labels).not.toContain("Supersede");
   await screen.click("Back");
   expect(state.listInputs.at(-1)).not.toHaveProperty("includeSuperseded");
@@ -841,7 +839,7 @@ it("drops a revised fact from the selection and the draft after saving", async (
   });
   screen.openMemory();
   await screen.click(`Inspect fact: ${fact.content}`);
-  await screen.click("Confirm");
+  await screen.click("Helpful");
   expect(state.setText).toHaveBeenCalledWith(scope.draftKey, "");
   expect(screen.container.textContent).toContain("0 selected");
   expect(screen.container.textContent).toContain("removed from the draft");
