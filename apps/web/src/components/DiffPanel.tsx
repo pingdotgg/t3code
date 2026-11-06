@@ -1425,6 +1425,8 @@ export default function DiffPanel({
                 >
                   <AnnotatableCodeView
                     key={collapseScopeKey ?? reviewSectionId}
+                    environmentId={activeThread?.environmentId}
+                    projectId={activeThread?.projectId}
                     viewerRef={codeViewReveal.attach}
                     codeViewKey={codeViewMountKey}
                     className="h-full min-h-0 overflow-auto"
