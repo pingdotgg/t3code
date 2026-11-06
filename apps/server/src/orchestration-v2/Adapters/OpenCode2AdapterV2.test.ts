@@ -560,6 +560,15 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       },
     },
     {
+      name: "an out-of-funds provider.go-limit (402)",
+      failureClass: "provider_error",
+      error: {
+        type: "provider.go-limit",
+        message: "Upstream request failed: Insufficient account funds",
+        status: 402,
+      },
+    },
+    {
       name: "a provider.quota account budget (429)",
       failureClass: "usage_limit",
       error: {
@@ -739,6 +748,32 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         message: goLimitMessage,
         retryable: null,
       });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reads Go usage off the event lock, so Stop still ends the limited turn", () =>
+    Effect.gen(function* () {
+      const reading = yield* Deferred.make<void>();
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          failWith({ type: "provider.go-limit", message: goLimitMessage, status: 429 }),
+          out("session.interrupt", { sessionID: SESSION }),
+          reply("session.interrupt", { interrupted: false }),
+        ],
+        {
+          readUsageLimits: Deferred.succeed(reading, undefined).pipe(Effect.andThen(Effect.never)),
+        },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* Deferred.await(reading);
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+      });
+      assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
     }).pipe(Effect.scoped),
   );
 

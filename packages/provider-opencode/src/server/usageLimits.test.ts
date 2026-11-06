@@ -48,6 +48,15 @@ describe("openCodeGoLimitResetAt", () => {
     ).toBe(WEEKLY_RESET);
   });
 
+  it.each([
+    "OpenCode Go weekly usage limit reached for this session.",
+    "OpenCode Go 5 hour and weekly usage limits reached.",
+  ])("waits for the latest window %s names while usage lags", (message) => {
+    expect(openCodeGoLimitResetAt(message, usage({ rolling: 40, weekly: 98, monthly: 30 }))).toBe(
+      WEEKLY_RESET,
+    );
+  });
+
   it("uses the spent windows when the error does not name one", () => {
     expect(
       openCodeGoLimitResetAt(
