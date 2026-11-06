@@ -219,7 +219,7 @@ export function McpAppFrame(props: {
   };
 
   // The host belongs to this frame element, which is replaced when the document is reopened.
-  const attachFrame = (frame: HTMLIFrameElement) => {
+  const attachFrame = useStableCallback((frame: HTMLIFrameElement) => {
     frameRef.current = frame;
     const hostContext = (): McpAppHostContext => {
       const current = readLive();
@@ -393,7 +393,7 @@ export function McpAppFrame(props: {
       hostRef.current = null;
       frameRef.current = null;
     };
-  };
+  });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes theme, width, display mode and tool definition to the MCP app host in the iframe
   useEffect(() => {
