@@ -587,7 +587,9 @@ export function AddEnvironmentDialog({
           </label>
         </div>
         {error || discoveredSshHostsError ? (
-          <p className="text-xs text-destructive">{error ?? discoveredSshHostsError}</p>
+          <p role="alert" className="text-xs text-destructive">
+            {error ?? discoveredSshHostsError}
+          </p>
         ) : null}
         <Button
           variant="outline"
