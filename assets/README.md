@@ -1,5 +1,7 @@
 # Brand icons
 
+OminaX: the tracked PNG, ICO and Android files below are the OminaX "Nest" icon, copied from the brand kit, and the mobile app's iOS icon points at the PNG. The Icon Composer projects still draw the T3 mark, so `icons:export`, `icons:export:android` and `icons:check` would bring T3 back. Don't run them until the projects are redrawn.
+
 The three Icon Composer projects are the source of truth for full application icons:
 
 - `dev/app-icon.icon`
