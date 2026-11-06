@@ -19,10 +19,43 @@ import {
   FleetDrainStepError,
   type DrainGitPush,
   type DrainSink,
+  type DrainSinkRecord,
   type DrainSource,
 } from "./OpenShellFleetDrain.ts";
 
 const encode = (value: string) => encodeURIComponent(value);
+
+/** Encoding keeps dots, so ".." could climb out of fleet-drain: keep only safe
+ * characters and refuse segments that would be empty or a relative hop. */
+const segmentOf = (value: string): string | null => {
+  const stripped = value.replace(/[^A-Za-z0-9._-]/g, "");
+  return stripped === "" || stripped === "." || stripped === ".." ? null : stripped;
+};
+
+const decodeEnvelope = (raw: string): DrainSinkRecord | null => {
+  try {
+    const parsed = JSON.parse(raw) as Partial<DrainSinkRecord>;
+    if (typeof parsed.threadId !== "string" || typeof parsed.body !== "string") return null;
+    return {
+      threadId: parsed.threadId,
+      snapshotSequence:
+        typeof parsed.snapshotSequence === "number" ? parsed.snapshotSequence : null,
+      body: parsed.body,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const toEnvelope = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      threadId: Schema.String,
+      snapshotSequence: Schema.NullOr(Schema.Number),
+      body: Schema.String,
+    }),
+  ),
+);
 
 /** `stateDir/fleet-drain/<environment>/<drainId>/thread-<id>.json`. */
 export const fileDrainSink = (input: {
@@ -31,10 +64,6 @@ export const fileDrainSink = (input: {
   readonly path: Path.Path;
 }): DrainSink => {
   const { fs, path, stateDir } = input;
-  const dirFor = (environmentId: EnvironmentId, drainId: string) =>
-    path.join(stateDir, "fleet-drain", encode(environmentId), encode(drainId));
-  const fileFor = (environmentId: EnvironmentId, drainId: string, threadId: string) =>
-    path.join(dirFor(environmentId, drainId), `thread-${encode(threadId)}.json`);
   return {
     write: (input) =>
       Effect.fn("DrainSink.write")(function* (input: {
@@ -42,22 +71,63 @@ export const fileDrainSink = (input: {
         readonly drainId: string;
         readonly threadId: string;
         readonly body: string;
+        readonly snapshotSequence: number | null;
       }) {
-        const target = fileFor(input.environmentId, input.drainId, input.threadId);
-        yield* fs.makeDirectory(dirFor(input.environmentId, input.drainId), { recursive: true });
+        const environment = segmentOf(input.environmentId);
+        const drain = segmentOf(input.drainId);
+        const thread = segmentOf(input.threadId);
+        if (environment === null || drain === null || thread === null) {
+          return yield* new FleetDrainStepError({
+            step: "write",
+            message: `Refused a drain path segment for ${input.environmentId} / ${input.drainId} / ${input.threadId}.`,
+          });
+        }
+        const dir = path.join(stateDir, "fleet-drain", environment, drain);
+        const target = path.join(dir, `thread-${thread}.json`);
+        yield* fs.makeDirectory(dir, { recursive: true });
         // Write then rename: a retry must never accept a half-written copy as done.
-        yield* fs.writeFileString(`${target}.partial`, input.body);
+        const envelope = yield* toEnvelope({
+          threadId: input.threadId,
+          snapshotSequence: input.snapshotSequence,
+          body: input.body,
+        });
+        yield* fs.writeFileString(`${target}.partial`, envelope);
         yield* fs.rename(`${target}.partial`, target);
-        return { bytes: new TextEncoder().encode(input.body).byteLength };
+        return { bytes: new TextEncoder().encode(envelope).byteLength };
       })(input).pipe(
         Effect.mapError(
           (cause) => new FleetDrainStepError({ step: "write", message: String(cause) }),
         ),
       ),
     read: (input) =>
-      fs
-        .readFileString(fileFor(input.environmentId, input.drainId, input.threadId))
-        .pipe(Effect.orElseSucceed(() => null)),
+      Effect.fn("DrainSink.read")(function* (input: {
+        readonly environmentId: EnvironmentId;
+        readonly drainId: string;
+        readonly threadId: string;
+      }) {
+        const environment = segmentOf(input.environmentId);
+        const drain = segmentOf(input.drainId);
+        const thread = segmentOf(input.threadId);
+        if (environment === null || drain === null || thread === null) {
+          return yield* new FleetDrainStepError({
+            step: "read",
+            message: `Refused a drain path segment for ${input.environmentId} / ${input.drainId} / ${input.threadId}.`,
+          });
+        }
+        const file = path.join(
+          stateDir,
+          "fleet-drain",
+          environment,
+          drain,
+          `thread-${thread}.json`,
+        );
+        const raw = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => null));
+        return raw === null ? null : decodeEnvelope(raw);
+      })(input).pipe(
+        Effect.mapError(
+          (cause) => new FleetDrainStepError({ step: "read", message: String(cause) }),
+        ),
+      ),
   };
 };
 
@@ -144,6 +214,18 @@ export const linkDrainSource = (input: {
           };
         }),
       ),
+    threadSequence: (request) =>
+      getJson(
+        request.environmentId,
+        `/api/orchestration/threads/${encode(request.threadId)}/bounded`,
+      ).pipe(
+        Effect.map((snapshot) => ({
+          snapshotSequence:
+            typeof (snapshot as { snapshotSequence?: unknown }).snapshotSequence === "number"
+              ? (snapshot as { snapshotSequence: number }).snapshotSequence
+              : null,
+        })),
+      ),
     threadHistory: Effect.fn("DrainSource.threadHistory")(function* (request: {
       readonly environmentId: EnvironmentId;
       readonly threadId: string;
@@ -152,7 +234,11 @@ export const linkDrainSource = (input: {
       const snapshot = (yield* getJson(
         request.environmentId,
         `/api/orchestration/threads/${encoded}/bounded`,
-      )) as { readonly historyCursor?: string | null; readonly hasMoreHistory?: boolean };
+      )) as {
+        readonly snapshotSequence?: unknown;
+        readonly historyCursor?: string | null;
+        readonly hasMoreHistory?: boolean;
+      };
       // The page endpoint needs the worker's own cursor: a page size is rejected,
       // and a truncated history is not a drain (spec section 7.2).
       const pages: unknown[] = [];
@@ -172,7 +258,11 @@ export const linkDrainSource = (input: {
           (cause) => new FleetDrainStepError({ step: "history", message: String(cause) }),
         ),
       );
-      return { body };
+      return {
+        body,
+        snapshotSequence:
+          typeof snapshot.snapshotSequence === "number" ? snapshot.snapshotSequence : null,
+      };
     }),
   };
 };
