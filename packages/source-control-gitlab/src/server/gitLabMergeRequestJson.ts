@@ -92,6 +92,10 @@ const RawMergeRequestSchema = Schema.Struct({
   squash: Schema.optional(Schema.NullOr(Schema.Boolean)),
   /** Only detail reads with include_diverged_commits_count return this expensive count. */
   diverged_commits_count: Schema.optional(Schema.NullOr(Schema.Int)),
+  source_project_id: Schema.optional(Schema.NullOr(Schema.Int)),
+  target_project_id: Schema.optional(Schema.NullOr(Schema.Int)),
+  /** Null on merge requests from the same project, where it means nothing. */
+  allow_collaboration: Schema.optional(Schema.NullOr(Schema.Boolean)),
   diff_refs: Schema.optional(Schema.NullOr(RawMergeRequestDiffRefs)),
 });
 
@@ -224,6 +228,9 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
   readonly diffRefs?: GitLabDiffRefs;
   /** On a fork the pipeline often belongs to the source project, not the target. */
   readonly headPipeline?: { readonly id: number; readonly projectId: number };
+  /** Whether target maintainers may push to the source branch. Only set on merge requests from forks. */
+  readonly maintainerCanModify?: boolean;
+  readonly viewerCanEditMaintainerEdits?: boolean;
 }
 
 function toActor(raw: Schema.Schema.Type<typeof RawUserSchema> | null | undefined) {
@@ -524,6 +531,11 @@ function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLab
     ...(raw.head_pipeline?.id == null || raw.head_pipeline.project_id == null
       ? {}
       : { headPipeline: { id: raw.head_pipeline.id, projectId: raw.head_pipeline.project_id } }),
+    ...(raw.source_project_id != null &&
+    raw.target_project_id != null &&
+    raw.source_project_id !== raw.target_project_id
+      ? { maintainerCanModify: raw.allow_collaboration === true }
+      : {}),
   };
 }
 
@@ -1862,6 +1874,67 @@ export function decodeLabelPermissionJson(raw: string): Result.Result<boolean, D
         decoded.success.data.project?.mergeRequest?.userPermissions.adminMergeRequest === true,
       )
     : Result.fail(decoded.failure);
+}
+
+/**
+ * GitLab lets whoever can push to a fork's branch allow maintainer pushes, but once allowed the
+ * target's maintainers can push too, so only the author may change it, as on GitHub. GitLab
+ * drops the setting unless the source branch is unprotected and neither project is private
+ * (`MergeRequest#collaborative_push_possible?`).
+ */
+export const MAINTAINER_EDITS_PERMISSION_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
+  currentUser { username }
+  project(fullPath: $fullPath) {
+    visibility
+    mergeRequest(iid: $iid) {
+      author { username }
+      userPermissions { pushToSourceBranch }
+      sourceBranchProtected
+      sourceProject { visibility }
+    }
+  }
+}`;
+
+const decodeMaintainerEditsPermission = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.Struct({
+      currentUser: Schema.NullOr(Schema.Struct({ username: Schema.String })),
+      project: Schema.NullOr(
+        Schema.Struct({
+          visibility: Schema.NullOr(Schema.String),
+          mergeRequest: Schema.NullOr(
+            Schema.Struct({
+              author: Schema.NullOr(Schema.Struct({ username: Schema.String })),
+              userPermissions: Schema.Struct({ pushToSourceBranch: Schema.Boolean }),
+              sourceBranchProtected: Schema.Boolean,
+              sourceProject: Schema.NullOr(
+                Schema.Struct({ visibility: Schema.NullOr(Schema.String) }),
+              ),
+            }),
+          ),
+        }),
+      ),
+    }),
+  }),
+);
+
+export function decodeMaintainerEditsPermissionJson(
+  raw: string,
+): Result.Result<boolean, DecodeFailure> {
+  const decoded = decodeMaintainerEditsPermission(raw);
+  if (Result.isFailure(decoded)) return Result.fail(decoded.failure);
+  const { currentUser, project } = decoded.success.data;
+  const mergeRequest = project?.mergeRequest;
+  const isPublicOrInternal = (visibility: string | null | undefined) =>
+    visibility === "public" || visibility === "internal";
+  return Result.succeed(
+    currentUser !== null &&
+      mergeRequest?.author?.username === currentUser.username &&
+      mergeRequest.userPermissions.pushToSourceBranch &&
+      !mergeRequest.sourceBranchProtected &&
+      isPublicOrInternal(project?.visibility) &&
+      isPublicOrInternal(mergeRequest.sourceProject?.visibility),
+  );
 }
 
 /** Per-file line counts for one merge request, which the code/tests/generated breakdown sorts. */
