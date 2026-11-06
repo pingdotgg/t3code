@@ -27,13 +27,12 @@ import {
 import { AsyncResult } from "effect/reactivity";
 import { useState, type MouseEvent as ReactMouseEvent } from "react";
 
-import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import type { DraftId } from "~/composerDraftStore";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { usePullRequestChecksRefresh } from "~/hooks/usePullRequestChecksRefresh";
 import { cn } from "~/lib/utils";
 import { useServerConfigs } from "~/state/entities";
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { useUiStateStore } from "~/uiStateStore";
 import {
   useEnvironmentQueryIsNewer,
@@ -64,6 +63,8 @@ import {
   usePullRequestActionRunner,
   usePullRequestDefaultMergeMethodResolver,
   usePullRequestHandoffs,
+  writeHandoffToComposer,
+  type PullRequestThreadTask,
 } from "../pullRequest/usePullRequestActions";
 import {
   ChangeRequestStatusIcon,
@@ -217,9 +218,8 @@ export function ThreadDetailsPrRow({
     });
   };
 
-  const addToComposer = (comments: ReadonlyArray<ReviewCommentContext>) => {
-    const store = useComposerDraftStore.getState();
-    for (const comment of comments) store.addReviewComment(composerTarget, comment);
+  const addToComposer = (task: PullRequestThreadTask) => {
+    writeHandoffToComposer(composerTarget, task);
     toastManager.add({
       type: "success",
       title: "Added to the composer",
@@ -228,14 +228,14 @@ export function ThreadDetailsPrRow({
   };
   const fixAllChecks = () => {
     if (detail === null) return;
-    addToComposer(buildFixChecksHandoff(detail).reviewComments);
+    addToComposer(buildFixChecksHandoff(detail));
   };
   const checksFix =
     detail !== null && open
       ? {
           onFixCheck: (check: PullRequestCheck) => {
             const finding: PullRequestFinding = { kind: "check", check };
-            addToComposer(buildFixFindingHandoff({ ...detail, finding }).reviewComments);
+            addToComposer(buildFixFindingHandoff({ ...detail, finding }));
           },
           onFixAll: fixAllChecks,
           pending: null,

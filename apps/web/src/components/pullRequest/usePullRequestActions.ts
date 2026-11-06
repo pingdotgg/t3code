@@ -251,7 +251,10 @@ export function writeHandoffToComposer(
 ) {
   const store = useComposerDraftStore.getState();
   if (task.additive === true) {
-    for (const comment of task.reviewComments ?? []) store.addReviewComment(target, comment);
+    // The caret may be in a provider question's answer, which is not this draft.
+    for (const comment of task.reviewComments ?? []) {
+      store.addReviewComment(target, comment, { insertAtCaret: false });
+    }
     return;
   }
   const draft = store.getComposerDraft(target);

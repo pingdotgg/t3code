@@ -161,6 +161,11 @@ it("adds fixes from the row and checks popover to this thread's composer without
         />,
       ),
   );
+  const insertAtCaret = vi.fn(() => true);
+  const removeHandler = useComposerDraftStore
+    .getState()
+    .setContextInsertionHandler(composerTarget, insertAtCaret);
+  using _handler = { [Symbol.dispose]: () => removeHandler?.() };
   await act(async () =>
     [...screen.container.querySelectorAll("button")]
       .find((button) => button.textContent?.trim() === "Fix")!
@@ -173,14 +178,15 @@ it("adds fixes from the row and checks popover to this thread's composer without
     document.querySelector<HTMLElement>('[aria-label="Fix CI-failure"]')!.click(),
   );
 
-  const comments = useComposerDraftStore
-    .getState()
-    .getComposerDraft(composerTarget)?.reviewComments;
+  const draft = useComposerDraftStore.getState().getComposerDraft(composerTarget);
+  const comments = draft?.reviewComments;
   expect(comments?.map((comment) => comment.filePath)).toEqual([
     "Failing checks on #1",
     "CI-failure",
     "PR #1",
   ]);
+  expect(insertAtCaret).not.toHaveBeenCalled();
+  expect(draft?.prompt).toContain("Failing checks on #1");
   expect(state.newThread).not.toHaveBeenCalled();
 });
 
