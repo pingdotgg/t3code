@@ -31,6 +31,17 @@ vi.mock("node:os", async (importOriginal) => {
 });
 
 // Clash and Mihomo answer every name from 198.18.0.0/16 in fake-IP mode.
+// Effect code may not read process.env, so the swap stays a plain function.
+const swapEgressProxyEnv = (value: string | undefined) => {
+  const previous = process.env.T3CODE_PREVIEW_EGRESS_PROXY;
+  if (value === undefined) delete process.env.T3CODE_PREVIEW_EGRESS_PROXY;
+  else process.env.T3CODE_PREVIEW_EGRESS_PROXY = value;
+  return () => {
+    if (previous === undefined) delete process.env.T3CODE_PREVIEW_EGRESS_PROXY;
+    else process.env.T3CODE_PREVIEW_EGRESS_PROXY = previous;
+  };
+};
+
 const TEST_DNS: Record<string, ReadonlyArray<{ address: string; family: number }>> = {
   "cdn.fake-ip.test": [{ address: "198.18.2.40", family: 4 }],
   "mixed.fake-ip.test": [
@@ -182,26 +193,14 @@ describe("publicProxy", () => {
   );
 
   describe("egress through the host proxy", () => {
-    const keys = ["T3CODE_PREVIEW_EGRESS_PROXY"] as const;
     const withEnv = <A, E, R>(
-      values: Partial<Record<(typeof keys)[number], string>>,
+      values: { readonly T3CODE_PREVIEW_EGRESS_PROXY?: string },
       effect: Effect.Effect<A, E, R>,
     ) =>
       Effect.acquireUseRelease(
-        Effect.sync(() => {
-          const saved = keys.map((key) => [key, process.env[key]] as const);
-          for (const key of keys) delete process.env[key];
-          Object.assign(process.env, values);
-          return saved;
-        }),
+        Effect.sync(() => swapEgressProxyEnv(values.T3CODE_PREVIEW_EGRESS_PROXY)),
         () => effect,
-        (saved) =>
-          Effect.sync(() => {
-            for (const [key, value] of saved) {
-              if (value === undefined) delete process.env[key];
-              else process.env[key] = value;
-            }
-          }),
+        (restore) => Effect.sync(restore),
       );
 
     /** A fake egress proxy: records CONNECT lines, answers, then echoes. */
