@@ -263,9 +263,8 @@ export function createTerminalSession(
   let lastStatus: TerminalBufferState["status"] | null = null;
   let loggedFirstOutput = false;
   let resizeRegistry: AtomRegistry.AtomRegistry | null = null;
-  let resizeRetried = false;
 
-  const sendResize = () => {
+  const sendResize = (retry = false) => {
     if (generation === null || resizeRegistry === null || !options.canOperate()) return;
     void runAtomCommand(resizeRegistry, atoms.resize, {
       environmentId,
@@ -273,10 +272,9 @@ export function createTerminalSession(
     }).then((result) => {
       // Only a new grid or generation sends again, so retry a failure once. Resend the current
       // grid, not this one: a newer resize may already be queued behind it.
-      const retry =
-        result._tag === "Failure" && !isAtomCommandInterrupted(result) && !resizeRetried;
-      resizeRetried = retry;
-      if (retry) sendResize();
+      if (!retry && result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        sendResize(true);
+      }
     });
   };
 

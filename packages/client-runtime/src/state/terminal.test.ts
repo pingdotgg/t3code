@@ -10,6 +10,7 @@ import {
   type TerminalLifecycleEvent,
   type TerminalSessionMode,
 } from "./terminal.ts";
+import type { AtomCommandResult } from "./runtime.ts";
 import { EMPTY_TERMINAL_BUFFER_STATE, type TerminalBufferState } from "./terminalSession.ts";
 
 function run(events: ReadonlyArray<TerminalLifecycleEvent>) {
@@ -79,18 +80,22 @@ function setup(options: { readonly initialInput?: string } = {}) {
     AsyncResult.initial(true),
   );
   const access = { canOperate: true };
-  const resizeFailures = { remaining: 0 };
   const calls: Array<{ readonly command: string; readonly input: unknown }> = [];
+  // Resize requests stay in flight until the test settles them.
+  const resizeResults: Array<(result: AtomCommandResult<void, string>) => void> = [];
   const command = (name: string) => ({
     label: name,
-    run: async (_registry: AtomRegistry.AtomRegistry, value: { readonly input: unknown }) => {
+    run: (_registry: AtomRegistry.AtomRegistry, value: { readonly input: unknown }) => {
       calls.push({ command: name, input: value.input });
-      if (name !== "resize" || resizeFailures.remaining === 0)
-        return AsyncResult.success(undefined);
-      resizeFailures.remaining -= 1;
-      return AsyncResult.failure(Cause.fail("offline"));
+      if (name !== "resize") return Promise.resolve(AsyncResult.success(undefined));
+      return new Promise<AtomCommandResult<void, string>>((resolve) => resizeResults.push(resolve));
     },
   });
+  // The session sees a settled result within a fixed number of microtasks.
+  const failResize = async (index: number) => {
+    resizeResults[index]!(AsyncResult.failure(Cause.fail("offline")));
+    for (let tick = 0; tick < 10; tick++) await Promise.resolve();
+  };
   const exits: Array<true> = [];
   const live: Array<boolean> = [];
   const session = createTerminalSession(
@@ -135,7 +140,7 @@ function setup(options: { readonly initialInput?: string } = {}) {
     session,
     attached,
     access,
-    resizeFailures,
+    failResize,
     flush,
     detach,
     emit,
@@ -173,16 +178,23 @@ it("replays the measured grid on every new attachment generation", () => {
   ]);
 });
 
-it("sends a failed resize again, once per failure streak", async () => {
-  const { session, attached, resizeFailures, emit, mount, of } = setup();
-  resizeFailures.remaining = 4;
+it("sends each failed resize again once, in every attachment generation", async () => {
+  const { session, attached, failResize, emit, detach, mount, of } = setup();
   mount(attached);
   emit({ status: "running", version: 1 });
-  await expect.poll(() => of("resize")).toHaveLength(2);
+  detach();
+  await failResize(0);
+  expect(of("resize")).toHaveLength(1);
 
+  emit({ status: "running", version: 1, generation: 2 });
+  await failResize(1);
+  expect(of("resize")).toHaveLength(3);
+  await failResize(2);
   session.reportGridSize({ cols: 100, rows: 30 });
-  await expect.poll(() => of("resize")).toHaveLength(4);
+  await failResize(3);
+  await failResize(4);
   expect(of("resize")).toEqual([
+    { threadId, terminalId: "term-1", cols: 120, rows: 40 },
     { threadId, terminalId: "term-1", cols: 120, rows: 40 },
     { threadId, terminalId: "term-1", cols: 120, rows: 40 },
     { threadId, terminalId: "term-1", cols: 100, rows: 30 },
