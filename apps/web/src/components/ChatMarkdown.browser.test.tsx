@@ -215,8 +215,9 @@ it("sizes a raw HTML image by width and height written with px units", async () 
   );
   const image = screen.getByAltText("spinner");
   await expect.element(image).toHaveAttribute("src", largeImage);
-  await image.element().decode();
-  expect(image.element().getBoundingClientRect().width).toBe(14);
+  const element = image.element() as HTMLImageElement;
+  await element.decode();
+  expect(element.getBoundingClientRect().width).toBe(14);
 });
 
 it("reuses the parse of a streaming reply's finished blocks when it remounts", async () => {
