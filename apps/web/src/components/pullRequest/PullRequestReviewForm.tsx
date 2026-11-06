@@ -14,7 +14,6 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import { Button } from "../ui/button";
-import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { readableFailure } from "./pullRequestDetail.logic";
 import { PullRequestSubmitKeyHint } from "./PullRequestSubmitKeyHint";
@@ -23,6 +22,10 @@ import {
   usePendingReviewComments,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
+import {
+  PullRequestMarkdownTextarea,
+  type PullRequestCompletionScope,
+} from "./PullRequestMarkdownTextarea";
 
 const sent = (term: string): Record<PullRequestReviewVerdict, string> => ({
   comment: "Review submitted",
@@ -34,6 +37,7 @@ export function PullRequestReviewForm({
   environmentId,
   active,
   reference,
+  completionScope,
   verdict,
   term,
   requestChangesSummaryRequired,
@@ -46,7 +50,9 @@ export function PullRequestReviewForm({
   /** False while the form stays mounted but hidden; dictation is cancelled then. */
   active: boolean;
   reference: PullRequestRef;
+  completionScope: PullRequestCompletionScope | null;
   verdict: PullRequestReviewVerdict;
+  /** The host's word for a change request, as in "pull request". */
   term: string;
   requestChangesSummaryRequired: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -133,14 +139,15 @@ export function PullRequestReviewForm({
 
   return (
     <>
-      <Textarea
+      <PullRequestMarkdownTextarea
         ref={textareaRef}
+        completionScope={completionScope}
         rows={3}
         readOnly={speech.freezesEditor}
         value={body}
         placeholder={placeholder}
         aria-label="Review summary"
-        onChange={(event) => setSummary(reviewKey, event.target.value)}
+        onValueChange={(next) => setSummary(reviewKey, next)}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229 || event.repeat) return;
           // Approving takes no words, so the chord submits an empty summary too.

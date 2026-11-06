@@ -5721,6 +5721,32 @@ body {
   }
 }
 
+/* Pull request tabs: the tab being left slides out toward its side while the new one slides in
+   from the other. The panel sets --pr-tab-direction (1 or -1) and the Panel animations duration. */
+@keyframes pr-tab-in {
+  from {
+    opacity: 0;
+    transform: translateX(calc(var(--pr-tab-direction) * 16px));
+  }
+}
+
+@keyframes pr-tab-out {
+  to {
+    opacity: 0;
+    transform: translateX(calc(var(--pr-tab-direction) * -16px));
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-pr-tab-motion="in"] {
+    animation: pr-tab-in 150ms ease-out both;
+  }
+
+  [data-pr-tab-motion="out"] {
+    animation: pr-tab-out 150ms ease-out both;
+  }
+}
+
 /* The board draws the working bar rule white, which vanishes on a light pane. */
 :root:not(.dark) {
   --timeline-working-rule: var(--border);
