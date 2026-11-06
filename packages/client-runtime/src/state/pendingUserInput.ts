@@ -77,7 +77,9 @@ export function resolvePendingUserInputAnswer(
     return selectedOptionValues.length > 0
       ? selectedOptionValues
       : (customAnswer ??
-          (question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0 ? "" : null));
+          (question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0
+            ? ""
+            : selectedOptionValues));
   }
   return (
     selectedOptionValues[0] ??

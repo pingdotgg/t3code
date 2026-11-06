@@ -32,6 +32,19 @@ const nativeChoiceQuestion = {
 } as const;
 
 describe("resolvePendingUserInputAnswer", () => {
+  it("accepts no selections for multi-select questions while single-select stays unanswered", () => {
+    const question = { ...singleSelectQuestion, multiSelect: true };
+    expect(buildPendingUserInputAnswers([question], {})).toEqual({ scope: [] });
+    expect(resolvePendingUserInputAnswer(question, { selectedOptionValues: [] })).toEqual([]);
+    expect(resolvePendingUserInputAnswer(question, { customAnswer: "   " })).toEqual([]);
+    expect(resolvePendingUserInputAnswer(question, { customAnswer: "Something else" })).toBe(
+      "Something else",
+    );
+    expect(resolvePendingUserInputAnswer(question, { attachmentCount: 1 })).toBe("");
+    expect(resolvePendingUserInputAnswer(question, { attachmentsBlocked: true })).toBeNull();
+    expect(resolvePendingUserInputAnswer(singleSelectQuestion, undefined)).toBeNull();
+  });
+
   it("preserves exact editor text, including a deliberately cleared answer", () => {
     const question = { ...singleSelectQuestion, initialAnswer: "  Proposed message\n" };
     expect(resolvePendingUserInputAnswer(question, { customAnswer: question.initialAnswer })).toBe(
@@ -123,6 +136,11 @@ describe("togglePendingUserInputOptionSelection", () => {
     );
     expect(buildPendingUserInputAnswers([question], { result: secondSelected })).toEqual({
       result: ["second"],
+    });
+
+    const noneSelected = togglePendingUserInputOptionSelection(question, secondSelected, "second");
+    expect(buildPendingUserInputAnswers([question], { result: noneSelected })).toEqual({
+      result: [],
     });
   });
 
