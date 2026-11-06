@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest.
+// @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest or execute-access check.
 import * as EffectNodeStream from "@effect/platform-node/NodeStream";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
@@ -17,6 +17,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
 
 import * as ServerConfig from "../config.ts";
 import { openZipArchive } from "../zipArchive.ts";
@@ -186,6 +187,10 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
       if (info.type !== "File" || (platform !== "win32" && (info.mode & 0o111) === 0)) {
         return yield* invalidPath;
       }
+      yield* Effect.tryPromise({
+        try: () => NodeFSP.access(configuredPath, NodeFSP.constants.X_OK),
+        catch: () => invalidPath,
+      });
       return configuredPath;
     }).pipe(Effect.withSpan("PreviewBrowser.executable"));
     return PreviewBrowser.of({

@@ -162,6 +162,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PreviewBrowser",
     ...(hostPlatform === "win32"
       ? []
       : [{ name: "a non-executable file", value: "not-executable", absolute: true }]),
+    ...(hostPlatform === "win32" || HostProcess.UserId.defaultValue() === 0
+      ? []
+      : [{ name: "execution denied to its owner", value: "owner-denied", absolute: true }]),
   ])("rejects $name without falling back to a download", (testCase) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -169,6 +172,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PreviewBrowser",
       const directory = yield* fs.makeTempDirectoryScoped();
       yield* fs.makeDirectory(path.join(directory, "directory"));
       yield* fs.writeFileString(path.join(directory, "not-executable"), "", { mode: 0o644 });
+      yield* fs.writeFileString(path.join(directory, "owner-denied"), "", { mode: 0o655 });
       const { browser, baseDir, requests } = yield* makeHarness({
         environment: {
           T3CODE_BROWSER_EXECUTABLE_PATH: testCase.absolute
