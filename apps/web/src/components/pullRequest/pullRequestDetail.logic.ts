@@ -1,4 +1,6 @@
 import { stripInlineContextReferences } from "~/lib/composerContextReferences";
+import type { Nodes as MdastNodes } from "mdast";
+import { fromMarkdown } from "mdast-util-from-markdown";
 import {
   capitalizeTerm,
   sourceControlClients,
@@ -238,9 +240,10 @@ export function threadPullRequestPanelTarget(thread: {
 }
 
 export function pullRequestHandoffLabels(inThisThread: boolean) {
+  // Beside a composer a remark's Fix shares its header with Add to chat.
   return inThisThread
     ? {
-        fixFinding: "Fix in this thread",
+        fixFinding: "Fix",
         fixCheck: "Fix in this thread",
         fixFindings: "Fix findings in this thread",
       }
@@ -652,6 +655,42 @@ export function pagePullRequestConversationItems(
 }
 
 /**
+ * A body as it reads, for text sent to the agent under a length bound. A bot's HTML-comment
+ * bookkeeping would otherwise use up the bound before the remark got any of it. Comments in code
+ * are source the remark is showing, so they stay. Null for a body with no words.
+ */
+function readableBody(raw: string): string | null {
+  if (visibleBody(raw) === null) return null;
+  const body = raw.replace(/\r\n?/gu, "\n");
+  const cuts: Array<[number, number]> = [];
+  const visit = (node: MdastNodes) => {
+    if (node.type === "html" && node.position?.start.offset !== undefined) {
+      cuts.push([node.position.start.offset, node.position.end.offset ?? body.length]);
+    }
+    if ("children" in node) for (const child of node.children) visit(child);
+  };
+  visit(fromMarkdown(body));
+  let readable = "";
+  let from = 0;
+  for (const [start, end] of cuts) {
+    readable += body.slice(from, start);
+    // An HTML block can carry markup around its comment; only the comment itself is hidden.
+    const html = body.slice(start, end).replace(/<!--[\s\S]*?(?:-->|$)/gu, "");
+    // A line that was all comment is dropped rather than left as a blank one.
+    const ownLine = /(?:^|\n)[ \t>]*$/u.test(readable) && /^[ \t]*(?:\n|$)/u.test(body.slice(end));
+    if (ownLine && html.trim() === "") {
+      readable = readable.replace(/[ \t>]*$/u, "");
+      from = end + (/^[ \t]*\n/u.exec(body.slice(end))?.[0].length ?? 0);
+    } else {
+      readable += html;
+      from = end;
+    }
+  }
+  readable = (readable + body.slice(from)).trim();
+  return readable === "" ? null : readable;
+}
+
+/**
  * Merged wins over closed: GitHub sets both timestamps on a merge, and reporting "closed" for a
  * merged pull request would misstate what happened.
  */
@@ -794,7 +833,7 @@ function reviewThreadContext(
     text: bounded(
       thread.comments
         .flatMap((comment) => {
-          const body = visibleBody(comment.body);
+          const body = readableBody(comment.body);
           return body === null ? [] : [`${comment.author?.login ?? "ghost"}: ${body}`];
         })
         .join("\n"),
@@ -1085,6 +1124,50 @@ export function buildPullRequestReferenceContext(
 ): ReviewCommentContext {
   const comment = pullRequestContextComment(input, []);
   return { ...comment, id: `pr-reference:${input.url}` };
+}
+
+/** The pull request chip a fix hand-off attaches, so the two dedupe in one draft. */
+export function buildPullRequestContext(input: PullRequestContextMetadata): ReviewCommentContext {
+  return pullRequestContextComment(input, []);
+}
+
+/** A remark the reader can bring into the chat: a conversation on a line, or one comment. */
+export type PullRequestChatSubject = Extract<PullRequestFinding, { kind: "thread" | "comment" }>;
+
+/**
+ * A remark or conversation brought into the chat to talk about, not to fix. Its id carries the
+ * URL because host ids are only unique within a repository. Null when there are no words in it.
+ */
+export function buildPullRequestCommentContext(
+  pullRequest: { readonly number: number; readonly url: string },
+  subject: PullRequestChatSubject,
+): ReviewCommentContext | null {
+  const pullRequestNumber = pullRequest.number;
+  if (subject.kind === "thread") {
+    const context = reviewThreadContext(subject.thread, pullRequestNumber);
+    return context.text === ""
+      ? null
+      : { ...context, id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}` };
+  }
+  const comment = subject.comment;
+  const body = readableBody(comment.body);
+  if (body === null) return null;
+  const author = comment.author?.login ?? "ghost";
+  return {
+    id: `pr-comment:${pullRequest.url}:comment:${comment.id}`,
+    sectionId: `pull-request:${pullRequestNumber}`,
+    sectionTitle: `PR #${pullRequestNumber} conversation`,
+    // The chip wears `filePath rangeLabel`: the file a remark names, or who wrote one that names none.
+    filePath: comment.path ?? `@${author}`,
+    startIndex: 0,
+    endIndex: 0,
+    rangeLabel: "comment",
+    text: bounded(`${author}: ${body}`),
+    diff: "",
+    ...(comment.path === null
+      ? {}
+      : { fenceLanguage: inferReviewCommentFenceLanguage(comment.path) }),
+  };
 }
 
 const ANSWER_INSTRUCTIONS = [
