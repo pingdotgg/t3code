@@ -19,7 +19,16 @@ interface HistoryEntryLike {
   readonly role?: unknown;
   readonly type?: unknown;
   readonly content?: unknown;
+  readonly error?: unknown;
 }
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+
+const str = (value: unknown): string | undefined =>
+  typeof value === "string" && value.length > 0 ? value : undefined;
 
 function entryText(entry: HistoryEntryLike): string {
   if (entry.type !== "message" || !Array.isArray(entry.content)) return "";
@@ -40,7 +49,7 @@ const waitForTurnTerminal = Effect.fn("VibeTextGeneration.waitForTurnTerminal")(
   while (true) {
     const turns = yield* client.sessionTurnsList({ sessionId, limit: 20 });
     const active = turns.find((turn) => !TERMINAL_TURN_STATUSES.has(turn.status));
-    if (active === undefined) return;
+    if (active === undefined) return turns[0];
     yield* Effect.sleep("500 millis");
   }
 });
@@ -75,10 +84,19 @@ export const makeVibeTextGeneration = Effect.fn("makeVibeTextGeneration")(functi
               sessionId,
               entries: [{ role: "user", content: [{ type: "text", text: prompt }] }],
             });
-            yield* waitForTurnTerminal(client, sessionId);
+            const terminalTurn = yield* waitForTurnTerminal(client, sessionId);
+            if (terminalTurn === undefined || terminalTurn.status !== "completed") {
+              const error = asRecord(terminalTurn?.error);
+              return yield* new TextGenerationError({
+                operation,
+                detail: `Mistral Vibe turn ended as ${terminalTurn?.status ?? "unknown"}: ${str(error?.["message"]) ?? "no assistant reply"}`,
+              });
+            }
             const history = yield* client.sessionHistoryList({ sessionId, limit: 100 });
+            // Only assistant messages are replies; the user's prompt must never be parsed as output.
             const reply = [...history.items]
               .reverse()
+              .filter((item) => (item as HistoryEntryLike).role === "assistant")
               .map((item) => entryText(item as HistoryEntryLike))
               .find((text) => text.length > 0);
             yield* client.sessionDelete(sessionId).pipe(Effect.ignore);

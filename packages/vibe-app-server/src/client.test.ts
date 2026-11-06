@@ -40,6 +40,8 @@ const serverLine = (input: Queue.Queue<Uint8Array>, payload: unknown) =>
   Queue.offer(input, encoder.encode(`${JSON.stringify(payload)}\n`));
 
 /** Fake vibe-app-server: answers initialize/account/read, fails session/stop, notifies on anything else. */
+const seenRequests: Array<{ method: string; params: unknown }> = [];
+
 const fakeServer = (
   output: Queue.Queue<string>,
   input: Queue.Queue<Uint8Array>,
@@ -49,6 +51,7 @@ const fakeServer = (
       const line = yield* Queue.take(output);
       const message = VibeProtocol.parseJsonRpcLine(line);
       if (!message || !VibeProtocol.isJsonRpcRequest(message)) return;
+      seenRequests.push({ method: message.method, params: message.params });
       switch (message.method) {
         case "initialize":
           return yield* serverLine(input, {
@@ -126,6 +129,25 @@ describe("VibeAppServerClient over in-memory stdio", () => {
         yield* client.sessionDelete("s1");
         yield* Effect.yieldNow;
         expect(notifications.some((n) => n.method === "turn/started")).toBe(true);
+
+        // Pagination goes under `page`, and callback answers nest `{ callbackId, output }` in `result`.
+        yield* client
+          .sessionHistoryList({ sessionId: "s1", limit: 5, cursor: "c1" })
+          .pipe(Effect.ignore);
+        yield* client.sessionTurnsList({ sessionId: "s1", limit: 5 }).pipe(Effect.ignore);
+        yield* client
+          .callbackResult({ sessionId: "s1", callbackId: "cb1", result: { outcome: "approved" } })
+          .pipe(Effect.ignore);
+        yield* Effect.yieldNow;
+        const historyReq = seenRequests.find((r) => r.method === "session/history/list");
+        expect(historyReq?.params).toEqual({ sessionId: "s1", page: { limit: 5, cursor: "c1" } });
+        const turnsReq = seenRequests.find((r) => r.method === "session/turns/list");
+        expect(turnsReq?.params).toEqual({ sessionId: "s1", page: { limit: 5 } });
+        const callbackReq = seenRequests.find((r) => r.method === "callback/result");
+        expect(callbackReq?.params).toEqual({
+          sessionId: "s1",
+          result: { callbackId: "cb1", output: { outcome: "approved" } },
+        });
 
         yield* Fiber.interrupt(serverFiber);
       }),
