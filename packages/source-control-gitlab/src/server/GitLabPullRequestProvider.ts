@@ -27,6 +27,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   comment: true,
   actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
+  deleteBranch: true,
   // GitLab has no merge-target-into-source operation.
   updateMethods: ["rebase"],
   search: true,
@@ -66,11 +67,14 @@ const MERGE_ACTIONS: ReadonlySet<string> = new Set([
 /** Authors may close/reopen/change draft state regardless of role; REST omits authorship. */
 export function gitLabViewerPermissions(input: {
   readonly viewerCanMerge: boolean;
+  readonly viewerCanDeleteBranch?: boolean;
   readonly viewerCanEditLabels?: boolean | undefined;
 }): PullRequestViewerPermissions {
   return {
-    actions: CAPABILITIES.actions.filter(
-      (action) => !MERGE_ACTIONS.has(action) || input.viewerCanMerge,
+    actions: CAPABILITIES.actions.filter((action) =>
+      action === "delete-branch"
+        ? input.viewerCanDeleteBranch === true
+        : !MERGE_ACTIONS.has(action) || input.viewerCanMerge,
     ),
     comment: true,
     resolve: true,
