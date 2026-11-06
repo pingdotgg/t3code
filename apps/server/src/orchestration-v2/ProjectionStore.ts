@@ -4839,11 +4839,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `,
             // CROSS JOIN keeps empty run cohorts out of message history; the run index bounds each lookup.
             messages: sql<PayloadRow>`
-              SELECT message.payload_json FROM orchestration_v2_projection_runs AS run
+              SELECT message.payload_json FROM orchestration_v2_projection_runs AS message_run
               CROSS JOIN orchestration_v2_projection_messages AS message
-                INDEXED BY orchestration_v2_projection_messages_run_idx ON message.run_id = run.run_id
-              WHERE run.thread_id = ${threadId}
-                AND run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                INDEXED BY orchestration_v2_projection_messages_run_idx ON message.run_id = message_run.run_id
+              WHERE message_run.thread_id = ${threadId}
+                AND message_run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
                 AND message.thread_id = ${threadId} AND message.streaming = 1
               ORDER BY message.created_at ASC, message.message_id ASC
             `,

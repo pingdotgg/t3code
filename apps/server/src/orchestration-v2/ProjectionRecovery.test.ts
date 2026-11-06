@@ -997,7 +997,7 @@ it.effect("bounds streaming recovery reads by candidate runs and preserves messa
     for (const [query, params] of statements) {
       const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, params);
       assert.isTrue(
-        plan.some((row) => row.detail.includes("SEARCH run ")),
+        plan.some((row) => row.detail.includes("SEARCH message_run ")),
         JSON.stringify(plan),
       );
       assert.isTrue(
