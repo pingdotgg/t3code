@@ -11,6 +11,8 @@ import { resolvePullRequestAuthorFilter, VcsProcessExitError } from "@t3tools/co
 import type {
   PullRequestAction,
   PullRequestActor,
+  PullRequestReferenceCandidate,
+  PullRequestReferenceSigil,
   PullRequestCheck,
   PullRequestComment,
   PullRequestCommit,
@@ -51,12 +53,14 @@ import {
   decodeMergeRequestListJson,
   decodeMergeRequestFileStatsJson,
   decodeMergeRequestStatsJson,
+  decodeMutationErrorsJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
   decodePipelineStageChecksJson,
   decodeProjectMergeCapabilitiesJson,
   decodeProjectLabelsJson,
   decodeProjectUsersJson,
+  decodeReferenceCandidatesJson,
   decodeRepositoryBlobsJson,
   decodeListStatesJson,
   decodeSourceBranchJson,
@@ -204,6 +208,34 @@ export class GitLabDiffFileContentsUnavailableError extends Schema.TaggedError<G
   }
 }
 
+export class GitLabMutationRefusedError extends Schema.TaggedError<GitLabMutationRefusedError>()(
+  "GitLabMutationRefusedError",
+  {
+    command: Schema.Literal("glab"),
+    cwd: Schema.String,
+    operation: Schema.String,
+    reasons: Schema.Array(Schema.String),
+  },
+) {
+  get detail(): string {
+    return `GitLab refused it: ${this.reasons.join("; ")}`;
+  }
+
+  override get message(): string {
+    return `GitLab CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
+const SET_SELF_AS_REVIEWER_MUTATION = `mutation($projectPath: ID!, $iid: String!, $reviewers: [String!]!) {
+  mergeRequestSetReviewers(
+    input: { projectPath: $projectPath, iid: $iid, reviewerUsernames: $reviewers, operationMode: APPEND }
+  ) { errors }
+}`;
+
+const REQUEST_CHANGES_MUTATION = `mutation($projectPath: ID!, $iid: String!) {
+  mergeRequestRequestChanges(input: { projectPath: $projectPath, iid: $iid }) { errors }
+}`;
+
 export class GitLabBranchDeletionRefusedError extends Schema.TaggedError<GitLabBranchDeletionRefusedError>()(
   "GitLabBranchDeletionRefusedError",
   {
@@ -266,7 +298,8 @@ export type GitLabPullRequestCliError =
   | GitLabDiffCommitParentUnavailableError
   | GitLabDiffFileContentsUnavailableError
   | GitLabDiffRefsUnavailableError
-  | GitLabViewerUnavailableError;
+  | GitLabViewerUnavailableError
+  | GitLabMutationRefusedError;
 
 /** GitLab's `per_page` limit. */
 const MAX_PAGE_SIZE = 100;
@@ -479,6 +512,20 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly search?: string | undefined;
     }) => Effect.Effect<
       { readonly items: ReadonlyArray<PullRequestActor>; readonly truncated: boolean },
+      GitLabPullRequestCliError
+    >;
+
+    readonly searchProjectReferences: (input: {
+      readonly cwd: string;
+      readonly host?: string | undefined;
+      readonly repository: string;
+      readonly search?: string | undefined;
+      readonly sigil?: PullRequestReferenceSigil | undefined;
+    }) => Effect.Effect<
+      {
+        readonly items: ReadonlyArray<PullRequestReferenceCandidate>;
+        readonly truncated: boolean;
+      },
       GitLabPullRequestCliError
     >;
 
@@ -759,6 +806,58 @@ function diffCursorPage(cursor: string): number | null {
 function searchParams(search: string | undefined): ReadonlyArray<readonly [string, string]> {
   const trimmed = search?.trim() ?? "";
   return trimmed.length === 0 ? [] : [["search", trimmed]];
+}
+
+// GitLab's user, issue and merge request searches answer nothing under three characters, so
+// shorter text reads the unsearched page, which the server narrows.
+function hostSearchParams(search: string | undefined): ReadonlyArray<readonly [string, string]> {
+  return (search?.trim().length ?? 0) >= 3 ? searchParams(search) : [];
+}
+
+const REFERENCE_PAGE_SIZE = 20;
+
+/**
+ * Recently updated issues and merge requests, by title for text. Issue and MR search cannot match
+ * a number, so a numeric query also asks for that iid of each.
+ */
+export function referenceSearches(
+  search: string | undefined,
+  sigil?: PullRequestReferenceSigil | undefined,
+): ReadonlyArray<{
+  readonly kind: PullRequestReferenceCandidate["kind"];
+  readonly params: ReadonlyArray<readonly [string, string]>;
+}> {
+  const text = search?.trim() ?? "";
+  const numeric = /^\d+$/.test(text);
+  const recent: ReadonlyArray<readonly [string, string]> = [
+    ["order_by", "updated_at"],
+    ["sort", "desc"],
+    ...(numeric || hostSearchParams(text).length === 0
+      ? []
+      : ([...hostSearchParams(text), ["in", "title"]] as const)),
+  ];
+  const kinds =
+    sigil === "#"
+      ? (["issue"] as const)
+      : sigil === "!"
+        ? (["change-request"] as const)
+        : (["issue", "change-request"] as const);
+  return [
+    ...(numeric ? kinds.map((kind) => ({ kind, params: [["iids[]", text]] as const })) : []),
+    ...kinds.map((kind) => ({ kind, params: recent })),
+  ];
+}
+
+function mergeReferencePages(
+  pages: ReadonlyArray<{
+    readonly items: ReadonlyArray<PullRequestReferenceCandidate>;
+    readonly rawCount: number;
+  }>,
+) {
+  return {
+    items: pages.flatMap((page) => page.items),
+    truncated: pages.some((page) => page.rawCount >= REFERENCE_PAGE_SIZE),
+  };
 }
 
 function query(params: ReadonlyArray<readonly [string, string]>): string {
@@ -1287,9 +1386,7 @@ export const make = Effect.gen(function* () {
       host: input.host,
       path: `projects/${projectPath(input.repository)}/users?${query([
         ["per_page", String(MAX_PAGE_SIZE)],
-        // GitLab answers nothing for a user search under three characters; callers narrow the
-        // unsearched page instead.
-        ...((input.search?.trim().length ?? 0) >= 3 ? searchParams(input.search) : []),
+        ...hostSearchParams(input.search),
       ])}`,
     }).pipe(
       Effect.flatMap((result) => {
@@ -1301,6 +1398,35 @@ export const make = Effect.gen(function* () {
                 command: "glab",
                 cwd: input.cwd,
                 operation: "listReviewerCandidates",
+                cause: decoded.failure,
+              }),
+            );
+      }),
+    );
+
+  const projectReferences = (input: {
+    readonly cwd: string;
+    readonly host?: string | undefined;
+    readonly repository: string;
+    readonly kind: PullRequestReferenceCandidate["kind"];
+    readonly params: ReadonlyArray<readonly [string, string]>;
+  }) =>
+    api({
+      cwd: input.cwd,
+      host: input.host,
+      path: `projects/${projectPath(input.repository)}/${
+        input.kind === "issue" ? "issues" : "merge_requests"
+      }?${query([...input.params, ["per_page", String(REFERENCE_PAGE_SIZE)]])}`,
+    }).pipe(
+      Effect.flatMap((result) => {
+        const decoded = decodeReferenceCandidatesJson(result.stdout.trim(), input.kind);
+        return Result.isSuccess(decoded)
+          ? Effect.succeed(decoded.success)
+          : Effect.fail(
+              new GitLabMergeRequestReadError({
+                command: "glab",
+                cwd: input.cwd,
+                operation: "searchProjectReferences",
                 cause: decoded.failure,
               }),
             );
@@ -1452,6 +1578,28 @@ export const make = Effect.gen(function* () {
               }),
             );
       }),
+    );
+
+  const graphqlMutation = (input: {
+    readonly cwd: string;
+    readonly host?: string | undefined;
+    readonly operation: string;
+    readonly query: string;
+    readonly variables: Record<string, unknown>;
+  }) =>
+    graphqlRead({ ...input, decode: decodeMutationErrorsJson }).pipe(
+      Effect.flatMap((reasons) =>
+        reasons.length === 0
+          ? Effect.void
+          : Effect.fail(
+              new GitLabMutationRefusedError({
+                command: "glab",
+                cwd: input.cwd,
+                operation: input.operation,
+                reasons,
+              }),
+            ),
+      ),
     );
 
   const graphqlListPage = (input: {
@@ -2170,6 +2318,32 @@ export const make = Effect.gen(function* () {
       );
     }),
 
+    searchProjectReferences: Effect.fn("GitLabPullRequestCli.searchProjectReferences")(
+      function (input) {
+        return Effect.forEach(
+          referenceSearches(input.search, input.sigil),
+          ({ kind, params }) =>
+            projectReferences({ ...input, kind, params }).pipe(
+              // A project with issues turned off answers 403 for issues; its merge requests still
+              // complete. An unusable CLI or account still reaches the caller.
+              Effect.catchIf(
+                (cause) =>
+                  cause._tag !== "GitLabCliUnavailableError" &&
+                  cause._tag !== "GitLabCliAuthenticationError" &&
+                  cause._tag !== "GitLabCliRateLimitError",
+                (cause) =>
+                  Effect.logWarning("GitLab reference search failed", {
+                    repository: input.repository,
+                    kind,
+                    reason: cause._tag,
+                  }).pipe(Effect.as({ items: [], rawCount: 0 })),
+              ),
+            ),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.map(mergeReferencePages));
+      },
+    ),
+
     listReviewerCandidates: Effect.fn("GitLabPullRequestCli.listReviewerCandidates")(
       function (input) {
         return Effect.all([mergeRequestDetail(input), projectUsers(input)], {
@@ -2337,10 +2511,29 @@ export const make = Effect.gen(function* () {
     submitReview: Effect.fn("GitLabPullRequestCli.submitReview")(function* (input) {
       const project = projectPath(input.repository);
       const mergeRequest = `projects/${project}/merge_requests/${input.number}`;
-      // GitLab has no pending review to attach comments to, so a review is replayed as the
-      // requests it is made of: the line comments, then the summary, then the verdict. A
-      // failure part-way therefore leaves what was already posted in place, which is why
-      // the verdict goes last — a half-sent review is never an approval.
+      // GitLab has no pending review, so a review is replayed as separate requests and a failure
+      // leaves earlier ones posted. Requesting changes (GitLab 18.9+) goes first so an older
+      // server fails before any comment lands; approval goes last so a half-sent review never
+      // approves.
+      if (input.verdict === "request-changes") {
+        // GitLab keeps the verdict on the reviewer, so the viewer joins the reviewers first.
+        const viewer = yield* viewerUsername(input);
+        const target = { projectPath: input.repository, iid: String(input.number) };
+        yield* graphqlMutation({
+          cwd: input.cwd,
+          host: input.host,
+          operation: "submitReview",
+          query: SET_SELF_AS_REVIEWER_MUTATION,
+          variables: { ...target, reviewers: [viewer] },
+        });
+        yield* graphqlMutation({
+          cwd: input.cwd,
+          host: input.host,
+          operation: "submitReview",
+          query: REQUEST_CHANGES_MUTATION,
+          variables: target,
+        });
+      }
       if (input.comments.length > 0) {
         const refs = yield* getDiffRefs(input);
         yield* Effect.forEach(

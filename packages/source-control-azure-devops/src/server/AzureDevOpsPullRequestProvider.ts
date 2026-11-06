@@ -57,6 +57,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   search: false,
   reactions: false,
   mentions: false,
+  referenceSigils: [],
   // `comment` is the only verdict that casts no vote.
   review: { inlineComment: true, reply: true, resolve: true, verdicts: ["comment"] },
   // Reviewer candidates require separate identity/graph APIs and permissions.

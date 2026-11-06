@@ -16,6 +16,7 @@ import type {
   PullRequestMergeMethod,
   PullRequestReaction,
   PullRequestReactionContent,
+  PullRequestReferenceCandidate,
   PullRequestReviewDecision,
   PullRequestReviewThread,
   PullRequestReviewerCandidate,
@@ -653,6 +654,40 @@ export function decodeProjectUsersJson(
     });
   }
   return Result.succeed({ candidates, rawCount: decoded.success.length });
+}
+
+const RawReferenceSchema = Schema.Struct({
+  iid: Schema.Number,
+  title: Schema.String,
+  state: Schema.String,
+});
+const decodeReferenceEntry = Schema.decodeUnknownExit(RawReferenceSchema);
+
+/** A list of issues (`#`) or merge requests (`!`), as composers reference them. */
+export function decodeReferenceCandidatesJson(
+  raw: string,
+  kind: PullRequestReferenceCandidate["kind"],
+): Result.Result<
+  { readonly items: ReadonlyArray<PullRequestReferenceCandidate>; readonly rawCount: number },
+  DecodeFailure
+> {
+  const decoded = decodeUnknownList(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const items: PullRequestReferenceCandidate[] = [];
+  for (const entry of decoded.success) {
+    const reference = decodeReferenceEntry(entry);
+    if (Exit.isFailure(reference) || !Number.isInteger(reference.value.iid)) continue;
+    if (reference.value.iid < 1) continue;
+    const { iid, title, state } = reference.value;
+    items.push({
+      reference: `${kind === "issue" ? "#" : "!"}${iid}`,
+      kind,
+      number: iid,
+      title,
+      state: state === "merged" ? "merged" : state === "opened" ? "open" : "closed",
+    });
+  }
+  return Result.succeed({ items, rawCount: decoded.success.length });
 }
 
 const RawLabelSchema = Schema.Struct({
@@ -1710,6 +1745,28 @@ export function decodeGraphqlListSupportJson(raw: string): Result.Result<boolean
   const major = Number(match[1]);
   const minor = Number(match[2]);
   return Result.succeed(major > 17 || (major === 17 && minor >= 9));
+}
+
+const decodeMutationPayloads = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.Record(
+      Schema.String,
+      Schema.NullOr(
+        Schema.Struct({ errors: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))) }),
+      ),
+    ),
+  }),
+);
+
+/** GitLab answers a refused mutation with HTTP 200 and the reasons in each payload's `errors`. */
+export function decodeMutationErrorsJson(
+  raw: string,
+): Result.Result<ReadonlyArray<string>, DecodeFailure> {
+  const decoded = decodeMutationPayloads(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  return Result.succeed(
+    Object.values(decoded.success.data).flatMap((payload) => payload?.errors ?? []),
+  );
 }
 
 /**
