@@ -1067,6 +1067,50 @@ it.effect("puts the author a query names exactly ahead of those it only begins",
   }),
 );
 
+it.effect("ranks references by number, keeping the host's recent-first order", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+        project({ id: "p2", title: "tree", workspaceRoot: "/b", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          searchRepositoryReferences: () =>
+            Effect.succeed({
+              items: [
+                { reference: "#129", kind: "issue", number: 129, title: "Newest", state: "open" },
+                {
+                  reference: "#7",
+                  kind: "issue",
+                  number: 7,
+                  title: "Fix #12 again",
+                  state: "open",
+                },
+                {
+                  reference: "#12",
+                  kind: "change-request",
+                  number: 12,
+                  title: "Exact",
+                  state: "merged",
+                },
+                { reference: "#120", kind: "issue", number: 120, title: "Older", state: "closed" },
+              ],
+              truncated: false,
+            }),
+        }),
+      ],
+    });
+
+    const result = yield* service.filterOptions({ kind: "references", query: "12" });
+
+    assert.deepStrictEqual(
+      result.references.map((candidate) => candidate.reference),
+      ["#12", "#129", "#120", "#7"],
+    );
+  }),
+);
+
 it.effect("tries another workspace on the same host for the viewer", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
