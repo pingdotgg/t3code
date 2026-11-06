@@ -126,7 +126,7 @@ export class PreviewBrowserUnsupportedError extends Schema.TaggedError<PreviewBr
 export class PreviewBrowser extends Context.Service<
   PreviewBrowser,
   {
-    /** Starts installation on first call; returns progress after a bounded wait while installation continues. */
+    /** Uses the configured executable, or starts a managed install with a bounded wait for progress. */
     readonly executable: Effect.Effect<
       string,
       PreviewBrowserInstallError | PreviewBrowserInstallingError | PreviewBrowserUnsupportedError
@@ -167,6 +167,35 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
   const serviceScope = yield* Effect.scope;
   const platform = yield* HostProcess.Platform;
   const arch = yield* HostProcess.Architecture;
+  const configuredPath = (yield* HostProcess.Environment).T3CODE_BROWSER_EXECUTABLE_PATH;
+  if (configuredPath !== undefined) {
+    const invalidPath = new PreviewBrowserInstallError({
+      detail: "T3CODE_BROWSER_EXECUTABLE_PATH must be an absolute path to an executable file.",
+    });
+    const executable = Effect.gen(function* () {
+      if (!path.isAbsolute(configuredPath)) return yield* invalidPath;
+      const info = yield* fs
+        .stat(configuredPath)
+        .pipe(
+          Effect.mapError(
+            wrapFailure(
+              "Could not read T3CODE_BROWSER_EXECUTABLE_PATH. Check the file and permissions.",
+            ),
+          ),
+        );
+      if (info.type !== "File" || (platform !== "win32" && (info.mode & 0o111) === 0)) {
+        return yield* invalidPath;
+      }
+      return configuredPath;
+    }).pipe(Effect.withSpan("PreviewBrowser.executable"));
+    return PreviewBrowser.of({
+      executable,
+      installed: executable.pipe(
+        Effect.asSome,
+        Effect.orElseSucceed(() => Option.none<string>()),
+      ),
+    });
+  }
   const release =
     options.release === undefined ? previewBrowserRelease(platform, arch) : options.release;
   const wait = options.wait ?? "45 seconds";

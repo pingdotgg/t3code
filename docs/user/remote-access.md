@@ -244,7 +244,7 @@ directly. Every other device, and the desktop app for other environments,
 streams them from the host. Agents keep using them while no device is
 connected, and `localhost` addresses reach servers on the host.
 
-The first tab downloads a headless Chrome, about 120 MB, into the T3 home. It
+By default, the first tab downloads a headless Chrome, about 120 MB, into the T3 home. It
 is the same browser [HTML renders](html-renders.md) use, so a host downloads it
 only once. Some Linux hosts need [setup](#browser-host-setup) before it can
 start.
@@ -277,6 +277,14 @@ starts the T3 Code server, such as
 the background service, and restart it. Script preview URLs still appear.
 
 ### Browser host setup
+
+To use a system-managed Chromium instead, such as on NixOS, set
+`T3CODE_BROWSER_EXECUTABLE_PATH` to its absolute executable path in the environment
+that starts the T3 Code server, then restart it. For the background service, set it in
+[`service.env`](./background-service.md#configure-the-service-environment).
+This also applies to HTML previews. T3 Code does not download or update that browser;
+you maintain its Playwright compatibility, libraries, and security updates. An empty,
+relative, missing, or non-executable path fails without falling back to a download.
 
 macOS, Windows, and Linux desktops run the browser as is. Some Linux hosts need
 one-time setup: Ubuntu 23.10 and later block the sandbox the browser runs in,
