@@ -1355,11 +1355,11 @@ export const layerWithOptions = (
           ),
         );
 
-      const releaseIfStillIdle = Effect.fn("ProviderSessionManager.releaseIfStillIdle")(
+      const releaseOrDeferIdle = Effect.fn("ProviderSessionManager.releaseIfStillIdle")(
         function* (input: {
           readonly providerSessionId: ProviderSessionId;
           readonly generation: number;
-        }): Effect.fn.Return<void> {
+        }): Effect.fn.Return<boolean> {
           const current = yield* Ref.get(sessions);
           const key = sessionKey(input.providerSessionId);
           const entry = current.get(key);
@@ -1368,7 +1368,7 @@ export const layerWithOptions = (
             entry.busyTurns.size > 0 ||
             entry.idleGeneration !== input.generation
           ) {
-            return;
+            return false;
           }
           // Capture runtime identity before yielding; replacements can reuse the session id.
           const probedRuntime = entry.runtime;
@@ -1409,15 +1409,14 @@ export const layerWithOptions = (
                 return [true, updated] as const;
               });
               if (!shouldContinuePin) {
-                return;
+                return false;
               }
               yield* Effect.logInfo("orchestration-v2.driver-session.idle-release-deferred", {
                 providerSessionId: input.providerSessionId,
                 pinnedForMs: now - pinnedSinceMs,
               });
-              // Recheck on this fiber; scheduleIdleReleaseInternal would interrupt it and self-deadlock.
               yield* Effect.sleep(Duration.millis(idleTimeoutMs));
-              return yield* releaseIfStillIdle(input);
+              return true;
             }
             yield* Effect.logWarning("orchestration-v2.driver-session.idle-release-pin-expired", {
               providerSessionId: input.providerSessionId,
@@ -1450,8 +1449,20 @@ export const layerWithOptions = (
               }),
             ),
           );
+          return false;
         },
       );
+
+      // Recheck on this fiber; scheduleIdleReleaseInternal would interrupt it and self-deadlock.
+      // Repeat instead of recursing so indefinitely pinned work keeps constant memory.
+      const releaseIfStillIdle = (input: {
+        readonly providerSessionId: ProviderSessionId;
+        readonly generation: number;
+      }) =>
+        releaseOrDeferIdle(input).pipe(
+          Effect.repeat({ while: (deferred) => deferred }),
+          Effect.asVoid,
+        );
 
       const withActivityError = <A, E, R>(
         providerSessionId: ProviderSessionId,
