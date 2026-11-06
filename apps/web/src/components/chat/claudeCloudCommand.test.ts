@@ -44,6 +44,7 @@ describe("Claude cloud commands", () => {
       "hello\x1b[31m",
       "--help",
       "session_abc",
+      "é".repeat(2100),
     ]) {
       expect(() =>
         claudeCloudCommand({ binaryPath: "claude", platform: "linux", message, session: "" }),

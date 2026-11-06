@@ -99,7 +99,7 @@ export function ClaudeCloudDialog({
                   id="claude-cloud-message"
                   value={message}
                   onChange={(event) => setMessage(event.target.value)}
-                  maxLength={8000}
+                  maxLength={4000}
                   disabled={busy}
                   required
                 />

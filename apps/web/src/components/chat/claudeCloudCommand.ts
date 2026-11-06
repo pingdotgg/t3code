@@ -21,8 +21,8 @@ export function claudeCloudCommand(input: {
   session: string;
 }): string {
   const message = input.message.trim();
-  if (!message || message.length > 8000 || /[\x00-\x1f\x7f-\x9f\u2028\u2029]/u.test(message)) {
-    throw new Error("Enter a task or message on a single line (up to 8,000 characters).");
+  if (!message || /[\x00-\x1f\x7f-\x9f\u2028\u2029]/u.test(message)) {
+    throw new Error("Enter a task or message on a single line.");
   }
   if (input.platform !== "darwin" && input.platform !== "linux") {
     throw new Error("Claude Cloud terminal launch is not supported on this platform.");
@@ -45,5 +45,10 @@ export function claudeCloudCommand(input: {
   const args = sessionId
     ? ["-p", message, "--cloud", sessionId, "--output-format", "json"]
     : ["--cloud", message];
-  return `${executable} ${args.map(quote).join(" ")}`;
+  const command = `${executable} ${args.map(quote).join(" ")}`;
+  // Shells like dash read in canonical mode, where Linux drops input past 4,096 bytes per line.
+  if (new TextEncoder().encode(command).length >= 4096) {
+    throw new Error("Shorten the task or message to fit on one terminal line (about 4,000 bytes).");
+  }
+  return command;
 }
