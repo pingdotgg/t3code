@@ -23,6 +23,8 @@ export const PullRequestMarkdownContext = createContext<{
   remarkPlugins: PluggableList;
   lineBreaks: boolean;
   threadRef: ScopedThreadRef | null;
+  /** The change request's `owner/name`, which can differ from the checkout the body renders in. */
+  repository: string | null;
 } | null>(null);
 
 function PullRequestHostVideo({
@@ -30,13 +32,20 @@ function PullRequestHostVideo({
   cwd,
   url,
   fetchUrl,
+  repository,
 }: {
   environmentId: EnvironmentId;
   cwd: string;
   url: string;
   fetchUrl: string;
+  repository: string | undefined;
 }) {
-  const resource: AssetResource = { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd, url: fetchUrl };
+  const resource: AssetResource = {
+    _tag: SOURCE_CONTROL_MEDIA_ASSET,
+    cwd,
+    url: fetchUrl,
+    ...(repository ? { repository } : {}),
+  };
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
   const src =
@@ -60,6 +69,7 @@ export function PullRequestMarkdown({
   threadRef,
   lineBreaks,
   className,
+  onTaskListChange,
   gallery = true,
 }: {
   text: string;
@@ -68,10 +78,13 @@ export function PullRequestMarkdown({
   threadRef?: ScopedThreadRef | null;
   lineBreaks?: boolean;
   className?: string;
+  /** `markerOffset` is into `text`. Checkboxes stay read-only without it. */
+  onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
   gallery?: boolean;
 }) {
   const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
+  const repository = context?.repository ?? undefined;
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
   return (
     <div
@@ -94,6 +107,16 @@ export function PullRequestMarkdown({
               {...(context ? { extraRemarkPlugins: context.remarkPlugins } : {})}
               lineBreaks={lineBreaks ?? context?.lineBreaks ?? false}
               sourceControlMedia
+              sourceControlMediaRepository={repository}
+              onTaskListChange={
+                onTaskListChange && segment.kind === "markdown"
+                  ? ({ markerOffset, checked }) =>
+                      onTaskListChange({
+                        markerOffset: segment.sourceOffset + markerOffset,
+                        checked,
+                      })
+                  : undefined
+              }
             />
           );
         }
@@ -106,6 +129,7 @@ export function PullRequestMarkdown({
               cwd={cwd}
               url={segment.url}
               fetchUrl={hostMedia.fetchUrl}
+              repository={repository}
             />
           );
         }
