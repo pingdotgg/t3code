@@ -518,6 +518,16 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       },
     ),
   );
+  // Pages read the strict detail and other surfaces the default one; patch whichever is loaded
+  // without starting a read of the other.
+  const loadedDetails = (
+    registry: AtomRegistry.AtomRegistry,
+    target: { readonly environmentId: EnvironmentId; readonly input: PullRequestRef },
+  ) =>
+    [
+      detail({ ...target, input: { ...target.input, allowStale: undefined } }),
+      detail({ ...target, input: { ...target.input, allowStale: false } }),
+    ].filter((atom) => registry.getNodes().has(atom));
   const detailReadVersions = Atom.family((source: ReturnType<typeof detail>) =>
     Atom.family((answer: ReturnType<typeof detailAnswers>) =>
       Atom.make((get) => {
@@ -601,6 +611,13 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
     }),
   );
+  // Asked only when the menu's first page is not everybody, so a query cannot be answered from it.
+  const reviewerSearch = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:pull-requests:reviewer-search",
+    tag: WS_METHODS.pullRequestsReviewerCandidates,
+    execute: (input) => routedRequest(WS_METHODS.pullRequestsReviewerCandidates, input),
+    staleTimeMs: 60_000,
+  });
   const loadDiff = Effect.fn("PullRequests.loadDiff")(function* (input: PullRequestDiffInput) {
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const loader = yield* PullRequestDiffLoader.PullRequestDiffLoader;
@@ -904,6 +921,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       concurrency: serialPerEnvironment,
     }),
     reviewerCandidates,
+    /** The host's search for reviewers past the first page, keyed by what was typed. */
+    reviewerSearch,
     requestReviewers: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:request-reviewers",
       tag: WS_METHODS.pullRequestsRequestReviewers,
@@ -922,12 +941,19 @@ export function createPullRequestEnvironmentAtoms<R, E>(
               ),
             ) ?? [];
           const missingIdentities = selected.length < reviewers.length;
-          updateCached(registry, candidatesAtom, (value) => ({
-            ...value,
-            candidates: value.candidates.map((candidate) =>
-              selected.includes(candidate) ? { ...candidate, isRequested: requested } : candidate,
-            ),
-          }));
+          // Somebody found only by the host's search is not in the loaded list yet; the host
+          // puts requested reviewers first, so reading it again brings them in.
+          updateCached(
+            registry,
+            candidatesAtom,
+            (value) => ({
+              ...value,
+              candidates: value.candidates.map((candidate) =>
+                selected.includes(candidate) ? { ...candidate, isRequested: requested } : candidate,
+              ),
+            }),
+            missingIdentities,
+          );
           const selectedLogins = new Set(
             selected.map((candidate) => candidate.login.toLowerCase()),
           );
@@ -950,15 +976,17 @@ export function createPullRequestEnvironmentAtoms<R, E>(
               : actors.filter(
                   (actor) => !selectedLogins.has(actor.login.toLowerCase()) || keep(actor),
                 );
-          updateCached(
-            registry,
-            detail(target),
-            (value) => ({
-              ...value,
-              reviewers: updateReviewers(value.reviewers),
-            }),
-            missingIdentities,
-          );
+          for (const atom of loadedDetails(registry, target)) {
+            updateCached(
+              registry,
+              atom,
+              (value) => ({
+                ...value,
+                reviewers: updateReviewers(value.reviewers),
+              }),
+              missingIdentities,
+            );
+          }
           updateCached(
             registry,
             activity(target),
@@ -1008,22 +1036,24 @@ export function createPullRequestEnvironmentAtoms<R, E>(
               names.has(candidate.name) ? { ...candidate, isApplied: applied } : candidate,
             ),
           }));
-          updateCached(registry, detail(target), (value) => ({
-            ...value,
-            labels: applied
-              ? [
-                  ...value.labels,
-                  ...labels
-                    .filter((name) => !value.labels.some((label) => label.name === name))
-                    .map((name) => ({
-                      name,
-                      color:
-                        candidates?.candidates.find((candidate) => candidate.name === name)
-                          ?.color ?? null,
-                    })),
-                ]
-              : value.labels.filter((label) => !names.has(label.name)),
-          }));
+          for (const atom of loadedDetails(registry, target)) {
+            updateCached(registry, atom, (value) => ({
+              ...value,
+              labels: applied
+                ? [
+                    ...value.labels,
+                    ...labels
+                      .filter((name) => !value.labels.some((label) => label.name === name))
+                      .map((name) => ({
+                        name,
+                        color:
+                          candidates?.candidates.find((candidate) => candidate.name === name)
+                            ?.color ?? null,
+                      })),
+                  ]
+                : value.labels.filter((label) => !names.has(label.name)),
+            }));
+          }
         }),
     }),
     setThreadResolution: createEnvironmentRpcCommand(runtime, {
