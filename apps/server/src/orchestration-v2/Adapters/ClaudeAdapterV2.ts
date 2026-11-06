@@ -9326,7 +9326,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 message.direction === "revert" ? message.original_model : message.fallback_model;
               liveQuery.currentModel = model;
               const reportedModel =
-                model === compileClaudeModelSelection(context.input.modelSelection).apiModelId
+                model ===
+                compileClaudeModelSelection(context.input.modelSelection, modelCatalog).apiModelId
                   ? context.input.modelSelection.model
                   : model;
               yield* reportClaudeModel(context, reportedModel);
@@ -11058,6 +11059,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               shouldResume && turnInput.providerThread.nativeMetadata?.modelSelection !== undefined
                 ? compileClaudeModelSelection(
                     turnInput.providerThread.nativeMetadata.modelSelection,
+                    modelCatalog,
                   ).apiModelId
                 : compiledSelection.apiModelId,
             closed,
