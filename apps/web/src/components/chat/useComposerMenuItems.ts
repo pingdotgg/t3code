@@ -500,7 +500,9 @@ export function useComposerMenuItems({
     (!isLoading &&
       (settled.isPending ||
         settled.query !== pathTriggerQuery ||
-        settled.entries !== workspaceEntries.entries))
+        settled.entries !== workspaceEntries.entries ||
+        settled.items.length !== items.length ||
+        settled.items.some((item, index) => item.id !== items[index]?.id)))
   ) {
     setSettled({
       scope,
