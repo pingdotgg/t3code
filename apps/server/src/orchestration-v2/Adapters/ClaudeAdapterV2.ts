@@ -183,6 +183,11 @@ import {
   resolveClaudeHomePath,
 } from "../../provider/Drivers/ClaudeHome.ts";
 import {
+  findNadirCompactionScript,
+  nadirCompactionHooks,
+  withExtraHooks,
+} from "../NadirCompaction.ts";
+import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   resolveClaudeCatalogContextWindowTokens,
   type ClaudeModelCatalog,
@@ -1775,6 +1780,8 @@ export function makeClaudeQueryOptions(input: {
   readonly appendSystemPromptFileText?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
+  /** Hooks to run beside the user's own, such as Nadir compaction. */
+  readonly extraHooks?: ClaudeSdkSettings["hooks"];
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection, input.modelCatalog);
   const {
@@ -1823,13 +1830,17 @@ export function makeClaudeQueryOptions(input: {
           autoCompactWindow: Number(input.settings.autoCompactWindow),
         } as ClaudeSdkSettings);
   // A settings file path cannot take extra keys, so it goes through unchanged.
-  const effectiveQuerySettings =
+  const toolSearchQuerySettings =
     input.toolSearchOverride === undefined || typeof compactQuerySettings === "string"
       ? compactQuerySettings
       : ({
           ...compactQuerySettings,
           env: { ...compactQuerySettings?.env, ENABLE_TOOL_SEARCH: input.toolSearchOverride },
         } as ClaudeSdkSettings);
+  const effectiveQuerySettings =
+    input.extraHooks === undefined || typeof toolSearchQuerySettings === "string"
+      ? toolSearchQuerySettings
+      : withExtraHooks(toolSearchQuerySettings, input.extraHooks);
   const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
@@ -4890,6 +4901,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   ).pipe(Effect.provideService(Path.Path, path));
   const hostEnvironment = yield* HostProcess.Environment;
   const hostPlatform = yield* HostProcess.Platform;
+  const hostHome = yield* HostProcess.HomeDirectory;
+  const nadirStateDir = path.join(hostHome, ".nadir", "context");
   const customHome =
     adapterOptions.settings.homePath.trim().length > 0 ||
     adapterOptions.environment.CLAUDE_CONFIG_DIR !== hostEnvironment.CLAUDE_CONFIG_DIR;
@@ -5003,6 +5016,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       if (path.dirname(directory) === directory) return cwd;
     }
   });
+  const resolveNadirCompactionHooks = Effect.gen(function* () {
+    if (Option.isNone(serverSettings)) return undefined;
+    const enabled = yield* serverSettings.value.getSettings.pipe(
+      Effect.map((settings) => settings.nadirCompaction),
+      Effect.orElseSucceed(() => false),
+    );
+    if (!enabled) return undefined;
+    const script = yield* findNadirCompactionScript({
+      fileSystem,
+      path,
+      claudeHome: homePath,
+      hostHome,
+      userSettingsLoaded: !customHome,
+    });
+    if (script === undefined) {
+      yield* Effect.logDebug("Nadir compaction skipped: not installed, or Claude Code runs it");
+      return undefined;
+    }
+    return nadirCompactionHooks(script, nadirStateDir);
+  });
+
   const settingsFilesByPrecedence = Effect.fn("ClaudeAdapterV2.settingsFilesByPrecedence")(
     function* (cwd: string | null) {
       const localDirectory = cwd === null ? null : yield* localSettingsDirectory(cwd);
@@ -10914,6 +10948,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.runtimePolicy.cwd,
             launchArgSettings,
           );
+          const extraHooks = yield* resolveNadirCompactionHooks;
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             modelCatalog,
@@ -10954,6 +10989,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
+            ...(extraHooks === undefined ? {} : { extraHooks }),
           });
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")

@@ -394,7 +394,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
                   />
                 </SettingsSection>
-                <SettingsSection title="Model routing">
+                <SettingsSection title="Nadir">
                   <SettingsSwitchRow
                     icon="arrow.triangle.branch"
                     label="Nadir model routing"
@@ -407,6 +407,19 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     value={uniform("nadirRouting")}
                     disabled={disabledFor("nadirRouting")}
                     onValueChange={(value) => write({ nadirRouting: value })}
+                  />
+                  <SettingsSwitchRow
+                    icon="arrow.down.right.and.arrow.up.left"
+                    label="Nadir compaction"
+                    subtitle={managedSubtitle(
+                      "nadirCompaction",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "New Claude threads shrink bulky tool output with Nadir's compaction, keeping an exact copy. Needs Nadir installed (npx nadir-labs). No network calls.",
+                    )}
+                    value={uniform("nadirCompaction")}
+                    disabled={disabledFor("nadirCompaction")}
+                    onValueChange={(value) => write({ nadirCompaction: value })}
                   />
                 </SettingsSection>
                 <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />

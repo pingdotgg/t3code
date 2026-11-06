@@ -1249,6 +1249,8 @@ export const ServerSettings = Schema.Struct({
   ),
   /** Before each user turn, Nadir picks the model from the selected instance's menu, never above the user's pick. */
   nadirRouting: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** New Claude sessions run the compaction hooks of Nadir's installed Claude Code plugin. */
+  nadirCompaction: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   speechModelId: Schema.String.pipe(
@@ -1670,6 +1672,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   nadirRouting: Schema.optionalKey(Schema.Boolean),
+  nadirCompaction: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   speechModelId: Schema.optionalKey(Schema.String),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),

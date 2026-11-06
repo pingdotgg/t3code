@@ -1433,36 +1433,60 @@ export function DiffsSettingsPanel() {
   );
 }
 
+const NADIR_SETTING_ROWS = {
+  nadirRouting: {
+    label: "Nadir model routing",
+    searchId: "nadir-routing",
+    description:
+      "Before each message you send, Nadir picks the model from the selected provider's list, never above the one you chose, and the model picker shows what ran. Sends the message text to getnadir.com. Set NADIR_API_KEY on the host to use your Nadir account.",
+  },
+  nadirCompaction: {
+    label: "Nadir compaction",
+    searchId: "nadir-compaction",
+    description:
+      "New Claude threads shrink bulky file reads and command output with Nadir's compaction, keeping an exact copy the agent can read back. Runs on this machine with no network calls. Needs Nadir installed (npx nadir-labs); when Claude Code already runs it, T3 leaves it to Claude Code.",
+  },
+} as const;
+
 export function NadirRoutingRow() {
-  return useOptionalSettingsScope() === null ? null : <ScopedNadirRoutingRow />;
+  return useOptionalSettingsScope() === null ? null : (
+    <ScopedNadirSettingRow settingKey="nadirRouting" />
+  );
 }
 
-function ScopedNadirRoutingRow() {
+export function NadirCompactionRow() {
+  return useOptionalSettingsScope() === null ? null : (
+    <ScopedNadirSettingRow settingKey="nadirCompaction" />
+  );
+}
+
+function ScopedNadirSettingRow({ settingKey }: { settingKey: keyof typeof NADIR_SETTING_ROWS }) {
+  const { label, searchId, description } = NADIR_SETTING_ROWS[settingKey];
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  const mixed = useScopedSettingsMixed(["nadirRouting"]);
+  const mixed = useScopedSettingsMixed([settingKey]);
 
   return (
     <SettingsRow
       serverScoped
-      settingKeys={["nadirRouting"]}
+      settingKeys={[settingKey]}
       mixed={mixed}
-      {...searchableSetting("nadir-routing")}
-      description="Before each message you send, Nadir picks the model from the selected provider's list, never above the one you chose, and the model picker shows what ran. Sends the message text to getnadir.com. Set NADIR_API_KEY on the host to use your Nadir account."
+      {...searchableSetting(searchId)}
+      description={description}
       resetAction={
-        settings.nadirRouting !== DEFAULT_UNIFIED_SETTINGS.nadirRouting ? (
+        settings[settingKey] !== DEFAULT_UNIFIED_SETTINGS[settingKey] ? (
           <SettingResetButton
-            label="Nadir model routing"
-            onClick={() => updateSettings({ nadirRouting: DEFAULT_UNIFIED_SETTINGS.nadirRouting })}
+            label={label}
+            onClick={() => updateSettings({ [settingKey]: DEFAULT_UNIFIED_SETTINGS[settingKey] })}
           />
         ) : null
       }
       control={
         <ScopedSwitch
-          settingKeys={["nadirRouting"]}
-          checked={settings.nadirRouting}
-          onCheckedChange={(checked) => updateSettings({ nadirRouting: Boolean(checked) })}
-          aria-label="Nadir model routing"
+          settingKeys={[settingKey]}
+          checked={settings[settingKey]}
+          onCheckedChange={(checked) => updateSettings({ [settingKey]: Boolean(checked) })}
+          aria-label={label}
         />
       }
     />

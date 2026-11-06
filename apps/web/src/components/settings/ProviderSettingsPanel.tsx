@@ -103,7 +103,7 @@ import { CodexSetupSection, CodexManagedRuntimeFields } from "./CodexSetupSectio
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import { providerClients } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
-import { CompactIdleThreadsRow, NadirRoutingRow } from "./SettingsPanels";
+import { CompactIdleThreadsRow, NadirCompactionRow, NadirRoutingRow } from "./SettingsPanels";
 import {
   backgroundActivityOverrideSettings,
   buildProviderInstanceUpdatePatch,
@@ -1175,6 +1175,7 @@ export function EnvironmentProviderSettings({
         />
         <CompactIdleThreadsRow />
         <NadirRoutingRow />
+        <NadirCompactionRow />
       </SettingsSection>
 
       {isAddInstanceDialogOpen && !readOnly ? (

@@ -56,7 +56,7 @@ export function forgetChoices(): void {
 }
 
 /** Models the user can pick for this instance, the menu Nadir chooses from. */
-export function modelMenu(provider: ServerProvider | undefined): ReadonlyArray<string> {
+function modelMenu(provider: ServerProvider | undefined): ReadonlyArray<string> {
   return (
     provider?.models.filter((model) => model.isLegacy !== true).map((model) => model.slug) ?? []
   );

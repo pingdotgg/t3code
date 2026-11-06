@@ -367,11 +367,17 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       cwd: "/workspace",
       sdkSettings: { env: { OTHER: "kept" } },
       toolSearchOverride: "true",
+      extraHooks: {
+        PostToolUse: [{ matcher: "Read", hooks: [{ type: "command", command: "x" }] }],
+      },
     });
     assert.deepEqual((options.settings as { env?: Record<string, string> }).env, {
       OTHER: "kept",
       ENABLE_TOOL_SEARCH: "true",
     });
+    assert.deepEqual((options.settings as { hooks?: Record<string, unknown> }).hooks?.PostToolUse, [
+      { matcher: "Read", hooks: [{ type: "command", command: "x" }] },
+    ]);
   });
 
   it("projects AskUserQuestion input with question text as the answer key", () => {
