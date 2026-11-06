@@ -8,11 +8,11 @@ import type {
   PullRequestActor,
   PullRequestCapabilities,
   PullRequestReaction,
-  PullRequestReviewDecision,
   PullRequestViewerPermissions,
 } from "@t3tools/contracts";
 
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
+import type { GitLabDiffRefs, GitLabMergeRequestListState } from "./gitLabMergeRequestJson.ts";
 import {
   PullRequestProviderError,
   type PullRequestProviderFailure,
@@ -96,6 +96,8 @@ const MERGE_REQUEST_DETAIL_TTL = Duration.minutes(1);
 /** A project's merge methods change in its settings, which nobody does between page views. */
 const PROJECT_MERGE_CAPABILITIES_TTL = Duration.minutes(15);
 const READ_CACHE_CAPACITY = 256;
+/** A host's GitLab version only changes on upgrade. */
+const GRAPHQL_LIST_SUPPORT_TTL = Duration.hours(1);
 
 function gitLabProviderFailure(
   error: GitLabPullRequestCli.GitLabPullRequestCliError,
@@ -106,6 +108,17 @@ function gitLabProviderFailure(
   if (error._tag === "GitLabMergeRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
 }
+
+// GitLab keeps a thread on the latest diff while its line survives, so older refs mean the code moved.
+const isOutdated = (
+  thread: GitLabDiffRefs | undefined,
+  current: GitLabDiffRefs | undefined,
+): boolean =>
+  thread !== undefined &&
+  current !== undefined &&
+  (thread.baseSha !== current.baseSha ||
+    thread.startSha !== current.startSha ||
+    thread.headSha !== current.headSha);
 
 export const make = Effect.gen(function* () {
   const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
@@ -120,6 +133,25 @@ export const make = Effect.gen(function* () {
     {
       capacity: READ_CACHE_CAPACITY,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? MERGE_REQUEST_DETAIL_TTL : Duration.zero),
+    },
+  );
+  const graphqlListSupport = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd, host] = JSON.parse(key) as [string, string | undefined];
+      // A host whose version read fails keeps failing it; remember REST rather than ask each poll.
+      return cli.supportsGraphqlList({ cwd, host }).pipe(
+        Effect.catchIf(
+          (cause) =>
+            cause._tag !== "GitLabCliUnavailableError" &&
+            cause._tag !== "GitLabCliAuthenticationError" &&
+            cause._tag !== "GitLabCliRateLimitError",
+          () => Effect.succeed(false),
+        ),
+      );
+    },
+    {
+      capacity: READ_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? GRAPHQL_LIST_SUPPORT_TTL : Duration.zero),
     },
   );
   const projectMergeCapabilities = yield* Cache.makeWith(
@@ -192,14 +224,14 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  // The rows were already read, so even a rate limit only leaves their decision unknown.
-  const reviewDecisions = (input: Parameters<typeof cli.getReviewDecisions>[0]) =>
-    cli.getReviewDecisions(input).pipe(
+  // The rows were already read, so even a rate limit only leaves their states unknown.
+  const listStates = (input: Parameters<typeof cli.getListStates>[0]) =>
+    cli.getListStates(input).pipe(
       Effect.catch((error) =>
-        Effect.logWarning("GitLab merge request approval read failed", {
+        Effect.logWarning("GitLab merge request approval and pipeline read failed", {
           repository: input.repository,
           reason: error._tag,
-        }).pipe(Effect.as<ReadonlyMap<number, PullRequestReviewDecision | null>>(new Map())),
+        }).pipe(Effect.as<ReadonlyMap<number, GitLabMergeRequestListState>>(new Map())),
       ),
     );
 
@@ -238,36 +270,43 @@ export const make = Effect.gen(function* () {
     getViewer: (input) => cli.getViewerUsername(input).pipe(Effect.mapError(fail("getViewer"))),
 
     listChangeRequests: (input) =>
-      cli
-        .listMergeRequests({
-          cwd: input.cwd,
-          host: input.host,
-          repository: input.repository,
-          state: input.state,
-          involvement: input.involvement,
-          viewer: input.viewer,
-          limit: input.limit,
-          query: input.query,
-          cursor: input.cursor,
-          filters: input.filters,
-        })
-        .pipe(
-          Effect.flatMap((batch) =>
-            reviewDecisions({
-              cwd: input.cwd,
-              host: input.host,
-              repository: input.repository,
-              numbers: batch.items.map((item) => item.number),
-            }).pipe(
-              Effect.map((decisions) => ({
-                ...batch,
-                items: batch.items.map((item) => withReviewDecision(item, decisions)),
-                continues: true,
-              })),
-            ),
-          ),
-          Effect.mapError(fail("listChangeRequests")),
+      Cache.get(graphqlListSupport, JSON.stringify([input.cwd, input.host])).pipe(
+        // Without a known version the REST list still answers, only with fewer filters.
+        Effect.orElseSucceed(() => false),
+        Effect.flatMap((graphql) =>
+          cli.listMergeRequests({
+            cwd: input.cwd,
+            host: input.host,
+            repository: input.repository,
+            state: input.state,
+            involvement: input.involvement,
+            viewer: input.viewer,
+            limit: input.limit,
+            query: input.query,
+            cursor: input.cursor,
+            filters: input.filters,
+            graphql,
+          }),
         ),
+        Effect.flatMap(({ listStates: carried, ...batch }) =>
+          (carried === undefined
+            ? listStates({
+                cwd: input.cwd,
+                host: input.host,
+                repository: input.repository,
+                numbers: batch.items.map((item) => item.number),
+              })
+            : Effect.succeed(carried)
+          ).pipe(
+            Effect.map((states) => ({
+              ...batch,
+              items: batch.items.map((item) => withListState(item, states)),
+              continues: true,
+            })),
+          ),
+        ),
+        Effect.mapError(fail("listChangeRequests")),
+      ),
 
     getFileStats: (input) =>
       cli.getMergeRequestFileStats(input).pipe(Effect.mapError(fail("getFileStats"))),
@@ -294,7 +333,7 @@ export const make = Effect.gen(function* () {
             input,
             cli.getMergeRequestDetail({ ...input, maintainerEdits: false }),
           ),
-          reviewDecisions({
+          listStates({
             cwd: input.cwd,
             host: input.host,
             repository: input.repository,
@@ -303,7 +342,7 @@ export const make = Effect.gen(function* () {
         ],
         { concurrency: 2 },
       ).pipe(
-        Effect.map(([mergeRequest, decisions]) => withReviewDecision(mergeRequest, decisions)),
+        Effect.map(([mergeRequest, states]) => withListState(mergeRequest, states)),
         Effect.mapError(fail("getChangeRequestSummary")),
       ),
 
@@ -341,16 +380,26 @@ export const make = Effect.gen(function* () {
         [
           recoverRead(cli.listNotes(input), { comments: [], truncated: true }),
           recoverRead(cli.listCommits(input), []),
-          recoverRead(cli.listDiscussions(input), { threads: [], truncated: true }),
+          recoverRead(cli.listDiscussions(input), {
+            threads: [],
+            diffRefsByThreadId: new Map(),
+            overviewFindingIds: [],
+            truncated: true,
+          }),
           recoverRead(cli.listReactions(input), {
             reactions: [] as ReadonlyArray<PullRequestReaction>,
             reactionsByNoteId: new Map<string, ReadonlyArray<PullRequestReaction>>(),
             editedAtByNoteId: new Map<string, string>(),
             botLogins: new Set<string>(),
           }),
-          // Usually cached by the detail read beside this one; web_url holds the real web origin.
+          // Fresh, not the cached detail: refs from before a push would mark every thread outdated.
           recoverRead(
-            mergeRequestDetail(input).pipe(Effect.map((mergeRequest) => mergeRequest.url)),
+            cli.getMergeRequestDetail({ ...input, downstreamChecks: false }).pipe(
+              Effect.map((mergeRequest) => ({
+                url: mergeRequest.url,
+                diffRefs: mergeRequest.diffRefs,
+              })),
+            ),
             null,
           ),
         ],
@@ -358,8 +407,9 @@ export const make = Effect.gen(function* () {
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
         Effect.map(
-          ([notes, commits, discussions, awards, webUrl]): ProviderChangeRequestActivity => {
-            const noteUrl = (id: string) => (webUrl === null ? null : `${webUrl}#note_${id}`);
+          ([notes, commits, discussions, awards, detail]): ProviderChangeRequestActivity => {
+            const noteUrl = (id: string) => (detail === null ? null : `${detail.url}#note_${id}`);
+            const findingIds = new Set(discussions.overviewFindingIds);
             const edited = (id: string) => {
               const editedAt = awards.editedAtByNoteId.get(id);
               return editedAt === undefined ? {} : { editedAt };
@@ -373,6 +423,7 @@ export const make = Effect.gen(function* () {
               reactions: awards.reactions,
               comments: notes.comments.map((comment) => ({
                 ...comment,
+                ...(findingIds.has(comment.id) ? { kind: "review-comment" as const } : {}),
                 ...edited(comment.id),
                 author: withBotFlag(comment.author),
                 url: noteUrl(comment.id),
@@ -382,6 +433,10 @@ export const make = Effect.gen(function* () {
               commentsTruncated: notes.truncated || discussions.truncated,
               reviewThreads: discussions.threads.map((thread) => ({
                 ...thread,
+                isOutdated: isOutdated(
+                  discussions.diffRefsByThreadId.get(thread.id),
+                  detail?.diffRefs,
+                ),
                 comments: thread.comments.map((comment) => ({
                   ...comment,
                   ...edited(comment.id),
@@ -594,10 +649,10 @@ export const make = Effect.gen(function* () {
   return provider;
 });
 
-function withReviewDecision<Item extends { readonly number: number }>(
+function withListState<Item extends { readonly number: number }>(
   item: Item,
-  decisions: ReadonlyMap<number, PullRequestReviewDecision | null>,
-): Item & { readonly reviewDecision?: PullRequestReviewDecision | null } {
-  const reviewDecision = decisions.get(item.number);
-  return reviewDecision === undefined ? item : { ...item, reviewDecision };
+  states: ReadonlyMap<number, GitLabMergeRequestListState>,
+): Item & Partial<GitLabMergeRequestListState> {
+  const state = states.get(item.number);
+  return state === undefined ? item : { ...item, ...state };
 }
