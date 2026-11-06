@@ -23,7 +23,6 @@ import {
   T3_LEARN_APP_ID,
   T3_LEARN_EXECUTABLE_NAME,
   T3_LEARN_LINK_SCHEMES,
-  T3_LEARN_LINUX_DESKTOP_ENTRY,
   T3_LEARN_LEGACY,
   T3_LEARN_PRODUCT_NAME,
 } from "@t3tools/shared/t3LearnIdentity";
@@ -981,7 +980,6 @@ interface StagePackageJson {
   readonly license: string;
   readonly homepage: string;
   readonly author: string;
-  readonly desktopName: string;
   readonly main: string;
   readonly build: Record<string, unknown>;
   readonly dependencies: Record<string, unknown>;
@@ -2940,7 +2938,6 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           StartupWMClass: T3_LEARN_EXECUTABLE_NAME,
         },
       },
-      syncDesktopName: true,
     };
     buildConfig.deb = {
       // FPM runs outside the staged app directory, so source paths must be absolute.
@@ -3907,7 +3904,6 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     license: "MIT",
     homepage: "https://github.com/aabdel0181/ominax",
     author: "aabdel0181",
-    desktopName: T3_LEARN_LINUX_DESKTOP_ENTRY,
     main: "apps/desktop/dist-electron/boot.cjs",
     build: yield* createBuildConfig(
       options.platform,

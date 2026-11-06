@@ -270,9 +270,9 @@ if [ "$os" = Darwin ]; then
   done
 elif [ "$scenario" = appimage ]; then
   [ -x "$HOME/.local/share/ominax/OminaX.AppImage" ] || fail "the AppImage is missing"
-  grep -q '^Exec=' "$HOME/.local/share/applications/io.github.aabdel0181.OminaX.desktop" || fail "no desktop entry"
+  grep -q '^Exec=' "$HOME/.local/share/applications/ominax.desktop" || fail "no desktop entry"
   for scheme in ominax t3learn; do
-    grep -q "^MimeType=.*x-scheme-handler/$scheme;" "$HOME/.local/share/applications/io.github.aabdel0181.OminaX.desktop" ||
+    grep -q "^MimeType=.*x-scheme-handler/$scheme;" "$HOME/.local/share/applications/ominax.desktop" ||
       fail "the desktop entry does not register $scheme:// links"
   done
   [ -s "$HOME/.local/share/icons/hicolor/512x512/apps/ominax.png" ] || fail "no menu icon"
@@ -281,9 +281,9 @@ elif [ "$scenario" = service ]; then
 else
   installed ominax || fail "the ominax package is not installed"
   ! installed t3learn || fail "the old t3learn package is still installed"
-  [ -e /usr/share/applications/io.github.aabdel0181.OminaX.desktop ] || fail "the OminaX desktop entry is missing"
+  [ -e /usr/share/applications/ominax.desktop ] || fail "the OminaX desktop entry is missing"
   for scheme in ominax t3learn; do
-    grep -q "^MimeType=.*x-scheme-handler/$scheme;" /usr/share/applications/io.github.aabdel0181.OminaX.desktop ||
+    grep -q "^MimeType=.*x-scheme-handler/$scheme;" /usr/share/applications/ominax.desktop ||
       fail "the desktop entry does not register $scheme:// links"
   done
 fi

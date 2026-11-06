@@ -59,11 +59,11 @@ describe("cliRelease", () => {
 
   it("reads releases from T3 Learn's repository, never T3 Code's", () => {
     expect(cliReleaseDownloadBaseUrl("1.2.3")).toBe(
-      "https://github.com/aabdel0181/t3-learn/releases/download/v1.2.3",
+      "https://github.com/aabdel0181/ominax/releases/download/v1.2.3",
     );
     expect(cliReleaseIndexPageUrl(2)).toBe(
-      "https://api.github.com/repos/aabdel0181/t3-learn/releases?per_page=100&page=2",
+      "https://api.github.com/repos/aabdel0181/ominax/releases?per_page=100&page=2",
     );
-    expect(CLI_RELEASES_PAGE_URL).toBe("https://github.com/aabdel0181/t3-learn/releases");
+    expect(CLI_RELEASES_PAGE_URL).toBe("https://github.com/aabdel0181/ominax/releases");
   });
 });

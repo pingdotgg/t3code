@@ -57,13 +57,13 @@ cat <<'EOF'
 macOS and Linux:
 
 ```sh
-curl -fsSL https://github.com/aabdel0181/t3-learn/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/aabdel0181/ominax/releases/latest/download/install.sh | sh
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://github.com/aabdel0181/t3-learn/releases/latest/download/install.ps1 | iex
+irm https://github.com/aabdel0181/ominax/releases/latest/download/install.ps1 | iex
 ```
 
 Run the same command again to update. Installed apps also update themselves.
