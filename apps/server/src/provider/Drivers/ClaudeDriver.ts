@@ -196,6 +196,7 @@ export const ClaudeDriver: ProviderDriver<
     const orchestrationAdapter = yield* createClaudeAdapterV2({ instanceId }, runtime, {
       scopedLimitNames,
       onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+      modelCatalog,
     }).pipe(
       Effect.mapError(
         (cause) =>

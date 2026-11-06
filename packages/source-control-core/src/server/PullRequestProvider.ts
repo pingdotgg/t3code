@@ -5,6 +5,8 @@ import type {
   PullRequestAction,
   PullRequestStackHead,
   PullRequestActor,
+  PullRequestReferenceCandidate,
+  PullRequestReferenceSigil,
   PullRequestBaseComparison,
   PullRequestCapabilities,
   PullRequestChecksState,
@@ -540,7 +542,11 @@ export interface PullRequestProviderApi {
 
   /** Exclude the author using host-specific account identities. */
   readonly listReviewerCandidates: (
-    input: ProviderRepositoryRef & { readonly number: number },
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      /** Asks the host to search past its first page of candidates. */
+      readonly query?: string | undefined;
+    },
   ) => Effect.Effect<PullRequestReviewerCandidateList, PullRequestProviderError>;
 
   readonly setReviewerRequest: (
@@ -573,6 +579,20 @@ export interface PullRequestProviderApi {
   readonly searchRepositoryAuthors?: (
     input: ProviderRepositoryRef & { readonly query?: string | undefined },
   ) => Effect.Effect<ProviderFilterOptionPage<PullRequestActor>, PullRequestProviderError>;
+
+  /**
+   * Issues and change requests a composer can reference, recently updated first. A numeric
+   * `query` also finds that number exactly; other text matches titles as far as the host can.
+   */
+  readonly searchRepositoryReferences?: (
+    input: ProviderRepositoryRef & {
+      readonly query?: string | undefined;
+      readonly sigil?: PullRequestReferenceSigil | undefined;
+    },
+  ) => Effect.Effect<
+    ProviderFilterOptionPage<PullRequestReferenceCandidate>,
+    PullRequestProviderError
+  >;
 
   readonly setLabels?: (
     input: ProviderRepositoryRef & {

@@ -14,6 +14,7 @@ export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRunt
   initialConfigValueAtom: environmentSession.initialConfigValueAtom,
   usageLimitSources: true,
   usageLimitsCommand: true,
+  providerCatalogsOnDemand: true,
 });
 export const providerAccountSync = createProviderAccountSyncCommand(connectionAtomRuntime);
 export const describeOutdatedServer = createOutdatedServerDescriptionCommand(connectionAtomRuntime);

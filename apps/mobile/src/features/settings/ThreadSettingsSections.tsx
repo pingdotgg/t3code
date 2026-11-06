@@ -23,6 +23,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
+import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
@@ -53,6 +55,7 @@ export function SettingsLabsRouteScreen() {
             onPress={() => navigation.navigate("SettingsZack")}
           />
         </SettingsSection>
+        <ToolCallVisibilitySection />
         <BetaSettingsSection />
         <LegacySettingsSection />
       </ScrollView>
@@ -319,6 +322,45 @@ function BetaSettingsSection() {
           </Text>
         </View>
       )}
+    </View>
+  );
+}
+
+const TOOL_CALL_VISIBILITY_OPTIONS: ReadonlyArray<{
+  readonly value: ToolCallVisibility;
+  readonly label: string;
+}> = [
+  { value: "showAll", label: "Show all" },
+  { value: "hideSuccessful", label: "Hide successful" },
+  { value: "hideAll", label: "Hide all" },
+  { value: "zen", label: "Zen" },
+];
+
+function ToolCallVisibilitySection() {
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const selected = AsyncResult.isSuccess(preferences)
+    ? (preferences.value.toolCallVisibility ?? "showAll")
+    : null;
+
+  return (
+    <View className="gap-3">
+      <SettingsSection title="Beta: Tool calls in chat">
+        {TOOL_CALL_VISIBILITY_OPTIONS.map((option, index) => (
+          <ListChoiceRow
+            key={option.value}
+            label={option.label}
+            selected={selected === option.value}
+            separated={index > 0}
+            disabled={selected === null}
+            onPress={() => savePreferences({ toolCallVisibility: option.value })}
+          />
+        ))}
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows
+        only final answers. Approvals, questions, and errors always show.
+      </Text>
     </View>
   );
 }

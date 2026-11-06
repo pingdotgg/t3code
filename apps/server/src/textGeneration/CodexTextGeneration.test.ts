@@ -55,6 +55,8 @@ interface FakeCodexInput {
   stdinMustContain?: string;
   stdinMustNotContain?: string;
   mcpServers?: ReadonlyArray<{ name: string; enabled: boolean }> | number;
+  requiredCwd?: string;
+  requireInstructions?: string;
 }
 
 function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
@@ -68,6 +70,8 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     stdinMustContain: input.stdinMustContain ?? null,
     stdinMustNotContain: input.stdinMustNotContain ?? null,
     mcpServers: input.mcpServers ?? [],
+    requiredCwd: input.requiredCwd ?? null,
+    requireInstructions: input.requireInstructions ?? null,
     stderr: input.stderr ?? null,
     output: input.output,
     exitCode: input.exitCode ?? 0,
@@ -101,6 +105,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "let seenImage = false;",
         'let seenServiceTier = "";',
         'let seenReasoningEffort = "";',
+        'let instructions = "";',
         "for (let index = 0; index < args.length; index += 1) {",
         '  if (args[index] === "--image") {',
         "    index += 1;",
@@ -108,6 +113,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         '  } else if (args[index] === "--config") {',
         "    index += 1;",
         '    const value = args[index] ?? "";',
+        '    if (value.startsWith("developer_instructions=")) instructions = JSON.parse(value.slice("developer_instructions=".length));',
         '    if (value.startsWith("service_tier=")) seenServiceTier = value;',
         '    if (value.startsWith("model_reasoning_effort=")) seenReasoningEffort = value;',
         '  } else if (args[index] === "--output-last-message") {',
@@ -122,6 +128,8 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         '  process.stderr.write(message + "\\n");',
         "  process.exit(code);",
         "}",
+        'if (check.requiredCwd !== null && process.cwd() !== check.requiredCwd) fail("cannot inspect checkout", 10);',
+        'if (check.requireInstructions !== null && !instructions.includes(check.requireInstructions)) fail("missing writer task", 11);',
         "if (check.requireArg !== null && !originalArgs.includes(` ${check.requireArg} `)) {",
         '  fail("missing arg: " + check.requireArg, 8);',
         "}",
@@ -165,6 +173,9 @@ function withFakeCodexEnv<A, E, R>(
     environment?: NodeJS.ProcessEnv;
     models?: ReadonlyArray<string>;
     resolvedRuntime?: "managed" | "existing";
+    defaultModel?: string;
+    customModels?: ReadonlyArray<string>;
+    managedRuntime?: boolean;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -175,7 +186,8 @@ function withFakeCodexEnv<A, E, R>(
     const config = decodeCodexSettings({
       binaryPath: codexPath,
       launchArgs: input.launchArgs,
-      setupMode: input.resolvedRuntime ?? "existing",
+      setupMode: input.resolvedRuntime ?? (input.managedRuntime ? "managed" : "existing"),
+      customModels: input.customModels,
     });
     const textGeneration = yield* makeCodexTextGeneration(
       config,
@@ -185,10 +197,11 @@ function withFakeCodexEnv<A, E, R>(
           slug,
           name: slug,
           isCustom: false,
+          ...(slug === input.defaultModel ? { isDefault: true } : {}),
           capabilities: null,
         })),
       ),
-      input.resolvedRuntime
+      input.resolvedRuntime || input.managedRuntime
         ? Effect.succeed({
             config,
             environment: input.environment ?? process.env,
@@ -229,15 +242,40 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
       }),
   );
 
-  it.effect.each(["gpt-5.6-luna", "openai.gpt-5.6-luna"])(
-    "dispatches the qualified live model for %s",
-    (selectedModel) =>
+  it.effect.each([
+    {
+      selectedModel: "gpt-5.6-luna",
+      models: ["openai.gpt-5.6-luna"],
+      expected: "openai.gpt-5.6-luna",
+    },
+    {
+      selectedModel: "openai.gpt-5.6-luna",
+      models: ["openai.gpt-5.6-luna"],
+      expected: "openai.gpt-5.6-luna",
+    },
+    {
+      selectedModel: "openai.gpt-5.6-luna",
+      models: ["gpt-6-astra", "gpt-5.6-luna"],
+      defaultModel: "gpt-6-astra",
+      expected: "gpt-5.6-luna",
+    },
+    {
+      selectedModel: "gpt-6-luna",
+      models: ["gpt-5.6-luna", "gpt-6-astra"],
+      defaultModel: "gpt-6-astra",
+      expected: "gpt-6-astra",
+    },
+    { selectedModel: "gpt-6-luna", models: ["gpt-5.6-luna"], expected: "gpt-5.6-luna" },
+    { selectedModel: "gpt-6-luna", models: [], expected: "gpt-6-luna" },
+  ])(
+    "dispatches $expected for $selectedModel from $models",
+    ({ selectedModel, models, defaultModel, expected }) =>
       withFakeCodexEnv(
         {
-          output: JSON.stringify({ title: "Bedrock title" }),
-          models: ["openai.gpt-5.6-luna"],
-          requireArg: "--model openai.gpt-5.6-luna",
-          forbidArg: "--model gpt-5.6-luna",
+          output: JSON.stringify({ title: "Live title" }),
+          models,
+          ...(defaultModel ? { defaultModel } : {}),
+          requireArg: `--model ${expected}`,
         },
         (textGeneration) =>
           Effect.gen(function* () {
@@ -246,7 +284,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
               message: "Describe this change",
               modelSelection: createModelSelection(ProviderInstanceId.make("codex"), selectedModel),
             });
-            expect(result.title).toBe("Bedrock title");
+            expect(result.title).toBe("Live title");
           }),
       ),
   );
@@ -271,6 +309,48 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
         }),
     ),
   );
+  it.effect("drops the requested model's options when falling back to another model", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Live title" }),
+        models: ["gpt-6-astra"],
+        requireArg: '--model gpt-6-astra --config model_reasoning_effort="low"',
+        forbidArg: 'service_tier="priority"',
+      },
+      (textGeneration) =>
+        textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Describe this change",
+          modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna", [
+            { id: "reasoningEffort", value: "none" },
+            { id: "serviceTier", value: "priority" },
+          ]),
+        }),
+    ),
+  );
+
+  it.effect("sends a configured custom model the managed snapshot leaves out", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Live title" }),
+        models: ["gpt-6-astra", "gpt-5.6-luna"],
+        defaultModel: "gpt-6-astra",
+        customModels: ["gpt-5.6-luna-preview"],
+        managedRuntime: true,
+        requireArg: '--model gpt-5.6-luna-preview --config model_reasoning_effort="high"',
+      },
+      (textGeneration) =>
+        textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Describe this change",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("codex"),
+            "gpt-5.6-luna-preview",
+            [{ id: "reasoningEffort", value: "high" }],
+          ),
+        }),
+    ),
+  );
 
   it.effect("omits a persisted service tier for managed ChatGPT text generation", () =>
     withFakeCodexEnv(
@@ -292,10 +372,14 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("generates titles with the user's MCP servers and plugins off", () =>
+  it.effect("preserves custom PR instructions while allowing checkout inspection", () =>
     withFakeCodexEnv(
       {
-        output: JSON.stringify({ title: "Remove default shapes" }),
+        output: JSON.stringify({ title: "Remove default shapes", body: "Removes default shapes." }),
+        launchArgs: "--config 'developer_instructions=\"Use TEAM: as the PR title prefix\"'",
+        requiredCwd: process.cwd(),
+        requireInstructions: "Use TEAM: as the PR title prefix",
+        forbidArg: "--config features.shell_tool=false",
         mcpServers: [
           { name: "augmenter", enabled: true },
           { name: "my.server", enabled: true },
@@ -306,9 +390,14 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
       },
       (textGeneration) =>
         Effect.gen(function* () {
-          const result = yield* textGeneration.generateThreadTitle({
+          const result = yield* textGeneration.generatePrContent({
             cwd: process.cwd(),
-            message: "Augmenter task 1. Use the Augmenter MCP: link_thread when you start.",
+            baseBranch: "main",
+            headBranch: "remove-default-shapes",
+            commitSummary: "Remove default shapes",
+            diffSummary: "shapes.ts | 2 --",
+            diffPatch: "-addDefaultShapes();",
+            threadContext: "user: in a few minutes PR will be up then $babysit-pr",
             modelSelection: DEFAULT_TEST_MODEL_SELECTION,
           });
           expect(result.title).toBe("Remove default shapes");
@@ -470,7 +559,16 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
   );
 });
 
-it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhausted) =>
+const PREFLIGHT_PRIMARY_STATES = [
+  "ready",
+  "pending",
+  "exhausted",
+  "not installed",
+  "signed out",
+  "signed out, fallback failed",
+] as const;
+
+it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (primaryState) =>
   Effect.gen(function* () {
     const primary = ProviderInstanceId.make("codex");
     const fallback = ProviderInstanceId.make("claude_work");
@@ -494,7 +592,19 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
         models: [],
         slashCommands: [],
         skills: [],
-        ...(exhausted && instanceId === primary
+        ...(primaryState === "pending" && instanceId === primary
+          ? { installed: false, status: "warning", auth: { status: "unknown" } }
+          : {}),
+        ...(primaryState === "not installed" && instanceId === primary
+          ? { installed: false, status: "error", auth: { status: "unknown" } }
+          : {}),
+        ...(primaryState.startsWith("signed out") && instanceId === primary
+          ? { status: "error", auth: { status: "unauthenticated" } }
+          : {}),
+        ...(primaryState === "signed out, fallback failed" && instanceId === fallback
+          ? { status: "error", auth: { status: "unknown" } }
+          : {}),
+        ...(primaryState === "exhausted" && instanceId === primary
           ? {
               usageLimits: {
                 checkedAt: "1970-01-01T00:00:00Z",
@@ -549,13 +659,15 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
       }),
     ).toEqual({ title: "Generated title" });
     expect(calls).toEqual([
-      exhausted
-        ? {
+      primaryState === "ready" ||
+      primaryState === "pending" ||
+      primaryState === "signed out, fallback failed"
+        ? selection
+        : {
             instanceId: fallback,
             model:
               DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")],
-          }
-        : selection,
+          },
     ]);
   }),
 );

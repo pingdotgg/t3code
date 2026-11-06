@@ -382,12 +382,17 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
         origin: hubOrigin,
         http,
         run,
-        // Keep probing negative reports so an SDK installed after connecting is still found.
-        platforms: Effect.suspend(() =>
-          summary.platforms.some((p) => p.platform === "android" && p.available)
-            ? Effect.succeed(summary.platforms)
-            : platforms.pipe(Effect.orElseSucceed(() => summary.platforms)),
-        ),
+        // Retry Android SDK discovery; iOS support is fixed by the connected host's platform.
+        platformAvailable: (platform) =>
+          Effect.suspend(() =>
+            summary.platforms.some((p) => p.platform === platform && p.available)
+              ? Effect.succeed(true)
+              : platform === "ios"
+                ? Effect.succeed(false)
+                : platformAvailability(platform).pipe(
+                    Effect.map((availability) => availability.available),
+                  ),
+          ),
       }),
       ...(remote.daemonPort !== undefined &&
       remote.token !== undefined &&

@@ -1,6 +1,5 @@
 // Relay JSON-RPC verbatim; schema decoding would reject foreign payloads.
 // @effect-diagnostics nodeBuiltinImport:off globalJsonInEffect:off
-import * as NodeReadline from "node:readline";
 
 import {
   makeIncomingDecisionShadow,
@@ -357,8 +356,12 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
       return yield* launch(task);
     });
 
-    const reader = NodeReadline.createInterface({ input: options.input });
-    yield* Stream.runForEach(Stream.fromAsyncIterable(reader, bridgeError), dispatch).pipe(
+    // node:readline also splits on U+2028/U+2029, which JSON.stringify leaves raw inside strings.
+    yield* Stream.fromAsyncIterable(options.input, bridgeError).pipe(
+      Stream.map((chunk) => (typeof chunk === "string" ? Buffer.from(chunk) : chunk)),
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.runForEach(dispatch),
       Effect.ignoreCause,
     );
     yield* Fiber.awaitAll(running);
