@@ -42,6 +42,7 @@ import {
   decodeCommitsJson,
   decodeDiffRefsJson,
   decodeDiscussionsJson,
+  decodeMaintainerEditsPermissionJson,
   decodeLabelNameJson,
   decodeLabelPermissionJson,
   decodeMergeMessagesJson,
@@ -67,6 +68,7 @@ import {
   decodeTriggerJobChecksJson,
   decodeViewerJson,
   gitLabAwardName,
+  MAINTAINER_EDITS_PERMISSION_GRAPHQL_QUERY,
   LABEL_PERMISSION_GRAPHQL_QUERY,
   MERGE_MESSAGES_GRAPHQL_QUERY,
   MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
@@ -380,6 +382,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly number: number;
       /** `false` skips the stage and trigger job reads, as write permission checks do. */
       readonly downstreamChecks?: boolean;
+      /** `false` skips a fork's maintainer edits permission read, for views that never show it. */
+      readonly maintainerEdits?: boolean;
     }) => Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError>;
 
     /** Approval and head pipeline state, read in one GraphQL request per 100 merge requests. */
@@ -477,6 +481,7 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly host?: string | undefined;
       readonly repository: string;
       readonly number: number;
+      readonly query?: string | undefined;
     }) => Effect.Effect<PullRequestReviewerCandidateList, GitLabPullRequestCliError>;
 
     readonly listProjectLabels: (input: {
@@ -555,6 +560,7 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly number: number;
       readonly title?: string | undefined;
       readonly description?: string | undefined;
+      readonly allowCollaboration?: boolean | undefined;
     }) => Effect.Effect<void, GitLabPullRequestCliError>;
 
     readonly commentOnMergeRequest: (input: {
@@ -1580,6 +1586,19 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // A read GitLab could not answer (an older host, a field it rejects) is not worth failing the
+  // surrounding operation for. An unusable CLI or account still reaches the caller.
+  const isOptionalReadFailure = (cause: GitLabPullRequestCliError) =>
+    cause._tag !== "GitLabCliUnavailableError" &&
+    cause._tag !== "GitLabCliAuthenticationError" &&
+    cause._tag !== "GitLabCliRateLimitError";
+
+  const orWhenUnanswered = <A>(
+    read: Effect.Effect<A, GitLabPullRequestCliError>,
+    fallback: A,
+  ): Effect.Effect<A, GitLabPullRequestCliError> =>
+    read.pipe(Effect.catchIf(isOptionalReadFailure, () => Effect.succeed(fallback)));
+
   const graphqlMutation = (input: {
     readonly cwd: string;
     readonly host?: string | undefined;
@@ -1675,16 +1694,7 @@ export const make = Effect.gen(function* () {
       query: LABEL_PERMISSION_GRAPHQL_QUERY,
       variables: { fullPath: input.repository, iid: String(input.number) },
       decode: decodeLabelPermissionJson,
-    }).pipe(
-      // The answer gates one optional control; an unusable CLI or account still surfaces.
-      Effect.catchIf(
-        (cause) =>
-          cause._tag !== "GitLabCliUnavailableError" &&
-          cause._tag !== "GitLabCliAuthenticationError" &&
-          cause._tag !== "GitLabCliRateLimitError",
-        () => Effect.succeed(false),
-      ),
-    );
+    }).pipe(Effect.catchIf(isOptionalReadFailure, () => Effect.succeed(false)));
 
   const sourceBranch = (input: {
     readonly cwd: string;
@@ -1812,18 +1822,12 @@ export const make = Effect.gen(function* () {
               return stat === undefined ? [] : [{ repository: read.repository, number, ...stat }];
             }),
           ),
-          // One read GitLab could not answer costs its own rows their counts, not every other
-          // read's on the same page. An unusable CLI or account still reaches the caller.
-          Effect.catchIf(
-            (cause) =>
-              cause._tag !== "GitLabCliUnavailableError" &&
-              cause._tag !== "GitLabCliAuthenticationError" &&
-              cause._tag !== "GitLabCliRateLimitError",
-            (cause) =>
-              Effect.logWarning("GitLab merge request line count read failed", {
-                repository: read.repository,
-                reason: cause._tag,
-              }).pipe(Effect.as([])),
+          // One failed read costs its own rows their counts, not every other read's on the page.
+          Effect.catchIf(isOptionalReadFailure, (cause) =>
+            Effect.logWarning("GitLab merge request line count read failed", {
+              repository: read.repository,
+              reason: cause._tag,
+            }).pipe(Effect.as([])),
           ),
         ),
       { concurrency: STAT_REQUEST_CONCURRENCY },
@@ -1998,24 +2002,33 @@ export const make = Effect.gen(function* () {
           [mergeRequestDetail(input), labelPermission(input)],
           { concurrency: 2 },
         );
-        // Only a closed or merged merge request offers its branch for deletion, so an open one,
-        // the page most often read, skips the extra query.
+        // Only a closed or merged merge request offers its branch for deletion, and only an open
+        // fork's has maintainer edits to change, so each extra read is skipped elsewhere.
         const detail =
           read.state === "open"
-            ? { ...read, viewerCanEditLabels }
+            ? input.maintainerEdits === false || read.maintainerCanModify === undefined
+              ? { ...read, viewerCanEditLabels }
+              : {
+                  ...read,
+                  viewerCanEditLabels,
+                  viewerCanEditMaintainerEdits: yield* orWhenUnanswered(
+                    graphqlRead({
+                      cwd: input.cwd,
+                      host: input.host,
+                      operation: "getMaintainerEditsPermission",
+                      query: MAINTAINER_EDITS_PERMISSION_GRAPHQL_QUERY,
+                      variables: { fullPath: input.repository, iid: String(input.number) },
+                      decode: decodeMaintainerEditsPermissionJson,
+                    }),
+                    false,
+                  ),
+                }
             : {
                 ...read,
                 viewerCanEditLabels,
-                viewerCanDeleteBranch: yield* sourceBranch(input).pipe(
-                  Effect.map((source) => source?.canDelete === true),
-                  // The answer gates one optional action; an unusable CLI or account still surfaces.
-                  Effect.catchIf(
-                    (cause) =>
-                      cause._tag !== "GitLabCliUnavailableError" &&
-                      cause._tag !== "GitLabCliAuthenticationError" &&
-                      cause._tag !== "GitLabCliRateLimitError",
-                    () => Effect.succeed(false),
-                  ),
+                viewerCanDeleteBranch: yield* orWhenUnanswered(
+                  sourceBranch(input).pipe(Effect.map((source) => source?.canDelete === true)),
+                  false,
                 ),
               };
         if (input.downstreamChecks === false || detail.headPipeline === undefined) return detail;
@@ -2346,19 +2359,42 @@ export const make = Effect.gen(function* () {
 
     listReviewerCandidates: Effect.fn("GitLabPullRequestCli.listReviewerCandidates")(
       function (input) {
-        return Effect.all([mergeRequestDetail(input), projectUsers(input)], {
-          concurrency: 2,
-        }).pipe(
+        return Effect.all(
+          [mergeRequestDetail(input), projectUsers({ ...input, search: input.query })],
+          {
+            concurrency: 2,
+          },
+        ).pipe(
           Effect.map(([mergeRequest, users]) => {
             const author = mergeRequest.author?.login;
-            const requested = new Set(mergeRequest.reviewRequestLogins);
+            const requested = (input.query?.trim() ? [] : mergeRequest.reviewerUsers).map(
+              ({ id, ...actor }) => ({
+                ...actor,
+                id: String(id),
+                kind: "user" as const,
+                isRequested: true,
+              }),
+            );
+            const listed = new Set(requested.map((reviewer) => reviewer.id));
+            // Every reviewer id, not just the ones shown above: a reviewer GitLab sent without a
+            // username can still turn up on the users page, and must read as requested there or
+            // choosing them would ask again instead of taking the request back.
+            const requestedIds = new Set(mergeRequest.reviewerIds.map(String));
             return {
-              // GitLab forbids requesting a review from the MR author.
-              candidates: users.candidates.flatMap((candidate) =>
-                candidate.login === author
-                  ? []
-                  : [{ ...candidate, isRequested: requested.has(candidate.login) }],
-              ),
+              // The reviewers lead, and come from the merge request rather than the users page:
+              // that page stops at a hundred, and somebody missing from it could not be taken off.
+              // The author is dropped rather than shown unusable: GitLab refuses to make the person
+              // who opened a merge request its reviewer.
+              candidates: [
+                ...requested,
+                ...users.candidates
+                  .filter((candidate) => candidate.login !== author && !listed.has(candidate.id))
+                  .map((candidate) =>
+                    requestedIds.has(candidate.id)
+                      ? { ...candidate, isRequested: true }
+                      : candidate,
+                  ),
+              ],
               truncated: users.rawCount >= MAX_PAGE_SIZE,
             };
           }),
@@ -2469,6 +2505,9 @@ export const make = Effect.gen(function* () {
         stdin: JSON.stringify({
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.description === undefined ? {} : { description: input.description }),
+          ...(input.allowCollaboration === undefined
+            ? {}
+            : { allow_collaboration: input.allowCollaboration }),
         }),
       }).pipe(Effect.asVoid);
     }),

@@ -1643,33 +1643,39 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expected: true,
     },
     { answer: JSON.stringify({ errors: [{ message: "Field unknown" }] }), expected: false },
-  ])("reads merge and label permissions without reading the trigger jobs", ({ answer, expected }) =>
-    Effect.gen(function* () {
-      mockedExecute.mockImplementation(({ args }) =>
-        Effect.succeed(
-          output(
-            args[1] === "graphql"
-              ? answer
-              : mergeRequestJson({
-                  head_pipeline: { id: 31, project_id: 12, status: "success" },
-                  user: { can_merge: false },
-                }),
+  ])(
+    "reads merge and label permissions without reading the trigger jobs or fork settings",
+    ({ answer, expected }) =>
+      Effect.gen(function* () {
+        mockedExecute.mockImplementation(({ args }) =>
+          Effect.succeed(
+            output(
+              args[1] === "graphql"
+                ? answer
+                : mergeRequestJson({
+                    head_pipeline: { id: 31, project_id: 12, status: "success" },
+                    user: { can_merge: false },
+                    source_project_id: 12,
+                    target_project_id: 12,
+                    allow_collaboration: null,
+                  }),
+            ),
           ),
-        ),
-      );
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+        );
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      const detail = yield* cli.getMergeRequestDetail({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        downstreamChecks: false,
-      });
+        const detail = yield* cli.getMergeRequestDetail({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          downstreamChecks: false,
+        });
 
-      expect(detail.viewerCanMerge).toBe(false);
-      expect(detail.viewerCanEditLabels).toBe(expected);
-      expect(mockedExecute).toHaveBeenCalledTimes(2);
-    }),
+        expect(detail.viewerCanMerge).toBe(false);
+        expect(detail.maintainerCanModify).toBeUndefined();
+        expect(detail.viewerCanEditLabels).toBe(expected);
+        expect(mockedExecute).toHaveBeenCalledTimes(2);
+      }),
   );
 
   it.effect(
@@ -1889,6 +1895,143 @@ layer("GitLabPullRequestCli.layer", (it) => {
   );
 
   it.effect.each([
+    { viewer: "the author who can push to the fork", username: "bilal", allowed: true },
+    {
+      viewer: "the author who turned them off",
+      username: "bilal",
+      allowCollaboration: false,
+      allowed: true,
+    },
+    { viewer: "a target maintainer the fork lets push", username: "octocat", allowed: false },
+    {
+      viewer: "the author without push access",
+      username: "bilal",
+      pushToSourceBranch: false,
+      allowed: false,
+    },
+    {
+      viewer: "a viewer on a host that rejects the permission read",
+      username: "bilal",
+      rejected: true,
+      allowed: false,
+    },
+    {
+      viewer: "the author of a protected source branch",
+      username: "bilal",
+      sourceBranchProtected: true,
+      allowed: false,
+    },
+    {
+      viewer: "the author of a private fork",
+      username: "bilal",
+      sourceVisibility: "private",
+      allowed: false,
+    },
+    {
+      viewer: "the author targeting a private project",
+      username: "bilal",
+      targetVisibility: "private",
+      allowed: false,
+    },
+  ])("reads a fork's maintainer edits and lets $viewer change them", (row) =>
+    Effect.gen(function* () {
+      const allowCollaboration = row.allowCollaboration ?? true;
+      mockedExecute.mockImplementation(({ args }) =>
+        Effect.succeed(
+          output(
+            args[1] === "graphql"
+              ? JSON.stringify(
+                  row.rejected === true
+                    ? { errors: [{ message: "Field 'pushToSourceBranch' doesn't exist" }] }
+                    : {
+                        data: {
+                          currentUser: { username: row.username },
+                          project: {
+                            visibility: row.targetVisibility ?? "public",
+                            mergeRequest: {
+                              author: { username: "bilal" },
+                              userPermissions: {
+                                pushToSourceBranch: row.pushToSourceBranch ?? true,
+                              },
+                              sourceBranchProtected: row.sourceBranchProtected ?? false,
+                              sourceProject: { visibility: row.sourceVisibility ?? "public" },
+                            },
+                          },
+                        },
+                      },
+                )
+              : mergeRequestJson({
+                  author,
+                  source_project_id: 40,
+                  target_project_id: 12,
+                  allow_collaboration: allowCollaboration,
+                }),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        downstreamChecks: false,
+      });
+
+      expect(detail.maintainerCanModify).toBe(allowCollaboration);
+      expect(detail.viewerCanEditMaintainerEdits).toBe(row.allowed);
+    }),
+  );
+
+  it.effect("skips a fork's maintainer edits permission read when the caller opts out", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              mergeRequestJson({
+                source_project_id: 40,
+                target_project_id: 12,
+                allow_collaboration: true,
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(labelPermission));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        downstreamChecks: false,
+        maintainerEdits: false,
+      });
+
+      expect(detail.maintainerCanModify).toBe(true);
+      expect(detail.viewerCanEditMaintainerEdits).toBeUndefined();
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+    }),
+  );
+
+  it.effect("sends maintainer edits as allow_collaboration", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.updateMergeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        allowCollaboration: false,
+      });
+
+      expect(argsOfCall(0)).toContain("PUT");
+      expect(JSON.parse(callAt(0).stdin ?? "")).toEqual({ allow_collaboration: false });
+    }),
+  );
+
+  it.effect.each([
     ["th", "projects/acme%2Fweb/users?per_page=100"],
     ["tho", "projects/acme%2Fweb/users?per_page=100&search=tho"],
   ] as const)("searches project users only from three characters (%s)", ([search, path]) =>
@@ -1926,6 +2069,82 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect(
+    "lists the requested reviewers first, even when the users page does not reach them",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute
+          .mockReturnValueOnce(
+            Effect.succeed(output(mergeRequestJson({ reviewers: [{ id: 42, username: "late" }] }))),
+          )
+          .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))));
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+        const list = yield* cli.listReviewerCandidates({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+        });
+
+        expect(
+          list.candidates.map((candidate) => [
+            candidate.login,
+            candidate.id,
+            candidate.isRequested,
+          ]),
+        ).toEqual([
+          ["late", "42", true],
+          [reviewer.username, "5", false],
+        ]);
+      }),
+  );
+
+  it.effect("marks a reviewer GitLab sent without a username as requested on the users page", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(mergeRequestJson({ reviewers: [{ id: 5, username: "" }] }))),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const list = yield* cli.listReviewerCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(list.candidates.map((candidate) => [candidate.id, candidate.isRequested])).toEqual([
+        ["5", true],
+      ]);
+    }),
+  );
+
+  it.effect("asks GitLab to search the project's users when the menu has a query", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(mergeRequestJson({ reviewers: [reviewer, { id: 42, username: "unrelated" }] })),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([reviewer]))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const list = yield* cli.listReviewerCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        query: "octo cat",
+      });
+
+      expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual([
+        [reviewer.username, true],
+      ]);
+      expect(argsOfCall(1)[1]).toBe("projects/acme%2Fweb/users?per_page=100&search=octo%20cat");
+    }),
+  );
+
   it.effect("writes the reviewer set back with the one being asked added to it", () =>
     Effect.gen(function* () {
       mockedExecute
@@ -1943,6 +2162,27 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
       expect(argsOfCall(1)).toContain("PUT");
       expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({ reviewer_ids: [5, 9] });
+    }),
+  );
+
+  it.effect("keeps a reviewer it cannot show when writing the set back", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(mergeRequestJson({ reviewers: [{ id: 3, username: "" }] }))),
+        )
+        .mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.setReviewerRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        reviewers: [{ id: "9" }],
+        requested: true,
+      });
+
+      expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({ reviewer_ids: [3, 9] });
     }),
   );
 
