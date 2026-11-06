@@ -13,6 +13,7 @@ import {
   COMPACTION_SUGGESTION_MIN_TOKENS,
   isClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
 import { resolvePendingHandoff } from "../handoff.ts";
@@ -247,6 +248,7 @@ export function shouldCompactBeforeSend(input: {
     | "providerTurns"
     | "runtimeRequests"
     | "runs"
+    | "turnItems"
     | "visibleTurnItems"
   >;
   readonly visibleTurnItems: ReadonlyArray<{ readonly item: ThreadStructureTurnItem }>;
@@ -296,6 +298,19 @@ export function shouldCompactBeforeSend(input: {
   const providerThread = projection.providerThreads.find(
     (thread) => thread.id === activeProviderThreadId,
   );
+  // Background agents keep the session live and report into its next turn.
+  if (
+    derivePendingBackgroundWork({
+      latestRun: projection.runs.findLast(
+        (run) => run.status !== "queued" && run.status !== "rolled_back",
+      ),
+      providerThreads: projection.providerThreads,
+      turnItems: projection.turnItems,
+      activeProviderThreadId,
+      runs: projection.runs,
+    }).length > 0
+  )
+    return false;
   const liveUsage = latestProviderTurnTokenUsage(
     projection.providerTurns.filter((turn) => turn.providerThreadId === activeProviderThreadId),
     input.selection.instanceId === projection.thread.modelSelection.instanceId ? projection : null,

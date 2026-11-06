@@ -43,6 +43,8 @@ function sendInput(
     readonly promptOutsideWindow?: boolean;
     readonly text?: string;
     readonly threadIdle?: boolean;
+    readonly backgroundTask?: boolean;
+    readonly backgroundAgent?: boolean;
   } = {},
 ) {
   const source = overrides.source ?? claude;
@@ -67,6 +69,9 @@ function sendInput(
     providerInstanceId: source,
     contextUsage: null,
     updatedAt: DateTime.makeUnsafe(lastTurnAt),
+    ...(overrides.backgroundTask === true && id === "provider-thread-current"
+      ? { pendingBackgroundTasks: [{ taskId: "gate", kind: "command" }] }
+      : {}),
   });
   const visibleTurnItems =
     overrides.promptOutsideWindow === true
@@ -123,6 +128,18 @@ function sendInput(
         ? [{ id: RunId.make("queued-run"), status: "queued", queueHeld: true, startedAt: null }]
         : []),
     ],
+    turnItems:
+      overrides.backgroundAgent === true
+        ? [
+            {
+              id: "item-agent",
+              type: "subagent",
+              status: "running",
+              runId: RunId.make("run-1"),
+              prompt: "Identify the block wall",
+            },
+          ]
+        : [],
     runtimeRequests: [
       ...(overrides.dismissed === true
         ? [
@@ -254,6 +271,8 @@ describe("shouldCompactBeforeSend", () => {
     { name: "while the queue is held", heldQueue: true, expected: false },
     { name: "while a request waits for an answer", pendingRequest: true, expected: false },
     { name: "while the thread is working", threadIdle: false, expected: false },
+    { name: "while a background command runs", backgroundTask: true, expected: false },
+    { name: "while a background agent runs", backgroundAgent: true, expected: false },
     { name: "with no conversation but /compact", onlyCompactMessages: true, expected: false },
     { name: "for a typed /compact", text: "/compact keep the plan", expected: false },
   ] as const)("$name", ({ name: _name, expected, ...overrides }) => {

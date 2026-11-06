@@ -2501,6 +2501,9 @@ export default function ChatView(props: ChatViewProps) {
     !compactDisabled &&
     !hasHeldQueuedRuns &&
     multipleModelSelections === null &&
+    // Background agents keep the session live and report into its next turn.
+    deriveThreadPendingBackgroundTasks(serverProjection, { includePullRequestWatches: false })
+      .length === 0 &&
     shouldOfferResumeCompaction({
       provider: selectedProvider,
       usedTokens: activeContextWindow.usedTokens,
