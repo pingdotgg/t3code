@@ -122,7 +122,11 @@ export function useNextPromptChips(input: {
   const chips: Array<NextPromptChip> = [];
   const seen = new Set<string>();
   const add = (chip: NextPromptChip) => {
-    const key = chip.insertText.trim().toLowerCase();
+    // "Use React." and "Use React" are the same suggestion.
+    const key = chip.insertText
+      .trim()
+      .toLowerCase()
+      .replace(/[.!?…]+$/, "");
     if (key.length === 0 || seen.has(key) || chips.length >= MAX_CHIPS) return;
     seen.add(key);
     chips.push(chip);
@@ -141,9 +145,15 @@ export function useNextPromptChips(input: {
 export function NextPromptSuggestionChips(props: {
   readonly chips: ReadonlyArray<NextPromptChip>;
   readonly showTabHint: boolean;
+  /** The chip whose text is in the composer unchanged, or -1. */
+  readonly activeIndex?: number;
   readonly onPick: (chip: NextPromptChip) => void;
 }) {
   if (props.chips.length === 0) return null;
+  const activeIndex = props.activeIndex ?? -1;
+  // The hint sits on the chip the next Tab puts in the composer.
+  const tabTargetIndex =
+    activeIndex === -1 ? 0 : props.chips.length > 1 ? (activeIndex + 1) % props.chips.length : -1;
   return (
     <div className="relative h-0" data-next-prompt-suggestions="true">
       <div className="absolute inset-x-0 bottom-full z-10 mb-2 flex flex-wrap justify-start gap-1.5 px-1">
@@ -156,19 +166,20 @@ export function NextPromptSuggestionChips(props: {
                 ? `Put "${chip.label}" in the message box`
                 : `Put ${chip.insertText.trim()} in the message box`
             }
+            aria-pressed={index === activeIndex}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => props.onPick(chip)}
-            className={
+            className={`${
               chip.kind === "prompt"
                 ? "inline-flex max-w-full items-center gap-1.5 truncate rounded-full border border-border bg-popover px-3 py-1 text-xs text-popover-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
                 : "inline-flex max-w-full items-center gap-1.5 truncate rounded-full border border-primary/60 bg-popover px-3 py-1 text-xs text-primary shadow-sm transition-colors hover:bg-accent"
-            }
+            }${index === activeIndex ? " bg-accent ring-1 ring-primary" : ""}`}
           >
             {chip.kind === "prompt" ? null : (
               <span className="font-mono opacity-70">{chip.kind === "skill" ? "$" : "/"}</span>
             )}
             <span className="truncate">{chip.label}</span>
-            {props.showTabHint && index === 0 ? (
+            {props.showTabHint && index === tabTargetIndex ? (
               <Kbd
                 variant="outline"
                 className="ml-0.5 hidden [@media(any-pointer:fine)]:inline-flex"

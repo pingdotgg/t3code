@@ -85,6 +85,11 @@ export function composerCommandKeyHandler(input: {
   /** Predicted next prompt that Tab fills into an empty composer; Escape dismisses it. */
   readonly promptSuggestion: string | null;
   readonly dismissPromptSuggestion: () => void;
+  /**
+   * Custom build: the next-prompt buttons' texts in order. While the composer holds one of them
+   * unchanged, Tab swaps it for the next and Escape hides the buttons.
+   */
+  readonly promptSuggestionCycle?: ReadonlyArray<string>;
 }) {
   const {
     keybindings,
@@ -122,6 +127,7 @@ export function composerCommandKeyHandler(input: {
     submitComposer,
     promptSuggestion,
     dismissPromptSuggestion,
+    promptSuggestionCycle = [],
   } = input;
 
   // The composer persists across threads. A recall from thread A must not
@@ -212,11 +218,37 @@ export function composerCommandKeyHandler(input: {
     if (key === "Tab" && event.shiftKey && submissionIntent === null) {
       return applyListEdit(event, listOutdentForTab);
     }
+    // Custom build: an untouched suggestion in the composer; Tab moves on to the next one, even
+    // when it is a skill or command whose name would otherwise open the menu.
+    const cycleIndex =
+      promptSuggestionCycle.length > 0 ? promptSuggestionCycle.indexOf(promptRef.current) : -1;
+    if (
+      key === "Tab" &&
+      cycleIndex !== -1 &&
+      promptSuggestionCycle.length > 1 &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.isComposing &&
+      event.keyCode !== 229
+    ) {
+      const next = promptSuggestionCycle[(cycleIndex + 1) % promptSuggestionCycle.length]!;
+      return applyPromptReplacement(0, promptRef.current.length, next);
+    }
     const { trigger } = resolveActiveComposerTrigger();
     const menuIsActive =
       !isLiteralPendingAnswer && (composerMenuOpenRef.current || trigger !== null);
     if (key === "Escape") {
       if (event.isComposing || event.keyCode === 229) return false;
+      if (cycleIndex !== -1) {
+        dismissPromptSuggestion();
+        if (menuIsActive) {
+          dismissComposerTrigger(trigger);
+          composerMenuOpenRef.current = false;
+        }
+        return true;
+      }
       if (!menuIsActive && promptSuggestion !== null && promptRef.current.length === 0) {
         dismissPromptSuggestion();
         return true;
