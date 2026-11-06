@@ -35,6 +35,7 @@ import {
   normalizeResourceTelemetryHistoryInput,
   type ResourceTelemetryHistoryWithLegacyBuckets,
 } from "./ResourceTelemetryHistory.ts";
+import { readResourceTelemetryHistory } from "./ResourceTelemetryHistoryReader.ts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
 
 export class ResourceTelemetryRefreshFailed extends Schema.TaggedError<ResourceTelemetryRefreshFailed>()(
@@ -141,6 +142,7 @@ function buildHealth(input: {
 /** @public */
 export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(function* () {
   const nativeClient = yield* NativeTelemetryClient.NativeTelemetryClient;
+  const historyMutex = yield* Semaphore.make(1);
   const desktopReceiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
   const attribution = yield* ResourceAttribution.ResourceAttribution;
   const mutex = yield* Semaphore.make(1);
@@ -425,7 +427,7 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
       desktopReceiver.health,
     ]);
     const current = yield* Ref.get(state);
-    return buildResourceTelemetryHistory({
+    const historyInput = {
       readAt,
       windowMs: normalizedInput.windowMs,
       bucketMs: normalizedInput.bucketMs,
@@ -439,8 +441,15 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
         desktop: desktopHealth,
         nativeSnapshot: current.nativeSnapshot,
       }),
-    });
-  });
+    };
+    return yield* readResourceTelemetryHistory(historyInput).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to aggregate resource telemetry history", { cause }).pipe(
+          Effect.as(buildResourceTelemetryHistory({ ...historyInput, snapshots: [] })),
+        ),
+      ),
+    );
+  }, historyMutex.withPermits(1));
   yield* nativeHealthSubscription.changes.pipe(
     Stream.runForEach(() => refreshHealth),
     Effect.forkScoped,

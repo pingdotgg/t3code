@@ -1,3 +1,4 @@
+import * as NodeWorkerThreads from "node:worker_threads";
 import type {
   DesktopHostTelemetrySnapshot,
   ResourceMonitorProcessSample,
@@ -18,6 +19,7 @@ import * as DesktopTelemetryReceiver from "./DesktopTelemetryReceiver.ts";
 import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./ResourceAttribution.ts";
 import * as ResourceTelemetry from "./ResourceTelemetry.ts";
+import { buildResourceTelemetryHistory } from "./ResourceTelemetryHistory.ts";
 
 // ResourceTelemetry classifies process.pid as the server, so fixture PIDs are
 // offsets from it. Fixed PIDs collide whenever the test worker is assigned one.
@@ -148,7 +150,83 @@ function desktopSnapshot(sampledAtUnixMs: number): DesktopHostTelemetrySnapshot 
 }
 
 describe("ResourceTelemetry", () => {
-  it.effect("replays churning history and retains baselines for returning processes", () =>
+  it.live("serves the event loop before a retained history replay completes", () =>
+    Effect.gen(function* () {
+      const readAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+      let completed = false;
+      let observeEventLoop: Promise<boolean> | undefined;
+      const samples = Array.from({ length: 1_000 }, (_, index) => {
+        const sample = nativeSnapshot({
+          sequence: index + 1,
+          sampledAtUnixMs: readAtMs - (1_000 - index) * 1_000,
+          childCpuTimeMs: index * 10,
+          childWriteBytes: index * 100,
+        });
+        return {
+          ...sample,
+          processes: Array.from({ length: 20 }, (_, child) => ({
+            ...processSample({
+              pid: SERVER_PID + child,
+              ppid: child === 0 ? 1 : SERVER_PID,
+              startTimeMs: child,
+              ioWriteBytes: index * 100,
+            }),
+            get cpuTimeMs() {
+              if (observeEventLoop === undefined) {
+                observeEventLoop = new Promise((resolve) => {
+                  const { port1, port2 } = new NodeWorkerThreads.MessageChannel();
+                  port1.once("message", () => {
+                    resolve(completed);
+                    port1.close();
+                    port2.close();
+                  });
+                  port2.postMessage("history started");
+                });
+              }
+              return index * 10;
+            },
+          })),
+        };
+      });
+      const layerTelemetry = ResourceTelemetry.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            NativeTelemetryClient.layerTest({ readHistory: () => Effect.succeed(samples) }),
+            DesktopTelemetryReceiver.layerTest(),
+            ResourceAttribution.layer,
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
+        const history = yield* telemetry.readHistory({ windowMs: 3_600_000, bucketMs: 120_000 });
+        completed = true;
+        expect(yield* Effect.promise(() => observeEventLoop!)).toBe(false);
+        expect(history).toEqual(
+          buildResourceTelemetryHistory({
+            readAt: history.readAt,
+            windowMs: history.windowMs,
+            bucketMs: history.bucketMs,
+            sampleIntervalMs: history.sampleIntervalMs,
+            serverPid: SERVER_PID,
+            sidecarPid: Option.none(),
+            desktopSnapshot: Option.none(),
+            snapshots: samples,
+            health: history.health,
+          }),
+        );
+        expect(history.retainedSampleCount).toBe(21_000);
+        expect(history.topProcesses).toHaveLength(20);
+        expect(history.topProcesses[0]).toMatchObject({
+          sampleCount: 1_000,
+          cpuTimeMs: 9_990,
+          ioWriteBytes: 99_900,
+        });
+      }).pipe(Effect.provide(layerTelemetry));
+    }),
+  );
+
+  it.live("replays churning history and retains baselines for returning processes", () =>
     Effect.gen(function* () {
       const readAtMs = DateTime.toEpochMillis(yield* DateTime.now);
       const sampleCount = 100;
@@ -192,10 +270,23 @@ describe("ResourceTelemetry", () => {
       yield* Effect.gen(function* () {
         const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
         const history = yield* telemetry.readHistory({
-          windowMs: sampleCount * 1_000,
+          windowMs: (sampleCount + 1) * 1_000,
           bucketMs: 10_000,
         });
 
+        expect(history).toEqual(
+          buildResourceTelemetryHistory({
+            readAt: history.readAt,
+            windowMs: history.windowMs,
+            bucketMs: history.bucketMs,
+            sampleIntervalMs: history.sampleIntervalMs,
+            serverPid: SERVER_PID,
+            sidecarPid: Option.none(),
+            desktopSnapshot: Option.none(),
+            snapshots: samples,
+            health: history.health,
+          }),
+        );
         expect(history.topProcesses).toHaveLength(sampleCount + 2);
         expect(
           history.topProcesses.find((entry) => entry.identity.pid === SERVER_PID),
