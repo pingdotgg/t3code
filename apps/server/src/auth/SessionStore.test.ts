@@ -619,6 +619,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
 
       const relay = yield* sessions.issue(relaySessionInput);
       expect(yield* sessions.rename(relay.sessionId, "Renewals would drop this")).toBe(false);
+      expect(yield* sessions.rename(relay.sessionId, relaySessionInput.client.label)).toBe(false);
 
       const expiring = yield* sessions.issue({ ttl: Duration.minutes(1) });
       yield* TestClock.adjust(Duration.minutes(2));

@@ -1027,13 +1027,18 @@ const make = Effect.gen(function* () {
       const session = yield* loadActiveSession(sessionId).pipe(
         Effect.mapError((cause) => new SessionRenameError({ sessionId, cause })),
       );
-      if (Option.isNone(session)) return false;
+      if (Option.isNone(session) || session.value.method === "dpop-access-token") return false;
       if (session.value.client.label === label) return true;
       const renamed = yield* authSessions
         .setClientLabel({ sessionId, label })
         .pipe(Effect.mapError((cause) => new SessionRenameError({ sessionId, cause })));
       if (!renamed) return false;
-      yield* emitUpsert({ ...session.value, client: { ...session.value.client, label } });
+      // A disconnect between the check and the write may already have published its removal.
+      const renamedSession = yield* loadActiveSession(sessionId).pipe(
+        Effect.mapError((cause) => new SessionRenameError({ sessionId, cause })),
+      );
+      if (Option.isNone(renamedSession)) return false;
+      yield* emitUpsert(renamedSession.value);
       return true;
     },
   );
