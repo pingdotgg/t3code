@@ -20,6 +20,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as WindowsSpawn from "../process/WindowsSpawn.ts";
 
 import {
   GitCommandError,
@@ -945,6 +946,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const spawn = (yield* WindowsSpawn.WindowsSpawn) ?? commandSpawner.spawn;
   const { worktreesDir } = yield* ServerConfig.ServerConfig;
   const isServerInternalPath = yield* makeIsServerInternalPath;
   const digest = yield* Digest.Digest;
@@ -988,27 +990,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
         // cmd wrappers truncate multiline commits; leave git.cmd handling to Node lookup.
         const executable = resolved.shell ? "git" : resolved.command;
-        const child = yield* commandSpawner
-          .spawn(
-            ChildProcess.make(executable, commandInput.args, {
-              cwd: commandInput.cwd,
-              env: spawnEnv,
-              forceKillAfter: input.forceKillAfterMs,
-              ...(runsGitWithoutConsole(hostPlatform, executable, commandInput.args)
-                ? { detached: true, windowsHide: true }
-                : {}),
-            }),
-          )
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new GitCommandError({
-                  ...gitCommandContext(commandInput),
-                  detail: "Failed to spawn Git process.",
-                  cause,
-                }),
-            ),
-          );
+        const child = yield* spawn(
+          ChildProcess.make(executable, commandInput.args, {
+            cwd: commandInput.cwd,
+            env: spawnEnv,
+            forceKillAfter: input.forceKillAfterMs,
+            ...(runsGitWithoutConsole(hostPlatform, executable, commandInput.args)
+              ? { detached: true, windowsHide: true }
+              : {}),
+          }),
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitCommandError({
+                ...gitCommandContext(commandInput),
+                detail: "Failed to spawn Git process.",
+                cause,
+              }),
+          ),
+        );
 
         const [stdout, stderr, exitCode] = yield* Effect.all(
           [

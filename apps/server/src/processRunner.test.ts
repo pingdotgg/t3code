@@ -11,6 +11,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import * as ProcessRunner from "./processRunner.ts";
+import { probeProcessCreation } from "./process/processCreationProbe.ts";
 
 type ChildProcessCommand = {
   readonly command: string;
@@ -70,13 +71,44 @@ const runWith =
         }),
       ),
       Effect.provide(
-        ProcessRunner.layer.pipe(
+        Layer.effect(ProcessRunner.ProcessRunner, ProcessRunner.make()).pipe(
           Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
         ),
       ),
     );
 
 describe("runProcess", () => {
+  // quarantine: #25245 this regression exercises Windows child ownership during native creation.
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "win32")(
+    "cleans up a child cancelled during Windows native creation",
+    () =>
+      Effect.promise(() => probeProcessCreation(false, true)).pipe(
+        Effect.map((result) => {
+          expect(result).toEqual({
+            serverThread: false,
+            gateClosed: true,
+            stdout: "cancelled",
+            code: null,
+          });
+        }),
+      ),
+  );
+  // quarantine: #25245 this regression exercises the Windows process-creation boundary.
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "win32")(
+    "answers requests while Windows native process creation is blocked",
+    () =>
+      Effect.promise(() => probeProcessCreation()).pipe(
+        Effect.map((result) => {
+          expect(result).toEqual({
+            serverThread: false,
+            gateClosed: true,
+            stdout: "finished",
+            code: 0,
+          });
+        }),
+      ),
+  );
+
   it.effect("resolves and escapes Windows command shims before spawning", () => {
     const spawner = makeSpawner((command) =>
       Effect.sync(() => {

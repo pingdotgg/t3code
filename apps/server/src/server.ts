@@ -94,6 +94,7 @@ import * as DesktopBrowserChannel from "./preview/DesktopBrowserChannel.ts";
 import * as ServerBrowserStream from "./preview/ServerBrowserStream.ts";
 import * as PreviewBrowser from "./preview/PreviewBrowser.ts";
 import * as ProcessRunner from "./processRunner.ts";
+import * as WindowsSpawn from "./process/WindowsSpawn.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -379,6 +380,7 @@ const layerHttpServer = Layer.unwrap(
 ).pipe(Layer.provide(ManagedPolicy.layer));
 
 const layerPlatformServices = DocumentText.layer.pipe(
+  Layer.provideMerge(WindowsSpawn.layer),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
