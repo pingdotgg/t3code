@@ -447,6 +447,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var isReadOnly = false
   private var isApplyingControlledValue = false
   private var nativeEventCount = 0
+  private var hasControlledDocument = false
   private var resetGeneration = 0
   private var lastContentSize = CGSize.zero
   private var iconImages: [String: UIImage] = [:]
@@ -676,12 +677,15 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     }
     if isReset {
       resetGeneration = document.resetGeneration
-      nativeEventCount = document.mostRecentEventCount
       endComposition()
     }
-    if document.isNativeEcho && !isReset && textView.serializedText() != document.value {
+    // iOS destroys this view under display: none and mounts a fresh one while JS keeps its
+    // revision and draft. Continue from them, or JS drops every event the new view sends.
+    nativeEventCount = document.mostRecentEventCount
+    if document.isNativeEcho && !isReset && hasControlledDocument && textView.serializedText() != document.value {
       return
     }
+    hasControlledDocument = true
     if tokensJson != document.tokensJson {
       tokensJson = document.tokensJson
       tokens = decode([ComposerTokenPayload].self, from: document.tokensJson) ?? []
