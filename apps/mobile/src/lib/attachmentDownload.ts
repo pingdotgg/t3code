@@ -271,6 +271,17 @@ export async function shareLocalAttachment(input: {
   }
 }
 
+export function shareAttachmentUri(input: {
+  readonly uri: string;
+  readonly attachment: AttachmentFileMetadata;
+  readonly signal: AbortSignal;
+  readonly sourceIdentifier?: string;
+}): Promise<void> {
+  return /^(file|content):/i.test(input.uri)
+    ? shareLocalAttachment(input)
+    : downloadAndShareAttachment({ ...input, url: input.uri });
+}
+
 export async function writeGeneratedAttachmentFile(input: {
   readonly bytes: Uint8Array;
   readonly attachment: AttachmentFileMetadata;

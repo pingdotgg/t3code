@@ -4,11 +4,7 @@ import { useContext, useEffect, useEffectEvent, useState } from "react";
 import { Platform } from "react-native";
 
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
-import {
-  downloadAndShareAttachment,
-  nativeViewerErrorMessage,
-  shareLocalAttachment,
-} from "../lib/attachmentDownload";
+import { nativeViewerErrorMessage, shareAttachmentUri } from "../lib/attachmentDownload";
 import { usePreviewPresentation } from "../lib/previewPresentation";
 import { refreshAssetUrl } from "../state/assets";
 import { filePreviewGallery, filePreviewKey, filePreviewName } from "../lib/filePreviewGallery";
@@ -149,17 +145,14 @@ function ResolvedFilePreview(props: {
             {
               text: "Save or share",
               onPress: () => {
-                const input = {
+                void shareAttachmentUri({
+                  uri,
                   attachment: {
                     name: selected.name,
                     mimeType: selected.mimeType ?? "application/octet-stream",
                   },
                   signal: new AbortController().signal,
-                };
-                const sharing = /^(file|content):/.test(uri)
-                  ? shareLocalAttachment({ ...input, uri })
-                  : downloadAndShareAttachment({ ...input, url: uri });
-                void sharing.catch(() => Dialog.alert("Could not share file", "Please try again."));
+                }).catch(() => Dialog.alert("Could not share file", "Please try again."));
               },
             },
           ]

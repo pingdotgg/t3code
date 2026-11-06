@@ -15,9 +15,8 @@ vi.mock("react-native", () => ({ Platform: harness.platform }));
 vi.mock("../state/assets", () => ({ refreshAssetUrl: harness.refreshAssetUrl }));
 vi.mock("../lib/localAttachmentPreview", () => ({ loadLocalAttachmentPreview: vi.fn() }));
 vi.mock("../lib/attachmentDownload", () => ({
-  downloadAndShareAttachment: vi.fn(),
   nativeViewerErrorMessage: () => "",
-  shareLocalAttachment: vi.fn(),
+  shareAttachmentUri: vi.fn(),
 }));
 vi.mock("../lib/previewPresentation", () => ({ usePreviewPresentation: () => {} }));
 vi.mock("./ui/Dialog", () => ({ alert: harness.alert }));
