@@ -658,6 +658,7 @@ it.effect.each([0, 3, 4])(
                 providerInstanceId: instanceId,
                 archivedAt: null,
                 deletedAt: null,
+                lineage: { parentThreadId: null, relationshipToParent: null },
               },
               runs: [
                 {
