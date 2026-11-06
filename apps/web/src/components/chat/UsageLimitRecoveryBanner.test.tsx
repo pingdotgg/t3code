@@ -17,6 +17,8 @@ function bannerItem(
     errorCode,
     resetAt: resetAt?.toISOString() ?? null,
     stoppedAt: stoppedAt.toISOString(),
+    settled: false,
+    requestPending: false,
     snoozedUntil: null,
     recovery: null,
     timestampFormat,

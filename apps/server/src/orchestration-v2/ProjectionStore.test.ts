@@ -6044,15 +6044,16 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
-  it.effect("does not freshly arm limit recovery for a subagent of a settled parent", () =>
+  it.effect("does not freshly arm limit recovery for a subagent of a put-away parent", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
       const resetAt = DateTime.formatIso(DateTime.add(now, { hours: 1 }));
+      type ParentState = "settled" | "archived" | "deleted" | null;
       const threadPayload = (
         threadId: ThreadId,
         parentThreadId: ThreadId | null,
-        settledOverride: "settled" | null,
+        state: ParentState,
       ) =>
         ({
           createdBy: "user",
@@ -6075,30 +6076,30 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           forkedFrom: null,
           createdAt: now,
           updatedAt: now,
-          archivedAt: null,
-          settledOverride,
-          settledAt: settledOverride === null ? null : now,
+          archivedAt: state === "archived" ? now : null,
+          settledOverride: state === "settled" ? ("settled" as const) : null,
+          settledAt: state === "settled" ? now : null,
           lastVisitedAt: null,
-          deletedAt: null,
+          deletedAt: state === "deleted" ? now : null,
         }) as const;
       const createThread = (
         threadId: ThreadId,
         parentThreadId: ThreadId | null,
-        settledOverride: "settled" | null,
+        state: ParentState,
       ) =>
         store.apply({
           id: EventId.make(`event:${threadId}:created`),
           type: "thread.created",
           threadId,
           occurredAt: now,
-          payload: threadPayload(threadId, parentThreadId, settledOverride),
+          payload: threadPayload(threadId, parentThreadId, state),
         });
-      const addLimitedChild = Effect.fnUntraced(function* (name: string, parentSettled: boolean) {
+      const addLimitedChild = Effect.fnUntraced(function* (name: string, parentState: ParentState) {
         const parentId = ThreadId.make(`thread:settled-parent-limit:${name}:parent`);
         const childId = ThreadId.make(`thread:settled-parent-limit:${name}:child`);
         const runId = RunId.make(`run:settled-parent-limit:${name}`);
         const rootNodeId = NodeId.make(`node:settled-parent-limit:${name}`);
-        yield* createThread(parentId, null, parentSettled ? "settled" : null);
+        yield* createThread(parentId, null, parentState);
         yield* createThread(childId, parentId, null);
         const run = {
           id: runId,
@@ -6160,14 +6161,22 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         });
         return childId;
       });
-      const settledParentChild = yield* addLimitedChild("settled", true);
-      const activeParentChild = yield* addLimitedChild("active", false);
+      const settledParentChild = yield* addLimitedChild("settled", "settled");
+      const archivedParentChild = yield* addLimitedChild("archived", "archived");
+      const deletedParentChild = yield* addLimitedChild("deleted", "deleted");
+      const activeParentChild = yield* addLimitedChild("active", null);
+      const children = [
+        settledParentChild,
+        archivedParentChild,
+        deletedParentChild,
+        activeParentChild,
+      ];
       for (const options of [
         { now, autoResume: true, snooze: false },
         { now, autoResume: false, snooze: true },
       ]) {
         const armed = (yield* store.getLimitRecoveryCandidates(options))
-          .filter((row) => row.id === settledParentChild || row.id === activeParentChild)
+          .filter((row) => children.includes(row.id))
           .filter(
             (row) =>
               limitRecoveryCommand(
@@ -6181,7 +6190,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         assert.deepEqual(
           armed,
           [activeParentChild],
-          `only the child of the unsettled parent is armed (${JSON.stringify(options)})`,
+          `only the child of the open parent is armed (${JSON.stringify(options)})`,
         );
       }
       // A recovery armed before the parent settled still resumes at its reset.
@@ -8430,6 +8439,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           .pipe(Effect.withTracer(tracer))).runs.map((run) => run.id),
         [runId, newerRunId],
       );
+      assert.lengthOf(statements, 2);
       // Live-item filters must hit the active partial indexes, not walk the thread's history.
       const sql = yield* SqlClient.SqlClient;
       for (const statement of statements.filter((query) => query.includes("turn_items"))) {
