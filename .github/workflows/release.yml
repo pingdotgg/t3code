@@ -653,6 +653,8 @@ jobs:
       resource_key: darwin-arm64
       cli_archive: true
       launch_check: true
+      # desktop_mac_x64 saves the shared pnpm store; this job finishes last.
+      save_pnpm_store: false
 
   desktop_mac_x64:
     name: Desktop macOS x64
