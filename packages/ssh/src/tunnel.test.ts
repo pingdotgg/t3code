@@ -83,6 +83,17 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
   return command._tag === "StandardCommand" ? command.args.map(String) : [];
 }
 
+const readRemoteScript = Effect.fn("test.readRemoteScript")(function* (
+  command: ChildProcess.Command,
+) {
+  assert(ChildProcess.isStandardCommand(command));
+  const stdin = command.options.stdin;
+  assert(typeof stdin === "object" && "stream" in stdin);
+  assert(stdin.stream !== undefined && typeof stdin.stream !== "string");
+  const chunks = yield* Stream.runCollect(stdin.stream);
+  return Buffer.concat([...chunks]).toString("utf8");
+});
+
 const ARCHIVE = { archiveVersion: "1.2.3-preview.20260911.4" } as const;
 
 describe("ssh tunnel scripts", () => {
@@ -177,6 +188,73 @@ describe("ssh tunnel scripts", () => {
       assert.equal(result.credential, "LCL4R2TPHDKQ{opaque}");
     }).pipe(Effect.provide(layerProcess));
   });
+
+  it.live.each(["launch", "pairing"] as const)(
+    "separates the %s response from profile output without a newline",
+    (operation) =>
+      Effect.gen(function* () {
+        const nativeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            const script = yield* readRemoteScript(command);
+            const lines = script.trimEnd().split("\n");
+            const response =
+              operation === "launch"
+                ? lines.at(-1)!
+                : lines
+                    .slice(lines.findLastIndex((line) => line.startsWith("PAIRING_BASE_DIR=")) + 1)
+                    .join("\n");
+            // Git supplies a POSIX shell on Windows too; execute only the generated response, not server setup.
+            return yield* nativeSpawner.spawn(
+              ChildProcess.make(
+                "git",
+                [
+                  "-c",
+                  `alias.t3-ssh-response=!printf '%s' "$T3_TEST_PROFILE"; t3_pairing_fixture() { printf '%s\\n' "$T3_TEST_PAIRING"; }; ${response}`,
+                  "t3-ssh-response",
+                ],
+                {
+                  stdin: "ignore",
+                  extendEnv: true,
+                  env: {
+                    T3_TEST_PROFILE: "loaded nvm {default}",
+                    T3_TEST_PAIRING: '{"credential":"fixture-credential"}',
+                    REMOTE_PORT: "3774",
+                    REMOTE_MANAGED: "managed",
+                    RUNNER_FILE: "t3_pairing_fixture",
+                    PAIRING_BASE_DIR: "fixture-home",
+                  },
+                },
+              ),
+            );
+          }),
+        );
+        const target = {
+          alias: "devbox",
+          hostname: "devbox.example.com",
+          username: null,
+          port: null,
+        };
+        const provideSpawner = Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          spawner,
+        );
+        const result =
+          operation === "launch"
+            ? yield* SshTunnel.launchOrReuseRemoteServer(target, undefined, ARCHIVE).pipe(
+                provideSpawner,
+              )
+            : yield* SshTunnel.issueRemotePairingToken(target, undefined, ARCHIVE).pipe(
+                provideSpawner,
+              );
+        assert.deepEqual(
+          result,
+          operation === "launch"
+            ? { remotePort: 3774, remoteServerKind: "managed" }
+            : { credential: "fixture-credential" },
+        );
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
 
   it.effect("retains a bounded diagnostic tail when the tunnel exits before readiness", () =>
     Effect.gen(function* () {
