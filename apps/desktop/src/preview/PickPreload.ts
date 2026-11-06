@@ -744,6 +744,7 @@ function startAnnotation(
     }
     const recording = state.phase === "recording";
     const active = state.phase !== "idle" && state.phase !== "error";
+    const restoreCommentFocus = active && shadowRoot.activeElement === voiceButton;
     voiceButton.hidden = !state.available || active;
     voiceButton.disabled = voiceBusy;
     const label = voiceSettings ? "Open voice settings" : "Start voice input";
@@ -753,6 +754,7 @@ function startAnnotation(
     // An active dictation takes the textarea's place; it stays focused (sr-only) so Enter still attaches.
     voiceRow.hidden = state.phase === "idle" || active;
     comment.classList.toggle("sr-only", active);
+    if (restoreCommentFocus) comment.focus({ preventScroll: true });
     composerRow.classList.toggle("flex-wrap", active);
     // Re-inserting on every level update would blur a focused Finish or Cancel.
     if (active && voicePill.parentElement !== composerRow) comment.after(voicePill);
