@@ -278,6 +278,11 @@ export function planScopedSettingsPatch(
                   next[key] = { instanceId: base.instanceId, model: base.model, ...value };
                   continue;
                 }
+                // Host→login maps replace whole so clearing a host can inherit the environment pin.
+                if (key === "githubHostAccounts") {
+                  next[key] = value;
+                  continue;
+                }
                 next[key] =
                   isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
               }

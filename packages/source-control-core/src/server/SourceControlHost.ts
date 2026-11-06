@@ -13,6 +13,15 @@ import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+/**
+ * Project (or other) host→login overlay for CLI credential resolution. Empty means inherit the
+ * environment pin in Settings → Source control. Provided around project-scoped source-control work.
+ */
+export const PreferredHostAccounts = Context.Reference<Readonly<Record<string, string>>>(
+  "@t3tools/source-control-core/server/SourceControlHost/PreferredHostAccounts",
+  { defaultValue: () => ({}) },
+);
+
 export interface SourceControlProcessInput {
   readonly operation: string;
   readonly command: string;

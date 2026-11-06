@@ -7,7 +7,7 @@ import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
-import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
@@ -141,6 +141,20 @@ describe("GitHubCredentials", () => {
       expect(Redacted.value(credential.token)).toBe("saved-token");
       expect(credential.source).toBe("settings");
       expect(calls).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("prefers a project host account overlay over the environment pin", () => {
+    const { layer, calls } = harness({ "github.com": { account: "personal" } });
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      const credential = yield* credentials.get("github.com").pipe(
+        Effect.provideService(SourceControlHost.PreferredHostAccounts, {
+          "github.com": "work",
+        }),
+      );
+      expect(Redacted.value(credential.token)).toBe("token-for-work");
+      expect(calls).toEqual([["auth", "token", "--hostname", "github.com", "--user", "work"]]);
     }).pipe(Effect.provide(layer));
   });
 

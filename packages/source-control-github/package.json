@@ -10,6 +10,10 @@
     "./server/driver": {
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
+    },
+    "./server/GitHubCredentials": {
+      "types": "./src/server/GitHubCredentials.ts",
+      "import": "./src/server/GitHubCredentials.ts"
     }
   },
   "scripts": {

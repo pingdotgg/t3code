@@ -193,6 +193,13 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => undefined),
     );
 
+  const preferredAccount = Effect.fn("GitHubCredentials.preferredAccount")(function* (
+    host: string,
+  ) {
+    const login = (yield* SourceControlHost.PreferredHostAccounts)[host]?.trim();
+    return login === undefined || login.length === 0 ? undefined : login;
+  });
+
   const savedToken = (host: string) =>
     sourceControlHost.settings.getWithSecrets(GitHubClient.definition.kind).pipe(
       Effect.map(
@@ -251,19 +258,23 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  const accountFor = Effect.fnUntraced(function* (host: string) {
+    return (yield* preferredAccount(host)) ?? (yield* hostChoice(host))?.account;
+  });
+
   return GitHubCredentials.of({
     get: Effect.fn("GitHubCredentials.get")(function* (rawHost) {
       const host = normalizeHost(rawHost);
       const fromSettings = yield* saved(host);
       if (Option.isSome(fromSettings)) return fromSettings.value;
-      return yield* Cache.get(cache, cacheKey(host, (yield* hostChoice(host))?.account));
+      return yield* Cache.get(cache, cacheKey(host, yield* accountFor(host)));
     }),
     saved,
     fingerprint: fingerprintOf,
     invalidate: Effect.fn("GitHubCredentials.invalidate")(function (rawHost) {
       const host = normalizeHost(rawHost);
-      return hostChoice(host).pipe(
-        Effect.flatMap((choice) => Cache.invalidate(cache, cacheKey(host, choice?.account))),
+      return accountFor(host).pipe(
+        Effect.flatMap((account) => Cache.invalidate(cache, cacheKey(host, account))),
       );
     }),
   });

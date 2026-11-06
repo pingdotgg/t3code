@@ -1043,6 +1043,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "reviewGuideInstructions",
   "sourceControlWritingStyle",
   "removeAgentCreditsOnMerge",
+  "githubHostAccounts",
   "branchNamingMode",
   "branchNamePrefix",
   "branchNameInstructions",
@@ -1080,6 +1081,15 @@ export const ProjectSettingsOverrides = Schema.Struct({
   reviewGuideInstructions: Schema.optionalKey(TrimmedString),
   sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSetting),
   removeAgentCreditsOnMerge: Schema.optionalKey(Schema.Boolean),
+  /** Per-host `gh` login for this project; absent hosts inherit Settings → Source control. */
+  githubHostAccounts: Schema.optionalKey(
+    Schema.Record(
+      TrimmedNonEmptyString.pipe(
+        Schema.decodeTo(Schema.String, SchemaTransformation.toLowerCase()),
+      ),
+      TrimmedNonEmptyString,
+    ),
+  ),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
   branchNamePrefix: Schema.optionalKey(TrimmedString),
   branchNameInstructions: Schema.optionalKey(TrimmedString),
@@ -1338,6 +1348,11 @@ export const ServerSettings = Schema.Struct({
   branchNamePrefix: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("t3"))),
   branchNameInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   removeAgentCreditsOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Project overrides pick a `gh` login per host; the environment default is empty (inherit host pin). */
+  githubHostAccounts: Schema.Record(
+    TrimmedNonEmptyString.pipe(Schema.decodeTo(Schema.String, SchemaTransformation.toLowerCase())),
+    TrimmedNonEmptyString,
+  ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   sourceControlWritingStyle: SourceControlWritingStyleSetting.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1684,6 +1699,14 @@ export const ServerSettingsPatch = Schema.Struct({
   branchNamePrefix: Schema.optionalKey(TrimmedString),
   branchNameInstructions: Schema.optionalKey(TrimmedString),
   removeAgentCreditsOnMerge: Schema.optionalKey(Schema.Boolean),
+  githubHostAccounts: Schema.optionalKey(
+    Schema.Record(
+      TrimmedNonEmptyString.pipe(
+        Schema.decodeTo(Schema.String, SchemaTransformation.toLowerCase()),
+      ),
+      TrimmedNonEmptyString,
+    ),
+  ),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({
       mode: Schema.optionalKey(SourceControlWritingStyleMode),
