@@ -559,6 +559,15 @@ describe("composer rich text document model", () => {
       );
     });
 
+    it("reopens without an empty line between the quote and the comment", () => {
+      const { doc, map } = serialize(quote("quoted"), paragraph("Comment to it"));
+      const reopened = ProseMirrorNode.fromJSON(
+        schema,
+        buildDocJson(map.value, (name) => ({ label: name, description: null })),
+      );
+      expect(reopened.toJSON()).toEqual(doc.toJSON());
+    });
+
     it("settles on the blank line when a draft glued it to the quote", () => {
       const settled = "before\n> quoted\n\nafter";
       expect(roundTrip("before\n> quoted\nafter").value).toBe(settled);
