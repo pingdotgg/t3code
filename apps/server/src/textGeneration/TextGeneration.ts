@@ -132,6 +132,11 @@ export const make = Effect.gen(function* () {
           instances.filter(
             (instance) =>
               instance.enabled &&
+              fallbackTextGenerationModelSelection(
+                settings.providerInstances,
+                (instanceId) => instanceId === instance.instanceId,
+                { includeConfiguredInstances: true },
+              ) !== null &&
               snapshots.some(
                 (provider) => provider.instanceId === instance.instanceId && canServe(provider),
               ),
