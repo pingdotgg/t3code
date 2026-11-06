@@ -19,6 +19,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
@@ -117,6 +118,8 @@ interface HarnessOptions {
   readonly deleteLocalBranchFails?: boolean;
   readonly createWorktreeGate?: Effect.Effect<void>;
   readonly existsFails?: boolean;
+  readonly subagentStatus?: string;
+  readonly destinationProjectExists?: boolean;
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -176,7 +179,11 @@ const makeHarness = (options: HarnessOptions = {}) => {
       return Effect.succeed(makeProjection({ ...thread, archivedAt: "2026-01-02T00:00:00.000Z" }));
     }
     return id === threadId && thread !== null
-      ? Effect.succeed(makeProjection(thread))
+      ? Effect.succeed({
+          ...makeProjection(thread),
+          subagents:
+            options.subagentStatus === undefined ? [] : [{ status: options.subagentStatus }],
+        } as unknown as OrchestrationV2ThreadProjection)
       : Effect.fail(new OrchestratorProjectionError({ threadId: id }));
   });
   const sendToThread = vi.fn((_: unknown) => {
@@ -204,6 +211,17 @@ const makeHarness = (options: HarnessOptions = {}) => {
             : Option.none(),
         ),
   );
+  const bootstrap = vi.fn((input: { readonly projectId: ProjectId; readonly title: string }) =>
+    Effect.succeed({
+      project: {
+        ...project,
+        id: options.destinationProjectExists ? ProjectId.make("project-existing") : input.projectId,
+        title: input.title,
+      },
+      created: options.destinationProjectExists !== true,
+    }),
+  );
+  const moveThreadToProject = vi.fn((_: unknown) => Effect.succeed({ movesWhenTurnEnds: true }));
   const removeWorktree = vi.fn((_: unknown) =>
     options.removeWorktreeFails
       ? (Effect.fail("simulated worktree removal failure") as never)
@@ -299,9 +317,11 @@ const makeHarness = (options: HarnessOptions = {}) => {
           dispatch,
           getThreadRecords,
           sendToThread,
+          moveThreadToProject: moveThreadToProject as never,
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
         Layer.mock(ProjectService.ProjectService)({
           getById,
+          bootstrap: bootstrap as never,
         } satisfies Partial<ProjectService.ProjectService["Service"]>),
         ServerSettings.layerTest({
           newWorktreesStartFromOrigin: options.newWorktreesStartFromOrigin ?? false,
@@ -362,6 +382,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
     deleteLocalBranch,
     localStatus,
     runForThread,
+    bootstrap,
+    moveThreadToProject,
   };
 };
 
@@ -396,6 +418,104 @@ const runStatus = (harness: ReturnType<typeof makeHarness>) =>
   }).pipe(Effect.provide(harness.layer));
 
 const decodeHandoffInput = Schema.decodeUnknownEffect(WorktreeMcpHandoffInput);
+
+describe("t3_thread_move", () => {
+  const moveCapabilities = new Set(["worktree", "orchestration"] as const);
+  const makeFolder = Effect.fn("makeFolder")(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    return yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-thread-move-" });
+  });
+  const runMove = (
+    harness: ReturnType<typeof makeHarness>,
+    input: Parameters<WorktreeMcpService.WorktreeMcpService["Service"]["moveToFolder"]>[1],
+  ) =>
+    WorktreeMcpService.WorktreeMcpService.pipe(
+      Effect.flatMap((service) => service.moveToFolder(harness.scope, input)),
+      Effect.provide(harness.layer),
+    );
+
+  it.effect("registers the folder as a project and defers the move and its continuation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const folder = yield* makeFolder();
+        const harness = makeHarness({ capabilities: moveCapabilities });
+        const result = yield* runMove(harness, { path: folder, continuationPrompt: "Carry on." });
+
+        expect(result).toMatchObject({
+          projectCreated: true,
+          workspaceRoot: folder,
+          movesWhenTurnEnds: true,
+        });
+        expect(harness.moveThreadToProject).toHaveBeenCalledWith(
+          expect.objectContaining({
+            threadId,
+            projectId: result.projectId,
+            continuation: expect.objectContaining({ text: "Carry on." }),
+          }),
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reuses the project already rooted at the folder", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const folder = yield* makeFolder();
+        const harness = makeHarness({
+          capabilities: moveCapabilities,
+          destinationProjectExists: true,
+        });
+        const result = yield* runMove(harness, { path: folder });
+
+        expect(result.projectCreated).toBe(false);
+        expect(result.projectId).toBe(ProjectId.make("project-existing"));
+        expect(harness.moveThreadToProject).toHaveBeenCalledWith(
+          expect.not.objectContaining({ continuation: expect.anything() }),
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses a move it cannot honor before changing anything", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const folder = yield* makeFolder();
+        const file = path.join(folder, "file.txt");
+        yield* fileSystem.writeFileString(file, "");
+        const cases = [
+          { input: "relative/folder", code: "invalid_request" },
+          { input: path.join(folder, "missing"), code: "invalid_request" },
+          { input: file, code: "invalid_request" },
+          {
+            input: folder,
+            code: "invalid_request",
+            options: { thread: { worktreePath: folder } },
+          },
+          { input: folder, code: "invalid_request", options: { subagentStatus: "running" } },
+          { input: folder, code: "invalid_request", options: { thread: { archivedAt: "now" } } },
+          {
+            input: folder,
+            code: "capability_denied",
+            options: { capabilities: new Set(["worktree"] as const) },
+          },
+        ] satisfies ReadonlyArray<{
+          readonly input: string;
+          readonly code: string;
+          readonly options?: HarnessOptions;
+        }>;
+        for (const { input, code, options } of cases) {
+          const harness = makeHarness({ capabilities: moveCapabilities, ...options });
+          const exit = yield* Effect.exit(runMove(harness, { path: input }));
+          expectTypedFailure(exit, { code });
+          expect(harness.bootstrap).not.toHaveBeenCalled();
+          expect(harness.moveThreadToProject).not.toHaveBeenCalled();
+        }
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
 
 describe("t3_worktree_handoff", () => {
   it.effect("reports a continuation failure without failing the handoff", () => {

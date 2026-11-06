@@ -42,6 +42,7 @@ export type T3McpToolSummaryAction =
   | "question-respond"
   | "secret-request"
   | "worktree-handoff"
+  | "thread-move"
   | "worktree-list"
   | "worktree-status"
   | "project-list"
@@ -180,6 +181,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Interrupt", "Interrupting", "Requested an interrupt of", "a T3 thread"],
     "thread-interrupt",
   ),
+  t3_thread_move: tool(["Move", "Moving", "Moved", "thread to a folder"], "thread-move"),
   t3_worktree_handoff: tool(
     ["Hand off", "Handing off", "Handed off", "thread to a git worktree"],
     "worktree-handoff",

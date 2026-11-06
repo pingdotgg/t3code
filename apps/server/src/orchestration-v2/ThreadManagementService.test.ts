@@ -704,6 +704,194 @@ it.effect.each([
 );
 
 it.effect.each([
+  { status: "completed", moves: true },
+  { status: "failed", moves: false },
+] as const)("moveThreadToProject handles a $status turn", ({ status, moves }) =>
+  Effect.gen(function* () {
+    const sourceProjectId = ProjectId.make("project:thread-management:move-source");
+    const targetProjectId = ProjectId.make("project:thread-management:move-target");
+    const threadId = ThreadId.make("thread:thread-management:move");
+    const runId = RunId.make("run:thread-management:move");
+    const queuedRunId = RunId.make("run:thread-management:move-queued");
+    const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+    const subscribed = yield* Deferred.make<void>();
+    const continued = yield* Deferred.make<void>();
+    const refused = yield* Deferred.make<void>();
+    const runs: Array<{
+      id: RunId;
+      ordinal: number;
+      status: OrchestrationV2Run["status"];
+      userMessageId: MessageId;
+    }> = [{ id: runId, ordinal: 1, status: "running", userMessageId: MessageId.make("original") }];
+    let projectId = sourceProjectId;
+    let sequence = 0;
+    let queuedRunBusy = true;
+    const terminalRead = yield* Deferred.make<void>();
+    const moveCommands: Array<CommandId> = [];
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.sync(() => sequence),
+          getThreadShell: () =>
+            Effect.succeed({ id: threadId, projectId, activeRunId: runId } as never),
+          restartContinuationPending: () => Effect.succeed(false),
+          streamStoredEventsFrom: (input) =>
+            input?.eventType === "run.updated"
+              ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                  Stream.drain,
+                  Stream.concat(Stream.fromQueue(events)),
+                )
+              : Stream.never,
+          getThreadRecords: () =>
+            Effect.gen(function* () {
+              if (runs[0]!.status !== "running") yield* Deferred.succeed(terminalRead, undefined);
+              return {
+                thread: {
+                  id: threadId,
+                  projectId,
+                  archivedAt: null,
+                  deletedAt: null,
+                  modelSelection: {
+                    instanceId: ProviderInstanceId.make("claudeAgent"),
+                    model: "test",
+                  },
+                },
+                runs,
+                messages: [],
+                turnItems: [],
+                providerTurns: [],
+              } as unknown as OrchestrationV2ThreadProjection;
+            }),
+          dispatch: (command) =>
+            Effect.gen(function* () {
+              if (command.type === "thread.project.move") {
+                moveCommands.push(command.commandId);
+                // A message queued during the turn runs before the move can apply.
+                if (queuedRunBusy) {
+                  yield* Deferred.succeed(refused, undefined);
+                  return yield* new Orchestrator.OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause: "Thread still has work in progress.",
+                  });
+                }
+                projectId = command.projectId;
+              }
+              if (command.type === "message.dispatch") {
+                expect(projectId).toBe(targetProjectId);
+                expect(command.text).toBe("Carry on.");
+                yield* Deferred.succeed(continued, undefined);
+              }
+              return { sequence: 1, storedEvents: [] } as never;
+            }),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ThreadManagementService.ThreadManagementService;
+      const result = yield* service.moveThreadToProject({
+        threadId,
+        projectId: targetProjectId,
+        commandId: CommandId.make("command:thread-management:move"),
+        continuation: {
+          commandId: CommandId.make("command:thread-management:move-continuation"),
+          messageId: MessageId.make("message:thread-management:move-continuation"),
+          text: "Carry on.",
+        },
+      });
+      expect(result).toEqual({ movesWhenTurnEnds: true });
+      yield* Deferred.await(subscribed);
+      expect(moveCommands).toEqual([]);
+
+      runs[0]!.status = status;
+      sequence = 1;
+      yield* Queue.offer(events, {
+        sequence,
+        event: { type: "run.updated", threadId, payload: { id: runId } },
+      } as unknown as OrchestrationV2StoredEvent);
+      yield* Deferred.await(terminalRead);
+      if (!moves) {
+        expect(moveCommands).toEqual([]);
+        return;
+      }
+
+      yield* Deferred.await(refused);
+      expect(projectId).toBe(sourceProjectId);
+      queuedRunBusy = false;
+      sequence = 2;
+      yield* Queue.offer(events, {
+        sequence,
+        event: { type: "run.updated", threadId, payload: { id: queuedRunId } },
+      } as unknown as OrchestrationV2StoredEvent);
+      yield* Deferred.await(continued);
+      expect(new Set(moveCommands).size).toBe(moveCommands.length);
+    }).pipe(Effect.provide(layerTest));
+  }),
+);
+
+it.effect("waitForThread follows a thread that moves to another project", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:wait-source");
+    const threadId = ThreadId.make("thread:thread-management:wait-move");
+    const runId = RunId.make("run:thread-management:wait-move");
+    const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+    const run: { id: RunId; ordinal: number; status: OrchestrationV2Run["status"] } = {
+      id: runId,
+      ordinal: 1,
+      status: "running",
+    };
+    let currentProjectId = projectId;
+    const subscribed = yield* Deferred.make<void>();
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(
+        ThreadManagementService.layer.pipe(
+          Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+          Layer.provide(
+            Layer.mock(Orchestrator.OrchestratorV2)({
+              getThreadEventSequence: () => Effect.succeed(0),
+              restartContinuationPending: () => Effect.succeed(false),
+              streamStoredEventsFrom: (input) =>
+                input?.eventType === "run.updated"
+                  ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                      Stream.drain,
+                      Stream.concat(Stream.fromQueue(events)),
+                    )
+                  : Stream.never,
+              getThreadRecords: () =>
+                Effect.sync(
+                  () =>
+                    ({
+                      thread: { id: threadId, projectId: currentProjectId, deletedAt: null },
+                      runs: [run],
+                    }) as unknown as OrchestrationV2ThreadProjection,
+                ),
+            }),
+          ),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(layerReceiptsTest),
+        ),
+      ),
+    );
+    const fiber = yield* service
+      .waitForThread({ projectId, threadId, runId, timeoutMs: 60_000 })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(subscribed);
+    run.status = "completed";
+    currentProjectId = ProjectId.make("project:thread-management:wait-target");
+    yield* Queue.offer(events, {
+      sequence: 1,
+      event: { type: "run.updated", threadId, payload: { id: runId } },
+    } as unknown as OrchestrationV2StoredEvent);
+    const result = yield* Fiber.join(fiber);
+    expect(result).toMatchObject({ timedOut: false, run: { status: "completed" } });
+  }),
+);
+
+it.effect.each([
   {
     name: "kills the thread's own agent and ends its turn",
     others: [] as ReadonlyArray<string>,

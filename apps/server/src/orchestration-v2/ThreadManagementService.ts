@@ -453,6 +453,20 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly runId: RunId;
   }) => Effect.Effect<void, ThreadManagementFailure>;
+  /** Moves the thread once it is idle. Dropped if the turn in progress does not complete. */
+  readonly moveThreadToProject: (input: {
+    readonly threadId: ThreadId;
+    readonly projectId: ProjectId;
+    readonly commandId: CommandId;
+    readonly continuation?: {
+      readonly commandId: CommandId;
+      readonly messageId: MessageId;
+      readonly text: string;
+    };
+  }) => Effect.Effect<
+    { readonly movesWhenTurnEnds: boolean },
+    Orchestrator.OrchestratorV2Error | ThreadManagementFailure
+  >;
   readonly settleThread: (input: {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
@@ -757,31 +771,32 @@ const make = Effect.gen(function* () {
       Effect.andThen(orchestrator.dispatch(command)),
     );
 
-  const getProjectThreadRecords: ThreadManagementServiceShape["getProjectThreadRecords"] = (
-    input,
-    fields,
-    filter,
-  ) =>
-    ensureProjectionTranscript(input.threadId).pipe(
-      Effect.andThen(orchestrator.getThreadRecords(input.threadId, fields, filter)),
-      Effect.mapError(
-        (cause) =>
-          new ThreadManagementProjectionLoadError({
-            projectId: input.projectId,
-            threadId: input.threadId,
-            cause,
-          }),
-      ),
-      Effect.filterOrFail(
-        (projection) =>
-          projection.thread.projectId === input.projectId && projection.thread.deletedAt === null,
-        (_projection) =>
-          new ThreadManagementThreadNotFoundError({
-            projectId: input.projectId,
-            threadId: input.threadId,
-          }),
-      ),
-    );
+  const readThreadRecords =
+    (anyProject: boolean): ThreadManagementServiceShape["getProjectThreadRecords"] =>
+    (input, fields, filter) =>
+      ensureProjectionTranscript(input.threadId).pipe(
+        Effect.andThen(orchestrator.getThreadRecords(input.threadId, fields, filter)),
+        Effect.mapError(
+          (cause) =>
+            new ThreadManagementProjectionLoadError({
+              projectId: input.projectId,
+              threadId: input.threadId,
+              cause,
+            }),
+        ),
+        Effect.filterOrFail(
+          (projection) =>
+            (anyProject || projection.thread.projectId === input.projectId) &&
+            projection.thread.deletedAt === null,
+          (_projection) =>
+            new ThreadManagementThreadNotFoundError({
+              projectId: input.projectId,
+              threadId: input.threadId,
+            }),
+        ),
+      );
+  const getProjectThreadRecords = readThreadRecords(false);
+  const readThreadRecordsInAnyProject = readThreadRecords(true);
 
   const listProjectThreads: ThreadManagementServiceShape["listProjectThreads"] = (input) =>
     orchestrator
@@ -948,7 +963,8 @@ const make = Effect.gen(function* () {
     });
     const untilDelegatedWorkSettled = input.untilDelegatedWorkSettled === true;
     const delegatedWorkResult = Effect.gen(function* () {
-      const records = yield* getProjectThreadRecords(
+      // The thread may move to another project once its turn ends; the wait follows it.
+      const records = yield* readThreadRecordsInAnyProject(
         input,
         ["runs", "messages", "subagents", "providerThreads"],
         { messageRoles: ["user"], monitorNotificationsOnly: true },
@@ -1023,7 +1039,7 @@ const make = Effect.gen(function* () {
         : Stream.empty,
     ).pipe(
       Stream.mapEffect(() =>
-        getProjectThreadRecords(input, ["runs"]).pipe(
+        readThreadRecordsInAnyProject(input, ["runs"]).pipe(
           Effect.flatMap((current) => evaluate(current.runs)),
         ),
       ),
@@ -1036,7 +1052,9 @@ const make = Effect.gen(function* () {
     // The run may have reached a terminal status while the timeout was
     // winning the race; the final projection read decides what actually
     // happened, so only a still-active run counts as timed out.
-    return settledResult(yield* evaluate((yield* getProjectThreadRecords(input, ["runs"])).runs));
+    return settledResult(
+      yield* evaluate((yield* readThreadRecordsInAnyProject(input, ["runs"])).runs),
+    );
   });
 
   const settleAfterRun: ThreadManagementServiceShape["settleAfterRun"] = Effect.fn(
@@ -1112,6 +1130,83 @@ const make = Effect.gen(function* () {
       Stream.runHead,
       Effect.timeoutOption(Duration.millis(SETTLE_AFTER_RUN_WAIT_MS)),
     );
+  });
+
+  const moveThreadToProject: ThreadManagementServiceShape["moveThreadToProject"] = Effect.fn(
+    "orchestrationV2.threadManagement.moveThreadToProject",
+  )(function* (input) {
+    const apply = Effect.gen(function* () {
+      const afterSequence = yield* orchestrator.getThreadEventSequence(input.threadId);
+      const tryMove = Effect.gen(function* () {
+        const sequence = yield* orchestrator.getThreadEventSequence(input.threadId);
+        return yield* dispatch({
+          type: "thread.project.move",
+          commandId: CommandId.make(`${input.commandId}:${sequence}`),
+          threadId: input.threadId,
+          projectId: input.projectId,
+        }).pipe(
+          Effect.as(true),
+          // A queued message may run first; the next run update tries again.
+          Effect.catchTags({
+            OrchestratorDispatchError: () => Effect.succeed(false),
+            OrchestratorCommandPreviouslyRejectedError: () => Effect.succeed(false),
+          }),
+        );
+      });
+      const moved = yield* Stream.fromEffect(tryMove).pipe(
+        Stream.concat(
+          orchestrator
+            .streamStoredEventsFrom({
+              threadId: input.threadId,
+              afterSequence,
+              eventType: "run.updated",
+            })
+            .pipe(Stream.mapEffect(() => tryMove)),
+        ),
+        Stream.filter((done) => done),
+        Stream.runHead,
+        Effect.timeoutOption(Duration.millis(SETTLE_AFTER_RUN_WAIT_MS)),
+      );
+      if (Option.isNone(moved) || Option.isNone(moved.value) || input.continuation === undefined) {
+        return;
+      }
+      yield* sendToThread({
+        projectId: input.projectId,
+        commandId: input.continuation.commandId,
+        threadId: input.threadId,
+        messageId: input.continuation.messageId,
+        text: input.continuation.text,
+        attachments: [],
+        mode: "queue",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+    });
+    const shell = yield* orchestrator.getThreadShell(input.threadId);
+    if (shell == null || shell.activeRunId === null) {
+      yield* apply;
+      return { movesWhenTurnEnds: false };
+    }
+    const { projectId, activeRunId } = shell;
+    yield* waitForThread({
+      projectId,
+      threadId: input.threadId,
+      runId: activeRunId,
+      timeoutMs: SETTLE_AFTER_RUN_WAIT_MS,
+    }).pipe(
+      Effect.flatMap(({ run }) =>
+        run?.status === "completed"
+          ? apply
+          : Effect.logInfo("Dropped a thread move because its turn did not complete", {
+              threadId: input.threadId,
+              runId: activeRunId,
+              status: run?.status ?? null,
+            }),
+      ),
+      Effect.ignoreCause({ log: true }),
+      Effect.forkIn(layerScope),
+    );
+    return { movesWhenTurnEnds: true };
   });
 
   const settleThread: ThreadManagementServiceShape["settleThread"] = Effect.fn(
@@ -1616,6 +1711,7 @@ const make = Effect.gen(function* () {
     hasReceipt,
     waitForThread,
     settleAfterRun,
+    moveThreadToProject,
     settleThread,
     interruptThread,
     stopDelegatedTasks,
