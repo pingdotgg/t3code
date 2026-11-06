@@ -1,5 +1,4 @@
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
-import { getScrollableAncestors } from "@dnd-kit/core";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { type ReactNode, useLayoutEffect } from "react";
@@ -25,19 +24,8 @@ function SortableSidebarMarker(props: {
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the projected drop box inside the scroll viewport as drag transforms move it
   useLayoutEffect(() => {
-    const hint = node.current?.firstElementChild;
-    if (!props.revealOverflow || transform?.y === undefined || !hint) return;
-    const viewport = getScrollableAncestors(hint, 1)[0]?.getBoundingClientRect();
-    if (!viewport) return;
-    const rect = hint.getBoundingClientRect();
-    const onScreen = (top: number, bottom: number) =>
-      top < viewport.bottom && bottom > viewport.top;
-    // Follow a hint that is or rests on screen; scrolling to an off-screen one jumps the list.
-    if (
-      onScreen(rect.top, rect.bottom) ||
-      onScreen(rect.top - transform.y, rect.bottom - transform.y)
-    ) {
-      hint.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (props.revealOverflow && transform?.y !== undefined) {
+      node.current?.firstElementChild?.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
   }, [node, props.revealOverflow, transform?.y]);
   return (
