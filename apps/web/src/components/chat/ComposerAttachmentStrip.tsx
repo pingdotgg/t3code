@@ -79,7 +79,13 @@ function formatVideoDuration(seconds: number) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
-function ComposerVideoThumbnail({ file }: { file: File }) {
+function ComposerVideoThumbnail({
+  file,
+  showDuration,
+}: {
+  readonly file: File;
+  readonly showDuration: boolean;
+}) {
   const [duration, setDuration] = useState<number | null>(null);
   const setVideo = (video: HTMLVideoElement | null) => {
     if (!video) return;
@@ -101,7 +107,7 @@ function ComposerVideoThumbnail({ file }: { file: File }) {
         }}
         className="pointer-events-none absolute inset-0 size-full object-cover"
       />
-      {duration !== null ? (
+      {showDuration && duration !== null ? (
         <span className="pointer-events-none absolute bottom-0.5 right-1 z-10 font-mono text-3xs tabular-nums text-white drop-shadow-md">
           {formatVideoDuration(duration)}
         </span>
@@ -389,7 +395,10 @@ export function ComposerAttachmentMediaRow({
             >
               {file.file && (
                 <>
-                  <ComposerVideoThumbnail file={file.file} />
+                  <ComposerVideoThumbnail
+                    file={file.file}
+                    showDuration={upload?.status !== "uploading"}
+                  />
                   <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-black/10" />
                 </>
               )}
@@ -443,6 +452,7 @@ export function ComposerAttachmentMediaRow({
 }
 
 const COUNTABLE_TEXT_MAX_BYTES = 1024 * 1024;
+const COUNTABLE_PDF_MAX_BYTES = 20 * 1024 * 1024;
 
 function fileTypeLabel(name: string): string | null {
   const dot = name.lastIndexOf(".");
@@ -465,7 +475,8 @@ async function readLocalFileDetail(
   const kind = filePreviewKind({ name, mimeType });
   const countLines =
     (kind === "text" || kind === "markdown") && source.size <= COUNTABLE_TEXT_MAX_BYTES;
-  if (kind !== "pdf" && !countLines) return null;
+  const countPages = kind === "pdf" && source.size <= COUNTABLE_PDF_MAX_BYTES;
+  if (!countPages && !countLines) return null;
   const bytes = await source.arrayBuffer();
   if (countLines) {
     const { text } = decodeFilePreviewText(new Uint8Array(bytes));
@@ -782,7 +793,7 @@ export function ComposerTerminalContextCards({
             <TooltipTrigger render={card} />
             <TooltipPopup side="top" className="max-w-md">
               <pre className="max-h-48 overflow-hidden whitespace-pre-wrap font-mono text-2xs leading-snug">
-                {context.text.split("\n").slice(0, 12).join("\n")}
+                {context.text.split("\n", 12).join("\n")}
               </pre>
             </TooltipPopup>
           </Tooltip>

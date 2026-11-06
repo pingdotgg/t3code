@@ -699,9 +699,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const prompt = composerDraft.prompt;
   const composerImages = attachmentDraft.images;
   const composerFiles = attachmentDraft.files;
+  const inlineContextIdSet = new Set(collectInlineContextIds(prompt));
   const inlineFileIdSet = (() => {
     if (questionAttachmentTarget) return new Set<string>();
-    const contextIds = new Set(collectInlineContextIds(prompt));
+    const contextIds = inlineContextIdSet;
     return new Set(
       composerFiles
         .filter((file) => contextIds.has(toKindScopedComposerContextId("file", file.id)))
@@ -719,7 +720,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerTerminalContexts = composerDraft.terminalContexts;
   const composerPreviewAnnotations = composerDraft.previewAnnotations;
   const composerReviewComments = composerDraft.reviewComments;
-  const inlineContextIdSet = new Set(collectInlineContextIds(prompt));
   const shelfTerminalContexts = composerTerminalContexts.filter(
     (context) => !inlineContextIdSet.has(terminalContextReference(context).contextId),
   );
@@ -1720,7 +1720,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (liveReviewIds.has(contextId)) continue;
       const comment = retained.reviewComments.get(contextId);
       if (comment) {
-        addComposerDraftReviewComment(composerDraftTarget, comment, { appendReference: false });
+        addComposerDraftReviewComment(composerDraftTarget, comment);
       }
     }
 
@@ -1737,9 +1737,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     for (const restored of attachmentChanges.annotationsToRestore) {
       if (restored.image) addComposerDraftImages(attachmentDraftTarget, [restored.image]);
-      addComposerDraftPreviewAnnotation(composerDraftTarget, restored.annotation, {
-        appendReference: false,
-      });
+      addComposerDraftPreviewAnnotation(composerDraftTarget, restored.annotation);
     }
     for (const fileId of attachmentChanges.filesToRemove) {
       removeComposerDraftFile(attachmentDraftTarget, fileId);
@@ -1987,9 +1985,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
       });
       if (applied) {
-        addComposerDraftReviewComment(composerDraftTarget, comment, {
-          appendReference: false,
-        });
+        addComposerDraftReviewComment(composerDraftTarget, comment);
         setComposerHighlightedItemId(null);
       }
       return;
@@ -2605,7 +2601,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const insertContextReferencesAtCaret = (
     references: ReadonlyArray<ComposerContextReference>,
   ): boolean => {
-    // Review comments and preview picks show above the prompt; send adds their references.
     if (references.some((reference) => SHELF_CONTEXT_KINDS.has(reference.kind))) return true;
     return insertComposerText(
       `${references.map(formatInlineContextReference).join(" ")} `,
@@ -2633,7 +2628,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         { ensureLeadingBoundary: true },
       );
       if (inserted) {
-        addComposerDraftReviewComment(composerDraftTarget, comment, { appendReference: false });
+        addComposerDraftReviewComment(composerDraftTarget, comment);
       }
       return inserted;
     },
@@ -3136,15 +3131,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onRemoveFile={removeComposerFileFromDraft}
       />
     ) : null;
+  // A question answer sends only its own text and files, so the thread's context waits.
+  const showThreadContextShelf = !isComposerCollapsedMobile && pendingUserInputs.length === 0;
   const composerTerminalCards =
-    !isComposerCollapsedMobile && shelfTerminalContexts.length > 0 ? (
+    showThreadContextShelf && shelfTerminalContexts.length > 0 ? (
       <ComposerTerminalContextCards
         contexts={shelfTerminalContexts}
         onRemove={(contextId) => removeComposerDraftTerminalContext(composerDraftTarget, contextId)}
       />
     ) : null;
   const composerContextChipRow =
-    !isComposerCollapsedMobile &&
+    showThreadContextShelf &&
     (shelfReviewComments.length > 0 || shelfPreviewAnnotations.length > 0) ? (
       <ComposerContextChipRow
         reviewComments={shelfReviewComments}

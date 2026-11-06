@@ -331,7 +331,7 @@ export function useComposerStash(input: {
       }
       const restoredFiles = [...markerReplacements, ...filesToAppend];
       if (restoredFiles.length > 0) {
-        addComposerDraftFiles(composerDraftTarget, restoredFiles, { appendReference: true });
+        addComposerDraftFiles(composerDraftTarget, restoredFiles);
         const restoredFilePrompt = getComposerDraft(composerDraftTarget)?.prompt;
         if (restoredFilePrompt !== undefined && restoredFilePrompt !== promptRef.current) {
           promptRef.current = restoredFilePrompt;
@@ -471,7 +471,12 @@ export function useComposerStash(input: {
         }),
       ),
     ];
-    if (prompt.length === 0 && images.length === 0 && files.length === 0) {
+    if (
+      prompt.length === 0 &&
+      images.length === 0 &&
+      files.length === 0 &&
+      stashedRecords.length === 0
+    ) {
       const entries = usePromptStashStore.getState().entries;
       const entry = entries.length === 1 ? entries[0] : undefined;
       if (entry && !entry.pendingImageCount) {

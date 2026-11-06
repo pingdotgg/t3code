@@ -359,18 +359,14 @@ export function useComposerContextImport(input: {
           if (!threadId) break;
           const imported = terminalContextDraftFromRecord(record, threadId);
           const draft = conflicts ? { ...imported, id: randomUUID() } : imported;
-          addComposerDraftTerminalContexts(composerDraftTarget, [draft], {
-            appendReference: false,
-          });
+          addComposerDraftTerminalContexts(composerDraftTarget, [draft]);
           rewritten.set(record.contextId, terminalContextReference(draft).contextId);
           break;
         }
         case "review-comment": {
           const imported = reviewCommentFromRecord(record);
           const comment = conflicts ? { ...imported, id: randomUUID() } : imported;
-          addComposerDraftReviewComment(composerDraftTarget, comment, {
-            appendReference: false,
-          });
+          addComposerDraftReviewComment(composerDraftTarget, comment);
           rewritten.set(record.contextId, reviewCommentContextId(comment.id));
           break;
         }
@@ -384,9 +380,7 @@ export function useComposerContextImport(input: {
           if (record.kind === "preview-annotation" && record.screenshotContextId) {
             dependentAttachmentLocalIds.set(record.screenshotContextId, annotation.id);
           }
-          addComposerDraftPreviewAnnotation(composerDraftTarget, annotation, {
-            appendReference: false,
-          });
+          addComposerDraftPreviewAnnotation(composerDraftTarget, annotation);
           rewritten.set(record.contextId, previewAnnotationContextId(annotation.id));
           break;
         }

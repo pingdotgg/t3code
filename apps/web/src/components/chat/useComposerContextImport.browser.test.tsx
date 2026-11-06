@@ -85,7 +85,7 @@ it.each([
     pendingThreadImportsRef: { current: new Map() },
     promptRef,
     addComposerFilesToDraft: (files: Parameters<typeof store.addFiles>[1]) =>
-      store.addFiles(target, files, { appendReference: edit !== "question" }),
+      store.addFiles(target, files),
   } satisfies ImportInput & { promptRef: { current: string } };
   let importer!: Importer;
   await using _screen = await render(

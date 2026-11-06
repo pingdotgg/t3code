@@ -849,6 +849,7 @@ export function useComposerSend(input: ComposerSendInput) {
     const threadIdForSend = activeThread.id;
     const sendSnapshot = snapshotComposerSend({
       prompt: promptForSend,
+      draftPrompt: promptRef.current,
       images: composerImages,
       files: composerFiles,
       terminalContexts: composerTerminalContexts,
@@ -1055,6 +1056,22 @@ export function useComposerSend(input: ComposerSendInput) {
       );
       const sameIds = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
         left.length === right.length && left.every((id, index) => id === right[index]);
+      // Cards above the prompt do not change its text, so an added card counts as an edit here.
+      const cardContextIds = (draft: {
+        readonly terminalContexts: ReadonlyArray<{ readonly id: string }>;
+        readonly reviewComments: ReadonlyArray<{ readonly id: string }>;
+        readonly previewAnnotations: ReadonlyArray<{ readonly id: string }>;
+      }) =>
+        [
+          ...draft.terminalContexts.map((context) => context.id),
+          ...draft.reviewComments.map((comment) => comment.id),
+          ...draft.previewAnnotations.map((annotation) => annotation.id),
+        ].filter((id) => id !== directAnnotation?.annotation.id);
+      const contextIdsAtSend = cardContextIds({
+        terminalContexts: composerTerminalContexts,
+        reviewComments: composerReviewComments,
+        previewAnnotations: composerPreviewAnnotations,
+      });
       const draftChangedSinceSend = () => {
         if (composerRef.current?.hasPendingAttachments() === true) return true;
         const sendContext = composerRef.current?.getSendContext();
@@ -1062,7 +1079,8 @@ export function useComposerSend(input: ComposerSendInput) {
           ? [...sendContext.images, ...sendContext.files].map((attachment) => attachment.id)
           : attachmentIdsAtSend;
         const promptUnchanged =
-          promptRef.current === promptAtSend || promptRef.current === promptForSend;
+          (promptRef.current === promptAtSend || promptRef.current === promptForSend) &&
+          (sendContext === undefined || sameIds(cardContextIds(sendContext), contextIdsAtSend));
         const attachmentsUnchanged =
           sameIds(attachmentIds, attachmentIdsAtSend) ||
           (annotationImageId !== undefined &&
@@ -1468,13 +1486,16 @@ export function useComposerSend(input: ComposerSendInput) {
         optimisticBlobPreviews.release(optimisticMessage);
         const retryComposerImages = restoreComposerDraft(composerDraftTarget, sendSnapshot);
         if (currentRouteThreadKeyRef.current === routeThreadKey) {
-          promptRef.current = messageTextForSend;
+          promptRef.current = sendSnapshot.draftText;
           composerImagesRef.current = retryComposerImages;
           composerFilesRef.current = composerFilesSnapshot;
           composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
           composerRef.current?.resetCursorState({
-            cursor: collapseExpandedComposerCursor(messageTextForSend, messageTextForSend.length),
-            prompt: messageTextForSend,
+            cursor: collapseExpandedComposerCursor(
+              sendSnapshot.draftText,
+              sendSnapshot.draftText.length,
+            ),
+            prompt: sendSnapshot.draftText,
             detectTrigger: true,
           });
         }

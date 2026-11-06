@@ -36,7 +36,7 @@ are comfortable showing.
 
 ## Guest attachments
 
-Guests can attach images and other files to a message: use the paperclip, paste, or drop them on
+Guests can attach images and other files to a message: use the **+** button, paste, or drop them on
 the message box. A message holds up to 4 files and 10 MB in total. Images must be PNG, JPEG, GIF, or
 WebP. While messages wait for you, their files can total 20 MB; the guest can attach more once you
 send or dismiss some.

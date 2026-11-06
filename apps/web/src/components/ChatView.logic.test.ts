@@ -1047,6 +1047,7 @@ describe("snapshotComposerSend", () => {
         terminalContextReference(expired),
         terminalContextReference(live),
       ]),
+      draftPrompt: "run",
       images: [],
       files: [],
       terminalContexts: [expired, live],
@@ -1061,6 +1062,8 @@ describe("snapshotComposerSend", () => {
     expect(snapshot.messageText).toBe(
       ensureInlineContextReferences("run", [terminalContextReference(live)]).trim(),
     );
+    // A failed send restores the typed text, so the terminal stays a card.
+    expect(snapshot.draftText).toBe("run");
   });
 });
 
