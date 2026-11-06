@@ -126,6 +126,7 @@ export function quizAnswerMessage(input: {
 /** The grade in a `quizAnswerMessage`, so analytics can count answers without their text. */
 export function quizAnswerGrade(text: string): "right" | "wrong" | "unknown" | undefined {
   if (text.startsWith("Quiz answer: I don't know.")) return "unknown";
+  // shortcut: an option whose own text holds `", right.` misgrades; quote answers if counts drift.
   const graded = /^Quiz answer: ".*?", (right|wrong)\./s.exec(text)?.[1];
   return graded === "right" || graded === "wrong" ? graded : undefined;
 }

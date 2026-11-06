@@ -4,7 +4,6 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { quizAnswerGrade } from "@t3tools/shared/quizCard";
-import * as DateTime from "effect/DateTime";
 
 export interface FeatureUsage {
   readonly feature: string;
@@ -90,7 +89,7 @@ const METHOD_FEATURES: Readonly<Record<string, (payload: Payload) => FeatureUsag
   [WS_METHODS.knowledgeRemove]: () => ({ feature: "knowledge_map.remove" }),
   [WS_METHODS.coursesRemove]: () => ({ feature: "course.remove" }),
   [WS_METHODS.learnFeatureUsed]: (payload) =>
-    use(literal(payload, "feature") ?? "unknown", literal(payload, "variant")),
+    use(payload.feature as string, literal(payload, "variant")),
 };
 
 /** The feature a dispatched command uses, or undefined when it is not a tracked feature. */
@@ -117,11 +116,9 @@ export function autoFinishedSideChats(
   storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>,
 ): number {
   if (command.type !== "message.dispatch") return 0;
-  return storedEvents.filter(({ event }) => {
-    if (event.type !== "thread.metadata-updated") return false;
-    const done = event.payload.sideChat?.done;
-    return (
-      done?.outcome.status === "generating" && done.at === DateTime.formatIso(event.occurredAt)
-    );
-  }).length;
+  return storedEvents.filter(
+    ({ event }) =>
+      event.type === "thread.metadata-updated" &&
+      event.payload.sideChat?.done?.outcome.status === "generating",
+  ).length;
 }
