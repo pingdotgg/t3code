@@ -85,6 +85,8 @@ const RawThreadSchema = Schema.Struct({
           content: Schema.optional(Schema.NullOr(Schema.String)),
           author: Schema.optional(Schema.NullOr(RawIdentitySchema)),
           publishedDate: Schema.optional(Schema.NullOr(Schema.String)),
+          // lastUpdatedDate moves on any change to the comment; this one only on its text.
+          lastContentUpdatedDate: Schema.optional(Schema.NullOr(Schema.String)),
           isDeleted: Schema.optional(Schema.NullOr(Schema.Boolean)),
           commentType: Schema.optional(Schema.NullOr(Schema.String)),
         }),
@@ -301,6 +303,7 @@ export function decodeThreadsJson(
     const path = toRepositoryPath(thread.threadContext?.filePath);
     for (const comment of thread.comments ?? []) {
       const publishedDate = trimmed(comment.publishedDate);
+      const editedAt = trimmed(comment.lastContentUpdatedDate);
       if (
         comment.isDeleted === true ||
         comment.commentType?.trim().toLowerCase() === "system" ||
@@ -315,6 +318,9 @@ export function decodeThreadsJson(
         author: toActor(comment.author),
         body: comment.content ?? "",
         createdAt: publishedDate,
+        ...(editedAt !== null && Date.parse(editedAt) > Date.parse(publishedDate)
+          ? { editedAt }
+          : {}),
         url: null,
         path,
         reviewState: null,
