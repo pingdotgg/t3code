@@ -186,7 +186,7 @@ export function FloatingWorkingControl(props: {
     props.status !== null ? (
       <View
         pointerEvents={statusInteractive ? "box-none" : "none"}
-        className={`h-11 items-center justify-center ${extensionOnly ? "bg-black" : ""}`}
+        className="h-11 items-center justify-center"
       >
         <Animated.View className="h-11" style={capsuleSizerStyle} />
         <View
@@ -220,9 +220,10 @@ export function FloatingWorkingControl(props: {
           onPress={extensionStatus.onPress}
           onLayout={(event) => setExtensionWidth(settleWidth(event.nativeEvent.layout.width))}
           style={{ maxWidth: availableLabelWidth * 0.5 }}
-          className="h-11 flex-row items-center bg-black px-3 active:opacity-70"
+          className="h-11 flex-row items-center px-3 active:opacity-70"
         >
-          <Text className="shrink font-t3-medium text-xs text-white" numberOfLines={1}>
+          {hasStatus ? <View className="absolute left-0 h-4 w-px bg-border" /> : null}
+          <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
             {extensionStatus.label}
           </Text>
         </Pressable>
@@ -416,10 +417,10 @@ function FloatingStatusLabel(props: {
         className="gap-1.5"
         animated={false}
       >
-        <Text className="shrink font-t3-medium text-xs text-white" numberOfLines={1}>
+        <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
           {props.status.label}
         </Text>
-        <SymbolView name="chevron.down" size={10} tintColor="#fff" />
+        <SymbolView name="chevron.down" size={10} tintColorClassName="accent-foreground" />
       </StatusLabelRow>
     );
   }
