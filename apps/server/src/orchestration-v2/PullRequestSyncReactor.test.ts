@@ -1565,6 +1565,48 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
+  it.effect(
+    "caps the failed-read backoff at the slow cadence and restarts it after a success",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const failing = yield* Ref.make(true);
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([makeThread("one", { pullRequests: [failingGitLabLink] })]),
+            summary: (input) =>
+              Ref.get(failing).pipe(
+                Effect.flatMap((fails) =>
+                  fails ? Effect.fail(gitLabCliFailure) : Effect.succeed(makeSummary(input)),
+                ),
+              ),
+          });
+          yield* Effect.gen(function* () {
+            const reactor = yield* startAndSweep(fixture);
+            const readMinutes = [0];
+            const sweepMinutes = Effect.fnUntraced(function* (from: number, to: number) {
+              for (let minute = from; minute <= to; minute++) {
+                const before = (yield* Ref.get(fixture.summaryCalls)).length;
+                yield* sweepAgain(fixture, reactor);
+                if ((yield* Ref.get(fixture.summaryCalls)).length > before)
+                  readMinutes.push(minute);
+              }
+            });
+
+            yield* sweepMinutes(1, 60);
+            assert.deepStrictEqual(readMinutes, [0, 1, 3, 7, 15, 30, 45, 60]);
+
+            yield* Ref.set(failing, false);
+            yield* sweepMinutes(61, 75);
+            yield* Ref.set(failing, true);
+            readMinutes.length = 0;
+            yield* sweepMinutes(76, 80);
+            assert.deepStrictEqual(readMinutes, [76, 77, 79]);
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+  );
+
   it.effect("reads a backed-off link at once when a refresh asks, then keeps backing off", () =>
     Effect.scoped(
       Effect.gen(function* () {
