@@ -68,6 +68,7 @@ import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import { hardenPreviewWebviewPreferences } from "./WebviewPreferences.ts";
+import { isSameOriginRendererNavigation } from "../window/RendererNavigation.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
   ANNOTATION_SEND_ENABLED_CHANNEL,
@@ -2900,7 +2901,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     host.setWindowOpenHandler(() => ({ action: "deny" }));
     // The preload exposes desktopBridge, so the window must never leave the app origin.
     host.on("will-navigate", (event, url) => {
-      if (new URL(url).origin !== appUrl.origin) event.preventDefault();
+      if (!isSameOriginRendererNavigation({ applicationUrl: appUrl.href, navigationUrl: url })) {
+        event.preventDefault();
+      }
     });
     window.once("closed", () => {
       tabWindowHostIds.delete(hostId);
