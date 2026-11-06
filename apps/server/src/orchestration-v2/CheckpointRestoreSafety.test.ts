@@ -252,3 +252,76 @@ it.effect.each([
       assert.equal(result, isolated);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect.each([
+  { child: "a completed subagent", depth: 1, parent: "restoring", live: {}, isolated: true },
+  { child: "a completed sub-subagent", depth: 2, parent: "restoring", live: {}, isolated: true },
+  {
+    child: "a running subagent",
+    depth: 1,
+    parent: "restoring",
+    live: { status: "running", activeRunId: "child-run", activityRunStatus: "running" },
+    isolated: false,
+  },
+  {
+    child: "a subagent awaiting approval",
+    depth: 1,
+    parent: "restoring",
+    live: { status: "waiting", pendingRuntimeRequest: { requestId: "child-request" } },
+    isolated: false,
+  },
+  {
+    child: "a subagent with background work",
+    depth: 1,
+    parent: "restoring",
+    live: { pendingBackgroundTasks: [{ taskId: "child-task" }] },
+    isolated: false,
+  },
+  { child: "another thread's subagent", depth: 1, parent: "other", live: {}, isolated: false },
+] as const)(
+  "$child in the parent's worktree leaves file restore isolated: $isolated",
+  ({ depth, parent, live, isolated }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const worktreePath = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-v2-restore-subagent-",
+      });
+      const restoringId = ThreadId.make("restore-subagent-parent");
+      const rootId = parent === "restoring" ? restoringId : ThreadId.make("restore-unrelated");
+      const subagent = (id: string, parentThreadId: ThreadId) => ({
+        id: ThreadId.make(id),
+        projectId: ProjectId.make("restore-project"),
+        deletedAt: null,
+        worktreePath,
+        status: "completed",
+        activeRunId: null,
+        activityRunStatus: null,
+        pendingRuntimeRequest: null,
+        pendingBackgroundTasks: [],
+        lineage: { parentThreadId, relationshipToParent: "subagent", rootThreadId: rootId },
+      });
+      const child = { ...subagent("restore-subagent-child", rootId), ...(depth === 1 ? live : {}) };
+      const threads =
+        depth === 1
+          ? [child]
+          : [child, { ...subagent("restore-subagent-grandchild", child.id), ...live }];
+      const result = yield* isCheckpointRestoreIsolated(
+        { id: restoringId, worktreePath },
+        { cwd: worktreePath },
+        {
+          fileSystem,
+          path,
+          projections: {
+            getShellSnapshot: () => Effect.succeed({ threads, archivedThreads: [] }),
+            getThreadRecords: () => Effect.succeed({ turnItems: [{ type: "file_change" }] }),
+            getCheckpointContext: () =>
+              Effect.succeed({ checkpointScopes: [{ cwd: worktreePath }] }),
+            getThreadProviderContext: () => Effect.succeed({ providerSessions: [] }),
+          } as never,
+          projects: {} as never,
+        },
+      );
+      assert.equal(result, isolated);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
