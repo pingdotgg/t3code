@@ -1639,13 +1639,13 @@ export default function GitActionsControl({
           onClick={onOpenChanges}
         >
           <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-          <span className="flex min-w-0 flex-1 items-baseline gap-2.5">
+          <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
             <span className="shrink-0">Changes</span>
             {changesBaseLabel ? (
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <span className="pointer-events-auto min-w-0 truncate text-xs text-muted-foreground" />
+                    <span className="pointer-events-auto min-w-0 truncate font-normal text-muted-foreground" />
                   }
                 >
                   {changesBaseLabel}
@@ -1655,7 +1655,7 @@ export default function GitActionsControl({
                 </TooltipPopup>
               </Tooltip>
             ) : null}
-            <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums">
+            <span className="ml-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
               <span
                 className={
                   changesTotals.insertions
