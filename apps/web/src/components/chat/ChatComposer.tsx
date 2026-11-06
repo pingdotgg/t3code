@@ -2541,6 +2541,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
   // The focused paste decides plain text before the editor imports the same event's text.
   const pastingAsTextRef = useRef(false);
+  const swappedCursorRef = useRef<{ prompt: string; cursor: number } | null>(null);
   const resolvePastedPullRequest = (url: string) =>
     resolvePullRequestPreviewTarget({
       environmentId,
@@ -2564,7 +2565,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       let remaining = tracked.filter((link) => link.url !== url);
       // The editor catches up with an earlier swap only after React commits it.
       const shown = readComposerSnapshot();
-      let cursor = mapCursor(shown.expandedCursor, shown.value, prompt);
+      const swapped = swappedCursorRef.current;
+      let cursor =
+        shown.value === prompt
+          ? shown.expandedCursor
+          : swapped?.prompt === prompt
+            ? swapped.cursor
+            : mapCursor(shown.expandedCursor, shown.value, prompt);
       let applied = false;
       for (const link of tracked.filter((candidate) => candidate.url === url).toReversed()) {
         if (!current.some((found) => found.start === link.start && found.end === link.end)) {
@@ -2590,6 +2597,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       paste.links = remaining;
       paste.snapshot = promptRef.current;
+      if (applied) swappedCursorRef.current = { prompt: promptRef.current, cursor };
       if (applied) {
         addComposerDraftReviewComment(composerDraftTarget, chip.comment, {
           appendReference: false,

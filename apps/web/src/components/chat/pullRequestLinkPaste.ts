@@ -29,7 +29,10 @@ export function findPullRequestLinks(markdown: string): PastedLink[] {
 
 /** A link to one comment, file or commit keeps its anchor, so only the pull request's own page converts. */
 export function isPullRequestPage(url: string, number: number): boolean {
-  return new RegExp(`^[^?#]*/${number}/?$`, "u").test(url);
+  return new RegExp(
+    `^[^?#]*/(?:pulls?|-/merge_requests|pull-requests|pullrequest)/${number}/?$`,
+    "u",
+  ).test(url);
 }
 
 export function pullRequestContextFromSummary(

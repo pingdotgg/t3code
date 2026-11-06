@@ -38,6 +38,9 @@ describe("isPullRequestPage", () => {
     [link, true],
     [`${link}/`, true],
     [`${link}/commits/1234567`, false],
+    ["https://github.com/owner/repo/pull/12/commits/12", false],
+    ["https://gitlab.com/group/repo/-/merge_requests/12", true],
+    ["https://dev.azure.com/org/project/_git/repo/pullrequest/12", true],
     [`${link}?w=1`, false],
     ["https://github.com/owner/repo/pull/112", false],
   ])("reads %s as pull request 12's page: %s", (url, expected) => {
