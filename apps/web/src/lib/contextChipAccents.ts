@@ -15,6 +15,7 @@ export const CONTEXT_CHIP_ACCENTS = {
   skill: "oklch(0.62 0.16 322)",
   thread: "oklch(0.62 0.12 190)",
   environment: "oklch(0.62 0.11 145)",
+  model: "oklch(0.62 0.15 305)",
   citation: "oklch(0.62 0.16 259)",
   "doc-pdf": "oklch(0.62 0.16 24)",
   "doc-word": "oklch(0.62 0.136 248)",

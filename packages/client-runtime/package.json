@@ -19,6 +19,10 @@
       "types": "./src/workspaceBasenameLookup.ts",
       "default": "./src/workspaceBasenameLookup.ts"
     },
+    "./composerInlineSuggestion": {
+      "types": "./src/composerInlineSuggestion.ts",
+      "default": "./src/composerInlineSuggestion.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"

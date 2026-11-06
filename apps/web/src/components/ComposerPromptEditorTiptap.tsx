@@ -1,3 +1,5 @@
+import type { ComposerInlineSuggestion } from "@t3tools/client-runtime/composerInlineSuggestion";
+import type { ComposerInlineCandidate } from "~/lib/composerContextRecords";
 import { documentChipKindForFileName } from "~/pierre-icons";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
@@ -177,6 +179,8 @@ export interface ComposerPromptEditorProps {
   ) => void;
   onVisibleSelectionChange?: () => void;
   onCommandKeyDown?: (key: string, event: KeyboardEvent, isTaskItem?: boolean) => boolean;
+  matchInlineSuggestion?: (textBeforeCaret: string) => ComposerEditorInlineSuggestion | null;
+  onAcceptInlineSuggestion?: (suggestion: ComposerEditorInlineSuggestion) => void;
   onPageScrollKeyDown?: (key: "PageUp" | "PageDown") => void;
   onPageScrollKeyUp?: (key: string) => void;
   onPageScrollRelease?: () => void;
@@ -669,6 +673,120 @@ const ComposerChipSelectionExtension = Extension.create({
   },
 });
 
+/** What the composer proposes after the caret; the editor only draws it and reports Tab. */
+export type ComposerEditorInlineSuggestion = ComposerInlineSuggestion<ComposerInlineCandidate>;
+
+interface InlineSuggestionState {
+  readonly suggestion: ComposerEditorInlineSuggestion | null;
+  readonly from: number | null;
+  /** Where the suggestion Escape dismissed starts, so it stays gone while that word grows. */
+  readonly dismissedFrom: number | null;
+}
+
+interface InlineSuggestionStorage {
+  match: (textBeforeCaret: string) => ComposerEditorInlineSuggestion | null;
+}
+
+const InlineSuggestionPluginKey = new PluginKey<InlineSuggestionState>(
+  "composer-inline-suggestion",
+);
+const CHIP_PLACEHOLDER = "\ufffc";
+
+function inlineSuggestionAtCaret(
+  { selection }: EditorState,
+  match: InlineSuggestionStorage["match"],
+): Pick<InlineSuggestionState, "suggestion" | "from"> | null {
+  const { $from, empty } = selection;
+  const { parent, parentOffset } = $from;
+  if (!empty || !parent.isTextblock || parent.type.spec.code) return null;
+  const next = parent.textBetween(
+    parentOffset,
+    Math.min(parentOffset + 1, parent.content.size),
+    undefined,
+    CHIP_PLACEHOLDER,
+  );
+  if (next !== "" && !/\s/u.test(next)) return null;
+  const textBeforeCaret = parent.textBetween(0, parentOffset, undefined, (node) =>
+    node.type.name === "hardBreak" ? "\n" : CHIP_PLACEHOLDER,
+  );
+  const suggestion = match(textBeforeCaret);
+  // Accepting replaces serialized Markdown, so the name must not span formatting markers.
+  if (!suggestion || suggestion.typed.length > ($from.nodeBefore?.text?.length ?? 0)) return null;
+  return { suggestion, from: selection.from - suggestion.typed.length };
+}
+
+function inlineSuggestionWidget(remainder: string): HTMLElement {
+  const root = document.createElement("span");
+  root.className = "composer-inline-suggestion";
+  root.setAttribute("aria-hidden", "true");
+  root.append(remainder);
+  const key = document.createElement("kbd");
+  key.className = "composer-inline-suggestion-key";
+  key.textContent = "Tab";
+  root.append(key);
+  return root;
+}
+
+const ComposerInlineSuggestionExtension = Extension.create<unknown, InlineSuggestionStorage>({
+  name: "composerInlineSuggestion",
+  addStorage() {
+    return { match: () => null };
+  },
+  addProseMirrorPlugins() {
+    const storage = this.storage;
+    return [
+      new Plugin<InlineSuggestionState>({
+        key: InlineSuggestionPluginKey,
+        state: {
+          init: () => ({ suggestion: null, from: null, dismissedFrom: null }),
+          apply: (tr, previous, _, state) => {
+            const dismissing = tr.getMeta(InlineSuggestionPluginKey) === "dismiss";
+            if (!tr.docChanged && !tr.selectionSet && !dismissing) return previous;
+            const dismissedFrom = dismissing
+              ? previous.from
+              : previous.dismissedFrom === null
+                ? null
+                : tr.mapping.map(previous.dismissedFrom);
+            const none = { suggestion: null, from: null, dismissedFrom };
+            // Follows typing only: a moved caret, a paste, an undo or a restored draft has no word
+            // in progress, and Tab should keep its usual meaning there.
+            if (
+              !tr.docChanged ||
+              tr.getMeta("uiEvent") ||
+              tr.getMeta("history$") ||
+              tr.getMeta("preventUpdate") ||
+              tr.getMeta("composition") !== undefined
+            ) {
+              return none;
+            }
+            const found = inlineSuggestionAtCaret(state, storage.match);
+            return found === null || found.from === dismissedFrom
+              ? none
+              : { ...found, dismissedFrom };
+          },
+        },
+        props: {
+          decorations: (state) => {
+            const suggestion = InlineSuggestionPluginKey.getState(state)?.suggestion;
+            if (!suggestion) return null;
+            return DecorationSet.create(state.doc, [
+              Decoration.widget(
+                state.selection.head,
+                () => inlineSuggestionWidget(suggestion.remainder),
+                {
+                  side: 1,
+                  ignoreSelection: true,
+                  key: `inline-suggestion:${suggestion.remainder}`,
+                },
+              ),
+            ]);
+          },
+        },
+      }),
+    ];
+  },
+});
+
 function chipSelectionDecorations({ doc, selection }: EditorState): DecorationSet {
   if (selection.empty) return DecorationSet.empty;
   const decorations: Decoration[] = [];
@@ -772,6 +890,7 @@ function createComposerExtensions(richText: boolean) {
     ComposerCitationExtension,
     ComposerContextReferenceExtension,
     ComposerChipSelectionExtension,
+    ComposerInlineSuggestionExtension,
     ...(richText
       ? [
           ComposerMarkdownSourceExtension,
@@ -879,6 +998,8 @@ function ComposerPromptEditorTiptapInner(
     onChange,
     onVisibleSelectionChange,
     onCommandKeyDown,
+    matchInlineSuggestion,
+    onAcceptInlineSuggestion,
     onPageScrollKeyDown,
     onPageScrollKeyUp,
     onPageScrollRelease,
@@ -905,6 +1026,8 @@ function ComposerPromptEditorTiptapInner(
     onChange,
     onVisibleSelectionChange,
     onCommandKeyDown,
+    matchInlineSuggestion,
+    onAcceptInlineSuggestion,
     isPathQueryActive,
     importContextFragment,
   }));
@@ -1041,9 +1164,32 @@ function ComposerPromptEditorTiptapInner(
         literalText,
       }),
       editable: !disabled,
+      onBeforeCreate: ({ editor: created }) => {
+        const storage = created.storage as unknown as {
+          composerInlineSuggestion: InlineSuggestionStorage;
+        };
+        storage.composerInlineSuggestion.match = (textBeforeCaret) =>
+          readCallbacks().matchInlineSuggestion?.(textBeforeCaret) ?? null;
+      },
       editorProps: {
         attributes: editorAttributes,
         handleKeyDown: (view, event) => {
+          const inlineSuggestion = InlineSuggestionPluginKey.getState(view.state)?.suggestion;
+          if (
+            inlineSuggestion &&
+            (event.key === "Tab" || event.key === "Escape") &&
+            !event.isComposing &&
+            !event.shiftKey &&
+            !event.altKey &&
+            !event.metaKey &&
+            !event.ctrlKey
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.key === "Tab") readCallbacks().onAcceptInlineSuggestion?.(inlineSuggestion);
+            else view.dispatch(view.state.tr.setMeta(InlineSuggestionPluginKey, "dismiss"));
+            return true;
+          }
           // In a right-to-left line the start is on the right.
           const backArrow = caretLineDirection(view.state) === "rtl" ? "ArrowRight" : "ArrowLeft";
           const boundary = event.metaKey

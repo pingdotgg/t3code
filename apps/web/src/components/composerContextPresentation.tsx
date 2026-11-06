@@ -1,3 +1,4 @@
+import type { MentionContextRecord, ModelContextRecord } from "~/lib/composerContextRecords";
 import ChatMarkdown from "./ChatMarkdown";
 import { isSvgAttachment } from "@t3tools/shared/image";
 import { ReadOnlySourcePreview } from "./files/AttachmentFilePreview";
@@ -37,6 +38,7 @@ import type { TerminalContextDraft } from "~/lib/terminalContext";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
 import { EnvironmentContextChip } from "./EnvironmentContextChip";
+import { ModelContextChip } from "./ModelContextChip";
 import { ThreadContextChip } from "./ThreadContextChip";
 import { useLinkedEnvironments } from "~/state/peerLinks";
 import {
@@ -66,7 +68,8 @@ export type ComposerDraftContextRecord =
   | { kind: "image"; record: ComposerImageAttachment; upload?: AttachmentUploadState | undefined }
   | { kind: "file"; record: ComposerFileAttachment; upload?: AttachmentUploadState | undefined }
   | { kind: "thread"; record: ThreadContextRecord }
-  | { kind: "environment"; record: EnvironmentContextRecord };
+  | { kind: "environment"; record: EnvironmentContextRecord }
+  | { kind: "model"; record: ModelContextRecord };
 
 export {
   ComposerContextActionsContext,
@@ -91,7 +94,7 @@ export function composerContextRecordsFromDraft(input: {
   reviewComments?: ReadonlyArray<ReviewCommentContext>;
   previewAnnotations?: ReadonlyArray<PreviewAnnotationPayload>;
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
-  environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
+  environmentContexts?: ReadonlyArray<MentionContextRecord>;
   images?: ReadonlyArray<ComposerImageAttachment>;
   files?: ReadonlyArray<ComposerFileAttachment>;
   uploadsByImageId?: Readonly<Record<string, AttachmentUploadState>>;
@@ -129,7 +132,10 @@ export function composerContextRecordsFromDraft(input: {
     records.set(record.contextId, { kind: "thread", record });
   }
   for (const record of input.environmentContexts ?? []) {
-    records.set(record.contextId, { kind: "environment", record });
+    records.set(
+      record.contextId,
+      record.kind === "model" ? { kind: "model", record } : { kind: "environment", record },
+    );
   }
   return records;
 }
@@ -487,7 +493,9 @@ export function ComposerContextReferenceChip(props: {
   label: string;
 }): ReactElement {
   const records = use(ComposerContextRecordsContext);
-  return composerContextPresentationRegistry.render(props.kind, records.get(props.contextId), {
+  const record = records.get(props.contextId);
+  if (record?.kind === "model") return <ModelContextChip label={record.record.label} />;
+  return composerContextPresentationRegistry.render(props.kind, record, {
     label: props.label,
   });
 }

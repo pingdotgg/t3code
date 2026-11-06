@@ -21,6 +21,7 @@ import {
   RuntimeMode,
   ThreadContextRecord,
   EnvironmentContextRecord,
+  UnknownContextRecord,
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
@@ -87,6 +88,8 @@ import {
   terminalContextReference,
   threadContextReference,
   environmentContextReference,
+  isModelContextRecord,
+  type MentionContextRecord,
 } from "./lib/composerContextRecords";
 import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
@@ -106,7 +109,9 @@ const isRuntimeMode = Schema.is(RuntimeMode);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
 const isThreadContextRecord = Schema.is(ThreadContextRecord);
-const isEnvironmentContextRecord = Schema.is(EnvironmentContextRecord);
+const isMachineContextRecord = Schema.is(EnvironmentContextRecord);
+const isEnvironmentContextRecord = (record: unknown): record is MentionContextRecord =>
+  isMachineContextRecord(record) || isModelContextRecord(record);
 const isSnapShotSource = Schema.is(SnapShotSource);
 const isPreviewAnnotationPayload = Schema.is(PreviewAnnotationPayloadSchema);
 
@@ -247,7 +252,10 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   previewAnnotations: Schema.optionalKey(Schema.Array(PreviewAnnotationPayloadSchema)),
   reviewComments: Schema.optionalKey(Schema.Array(ReviewCommentContextSchema)),
   threadContexts: Schema.optionalKey(Schema.Array(ThreadContextRecord)),
-  environmentContexts: Schema.optionalKey(Schema.Array(EnvironmentContextRecord)),
+  // The machines and models the prompt names. The key predates models.
+  environmentContexts: Schema.optionalKey(
+    Schema.Array(Schema.Union([EnvironmentContextRecord, UnknownContextRecord])),
+  ),
   modelSelectionByProvider: Schema.optionalKey(Schema.Record(ProviderInstanceId, ModelSelection)),
   activeProvider: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
   modelSelectionExplicit: Schema.optionalKey(Schema.Boolean),
@@ -371,7 +379,7 @@ export interface ComposerThreadDraftState {
   previewAnnotations: PreviewAnnotationPayload[];
   reviewComments: ReviewCommentContext[];
   threadContexts: ThreadContextRecord[];
-  environmentContexts: EnvironmentContextRecord[];
+  environmentContexts: MentionContextRecord[];
   modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
   activeProvider: ProviderInstanceId | null;
   modelSelectionExplicit?: boolean;
@@ -613,12 +621,12 @@ interface ComposerDraftStoreState {
   /** Mentions machines as context; already-mentioned machines are skipped. */
   addEnvironmentContexts: (
     threadRef: ComposerThreadTarget,
-    records: ReadonlyArray<EnvironmentContextRecord>,
+    records: ReadonlyArray<MentionContextRecord>,
     options?: ComposerContextAddOptions,
   ) => void;
   setEnvironmentContexts: (
     threadRef: ComposerThreadTarget,
-    records: ReadonlyArray<EnvironmentContextRecord>,
+    records: ReadonlyArray<MentionContextRecord>,
   ) => void;
   clearPersistedAttachments: (threadRef: ComposerThreadTarget) => void;
   syncPersistedAttachments: (
@@ -728,7 +736,7 @@ const EMPTY_TERMINAL_CONTEXTS: TerminalContextDraft[] = [];
 const EMPTY_PREVIEW_ANNOTATIONS: PreviewAnnotationPayload[] = [];
 const EMPTY_REVIEW_COMMENTS: ReviewCommentContext[] = [];
 const EMPTY_THREAD_CONTEXTS: ThreadContextRecord[] = [];
-const EMPTY_ENVIRONMENT_CONTEXTS: EnvironmentContextRecord[] = [];
+const EMPTY_ENVIRONMENT_CONTEXTS: MentionContextRecord[] = [];
 Object.freeze(EMPTY_IMAGES);
 Object.freeze(EMPTY_FILES);
 Object.freeze(EMPTY_IDS);
@@ -2428,7 +2436,9 @@ function toHydratedThreadDraft(
       ...(persistedDraft.reviewComments ?? []).map(reviewCommentContextReference),
       ...(persistedDraft.previewAnnotations ?? []).map(previewAnnotationContextReference),
       ...(persistedDraft.threadContexts ?? []).map(threadContextReference),
-      ...(persistedDraft.environmentContexts ?? []).map(environmentContextReference),
+      ...(persistedDraft.environmentContexts ?? [])
+        .filter(isEnvironmentContextRecord)
+        .map(environmentContextReference),
       ...files.map(fileContextReference),
     ]),
     images: hydrateImagesFromPersisted(persistedDraft.attachments),
@@ -2444,7 +2454,10 @@ function toHydratedThreadDraft(
       persistedDraft.previewAnnotations?.map((annotation) => ({ ...annotation })) ?? [],
     reviewComments: persistedDraft.reviewComments?.map((comment) => ({ ...comment })) ?? [],
     threadContexts: persistedDraft.threadContexts?.map((record) => ({ ...record })) ?? [],
-    environmentContexts: persistedDraft.environmentContexts?.map((record) => ({ ...record })) ?? [],
+    environmentContexts:
+      persistedDraft.environmentContexts
+        ?.filter(isEnvironmentContextRecord)
+        .map((record) => ({ ...record })) ?? [],
     modelSelectionByProvider,
     activeProvider,
     ...(persistedDraft.modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
