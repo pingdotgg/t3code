@@ -372,7 +372,7 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
                   value={env.environmentId}
                   closeOnClick
                 >
-                  <span className="flex min-w-0 items-center gap-2.5">
+                  <span className="flex min-w-0 items-center gap-2">
                     <EnvironmentMachineIcon
                       kind={env.machine}
                       className="size-4 shrink-0 text-muted-foreground"
@@ -395,7 +395,7 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
                     if (autoEnvironmentLabel) onAutoEnvironment?.();
                   }}
                 >
-                  <span className="flex min-w-0 items-center gap-2.5">
+                  <span className="flex min-w-0 items-center gap-2">
                     <ScaleIcon
                       className="size-4 shrink-0 text-muted-foreground"
                       aria-hidden="true"
@@ -440,7 +440,7 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
             onValueChange={(value) => onEnvModeChange(value as EnvMode)}
           >
             <MenuRadioItem disabled={envModeLocked || forceNewWorktree} value="local" closeOnClick>
-              <span className="flex min-w-0 items-center gap-2.5">
+              <span className="flex min-w-0 items-center gap-2">
                 {activeWorktreePath ? (
                   <FolderGitIcon className="size-4 shrink-0 text-muted-foreground" />
                 ) : (
@@ -454,7 +454,7 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
               </span>
             </MenuRadioItem>
             <MenuRadioItem disabled={envModeLocked} value="worktree" closeOnClick>
-              <span className="flex min-w-0 items-center gap-2.5">
+              <span className="flex min-w-0 items-center gap-2">
                 <FolderGit2Icon className="size-4 shrink-0 text-muted-foreground" />
                 <span className="shrink-0">{resolveEnvModeLabel("worktree")}</span>
                 <span className="min-w-0 truncate text-meta text-dim-foreground">
