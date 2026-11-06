@@ -20,6 +20,7 @@ import {
 } from "effect/http";
 import * as Socket from "effect/socket/Socket";
 
+import * as SessionStore from "../auth/SessionStore.ts";
 import { authenticateMediaRequest } from "../auth/http.ts";
 import { assetResponseHeaders } from "../http.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
@@ -71,6 +72,7 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
     return HttpServerResponse.text("Not Found", { status: 404 });
   }
   const session = yield* authenticateMediaRequest(AuthOrchestrationReadScope);
+  const sessions = yield* SessionStore.SessionStore;
   const params = url.value.searchParams;
   const canOperate =
     session.scopes.includes(AuthPreviewOperateScope) && params.get("interactive") !== "false";
@@ -201,6 +203,12 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
       return yield* Effect.raceFirst(Effect.forever(sendOutput), Effect.forever(receiveInput));
     }),
   ).pipe(
+    // Like the RPC socket: a revoked or expired session ends the stream and its input.
+    Effect.raceFirst(
+      sessions
+        .awaitInvalidation(session.sessionId, session.proofKeyThumbprint)
+        .pipe(Effect.as(HttpServerResponse.empty())),
+    ),
     Effect.catchTags({
       ServerBrowserLaunchError: (error) =>
         Effect.logWarning("server preview browser failed to start", { cause: error.cause }).pipe(
