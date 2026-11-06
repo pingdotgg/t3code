@@ -106,14 +106,17 @@ const decodeJsonString = Schema.decodeUnknownOption(Schema.fromJsonString(Schema
  * reply can arrive as cut-off `{"ok":…,"result":"…` JSON. Keeps the readable
  * prefix and marks the cut.
  */
-function fxSubagentOutcome(
+export function fxSubagentOutcome(
   text: string,
 ): { readonly ok: boolean; readonly result: string | null } | undefined {
   const whole = decodeFxSubagentResult(text);
   if (Option.isSome(whole)) return whole.value;
   const clipped = /^\{"ok":(true|false),"result":"((?:[^"\\]|\\.)*)/.exec(text);
   if (clipped === null) return undefined;
-  const prefix = decodeJsonString(`"${(clipped[2] ?? "").replace(/\\u[0-9a-fA-F]{0,3}$/, "")}"`);
+  const fragment = clipped[2] ?? "";
+  const prefix = decodeJsonString(`"${fragment}"`).pipe(
+    Option.orElse(() => decodeJsonString(`"${fragment.replace(/\\u[0-9a-fA-F]{0,3}$/, "")}"`)),
+  );
   const cut = text[clipped[0].length] !== '"';
   return {
     ok: clipped[1] === "true",

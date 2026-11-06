@@ -1,11 +1,10 @@
-import { describe, expect, it } from "vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as ChildProcess from "effect/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
-import { loadPrerenderPairs, seedStoreFromPrerender } from "../cache/seed.ts";
+import { describe, expect, it } from "vitest";
 import {
   LAMBDA_ADAPTER_FILE_NAME,
   SERVE_ENTRY_NAME,
@@ -13,6 +12,7 @@ import {
   makeLambdaEntrySource,
   target,
 } from "../aws.ts";
+import { loadPrerenderPairs, seedStoreFromPrerender } from "../cache/seed.ts";
 
 describe("makeAwsTarget", () => {
   it(
@@ -24,44 +24,29 @@ describe("makeAwsTarget", () => {
             const fs = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
             const root = yield* path.fromFileUrl(
-              new URL(
-                "../../../../../examples/aws-website-vinext/",
-                import.meta.url,
-              ),
+              new URL("../../../../../examples/aws-website-vinext/", import.meta.url),
             );
             const configPath = path.join(root, "vite.config.ts");
             const configBefore = yield* fs.readFileString(configPath);
-            expect(configBefore).not.toContain(
-              "@alchemy.run/frontend-frameworks",
-            );
+            expect(configBefore).not.toContain("@alchemy.run/frontend-frameworks");
             const built = yield* makeAwsTarget({ streaming: false }).build!({
               root,
               framework: "vinext",
             });
             expect(yield* fs.readFileString(configPath)).toBe(configBefore);
             expect(
-              yield* fs.readFileString(
-                path.join(built.distDirectory!, "server/index.js"),
-              ),
+              yield* fs.readFileString(path.join(built.distDirectory!, "server/index.js")),
             ).toContain("CACHE_BUCKET_NAME");
             const directory = yield* fs.makeTempDirectoryScoped({
               prefix: "vinext-lambda-",
             });
-            yield* fs.copy(
-              path.join(built.distDirectory!, "server"),
-              directory,
-            );
-            const prerender = yield* Effect.promise(() =>
-              loadPrerenderPairs(directory),
-            );
+            yield* fs.copy(path.join(built.distDirectory!, "server"), directory);
+            const prerender = yield* Effect.promise(() => loadPrerenderPairs(directory));
             expect(prerender.routeCount).toBeGreaterThan(0);
-            expect(
-              prerender.pairs.some((pair) => pair.key.includes("/isr")),
-            ).toBe(true);
+            expect(prerender.pairs.some((pair) => pair.key.includes("/isr"))).toBe(true);
             const values = new Map<string, string>();
             const store = {
-              getText: (key: string) =>
-                Effect.runPromise(Effect.sync(() => values.get(key))),
+              getText: (key: string) => Effect.runPromise(Effect.sync(() => values.get(key))),
               putText: (key: string, value: string) =>
                 Effect.runPromise(
                   Effect.sync(() => {
@@ -75,14 +60,10 @@ describe("makeAwsTarget", () => {
                   }),
                 ),
             };
-            yield* Effect.promise(() =>
-              seedStoreFromPrerender(store, directory),
-            );
+            yield* Effect.promise(() => seedStoreFromPrerender(store, directory));
             const key = prerender.pairs[0]!.key;
             values.set(key, "refreshed at runtime");
-            yield* Effect.promise(() =>
-              seedStoreFromPrerender(store, directory),
-            );
+            yield* Effect.promise(() => seedStoreFromPrerender(store, directory));
             expect(values.get(key)).toBe("refreshed at runtime");
             const spawner = yield* ChildProcessSpawner;
             const node = yield* Effect.sync(() => process.execPath);
