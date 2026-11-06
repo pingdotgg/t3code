@@ -177,7 +177,7 @@ export function resolveVariantRow(input: {
             aria-hidden
             data-row-pill-dot
             ref={observeVisibleAnimation}
-            className="sidebar-status-dot block size-1.5 shrink-0 rounded-full bg-current"
+            className="sidebar-status-dot block size-1.5 shrink-0 rounded-full"
           />
         ) : null}
         <span className="sidebar-row-pill-word">{statusWord.label}</span>
