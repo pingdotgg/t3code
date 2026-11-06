@@ -1296,6 +1296,7 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
           {},
           yield* ServerBrowser.ServerBrowser,
           () => Effect.void,
+          { secretReferences: true },
         ).pipe(
           Layer.provide(services),
           Layer.merge(RpcAuthorization.layer([AuthSourceControlWriteScope])),
