@@ -87,6 +87,15 @@ export const FileViewedState = Schema.Literals(["DISMISSED", "UNVIEWED", "VIEWED
 export type FileViewedState = typeof FileViewedState.Type
 
 /**
+ * The possible states of an issue.
+ *
+ * - `CLOSED`: An issue that has been closed
+ * - `OPEN`: An issue that is still open
+ */
+export const IssueState = Schema.Literals(["CLOSED", "OPEN"])
+export type IssueState = typeof IssueState.Type
+
+/**
  * Detailed status information about a pull request merge.
  *
  * - `BEHIND`: The head ref is out of date.
@@ -291,6 +300,8 @@ export declare namespace Typename {
   export type Actor = "Bot" | "EnterpriseUserAccount" | "Mannequin" | "Organization" | "User"
   /** Every possible `__typename` of interface `GitObject`. */
   export type GitObject = "Blob" | "Commit" | "Tag" | "Tree"
+  /** Every possible `__typename` of union `IssueOrPullRequest`. */
+  export type IssueOrPullRequest = "Issue" | "PullRequest"
   /** Every possible `__typename` of interface `Node`. */
   export type Node =
     | "AddedToMergeQueueEvent" | "AddedToProjectEvent" | "AddedToProjectV2Event" | "AddedToStackEvent" | "App"
