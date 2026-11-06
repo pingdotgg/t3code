@@ -72,6 +72,8 @@ vi.mock("~/hooks/useSettings", () => ({
     select({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: state.diffFilesCollapsed }),
   updateClientSettings: async () => {},
   useDiffThemeNames: () => DIFF_THEME_NAMES,
+  getDiffThemeNames: () => DIFF_THEME_NAMES,
+  subscribeDiffThemeNames: () => () => {},
 }));
 vi.mock("~/hooks/useTheme", () => ({
   useRenderedAppearance: () => "dark",
