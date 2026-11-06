@@ -2,6 +2,7 @@ import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/co
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -9,6 +10,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopLegacySecretKey from "../app/DesktopLegacySecretKey.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 
 type PersistedSavedEnvironmentDesktopSsh = NonNullable<
@@ -63,10 +65,15 @@ const SavedEnvironmentRegistryDocumentJson = fromLenientJson(
 const decodeSavedEnvironmentRegistryDocumentJson = Schema.decodeEffect(
   SavedEnvironmentRegistryDocumentJson,
 );
+const encodeSavedEnvironmentRegistryDocumentJson = Schema.encodeEffect(
+  SavedEnvironmentRegistryDocumentJson,
+);
 
 const DesktopSavedEnvironmentSecretProtectionOperation = Schema.Literals([
   "check-encryption-availability",
   "decrypt-secret",
+  "backup-secret",
+  "persist-secret",
 ]);
 
 export class DesktopSavedEnvironmentsReadError extends Schema.TaggedError<DesktopSavedEnvironmentsReadError>()(
@@ -221,12 +228,32 @@ function decodeSecretBytes(
   );
 }
 
+const writeRegistryDocument = Effect.fn("desktop.savedEnvironments.writeRegistryDocument")(
+  function* (input: {
+    readonly fileSystem: FileSystem.FileSystem;
+    readonly registryPath: string;
+    readonly document: SavedEnvironmentRegistryDocument;
+  }) {
+    const encoded = yield* encodeSavedEnvironmentRegistryDocumentJson(input.document);
+    const temporaryPath = `${input.registryPath}.${process.pid}.pre-ominax.tmp`;
+    yield* input.fileSystem.writeFileString(temporaryPath, `${encoded}\n`);
+    yield* input.fileSystem
+      .rename(temporaryPath, input.registryPath)
+      .pipe(
+        Effect.ensuring(
+          input.fileSystem.remove(temporaryPath, { force: true }).pipe(Effect.ignore),
+        ),
+      );
+  },
+);
+
 /** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
 
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
+  const legacySecretKey = yield* DesktopLegacySecretKey.DesktopLegacySecretKey;
 
   return DesktopSavedEnvironments.of({
     getRegistry: readRegistryDocument(fileSystem, environment.savedEnvironmentRegistryPath).pipe(
@@ -269,8 +296,8 @@ export const make = Effect.gen(function* () {
         environment.savedEnvironmentRegistryPath,
         encoded.value,
       );
-      return Option.some(
-        yield* safeStorage.decryptString(secretBytes).pipe(
+      const currentResult = yield* Effect.exit(
+        safeStorage.decryptString(secretBytes).pipe(
           Effect.mapError(
             (cause) =>
               new DesktopSavedEnvironmentSecretProtectionError({
@@ -282,6 +309,86 @@ export const make = Effect.gen(function* () {
           ),
         ),
       );
+      if (Exit.isSuccess(currentResult)) return Option.some(currentResult.value);
+
+      if (
+        !environment.isDevelopment &&
+        (environment.platform === "darwin" || environment.platform === "linux")
+      ) {
+        const legacyResult = yield* legacySecretKey.decrypt(secretBytes);
+        if (Option.isSome(legacyResult)) {
+          const backupPath = `${environment.savedEnvironmentRegistryPath}.pre-ominax`;
+          const backupExists = yield* fileSystem.readFile(backupPath).pipe(Effect.option);
+          if (Option.isNone(backupExists)) {
+            const original = yield* fileSystem
+              .readFile(environment.savedEnvironmentRegistryPath)
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new DesktopSavedEnvironmentSecretProtectionError({
+                      operation: "backup-secret",
+                      environmentId,
+                      registryPath: environment.savedEnvironmentRegistryPath,
+                      cause,
+                    }),
+                ),
+              );
+            yield* fileSystem.writeFile(backupPath, original, { flag: "wx" }).pipe(
+              Effect.catchIf(
+                (cause) => cause.reason._tag === "AlreadyExists",
+                () => Effect.void,
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new DesktopSavedEnvironmentSecretProtectionError({
+                    operation: "backup-secret",
+                    environmentId,
+                    registryPath: environment.savedEnvironmentRegistryPath,
+                    cause,
+                  }),
+              ),
+            );
+          }
+
+          const encrypted = yield* safeStorage.encryptString(legacyResult.value).pipe(
+            Effect.mapError(
+              (cause) =>
+                new DesktopSavedEnvironmentSecretProtectionError({
+                  operation: "persist-secret",
+                  environmentId,
+                  registryPath: environment.savedEnvironmentRegistryPath,
+                  cause,
+                }),
+            ),
+          );
+          const nextDocument: SavedEnvironmentRegistryDocument = {
+            ...document,
+            records: document.records.map((record) =>
+              record.environmentId === environmentId
+                ? { ...record, encryptedBearerToken: Base64.encode(encrypted) }
+                : record,
+            ),
+          };
+          yield* writeRegistryDocument({
+            fileSystem,
+            registryPath: environment.savedEnvironmentRegistryPath,
+            document: nextDocument,
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new DesktopSavedEnvironmentSecretProtectionError({
+                  operation: "persist-secret",
+                  environmentId,
+                  registryPath: environment.savedEnvironmentRegistryPath,
+                  cause,
+                }),
+            ),
+          );
+          return Option.some(legacyResult.value);
+        }
+      }
+
+      return yield* Effect.failCause(currentResult.cause);
     }),
   });
 });

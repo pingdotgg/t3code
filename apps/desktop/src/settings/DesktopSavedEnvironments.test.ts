@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopLegacySecretKey from "../app/DesktopLegacySecretKey.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "./DesktopSavedEnvironments.ts";
 
@@ -102,6 +103,7 @@ function layer(
     readonly availableSecretStorage?: boolean;
     readonly availabilityError?: unknown;
     readonly decryptError?: unknown;
+    readonly legacyDecrypt?: (encrypted: Uint8Array) => Effect.Effect<Option.Option<string>>;
   },
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
 ) {
@@ -131,6 +133,9 @@ function layer(
     layerSafeStorage,
     NodeServices.layer,
     fileSystemLayer,
+    Layer.succeed(DesktopLegacySecretKey.DesktopLegacySecretKey, {
+      decrypt: options?.legacyDecrypt ?? (() => Effect.succeedNone),
+    }),
   );
 
   return DesktopSavedEnvironments.layer.pipe(Layer.provideMerge(layerDependencies));
@@ -142,6 +147,7 @@ const withSavedEnvironments = <A, E, R>(
     readonly availableSecretStorage?: boolean;
     readonly availabilityError?: unknown;
     readonly decryptError?: unknown;
+    readonly legacyDecrypt?: (encrypted: Uint8Array) => Effect.Effect<Option.Option<string>>;
   },
 ) =>
   Effect.gen(function* () {
@@ -215,6 +221,32 @@ describe("DesktopSavedEnvironments", () => {
         );
       }),
       { availableSecretStorage: false },
+    ),
+  );
+
+  it.effect("migrates a legacy encrypted secret and backs up the registry", () =>
+    withSavedEnvironments(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+        yield* seedSavedEnvironmentRegistry(Base64.encode(textEncoder.encode("legacy")));
+        const original = yield* fileSystem.readFileString(environment.savedEnvironmentRegistryPath);
+        assert.deepEqual(
+          yield* savedEnvironments.getSecret(savedRegistryRecord.environmentId),
+          Option.some("legacy-token"),
+        );
+        assert.equal(
+          yield* fileSystem.readFileString(
+            `${environment.savedEnvironmentRegistryPath}.pre-ominax`,
+          ),
+          original,
+        );
+      }),
+      {
+        decryptError: new Error("new key unavailable"),
+        legacyDecrypt: () => Effect.succeedSome("legacy-token"),
+      },
     ),
   );
 });

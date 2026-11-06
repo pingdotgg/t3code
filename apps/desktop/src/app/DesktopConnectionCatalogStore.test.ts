@@ -17,9 +17,12 @@ import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.
 import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopConnectionCatalogStore from "./DesktopConnectionCatalogStore.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopLegacySecretKey from "./DesktopLegacySecretKey.ts";
 
 const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
+const validCatalog =
+  '{"schemaVersion":1,"targets":[],"profiles":[],"credentials":[],"remoteDpopTokens":[],"disabledEnvironmentIds":[]}';
 const decodeConnectionCatalog = Schema.decodeEffect(
   Schema.fromJsonString(ConnectionCatalogDocument),
 );
@@ -54,6 +57,8 @@ function layerFor(
   baseDir: string,
   encryptionAvailable = true,
   failDecrypt: Ref.Ref<boolean> | null = null,
+  legacyDecrypt: (encrypted: Uint8Array) => Effect.Effect<Option.Option<string>> = () =>
+    Effect.succeedNone,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
 ) {
   const layerEnvironment = DesktopEnvironment.layer({
@@ -78,6 +83,9 @@ function layerFor(
     NodeServices.layer,
     NodeCrypto.layer,
     fileSystemLayer,
+    Layer.succeed(DesktopLegacySecretKey.DesktopLegacySecretKey, {
+      decrypt: legacyDecrypt,
+    }),
   );
   const layerSavedEnvironments = DesktopSavedEnvironments.layer.pipe(
     Layer.provideMerge(layerDependencies),
@@ -92,13 +100,17 @@ function layerFor(
 const withStore = <A, E, R>(
   effect: Effect.Effect<A, E, R | DesktopConnectionCatalogStore.DesktopConnectionCatalogStore>,
   encryptionAvailable = true,
+  legacyDecrypt: (encrypted: Uint8Array) => Effect.Effect<Option.Option<string>> = () =>
+    Effect.succeedNone,
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({
       prefix: "t3-desktop-connection-catalog-test-",
     });
-    return yield* effect.pipe(Effect.provide(layerFor(baseDir, encryptionAvailable)));
+    return yield* effect.pipe(
+      Effect.provide(layerFor(baseDir, encryptionAvailable, null, legacyDecrypt)),
+    );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopConnectionCatalogStore", () => {
@@ -106,7 +118,7 @@ describe("DesktopConnectionCatalogStore", () => {
     withStore(
       Effect.gen(function* () {
         const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
-        const catalog = '{"schemaVersion":1,"targets":[]}';
+        const catalog = validCatalog;
 
         assert.isTrue(yield* store.set(catalog));
         assert.deepStrictEqual(yield* store.get, Option.some(catalog));
@@ -278,7 +290,7 @@ describe("DesktopConnectionCatalogStore", () => {
         Effect.provide(layer),
       );
 
-      assert.isTrue(yield* store.set('{"schemaVersion":1,"targets":[]}'));
+      assert.isTrue(yield* store.set(validCatalog));
       yield* Ref.set(failDecrypt, true);
       const error = yield* store.get.pipe(Effect.flip);
       assert.instanceOf(
@@ -286,18 +298,50 @@ describe("DesktopConnectionCatalogStore", () => {
         DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreProtectionError,
       );
       assert.equal(error.operation, "decrypt-catalog");
-      assert.equal(error.catalogPath, path.join(baseDir, "userdata", "connection-catalog.json"));
+      assert.equal(
+        error.catalogPath,
+        path.join(baseDir, ".ominax", "userdata", "connection-catalog.json"),
+      );
       assert.instanceOf(error.cause, ElectronSafeStorage.ElectronSafeStorageDecryptError);
       const decryptError = error.cause as ElectronSafeStorage.ElectronSafeStorageDecryptError;
       assert.instanceOf(decryptError.cause, Error);
       assert.equal(decryptError.cause.message, "invalid encrypted catalog");
       assert.equal(
         error.message,
-        `Desktop connection catalog protection failed during decrypt-catalog at ${path.join(baseDir, "userdata", "connection-catalog.json")}.`,
+        `Desktop connection catalog protection failed during decrypt-catalog at ${path.join(baseDir, ".ominax", "userdata", "connection-catalog.json")}.`,
       );
       assert.notEqual(error.message, decryptError.message);
       yield* Ref.set(failDecrypt, false);
-      assert.deepStrictEqual(yield* store.get, Option.some('{"schemaVersion":1,"targets":[]}'));
+      assert.deepStrictEqual(yield* store.get, Option.some(validCatalog));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("migrates a catalog decrypted with the legacy key and keeps a backup", () =>
+    withStore(
+      Effect.gen(function* () {
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const original = '{"version":1,"encryptedCatalog":"b3JpZ2luYWw="}\n';
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(environment.stateDir, "connection-catalog.json"),
+          original,
+        );
+        // The current fake key cannot decrypt this file; the injected legacy key can.
+        const catalog =
+          '{"schemaVersion":1,"targets":[],"profiles":[],"credentials":[],"remoteDpopTokens":[],"disabledEnvironmentIds":[]}';
+        assert.deepStrictEqual(yield* store.get, Option.some(catalog));
+        assert.equal(
+          yield* fileSystem.readFileString(
+            path.join(environment.stateDir, "connection-catalog.json.pre-ominax"),
+          ),
+          original,
+        );
+      }),
+      true,
+      () => Effect.succeedSome(validCatalog),
+    ),
   );
 });
