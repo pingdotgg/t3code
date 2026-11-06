@@ -4168,15 +4168,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND json_extract(child.payload_json, '$.lineage.parentThreadId') IS NOT NULL
                   AND json_extract(child.payload_json, '$.forkedFrom.type') = 'node'
                   ELSE 0 END
-                  AND (EXISTS (
-                    SELECT 1 FROM orchestration_v2_projection_runs AS requested
-                    JOIN orchestration_v2_projection_subagents AS task
-                      ON task.subagent_id = json_extract(requested.payload_json, '$.delegatedTaskId')
-                    WHERE requested.thread_id = child.thread_id
-                      AND requested.status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
-                      AND task.child_thread_id = child.thread_id
-                      AND json_extract(task.payload_json, '$.origin') = 'app_owned'
+                  AND (child.thread_id IN (
+                    -- Finalizing acts on a task's latest run only; an earlier terminal run
+                    -- under a live follow-up would reselect the child on every boot.
+                    SELECT task.child_thread_id
+                    FROM orchestration_v2_projection_subagents AS task
+                    WHERE task.origin = 'app_owned'
+                      AND task.child_thread_id IS NOT NULL
                       AND json_extract(task.payload_json, '$.result') IS NULL
+                      AND (SELECT requested.status FROM orchestration_v2_projection_runs AS requested
+                           WHERE requested.thread_id = task.child_thread_id
+                             AND json_extract(requested.payload_json, '$.delegatedTaskId') = task.subagent_id
+                           ORDER BY requested.ordinal DESC LIMIT 1
+                          ) IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
                   ) OR (
                     -- The original task still waits for the latest unheld work.
                     (SELECT status FROM orchestration_v2_projection_runs

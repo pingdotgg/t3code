@@ -753,6 +753,77 @@ it.effect("recovers only recorded follow-up results with SQLite projections", ()
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("leaves a worker child alone while its task's latest run is still live", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const parent = yield* createThread("worker-parent");
+    const child = yield* createThread("worker-child", {
+      lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: parent },
+      forkedFrom: { type: "node", nodeId: NodeId.make("node:worker") },
+    });
+    const originalRunId = yield* createRun(child, "completed");
+    yield* projections.apply({
+      id: EventId.make("event:worker-result"),
+      type: "context-transfer.created",
+      threadId: parent,
+      occurredAt: now,
+      payload: {
+        id: ContextTransferId.make("transfer:worker-result"),
+        type: "subagent_result",
+        sourceThreadId: child,
+        targetThreadId: parent,
+        sourcePoint: { threadId: child, runId: originalRunId },
+        basePoint: null,
+        sourceProviderInstanceId: providerInstanceId,
+        targetProviderInstanceId: providerInstanceId,
+        targetRunId: null,
+        status: "pending",
+        resolution: null,
+        createdBy: "system",
+        error: null,
+        createdAt: now,
+        updatedAt: now,
+        consumedAt: null,
+      },
+    });
+    const taskId = NodeId.make("node:worker-task");
+    yield* createRun(child, "cancelled", { ordinal: 2, delegatedTaskId: taskId });
+    yield* createRun(child, "running", { ordinal: 3, delegatedTaskId: taskId });
+    yield* projections.apply({
+      id: EventId.make("event:worker-task"),
+      type: "subagent.updated",
+      threadId: parent,
+      occurredAt: now,
+      payload: {
+        id: taskId,
+        threadId: parent,
+        runId: null,
+        parentNodeId: NodeId.make("node:parent"),
+        origin: "app_owned",
+        createdBy: "agent",
+        driver,
+        providerInstanceId,
+        providerThreadId: null,
+        childThreadId: child,
+        nativeTaskRef: null,
+        prompt: "Keep working.",
+        title: null,
+        model: null,
+        status: "running",
+        result: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      },
+    });
+    assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), []);
+
+    yield* createRun(child, "completed", { ordinal: 3, delegatedTaskId: taskId });
+    assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), [child]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("includes shared sessions and provider-owned background rosters in recovery", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
