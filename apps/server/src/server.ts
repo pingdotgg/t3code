@@ -1186,6 +1186,7 @@ const layerMakeServer = Layer.unwrap(
       layerRuntimeState.pipe(Layer.provide(layerLauncher)),
       layerTailscaleServe,
       layerCloudDesiredLinkReconcile,
+      UsageService.layerWarmup,
       HeapSnapshot.layer,
     );
 

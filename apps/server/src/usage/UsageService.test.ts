@@ -24,6 +24,7 @@ import {
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -35,6 +36,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Scheduler from "effect/Scheduler";
+import * as Tracer from "effect/Tracer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -54,6 +56,7 @@ import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as UsageService from "./UsageService.ts";
+import * as ServerActivation from "../serverActivation.ts";
 import * as UsageTranscriptParser from "./UsageTranscriptParser.ts";
 import { TRANSCRIPT_USAGE_FORMATS } from "./usageTranscriptFormats.ts";
 import { BUILT_IN_USAGE_DRIVERS } from "../provider/builtInDrivers.ts";
@@ -3399,6 +3402,135 @@ describe("UsageService", () => {
         assert.deepStrictEqual(cached.buckets, summary.buckets);
         assert.strictEqual(requests.length, 2);
       }).pipe(Effect.scoped),
+  );
+
+  it.live("warms the scan cache after activation and shares it with summaries meanwhile", () =>
+    Effect.gen(function* () {
+      const { home, transcript, settings } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const activation = yield* Deferred.make<void>();
+      const parseStarted = yield* Deferred.make<void>();
+      const releaseParse = yield* Deferred.make<void>();
+      const summaryWaiting = yield* Deferred.make<void>();
+      const secondParse = yield* Deferred.make<void>();
+      const parsedPaths: string[] = [];
+      const gatedParser = Layer.effect(
+        UsageTranscriptParser.UsageTranscriptParser,
+        Effect.gen(function* () {
+          const inProcess = yield* UsageTranscriptParser.UsageTranscriptParser;
+          return UsageTranscriptParser.UsageTranscriptParser.of({
+            parse: (requests) =>
+              requests.length === 0
+                ? inProcess.parse(requests)
+                : Effect.gen(function* () {
+                    parsedPaths.push(...requests.map((request) => request.path));
+                    yield* Deferred.succeed(
+                      parsedPaths.length > 1 ? secondParse : parseStarted,
+                      undefined,
+                    );
+                    yield* Deferred.await(releaseParse);
+                    return yield* inProcess.parse(requests);
+                  }),
+          });
+        }),
+      ).pipe(Layer.provide(UsageTranscriptParser.layerInProcess));
+      const tracer = Tracer.make({
+        span: (options) => {
+          if (options.name === "UsageService.awaitWarmup") {
+            Deferred.doneUnsafe(summaryWaiting, Effect.void);
+          }
+          return new Tracer.NativeSpan(options);
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        // Building the warm-up layer returns before activation, so startup never waits on it.
+        yield* Layer.build(UsageService.layerWarmup).pipe(
+          Effect.provideService(UsageService.UsageService, service),
+          Effect.provideService(ServerActivation.ServerActivation, Deferred.await(activation)),
+        );
+        assert.deepStrictEqual(parsedPaths, []);
+
+        yield* Deferred.succeed(activation, undefined);
+        yield* Deferred.await(parseStarted);
+        const summary = yield* service
+          .readSummary(WINDOW)
+          .pipe(Effect.withTracer(tracer), Effect.forkChild);
+        // Either the summary waits for the warm-up, or it starts its own parse of the same file.
+        yield* Effect.raceFirst(Deferred.await(summaryWaiting), Deferred.await(secondParse));
+        assert.deepStrictEqual(parsedPaths, [transcript]);
+        yield* Deferred.succeed(releaseParse, undefined);
+        assert.strictEqual(totalOutputTokens(yield* Fiber.join(summary)), 5);
+        assert.deepStrictEqual(parsedPaths, [transcript]);
+        yield* service.awaitPersisted;
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerService({ prefix: "usage-warmup", home, settings, transcriptParser: gatedParser }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("warms the rest of the window after a shorter in-flight summary", () =>
+    Effect.gen(function* () {
+      const { home, transcript, settings } = yield* setup;
+      const older = NodePath.join(NodePath.dirname(transcript), "older.jsonl");
+      const nowMs = yield* Clock.currentTimeMillis;
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(transcript, claudeLine(1, 5));
+        await NodeFSP.writeFile(older, claudeLine(2, 7, undefined, "session-2"));
+        const tenDaysAgoSeconds = (nowMs - 10 * 24 * 60 * 60 * 1000) / 1000;
+        await NodeFSP.utimes(older, tenDaysAgoSeconds, tenDaysAgoSeconds);
+      });
+      const parseStarted = yield* Deferred.make<void>();
+      const releaseParse = yield* Deferred.make<void>();
+      const parsedPaths: string[] = [];
+      const gatedParser = Layer.effect(
+        UsageTranscriptParser.UsageTranscriptParser,
+        Effect.gen(function* () {
+          const inProcess = yield* UsageTranscriptParser.UsageTranscriptParser;
+          return UsageTranscriptParser.UsageTranscriptParser.of({
+            parse: (requests) =>
+              requests.length === 0
+                ? inProcess.parse(requests)
+                : Effect.gen(function* () {
+                    parsedPaths.push(...requests.map((request) => request.path));
+                    yield* Deferred.succeed(parseStarted, undefined);
+                    yield* Deferred.await(releaseParse);
+                    return yield* inProcess.parse(requests);
+                  }),
+          });
+        }),
+      ).pipe(Layer.provide(UsageTranscriptParser.layerInProcess));
+      const today = UsageDay.make(DateTime.formatIsoDateUtc(DateTime.makeUnsafe(nowMs)));
+
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        // A one-day summary only scans files written since yesterday, not `older`.
+        const summary = yield* service
+          .readSummary({ timeZone: "UTC", sinceDay: today, untilDay: today })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(parseStarted);
+        const warmup = yield* service.warmScanCache.pipe(Effect.forkChild);
+        yield* Deferred.succeed(releaseParse, undefined);
+        yield* Fiber.join(summary);
+        yield* Fiber.join(warmup);
+        assert.include(parsedPaths, older);
+        yield* service.awaitPersisted;
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerService({
+            prefix: "usage-warm-after-summary",
+            home,
+            settings,
+            transcriptParser: gatedParser,
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.live("does not orphan an in-flight scan when its first caller is interrupted", () =>
