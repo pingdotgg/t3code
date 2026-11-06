@@ -7,12 +7,16 @@ import {
   buildRemoteOpenUrl,
   buildRemoteSshTerminalDestination,
   buildRemoteSshTerminalRemoteCommand,
+  DesktopOpenRemoteTerminalInputSchema,
   EnvironmentId,
   remoteTerminalWorkingDirectory,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveRemoteOpenState } from "./remoteOpen";
+
+const decodeRemoteTerminalInput = Schema.decodeUnknownExit(DesktopOpenRemoteTerminalInputSchema);
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -165,13 +169,35 @@ describe("remote SSH terminal helpers", () => {
     );
   });
 
-  it("quotes the remote cd path and leaves SHELL for the remote shell", () => {
+  it("runs cd and the login shell through /bin/sh for non-POSIX login shells", () => {
     expect(buildRemoteSshTerminalRemoteCommand("/work/my project")).toBe(
-      `cd -- '/work/my project' && exec "\${SHELL:-/bin/sh}" -l`,
+      `exec /bin/sh -c 'cd -- "$1" && exec "\${SHELL:-/bin/sh}" -l' sh '/work/my project'`,
     );
     expect(buildRemoteSshTerminalRemoteCommand("/tmp/o'brian")).toBe(
-      `cd -- '/tmp/o'\\''brian' && exec "\${SHELL:-/bin/sh}" -l`,
+      `exec /bin/sh -c 'cd -- "$1" && exec "\${SHELL:-/bin/sh}" -l' sh '/tmp/o'\\''brian'`,
     );
+  });
+
+  it("rejects advertised hosts that would become ssh options", () => {
+    expect(
+      decodeRemoteTerminalInput({
+        host: "-oProxyCommand=x",
+        absolutePath: "/work/project",
+      })._tag,
+    ).toBe("Failure");
+    expect(
+      decodeRemoteTerminalInput({
+        host: "sol",
+        username: "-oProxyCommand=x",
+        absolutePath: "/work/project",
+      })._tag,
+    ).toBe("Failure");
+    expect(
+      decodeRemoteTerminalInput({
+        host: "sol",
+        absolutePath: "/work/project",
+      })._tag,
+    ).toBe("Success");
   });
 });
 
