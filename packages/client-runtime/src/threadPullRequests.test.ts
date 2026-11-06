@@ -428,6 +428,19 @@ describe("chain selection and badge state", () => {
     );
     expect(stateOf([merged, middle, openTop])).toBe("open");
     expect(stateOf([merged, middle, { ...queuedTop, snapshot: null }])).toBe("open");
+    expect(
+      stateOf([
+        merged,
+        middle,
+        link(3, {
+          snapshot: snapshot({
+            baseBranch: "middle",
+            isInMergeQueue: true,
+            mergeability: "conflicting",
+          }),
+        }),
+      ]),
+    ).toBe("open");
   });
 
   it("keeps branch matching case-sensitive while ignoring repository case", () => {

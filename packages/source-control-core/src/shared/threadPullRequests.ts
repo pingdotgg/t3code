@@ -294,7 +294,12 @@ export function makeThreadPullRequests(
     const open = visible.filter(isOpen);
     const state = visible.every((link) => link.snapshot?.state === "open" && link.snapshot.isDraft)
       ? "draft"
-      : open.length > 0 && open.every((link) => link.snapshot?.isInMergeQueue === true)
+      : open.length > 0 &&
+          open.every(
+            (link) =>
+              link.snapshot?.isInMergeQueue === true &&
+              link.snapshot.mergeability !== "conflicting",
+          )
         ? "queued"
         : states.includes("open")
           ? "open"
