@@ -23,6 +23,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   mergeMethods: ["merge", "squash", "rebase"],
   search: true,
   reactions: false,
+  mentions: false,
   review: {
     inlineComment: true,
     reply: true,
