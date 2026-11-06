@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "@effect/vitest";
 import {
   makeWorkPresetName,
   MAX_WORK_PRESETS_PER_ENVIRONMENT,
+  getWorkPresetsForEnvironment,
   normalizeWorkPresetsState,
   useWorkPresetsStore,
 } from "./workPresetsStore";
@@ -60,6 +61,16 @@ describe("work presets", () => {
     });
     expect(normalized.presetsByEnvironmentId[environmentId]).toHaveLength(1);
     expect(normalized.presetsByEnvironmentId[environmentId]?.[0]?.id).toBe("valid");
+    const current = useWorkPresetsStore.getState();
+    const hydrated = useWorkPresetsStore.persist.getOptions().merge!(
+      { presetsByEnvironmentId: { [environmentId]: [{ id: "broken" }] }, save: null },
+      current,
+    );
+    expect(hydrated.presetsByEnvironmentId).toEqual({});
+    expect(hydrated.save).toBe(current.save);
+    expect(getWorkPresetsForEnvironment(current, environmentId)).toBe(
+      getWorkPresetsForEnvironment(current, environmentId),
+    );
   });
 
   it("limits each environment to the retention size", () => {

@@ -537,6 +537,32 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       assert.isNull(preview.publish);
       assert.isNull(previewChannel.publish);
+      const custom = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.1.8",
+        false,
+        false,
+        undefined,
+        undefined,
+      ).pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                T3CODE_DESKTOP_CUSTOM: "true",
+                GITHUB_REPOSITORY: "pingdotgg/t3code",
+              },
+            }),
+          ),
+        ),
+      );
+      assert.equal(custom.appId, "com.kbfx1234.t3code.custom");
+      assert.equal(custom.productName, "T3 Code Custom");
+      assert.isNull(custom.publish);
+      assert.deepStrictEqual((custom.mac as { protocols: unknown }).protocols, [
+        { name: "T3 Code Custom", schemes: ["t3code-custom"] },
+      ]);
       assert.deepStrictEqual(release.publish, [
         {
           provider: "github",

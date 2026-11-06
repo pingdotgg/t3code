@@ -18,6 +18,13 @@ vi.mock("electron", () => ({
 
 import * as ElectronProtocol from "./ElectronProtocol.ts";
 
+it("uses a custom production scheme without changing development routing", () => {
+  assert.equal(ElectronProtocol.getDesktopSchemeForBuild(false, true), "t3code-custom");
+  assert.equal(ElectronProtocol.getDesktopSchemeForBuild(false, false), "t3code");
+  assert.equal(ElectronProtocol.getDesktopSchemeForBuild(true, true), "t3code-dev");
+  assert.equal(ElectronProtocol.getDesktopUrl(false, true), "t3code-custom://app/");
+});
+
 const layerProtocol = ElectronProtocol.layer.pipe(Layer.provide(NodeServices.layer));
 
 describe("ElectronProtocol", () => {

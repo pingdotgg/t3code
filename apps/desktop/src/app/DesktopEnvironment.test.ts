@@ -72,4 +72,19 @@ describe("DesktopEnvironment", () => {
       assert.equal(production.stateDir, "/Users/alice/.t3/userdata");
     }),
   );
+
+  it.effect("isolates the custom build from the official state and identity", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        { isPackaged: true },
+        { T3CODE_DESKTOP_CUSTOM: "1", T3CODE_HOME: "/Users/alice/.t3" },
+      );
+
+      assert.equal(environment.baseDir, "/Users/alice/.t3-custom");
+      assert.equal(environment.stateDir, "/Users/alice/.t3-custom/userdata");
+      assert.equal(environment.displayName, "T3 Code Custom");
+      assert.equal(environment.appUserModelId, "com.kbfx1234.t3code.custom");
+      assert.isTrue(environment.isCustomBuild);
+    }),
+  );
 });

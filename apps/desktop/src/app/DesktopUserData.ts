@@ -35,10 +35,12 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
   function* (input: {
     readonly appDataDirectory: string;
     readonly isDevelopment: boolean;
+    readonly isCustomBuild?: boolean;
     readonly platform: NodeJS.Platform;
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    if (input.isCustomBuild) return path.join(input.appDataDirectory, "t3code-custom");
     const names = input.isDevelopment
       ? { current: "t3code-dev", legacy: "T3 Code (Dev)" }
       : { current: "t3code-v2", legacy: "T3 Code (Alpha)" };

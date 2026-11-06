@@ -751,6 +751,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           "x-forwarded-host": "box.tail1234.ts.net",
         });
         yield* upgrade({ origin: "t3code://app" });
+        yield* upgrade({ origin: "t3code-custom://app" });
         yield* upgrade({ origin: "http://localhost:5733" });
         yield* upgrade({});
 
@@ -758,6 +759,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         expect(otherPort._tag).toBe("ServerAuthInvalidCredentialError");
         const opaque = yield* Effect.flip(upgrade({ origin: "null" }));
         expect(opaque._tag).toBe("ServerAuthInvalidCredentialError");
+        const otherDesktop = yield* Effect.flip(upgrade({ origin: "t3code-custom://other" }));
+        expect(otherDesktop._tag).toBe("ServerAuthInvalidCredentialError");
       }).pipe(
         Effect.provide(
           layerEnvironmentAuth({

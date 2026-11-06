@@ -9,6 +9,7 @@ import { randomUUID } from "./lib/utils";
 
 const WORK_PRESETS_STORAGE_KEY = "t3code:work-presets:v1";
 export const MAX_WORK_PRESETS_PER_ENVIRONMENT = 20;
+const EMPTY_WORK_PRESETS: ReadonlyArray<WorkPreset> = [];
 const isModelSelection = Schema.is(ModelSelectionSchema);
 
 export interface WorkPreset {
@@ -24,6 +25,13 @@ interface WorkPresetsState {
   readonly presetsByEnvironmentId: Readonly<Record<string, ReadonlyArray<WorkPreset>>>;
   readonly save: (environmentId: EnvironmentId, modelSelection: ModelSelection) => string;
   readonly remove: (environmentId: EnvironmentId, presetId: string) => void;
+}
+
+export function getWorkPresetsForEnvironment(
+  state: Pick<WorkPresetsState, "presetsByEnvironmentId">,
+  environmentId: EnvironmentId,
+): ReadonlyArray<WorkPreset> {
+  return state.presetsByEnvironmentId[environmentId] ?? EMPTY_WORK_PRESETS;
 }
 
 function selectionKey(selection: ModelSelection): string {
@@ -139,6 +147,10 @@ export const useWorkPresetsStore = create<WorkPresetsState>()(
       ),
       version: 1,
       migrate: (persisted) => normalizeWorkPresetsState(persisted),
+      merge: (persisted, current) => ({
+        ...current,
+        ...normalizeWorkPresetsState(persisted),
+      }),
       partialize: ({ presetsByEnvironmentId }) => ({ presetsByEnvironmentId }),
     },
   ),

@@ -39,6 +39,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly processArch: string;
     readonly isPackaged: boolean;
     readonly isDevelopment: boolean;
+    readonly isCustomBuild: boolean;
     readonly appVersion: string;
     readonly appPath: string;
     readonly resourcesPath: string;
@@ -101,12 +102,14 @@ function resolveDesktopAppStageLabel(input: {
 export function resolveDesktopAppBranding(input: {
   readonly isDevelopment: boolean;
   readonly appVersion: string;
+  readonly isCustomBuild?: boolean;
 }): DesktopAppBranding {
   const stageLabel = resolveDesktopAppStageLabel(input);
+  const baseName = input.isCustomBuild ? "T3 Code Custom" : APP_BASE_NAME;
   return {
-    baseName: APP_BASE_NAME,
+    baseName,
     stageLabel,
-    displayName: `${APP_BASE_NAME} (${stageLabel})`,
+    displayName: input.isCustomBuild ? baseName : `${baseName} (${stageLabel})`,
   };
 }
 
@@ -159,7 +162,9 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const baseDir = resolveDesktopBaseDir({
     homeDirectory,
     joinPath: path.join,
-    t3Home: config.t3Home,
+    t3Home: config.customBuild
+      ? Option.some(path.join(homeDirectory, ".t3-custom"))
+      : config.t3Home,
   });
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
@@ -170,13 +175,16 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const branding = resolveDesktopAppBranding({
     isDevelopment,
     appVersion: input.appVersion,
+    isCustomBuild: config.customBuild,
   });
   const displayName = branding.displayName;
   const stateDir = resolveDesktopStateDir({
     baseDir,
     isDevelopment,
     joinPath: path.join,
-    t3Home: config.t3Home,
+    t3Home: config.customBuild
+      ? Option.some(path.join(homeDirectory, ".t3-custom"))
+      : config.t3Home,
   });
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
@@ -191,6 +199,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     processArch: input.processArch,
     isPackaged: input.isPackaged,
     isDevelopment,
+    isCustomBuild: config.customBuild,
     appVersion: input.appVersion,
     appPath: input.appPath,
     resourcesPath,
@@ -228,7 +237,11 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
+      config.customBuild
+        ? "com.kbfx1234.t3code.custom"
+        : isDevelopment
+          ? "com.t3tools.t3code.dev"
+          : "com.t3tools.t3code",
     ),
     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
     linuxApplicationsDir,

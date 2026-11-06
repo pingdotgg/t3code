@@ -7,6 +7,19 @@ import * as PlatformError from "effect/PlatformError";
 
 import { clearStaleGpuCaches, resolveUserDataPath } from "./DesktopUserData.ts";
 
+it.effect("uses a separate Chromium profile for the custom build", () =>
+  Effect.gen(function* () {
+    const directory = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped();
+    const resolved = yield* resolveUserDataPath({
+      appDataDirectory: directory,
+      isDevelopment: false,
+      isCustomBuild: true,
+      platform: "darwin",
+    });
+    assert.equal(resolved, `${directory}/t3code-custom`);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect.each(["t3code", "T3 Code (Alpha)"])(
   "preserves Windows credential keys from %s without copying browser databases",
   (sourceName) =>

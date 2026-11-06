@@ -15,12 +15,19 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 const environmentFor = (
   path: Path.Path,
-  input: { home: string; baseDir: string; platform?: NodeJS.Platform; isPackaged?: boolean },
+  input: {
+    home: string;
+    baseDir: string;
+    platform?: NodeJS.Platform;
+    isPackaged?: boolean;
+    isCustomBuild?: boolean;
+  },
 ) =>
   DesktopEnvironment.DesktopEnvironment.of({
     path,
     platform: input.platform ?? "linux",
     isPackaged: input.isPackaged ?? true,
+    isCustomBuild: input.isCustomBuild ?? false,
     homeDirectory: input.home,
     baseDir: input.baseDir,
     stateDir: path.join(input.baseDir, "userdata"),
@@ -35,6 +42,7 @@ const commandIn = (
     baseDir?: string;
     platform?: NodeJS.Platform;
     isPackaged?: boolean;
+    isCustomBuild?: boolean;
     env?: NodeJS.ProcessEnv;
   },
   spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"],
@@ -94,6 +102,36 @@ const fakePowerShell = (initial: string, inherited: Record<string, string> = {})
 };
 
 it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
+  it.effect("keeps the custom build from changing the shared t3 command", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const bin = path.join(home, ".local", "bin");
+      const official = path.join(home, ".t3", "bin", "t3");
+      yield* fs.makeDirectory(path.dirname(official), { recursive: true });
+      yield* fs.makeDirectory(bin, { recursive: true });
+      yield* fs.writeFileString(official, `#!/bin/sh\n# ${DesktopCliShim.MARKER}\n`, {
+        mode: 0o755,
+      });
+      yield* fs.symlink(official, path.join(bin, "t3"));
+      const stateDir = path.join(home, ".t3-custom", "userdata");
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      const command = yield* commandIn({
+        home,
+        baseDir: path.join(home, ".t3-custom"),
+        isCustomBuild: true,
+        env: { PATH: bin },
+      });
+      expect((yield* command.state).supported).toBe(false);
+      yield* Effect.flip(command.install);
+      yield* Effect.flip(command.uninstall);
+      yield* command.installOnFirstLaunch;
+      expect(yield* fs.exists(path.join(stateDir, "cli-command-first-launch"))).toBe(false);
+      expect(yield* fs.readLink(path.join(bin, "t3"))).toBe(official);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("links the launcher onto PATH and removes only that link", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = { PATH: "", SHELL: "/bin/zsh" };

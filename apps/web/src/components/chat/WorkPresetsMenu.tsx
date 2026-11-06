@@ -16,7 +16,11 @@ import {
 } from "../ui/menu";
 import { ComposerControl, ComposerControlIcon, type ComposerControlSize } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
-import { useWorkPresetsStore, type WorkPreset } from "../../workPresetsStore";
+import {
+  getWorkPresetsForEnvironment,
+  useWorkPresetsStore,
+  type WorkPreset,
+} from "../../workPresetsStore";
 
 export function WorkPresetsMenu(props: {
   environmentId: EnvironmentId;
@@ -26,8 +30,8 @@ export function WorkPresetsMenu(props: {
   onApply: (preset: WorkPreset) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const presets = useWorkPresetsStore(
-    (state) => state.presetsByEnvironmentId[props.environmentId] ?? [],
+  const presets = useWorkPresetsStore((state) =>
+    getWorkPresetsForEnvironment(state, props.environmentId),
   );
   const save = useWorkPresetsStore((state) => state.save);
   const remove = useWorkPresetsStore((state) => state.remove);

@@ -2765,7 +2765,8 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
   return `${trimmed.slice(0, versionSeparator)}/${trimmed.slice(versionSeparator + 1)}`;
 }
 
-export function resolveDesktopProductName(version: string): string {
+export function resolveDesktopProductName(version: string, custom = false): string {
+  if (custom) return "T3 Code Custom";
   return resolveDesktopUpdateChannel(version) === "nightly"
     ? "T3 Code (Nightly)"
     : (desktopPackageJson.productName ?? "T3 Code");
@@ -2787,11 +2788,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
 ) {
+  const custom = yield* Config.Boolean("T3CODE_DESKTOP_CUSTOM").pipe(Config.withDefault(false));
   const buildConfig: Record<string, unknown> = {
     afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
-    appId: DESKTOP_APP_ID,
-    productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    appId: custom ? "com.kbfx1234.t3code.custom" : DESKTOP_APP_ID,
+    productName: resolveDesktopProductName(version, custom),
+    artifactName: custom
+      ? "T3-Code-Custom-${version}-${arch}.${ext}"
+      : "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
@@ -2819,7 +2823,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const updateChannel = resolveDesktopUpdateChannel(version);
   // Missing publish config infers a GitHub feed from tokens; staging has no repository, so manifest generation would crash.
   buildConfig.publish = null;
-  if (!isDesktopPreviewVersion(version)) {
+  if (!custom && !isDesktopPreviewVersion(version)) {
     const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
     if (publishConfig) {
       buildConfig.publish = [publishConfig];
@@ -2868,17 +2872,19 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           },
         ],
       },
-      protocols: [
-        {
-          name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
-        },
-        {
-          name: "Web site URL",
-          schemes: ["http", "https"],
-          role: "Viewer",
-        },
-      ],
+      protocols: custom
+        ? [{ name: "T3 Code Custom", schemes: ["t3code-custom"] }]
+        : [
+            {
+              name: "T3 Code",
+              schemes: ["t3code", "t3code-dev"],
+            },
+            {
+              name: "Web site URL",
+              schemes: ["http", "https"],
+              role: "Viewer",
+            },
+          ],
       ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
       ...(macPasskeySigning
         ? {
@@ -2892,7 +2898,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac" && target === "dmg") {
     buildConfig.dmg = {
       // Finder caches DMG backgrounds by volume name; give each installer its own.
-      title: `${resolveDesktopProductName(version)} ${version} Installer`,
+      title: `${resolveDesktopProductName(version, custom)} ${version} Installer`,
       background: `dmg/dmg-background-${updateChannel}.png`,
       window: {
         width: 640,
@@ -3696,6 +3702,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
 
   const appVersion =
     options.version ?? resolveTaggedSourceVersion(repoRoot, serverPackageJson.version);
+  const custom = yield* Config.Boolean("T3CODE_DESKTOP_CUSTOM").pipe(Config.withDefault(false));
   const iconAssets = resolveDesktopBuildIconAssets(appVersion);
   const commitHash = yield* resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
@@ -3914,7 +3921,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       ? path.join(stageAppDir, WINDOWS_SERVER_RESOURCE_SOURCE_DIR, WINDOWS_SERVER_ASAR_RESOURCE)
       : undefined;
   const stagePackageJson: StagePackageJson = {
-    name: "t3code",
+    name: custom ? "t3code-custom" : "t3code",
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
@@ -3927,7 +3934,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     license: "MIT",
     homepage: "https://t3.codes",
     author: "T3 Tools",
-    main: "apps/desktop/dist-electron/boot.cjs",
+    main: custom ? "custom-boot.cjs" : "apps/desktop/dist-electron/boot.cjs",
     build: yield* createBuildConfig(
       options.platform,
       options.target,
@@ -3952,6 +3959,20 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
 
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
+  if (custom) {
+    yield* fs.writeFileString(
+      path.join(stageAppDir, "custom-boot.cjs"),
+      [
+        'process.env.T3CODE_DESKTOP_CUSTOM = "1";',
+        'process.env.T3CODE_HOME = require("node:path").join(require("node:os").homedir(), ".t3-custom");',
+        'process.env.T3CODE_DISABLE_AUTO_UPDATE = "true";',
+        "delete process.env.T3CODE_PORT;",
+        "delete process.env.VITE_DEV_SERVER_URL;",
+        'require("./apps/desktop/dist-electron/boot.cjs");',
+        "",
+      ].join("\n"),
+    );
+  }
   const stageWorkspaceConfig = createStageWorkspaceConfig({
     platform: options.platform,
     arch: options.arch,
