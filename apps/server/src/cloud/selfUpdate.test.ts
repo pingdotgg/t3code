@@ -362,6 +362,28 @@ it.layer(NodeServices.layer)("server self update", (it) => {
     }),
   );
 
+  it.effect("releases an abandoned desktop prepare drain after the watchdog timeout", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, completedShutdownIds } = yield* makeHarness({
+        mode: "desktop",
+        desktopAppUpdate: {
+          available: true,
+          run: () =>
+            Effect.succeed({
+              targetVersion: "1.2.0",
+              method: "desktop-app" as const,
+              desktopUpdateToken: "desktop-token",
+            }),
+          commit: () => Effect.never,
+        },
+      });
+      yield* selfUpdate.update({ targetVersion: "1.1.0" });
+      expect(yield* Ref.get(completedShutdownIds)).toEqual([]);
+      yield* TestClock.adjust("20 minutes");
+      expect(yield* Ref.get(completedShutdownIds)).toEqual([TEST_DESKTOP_SHUTDOWN_ID]);
+    }),
+  );
+
   it.effect("allows only one update at a time", () =>
     Effect.gen(function* () {
       const requested = yield* Deferred.make<void>();

@@ -1912,40 +1912,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ]);
   });
 
-  const startNextQueuedRun = Effect.fn("Orchestrator.startNextQueuedRun")(
-    function* (
-      threadId: ThreadId,
-      options?: {
-        readonly failedRunId?: RunId;
-        readonly endedRunId?: RunId;
-        readonly queuedRunId?: RunId;
-      },
+  const startNextQueuedRun = Effect.fn("Orchestrator.startNextQueuedRun")(function* (
+    threadId: ThreadId,
+    options?: {
+      readonly failedRunId?: RunId;
+      readonly endedRunId?: RunId;
+      readonly queuedRunId?: RunId;
+    },
+  ) {
+    if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
+    const projection = yield* readCommandProjection(threadId);
+    if (
+      projection.thread.archivedAt !== null ||
+      projection.thread.deletedAt !== null ||
+      projection.runs.some(isActiveRun)
     ) {
-      if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
-      const projection = yield* readCommandProjection(threadId);
-      if (
-        projection.thread.archivedAt !== null ||
-        projection.thread.deletedAt !== null ||
-        projection.runs.some(isActiveRun)
-      ) {
-        return;
-      }
+      return;
+    }
 
-      const selectedQueuedRun =
-        options?.queuedRunId === undefined
-          ? undefined
-          : projection.runs.find(
-              (run) => run.id === options.queuedRunId && run.status === "queued",
-            );
-      const queuedCandidates =
-        selectedQueuedRun === undefined
-          ? queuedRunsInDeliveryOrder(projection).filter((run) => run.queueHeld !== true)
-          : [selectedQueuedRun];
-      const selected = yield* selectStartableQueuedRun(threadId, projection, queuedCandidates);
-      if (selected === undefined) {
-        return;
-      }
-      const { storedQueuedRun, modelSelection } = selected;
+    const selectedQueuedRun =
+      options?.queuedRunId === undefined
+        ? undefined
+        : projection.runs.find((run) => run.id === options.queuedRunId && run.status === "queued");
+    const queuedCandidates =
+      selectedQueuedRun === undefined
+        ? queuedRunsInDeliveryOrder(projection).filter((run) => run.queueHeld !== true)
+        : [selectedQueuedRun];
+    const selected = yield* selectStartableQueuedRun(threadId, projection, queuedCandidates);
+    if (selected === undefined) {
+      return;
+    }
+    const { storedQueuedRun, modelSelection } = selected;
+    // Capture the selected id for failure attribution; the gate may clear before catch runs.
+    yield* Effect.gen(function* () {
       const queuedMessage = projection.messages.find(
         (candidate) => candidate.id === storedQueuedRun.userMessageId,
       );
@@ -2698,12 +2697,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         ],
       );
-    },
-    (effect, threadId, options?) =>
-      effect.pipe(
-        Effect.catch((cause) => failQueuedRunStart(threadId, cause, options?.queuedRunId)),
-      ),
-  );
+    }).pipe(Effect.catch((cause) => failQueuedRunStart(threadId, cause, storedQueuedRun.id)));
+  });
 
   // Under load a resumed provider can time out before taking the prompt; the restart still owes the turn.
   const retryContinuationStart = Effect.fn("Orchestrator.retryContinuationStart")(function* (
