@@ -1543,34 +1543,57 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const claudeHomePath = yield* makeTempDir("t3code-record-budget-claude-");
         const codexHomePath = yield* makeTempDir("t3code-record-budget-codex-");
         const workspace = yield* makeTempDir("t3code-record-budget-workspace-");
-        const exactLimit = makeRecordLimitTranscript(workspace, false);
-        // The newer transcript has 100,001 records; the older one has exactly 100,000.
-        for (const [sessionId, contents, mtimeMs] of [
-          ["excessive", exactLimit.replace("record-limit-session", "excessive") + "{}\n", nowMs],
-          ["older", exactLimit, nowMs - 1_000],
-        ] as const) {
+        const rolloutPath = (name: string) =>
+          path.join(codexHomePath, "sessions", "2026", "08", "24", `rollout-${name}.jsonl`);
+        // Without their inherited history these fail on every attempt and use 99 of 100 slots.
+        for (let index = 0; index < 99; index += 1) {
           yield* writeTranscript({
-            filePath: path.join(
-              codexHomePath,
-              "sessions",
-              "2026",
-              "08",
-              "24",
-              `rollout-${sessionId}.jsonl`,
-            ),
-            contents,
-            mtimeMs,
+            filePath: rolloutPath(`missing-base-${String(index).padStart(2, "0")}`),
+            contents: encodeTranscriptRecord({
+              type: "session_meta",
+              payload: {
+                id: `missing-base-${index}`,
+                cwd: workspace,
+                history_base: { thread_id: "missing-parent", end_byte_offset: 1 },
+              },
+            }),
+            mtimeMs: nowMs - index,
           });
         }
-        const outcomes = yield* runRecentThreadOutcomes({
-          claudeHomePath,
-          codexHomePath,
-          workspaceRoot: workspace,
-        });
-        expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Skipped", "Importable"]);
-        expect(outcomes[1]).toMatchObject({
-          thread: { providerSessionId: "record-limit-session" },
-        });
+        // The newer transcript has 100,001 records; the older one has exactly 100,000.
+        const exactLimit = makeRecordLimitTranscript(workspace, false);
+        for (const [sessionId, contents, mtimeMs] of [
+          [
+            "excessive",
+            exactLimit.replace("record-limit-session", "excessive") + "{}\n",
+            nowMs - 500,
+          ],
+          ["older", exactLimit, nowMs - 1_000],
+        ] as const) {
+          yield* writeTranscript({ filePath: rolloutPath(sessionId), contents, mtimeMs });
+        }
+        const filler = Array.from({ length: 99 }, () => "Skipped");
+
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const first = yield* Stream.runCollect(scanner.recentThreads(workspace));
+          expect(Array.from(first, (outcome) => outcome._tag)).toEqual([
+            ...filler,
+            "Skipped",
+            "Deferred",
+          ]);
+
+          // The unchanged excessive transcript no longer takes the last slot.
+          const second = Array.from(yield* Stream.runCollect(scanner.recentThreads(workspace)));
+          expect(second.map((outcome) => outcome._tag)).toEqual([
+            ...filler,
+            "Skipped",
+            "Importable",
+          ]);
+          expect(second[100]).toMatchObject({
+            thread: { providerSessionId: "record-limit-session" },
+          });
+        }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
       }),
     );
 
@@ -2012,6 +2035,66 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         expect(transcriptOpenCount).toBe(2);
         expect(fullReadBytes).toBe(new TextEncoder().encode(contents).byteLength);
         expect(outcomes).toEqual([{ _tag: "Skipped" }]);
+      }),
+    );
+
+    it.effect("retries a transcript after a read error", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const transcriptPath = path.join(
+          codexHomePath,
+          "sessions",
+          "2026",
+          "08",
+          "24",
+          "rollout-flaky.jsonl",
+        );
+        yield* writeTranscript({
+          filePath: transcriptPath,
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: "flaky-session", cwd: workspace },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              payload: { type: "user_message", message: "Import after the error" },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+        // The scan opens the transcript first; only the first import read fails.
+        let transcriptOpenCount = 0;
+        const simulatedFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          open: (filePath, options) => {
+            if (filePath !== transcriptPath) return fileSystem.open(filePath, options);
+            transcriptOpenCount += 1;
+            return fileSystem.open(
+              transcriptOpenCount === 2 ? `${filePath}.unavailable` : filePath,
+              options,
+            );
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const first = yield* Stream.runCollect(scanner.recentThreads(workspace));
+          expect(Array.from(first)).toEqual([{ _tag: "Skipped" }]);
+          const second = Array.from(yield* Stream.runCollect(scanner.recentThreads(workspace)));
+          expect(second).toMatchObject([
+            { _tag: "Importable", thread: { providerSessionId: "flaky-session" } },
+          ]);
+        }).pipe(
+          Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })),
+          Effect.provideService(FileSystem.FileSystem, simulatedFileSystem),
+        );
       }),
     );
 

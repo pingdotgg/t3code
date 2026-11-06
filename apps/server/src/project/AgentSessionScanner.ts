@@ -1031,8 +1031,11 @@ export const make = Effect.gen(function* () {
     source: AgentSessionSource,
     prefix?: { readonly endByteOffset: number; readonly historyBytes: number },
   ) {
+    // "unimportable": an unchanged file fails the same way again. null: the read may succeed later.
     const readBytes = prefix?.endByteOffset ?? expected.size;
-    if (readBytes > expected.size || readBytes > MAX_IMPORTED_TRANSCRIPT_BYTES) return null;
+    if (readBytes > expected.size || readBytes > MAX_IMPORTED_TRANSCRIPT_BYTES) {
+      return "unimportable" as const;
+    }
 
     return yield* Effect.scoped(
       fileSystem.open(filePath, { flag: "r" }).pipe(
@@ -1121,7 +1124,7 @@ export const make = Effect.gen(function* () {
                 },
                 catch: (cause) => new TranscriptParseError({ filePath, cause }),
               });
-              if (!withinBudget) return null;
+              if (!withinBudget) return "unimportable" as const;
             }
 
             if (
@@ -1131,7 +1134,7 @@ export const make = Effect.gen(function* () {
                 catch: (cause) => new TranscriptParseError({ filePath, cause }),
               }))
             )
-              return null;
+              return "unimportable" as const;
             return sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))
               ? { records, cwd, claudeFields, historyBytes }
               : null;
@@ -1139,6 +1142,12 @@ export const make = Effect.gen(function* () {
         ),
       ),
     ).pipe(
+      Effect.catchTags({
+        TranscriptParseError: (cause) =>
+          Effect.logWarning("Could not read imported transcript", { filePath, cause }).pipe(
+            Effect.as("unimportable" as const),
+          ),
+      }),
       Effect.catch((cause) =>
         Effect.logWarning("Could not read imported transcript", { filePath, cause }).pipe(
           Effect.as(null),
@@ -1525,8 +1534,8 @@ export const make = Effect.gen(function* () {
   });
 
   let cachedCandidates: ReadonlyArray<RawCandidate> | null = null;
-  // An unchanged transcript that was read but could not be parsed fails the same way again, so
-  // later attempts skip it without spending the per-attempt budget.
+  // An unchanged transcript that hit a read limit or could not be parsed fails the same way again,
+  // so later attempts skip it without spending the per-attempt budget.
   const unimportableTranscripts = new Map<string, TranscriptIdentity>();
 
   const scan: AgentSessionScanner["Service"]["scan"] = Effect.gen(function* () {
@@ -1756,7 +1765,7 @@ export const make = Effect.gen(function* () {
           "codex",
           { endByteOffset: base.end_byte_offset, historyBytes },
         );
-        if (inherited === null) return null;
+        if (inherited === null || inherited === "unimportable") return null;
         historyBytes = inherited.historyBytes;
         // The rollout's own session_meta names the thread; inherited ones may name a fork parent.
         prefixes.unshift(inherited.records.filter((record) => record.type !== "session_meta"));
@@ -1811,7 +1820,7 @@ export const make = Effect.gen(function* () {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
 
-          if (Option.isNone(snapshot.cwd)) {
+          if (snapshot === "unimportable" || Option.isNone(snapshot.cwd)) {
             unimportableTranscripts.set(fileKey, identity);
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
