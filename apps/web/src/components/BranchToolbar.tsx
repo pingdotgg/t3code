@@ -5,7 +5,14 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
-import { FolderGit2Icon, FolderGitIcon, FolderIcon, PlusIcon, ScaleIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  FolderGit2Icon,
+  FolderGitIcon,
+  FolderIcon,
+  PlusIcon,
+  ScaleIcon,
+} from "lucide-react";
 import {
   type Ref,
   type MouseEvent as ReactMouseEvent,
@@ -101,6 +108,8 @@ interface BranchToolbarProps {
   trailing?: ReactNode;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  /** Panel only: where the branch picker renders the thread's PR rows. */
+  panelPrRowsContainer?: HTMLElement | null;
 }
 
 function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string) {
@@ -201,7 +210,7 @@ const RunContextSelector = memo(function RunContextSelector({
         ? resolveEnvModeLabel("worktree")
         : resolveCurrentWorkspaceLabel(activeWorktreePath);
   const isPanel = displayMode === "panel";
-  const isLocked = envLocked || (envModeLocked && (!isPanel || !showEnvironmentPicker));
+  const isLocked = !isPanel && (envLocked || envModeLocked);
   const workspacePath =
     forceNewWorktree || (effectiveEnvMode === "worktree" && !activeWorktreePath)
       ? null
@@ -249,13 +258,24 @@ const RunContextSelector = memo(function RunContextSelector({
   const icon = showEnvironmentIndicator ? environmentIcon : workspaceIcon;
   const triggerContent = (
     <>
-      {icon}
+      {isPanel ? (
+        autoEnvironmentLabel ? (
+          <ScaleIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+        ) : (
+          <EnvironmentMachineIcon
+            kind={activeEnvironment?.machine ?? "server"}
+            className={THREAD_DETAILS_PANEL_ICON_CLASS}
+          />
+        )
+      ) : (
+        icon
+      )}
       <ComposerContextLabel displayMode={displayMode}>
         {autoEnvironmentLabel ??
-          (showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel)}
+          (isPanel || showEnvironmentIndicator
+            ? (activeEnvironment?.label ?? "Run on")
+            : workspaceLabel)}
       </ComposerContextLabel>
-      {/* Trailing in the panel, so every row label starts on the same edge. */}
-      {isPanel && showEnvironmentIndicator ? workspaceIcon : null}
     </>
   );
 
@@ -263,9 +283,9 @@ const RunContextSelector = memo(function RunContextSelector({
     return (
       <span
         className={cn(
-          "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 font-normal text-foreground/70 text-sm sm:h-6 sm:text-xs dark:text-muted-foreground",
-          isPanel && "max-w-full",
-          isPanel && THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
+          isPanel
+            ? THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS
+            : "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 font-normal text-dim-foreground text-xs sm:h-6",
         )}
         onContextMenu={handleContextMenu}
         aria-label={
@@ -283,7 +303,7 @@ const RunContextSelector = memo(function RunContextSelector({
   return (
     <Menu>
       <MenuTrigger
-        render={isPanel ? <ThreadDetailsControl part="select" /> : <ComposerControl size="xs" />}
+        render={isPanel ? <ThreadDetailsControl /> : <ComposerControl size="xs" />}
         className={isPanel ? undefined : "min-w-0 max-w-[48%] flex-initial justify-start"}
         onContextMenu={handleContextMenu}
         onMouseDownCapture={
@@ -305,10 +325,13 @@ const RunContextSelector = memo(function RunContextSelector({
         ].join(" ")}
       >
         {triggerContent}
+        {isPanel ? (
+          <ChevronDownIcon className="ms-auto size-3.5 shrink-0 text-muted-foreground" />
+        ) : null}
       </MenuTrigger>
       <MenuPopup
         align="start"
-        side={isPanel ? "bottom" : "top"}
+        side={isPanel ? "right" : "top"}
         className={
           isPanel
             ? "w-(--anchor-width)"
@@ -318,6 +341,14 @@ const RunContextSelector = memo(function RunContextSelector({
         }
         {...(!isPanel ? composerFloatingLayerProps : {})}
       >
+        {isPanel && workspacePath ? (
+          <MenuGroup>
+            <MenuGroupLabel>{activeEnvironment?.label ?? "Environment"}</MenuGroupLabel>
+            <div className="px-2 py-1 text-caption text-muted-foreground break-all">
+              {workspacePath}
+            </div>
+          </MenuGroup>
+        ) : null}
         {availableEnvironments &&
         ((showEnvironmentPicker && onEnvironmentChange) || addTargets.length > 0) ? (
           <>
@@ -618,6 +649,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   availableEnvironments,
   onEnvironmentChange,
   trailing,
+  panelPrRowsContainer,
 }: BranchToolbarProps) {
   const branchSelectorRef = useRef<BranchToolbarBranchSelectorHandle>(null);
   const threadRef = scopeThreadRef(environmentId, threadId);
@@ -730,6 +762,9 @@ export const BranchToolbar = memo(function BranchToolbar({
             onStartFromOriginChange={onStartFromOriginChange}
             {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
             {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+            {...(panelPrRowsContainer !== undefined
+              ? { prRowsContainer: panelPrRowsContainer }
+              : {})}
           />
         ) : null}
       </div>
@@ -740,7 +775,7 @@ export const BranchToolbar = memo(function BranchToolbar({
     <ComposerSurface.ContextStrip
       ref={attachStrip}
       data-compact={labelsOverflow ? "" : undefined}
-      className={cn("gap-1 text-xs font-normal text-foreground/70 dark:text-muted-foreground")}
+      className={cn("gap-1 text-xs font-normal text-dim-foreground")}
     >
       {showGitControls ? (
         <div className="contents @xl/composer-surface:hidden">

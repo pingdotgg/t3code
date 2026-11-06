@@ -6,7 +6,6 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
-  shouldCreateNewThreadInCurrentProject,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
@@ -447,7 +446,7 @@ describe("resolveThreadStatusPill", () => {
         },
       }),
     ).toMatchObject({
-      label: "Waiting",
+      label: "Monitoring",
       colorClass: "text-sidebar-muted-foreground",
       dotClass: "bg-sidebar-muted-foreground",
       pulse: false,
@@ -925,7 +924,7 @@ describe("unseen completion with background work", () => {
       task: { kind: "command", awaited: true },
       status: "waiting",
       receded: true,
-      pill: "Waiting",
+      pill: "Monitoring",
     },
   ] as const)("presents a completed thread with a $roster roster", (expected) => {
     const thread = presentThreadShell(localEnvironmentId, {
@@ -1617,15 +1616,5 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([idle, working])).toBe("working");
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
-  });
-});
-
-describe("shouldCreateNewThreadInCurrentProject", () => {
-  it("opens the picker when several projects are open, or only archived ones exist", () => {
-    expect(shouldCreateNewThreadInCurrentProject(false, 2, 3)).toBe(false);
-    expect(shouldCreateNewThreadInCurrentProject(false, 0, 2)).toBe(false);
-    expect(shouldCreateNewThreadInCurrentProject(false, 1, 3)).toBe(true);
-    expect(shouldCreateNewThreadInCurrentProject(false, 0, 0)).toBe(true);
-    expect(shouldCreateNewThreadInCurrentProject(true, 2, 2)).toBe(true);
   });
 });

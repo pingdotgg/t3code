@@ -104,7 +104,7 @@ export function PullRequestCheckoutMenu({
               render={
                 <Button
                   size="xs"
-                  variant="outline"
+                  variant="secondary"
                   aria-label={handoff?.startsWith("checkout") ? "Checking out..." : "Check out"}
                 >
                   <GitBranchIcon aria-hidden className="size-3.5" />
@@ -121,7 +121,7 @@ export function PullRequestCheckoutMenu({
       </Tooltip>
       <MenuPopup align="end" side="bottom">
         <MenuItem disabled={!canPrepareWorktree} onClick={() => onCheckout("worktree")}>
-          <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start" />
+          <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start sm:mt-0.5" />
           <span className="flex min-w-0 flex-col">
             <span>In a separate worktree</span>
             <span className="text-xs text-muted-foreground">
@@ -130,7 +130,7 @@ export function PullRequestCheckoutMenu({
           </span>
         </MenuItem>
         <MenuItem disabled={!canCheckoutHere} onClick={() => onCheckout("local")}>
-          <FolderGit2Icon className="mt-1 size-3.5 shrink-0 self-start" />
+          <FolderGit2Icon className="mt-1 size-3.5 shrink-0 self-start sm:mt-0.5" />
           <span className="flex min-w-0 flex-col">
             <span>In this repository</span>
             <span className="text-xs text-muted-foreground">

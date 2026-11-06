@@ -43,7 +43,7 @@ export function SidebarThreadUndoNotice() {
         // second line that overflow hides, instead of truncating mid-word. Browse mode
         // reads the button first; the live announcement carries the full sentence.
         className={cn(
-          "flex h-6 min-w-0 flex-1 flex-row-reverse flex-wrap gap-x-1 overflow-hidden text-2xs leading-6 whitespace-nowrap text-sidebar-muted-foreground transition-opacity duration-200 ease-out starting:opacity-0",
+          "flex h-6 min-w-0 flex-1 flex-row-reverse flex-wrap gap-x-1 overflow-hidden text-caption leading-6 whitespace-nowrap text-sidebar-muted-foreground transition-opacity duration-200 ease-out starting:opacity-0",
           !summary && "opacity-0",
         )}
       >

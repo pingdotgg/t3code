@@ -19,7 +19,6 @@ import ProjectScriptsControl, {
 import { memo, useState, type ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
-import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadServersPanel } from "./ThreadServersPanel";
@@ -29,16 +28,11 @@ import {
   type ThreadDetailsUsageInput,
 } from "./ThreadDetailsUsage";
 import { ThreadDetailsItemsMenuItems } from "./ThreadDetailsItemsMenu";
-import { resolveThreadDetailsVisibility, THREAD_DETAILS_ITEMS } from "./threadDetailsItems";
+import { resolveThreadDetailsVisibility } from "./threadDetailsItems";
 import { useClientSettings } from "../../hooks/useSettings";
-import { cn } from "../../lib/utils";
 import { SlidersHorizontalIcon } from "lucide-react";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
-import {
-  THREAD_DETAILS_PANEL_ICON_CLASS,
-  THREAD_DETAILS_PANEL_LABEL_CLASS,
-} from "./threadDetailsPanelStyles";
-import { Menu, MenuPopup } from "../ui/menu";
+import { Menu, MenuItemLabel, MenuPopup } from "../ui/menu";
 
 const GitActionsControl = memo(BaseGitActionsControl);
 
@@ -84,6 +78,9 @@ interface ThreadDetailsPanelProps extends Pick<
   ) => Promise<ProjectScriptActionResult>;
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
   usage: ThreadDetailsUsageInput;
+  onCompactContext?: () => void;
+  compactDisabled?: boolean;
+  compactDisabledReason?: string | null;
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
@@ -94,6 +91,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     props.activeProjectScripts && visible.scripts ? props.gitCwd : null,
   );
   const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
+  // The branch picker owns PR state and portals its rows into the git group.
+  const [prRowsContainer, setPrRowsContainer] = useState<HTMLDivElement | null>(null);
   const branchToolbarProps = {
     showGitControls: props.isGitRepo,
     environmentId: props.environmentId,
@@ -125,9 +124,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
       threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
       anchor={props.anchor}
       handle={props.handle}
-      contentKey={THREAD_DETAILS_ITEMS.filter((item) => visible[item.id])
-        .map((item) => item.id)
-        .join(",")}
       onContextMenu={(event) => {
         // Popups the card opens bubble here through React; they, fields, links, and selected text
         // keep their own menus.
@@ -148,7 +144,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
       }}
     >
       {(density) => {
-        // Section flags follow the rows that will render, so no empty section steals the divider rule.
         const show = {
           environment: density === "full" && visible.environment,
           openIn: density !== "essential" && visible.openIn && props.showOpenInPicker,
@@ -161,30 +156,37 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         };
         return (
           <>
-            <div className="group/details-items">
-              {show.environment || show.openIn || show.scripts ? (
-                <ThreadDetailsSection
-                  headingId="thread-details-workspace-heading"
-                  title="Workspace"
-                  separated={false}
-                  showHeading={false}
-                >
-                  <div className="flex flex-col">
+            <div className="group/details-items thread-details-stack flex flex-col gap-1">
+              {Object.values(show).some(Boolean) || visible.usage || visible.context ? (
+                <section aria-label="Workspace" className="surface-tray rounded-pane p-1">
+                  <div className="surface-composer rounded-lg p-0.5">
                     {show.environment ? (
-                      <BranchToolbar
-                        layout="panel"
-                        panelSection="workspace"
-                        availableEnvironments={props.availableEnvironments}
-                        {...(props.onEnvironmentChange
-                          ? { onEnvironmentChange: props.onEnvironmentChange }
-                          : {})}
-                        autoEnvironmentLabel={props.autoEnvironmentLabel}
-                        onAutoEnvironment={props.onAutoEnvironment}
-                        {...branchToolbarProps}
-                      />
-                    ) : null}
-
-                    {show.openIn ? (
+                      <div className="flex min-w-0 items-center">
+                        <div className="min-w-0 flex-1">
+                          <BranchToolbar
+                            layout="panel"
+                            panelSection="workspace"
+                            availableEnvironments={props.availableEnvironments}
+                            {...(props.onEnvironmentChange
+                              ? { onEnvironmentChange: props.onEnvironmentChange }
+                              : {})}
+                            autoEnvironmentLabel={props.autoEnvironmentLabel}
+                            onAutoEnvironment={props.onAutoEnvironment}
+                            {...branchToolbarProps}
+                          />
+                        </div>
+                        {show.openIn ? (
+                          <OpenInPicker
+                            keybindings={props.keybindings}
+                            environmentId={props.environmentId}
+                            availableEditors={props.availableEditors}
+                            openInCwd={props.gitCwd}
+                            enableShortcut={props.openInShortcutEnabled}
+                            displayMode="panel"
+                          />
+                        ) : null}
+                      </div>
+                    ) : show.openIn ? (
                       <OpenInPicker
                         keybindings={props.keybindings}
                         environmentId={props.environmentId}
@@ -194,7 +196,34 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         displayMode="panel"
                       />
                     ) : null}
-
+                    {show.branch || show.git ? (
+                      <div className="flex min-w-0 items-center">
+                        {show.branch ? (
+                          <div className="min-w-0 flex-1">
+                            <BranchToolbar
+                              layout="panel"
+                              panelSection="branch"
+                              panelPrRowsContainer={prRowsContainer}
+                              {...branchToolbarProps}
+                            />
+                          </div>
+                        ) : null}
+                        {show.git && props.gitCwd ? (
+                          <GitActionsControl
+                            keybindings={props.keybindings}
+                            compact
+                            displayMode="panel"
+                            showActions={visible.gitActions}
+                            showChanges={visible.changes}
+                            gitCwd={props.gitCwd}
+                            activeThreadRef={activeThreadRef}
+                            {...(props.draftId ? { draftId: props.draftId } : {})}
+                            {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
+                          />
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <div ref={setPrRowsContainer} />
                     {show.scripts && props.activeProjectScripts ? (
                       <ProjectScriptsControl
                         environmentId={props.environmentId}
@@ -202,6 +231,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         scripts={props.activeProjectScripts}
                         fileScripts={fileScripts}
                         preferredScriptId={props.preferredScriptId}
+                        threadId={props.threadId}
                         onRunScript={props.onRunProjectScript}
                         onAddScript={props.onAddProjectScript}
                         onUpdateScript={props.onUpdateProjectScript}
@@ -209,39 +239,21 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                       />
                     ) : null}
                   </div>
-                </ThreadDetailsSection>
-              ) : null}
-
-              {props.gitCwd && (show.branch || show.git) ? (
-                <ThreadDetailsSection
-                  headingId="thread-details-version-control-heading"
-                  title="Version Control"
-                  showHeading={false}
-                  separated={density === "full"}
-                >
-                  <div className="flex flex-col">
-                    {show.branch ? (
-                      <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
-                    ) : null}
-                    {show.git ? (
-                      <GitActionsControl
-                        compact={density !== "full"}
-                        showActions={visible.gitActions}
-                        showChanges={visible.changes}
-                        gitCwd={props.gitCwd}
-                        activeThreadRef={activeThreadRef}
-                        {...(props.draftId ? { draftId: props.draftId } : {})}
-                        {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
-                      />
-                    ) : null}
-                  </div>
-                </ThreadDetailsSection>
+                  {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
+                  {visible.context ? (
+                    <ThreadDetailsContext
+                      usage={props.usage.contextWindow}
+                      onCompact={props.onCompactContext}
+                      compactDisabled={props.compactDisabled}
+                      compactDisabledReason={props.compactDisabledReason}
+                    />
+                  ) : null}
+                </section>
               ) : null}
 
               {density === "full" && !props.draftId && visible.servers ? (
                 <ThreadServersPanel environmentId={props.environmentId} threadId={props.threadId} />
               ) : null}
-
               {density === "full" && !props.draftId && visible.automations ? (
                 <ThreadAutomationsPanel
                   environmentId={props.environmentId}
@@ -258,28 +270,16 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 />
               ) : null}
 
-              {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
-
-              {visible.context && props.usage.contextWindow ? (
-                <ThreadDetailsContext usage={props.usage.contextWindow} />
-              ) : null}
-
               {/* Shown only when no section above has content, so an emptied card can be refilled. */}
-              <div className="p-2 group-has-[>section>:last-child:not(:empty)]/details-items:hidden">
+              <div className="p-1 group-has-[section]/details-items:hidden">
                 <ThreadDetailsControl
-                  size="xs"
-                  variant="ghost"
-                  part="row"
-                  panel
                   onClick={(event) => {
                     const rect = event.currentTarget.getBoundingClientRect();
                     setMenuPosition({ x: rect.left, y: rect.bottom });
                   }}
                 >
-                  <SlidersHorizontalIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-                  <span className={cn("ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
-                    Choose what to show
-                  </span>
+                  <SlidersHorizontalIcon aria-hidden />
+                  <MenuItemLabel>Choose what to show</MenuItemLabel>
                 </ThreadDetailsControl>
               </div>
             </div>

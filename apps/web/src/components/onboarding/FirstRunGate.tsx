@@ -191,7 +191,7 @@ function FirstRunRecovery({
   return (
     <main className="flex h-dvh min-h-0 items-center justify-center bg-background px-6 text-foreground">
       <div className="flex max-w-sm flex-col items-center text-center">
-        <h1 className="text-lg font-semibold">
+        <h1 className="text-lg font-semibold text-strong-foreground">
           {settingsReadFailed ? "Could not read settings" : "Still connecting"}
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
@@ -202,7 +202,7 @@ function FirstRunRecovery({
         <Button
           className="mt-5"
           size="sm"
-          variant="outline"
+          variant="secondary"
           disabled={retrying}
           onClick={() => {
             if (settingsReadFailed) {

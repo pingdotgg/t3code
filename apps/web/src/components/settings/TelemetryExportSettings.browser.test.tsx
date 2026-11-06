@@ -117,9 +117,9 @@ describe("TelemetryExportSettings", () => {
     };
     await using screen = await render(<TelemetryExportSettings />);
 
-    await expect
-      .element(screen.getByText("Set by environment · Connected · 12 ms"))
-      .toBeInTheDocument();
+    await expect.element(screen.getByText("Set by environment")).toBeInTheDocument();
+    await expect.element(screen.getByText("Connected")).toBeInTheDocument();
+    await expect.element(screen.getByText("12 ms")).toBeInTheDocument();
     await expect
       .element(
         screen.getByText("Running: http://collector/v1/traces from OTEL_EXPORTER_OTLP_ENDPOINT"),

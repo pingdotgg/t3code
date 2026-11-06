@@ -30,10 +30,10 @@ export function WorkspaceEntryTooltip(props: {
   const metadata = useFileMetadata(props.environmentId, props.path, props.cwd);
   return (
     <>
-      {props.label ?? props.path}
-      {metadata?.byteLength === undefined
-        ? null
-        : ` · ${formatAttachmentSize(metadata.byteLength)}`}
+      <span className="block">{props.label ?? props.path}</span>
+      {metadata?.byteLength === undefined ? null : (
+        <span className="block">{formatAttachmentSize(metadata.byteLength)}</span>
+      )}
     </>
   );
 }
