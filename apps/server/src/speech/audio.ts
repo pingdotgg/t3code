@@ -134,6 +134,7 @@ export function createSpeechAudio(config: {
         let lastKept = streamAt;
         for (let i = Math.floor(streamAt / frame); i < probs.length; i++)
           if (!config.filterSilence || keep[i]) lastKept = Math.min(samples, (i + 1) * frame);
+        // lastKept was just sent. The prefill floor only holds audio that has not been sent.
         streamAt = Math.max(lastKept, Math.max(0, samples - prefill * frame));
         return output.length ? [output] : [];
       }

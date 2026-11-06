@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - verifies isolated native worker processes and their exit events.
 import { expect, it } from "vite-plus/test";
 
-import { loadNativeSpeechModel } from "./native.ts";
+import { loadNativeSpeechModel, preferCpuForSlowIntegratedGpu } from "./native.ts";
 
 const fixture = (transcribe: string, maxAudioMs = 0, supportsVocabulary = false) =>
   `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false, maxAudioMs: ${maxAudioMs} }, supports: (feature) => feature === "vocabulary" && ${supportsVocabulary}, transcribe: ${transcribe} }) };`)}`;
@@ -30,6 +30,87 @@ const streamingFixture = (feed: string, supportsVocabulary = false) =>
     }),
   }) };
 `)}`;
+
+it("prefers CPU only when an integrated GPU misses real time by a clear margin", () => {
+  expect(preferCpuForSlowIntegratedGpu(1800, 900, 1000)).toBe(true);
+  expect(preferCpuForSlowIntegratedGpu(900, 400, 1000)).toBe(false);
+  expect(preferCpuForSlowIntegratedGpu(1800, 1700, 1000)).toBe(false);
+  expect(preferCpuForSlowIntegratedGpu(1800, 0, 1000)).toBe(false);
+  expect(preferCpuForSlowIntegratedGpu(Number.NaN, 100, 1000)).toBe(false);
+  expect(preferCpuForSlowIntegratedGpu(1800, undefined, 1000)).toBe(false);
+});
+
+const deviceProbeFixture = (gpuDelay: number, cpuDelay: number, deviceType = "igpu") =>
+  `data:text/javascript,${encodeURIComponent(`
+    const loads = [];
+    const devices = [
+      { deviceType: ${JSON.stringify(deviceType)}, kind: "vulkan", name: "UHD", deviceId: "gpu-1", index: 0 },
+      { deviceType: "cpu", kind: "cpu", name: "CPU", deviceId: null, index: 1 },
+    ];
+    export const getAvailableBackends = () => devices;
+    export const TranscribeModel = { load: async (_path, options) => {
+      const which = options.device?.deviceType ?? (options.backend === "cpu" ? "cpu" : ${JSON.stringify(deviceType)});
+      loads.push(which);
+      const delay = which === "cpu" ? ${cpuDelay} : ${gpuDelay};
+      return {
+        device: devices.find((device) => device.deviceType === which) ?? devices[0],
+        backend: loads.join(">"),
+        capabilities: { supportsStreaming: true, supportsTranslate: false },
+        supports: () => false,
+        dispose() {},
+        createSession: () => ({
+          dispose() {},
+          stream: async () => ({
+            feed: () => new Promise((resolve) => setTimeout(resolve, delay)),
+            finalize: async () => {},
+            text: { full: "", committed: "", tentative: "" },
+            reset() {},
+          }),
+        }),
+      };
+    } };
+  `)}`;
+
+it("keeps a realtime integrated GPU and a discrete GPU on the library choice", async () => {
+  for (const deviceType of ["igpu", "gpu"]) {
+    const model = await loadNativeSpeechModel(
+      "unused.gguf",
+      new AbortController().signal,
+      deviceProbeFixture(0, 0, deviceType),
+    );
+    try {
+      expect(model.backend).toBe(deviceType);
+    } finally {
+      await model.dispose();
+    }
+  }
+});
+
+it("moves Auto off an integrated GPU that cannot stream in real time when CPU is faster", async () => {
+  const model = await loadNativeSpeechModel(
+    "unused.gguf",
+    new AbortController().signal,
+    deviceProbeFixture(700, 20),
+  );
+  try {
+    expect(model.backend).toBe("igpu>cpu");
+  } finally {
+    await model.dispose();
+  }
+});
+
+it("restores the integrated GPU when CPU is not clearly faster", async () => {
+  const model = await loadNativeSpeechModel(
+    "unused.gguf",
+    new AbortController().signal,
+    deviceProbeFixture(700, 900),
+  );
+  try {
+    expect(model.backend).toBe("igpu>cpu>igpu");
+  } finally {
+    await model.dispose();
+  }
+});
 
 it("returns transcription from an isolated process and disposes it", async () => {
   const model = await loadNativeSpeechModel(

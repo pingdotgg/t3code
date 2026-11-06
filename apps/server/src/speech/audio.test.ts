@@ -73,6 +73,36 @@ it("plans at pauses while recording and preserves ordered audio and final tails"
   expect(chunks.at(-1)!.length).toBeGreaterThanOrEqual(5 * 16000);
 });
 
+it("does not replay the prefill window across half-second streaming chunks", () => {
+  const audio = make({ nativeStreaming: true });
+  const total = 16_000 * 20;
+  const pcm = Float32Array.from({ length: total }, (_, i) => i);
+  let scored = 0;
+  const seen = new Set<number>();
+  let emitted = 0;
+  const take = (final = false) => {
+    for (const out of audio.take(final))
+      for (const sample of out) {
+        emitted++;
+        seen.add(sample);
+      }
+  };
+  for (let at = 0; at < total; at += 8_000) {
+    audio.append(pcm.subarray(at, at + 8_000));
+    const end = Math.floor(audio.samples() / frame);
+    const probs = [];
+    for (let f = scored; f < end; f++) probs.push(((f * frame) / 16_000) % 5 < 2 ? 0.9 : 0);
+    audio.score(scored, probs);
+    scored = end;
+    take();
+  }
+  audio.score(scored, [0]);
+  take(true);
+  expect(emitted).toBe(seen.size);
+  expect(emitted).toBeGreaterThan(0);
+  expect(emitted).toBeLessThanOrEqual(total);
+});
+
 it("respects smaller engine limits, hard cuts, and native/internal-long-form eligibility", () => {
   for (const config of [{}, { maxAudioMs: 4000 }, { nativeStreaming: true }, { longForm: true }]) {
     const audio = make({ filterSilence: false, ...config });

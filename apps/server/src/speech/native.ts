@@ -4,9 +4,83 @@ import * as NodeSea from "node:sea";
 import type { SpeechStreamText } from "@t3tools/contracts";
 import { createSpeechAudio } from "./audio.ts";
 
+/** True when a timed integrated-GPU stream missed real time and CPU was clearly faster. */
+export function preferCpuForSlowIntegratedGpu(
+  gpuMs: number,
+  cpuMs: number | undefined,
+  budgetMs: number,
+) {
+  if (!Number.isFinite(gpuMs) || !Number.isFinite(budgetMs) || !(gpuMs > budgetMs)) return false;
+  return cpuMs !== undefined && Number.isFinite(cpuMs) && cpuMs > 0 && cpuMs * 1.15 < gpuMs;
+}
+
 // Inline the small child entry so the packaged CLI does not need a separate worker artifact.
 const entry = `
 const createSpeechAudio = ${createSpeechAudio.toString()};
+const preferCpuForSlowIntegratedGpu = ${preferCpuForSlowIntegratedGpu.toString()};
+const measureStream = async (current, pcm) => {
+  const session = current.createSession();
+  try {
+    const live = await session.stream({ timestamps: "none" });
+    await live.feed(pcm.subarray(0, 8000));
+    const started = performance.now();
+    for (let at = 8000; at < pcm.length; at += 8000)
+      await live.feed(pcm.subarray(at, Math.min(pcm.length, at + 8000)));
+    await live.finalize();
+    return performance.now() - started;
+  } finally {
+    session.dispose();
+  }
+};
+const resolveAutoDevice = async (gpuModel, TranscribeModel, getAvailableBackends, message) => {
+  if (message.acceleration !== "auto" || gpuModel.device?.deviceType !== "igpu") return gpuModel;
+  if (!gpuModel.capabilities?.supportsStreaming || typeof gpuModel.createSession !== "function")
+    return gpuModel;
+  if (typeof getAvailableBackends !== "function") return gpuModel;
+  const pcm = new Float32Array(24000);
+  for (let i = 0; i < pcm.length; i++) pcm[i] = Math.sin(i * 0.05) * 0.2;
+  const budgetMs = ((pcm.length - 8000) / 16000) * 1000;
+  let gpuMs;
+  try {
+    gpuMs = await measureStream(gpuModel, pcm);
+  } catch {
+    return gpuModel;
+  }
+  if (!(gpuMs > budgetMs)) return gpuModel;
+  const selected = {
+    kind: gpuModel.device.kind,
+    name: gpuModel.device.name,
+    deviceId: gpuModel.device.deviceId,
+    index: gpuModel.device.index,
+  };
+  await gpuModel.dispose?.();
+  let cpuModel;
+  let cpuMs;
+  try {
+    cpuModel = await TranscribeModel.load(message.path, { backend: "cpu" });
+    cpuMs = await measureStream(cpuModel, pcm);
+  } catch {
+    await cpuModel?.dispose?.();
+    cpuModel = undefined;
+  }
+  if (preferCpuForSlowIntegratedGpu(gpuMs, cpuMs, budgetMs)) return cpuModel;
+  const match = getAvailableBackends().find((item) =>
+    item.deviceType === "igpu" && item.kind === selected.kind &&
+    (typeof selected.index === "number" ? item.index === selected.index
+      : (item.deviceId ?? item.name) === (selected.deviceId ?? selected.name)));
+  if (!match) {
+    if (cpuModel) return cpuModel;
+    throw new Error("The selected speech GPU is unavailable.");
+  }
+  try {
+    const restored = await TranscribeModel.load(message.path, { device: match });
+    await cpuModel?.dispose?.();
+    return restored;
+  } catch (error) {
+    if (cpuModel) return cpuModel;
+    throw error;
+  }
+};
 let speech;
 let model;
 let vadModel;
@@ -146,6 +220,7 @@ process.on("message", async (message) => {
       if (message.acceleration.startsWith("gpu:") && !device)
         throw new Error("The selected speech GPU is unavailable.");
       model = await TranscribeModel.load(message.path, device ? { device } : { backend: message.acceleration });
+      model = await resolveAutoDevice(model, TranscribeModel, getAvailableBackends, message);
       process.send({ type: "t3-speech-reply", ok: true, backend: model.backend,
         supportsStreaming: model.capabilities.supportsStreaming,
         supportsLongForm: model.supports("long_form"),
