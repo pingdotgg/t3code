@@ -6,45 +6,90 @@ import {
   postProcessEnvironmentTranscript,
   VoiceInputController,
   voiceInputBlocksSubmission,
-  voiceInputFreezesEditor,
   type VoiceDraftSnapshot,
+  type VoiceInputControllerDependencies,
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
+import type { PreparedConnection } from "@t3tools/client-runtime/connection";
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   EnvironmentSpeechModel,
   EnvironmentSpeechStatus,
+  ProjectId,
+  SpeechPostProcessingOptions,
+  SpeechStreamText,
+  SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { resolveSpeechVocabulary } from "@t3tools/shared/speech";
 import * as Option from "effect/Option";
 import { useEffect, useRef, useState } from "react";
 
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { toastManager } from "../components/ui/toast";
 import {
   useClientSettings,
   useClientSettingsHydrated,
   useEnvironmentSettings,
 } from "../hooks/useSettings";
-import { usePreparedConnection } from "../state/session";
 import { runtime } from "../lib/runtime";
-import { usePrimaryEnvironmentId } from "../state/environments";
+import { useEnvironment } from "../state/environments";
+import { useEnvironmentScope, usePreparedConnection } from "../state/session";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
-import { toastManager } from "../components/ui/toast";
+import { bindAudioGrant, readCleanupGrant, useAudioGrant } from "./voiceConsent";
 
-const INITIAL_STATE: VoiceInputState<true> = { phase: "idle", error: null, errorAction: null };
-const WAITING_STATE: VoiceInputState<true> = { phase: "preparing", error: null, errorAction: null };
-// The last status each connection answered. A composer that mounts later (a
-// new draft, a thread switch) shows its mic at once instead of after a fetch.
-const lastStatusByConnection = new WeakMap<object, EnvironmentSpeechStatus>();
+const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
+const WAITING_STATE: VoiceInputState = { phase: "preparing", error: null, errorAction: null };
+const INITIAL_SETUP = {
+  open: false,
+  step: 0,
+  model: null as EnvironmentSpeechModel | null,
+  downloading: false,
+  error: null as string | null,
+};
+
+// Every mounted editor shares one status probe per destination; starting a recording refreshes it.
+const statusProbes = new WeakMap<PreparedConnection, Promise<EnvironmentSpeechStatus>>();
+function probeSpeechStatus(prepared: PreparedConnection, refresh = false) {
+  const cached = refresh ? undefined : statusProbes.get(prepared);
+  if (cached) return cached;
+  const probe = runtime.runPromise(getEnvironmentSpeechStatus(prepared));
+  statusProbes.set(prepared, probe);
+  probe.catch(() => {
+    if (statusProbes.get(prepared) === probe) statusProbes.delete(prepared);
+  });
+  return probe;
+}
 
 type DraftInput = {
   readonly text: string;
   readonly selection: { readonly start: number; readonly end: number };
 };
 
+function cleanupContext({ text, selection }: DraftInput): DraftInput {
+  const limit = 1_024;
+  const start = Math.max(0, Math.min(selection.start, text.length));
+  const end = Math.max(start, Math.min(selection.end, text.length));
+  const before = text.slice(Math.max(0, start - limit), start);
+  const selected = text.slice(start, Math.min(end, start + limit));
+  return {
+    text: before + selected + text.slice(end, end + limit),
+    selection: { start: before.length, end: before.length + selected.length },
+  };
+}
+
 type HookInput = {
+  /** The draft's own environment. Optional transcript cleanup runs there, never on the audio destination. */
   readonly environmentId: EnvironmentId;
-  readonly projectName?: string | undefined;
+  /** The draft's project: its vocabulary on that environment and its name become recognition hints. */
+  readonly projectId?: ProjectId | null | undefined;
+  readonly projectName?: string | null | undefined;
   readonly ownerKey: string;
   readonly draftText: string;
+  readonly disabled?: boolean | undefined;
+  /** False keeps the transcript off the cleanup provider even when cleanup is on; the model test uses it. */
+  readonly cleanup?: boolean | undefined;
   readonly readDraft: () => DraftInput;
   readonly commitDraft: (
     text: string,
@@ -52,92 +97,96 @@ type HookInput = {
   ) => void;
 };
 
-/** Microphone samples notify their display without rerendering the draft owner. */
-function createSpeechLevel() {
-  let value = 0;
-  const listeners = new Set<() => void>();
+/**
+ * Microphone audio leaves this device only for the environment the person chose in
+ * Voice settings. Nothing is inferred from the primary or the draft's environment, and
+ * the recording is abandoned the moment that choice changes or its connection drops.
+ */
+export function useVoiceTranscriptionDestination() {
+  const hydrated = useClientSettingsHydrated();
+  const grant = useAudioGrant();
+  const environmentId = hydrated && grant ? grant.destination.environmentId : null;
+  const environment = useEnvironment(environmentId);
+  const connection = Option.getOrNull(usePreparedConnection(environmentId));
+  const canDictate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const supported = environment?.serverConfig?.environment.capabilities.voiceTranscription === true;
   return {
-    getSnapshot: () => value,
-    subscribe: (listener: () => void) => {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-    set: (next: number) => {
-      if (Object.is(value, next)) return;
-      value = next;
-      listeners.forEach((listener) => listener());
-    },
+    environmentId,
+    grantId: grant?.id ?? null,
+    label: environment?.label ?? null,
+    prepared: supported && canDictate ? connection : null,
   };
 }
 
 export function useEnvironmentSpeechInput(input: HookInput) {
-  const clientSettingsHydrated = useClientSettingsHydrated();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const configuredEnvironmentId = useClientSettings(
-    (settings) => settings.voiceTranscriptionEnvironmentId,
-  );
-  const transcriptionEnvironmentId = clientSettingsHydrated
-    ? (configuredEnvironmentId ?? primaryEnvironmentId)
-    : null;
-  const prepared = Option.getOrNull(usePreparedConnection(transcriptionEnvironmentId));
-  const postProcessingPrepared = Option.getOrNull(usePreparedConnection(input.environmentId));
-  const postProcessingEnabled = useEnvironmentSettings(
+  const destination = useVoiceTranscriptionDestination();
+  const prepared = destination.prepared;
+  const grantId = destination.grantId;
+  const originatingEnvironment = useEnvironment(input.environmentId);
+  const originatingConnection = Option.getOrNull(usePreparedConnection(input.environmentId));
+  const canCleanUp = useEnvironmentScope(input.environmentId, AuthOrchestrationOperateScope);
+  const cleanupPrepared =
+    canCleanUp &&
+    originatingEnvironment?.serverConfig?.environment.capabilities.voiceTranscription === true
+      ? originatingConnection
+      : null;
+  const clientSettings = useClientSettings();
+  const projectId = input.projectId ?? null;
+  const projectWords = useEnvironmentSettings(
     input.environmentId,
-    (settings) => settings.speechPostProcessingEnabled,
+    (settings) => resolveProjectSettings(settings, projectId).settings.speechProjectCustomWords,
   );
-  const microphoneId = useClientSettings((settings) => settings.voiceMicrophone);
   const [status, setStatus] = useState<{
-    readonly prepared: NonNullable<typeof prepared>;
-    readonly value: EnvironmentSpeechStatus;
+    readonly prepared: PreparedConnection;
+    readonly value: EnvironmentSpeechStatus | null;
   } | null>(null);
   const [controllerState, setControllerState] = useState({
     prepared,
-    postProcessingEnabled,
-    postProcessingPrepared,
+    grantId,
     value: INITIAL_STATE,
   });
-  const [queuedStart, setQueuedStart] = useState<{
-    readonly prepared: NonNullable<typeof prepared>;
-    readonly request: number;
-  } | null>(null);
-  const [level] = useState(createSpeechLevel);
-  const controllerChanged =
-    controllerState.prepared !== prepared ||
-    controllerState.postProcessingEnabled !== postProcessingEnabled ||
-    controllerState.postProcessingPrepared !== postProcessingPrepared;
-  if (controllerChanged) {
-    setControllerState({
-      prepared,
-      postProcessingEnabled,
-      postProcessingPrepared,
-      value: INITIAL_STATE,
-    });
+  const [queuedStart, setQueuedStart] = useState<PreparedConnection | null>(null);
+  const [level, setLevel] = useState(0);
+  const [preview, setPreview] = useState<SpeechStreamText | null>(null);
+  const [setup, setSetup] = useState(INITIAL_SETUP);
+  const [previousOwner, setPreviousOwner] = useState({
+    key: input.ownerKey,
+    disabled: input.disabled,
+  });
+  if (controllerState.prepared !== prepared || controllerState.grantId !== grantId) {
+    setControllerState({ prepared, grantId, value: INITIAL_STATE });
+    setSetup(INITIAL_SETUP);
+    setQueuedStart(null);
+    setPreview(null);
+    setLevel(0);
   }
-  const state: VoiceInputState<true> =
-    queuedStart?.prepared === prepared
+  if (previousOwner.key !== input.ownerKey || previousOwner.disabled !== input.disabled) {
+    setPreviousOwner({ key: input.ownerKey, disabled: input.disabled });
+    setQueuedStart(null);
+    setSetup(INITIAL_SETUP);
+  }
+  const state: VoiceInputState =
+    queuedStart === prepared && prepared
       ? WAITING_STATE
-      : controllerChanged
-        ? INITIAL_STATE
-        : controllerState.value;
-  const [setupOpen, setSetupOpen] = useState(false);
-  const [setupStep, setSetupStep] = useState(0);
-  const [setupModel, setSetupModel] = useState<EnvironmentSpeechModel | null>(null);
-  const [setupDownloading, setSetupDownloading] = useState(false);
-  const [setupCancelled, setSetupCancelled] = useState(false);
-  const [setupError, setSetupError] = useState<string | null>(null);
-  const setupCancelledRef = useRef(false);
-  const controllerRef = useRef<VoiceInputController<true> | null>(null);
-  const startRequestRef = useRef(0);
-  const pendingStartRef = useRef<number | null>(null);
-  const latestInputRef = useRef(input);
-  const microphoneIdRef = useRef(microphoneId);
-  const draftRevisionRef = useRef({ ownerKey: input.ownerKey, text: input.draftText, revision: 0 });
+      : controllerState.prepared === prepared
+        ? controllerState.value
+        : INITIAL_STATE;
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Publish committed draft ownership and callbacks before asynchronous recorder completions read them.
+  const controllerRef = useRef<VoiceInputController | null>(null);
+  const startRequestRef = useRef(0);
+  const pendingSubmissionRef = useRef<{
+    ownerKey: string;
+    submit: (text: string) => void;
+    text?: string;
+  } | null>(null);
+  const latestRef = useRef({ input, clientSettings, cleanupPrepared, projectWords });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed props and settings to the asynchronous recording controller
   useEffect(() => {
-    latestInputRef.current = input;
+    latestRef.current = { input, clientSettings, cleanupPrepared, projectWords };
+  });
+  const draftRevisionRef = useRef({ ownerKey: input.ownerKey, text: input.draftText, revision: 0 });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks committed draft revisions so a late transcript cannot overwrite an edited draft
+  useEffect(() => {
     const revision = draftRevisionRef.current;
     if (revision.ownerKey !== input.ownerKey || revision.text !== input.draftText) {
       draftRevisionRef.current = {
@@ -146,19 +195,24 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         revision: revision.revision + 1,
       };
     }
-  }, [input]);
+  }, [input.ownerKey, input.draftText]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Publish the selected microphone before the external recorder starts its next capture.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the recording controller bound to the consented destination; it is disposed with the consent
   useEffect(() => {
-    microphoneIdRef.current = microphoneId;
-  }, [microphoneId]);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the external recorder and transcription controller for this environment connection.
-  useEffect(() => {
-    if (!prepared || typeof navigator === "undefined") return;
+    if (!prepared || !grantId || typeof navigator === "undefined") return;
+    const hasAudioConsent = bindAudioGrant(grantId);
+    let disposed = false;
+    let controller: VoiceInputController;
+    let recordingPreferences:
+      | {
+          readonly cleanup: SpeechPostProcessingOptions | null;
+          readonly cleanupGrant: string | null;
+          readonly environmentId: EnvironmentId;
+        }
+      | undefined;
 
     const readDraft = (): VoiceDraftSnapshot => {
-      const current = latestInputRef.current;
+      const current = latestRef.current.input;
       const draft = current.readDraft();
       const revision = draftRevisionRef.current;
       if (revision.ownerKey !== current.ownerKey || revision.text !== draft.text) {
@@ -175,110 +229,146 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         revision: draftRevisionRef.current.revision,
       };
     };
-
-    let disposed = false;
-    let lastPhase: VoiceInputState<true>["phase"] = "idle";
-    let controller: VoiceInputController<true>;
     const platform = createBrowserVoiceInputPlatform({
       prepared,
-      getProjectName: () => {
-        const name = latestInputRef.current.projectName;
-        return name && name.length <= 200 ? name : undefined;
+      hasAudioConsent,
+      getTranscriptionOptions: (): SpeechTranscriptionOptions => {
+        const {
+          clientSettings: settings,
+          projectWords: project,
+          input: current,
+        } = latestRef.current;
+        const cleanupGrant = current.cleanup === false ? null : readCleanupGrant();
+        const cleanupEnabled = cleanupGrant !== null;
+        const cue =
+          cleanupEnabled && latestRef.current.cleanupPrepared ? settings.speechCorrectionWord : "";
+        const speechCustomWords = resolveSpeechVocabulary({
+          personal: settings.speechCustomWords,
+          project,
+          hints: [cue, current.projectName ?? ""],
+        });
+        recordingPreferences = {
+          cleanupGrant,
+          environmentId: current.environmentId,
+          cleanup: cleanupEnabled
+            ? {
+                speechCustomWords,
+                speechPostProcessingPrompt: settings.speechPostProcessingPrompt,
+                ...(cue.trim() ? { speechCorrectionWord: cue } : {}),
+              }
+            : null,
+        };
+        return {
+          speechLanguage: settings.speechLanguage,
+          speechTranslateToEnglish: settings.speechTranslateToEnglish,
+          speechCustomWords,
+          speechRemoveFillerWords: settings.speechRemoveFillerWords,
+          ...(cue.trim() ? { speechCorrectionWord: cue } : {}),
+          speechSilenceFiltering: settings.speechSilenceFiltering,
+        };
       },
-      getMicrophoneId: () => microphoneIdRef.current,
-      onLevel: level.set,
+      getMicrophoneId: () => latestRef.current.clientSettings.voiceMicrophone,
+      onLevel: setLevel,
       onDurationLimit: () => void controller.stop(),
+      onText: (text) => {
+        if (!disposed) setPreview(text);
+      },
       onError: (message) => {
         if (!disposed) void controller.interruptRecording(message);
       },
     });
-    controller = new VoiceInputController<true>({
+    const postProcess: NonNullable<VoiceInputControllerDependencies["postProcess"]> = (
+      transcript,
+      options,
+    ) => {
+      const preferences = recordingPreferences;
+      const { input: current, cleanupPrepared: target } = latestRef.current;
+      if (
+        !preferences?.cleanup ||
+        !hasAudioConsent() ||
+        preferences.cleanupGrant !== readCleanupGrant() ||
+        current.cleanup === false ||
+        current.environmentId !== preferences.environmentId ||
+        current.ownerKey !== options.draft.ownerKey
+      )
+        return null;
+      if (!target)
+        return Promise.reject(
+          new Error("The draft's environment is unavailable for transcript cleanup."),
+        );
+      return runtime
+        .runPromise(
+          postProcessEnvironmentTranscript(
+            target,
+            transcript,
+            cleanupContext(options.draft),
+            preferences.cleanup,
+            () => hasAudioConsent() && preferences.cleanupGrant === readCleanupGrant(),
+          ),
+          options,
+        )
+        .then((result) => result.text);
+    };
+    controller = new VoiceInputController({
+      retryFailedRecording: true,
       recorder: platform.recorder,
       getTranscriber: () => platform.transcriber,
       requestPermission: async () => ({ granted: true, canAskAgain: true }),
       configureRecording: async () => undefined,
-      releaseRecording: async () => platform.releaseRecording(),
+      releaseRecording: async () => platform.cancelRecording(),
       deleteRecording: platform.deleteRecording,
-      ...(postProcessingEnabled && postProcessingPrepared
-        ? {
-            postProcess: async (transcript, options) => {
-              const result = await runtime.runPromise(
-                postProcessEnvironmentTranscript(postProcessingPrepared, transcript, {
-                  text: options.draft.text,
-                  selection: options.draft.selection,
-                }),
-                options,
-              );
-              return result.text;
-            },
-            onPostProcessingError: () =>
-              toastManager.add({
-                type: "warning",
-                title: "Post-processing failed",
-                description: "The original transcription was added.",
-              }),
-          }
-        : {}),
+      postProcess,
+      onPostProcessingError: () =>
+        toastManager.add({
+          type: "warning",
+          title: "Transcript cleanup failed",
+          description: "The original transcript was added.",
+        }),
       readDraft,
-      commitDraft: (text, selection) => latestInputRef.current.commitDraft(text, selection),
+      commitDraft: (text, selection) => {
+        if (latestRef.current.input.disabled) return;
+        latestRef.current.input.commitDraft(text, selection);
+        if (pendingSubmissionRef.current) pendingSubmissionRef.current.text = text;
+      },
       onStateChange: (value) => {
-        if (!disposed) {
-          setControllerState({ prepared, postProcessingEnabled, postProcessingPrepared, value });
-          if (value.phase === "error" && lastPhase !== "error") {
-            toastManager.add({
-              type: "error",
-              title: "Voice input failed",
-              description: value.error ?? "Try again.",
-            });
-          }
-          lastPhase = value.phase;
-        }
+        if (disposed) return;
+        if (value.phase === "error") pendingSubmissionRef.current = null;
+        setControllerState({ prepared, grantId, value });
+        if (value.phase !== "recording" && value.phase !== "transcribing") setPreview(null);
       },
     });
     controllerRef.current = controller;
     return () => {
       disposed = true;
-      level.set(0);
+      pendingSubmissionRef.current = null;
       startRequestRef.current += 1;
       setQueuedStart(null);
       controller.dispose();
       if (controllerRef.current === controller) controllerRef.current = null;
     };
-  }, [level, postProcessingEnabled, postProcessingPrepared, prepared]);
+  }, [prepared, grantId]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read transcription availability when the external environment connection changes.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- probes the chosen environment's speech status once its connection is available
   useEffect(() => {
     if (!prepared) return;
     let disposed = false;
-    void runtime
-      .runPromise(getEnvironmentSpeechStatus(prepared))
-      .then((next) => {
-        if (!disposed) setStatus({ prepared, value: next });
+    void probeSpeechStatus(prepared)
+      .then((value) => {
+        if (!disposed) setStatus({ prepared, value });
       })
       .catch(() => {
-        lastStatusByConnection.delete(prepared);
-        if (!disposed) setStatus(null);
+        if (!disposed) setStatus({ prepared, value: null });
       });
     return () => {
       disposed = true;
     };
   }, [prepared]);
+  const currentStatus = status?.prepared === prepared ? status.value : null;
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Cache committed speech status so later-mounted editors can share the connection result.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls download progress while the setup dialog owns an active model download
   useEffect(() => {
-    if (status) lastStatusByConnection.set(status.prepared, status.value);
-  }, [status]);
-
-  const currentStatus =
-    status?.prepared === prepared
-      ? status.value
-      : prepared
-        ? (lastStatusByConnection.get(prepared) ?? null)
-        : null;
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Poll external model download progress only while the setup dialog is downloading.
-  useEffect(() => {
-    if (!setupOpen || !setupDownloading || !prepared || !currentStatus?.supported) return;
+    if (!setup.open || !setup.downloading || !prepared || !currentStatus?.supported) return;
+    const modelId = currentStatus.modelId;
     let disposed = false;
     let refreshing = false;
     const timer = window.setInterval(() => {
@@ -287,173 +377,176 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       void runtime
         .runPromise(getEnvironmentSpeechModels(prepared))
         .then((result) => {
-          if (!disposed)
-            setSetupModel(
-              result.models.find((model) => model.id === currentStatus.modelId) ?? null,
-            );
+          if (disposed) return;
+          const model = result.models.find((candidate) => candidate.id === modelId) ?? null;
+          setSetup((current) => ({ ...current, model }));
         })
         .catch(() => undefined)
         .finally(() => {
           refreshing = false;
         });
-    }, 350);
+    }, 1_000);
     return () => {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [currentStatus, prepared, setupDownloading, setupOpen]);
+  }, [currentStatus, prepared, setup.downloading, setup.open]);
 
   const previousOwnerRef = useRef(input.ownerKey);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Cancel the external recording and queued start when the editor owner changes.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons the recording and any queued submission when the draft's owner changes
   useEffect(() => {
-    if (previousOwnerRef.current === input.ownerKey) return;
+    if (previousOwnerRef.current === input.ownerKey && !input.disabled) return;
     previousOwnerRef.current = input.ownerKey;
+    pendingSubmissionRef.current = null;
     startRequestRef.current += 1;
-    setQueuedStart(null);
     controllerRef.current?.ownerChanged();
-    setSetupOpen(false);
-  }, [input.ownerKey]);
+  }, [input.ownerKey, input.disabled]);
 
-  const start = async () => {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- delivers a queued submission only after the transcript has committed to the draft
+  useEffect(() => {
+    const pending = pendingSubmissionRef.current;
+    if (state.phase !== "idle" || !pending) return;
+    pendingSubmissionRef.current = null;
+    if (!input.disabled && pending.ownerKey === input.ownerKey && pending.text !== undefined)
+      pending.submit(pending.text);
+  }, [state, input.ownerKey, input.disabled]);
+
+  const submitAfterDictation = useStableCallback((submit: (text: string) => void) => {
+    if (latestRef.current.input.disabled || state.phase === "preparing") return;
+    const controller = controllerRef.current;
+    if (!controller || !voiceInputBlocksSubmission(state)) {
+      submit(latestRef.current.input.readDraft().text);
+      return;
+    }
+    if (pendingSubmissionRef.current) return;
+    pendingSubmissionRef.current = { ownerKey: latestRef.current.input.ownerKey, submit };
+    if (controller.currentState.phase === "recording") void controller.stop();
+  });
+
+  const start = useStableCallback(async () => {
     const request = ++startRequestRef.current;
-    const expectedController = controllerRef.current;
-    const expectedOwner = latestInputRef.current.ownerKey;
-    if (!expectedController || !prepared || !currentStatus?.supported) return;
+    const controller = controllerRef.current;
+    const owner = latestRef.current.input.ownerKey;
+    if (latestRef.current.input.disabled || !controller || !prepared) return;
     const stillCurrent = () =>
       request === startRequestRef.current &&
-      controllerRef.current === expectedController &&
-      latestInputRef.current.ownerKey === expectedOwner;
+      controllerRef.current === controller &&
+      latestRef.current.input.ownerKey === owner &&
+      !latestRef.current.input.disabled;
+    setQueuedStart(prepared);
     let latestStatus: EnvironmentSpeechStatus;
-    pendingStartRef.current = request;
     try {
-      latestStatus = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));
-      if (!stillCurrent()) return;
-      if (latestStatus.supported && latestStatus.state === "transcribing") {
-        setQueuedStart({ prepared, request });
-        // Remember the press and start when the previous stream drains,
-        // like Handy does, instead of erroring after a fixed wait.
-        // Esc, cancel, or a draft change (stillCurrent) abandons the queue.
-        while (latestStatus.supported && latestStatus.state === "transcribing") {
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
-          if (!stillCurrent()) return;
-          latestStatus = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));
-          if (!stillCurrent()) return;
-        }
-      }
+      latestStatus = await probeSpeechStatus(prepared, true);
     } catch (error) {
       if (!stillCurrent()) return;
+      setQueuedStart(null);
       toastManager.add({
         type: "error",
         title: "Could not start voice input",
         description: error instanceof Error ? error.message : String(error),
       });
-      setQueuedStart(null);
-      return;
-    } finally {
-      if (pendingStartRef.current === request) pendingStartRef.current = null;
-    }
-    setQueuedStart(null);
-    if (!latestStatus.supported) return;
-    setStatus({ prepared, value: latestStatus });
-    if (latestStatus.state === "missing-model") {
-      setSetupCancelled(false);
-      setSetupModel(null);
-      setSetupError(null);
-      setSetupStep(0);
-      setSetupOpen(true);
       return;
     }
     if (!stillCurrent()) return;
-    level.set(0);
-    await expectedController.start();
-  };
+    setQueuedStart(null);
+    setStatus({ prepared, value: latestStatus });
+    if (!latestStatus.supported) {
+      toastManager.add({
+        type: "error",
+        title: "Voice input is not available",
+        description: latestStatus.reason,
+      });
+      return;
+    }
+    if (latestStatus.state === "missing-model") {
+      setSetup({ ...INITIAL_SETUP, open: true });
+      return;
+    }
+    setLevel(0);
+    await controller.start();
+  });
 
-  const downloadSetupModel = async () => {
-    if (!prepared || !currentStatus?.supported || setupDownloading) return;
-    setupCancelledRef.current = false;
-    setSetupCancelled(false);
-    setSetupModel(null);
-    setSetupDownloading(true);
-    setSetupError(null);
+  const downloadSetupModel = useStableCallback(async () => {
+    if (!prepared || !currentStatus?.supported || setup.downloading) return;
+    const request = ++startRequestRef.current;
+    setSetup((current) => ({ ...current, downloading: true, error: null }));
     try {
       await runtime.runPromise(downloadEnvironmentSpeechModel(prepared, currentStatus.modelId));
-      if (!setupCancelledRef.current) {
-        const next = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));
-        setStatus({ prepared, value: next });
-        if (!next.supported || next.state === "missing-model") {
-          setSetupError("The model is not ready. Try downloading it again.");
-        } else {
-          setSetupStep(1);
-        }
-      }
+      if (request !== startRequestRef.current) return;
+      const next = await probeSpeechStatus(prepared, true);
+      if (request !== startRequestRef.current) return;
+      setStatus({ prepared, value: next });
+      setSetup((current) => ({
+        ...current,
+        downloading: false,
+        step: next.supported && next.state !== "missing-model" ? 1 : current.step,
+        error:
+          next.supported && next.state !== "missing-model"
+            ? null
+            : "The model is not ready. Try downloading it again.",
+      }));
     } catch {
-      if (!setupCancelledRef.current)
-        setSetupError(
-          "Could not download the model. Check this environment's connection and try again.",
-        );
+      if (request !== startRequestRef.current) return;
+      setSetup((current) => ({
+        ...current,
+        downloading: false,
+        error: "Could not download the model. Check this environment's connection and try again.",
+      }));
     }
-    setSetupDownloading(false);
-  };
+  });
 
-  const cancelSetupDownload = async () => {
+  const cancelSetupDownload = useStableCallback(async () => {
     if (!prepared || !currentStatus?.supported) return;
-    setupCancelledRef.current = true;
+    startRequestRef.current += 1;
+    setSetup((current) => ({ ...current, open: false, downloading: false }));
     try {
       await runtime.runPromise(
         cancelEnvironmentSpeechModelDownload(prepared, currentStatus.modelId),
       );
-      setSetupCancelled(true);
     } catch (error) {
-      setSetupError(error instanceof Error ? error.message : String(error));
+      setSetup((current) => ({
+        ...current,
+        error: error instanceof Error ? error.message : String(error),
+      }));
     }
-  };
+  });
 
-  const startAfterSetup = async () => {
-    setSetupOpen(false);
-    await controllerRef.current?.start();
-  };
-
-  const browserCanRecord =
-    typeof navigator !== "undefined" &&
-    Boolean(navigator.mediaDevices?.getUserMedia) &&
-    typeof AudioWorkletNode !== "undefined";
   return {
-    available: currentStatus?.supported === true && browserCanRecord,
-    // Why the mic is off, once the environment has answered; null while loading or available.
-    unavailableReason: !currentStatus
-      ? null
-      : !currentStatus.supported
-        ? currentStatus.reason
-        : browserCanRecord
-          ? null
-          : "This browser only records audio on HTTPS or localhost pages.",
+    available:
+      prepared !== null &&
+      status?.prepared === prepared &&
+      status.value?.supported !== false &&
+      typeof navigator !== "undefined" &&
+      Boolean(navigator.mediaDevices?.getUserMedia) &&
+      typeof AudioWorkletNode !== "undefined",
     status: currentStatus,
-    transcriptionEnvironmentId,
+    transcriptionEnvironmentId: destination.environmentId,
+    transcriptionEnvironmentLabel: destination.label,
     setup: {
-      open: setupOpen,
-      step: setupStep,
-      model: setupModel,
-      downloading: setupDownloading,
-      cancelled: setupCancelled,
-      error: setupError,
-      setOpen: setSetupOpen,
+      ...setup,
+      setOpen: (open: boolean) => setSetup((current) => ({ ...current, open })),
       download: downloadSetupModel,
       cancelDownload: cancelSetupDownload,
-      startRecording: startAfterSetup,
+      startRecording: async () => {
+        setSetup((current) => ({ ...current, open: false }));
+        await start();
+      },
     },
     state,
+    preview: state.phase === "recording" || state.phase === "transcribing" ? preview : null,
     level,
+    preparing: state.phase === "preparing",
     blocksSubmission: voiceInputBlocksSubmission(state),
-    freezesEditor: voiceInputFreezesEditor(state),
-    skipPostProcessing: () => controllerRef.current?.skipPostProcessing(),
+    freezesEditor: voiceInputBlocksSubmission(state),
     start,
-    startPending: () => pendingStartRef.current !== null,
-    stop: () => controllerRef.current?.stop() ?? Promise.resolve(),
-    cancel: () => {
+    submitAfterDictation,
+    stop: useStableCallback(() => controllerRef.current?.stop() ?? Promise.resolve()),
+    cancel: useStableCallback(() => {
+      pendingSubmissionRef.current = null;
       startRequestRef.current += 1;
-      pendingStartRef.current = null;
       setQueuedStart(null);
       controllerRef.current?.cancel();
-    },
+    }),
+    skipPostProcessing: useStableCallback(() => controllerRef.current?.skipPostProcessing()),
   };
 }
