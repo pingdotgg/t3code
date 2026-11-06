@@ -113,7 +113,7 @@ describe("matchComposerEnvironmentItems", () => {
     { environmentId: EnvironmentId.make("env-mini"), label: "Mac mini", machine: "mac-mini" },
   ] as const;
 
-  it("offers the other machines matching the query, never the composer's own", () => {
+  it("offers the machines matching the query, naming the thread's own", () => {
     expect(
       matchComposerEnvironmentItems({
         environments,
@@ -138,7 +138,16 @@ describe("matchComposerEnvironmentItems", () => {
         environmentId: EnvironmentId.make("env-here"),
         query: "lap",
       }),
-    ).toEqual([]);
+    ).toEqual([
+      {
+        id: "environment:env-here",
+        type: "environment",
+        environmentId: "env-here",
+        machine: "laptop",
+        label: "Laptop",
+        description: "This thread's machine",
+      },
+    ]);
     expect(
       matchComposerEnvironmentItems({
         environments,

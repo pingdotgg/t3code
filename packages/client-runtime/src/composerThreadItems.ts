@@ -103,8 +103,9 @@ export interface ComposerEnvironmentItem {
 
 /**
  * The machines the `@` picker offers, so the agent can link or work there: the client's paired
- * machines and those the composer's environment links to. The composer's own environment is
- * left out. Like threads, they need a query: bare `@` stays a file picker.
+ * machines and those the composer's environment links to. That includes the thread's own
+ * machine, which the user may still want to name. Like threads, they need a query: bare `@`
+ * stays a file picker.
  */
 export function matchComposerEnvironmentItems(
   input: {
@@ -125,17 +126,16 @@ export function matchComposerEnvironmentItems(
     machine: "server" as const,
   })).filter((environment) => !paired.has(environment.environmentId));
   return [...input.environments, ...linkedOnly]
-    .filter(
-      (environment) =>
-        environment.environmentId !== input.environmentId &&
-        environment.label.toLowerCase().includes(query),
-    )
+    .filter((environment) => environment.label.toLowerCase().includes(query))
     .map((environment) => ({
       id: `environment:${environment.environmentId}`,
       type: "environment",
       environmentId: environment.environmentId,
       machine: environment.machine,
       label: environment.label,
-      description: resolve(msg("Machine", { $context: "noun, search result type" })),
+      description:
+        environment.environmentId === input.environmentId
+          ? resolve(msg("This thread's machine"))
+          : resolve(msg("Machine", { $context: "noun, search result type" })),
     }));
 }
