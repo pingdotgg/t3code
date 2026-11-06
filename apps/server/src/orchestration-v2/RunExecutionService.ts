@@ -1074,6 +1074,8 @@ export const layer: Layer.Layer<
           ReadonlySet<OrchestrationV2TurnItem["id"]>
         >(new Set(inheritedBackgroundTurnItemsById.keys()));
         const openRunOwnedSubagents = yield* Ref.make(emptyOpenRunOwnedSubagentProjection());
+        // The last stored root snapshot's pendingBackgroundWork; adapters that omit it leave it false.
+        let rootSnapshotPendingWork = false;
         const assistantStreaming = makeAssistantStreamingFilter(responseStreamingMode);
         // Set when ingestion ends or finalization settles the run's open items, which a later
         // streaming snapshot must not reopen.
@@ -1306,6 +1308,10 @@ export const layer: Layer.Layer<
           }
           if (yield* Ref.get(providerThreadOwnerLost)) {
             return true;
+          }
+          // The live probe reads adapter state, which can be ahead of the events consumed here.
+          if (rootSnapshotPendingWork) {
+            return false;
           }
           // Claude background Bash has no turn-item projection. Use only the
           // thread-scoped probe: session-wide pending work (siblings, wake
@@ -1572,6 +1578,7 @@ export const layer: Layer.Layer<
           if (event.type === "provider_thread.updated") {
             if (event.providerThread.id === input.providerThread.id && storedEventCount > 0) {
               yield* Ref.set(latestProviderThread, event.providerThread);
+              rootSnapshotPendingWork = event.pendingBackgroundWork === true;
             }
           }
           if (
