@@ -3142,7 +3142,11 @@ export default function ChatView(props: ChatViewProps) {
       ? (serverRuntime?.lastErrorCode ?? null)
       : null,
     threadErrorBannerKey,
-    onRetry: canRetryFailedRun ? () => void onRetryFailedRunStable() : null,
+    onRetry: !canRetryFailedRun
+      ? null
+      : failedRunId !== null && retryableWorkspacePreparationRunIds.has(failedRunId)
+        ? () => onRetryWorkspacePreparationStable(failedRunId)
+        : () => void onRetryFailedRunStable(),
     retrying: retryingFailedRunId !== null,
     setThreadError,
     setThreadErrorBannerDismissTick,
