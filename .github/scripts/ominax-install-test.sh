@@ -243,7 +243,13 @@ for launcher_name in ominax t3-learn; do
 done
 check_learning "the install"
 if [ -f apps/desktop/scripts/plant-saved-connection.mjs ]; then
-  node apps/desktop/scripts/plant-saved-connection.mjs check
+  # N's renderer migrates saved connections when it loads them, shortly after its server is up.
+  secrets_ok=""
+  for _ in $(seq 1 30); do
+    node apps/desktop/scripts/plant-saved-connection.mjs check && { secrets_ok=1; break; }
+    sleep 2
+  done
+  [ -n "$secrets_ok" ] || fail "the saved connection planted under N-1 does not decrypt under N"
 else
   log "saved-connection plant script is not present on this branch; secret check deferred"
 fi
@@ -258,9 +264,17 @@ if [ "$os" = Darwin ]; then
   [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleName' "$app/Contents/Info.plist")" = OminaX ] || fail "unexpected CFBundleName"
   display_name="$(/usr/libexec/PlistBuddy -c 'Print CFBundleDisplayName' "$app/Contents/Info.plist" 2>/dev/null || true)"
   [ -z "$display_name" ] || [ "$display_name" = OminaX ] || fail "unexpected CFBundleDisplayName"
+  url_types="$(plutil -extract CFBundleURLTypes xml1 -o - "$app/Contents/Info.plist")"
+  for scheme in ominax t3learn; do
+    grep -q "<string>$scheme</string>" <<<"$url_types" || fail "the app does not register $scheme:// links"
+  done
 elif [ "$scenario" = appimage ]; then
   [ -x "$HOME/.local/share/ominax/OminaX.AppImage" ] || fail "the AppImage is missing"
   grep -q '^Exec=' "$HOME/.local/share/applications/io.github.aabdel0181.OminaX.desktop" || fail "no desktop entry"
+  for scheme in ominax t3learn; do
+    grep -q "^MimeType=.*x-scheme-handler/$scheme;" "$HOME/.local/share/applications/io.github.aabdel0181.OminaX.desktop" ||
+      fail "the desktop entry does not register $scheme:// links"
+  done
   [ -s "$HOME/.local/share/icons/hicolor/512x512/apps/ominax.png" ] || fail "no menu icon"
 elif [ "$scenario" = service ]; then
   :
@@ -268,6 +282,10 @@ else
   installed ominax || fail "the ominax package is not installed"
   ! installed t3learn || fail "the old t3learn package is still installed"
   [ -e /usr/share/applications/io.github.aabdel0181.OminaX.desktop ] || fail "the OminaX desktop entry is missing"
+  for scheme in ominax t3learn; do
+    grep -q "^MimeType=.*x-scheme-handler/$scheme;" /usr/share/applications/io.github.aabdel0181.OminaX.desktop ||
+      fail "the desktop entry does not register $scheme:// links"
+  done
 fi
 
 if [ "$scenario" = next-to-t3-code ]; then
@@ -280,7 +298,7 @@ if [ "$scenario" = next-to-t3-code ]; then
     [ -d "$t3code_app" ] || fail "T3 Code's app is gone"
   else
     installed t3code || fail "the t3code package is gone"
-    [ "$(xdg-mime query default x-scheme-handler/t3code 2>/dev/null || true)" != io.github.aabdel0181.T3Learn.desktop ] ||
+    ! grep -q "aabdel0181" <<<"$(xdg-mime query default x-scheme-handler/t3code 2>/dev/null || true)" ||
       fail "OminaX took over t3code:// links"
   fi
 fi
