@@ -795,6 +795,18 @@ export function useComposerMenuItems({
       if (pullRequestProjectId === null || pullRequestRepository === null) {
         return "Pull requests and issues are not available for this project.";
       }
+      if (mentionIndexLookup.error !== null || mentionIndexLookup.data?.status === "error") {
+        return "Pull requests could not be read for this project.";
+      }
+      if (
+        issueMentionIndexLookup.error !== null ||
+        issueMentionIndexLookup.data?.status === "error"
+      ) {
+        return (
+          issueMentionIndexLookup.data?.detail ??
+          "GitHub issues could not be read for this project."
+        );
+      }
       return composerTrigger?.query
         ? `No pull request or issue matches ${composerTrigger.query}.`
         : "No pull requests or issues found.";

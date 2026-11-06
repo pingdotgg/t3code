@@ -73,7 +73,7 @@ export function parseGitHubIssueUrl(value: string): {
   const owner = match[2]!;
   const name = match[3]!;
   const number = Number(match[4]);
-  if (!Number.isInteger(number) || number < 1) return null;
+  if (!Number.isSafeInteger(number) || number < 1) return null;
   const repository = `${owner}/${name}`;
   return {
     number,
@@ -97,7 +97,7 @@ export function parseGitHubPullRequestUrl(value: string): {
   const owner = match[2]!;
   const name = match[3]!;
   const number = Number(match[4]);
-  if (!Number.isInteger(number) || number < 1) return null;
+  if (!Number.isSafeInteger(number) || number < 1) return null;
   const repository = `${owner}/${name}`;
   return {
     number,
