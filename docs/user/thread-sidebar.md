@@ -167,7 +167,11 @@ and prevents automatic settlement until new activity resumes the usual rules.
 Manually settling an idle thread dismisses unanswered async questions without
 sending an answer or restarting the agent. Settling also closes the thread's
 terminals that wait at an idle prompt, and keeps their output. A terminal that
-runs a command, such as a dev server, stays open.
+runs a command, such as a dev server, stays open unless its action has **Stop this action
+when the thread settles** enabled in Settings > Projects > Actions. You can also set
+`"stopOnSettle": true` on a `t3.json` action and import it there. Start the command through
+that action so T3 can stop its terminal and child processes. Commands started through an
+agent's own shell tools are managed by the provider.
 
 To reclaim disk space from settled work, turn on **Run in the thread's worktree when the
 thread settles** for one of the project's actions, or set `"runOnSettle": true` on a
@@ -326,6 +330,8 @@ Choose **Snooze → Custom…** from a thread's menu to pick a date and time in 
 local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
+
 A snoozed thread keeps working and stays hidden until its wake time, even while
-its agent wakes itself for background work. It comes back early only when it needs
-an approval or answer from you, when a run fails, or when you send it a message.
+its agent wakes itself for background work. It comes back early for an approval,
+a new question, a failed run, or a message or answer you send. You can snooze an existing
+question and answer when the thread wakes; the question stays unanswered.
