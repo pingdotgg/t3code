@@ -5,7 +5,7 @@ import {
   PullRequestMediaContext,
 } from "./PullRequestMedia";
 import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
-import { useContext, useMemo, useState, type ReactNode } from "react";
+import { useContext, useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { pullRequestImageSource } from "./pullRequestMediaSource";
@@ -26,6 +26,7 @@ export function PullRequestDescription(props: {
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
   readonly footer?: ReactNode;
+  readonly onTaskListChange?: ComponentProps<typeof PullRequestMarkdown>["onTaskListChange"];
 }) {
   const { expanded, onExpandedChange } = props;
   const [bodyHeight, setBodyHeight] = useState(0);
@@ -66,7 +67,10 @@ export function PullRequestDescription(props: {
                 style={{ position: "absolute", top: 0, left: 0, right: 0 }}
                 onLayout={(event) => setBodyHeight(event.nativeEvent.layout.height)}
               >
-                <PullRequestMarkdown markdown={props.markdown} />
+                <PullRequestMarkdown
+                  markdown={props.markdown}
+                  onTaskListChange={props.onTaskListChange}
+                />
               </View>
             </View>
             {collapsed ? (
