@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeModule from "node:module";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
-import { workspaceDetailRouter } from "../workspace/workspace-detail-selection";
+import { workspaceDetailRouter } from "../layout/workspace/workspace-detail-selection";
 import type { NavigationState } from "@react-navigation/native";
 import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -46,8 +46,8 @@ function loadRouters() {
   };
 }
 
-vi.mock("../workspace/useSelectWorkspaceDetail", async () => {
-  const { selectWorkspaceDetail } = await import("../workspace/workspace-detail-selection");
+vi.mock("../layout/workspace/useSelectWorkspaceDetail", async () => {
+  const { selectWorkspaceDetail } = await import("../layout/workspace/workspace-detail-selection");
   return {
     useSelectWorkspaceDetail: () => (detail: Parameters<typeof selectWorkspaceDetail>[0]) =>
       state.dispatch(selectWorkspaceDetail(detail)),
