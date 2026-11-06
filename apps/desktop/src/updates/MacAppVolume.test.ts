@@ -94,6 +94,7 @@ const setUpDrive = Effect.fn("test.setUpDrive")(function* (
     driveReturns: fileSystem.remove(path.join(bin, "mv"), { force: true }),
     state: Effect.all({
       version: read(path.join(target, "version")),
+      stagedVersion: read(path.join(staged, "version")),
       backupVersion: read(path.join(backup, "version")),
       stageLeft: fileSystem.exists(stage),
       opened: read(opened),
@@ -133,14 +134,24 @@ describe("MacAppVolume.SWAP_SCRIPT", () => {
         assert.equal(swapped.opened, `-n ${swapped.target}\n`);
 
         const restored = yield* runSwap({ stageNewApp: false });
+        assert.notEqual(restored.exitCode, 0);
         assert.equal(restored.version, "1.2.3");
-        assert.isFalse(restored.stageLeft);
+        assert.isTrue(restored.stageLeft);
         assert.equal(restored.opened, `-n ${restored.target}\n`);
+
+        // A failed install move puts the previous app back, reopens it, and keeps the staged update.
+        const rolledBack = yield* runSwap({ stageNewApp: true, failedMoves: [2, 2] });
+        assert.notEqual(rolledBack.exitCode, 0);
+        assert.equal(rolledBack.version, "1.2.3");
+        assert.equal(rolledBack.stagedVersion, "1.2.4");
+        assert.isTrue(rolledBack.stageLeft);
+        assert.equal(rolledBack.opened, `-n ${rolledBack.target}\n`);
 
         // The app cannot be moved aside, so the helper reopens it and keeps the stage.
         const unmoved = yield* runSwap({ stageNewApp: true, failedMoves: [1, 1] });
         assert.notEqual(unmoved.exitCode, 0);
         assert.equal(unmoved.version, "1.2.3");
+        assert.equal(unmoved.stagedVersion, "1.2.4");
         assert.isTrue(unmoved.stageLeft);
         assert.equal(unmoved.opened, `-n ${unmoved.target}\n`);
 
