@@ -39,6 +39,7 @@ import {
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { openWelcomeGuide } from "../onboarding/WelcomeGuideDialog";
+import { openWhatsNew } from "../onboarding/WhatsNewDialog";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
@@ -2028,6 +2029,15 @@ export function AboutSettingsPanel() {
           control={
             <Button size="sm" variant="outline" onClick={openWelcomeGuide}>
               Take the tour
+            </Button>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("whats-new")}
+          description="Short guides for features added in recent updates."
+          control={
+            <Button size="sm" variant="outline" onClick={openWhatsNew}>
+              Show
             </Button>
           }
         />

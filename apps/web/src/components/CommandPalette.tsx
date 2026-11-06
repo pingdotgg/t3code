@@ -85,6 +85,7 @@ import {
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
 import { openWelcomeGuide } from "./onboarding/WelcomeGuideDialog";
+import { openWhatsNew } from "./onboarding/WhatsNewDialog";
 import { openNewLesson } from "./lesson/NewLessonDialog";
 import {
   useDeferredValue,
@@ -1787,6 +1788,14 @@ function OpenCommandPaletteDialog(props: {
 
   // The guide is not mounted while the setup wizard runs.
   if (pathname !== "/welcome") {
+    actionItems.push({
+      kind: "action",
+      value: "action:whats-new",
+      searchTerms: ["what's new", "updates", "release", "guide"],
+      title: "Show what's new",
+      icon: <MessageCircleQuestionIcon className={ITEM_ICON_CLASS} />,
+      run: async () => openWhatsNew(),
+    });
     actionItems.push({
       kind: "action",
       value: "action:welcome-guide",

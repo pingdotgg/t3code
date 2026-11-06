@@ -99,3 +99,5 @@ remaining history.
 
 You can continue without configuring agents or importing projects, or return to an earlier step
 using the setup progress bar. Navigation pauses while an import is running.
+
+After an update, OminaX may show a short What's new guide for the features that arrived. Reopen it from Settings → About, the command palette, or the desktop Help menu.
