@@ -73,6 +73,14 @@ function recordString(input: unknown, ...keys: ReadonlyArray<string>): string | 
   return undefined;
 }
 
+function recordText(input: Record<string, unknown>, ...keys: ReadonlyArray<string>) {
+  for (const key of keys) {
+    const value = input[key];
+    if (typeof value === "string") return value;
+  }
+  return undefined;
+}
+
 function recordNumber(input: unknown, ...keys: ReadonlyArray<string>): number | undefined {
   if (typeof input !== "object" || input === null) return undefined;
   for (const key of keys) {
@@ -137,8 +145,8 @@ export function openCodeToolTurnItem(
       };
     }
     case "file_change": {
-      const oldStr = recordString(input, "oldString", "oldText");
-      const newStr = recordString(input, "newString", "content", "newText");
+      const oldStr = recordText(input, "oldString", "oldText");
+      const newStr = recordText(input, "newString", "content", "newText");
       const diffStr =
         recordString(tool.completedMetadata, "diff", "patch") ??
         (base.status === "failed" && output?.trim() ? output : undefined);
