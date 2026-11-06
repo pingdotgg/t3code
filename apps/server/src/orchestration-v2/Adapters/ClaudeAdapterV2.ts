@@ -4448,6 +4448,8 @@ interface ClaudeLiveQueryContext {
   // The CLI may fall back from the requested mode on its first init frame.
   openedPermissionMode: PermissionMode;
   receivedInit: boolean;
+  // Init can arrive before the turn that opened this process attaches; that turn reports it.
+  initModelBeforeFirstTurn: string | undefined;
   // From system/init; feature-detects control requests such as MCP Apps.
   capabilities: ReadonlySet<string>;
   permissionMode: PermissionMode;
@@ -11053,6 +11055,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             promptEchoMode: "unknown",
             openedPermissionMode: queryOptions.permissionMode,
             receivedInit: false,
+            initModelBeforeFirstTurn: undefined,
             capabilities: new Set(),
             permissionMode: queryOptions.permissionMode,
             stopping: false,
@@ -11093,6 +11096,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     context.openedPermissionMode =
                       message.permissionMode ?? context.openedPermissionMode;
                     context.receivedInit = true;
+                    if (context.lastTurn === null) context.initModelBeforeFirstTurn = message.model;
                     context.capabilities = new Set(message.capabilities ?? []);
                   }
                   if (
@@ -11299,6 +11303,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               executedModel: undefined,
             };
             const attachTurn = Effect.gen(function* () {
+              if (querySession.lastTurn === null && querySession.initModelBeforeFirstTurn) {
+                recordExecutedModel(context, querySession.initModelBeforeFirstTurn);
+              }
               querySession.lastTurn = context;
               yield* Ref.set(activeTurn, context);
               if (
