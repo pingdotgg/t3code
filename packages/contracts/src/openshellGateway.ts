@@ -104,6 +104,31 @@ export const OpenShellGatewaySettings = Schema.Struct({
 });
 export type OpenShellGatewaySettings = typeof OpenShellGatewaySettings.Type;
 
+/** Patch shape for worker defaults: same fields, no decoding defaults. */
+export const OpenShellWorkerDefaultsPatch = Schema.Struct({
+  workerClass: Schema.optionalKey(OpenShellWorkerClass),
+  ttlMs: Schema.optionalKey(Schema.DurationFromMillis),
+  idleTimeoutMs: Schema.optionalKey(Schema.DurationFromMillis),
+  drainTimeoutMs: Schema.optionalKey(Schema.DurationFromMillis),
+  resources: Schema.optionalKey(OpenShellSandboxResources),
+});
+export type OpenShellWorkerDefaultsPatch = typeof OpenShellWorkerDefaultsPatch.Type;
+
+/** Patch shape for the shared cache: same fields, no decoding defaults. */
+export const OpenShellSharedCacheSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  mode: Schema.optionalKey(Schema.Literals(["rwx-pvc", "image-volume", "registry-proxy", "none"])),
+  mountPath: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Operator-labeled PVCs admitted by the gateway; mirrors read-only, cache read-write. */
+  pvcNames: Schema.optionalKey(
+    Schema.Struct({
+      mirrors: Schema.optionalKey(TrimmedNonEmptyString),
+      cache: Schema.optionalKey(TrimmedNonEmptyString),
+    }),
+  ),
+});
+export type OpenShellSharedCacheSettingsPatch = typeof OpenShellSharedCacheSettingsPatch.Type;
+
 /**
  * Patch shape for the same block: no decoding defaults, so a patch that only
  * changes one field cannot silently turn a managing instance into a follower.
@@ -114,8 +139,8 @@ export const OpenShellGatewaySettingsPatch = Schema.Struct({
   credential: Schema.optionalKey(Schema.NullOr(SecretReference)),
   defaultSandboxTemplate: Schema.optionalKey(TrimmedNonEmptyString),
   managingInstance: Schema.optionalKey(Schema.Boolean),
-  workerDefaults: Schema.optionalKey(OpenShellWorkerDefaults),
-  sharedCache: Schema.optionalKey(OpenShellSharedCacheSettings),
+  workerDefaults: Schema.optionalKey(OpenShellWorkerDefaultsPatch),
+  sharedCache: Schema.optionalKey(OpenShellSharedCacheSettingsPatch),
 });
 export type OpenShellGatewaySettingsPatch = typeof OpenShellGatewaySettingsPatch.Type;
 
