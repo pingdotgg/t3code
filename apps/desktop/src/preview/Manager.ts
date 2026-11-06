@@ -2901,6 +2901,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const hostId = host.id;
     tabWindows.set(tabId, window);
     tabWindowHostIds.add(hostId);
+    // A tab with no page never attaches a webview here, so nothing else would hand it to this window.
+    if (tab.webContentsId === null) yield* update(tabId, { detached: true });
     host.on("will-attach-webview", (event, webPreferences, params) => {
       if (typeof params.partition !== "string" || !isBrowserPartition(params.partition)) {
         event.preventDefault();

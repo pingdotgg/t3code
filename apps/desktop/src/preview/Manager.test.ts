@@ -1440,6 +1440,36 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("detaches a tab with no page as soon as its window opens", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        browserWindowConstructor.mockImplementation(function () {
+          return {
+            webContents: { id: 901, on: vi.fn(), setWindowOpenHandler: vi.fn() },
+            isDestroyed: () => false,
+            once: vi.fn(),
+            close: vi.fn(),
+            loadURL: vi.fn(async () => undefined),
+          };
+        });
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: { getURL: () => "t3code://app/" },
+        } as never);
+        const detached: Array<boolean> = [];
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => detached.push(state.detached)),
+        );
+
+        yield* manager.createTab("tab_empty_window");
+        yield* manager.openTabWindow("tab_empty_window", "persist:t3code-preview-test");
+
+        expect(detached.at(-1)).toBe(true);
+      }),
+    ),
+  );
+
   effectIt.effect("preserves both screenshots of the same site in the same millisecond", () =>
     withManager((manager) =>
       Effect.gen(function* () {
