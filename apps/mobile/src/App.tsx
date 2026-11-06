@@ -18,6 +18,7 @@ import {
   type NavigationState,
 } from "@react-navigation/native";
 import { pipe } from "effect/Function";
+import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 
 import { RegistryContext } from "@effect/atom-react";
 import { ProjectChipIconRasterizer } from "./native/ProjectChipIconImages";
@@ -81,8 +82,8 @@ import {
   launchWorkspaceURL,
   recordWorkspaceSelections,
   settingsLinkPage,
-} from "./features/workspace/workspace-selection-store";
-import { workspaceDetailLinkAction } from "./features/workspace/workspace-detail-selection";
+} from "./features/layout/workspace/workspace-selection-store";
+import { workspaceDetailLinkAction } from "./features/layout/workspace/workspace-detail-selection";
 import { NativeLayoutMetricsProvider } from "./native/native-layout-metrics";
 import {
   attachRootNavigation,
@@ -122,7 +123,13 @@ function getAppStateFromPath(path: string, options: Parameters<typeof getStateFr
 }
 
 const appLinking = {
-  prefixes: [Linking.createURL("/"), "t3code://", "t3code-dev://", "t3code-preview://"],
+  prefixes: [
+    Linking.createURL("/"),
+    "t3code://",
+    "t3code-dev://",
+    "t3code-preview://",
+    DEFAULT_HOSTED_APP_URL,
+  ],
   config: { initialRouteName: "Home" },
   filter: (url: string) => shouldHandleAppLink(url, hasCloudPublicConfig()),
   getInitialURL: async () => (await Linking.getInitialURL()) ?? (await launchWorkspaceURL()),
