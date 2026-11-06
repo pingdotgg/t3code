@@ -1121,50 +1121,72 @@ const connectTabHost = Effect.fn("connectTabHost")(function* (
     return broker.respond({ ...reply, requestId: request.requestId, ok: true, result: {} });
   }).pipe(Effect.forkScoped);
   yield* Effect.yieldNow;
-  return routed;
+  return { routed, openTabs };
 });
 
-it.effect("does not name a closed current tab when the caller omitted tabId", () =>
+const openTwoTabs = Effect.fn("openTwoTabs")(function* (
+  broker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+) {
+  const first = yield* broker.invoke<{ tabId: PreviewTabId }>({
+    scope,
+    operation: "open",
+    input: {},
+  });
+  const second = yield* broker.invoke<{ tabId: PreviewTabId }>({
+    scope,
+    operation: "open",
+    input: { reuseExistingTab: false },
+  });
+  return [first.tabId, second.tabId] as const;
+});
+
+it.effect("forgets a current tab that closed elsewhere instead of naming it", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const broker = yield* makeBroker;
-      yield* connectTabHost(broker);
-      const opened = yield* broker.invoke<{ tabId: PreviewTabId }>({
-        scope,
-        operation: "open",
-        input: {},
-      });
-      yield* broker.invoke({ scope, operation: "close", input: {}, tabId: opened.tabId });
+      const { routed, openTabs } = yield* connectTabHost(broker);
+      yield* broker.invoke({ scope, operation: "open", input: {} });
+      openTabs.splice(0);
 
       const error = yield* broker
         .invoke<void>({ scope, operation: "snapshot", input: {} })
         .pipe(Effect.flip);
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} }).pipe(Effect.ignore);
 
-      expect(error._tag).toBe("PreviewAutomationTabNotFoundError");
       expect(error.message).toBe(
         "No active preview tab was found for snapshot. Call preview_open first.",
       );
+      expect(routed.at(-1)?.tabId).toBeUndefined();
     }),
   ),
 );
 
-it.effect("stops targeting a closed current tab once the host reports it missing", () =>
+it.effect("closing the current tab leaves implicit calls to the remaining tab", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const broker = yield* makeBroker;
-      const routed = yield* connectTabHost(broker);
-      yield* broker.invoke({ scope, operation: "open", input: {} });
-      const second = yield* broker.invoke<{ tabId: PreviewTabId }>({
-        scope,
-        operation: "open",
-        input: { reuseExistingTab: false },
-      });
-      yield* broker.invoke({ scope, operation: "close", input: {}, tabId: second.tabId });
-      yield* broker.invoke({ scope, operation: "snapshot", input: {} }).pipe(Effect.ignore);
+      const { routed } = yield* connectTabHost(broker);
+      const [, second] = yield* openTwoTabs(broker);
+      yield* broker.invoke({ scope, operation: "close", input: {}, tabId: second });
 
-      yield* broker.invoke({ scope, operation: "snapshot", input: {} }).pipe(Effect.ignore);
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
 
       expect(routed.at(-1)?.tabId).toBeUndefined();
+    }),
+  ),
+);
+
+it.effect("closing another tab keeps the current tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const { routed } = yield* connectTabHost(broker);
+      const [first, second] = yield* openTwoTabs(broker);
+      yield* broker.invoke({ scope, operation: "close", input: {}, tabId: first });
+
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
+
+      expect(routed.at(-1)?.tabId).toBe(second);
     }),
   ),
 );

@@ -671,14 +671,15 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       });
     });
     const assignmentKey = hostAssignmentKey(input.scope);
-    const rememberCurrentTab = (tabId: PreviewTabId | null) =>
+    const rememberCurrentTab = (tabId: PreviewTabId | null, replacing?: PreviewTabId) =>
       SynchronizedRef.update(state, (current) => {
         const assignment = current.assignments.get(assignmentKey);
         if (
           !assignment ||
           assignment.connectionId !== connection.connectionId ||
           assignment.queue !== connection.queue ||
-          (assignment.tabSequence ?? -1) > requestSequence
+          (assignment.tabSequence ?? -1) > requestSequence ||
+          (replacing !== undefined && assignment.tabId !== replacing)
         ) {
           return current;
         }
@@ -709,6 +710,11 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       }),
     );
     if (input.updateCurrentTab === false) return result;
+    if (input.operation === "close") {
+      // A closed tab never becomes current; closing the current one leaves none.
+      if (requestContext.tabId !== undefined) yield* rememberCurrentTab(null, requestContext.tabId);
+      return result;
+    }
     const responseTabId = readResultTabId(result);
     const resultTabId = responseTabId === undefined ? input.tabId : responseTabId;
     if (resultTabId !== undefined) yield* rememberCurrentTab(resultTabId);
