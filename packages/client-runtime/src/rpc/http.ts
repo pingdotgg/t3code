@@ -78,11 +78,31 @@ export type RemoteEnvironmentRequestError =
   | RemoteEnvironmentAuthUndeclaredStatusError
   | RemoteEnvironmentAuthTimeoutError;
 
+// The server prefers a session cookie over Authorization, and iOS fetch sends the shared
+// cookie jar by default, so a request naming its own credential must not carry cookies.
+const omitAmbientCookiesWithExplicitCredential = (client: HttpClient.HttpClient) =>
+  HttpClient.transform(client, (effect, request) =>
+    request.headers.authorization === undefined
+      ? effect
+      : Effect.flatMap(Effect.serviceOption(FetchHttpClient.RequestInit), (init) =>
+          Effect.provideService(effect, FetchHttpClient.RequestInit, {
+            ...Option.getOrUndefined(init),
+            credentials: "omit",
+          }),
+        ),
+  );
+
 export const layerRemoteHttpClient = (
   fetchFn: typeof globalThis.fetch,
 ): Layer.Layer<HttpClient.HttpClient> =>
   Layer.merge(
-    FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn))),
+    Layer.effect(
+      HttpClient.HttpClient,
+      Effect.map(HttpClient.HttpClient, omitAmbientCookiesWithExplicitCredential),
+    ).pipe(
+      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn)),
+    ),
     HttpObservability.layer,
   );
 

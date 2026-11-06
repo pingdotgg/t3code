@@ -320,6 +320,12 @@ describe("RemoteEnvironmentAuthorization", () => {
         "/.well-known/t3/environment",
         "/api/auth/websocket-ticket/rpc",
       ]);
+      // The server prefers a session cookie over Authorization, and iOS fetch sends the
+      // shared cookie jar unless told not to, so a stale cookie would override the token.
+      expect(harness.fetch.calls[1]?.[1]).toMatchObject({
+        credentials: "omit",
+        headers: expect.objectContaining({ authorization: "Bearer bearer-token" }),
+      });
     }),
   );
 

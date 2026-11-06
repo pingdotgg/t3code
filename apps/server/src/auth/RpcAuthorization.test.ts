@@ -1,4 +1,6 @@
 import {
+  AuthAccessReadScope,
+  AuthStandardClientScopes,
   AuthEnvironmentMaintainScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
@@ -92,7 +94,11 @@ it("requires operate permission for tool updates even alongside a read-only chec
 });
 
 describe("RPC scope middleware", () => {
-  const tested = [WS_METHODS.serverProbe, WS_METHODS.serverRetryResourceTelemetry] as const;
+  const tested = [
+    WS_METHODS.serverProbe,
+    WS_METHODS.serverRetryResourceTelemetry,
+    WS_METHODS.peerLinksList,
+  ] as const;
   const group = WsRpcGroup.omit(
     ...[...WsRpcGroup.requests.keys()].filter(
       (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
@@ -101,35 +107,56 @@ describe("RPC scope middleware", () => {
   );
 
   it.effect.each([
-    { scopes: [AuthOrchestrationReadScope], missing: AuthEnvironmentMaintainScope },
+    {
+      scopes: [AuthOrchestrationReadScope],
+      missing: AuthEnvironmentMaintainScope,
+      method: WS_METHODS.serverRetryResourceTelemetry,
+    },
     {
       scopes: [AuthOrchestrationReadScope, AuthEnvironmentMaintainScope],
       missing: AuthDiagnosticsReadScope,
+      method: WS_METHODS.serverRetryResourceTelemetry,
     },
-  ])("rejects telemetry retry without $missing before its handler runs", ({ scopes, missing }) =>
-    Effect.gen(function* () {
-      const handled: Array<string> = [];
-      const client = yield* RpcTest.makeClient(group).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            group.toLayerHandler(WS_METHODS.serverProbe, () => Effect.succeed({})),
-            group.toLayerHandler(WS_METHODS.serverRetryResourceTelemetry, () =>
-              Effect.sync(() => handled.push("retry")).pipe(Effect.andThen(Effect.never)),
+    {
+      scopes: AuthStandardClientScopes.filter((scope) => scope !== AuthAccessReadScope),
+      missing: AuthAccessReadScope,
+      method: WS_METHODS.peerLinksList,
+    },
+  ])(
+    "isolates a rejected $method without $missing from later probes",
+    ({ scopes, missing, method }) =>
+      Effect.gen(function* () {
+        const handled: Array<string> = [];
+        const client = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              group.toLayerHandler(WS_METHODS.serverProbe, () => Effect.succeed({})),
+              group.toLayerHandler(WS_METHODS.serverRetryResourceTelemetry, () =>
+                Effect.sync(() => handled.push("retry")).pipe(Effect.andThen(Effect.never)),
+              ),
+              group.toLayerHandler(WS_METHODS.peerLinksList, () =>
+                Effect.sync(() => {
+                  handled.push("links");
+                  return { links: [] };
+                }),
+              ),
+              RpcAuthorization.layer(scopes),
             ),
-            RpcAuthorization.layer(scopes),
           ),
-        ),
-      );
+        );
 
-      expect(yield* client[WS_METHODS.serverProbe]({})).toEqual({});
-      expect(
-        yield* client[WS_METHODS.serverRetryResourceTelemetry]({}).pipe(Effect.flip),
-      ).toMatchObject({
-        _tag: "EnvironmentAuthorizationError",
-        requiredPermission: missing,
-      });
-      expect(handled).toEqual([]);
-    }).pipe(Effect.scoped),
+        expect(yield* client[WS_METHODS.serverProbe]({})).toEqual({});
+        const denied =
+          method === WS_METHODS.peerLinksList
+            ? yield* client[method]({}).pipe(Effect.flip)
+            : yield* client[method]({}).pipe(Effect.flip);
+        expect(denied).toMatchObject({
+          _tag: "EnvironmentAuthorizationError",
+          requiredPermission: missing,
+        });
+        expect(handled).toEqual([]);
+        expect(yield* client[WS_METHODS.serverProbe]({})).toEqual({});
+      }).pipe(Effect.scoped),
   );
 });
 

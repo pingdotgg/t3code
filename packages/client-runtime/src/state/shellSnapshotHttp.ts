@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientError, type HttpClientResponse } from "effect/http";
 
+import { ConnectionDiagnostics } from "../connection/diagnostics.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
@@ -36,6 +37,7 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
   readonly omitIdleSubagents?: boolean;
   readonly omitOlderSettled?: boolean;
 }) {
+  const diagnostics = yield* ConnectionDiagnostics;
   const endpoint = {
     query: {
       ...(input.omitIdleSubagents === true ? { omitIdleSubagents: "1" } : {}),
@@ -55,7 +57,14 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
           ...endpoint,
           responseMode: "response-only",
         })
-        .pipe(Effect.flatMap(decodeShellSnapshotResponse)),
+        .pipe(
+          Effect.tap(() => Effect.sync(() => diagnostics?.mark("shell-headers"))),
+          Effect.flatMap((response) =>
+            decodeShellSnapshotResponse(response).pipe(
+              Effect.provideService(ConnectionDiagnostics, diagnostics),
+            ),
+          ),
+        ),
   });
 });
 
@@ -70,7 +79,18 @@ const decodeShellSnapshotResponse = (
   HttpClientError.HttpClientError | Schema.SchemaError | EnvironmentHttpCommonError
 > => {
   if (response.status === 200) {
-    return response.json.pipe(Effect.flatMap(decodeShellSnapshotDeferringPullRequests));
+    return Effect.gen(function* () {
+      const diagnostics = yield* ConnectionDiagnostics;
+      const body = yield* response.json.pipe(
+        Effect.tapError(() => Effect.sync(() => diagnostics?.fail("shell-body"))),
+      );
+      diagnostics?.mark("shell-body");
+      const snapshot = yield* decodeShellSnapshotDeferringPullRequests(body).pipe(
+        Effect.tapError(() => Effect.sync(() => diagnostics?.fail("shell-schema"))),
+      );
+      diagnostics?.mark("shell-decoded");
+      return snapshot;
+    });
   }
   const statusError = new HttpClientError.HttpClientError({
     reason: new HttpClientError.StatusCodeError({ request: response.request, response }),

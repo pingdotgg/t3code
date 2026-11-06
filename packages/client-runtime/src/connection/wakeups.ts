@@ -32,6 +32,7 @@ export class ConnectionWakeups extends Context.Service<
     readonly changes: Stream.Stream<ConnectionWakeup>;
     /** Whether the user is looking at the app now; retries stay frequent while they are. */
     readonly isForeground?: Effect.Effect<boolean>;
+    readonly applicationState?: Effect.Effect<"active" | "inactive" | "background" | "unknown">;
   }
 >()("@t3tools/client-runtime/connection/wakeups/ConnectionWakeups") {}
 

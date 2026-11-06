@@ -94,8 +94,10 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     );
     if (result._tag === "Failure") {
       if (result.failure._tag === "ConnectionBlockedError") {
-        if (check === "answered") answeredBlocked ??= result.failure;
-        else blocked ??= result.failure;
+        // The environment refusing the request is an answer, even from a route too slow for its check.
+        if (check === "answered" || result.failure.hop === "server") {
+          answeredBlocked ??= result.failure;
+        } else blocked ??= result.failure;
       } else if (check === "silent") silentTransient ??= result.failure;
       else transient ??= result.failure;
     }

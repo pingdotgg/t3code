@@ -64,6 +64,29 @@ export type ClientKind = typeof ClientKind.Type;
 export const ClientActivityClientId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 export type ClientActivityClientId = typeof ClientActivityClientId.Type;
 
+export const ConnectionDiagnosticsSnapshot = Schema.Struct({
+  milestones: Schema.Array(
+    Schema.Literals([
+      "config-decoded",
+      "shell-headers",
+      "shell-body",
+      "shell-decoded",
+      "shell-applied",
+      "shell-synchronized",
+    ]),
+  ).check(Schema.isMaxLength(6)),
+  rx: Schema.Number,
+  tx: Schema.Number,
+  closes: Schema.Number,
+  errors: Schema.Number,
+  binary: Schema.Number,
+  firstFailure: Schema.optionalKey(
+    Schema.Literals(["inflate", "json", "socket", "shell-body", "shell-schema"]),
+  ),
+  closeCode: Schema.optionalKey(Schema.Number),
+});
+export type ConnectionDiagnosticsSnapshot = typeof ConnectionDiagnosticsSnapshot.Type;
+
 /** A failed or lost connection the client saw, reported once it reconnects so server logs show both sides. */
 export const ConnectionTroubleEvent = Schema.Struct({
   at: Schema.Number,
@@ -74,6 +97,9 @@ export const ConnectionTroubleEvent = Schema.Struct({
   detail: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
   network: Schema.String.check(Schema.isMaxLength(16)),
   foreground: Schema.optionalKey(Schema.Boolean),
+  stage: Schema.optionalKey(Schema.Literals(["preparing", "opening", "synchronizing"])),
+  diagnostics: Schema.optionalKey(ConnectionDiagnosticsSnapshot),
+  appState: Schema.optionalKey(Schema.Literals(["active", "inactive", "background", "unknown"])),
 });
 export type ConnectionTroubleEvent = typeof ConnectionTroubleEvent.Type;
 

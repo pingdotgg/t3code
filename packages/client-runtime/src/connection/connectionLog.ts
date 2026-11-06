@@ -1,4 +1,4 @@
-import type { ConnectionTroubleEvent } from "@t3tools/contracts";
+import type { ConnectionDiagnosticsSnapshot, ConnectionTroubleEvent } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import type { NetworkStatus, SupervisorConnectionState } from "./model.ts";
@@ -8,6 +8,8 @@ const DETAIL_LIMIT = 160;
 const TROUBLE_REPORT_LIMIT = 10;
 
 export interface ConnectionLogEvent {
+  readonly diagnostics?: ConnectionDiagnosticsSnapshot;
+  readonly appState?: ConnectionTroubleEvent["appState"];
   readonly at: number;
   readonly kind: "attempt" | "connected" | "failed" | "lost" | "waiting";
   readonly attempt: number;
@@ -59,6 +61,9 @@ export function connectionTroubleSince(
     .filter((event) => event.at > since && (event.kind === "failed" || event.kind === "lost"))
     .slice(-TROUBLE_REPORT_LIMIT)
     .map((event) => ({
+      ...(event.diagnostics === undefined ? {} : { diagnostics: event.diagnostics }),
+      ...(event.appState === undefined ? {} : { appState: event.appState }),
+      ...(event.stage === null ? {} : { stage: event.stage }),
       at: event.at,
       kind: event.kind as ConnectionTroubleEvent["kind"],
       attempt: event.attempt,
@@ -81,6 +86,8 @@ export function formatConnectionLog(log: ReadonlyArray<ConnectionLogEvent>): str
         event.stage,
         event.reason,
         event.detail,
+        event.diagnostics === undefined ? null : JSON.stringify(event.diagnostics),
+        event.appState ?? null,
         `net=${event.network}`,
         event.foreground === null ? null : event.foreground ? "fg" : "bg",
       ]

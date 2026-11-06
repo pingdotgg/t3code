@@ -17,6 +17,7 @@ import * as Tracer from "effect/Tracer";
 
 import type { ConnectionCatalogEntry, ConnectionRoute } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
+import { ConnectionDiagnostics, makeConnectionDiagnostics } from "./diagnostics.ts";
 import * as ConnectionDriver from "./driver.ts";
 import {
   type ConnectionAttemptError,
@@ -262,6 +263,7 @@ function failureFromExit<A>(
 export class EnvironmentSupervisor extends Context.Service<
   EnvironmentSupervisor,
   {
+    readonly diagnostics?: ReturnType<typeof makeConnectionDiagnostics>;
     readonly target: ConnectionTarget;
     readonly state: SubscriptionRef.SubscriptionRef<SupervisorConnectionState>;
     readonly session: SubscriptionRef.SubscriptionRef<Option.Option<RpcSession.RpcSession>>;
@@ -434,6 +436,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const troubleSince = yield* Ref.make<number | null>(null);
   const lastConnectedAt = yield* Ref.make<number | null>(null);
   const log = yield* SubscriptionRef.make<ReadonlyArray<ConnectionLogEvent>>([]);
+  let diagnostics = makeConnectionDiagnostics();
   const isForeground = wakeups.isForeground ?? Effect.succeed(false);
   // The route of the latest attempt; the lease is already cleared when its failure is recorded.
   const lastRoute = yield* Ref.make<string | null>(null);
@@ -471,6 +474,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     if (kind === null) return;
     const failure = kind === "failed" || kind === "lost" ? next.lastFailure : null;
     const event: ConnectionLogEvent = {
+      ...(failure === null ? {} : { diagnostics: diagnostics.snapshot() }),
+      ...(wakeups.applicationState === undefined
+        ? {}
+        : { appState: yield* wakeups.applicationState }),
       at: now,
       kind,
       attempt: next.attempt,
@@ -518,12 +525,15 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     lastFailure: ConnectionAttemptError | null,
     synchronizedRoutes: Ref.Ref<number>,
   ) {
-    return yield* driver.connect(yield* attemptEntry, (progress) =>
-      (progress.stage === "synchronizing"
-        ? Ref.update(synchronizedRoutes, (count) => count + 1)
-        : Effect.void
-      ).pipe(Effect.andThen(reportProgress(attempt, generation, lastFailure, progress))),
-    );
+    diagnostics = makeConnectionDiagnostics();
+    return yield* driver
+      .connect(yield* attemptEntry, (progress) =>
+        (progress.stage === "synchronizing"
+          ? Ref.update(synchronizedRoutes, (count) => count + 1)
+          : Effect.void
+        ).pipe(Effect.andThen(reportProgress(attempt, generation, lastFailure, progress))),
+      )
+      .pipe(Effect.provideService(ConnectionDiagnostics, diagnostics));
   });
 
   // Low-cardinality dimensions for time-to-connected dashboards; the error
@@ -1296,5 +1306,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     disconnect,
     retryNow,
     log,
+    get diagnostics() {
+      return diagnostics;
+    },
   });
 });

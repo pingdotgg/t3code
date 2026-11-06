@@ -19,6 +19,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/reactivity";
 
+import { ConnectionDiagnostics } from "../connection/diagnostics.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -87,6 +88,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   const snapshotLoader = yield* ShellSnapshotLoader.ShellSnapshotLoader;
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
   const environmentId = supervisor.target.environmentId;
+  let diagnostics = supervisor.diagnostics;
   const cached = yield* cache.loadShell(environmentId).pipe(
     Effect.catch((error) =>
       Effect.logWarning("Could not load cached environment shell.").pipe(
@@ -216,6 +218,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     let receivedSnapshot = false;
     for (const item of items) {
       if (item.kind === "synchronized") {
+        diagnostics?.mark("shell-synchronized");
         waiting = false;
         if (Option.isSome(next.snapshot)) {
           next = { ...next, status: "live", error: Option.none() };
@@ -362,6 +365,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     subscribeDynamic(
       ORCHESTRATION_V2_WS_METHODS.subscribeShell,
       Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
+        diagnostics = supervisor.diagnostics;
         yield* Ref.set(activeSubscriptionSession, session);
         const { omitIdleSubagents, omitOlderSettled } = yield* session.initialConfig.pipe(
           Effect.map((config) => ({
@@ -396,10 +400,12 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
             ),
           );
           // HTTP and the socket must agree, or omitted children would return through the socket.
-          const httpSnapshot = yield* snapshotLoader.load(prepared, {
-            omitIdleSubagents,
-            omitOlderSettled,
-          });
+          const httpSnapshot = yield* snapshotLoader
+            .load(prepared, {
+              omitIdleSubagents,
+              omitOlderSettled,
+            })
+            .pipe(Effect.provideService(ConnectionDiagnostics, diagnostics));
           if (Option.isSome(httpSnapshot)) {
             yield* cancelActiveFill;
             const previous = yield* SubscriptionRef.get(state);
@@ -413,6 +419,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
                 : httpSnapshot.value.threads.map((thread) => thread.id),
             );
             yield* applyItems([{ kind: "snapshot", snapshot }], pendingLinkIds);
+            diagnostics?.mark("shell-applied");
             canResume = true;
             current = yield* SubscriptionRef.get(state);
             if (Option.isSome(current.snapshot)) {

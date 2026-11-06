@@ -24,6 +24,7 @@ import {
   PrimaryConnectionTarget,
   type PreparedConnection,
 } from "../connection/model.ts";
+import { makeConnectionDiagnostics } from "../connection/diagnostics.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
@@ -632,6 +633,7 @@ describe("environment shell synchronization", () => {
 
   it.effect("opts in to shell omissions and counts authoritative snapshots and removals", () =>
     Effect.gen(function* () {
+      const diagnostics = makeConnectionDiagnostics();
       const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
       const subscribeInput = yield* Deferred.make<unknown>();
       const loadOptions = yield* Ref.make<ReadonlyArray<unknown>>([]);
@@ -650,6 +652,7 @@ describe("environment shell synchronization", () => {
         } as never),
       };
       const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        diagnostics,
         target: TARGET,
         state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
         session: yield* SubscriptionRef.make(Option.some(familySession)),
@@ -691,12 +694,18 @@ describe("environment shell synchronization", () => {
         afterSequence: 1,
         omitIdleSubagents: true,
         omitOlderSettled: true,
+        requestCompletionMarker: true,
       });
       expect(yield* Ref.get(loadOptions)).toEqual([
         { omitIdleSubagents: true, omitOlderSettled: true },
       ]);
       const loaded = Option.getOrThrow(yield* stateWhere((state) => state.generation > 0));
       expect(loaded.removedAt.size).toBe(0);
+      expect(loaded.status).toBe("synchronizing");
+      yield* Queue.offer(events, { kind: "synchronized" });
+      const synchronized = Option.getOrThrow(yield* stateWhere((state) => state.status === "live"));
+      expect(synchronized.snapshot).toEqual(loaded.snapshot);
+      expect(diagnostics.snapshot().milestones).toEqual(["shell-applied", "shell-synchronized"]);
 
       const gone = ThreadId.make("thread-gone");
       yield* Queue.offer(events, {

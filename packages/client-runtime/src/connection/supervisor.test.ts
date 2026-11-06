@@ -40,7 +40,8 @@ import {
 } from "./model.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { presentConnectionState } from "./presentation.ts";
-import { CONNECTION_LOG_LIMIT } from "./connectionLog.ts";
+import { ConnectionDiagnostics } from "./diagnostics.ts";
+import { connectionTroubleSince, CONNECTION_LOG_LIMIT } from "./connectionLog.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 import { connectionRouteId, entryWithRoutes, isLearned, mergeLearnedRoutes } from "./routes.ts";
@@ -157,6 +158,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   readonly preflight?: (route: ConnectionRoute) => Effect.Effect<ConnectionDriver.RoutePreflight>;
   readonly inboundFrames?: Effect.Effect<number>;
   readonly foreground?: Ref.Ref<boolean>;
+  readonly applicationState?: "active" | "inactive" | "background" | "unknown";
 }) {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>(
     options?.networkStatus ?? "online",
@@ -246,6 +248,9 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
           Stream.map((event) => event.reason),
         ),
         ...(options?.foreground === undefined ? {} : { isForeground: Ref.get(options.foreground) }),
+        ...(options?.applicationState === undefined
+          ? {}
+          : { applicationState: Effect.succeed(options.applicationState) }),
       }),
     ),
     Layer.succeed(
@@ -515,8 +520,15 @@ describe("EnvironmentSupervisor", () => {
     Effect.gen(function* () {
       const firstAttemptStarted = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
+        applicationState: "inactive",
         prepare: () =>
-          Deferred.succeed(firstAttemptStarted, undefined).pipe(Effect.andThen(Effect.never)),
+          Effect.gen(function* () {
+            const diagnostics = yield* ConnectionDiagnostics;
+            diagnostics?.mark("shell-headers");
+            diagnostics?.fail("json");
+            yield* Deferred.succeed(firstAttemptStarted, undefined);
+            return yield* Effect.never;
+          }),
       });
       const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
         initiallyDesired: true,
@@ -550,6 +562,13 @@ describe("EnvironmentSupervisor", () => {
       });
       expect(yield* Ref.get(harness.prepareCount)).toBe(1);
       expect(yield* Ref.get(harness.sessionCount)).toBe(0);
+      const report = connectionTroubleSince(yield* SubscriptionRef.get(supervisor.log!), -1);
+      expect(report.at(-1)).toMatchObject({
+        reason: "timeout",
+        stage: "preparing",
+        appState: "inactive",
+        diagnostics: { milestones: ["shell-headers"], firstFailure: "json" },
+      });
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -1783,6 +1802,54 @@ describe("EnvironmentSupervisor routes", () => {
       const state = yield* awaitState(supervisor.state, (value) => value.phase === "blocked");
       expect(state.lastFailure?.detail).toBe("Your cloud sign-in changed.");
     }),
+  );
+
+  it.effect(
+    "reports the environment's refusal from a slow route over a silent route's timeout",
+    () =>
+      Effect.gen(function* () {
+        const serveTarget = new BearerConnectionTarget({
+          environmentId: TARGET.environmentId,
+          label: TARGET.label,
+          connectionId: "bearer:serve",
+        });
+        const entry = entryWithRoutes(LAN_ENTRY, [
+          LAN_ROUTE,
+          {
+            target: serveTarget,
+            profile: Option.some(
+              new BearerConnectionProfile({
+                connectionId: serveTarget.connectionId,
+                environmentId: TARGET.environmentId,
+                label: TARGET.label,
+                httpBaseUrl: "https://desk.tail1234.ts.net/",
+                wsBaseUrl: "wss://desk.tail1234.ts.net/",
+              }),
+            ),
+          },
+        ]);
+        // Both checks miss the head start: one route is dead, the other is slow but answers.
+        const harness = yield* makeHarness({
+          checkRoute: () => Effect.succeed("silent"),
+          prepare: (_attempt, target) =>
+            target._tag === "BearerConnectionTarget" && target.connectionId === "bearer:serve"
+              ? Effect.fail(
+                  new ConnectionBlockedError({
+                    reason: "authentication",
+                    detail: "The environment credential is invalid.",
+                    hop: "server",
+                    via: "direct",
+                  }),
+                )
+              : Effect.fail(transient("Tailnet endpoint timed out.")),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(entry, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        const state = yield* awaitState(supervisor.state, (value) => value.phase === "blocked");
+        expect(state.lastFailure?.detail).toBe("The environment credential is invalid.");
+      }),
   );
 
   it.effect("moves back to the LAN route when the network changes and it answers again", () =>

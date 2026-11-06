@@ -26,6 +26,7 @@ import * as RpcClientError from "effect/rpc/RpcClientError";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
+import { ConnectionDiagnostics } from "../connection/diagnostics.ts";
 import { inflatingJson } from "./deflatedFrames.ts";
 import { makeWsRpcProtocolClient, PING_TIMEOUT, type WsRpcProtocolClient } from "./protocol.ts";
 import { NETWORK_BLOCKING_HINT, UNRESPONSIVE_HOST_HINT } from "../errors/network.ts";
@@ -195,6 +196,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
   });
 
   const connect = Effect.fnUntraced(function* (connection: PreparedConnection) {
+    const diagnostics = yield* ConnectionDiagnostics;
     const via = connection.target._tag === "RelayConnectionTarget" ? "relay" : "direct";
     const networkHint = via === "relay" ? ` ${NETWORK_BLOCKING_HINT}` : "";
     const mapRpcError = (error: Parameters<typeof mapSessionRpcError>[0]) =>
@@ -236,6 +238,20 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       const socket = webSocketConstructor(url, options);
       socket.addEventListener("message", () => {
         inboundFrames += 1;
+        diagnostics?.count("rx");
+      });
+      const send = socket.send.bind(socket);
+      socket.send = (data) => {
+        diagnostics?.count("tx");
+        return send(data);
+      };
+      socket.addEventListener("close", (event) => {
+        diagnostics?.count("closes");
+        if (typeof event.code === "number") diagnostics?.close(event.code);
+      });
+      socket.addEventListener("error", () => {
+        diagnostics?.count("errors");
+        diagnostics?.fail("socket");
       });
       return socket;
     };
@@ -256,7 +272,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       Layer.provide(
         Layer.mergeAll(
           layerSocket,
-          Layer.succeed(RpcSerialization.RpcSerialization, inflatingJson),
+          Layer.succeed(RpcSerialization.RpcSerialization, inflatingJson(diagnostics)),
           Layer.succeed(RpcClient.ConnectionHooks, hooks),
         ),
       ),
@@ -322,6 +338,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
             yield* PubSub.publish(serverConfigUpdates, buffered.value);
           }
           if (event.type === "snapshot") {
+            diagnostics?.mark("config-decoded");
             yield* Deferred.succeed(initialConfigDeferred, event.config);
           }
         }),
