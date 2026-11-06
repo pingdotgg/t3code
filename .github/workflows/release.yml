@@ -754,43 +754,36 @@ jobs:
       resource_key: win32-arm64
       cli_archive: true
 
-  # Nightlies attach Play's internal APK (~280 MB). The Play download is slow,
-  # so it runs here beside the desktop builds and the publish job only copies a
-  # finished artifact. The APK is optional: every step tolerates failure, and
-  # job-level continue-on-error keeps a runner fault from failing the release.
+  # Nightlies attach Play's optional internal APK (~280 MB), fetched here beside
+  # the desktop builds. A failed ancestor skips every job after release, and a
+  # job timeout cancels steps past continue-on-error, so each step has its own
+  # timeout and continue-on-error, and they sum to less than the job timeout.
   android_apk:
     name: Stage nightly Android APK
     needs: [preflight]
     if: needs.preflight.outputs.release_channel == 'nightly'
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 10
+    timeout-minutes: 15
     continue-on-error: true
     permissions:
       contents: read
+    outputs:
+      # Only this attempt's successful upload, so a rerun that finds no APK
+      # never hands release an earlier attempt's artifact.
+      apk_artifact_id: ${{ steps.upload.outcome == 'success' && steps.upload.outputs.artifact-id || '' }}
     steps:
-      - id: credentials
-        name: Check for Play credentials
-        env:
-          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-        run: |
-          if [ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON is not available; skipping the APK."
-          fi
-
       - name: Checkout
-        if: steps.credentials.outputs.present == 'true'
+        continue-on-error: true
+        timeout-minutes: 2
         uses: actions/checkout@v6
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: .github/scripts
 
-      # Writes the APK only when Play has a processed internal build.
+      # Writes the complete APK only when Play has a processed internal build.
+      # Without credentials it fails, and the release goes out without an APK.
       - id: mirror
         name: Download internal Android APK
-        if: steps.credentials.outputs.present == 'true'
         continue-on-error: true
         timeout-minutes: 5
         env:
@@ -799,9 +792,12 @@ jobs:
           APK_OUTPUT_DIR: android-apk
         run: node .github/scripts/mirror-play-apk.cjs
 
-      - name: Upload Android APK
-        if: steps.mirror.outcome == 'success' && hashFiles('android-apk/*.apk') != ''
+      # With no APK, nothing uploads and artifact-id stays empty.
+      - id: upload
+        name: Upload Android APK
+        if: steps.mirror.outcome == 'success'
         continue-on-error: true
+        timeout-minutes: 3
         uses: actions/upload-artifact@v7
         with:
           name: android-apk
@@ -809,7 +805,8 @@ jobs:
           if-no-files-found: ignore
           # APKs are already zip-compressed.
           compression-level: 0
-          retention-days: 1
+          # GitHub allows a failed-jobs rerun for 30 days.
+          retention-days: 30
 
   release:
     name: Publish GitHub Release
@@ -870,18 +867,19 @@ jobs:
           merge-multiple: true
           path: release-assets
 
-      # Downloads go to a staging directory so a failed transfer cannot leave a
-      # partial APK among the release assets.
+      # By ID only: an empty ID would download every artifact in the run. The
+      # staging directory keeps a failed or mismatched transfer out of the
+      # release assets.
       - id: android_apk
         name: Download nightly Android APK
-        if: needs.preflight.outputs.release_channel == 'nightly'
+        if: needs.android_apk.outputs.apk_artifact_id != ''
         continue-on-error: true
         timeout-minutes: 2
         uses: actions/download-artifact@v8
         with:
-          pattern: android-apk
-          merge-multiple: true
+          artifact-ids: ${{ needs.android_apk.outputs.apk_artifact_id }}
           path: android-apk
+          digest-mismatch: error
 
       - name: Add nightly Android APK
         if: steps.android_apk.outcome == 'success'
