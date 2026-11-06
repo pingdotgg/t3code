@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { assert, it, afterEach, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -96,6 +101,33 @@ layer("GitLabCli.layer", (it) => {
         "authentication",
       );
     }),
+  );
+
+  // A strictly confined glab (Snap) has a private /tmp, so it cannot open the server's body file.
+  it.effect("sends the merge request description to glab on stdin, not as a file path", () =>
+    Effect.gen(function* () {
+      const bodyDir = yield* Effect.acquireRelease(
+        Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-gitlab-mr-body-"))),
+        (dir) => Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
+      );
+      const bodyFile = NodePath.join(bodyDir, "t3code-pr-body.md");
+      NodeFS.writeFileSync(bodyFile, "## Summary\n\nFixes the thing.\n");
+      mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
+
+      const glab = yield* GitLabCli.GitLabCli;
+      yield* glab.createMergeRequest({
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "feature/mr",
+        title: "Add MR",
+        bodyFile,
+      });
+
+      const call = mockedRun.mock.calls.at(-1)?.[0];
+      expect(call?.args.join(" ")).not.toContain(bodyFile);
+      expect(call?.args).toContain("description=@-");
+      assert.strictEqual(call?.stdin, "## Summary\n\nFixes the thing.\n");
+    }).pipe(Effect.scoped),
   );
 
   it.effect("skips invalid entries when parsing MR lists", () =>
