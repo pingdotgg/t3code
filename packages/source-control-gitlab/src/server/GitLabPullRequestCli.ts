@@ -51,6 +51,7 @@ import {
   decodeMergeRequestListJson,
   decodeMergeRequestFileStatsJson,
   decodeMergeRequestStatsJson,
+  decodeMutationErrorsJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
   decodePipelineStageChecksJson,
@@ -204,6 +205,34 @@ export class GitLabDiffFileContentsUnavailableError extends Schema.TaggedError<G
   }
 }
 
+export class GitLabMutationRefusedError extends Schema.TaggedError<GitLabMutationRefusedError>()(
+  "GitLabMutationRefusedError",
+  {
+    command: Schema.Literal("glab"),
+    cwd: Schema.String,
+    operation: Schema.String,
+    reasons: Schema.Array(Schema.String),
+  },
+) {
+  get detail(): string {
+    return `GitLab refused it: ${this.reasons.join("; ")}`;
+  }
+
+  override get message(): string {
+    return `GitLab CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
+const SET_SELF_AS_REVIEWER_MUTATION = `mutation($projectPath: ID!, $iid: String!, $reviewers: [String!]!) {
+  mergeRequestSetReviewers(
+    input: { projectPath: $projectPath, iid: $iid, reviewerUsernames: $reviewers, operationMode: APPEND }
+  ) { errors }
+}`;
+
+const REQUEST_CHANGES_MUTATION = `mutation($projectPath: ID!, $iid: String!) {
+  mergeRequestRequestChanges(input: { projectPath: $projectPath, iid: $iid }) { errors }
+}`;
+
 export class GitLabBranchDeletionRefusedError extends Schema.TaggedError<GitLabBranchDeletionRefusedError>()(
   "GitLabBranchDeletionRefusedError",
   {
@@ -266,7 +295,8 @@ export type GitLabPullRequestCliError =
   | GitLabDiffCommitParentUnavailableError
   | GitLabDiffFileContentsUnavailableError
   | GitLabDiffRefsUnavailableError
-  | GitLabViewerUnavailableError;
+  | GitLabViewerUnavailableError
+  | GitLabMutationRefusedError;
 
 /** GitLab's `per_page` limit. */
 const MAX_PAGE_SIZE = 100;
@@ -1454,6 +1484,28 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const graphqlMutation = (input: {
+    readonly cwd: string;
+    readonly host?: string | undefined;
+    readonly operation: string;
+    readonly query: string;
+    readonly variables: Record<string, unknown>;
+  }) =>
+    graphqlRead({ ...input, decode: decodeMutationErrorsJson }).pipe(
+      Effect.flatMap((reasons) =>
+        reasons.length === 0
+          ? Effect.void
+          : Effect.fail(
+              new GitLabMutationRefusedError({
+                command: "glab",
+                cwd: input.cwd,
+                operation: input.operation,
+                reasons,
+              }),
+            ),
+      ),
+    );
+
   const graphqlListPage = (input: {
     readonly cwd: string;
     readonly host?: string | undefined;
@@ -2337,10 +2389,29 @@ export const make = Effect.gen(function* () {
     submitReview: Effect.fn("GitLabPullRequestCli.submitReview")(function* (input) {
       const project = projectPath(input.repository);
       const mergeRequest = `projects/${project}/merge_requests/${input.number}`;
-      // GitLab has no pending review to attach comments to, so a review is replayed as the
-      // requests it is made of: the line comments, then the summary, then the verdict. A
-      // failure part-way therefore leaves what was already posted in place, which is why
-      // the verdict goes last — a half-sent review is never an approval.
+      // GitLab has no pending review, so a review is replayed as separate requests and a failure
+      // leaves earlier ones posted. Requesting changes (GitLab 18.9+) goes first so an older
+      // server fails before any comment lands; approval goes last so a half-sent review never
+      // approves.
+      if (input.verdict === "request-changes") {
+        // GitLab keeps the verdict on the reviewer, so the viewer joins the reviewers first.
+        const viewer = yield* viewerUsername(input);
+        const target = { projectPath: input.repository, iid: String(input.number) };
+        yield* graphqlMutation({
+          cwd: input.cwd,
+          host: input.host,
+          operation: "submitReview",
+          query: SET_SELF_AS_REVIEWER_MUTATION,
+          variables: { ...target, reviewers: [viewer] },
+        });
+        yield* graphqlMutation({
+          cwd: input.cwd,
+          host: input.host,
+          operation: "submitReview",
+          query: REQUEST_CHANGES_MUTATION,
+          variables: target,
+        });
+      }
       if (input.comments.length > 0) {
         const refs = yield* getDiffRefs(input);
         yield* Effect.forEach(

@@ -1712,6 +1712,28 @@ export function decodeGraphqlListSupportJson(raw: string): Result.Result<boolean
   return Result.succeed(major > 17 || (major === 17 && minor >= 9));
 }
 
+const decodeMutationPayloads = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.Record(
+      Schema.String,
+      Schema.NullOr(
+        Schema.Struct({ errors: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))) }),
+      ),
+    ),
+  }),
+);
+
+/** GitLab answers a refused mutation with HTTP 200 and the reasons in each payload's `errors`. */
+export function decodeMutationErrorsJson(
+  raw: string,
+): Result.Result<ReadonlyArray<string>, DecodeFailure> {
+  const decoded = decodeMutationPayloads(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  return Result.succeed(
+    Object.values(decoded.success.data).flatMap((payload) => payload?.errors ?? []),
+  );
+}
+
 /**
  * Line counts for merge requests of one project. The REST listing carries no line counts, and
  * reading each diff to count them would cost a request per row, so GraphQL's per-merge-request

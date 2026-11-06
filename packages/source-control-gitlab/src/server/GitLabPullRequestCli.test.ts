@@ -1421,6 +1421,50 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("requests changes as a reviewer and reports what GitLab refused", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify({ username: "bilal" }))))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(JSON.stringify({ data: { mergeRequestSetReviewers: { errors: [] } } })),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              JSON.stringify({
+                data: { mergeRequestRequestChanges: { errors: ["Merge request is locked"] } },
+              }),
+            ),
+          ),
+        );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const error = yield* Effect.flip(
+        cli.submitReview({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          verdict: "request-changes",
+          body: "Needs work",
+          comments: [{ path: "src/a.ts", position: { kind: "added", newLine: 4 }, body: "nit" }],
+        }),
+      );
+
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
+      const target = { projectPath: "acme/web", iid: "7" };
+      const setReviewers = JSON.parse(callAt(1).stdin ?? "");
+      expect(setReviewers.query).toContain("operationMode: APPEND");
+      expect(setReviewers.variables).toEqual({ ...target, reviewers: ["bilal"] });
+      const requestChanges = JSON.parse(callAt(2).stdin ?? "");
+      expect(requestChanges.query).toContain("mergeRequestRequestChanges");
+      expect(requestChanges.variables).toEqual(target);
+      assert.strictEqual(error._tag, "GitLabMutationRefusedError");
+      expect(error.detail).toBe("GitLab refused it: Merge request is locked");
+    }),
+  );
+
   it.effect("removes an award by listing them and deleting the reader's own id", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
