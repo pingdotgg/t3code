@@ -107,7 +107,8 @@ function CheckoutGroupingSelect({ member }: { member: SidebarProjectGroupMember 
       }}
     >
       <SelectTrigger
-        size="sm"
+        variant="well"
+        size="compact"
         aria-label={`Grouping rule for ${member.workspaceRoot} on ${
           member.environmentLabel
             ? `${member.environmentLabel} (${member.environmentId})`
