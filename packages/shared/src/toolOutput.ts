@@ -308,7 +308,9 @@ export function omitToolOutputImageData(value: unknown): unknown {
 function omitImageData(value: unknown): unknown {
   const omit = (block: unknown) => {
     const image = readToolOutputImage(block);
-    return image?.data === undefined ? block : { type: "image", mimeType: image.mimeType };
+    if (image?.data === undefined || !Predicate.isObject(block)) return block;
+    const { data: _data, source: _source, ...rest } = block;
+    return { ...rest, type: "image", mimeType: image.mimeType };
   };
   if (Array.isArray(value)) return value.map(omit);
   if (Predicate.isObject(value) && Array.isArray(value.content)) {

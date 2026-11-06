@@ -159,15 +159,18 @@ export function hydrateMcpAppToolResultImages(
   let loading = false;
   const content = result.content.map((block): unknown => {
     const image = readToolOutputImage(block);
-    if (image === null || index >= MAX_TOOL_OUTPUT_IMAGES) return block;
+    if (image === null || !Predicate.isObject(block) || index >= MAX_TOOL_OUTPUT_IMAGES) {
+      return block;
+    }
     const at = index++;
     if (image.data !== undefined) return block;
     loading = true;
+    const { source: _source, ...rest } = block;
     return load(at).then(
       (bytes) =>
         bytes === undefined
           ? block
-          : { type: "image", data: Base64.encode(bytes), mimeType: image.mimeType },
+          : { ...rest, type: "image", data: Base64.encode(bytes), mimeType: image.mimeType },
       () => block,
     );
   });

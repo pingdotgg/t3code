@@ -179,7 +179,7 @@ describe("makeMcpAppHost", () => {
     const call = {
       arguments: {},
       result: {
-        content: [{ type: "image", mimeType: "image/png" }],
+        content: [{ type: "image", mimeType: "image/png", annotations: { priority: 1 } }],
         structuredContent: { device: "phone" },
       },
     };
@@ -187,7 +187,9 @@ describe("makeMcpAppHost", () => {
     initialize(host);
     host.setToolCall(call);
     expect(await delivered.promise).toEqual({
-      content: [{ type: "image", data: "AQID", mimeType: "image/png" }],
+      content: [
+        { type: "image", data: "AQID", mimeType: "image/png", annotations: { priority: 1 } },
+      ],
       structuredContent: { device: "phone" },
     });
     expect(

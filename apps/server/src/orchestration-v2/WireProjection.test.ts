@@ -254,7 +254,7 @@ describe("orchestration V2 wire projection", () => {
       output: {
         t3McpApp: app,
         result: {
-          content: [{ type: "image", mimeType: "image/png", data }],
+          content: [{ type: "image", mimeType: "image/png", data, _meta: { frameId: "f1" } }],
           structuredContent: { device: "tablet" },
         },
       },
@@ -264,7 +264,7 @@ describe("orchestration V2 wire projection", () => {
     expect(output).toEqual({
       t3McpApp: app,
       result: {
-        content: [{ type: "image", mimeType: "image/png" }],
+        content: [{ type: "image", mimeType: "image/png", _meta: { frameId: "f1" } }],
         structuredContent: { device: "tablet" },
       },
     });
