@@ -176,11 +176,7 @@ export function PullRequestCommentForm({
             )}
           </Button>
         )}
-        <Button
-          size="xs"
-          disabled={submitDisabled}
-          onClick={() => submitAfterDictation("comment")}
-        >
+        <Button size="xs" disabled={submitDisabled} onClick={() => submitAfterDictation("comment")}>
           <SendIcon className="size-3.5" />
           {submitting === "comment" ? "Posting..." : "Comment"}
           <PullRequestSubmitKeyHint />
