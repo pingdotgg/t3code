@@ -4381,6 +4381,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           },
           { name: "plans", id: "plan_id", decode: (payload) => decodePlanJson(payload) },
           {
+            name: "artifacts",
+            id: "artifact_id",
+            decode: (payload) => decodeArtifactPayload(payload),
+          },
+          {
             name: "turn_items",
             id: "turn_item_id",
             decode: (payload) => decodeTurnItemPayload(payload),
