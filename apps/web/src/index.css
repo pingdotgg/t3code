@@ -1839,6 +1839,12 @@ code {
   }
 }
 
+/* A fullscreen window cannot move, and drag regions there make clicks inside them
+   start drags (electron/electron#55100). */
+[data-window-fullscreen] .drag-region {
+  -webkit-app-region: initial;
+}
+
 .drag-region button,
 .drag-region input,
 .drag-region textarea,
