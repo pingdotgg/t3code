@@ -85,6 +85,7 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
         },
       }),
       Layer.succeed(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
         read: (references) => Effect.succeed(references.map(() => undefined)),
         invalidate: () => Effect.void,
       }),
@@ -166,6 +167,7 @@ const makeHubTest = Effect.fn("test.makeHubTest")(function* (failed: string[] = 
         }),
       }),
       Layer.succeed(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
         read: (references) =>
           Ref.get(mode).pipe(Effect.map((current) => references.map(() => current.resolvedKey))),
         invalidate: () => Effect.void,
@@ -489,6 +491,7 @@ it.effect("reads a management key from its secret provider", () => {
         shouldRunScopeWork: () => Effect.succeed(false),
       }),
       Layer.succeed(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
         read: (references) =>
           Effect.succeed(
             references.map((reference) =>
