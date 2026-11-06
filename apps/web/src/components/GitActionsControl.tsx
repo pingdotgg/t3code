@@ -39,7 +39,7 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
-import { RadioGroup } from "~/components/ui/radio-group";
+import { Radio, RadioGroup } from "~/components/ui/radio-group";
 import { Spinner } from "~/components/ui/spinner";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { cn } from "~/lib/utils";
@@ -113,8 +113,8 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { CommitFileSelection } from "./CommitFileSelection";
-import { RewriteCommitMessagesDialog } from "./RewriteCommitMessagesDialog";
-import { CommitWorkflowDialog } from "./CommitWorkflowDialog";
+import { RewriteCommitsDialog } from "./RewriteCommitsDialog";
+import { CommitWorkflowForm } from "./CommitWorkflowForm";
 import { RegeneratePullRequestsDialog } from "./RegeneratePullRequestsDialog";
 
 interface GitActionsControlProps {
@@ -287,7 +287,7 @@ function getMenuActionDisabledReason({
 
 const COMMIT_DIALOG_TITLE = "Commit changes";
 const COMMIT_DIALOG_DESCRIPTION =
-  "Review and confirm your commit. Leave the message blank to auto-generate one.";
+  "Choose files and create a single commit or a sequence of logical commits. Nothing is pushed.";
 
 function GitActionItemIcon({
   icon,
@@ -962,12 +962,12 @@ export default function GitActionsControl({
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [isRefreshingQuickAction, setIsRefreshingQuickAction] = useState(false);
-  const [isCommitWorkflowDialogOpen, setIsCommitWorkflowDialogOpen] = useState(false);
+  const [commitMode, setCommitMode] = useState("single");
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
   const [isEditingFiles, setIsEditingFiles] = useState(false);
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
-  const [isRewriteCommitMessagesDialogOpen, setIsRewriteCommitMessagesDialogOpen] = useState(false);
+  const [isRewriteCommitsDialogOpen, setIsRewriteCommitsDialogOpen] = useState(false);
   const [isRegeneratingDescription, setIsRegeneratingDescription] = useState(false);
   const regenerateScopeKey = `${successScopeKey}\u0000${threadRefreshKey ?? ""}`;
   const [regenerateSelection, setRegenerateSelection] = useState<{
@@ -1150,53 +1150,50 @@ export default function GitActionsControl({
     });
     const failures: Array<{ url: string; message: string }> = [];
     let updatedCount = 0;
-    try {
-      for (const candidate of candidates) {
-        const result = await regenerateDescription({
-          environmentId: activeEnvironmentId,
-          input: {
-            cwd: gitCwd,
-            projectId,
-            reference: candidate.url,
-            ...(activeServerThread ? { threadId: activeServerThread.id } : {}),
-          },
+    for (const candidate of candidates) {
+      const result = await regenerateDescription({
+        environmentId: activeEnvironmentId,
+        input: {
+          cwd: gitCwd,
+          projectId,
+          reference: candidate.url,
+          ...(activeServerThread ? { threadId: activeServerThread.id } : {}),
+        },
+      });
+      if (result._tag === "Failure") {
+        const error = squashAtomCommandFailure(result);
+        failures.push({
+          url: candidate.url,
+          message: `${candidate.repository} #${candidate.number}: ${error instanceof Error ? error.message : "An error occurred."}`,
         });
-        if (result._tag === "Failure") {
-          const error = squashAtomCommandFailure(result);
-          failures.push({
-            url: candidate.url,
-            message: `${candidate.repository} #${candidate.number}: ${error instanceof Error ? error.message : "An error occurred."}`,
-          });
-        } else {
-          updatedCount += 1;
-        }
+      } else {
+        updatedCount += 1;
       }
-      if (updatedCount > 0) {
-        requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
-      }
-      toastManager.update(
-        toastId,
-        failures.length > 0
-          ? {
-              type: "error",
-              title:
-                updatedCount > 0
-                  ? `Updated ${updatedCount} of ${candidates.length} ${label} titles and descriptions`
-                  : `Failed to regenerate ${label} titles and descriptions`,
-              description: failures.map((failure) => failure.message).join("\n"),
-            }
-          : {
-              type: "success",
-              title:
-                candidates.length === 1
-                  ? `${label} title and description updated`
-                  : `Updated ${candidates.length} ${label} titles and descriptions`,
-            },
-      );
-      return failures;
-    } finally {
-      setIsRegeneratingDescription(false);
     }
+    if (updatedCount > 0) {
+      requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+    }
+    toastManager.update(
+      toastId,
+      failures.length > 0
+        ? {
+            type: "error",
+            title:
+              updatedCount > 0
+                ? `Updated ${updatedCount} of ${candidates.length} ${label} titles and descriptions`
+                : `Failed to regenerate ${label} titles and descriptions`,
+            description: failures.map((failure) => failure.message).join("\n"),
+          }
+        : {
+            type: "success",
+            title:
+              candidates.length === 1
+                ? `${label} title and description updated`
+                : `Updated ${candidates.length} ${label} titles and descriptions`,
+          },
+    );
+    setIsRegeneratingDescription(false);
+    return failures;
   };
   const isSelectingWorktreeBase =
     !activeServerThread &&
@@ -1606,70 +1603,76 @@ export default function GitActionsControl({
       );
     })();
   };
-  const gitItems = (
-    <>
-      {gitActionMenuItems.map((item) => {
-        const disabledReason = getMenuActionDisabledReason({
-          item,
-          gitStatus: gitStatusForActions,
-          isBusy: isGitActionRunning,
-          hasPrimaryRemote,
-        });
-        if (item.disabled && disabledReason) {
-          return (
-            <Popover key={`${item.id}-${item.label}`}>
-              <PopoverTrigger
-                openOnHover
-                nativeButton={false}
-                render={<span className="block w-full cursor-not-allowed" />}
-              >
-                <ThreadDetailsControl variant="ghost" part="row" panel className="w-full" disabled>
-                  <GitActionItemIcon icon={item.icon} SourceControlIcon={SourceControlIcon} />
-                  <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>{item.label}</span>
-                </ThreadDetailsControl>
-              </PopoverTrigger>
-              <PopoverPopup tooltipStyle side="left" align="center">
-                {disabledReason}
-              </PopoverPopup>
-            </Popover>
-          );
-        }
-
-        return (
-          <ThreadDetailsControl
-            variant="ghost"
-            part="row"
-            panel
-            key={`${item.id}-${item.label}`}
-            disabled={!canWriteSourceControl || item.disabled}
-            onClick={() => {
-              runMenuItem(item);
-            }}
+  const renderGitMenuItem = (item: GitActionMenuItem) => {
+    const disabledReason = getMenuActionDisabledReason({
+      item,
+      gitStatus: gitStatusForActions,
+      isBusy: isGitActionRunning,
+      hasPrimaryRemote,
+    });
+    if (item.disabled && disabledReason) {
+      return (
+        <Popover key={`${item.id}-${item.label}`}>
+          <PopoverTrigger
+            openOnHover
+            nativeButton={false}
+            render={<span className="block w-full cursor-not-allowed" />}
           >
-            <GitActionItemIcon icon={item.icon} SourceControlIcon={SourceControlIcon} />
-            <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>{item.label}</span>
-          </ThreadDetailsControl>
-        );
-      })}
+            <ThreadDetailsControl variant="ghost" part="row" panel className="w-full" disabled>
+              <GitActionItemIcon icon={item.icon} SourceControlIcon={SourceControlIcon} />
+              <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>{item.label}</span>
+            </ThreadDetailsControl>
+          </PopoverTrigger>
+          <PopoverPopup tooltipStyle side="left" align="center">
+            {disabledReason}
+          </PopoverPopup>
+        </Popover>
+      );
+    }
+
+    return (
       <ThreadDetailsControl
         variant="ghost"
         part="row"
         panel
-        disabled={
-          !canWriteSourceControl ||
-          isGitActionRunning ||
-          !gitStatusForActions?.isRepo ||
-          !activeServerThread
-        }
+        key={`${item.id}-${item.label}`}
+        disabled={!canWriteSourceControl || item.disabled}
         onClick={() => {
-          setExcludedFiles(new Set());
-          setIsEditingFiles(false);
-          setIsCommitWorkflowDialogOpen(true);
+          runMenuItem(item);
         }}
       >
-        <GitCommitIcon />
-        <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>Split into logical commits...</span>
+        <GitActionItemIcon icon={item.icon} SourceControlIcon={SourceControlIcon} />
+        <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>{item.label}</span>
       </ThreadDetailsControl>
+    );
+  };
+  const closeCommitDialog = () => {
+    setIsCommitDialogOpen(false);
+    setDialogCommitMessage("");
+    setExcludedFiles(new Set());
+    setIsEditingFiles(false);
+  };
+  const commitModeControls = (
+    <RadioGroup
+      aria-label="Commit mode"
+      value={activeServerThread ? commitMode : "single"}
+      onValueChange={(value) => setCommitMode(value === "logical" ? "logical" : "single")}
+    >
+      <label className="flex items-center gap-2 text-sm">
+        <Radio value="single" />
+        Single commit
+      </label>
+      <label className="flex items-center gap-2 text-sm">
+        <Radio value="logical" disabled={!activeThreadRef || !activeServerThread} />
+        Logical commits
+      </label>
+    </RadioGroup>
+  );
+  const gitItems = (
+    <>
+      {gitActionMenuItems
+        .filter((item) => item.id !== "push" && item.id !== "pr")
+        .map(renderGitMenuItem)}
       <ThreadDetailsControl
         variant="ghost"
         part="row"
@@ -1677,13 +1680,16 @@ export default function GitActionsControl({
         disabled={
           !canWriteSourceControl ||
           isGitActionRunning ||
-          !canRewriteCommitMessages(gitStatusForActions)
+          (!activeServerThread && !canRewriteCommitMessages(gitStatusForActions))
         }
-        onClick={() => setIsRewriteCommitMessagesDialogOpen(true)}
+        onClick={() => setIsRewriteCommitsDialogOpen(true)}
       >
         <GitCommitIcon />
-        <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>Regenerate commit messages...</span>
+        <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>Rewrite commits...</span>
       </ThreadDetailsControl>
+      {gitActionMenuItems
+        .filter((item) => item.id === "push" || item.id === "pr")
+        .map(renderGitMenuItem)}
       <ThreadDetailsControl
         variant="ghost"
         part="row"
@@ -1868,12 +1874,7 @@ export default function GitActionsControl({
       <Dialog
         open={isCommitDialogOpen}
         onOpenChange={(open) => {
-          if (!open) {
-            setIsCommitDialogOpen(false);
-            setDialogCommitMessage("");
-            setExcludedFiles(new Set());
-            setIsEditingFiles(false);
-          }
+          if (!open) closeCommitDialog();
         }}
       >
         <DialogPopup>
@@ -1881,66 +1882,87 @@ export default function GitActionsControl({
             <DialogTitle>{COMMIT_DIALOG_TITLE}</DialogTitle>
             <DialogDescription>{COMMIT_DIALOG_DESCRIPTION}</DialogDescription>
           </DialogHeader>
-          <DialogPanel>
-            <div className="space-y-3 rounded-xl bg-zinc-25 p-3 text-sm ring-1 ring-black/5 dark:bg-white/[0.035] dark:ring-white/5">
-              <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
-                <span className="text-muted-foreground">Branch</span>
-                <span className="flex items-center justify-between gap-2">
-                  <span className="font-medium">
-                    {gitStatusForActions?.refName ?? "(detached HEAD)"}
-                  </span>
-                  {isDefaultRef && <span className="text-right text-warning">Default branch</span>}
-                </span>
-              </div>
-              <CommitFileSelection
-                files={allFiles}
-                excludedFiles={excludedFiles}
-                isEditing={isEditingFiles}
-                onExcludedFilesChange={setExcludedFiles}
-                onEditingChange={setIsEditingFiles}
-                onOpenFile={openChangedFileInEditor}
-                canOpenFile={canOperateThread && workingTreeRoot !== null}
-              />
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm font-medium">Commit message (optional)</p>
-              <Textarea
-                value={dialogCommitMessage}
-                onChange={(event) => setDialogCommitMessage(event.target.value)}
-                placeholder="Leave empty to auto-generate"
-                size="sm"
-              />
-            </div>
-          </DialogPanel>
-          <DialogFooter variant="bare">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setIsCommitDialogOpen(false);
-                setDialogCommitMessage("");
-                setExcludedFiles(new Set());
-                setIsEditingFiles(false);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!canChangeThreadBranch || noneSelected}
-              onClick={runDialogActionOnNewBranch}
-            >
-              Commit on new branch
-            </Button>
-            <Button
-              size="sm"
-              disabled={!canWriteSourceControl || noneSelected}
-              onClick={runDialogAction}
-            >
-              Commit
-            </Button>
-          </DialogFooter>
+          {commitMode === "logical" && activeThreadRef && activeServerThread && gitCwd ? (
+            <CommitWorkflowForm
+              threadRef={activeThreadRef}
+              cwd={gitCwd}
+              scope="working_tree"
+              controls={commitModeControls}
+              hasChanges={gitStatusForActions?.hasWorkingTreeChanges ?? false}
+              isDefaultRef={isDefaultRef}
+              branch={gitStatusForActions?.refName ?? null}
+              {...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {})}
+              fileSelection={
+                <CommitFileSelection
+                  files={allFiles}
+                  excludedFiles={excludedFiles}
+                  isEditing={isEditingFiles}
+                  onExcludedFilesChange={setExcludedFiles}
+                  onEditingChange={setIsEditingFiles}
+                  onOpenFile={openChangedFileInEditor}
+                  canOpenFile={canOperateThread && workingTreeRoot !== null}
+                />
+              }
+              onClose={closeCommitDialog}
+            />
+          ) : (
+            <>
+              <DialogPanel>
+                {commitModeControls}
+                <div className="space-y-3 rounded-xl bg-zinc-25 p-3 text-sm ring-1 ring-black/5 dark:bg-white/[0.035] dark:ring-white/5">
+                  <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
+                    <span className="text-muted-foreground">Branch</span>
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="font-medium">
+                        {gitStatusForActions?.refName ?? "(detached HEAD)"}
+                      </span>
+                      {isDefaultRef && (
+                        <span className="text-right text-warning">Default branch</span>
+                      )}
+                    </span>
+                  </div>
+                  <CommitFileSelection
+                    files={allFiles}
+                    excludedFiles={excludedFiles}
+                    isEditing={isEditingFiles}
+                    onExcludedFilesChange={setExcludedFiles}
+                    onEditingChange={setIsEditingFiles}
+                    onOpenFile={openChangedFileInEditor}
+                    canOpenFile={canOperateThread && workingTreeRoot !== null}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">Commit message (optional)</p>
+                  <Textarea
+                    value={dialogCommitMessage}
+                    onChange={(event) => setDialogCommitMessage(event.target.value)}
+                    placeholder="Leave empty to auto-generate"
+                    size="sm"
+                  />
+                </div>
+              </DialogPanel>
+              <DialogFooter variant="bare">
+                <Button variant="outline" size="sm" onClick={closeCommitDialog}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!canChangeThreadBranch || noneSelected}
+                  onClick={runDialogActionOnNewBranch}
+                >
+                  Commit on new branch
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={!canWriteSourceControl || noneSelected}
+                  onClick={runDialogAction}
+                >
+                  Commit
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogPopup>
       </Dialog>
 
@@ -1955,38 +1977,26 @@ export default function GitActionsControl({
           onClose={() => setRegenerateSelection(null)}
         />
       ) : null}
-      {isRewriteCommitMessagesDialogOpen ? (
-        <RewriteCommitMessagesDialog
-          key={successScopeKey}
-          open={isRewriteCommitMessagesDialogOpen}
+      {isRewriteCommitsDialogOpen && gitCwd ? (
+        <RewriteCommitsDialog
+          key={successScopeKey + threadRefreshKey}
           environmentId={activeEnvironmentId}
           cwd={gitCwd}
-          onOpenChange={setIsRewriteCommitMessagesDialogOpen}
+          workflow={
+            activeThreadRef && activeServerThread
+              ? {
+                  threadRef: activeThreadRef,
+                  cwd: gitCwd,
+                  hasChanges: gitStatusForActions?.hasWorkingTreeChanges ?? false,
+                  isDefaultRef,
+                  branch: gitStatusForActions?.refName ?? null,
+                  onClose: () => setIsRewriteCommitsDialogOpen(false),
+                }
+              : null
+          }
+          onClose={() => setIsRewriteCommitsDialogOpen(false)}
         />
       ) : null}
-      {isCommitWorkflowDialogOpen && activeThreadRef && activeServerThread && gitCwd && (
-        <CommitWorkflowDialog
-          key={successScopeKey + threadRefreshKey}
-          threadRef={activeThreadRef}
-          cwd={gitCwd}
-          hasChanges={gitStatusForActions?.hasWorkingTreeChanges ?? false}
-          isDefaultRef={gitStatusForActions?.isDefaultRef ?? false}
-          branch={gitStatusForActions?.refName ?? null}
-          {...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {})}
-          fileSelection={
-            <CommitFileSelection
-              files={allFiles}
-              excludedFiles={excludedFiles}
-              isEditing={isEditingFiles}
-              onExcludedFilesChange={setExcludedFiles}
-              onEditingChange={setIsEditingFiles}
-              onOpenFile={openChangedFileInEditor}
-              canOpenFile={canOperateThread}
-            />
-          }
-          onClose={() => setIsCommitWorkflowDialogOpen(false)}
-        />
-      )}
       {/* Its discovery query should stop when the Git actions row that opens it is hidden. */}
       {showActions ? (
         <PublishRepositoryDialog
