@@ -217,14 +217,14 @@ export function VoiceInputSetup(props: {
         <WizardFooter>
           {props.step === 0 ? (
             <>
-              <Button variant="outline" onClick={() => openSettings("speech-models")}>
+              <Button variant="secondary" onClick={() => openSettings("speech-models")}>
                 {model ? "Choose another model or language" : "Choose a model or language"}
               </Button>
               {props.onRetryCatalog ? (
                 <Button onClick={props.onRetryCatalog}>Retry loading models</Button>
               ) : null}
               {props.downloading ? (
-                <Button variant="outline" disabled={!canManage} onClick={props.onCancelDownload}>
+                <Button variant="secondary" disabled={!canManage} onClick={props.onCancelDownload}>
                   Cancel download
                 </Button>
               ) : null}
@@ -245,7 +245,7 @@ export function VoiceInputSetup(props: {
             </>
           ) : (
             <>
-              <Button variant="outline" onClick={() => openSettings("")}>
+              <Button variant="secondary" onClick={() => openSettings("")}>
                 Customize in Voice settings
               </Button>
               <Button onClick={props.onStartRecording}>Start dictating</Button>
