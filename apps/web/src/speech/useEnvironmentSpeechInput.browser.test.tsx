@@ -7,6 +7,7 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
+  type EnvironmentSpeechModel,
   type ProjectId,
   type SpeechCustomWords,
   type SpeechPostProcessingOptions,
@@ -36,7 +37,9 @@ const mocks = vi.hoisted(() => ({
   statusRequests: [] as string[],
   statusUnavailable: false,
   modelState: "ready" as "ready" | "missing-model",
-  download: vi.fn<() => Promise<void>>(),
+  statusModelId: "test-model",
+  models: [] as EnvironmentSpeechModel[],
+  download: vi.fn<(modelId: string) => Promise<void>>(),
   platforms: [] as string[],
   microphoneRequests: [] as string[],
   transcribeCalls: [] as string[],
@@ -109,7 +112,7 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
       return {
         supported: true,
         state: mocks.modelState,
-        modelId: "test-model",
+        modelId: mocks.statusModelId,
         model: "Test",
         size: 1,
         supportsStreaming: false,
@@ -119,8 +122,9 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
         gpuDevices: [],
       };
     }),
-  downloadEnvironmentSpeechModel: () => Effect.promise(mocks.download),
-  getEnvironmentSpeechModels: () => Effect.succeed({ models: [] }),
+  downloadEnvironmentSpeechModel: (_prepared: PreparedConnection, modelId: string) =>
+    Effect.promise(() => mocks.download(modelId)),
+  getEnvironmentSpeechModels: () => Effect.sync(() => ({ models: mocks.models })),
   postProcessEnvironmentTranscript: (
     prepared: PreparedConnection,
     transcript: string,
@@ -189,6 +193,8 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.statusRequests = [];
   mocks.statusUnavailable = false;
   mocks.modelState = "ready";
+  mocks.statusModelId = "test-model";
+  mocks.models = [];
   mocks.download.mockReset();
   mocks.platforms = [];
   mocks.microphoneRequests = [];
@@ -381,6 +387,53 @@ it("reopens setup after reconnecting during a download and ignores its stale com
     await done;
   });
   expect(mocks.voice.setup.error).toBeNull();
+});
+
+function catalogModel(
+  id: string,
+  languages: readonly string[],
+  recommended: boolean,
+): EnvironmentSpeechModel {
+  return {
+    id,
+    name: id,
+    description: "",
+    size: 1,
+    languages,
+    accuracy: 0,
+    speed: 0,
+    recommended,
+    supportsStreaming: false,
+    supportsLanguageDetection: languages.length > 1,
+    supportsTranslation: false,
+    active: false,
+    state: "downloadable",
+  };
+}
+
+it.each([
+  ["the browser prefers German", ["de-DE"], "auto"],
+  ["German is the chosen Voice language", ["en-US"], "de"],
+])("offers and downloads a German-capable model when %s", async (_, languages, speechLanguage) => {
+  setup({ destination: "env-a" });
+  mocks.settings = { speechLanguage };
+  using _languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(languages);
+  const englishDefault = "handy-computer/parakeet-unified-en-0.6b-gguf";
+  const german = "handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf";
+  mocks.modelState = "missing-model";
+  mocks.statusModelId = englishDefault;
+  mocks.models = [
+    { ...catalogModel(englishDefault, ["en"], true), active: true },
+    catalogModel(german, ["en", "de", "fr"], true),
+    catalogModel("handy-computer/canary-180m-flash-gguf", ["en", "de", "es", "fr"], true),
+  ];
+  mocks.download.mockResolvedValue(undefined);
+  await using _screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.setup.open).toBe(true);
+  await act(() => mocks.voice.setup.download());
+  expect(mocks.download).toHaveBeenCalledExactlyOnceWith(german);
+  expect(mocks.voice.setup.model?.id).toBe(german);
 });
 
 it("does not resend a failed recording after consent is revoked", async () => {
