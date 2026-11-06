@@ -1,15 +1,6 @@
-/** Terminal-emulator features shared by CliKit components. */
-import {
-  detectColorLevel,
-  detectUnicodeSupport,
-} from "@alchemy.run/sigil/capabilities";
-import {
-  setClipboard,
-  setTerminalProgress,
-  stringWidth,
-  tmuxPassthrough,
-  type TerminalProgressState,
-} from "@alchemy.run/sigil/ansi";
+import { setClipboard, stringWidth, tmuxPassthrough } from "@alchemy.run/sigil/ansi";
+/** Terminal-emulator features shared by CLI components. */
+import { detectColorLevel, detectUnicodeSupport } from "@alchemy.run/sigil/capabilities";
 
 export const ANSI_RESET = "\u001B[0m";
 export const ANSI_BOLD = "\u001B[1m";
@@ -25,7 +16,7 @@ export const ansiFg = (hex: string) => {
 
 /**
  * The canonical color-support decision, shared by raw terminal strings and
- * CliKit capability detection so the two can never disagree.
+ * terminal capability detection so the two can never disagree.
  */
 export const colorsEnabled = (
   stream: Pick<NodeJS.WriteStream, "isTTY"> = process.stdout,
@@ -49,17 +40,6 @@ export const copyToClipboard = (
   if (process.env.TMUX !== undefined) {
     sequence = tmuxPassthrough(sequence);
   }
-  stdout.write(sequence);
-};
-
-export const setNativeProgress = (
-  state: TerminalProgressState,
-  value?: number,
-  stdout: Pick<NodeJS.WriteStream, "write" | "isTTY"> = process.stdout,
-): void => {
-  if (stdout.isTTY !== true) return;
-  let sequence = setTerminalProgress(state, value);
-  if (process.env.TMUX !== undefined) sequence = tmuxPassthrough(sequence);
   stdout.write(sequence);
 };
 
