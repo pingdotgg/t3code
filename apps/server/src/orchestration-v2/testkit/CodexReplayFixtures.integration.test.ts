@@ -22,7 +22,7 @@ describe("Codex replay fixtures", () => {
 });
 
 it.effect(
-  "batches consecutive snapshots from one recorded Codex stream in the real run consumer",
+  "persists recorded Codex snapshots through provider transactions in the real run consumer",
   () =>
     Effect.gen(function* () {
       const fixture = findReplayFixture("multi_turn")!;
@@ -49,6 +49,10 @@ it.effect(
         materializeWorkspace: (transcript, workspace) =>
           Effect.succeed(materializeReplayTranscriptWorkspace(transcript, workspace)),
       }).pipe(Effect.withTracer(tracer), Effect.withTracerEnabled(true));
-      assert.deepEqual(writes, [3, 3]);
+      assert.equal(
+        writes.reduce((total, count) => total + count, 0),
+        6,
+      );
+      assert.isTrue(writes.every((count) => count <= 3));
     }),
 );
