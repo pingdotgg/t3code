@@ -106,13 +106,8 @@ export function UsageLimitRecoveryCard({
     if (!onCheckLimits) return;
     setChecking(true);
     setError(null);
-    try {
-      setError(await onCheckLimits());
-    } catch {
-      setError("Could not check usage limits.");
-    } finally {
-      setChecking(false);
-    }
+    setError(await onCheckLimits().catch(() => "Could not check usage limits."));
+    setChecking(false);
   }
   const action = workspaceLimit
     ? {
