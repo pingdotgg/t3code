@@ -147,6 +147,20 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("removes its staging file when the launcher cannot be replaced", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const command = yield* commandIn({ home });
+      const launcher = path.join(home, ".t3", "bin", "t3");
+      yield* fs.makeDirectory(path.join(launcher, "occupied"), { recursive: true });
+
+      expect((yield* Effect.flip(command.install)).message).toContain("Could not set up");
+      expect(yield* fs.readDirectory(path.dirname(launcher))).toEqual(["t3"]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("finds and removes a link left by a previous T3 home", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
