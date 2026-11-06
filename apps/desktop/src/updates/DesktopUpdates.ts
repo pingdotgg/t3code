@@ -26,6 +26,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -830,7 +831,8 @@ export const make = Effect.gen(function* () {
                 : Effect.succeed(Result.succeed(undefined)),
               Effect.forEach(
                 instances,
-                (instance) => instance.stop({ timeout: Duration.seconds(5) }),
+                (instance) =>
+                  instance.stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT }),
                 { concurrency: "unbounded", discard: true },
               ),
             ],
