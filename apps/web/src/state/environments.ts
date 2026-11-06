@@ -69,6 +69,14 @@ export function readPrimaryEnvironmentId(): EnvironmentId | null {
   return appAtomRegistry.get(primaryEnvironmentIdAtom);
 }
 
+/** The environment's state now, for handlers that should not re-render on every change. */
+export function readEnvironment(environmentId: EnvironmentId): EnvironmentPresentation | null {
+  const presentation = appAtomRegistry
+    .get(environmentPresentations.presentationsAtom)
+    .get(environmentId);
+  return presentation ? projectEnvironmentPresentation(environmentId, presentation) : null;
+}
+
 export function useEnvironment(
   environmentId: EnvironmentId | null,
 ): EnvironmentPresentation | null {

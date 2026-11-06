@@ -53,9 +53,7 @@ it.each<{
       }),
     );
     expect(output.clientDirectory).toBe(expected);
-    expect(output.externalWorkspaces).toEqual(
-      new Set([env?.BUILD_GREETING ?? "default"]),
-    );
+    expect(output.externalWorkspaces).toEqual(new Set([env?.BUILD_GREETING ?? "default"]));
     expect(process.env.NODE_ENV).toBe(nodeEnv);
   },
 );

@@ -22,6 +22,7 @@ import {
   type PullRequestUpdateMethod,
   type PullRequestRef,
   type PullRequestReviewGuideStop,
+  type PullRequestSummary,
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -105,7 +106,7 @@ import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
-import { pullRequestAutolinkPlugins } from "./pullRequestMarkdown.logic";
+import { pullRequestMarkdownPlugins } from "./pullRequestMarkdown.logic";
 import { PullRequestComposer } from "./PullRequestComposer";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
@@ -236,13 +237,14 @@ function resolvePullRequestReference(
 }
 
 function pullRequestMarkdownContext(
-  detail: Pick<PullRequestDetail, "provider" | "url"> | null,
+  detail: Pick<PullRequestDetail, "provider" | "url" | "repository"> | null,
   threadRef: ScopedThreadRef | null,
 ) {
   return {
-    remarkPlugins: pullRequestAutolinkPlugins(detail),
+    remarkPlugins: pullRequestMarkdownPlugins(detail),
     lineBreaks: sourceControlClients.find(detail?.provider ?? "")?.hardLineBreaks ?? false,
     threadRef,
+    repository: detail?.repository ?? null,
   };
 }
 
@@ -291,7 +293,11 @@ export function PullRequestDetailPanel({
    * notification can switch it.
    */
   tabOnPage?: boolean;
-  onActed?: (action?: PullRequestAction, phase?: "sent" | "done" | "failed") => void;
+  onActed?: (
+    action?: PullRequestAction,
+    phase?: "sent" | "done" | "failed",
+    reply?: PullRequestSummary,
+  ) => void;
   onClose?: () => void;
   context?: "page" | "thread";
   composerDraftTarget?: ScopedThreadRef | DraftId;
@@ -553,6 +559,12 @@ export function PullRequestDetailPanel({
     stackPending: !nativeStackQuery.isFresh,
     stackError: nativeStackQuery.error,
   });
+  const stackOwnsMerge = supportsStackActions && nativeStack !== null;
+  const mergeBlockedReason = canMergeSinglePullRequest
+    ? null
+    : nativeStackQuery.error
+      ? "Couldn't check stack membership"
+      : "Checking stack membership…";
   const activityPending = activityQuery.isPending && activity === null;
   const activityError = activity === null ? activityQuery.error : null;
   const refreshDetail = () => {
@@ -690,9 +702,11 @@ export function PullRequestDetailPanel({
     if (pullRequestActionNeedsHostRefresh(action)) {
       void refreshFromHost();
     } else {
-      refreshDetail();
+      // The action command already showed the reply in the detail or re-read it.
+      activityQuery.refresh();
+      nativeStackQuery.refresh();
     }
-    onActed?.(action, "done");
+    onActed?.(action, "done", result.value);
     return true;
   };
 
@@ -1143,9 +1157,9 @@ export function PullRequestDetailPanel({
         checksState,
         autoMergeEnabled: detail.autoMergeEnabled,
         hasMergeMethod: allowedMergeMethods.length > 0,
-        canMerge: canMergeSinglePullRequest && can("merge"),
+        canMerge: !stackOwnsMerge && can("merge"),
         canMarkReady: can("ready"),
-        canEnableAutoMerge: canMergeSinglePullRequest && can("enable-auto-merge"),
+        canEnableAutoMerge: !stackOwnsMerge && can("enable-auto-merge"),
       })
     : null;
   const showsDraftToggle =
@@ -1291,6 +1305,15 @@ export function PullRequestDetailPanel({
         <div className="mr-4 flex h-7 shrink-0 select-none items-center justify-end gap-1">
           {detail ? (
             <TooltipProvider delay={150} closeDelay={150} timeout={400}>
+              {context === "page" ? (
+                <PullRequestThreadLinks
+                  display="count"
+                  environmentId={environmentId}
+                  reference={reference}
+                  url={detail.url}
+                  threadRef={null}
+                />
+              ) : null}
               {!nativeStack && supportsStackActions && nativeStackQuery.error ? (
                 <Button variant="ghost" size="xs" onClick={nativeStackQuery.refresh}>
                   Retry stack lookup
@@ -1307,33 +1330,17 @@ export function PullRequestDetailPanel({
                   environmentId={environmentId}
                   onSelect={onSelectPullRequest}
                   mergeMethod={selectedMergeMethod}
-                  canMerge={
-                    nativeStackQuery.isFresh &&
-                    supportsStackActions &&
-                    can("merge") &&
-                    allowedMergeMethods.length > 0
-                  }
-                  canRebase={
-                    nativeStackQuery.isFresh &&
-                    supportsStackActions &&
-                    detail.viewerPermissions.stackRebase === true
-                  }
+                  stale={!nativeStackQuery.isFresh}
+                  canMerge={supportsStackActions && can("merge") && allowedMergeMethods.length > 0}
+                  canRebase={supportsStackActions && detail.viewerPermissions.stackRebase === true}
                   onActed={() => {
                     refreshDetail();
                     onActed?.();
                   }}
                 />
               ) : null}
-              {context === "page" ? (
-                <PullRequestThreadLinks
-                  display="count"
-                  environmentId={environmentId}
-                  reference={reference}
-                  url={detail.url}
-                  threadRef={null}
-                />
-              ) : null}
               <PullRequestPrimaryAction
+                mergeBlockedReason={mergeBlockedReason}
                 pullRequestKey={pullRequestKey}
                 primaryAction={primaryAction}
                 autoMergeArmed={autoMergeArmed}
