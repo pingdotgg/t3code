@@ -231,6 +231,9 @@ export interface CheckpointServiceV2Shape {
   readonly materializeBaselineCheckpoint: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly ordinalWithinScope: number;
+    /** The run materializing the baseline: its root node, and when it was requested. */
+    readonly nodeId: NodeId;
+    readonly capturedAt: DateTime.Utc;
     readonly runs?: CheckpointRunHistory;
     /** Records a missing checkpoint without touching git, for side chats sharing a parent's worktree. */
     readonly forceMissing?: boolean;
@@ -897,14 +900,14 @@ export const layer: Layer.Layer<
               id: checkpointId,
               scope: input.scope,
               runId: null,
-              nodeId: input.scope.nodeId,
+              nodeId: input.nodeId,
               parentCheckpointId: null,
               ordinalWithinScope: input.ordinalWithinScope,
               appRunOrdinal: null,
               ref: checkpointRef,
               status: stale ? "error" : available ? "ready" : "missing",
               files: [],
-              capturedAt: input.scope.createdAt,
+              capturedAt: input.capturedAt,
             });
           }),
         ).pipe(

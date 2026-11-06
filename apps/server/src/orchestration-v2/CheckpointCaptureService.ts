@@ -138,24 +138,25 @@ export const layer: Layer.Layer<
             ),
           )
         : [];
+      // The baselines this capture materializes are attributed to the run materializing them. The
+      // thread's scope may already be a later run's: one queued meanwhile, or sent after Stop.
+      const materializeBaseline = (ordinalWithinScope: number) =>
+        checkpoints.materializeBaselineCheckpoint({
+          scope,
+          ordinalWithinScope,
+          nodeId: rootNode.id,
+          capturedAt: run.requestedAt,
+          runs,
+          forceMissing: sideChat,
+        });
       const threadStartCheckpoint =
         hasRepositories || baselineOrdinalWithinScope === 0 || hasReadyCheckpoint(0)
           ? null
-          : yield* checkpoints.materializeBaselineCheckpoint({
-              scope,
-              ordinalWithinScope: 0,
-              runs,
-              forceMissing: sideChat,
-            });
+          : yield* materializeBaseline(0);
       const baselineCheckpoint =
         hasRepositories || hasReadyCheckpoint(baselineOrdinalWithinScope)
           ? null
-          : yield* checkpoints.materializeBaselineCheckpoint({
-              scope,
-              ordinalWithinScope: baselineOrdinalWithinScope,
-              runs,
-              forceMissing: sideChat,
-            });
+          : yield* materializeBaseline(baselineOrdinalWithinScope);
       // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
       const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } = run;
       const commandId = CommandId.make(`command:effect:checkpoint.capture:${run.id}`);
