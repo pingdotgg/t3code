@@ -39,11 +39,9 @@ import {
   IDLE_COMPACTING_LABELS,
   isSentMessageHidden,
   resolveUserMessageFileCards,
+  type SentMessageDisplaySettings,
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
-import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/reactivity";
-import { mobilePreferencesAtom } from "../../state/preferences";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
@@ -311,6 +309,10 @@ function formatMessageTime(input: string): string {
   return MESSAGE_TIME_FORMATTER.format(timestamp);
 }
 
+const MINIMIZE_SENT_MESSAGES: SentMessageDisplaySettings = {
+  agentMessageDisplay: "minimize",
+  automationMessageDisplay: "minimize",
+};
 const TURN_FOLD_HEIGHT = 42;
 const FEED_PADDING_TOP = 12;
 // Rows re-measure within a commit or two of a width change. LegendList also defers imperative
@@ -368,6 +370,7 @@ export interface ThreadFeedProps {
   /** A message to scroll to once it is in the feed; see `onJumpedToMessage`. */
   readonly jumpToMessageId?: MessageId | null;
   readonly onJumpedToMessage?: () => void;
+  readonly sentMessageDisplay?: SentMessageDisplaySettings;
   readonly contentInsetEndAdjustment: SharedValue<number>;
   readonly keyboardOffset: number;
   readonly sendingWithKeyboard?: boolean;
@@ -3317,12 +3320,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   const [loadedListKey, setLoadedListKey] = useState<string | null>(null);
   const { jumpToMessageId } = props;
   const jumpReady = !!jumpToMessageId && loadedListKey === `${feedThreadKey}:filled`;
-  const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const preferences = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : null;
-  const sentMessageDisplay = {
-    agentMessageDisplay: preferences?.agentMessageDisplay ?? "minimize",
-    automationMessageDisplay: preferences?.automationMessageDisplay ?? "minimize",
-  } as const;
+  const sentMessageDisplay = props.sentMessageDisplay ?? MINIMIZE_SENT_MESSAGES;
   const unfilteredFeed = appendGuestPendingMessages(
     useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups),
     guestShare,
@@ -3334,6 +3332,7 @@ export const ThreadFeed = memo(function ThreadFeed({
           (entry) =>
             entry.type !== "message" ||
             entry.message.id === workflowOpening?.messageId ||
+            entry.message.id === jumpToMessageId ||
             !isSentMessageHidden(entry.message, sentMessageDisplay),
         )
       : unfilteredFeed;

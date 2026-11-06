@@ -13,6 +13,7 @@ import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-visits";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import {
@@ -479,6 +480,12 @@ function ThreadDetailBody(
     threadId: props.selectedThread.id,
   });
   const composerError = useAtomValue(threadComposerErrorsAtom)[selectedThreadKey]?.message ?? null;
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const preferences = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : null;
+  const sentMessageDisplay = {
+    agentMessageDisplay: preferences?.agentMessageDisplay ?? "minimize",
+    automationMessageDisplay: preferences?.automationMessageDisplay ?? "minimize",
+  } as const;
   const queuedCount = useThreadQueuedCount(props.selectedThreadDetailRef);
   const turnSubagents = useThreadTurnSubagents(props.selectedThreadDetailRef);
   const agentsSegment = resolveSubagentPillSegment(turnSubagents);
@@ -1474,6 +1481,7 @@ function ThreadDetailBody(
                 anchorMessageId={anchorMessageId}
                 jumpToMessageId={jumpMessageLoaded ? jumpMessageId : null}
                 onJumpedToMessage={() => finishThreadMessageJump(selectedThreadKey)}
+                sentMessageDisplay={sentMessageDisplay}
                 ref={feedRef}
                 contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
                 keyboardOffset={composerKeyboardOffset}
