@@ -231,15 +231,22 @@ it.each([
   ["nothing is configured", {}],
   // A transcription host picked by an earlier PoC build is not consent.
   ["a legacy transcription host is configured", { voiceTranscriptionEnvironmentId: "env-a" }],
-])("stays local-only when %s, even with voice-capable environments", async (_, legacy) => {
+])("opens destination setup without sending audio when %s", async (_, legacy) => {
   setup();
   mocks.settings = { ...legacy, speechSilenceFiltering: true };
-  await using _screen = await render(<Probe />);
+  await using screen = await render(<Probe />);
+  // The composer mic and the dictation shortcut both gate on this.
+  expect(mocks.voice.available).toBe(true);
   await act(() => mocks.voice.start());
+  expect(screen.router?.state.location).toMatchObject({
+    pathname: "/settings/voice",
+    hash: "voice-transcription-destination",
+  });
   expectNoAudioSent();
   expect(mocks.committed).not.toHaveBeenCalled();
-  expect(mocks.voice.available).toBe(false);
+  expect(mocks.voice.state.phase).toBe("idle");
   expect(mocks.voice.transcriptionEnvironmentId).toBeNull();
+  expect(localStorage.getItem("t3code:voice-audio-grant:v1")).toBeNull();
 });
 
 it.each([true, false])(
@@ -370,7 +377,7 @@ it("revokes across windows even before the storage event and survives stale pref
     storage.removeItem(key);
     expect(canSend()).toBe(false);
     writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, wordWrap: false });
-    await vi.waitFor(() => expect(mocks.voice.available).toBe(false));
+    await vi.waitFor(() => expect(mocks.voice.transcriptionEnvironmentId).toBeNull());
     expect(mocks.voice.state.phase).toBe("idle");
     await act(() => mocks.voice.stop());
     expect(mocks.transcribeCalls).toEqual([]);
