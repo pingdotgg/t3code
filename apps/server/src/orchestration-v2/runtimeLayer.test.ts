@@ -2525,8 +2525,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       const effectTypes = (yield* outbox.listByCommandId(settleCommandId)).map(
         (effect) => effect.request.type,
       );
-      assert.include(effectTypes, "runtime-request.respond");
       assert.notInclude(effectTypes, "provider-turn.interrupt");
+      assert.deepEqual(
+        (yield* outbox.listByCommandId(settleCommandId)).flatMap((effect) =>
+          effect.request.type === "runtime-request.respond"
+            ? [[effect.request.requestId, effect.request.decision]]
+            : [],
+        ),
+        [[requestId, "cancel"]],
+      );
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
