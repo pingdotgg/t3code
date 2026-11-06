@@ -11,6 +11,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
   type ModelSelection,
@@ -1666,6 +1667,63 @@ it.effect("steers a promoted queued message with the selection it was queued wit
         const projection = yield* orchestrator.getThreadProjection(threadId);
         assert.deepEqual(steered, ["queued"]);
         assert.deepEqual(projection.thread.modelSelection, composerSelection);
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect("steers a promoted scheduled delivery with the thread's current selection", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+        "promote-scheduled-selection",
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        // Bound scheduled tasks send like ScheduledTaskService: no model of their own.
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("scheduled"),
+          threadId,
+          messageId: MessageId.make("message:scheduled"),
+          scheduledTaskId: ScheduledTaskId.make("task:scheduled"),
+          text: "scheduled",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const queuedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.status === "queued",
+        )!;
+        assert.deepEqual(queuedRun.modelSelection, runSelection);
+        yield* orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make("select-composer"),
+          threadId,
+          modelSelection: composerSelection,
+        });
+        yield* orchestrator.dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make("promote"),
+          threadId,
+          queuedRunId: queuedRun.id,
+          targetRunId: started[0]!.runId,
+        });
+        yield* worker.drain();
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(steered, ["scheduled"]);
+        assert.deepEqual(projection.thread.modelSelection, composerSelection);
+        const promoted = projection.turnItems.find(
+          (item) => item.type === "user_message" && item.messageId === "message:scheduled",
+        );
+        assert.deepEqual(
+          promoted?.type === "user_message" ? promoted.scheduledTaskId : undefined,
+          ScheduledTaskId.make("task:scheduled"),
+        );
       }).pipe(Effect.provide(layer));
     }),
   ),

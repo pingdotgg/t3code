@@ -832,7 +832,8 @@ function nextQueuedRun(
   return queuedRunsInDeliveryOrder(projection).find((run) => run.queueHeld !== true);
 }
 
-// Scheduled deliveries never choose a model, so a queued one runs on the thread's current pick.
+// Delegated completions, monitor notifications and scheduled deliveries never choose a model,
+// so a queued one runs on the thread's current pick rather than the one frozen at queue time.
 function followsCurrentConversation(
   message:
     | Pick<
@@ -10198,7 +10199,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       events,
       effects,
       projection,
-      modelSelection: queuedRun.modelSelection,
+      modelSelection: queuedRunModelSelection(projection, queuedRun),
       targetRunId: command.targetRunId,
       messageId: queuedMessage.id,
       text: queuedMessage.text,

@@ -6493,6 +6493,118 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  it.effect("starts each queued scheduled delivery on the selection current at its start", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-queued-scheduled-selection-repeated");
+      const switchedSelection = { instanceId: alternateInstanceId, model: "gpt-5.5" };
+      const laterSelection = {
+        ...switchedSelection,
+        options: [{ id: "reasoningEffort", value: "high" }],
+      };
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        createdBy: "user",
+        creationSource: "web",
+        title: "Repeated scheduled deliveries",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${threadId}:active`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:active`),
+        text: "Busy",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const deliveries = ["first", "second"].map((name) => MessageId.make(`${threadId}:${name}`));
+      for (const messageId of deliveries) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(messageId),
+          threadId,
+          messageId,
+          scheduledTaskId: ScheduledTaskId.make(`${threadId}:task`),
+          text: "Scheduled prompt",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+      }
+      const completeRunFor = (messageId: MessageId) =>
+        Effect.gen(function* () {
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          const run = projection.runs.find((candidate) => candidate.userMessageId === messageId)!;
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`${messageId}:completed`),
+                type: "run.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status: "completed", completedAt: now },
+              },
+            ],
+          });
+          yield* orchestrator.resumeQueuedRuns;
+        });
+      const startedRunFor = (messageId: MessageId) =>
+        orchestrator
+          .getThreadProjection(threadId)
+          .pipe(
+            Effect.map((projection) =>
+              projection.runs.find((candidate) => candidate.userMessageId === messageId),
+            ),
+          );
+
+      // Both deliveries froze the original selection when they queued.
+      yield* orchestrator.dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make(`${threadId}:select-switched`),
+        threadId,
+        modelSelection: switchedSelection,
+      });
+      yield* completeRunFor(MessageId.make(`${threadId}:active`));
+      const first = yield* startedRunFor(deliveries[0]!);
+      assert.equal(first?.status, "starting");
+      assert.deepEqual(first?.modelSelection, switchedSelection);
+      assert.equal((yield* startedRunFor(deliveries[1]!))?.status, "queued");
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.modelSelection,
+        switchedSelection,
+      );
+
+      yield* orchestrator.dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make(`${threadId}:select-later`),
+        threadId,
+        modelSelection: laterSelection,
+      });
+      yield* completeRunFor(deliveries[0]!);
+      const second = yield* startedRunFor(deliveries[1]!);
+      assert.equal(second?.status, "starting");
+      assert.deepEqual(second?.modelSelection, laterSelection);
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(after.thread.modelSelection, laterSelection);
+      assert.equal(after.thread.providerInstanceId, alternateInstanceId);
+    }),
+  );
+
   it.effect("keeps the queue after a user interrupts the active run", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
