@@ -4250,6 +4250,9 @@ export function subscribeComposerDraftModelReconciliation(input: {
   readonly shellStateAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentShellState, unknown>>;
+  readonly providersAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<ReadonlyArray<ServerProvider> | null>;
 }): () => void {
   const draftsAtom = Atom.make(composerDraftStore.getState());
   const unsubscribeDrafts = composerDraftStore.subscribe((state) =>
@@ -4270,7 +4273,8 @@ export function subscribeComposerDraftModelReconciliation(input: {
       const pick = draft.modelSelectionByProvider[draft.activeProvider];
       if (!ref || !pick || !threadKeys.has(key)) continue;
       const thread = get(input.threadShellAtom(ref));
-      if (!thread || !draftModelPickMatchesThread(pick, thread.modelSelection)) continue;
+      const providers = get(input.providersAtom(ref.environmentId));
+      if (!thread || !draftModelPickMatchesThread(pick, thread.modelSelection, providers)) continue;
       // Status and selection must come from the same emission; derived atoms can update apart.
       const shell = AsyncResult.getOrElse(get(input.shellStateAtom(ref.environmentId)), () => null);
       if (shell?.status !== "live") continue;
@@ -4279,7 +4283,7 @@ export function subscribeComposerDraftModelReconciliation(input: {
       );
       if (
         authoritativeThread &&
-        draftModelPickMatchesThread(pick, authoritativeThread.modelSelection)
+        draftModelPickMatchesThread(pick, authoritativeThread.modelSelection, providers)
       ) {
         matches.push([key, draft]);
       }

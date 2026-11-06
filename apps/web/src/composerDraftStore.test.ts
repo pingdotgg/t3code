@@ -34,6 +34,7 @@ import {
   type PreviewAnnotationPayload,
   type ProviderOptionSelection,
   type ScopedThreadRef,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 
@@ -1272,7 +1273,9 @@ function modelReconciliationHarness(
   environmentId: EnvironmentId,
   threadId: ThreadId,
   initialStatus: EnvironmentShellStatus = "live",
+  providers: ReadonlyArray<ServerProvider> = [],
 ) {
+  const providersAtom = Atom.make(providers);
   const tasks: Array<() => void> = [];
   const registry = AtomRegistry.make({
     scheduleTask: (task) => {
@@ -1345,6 +1348,7 @@ function modelReconciliationHarness(
       threadShellAtom: shells.threadShellAtom,
       threadRefsAtom: shells.threadRefsAtom,
       shellStateAtom: () => shellResultAtom,
+      providersAtom: () => providersAtom,
     }),
   );
   flush();
@@ -1666,7 +1670,37 @@ describe("composerDraftStore modelSelection", () => {
       { id: "contextWindow", value: "1m" },
     ]);
     useComposerDraftStore.getState().setModelSelection(threadRef, pick, { replaceOptions: true });
-    const h = modelReconciliationHarness(TEST_ENVIRONMENT_ID, threadId);
+    const claude: ServerProvider = {
+      instanceId: CLAUDE_AGENT_INSTANCE,
+      driver: CLAUDE_AGENT_DRIVER,
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [
+        {
+          slug: "claude-opus-5-5",
+          name: "Opus 5.5",
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "effort",
+                label: "Effort",
+                type: "select",
+                options: [{ id: "high", label: "High" }],
+              },
+              { id: "fastMode", label: "Fast", type: "boolean" },
+            ],
+          },
+        },
+      ],
+      slashCommands: [],
+      skills: [],
+    };
+    const h = modelReconciliationHarness(TEST_ENVIRONMENT_ID, threadId, "live", [claude]);
 
     h.update({
       modelSelection: createModelSelection(CLAUDE_AGENT_INSTANCE, "claude-opus-5-5", [

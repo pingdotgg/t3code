@@ -7,6 +7,7 @@ import {
   ProviderInstanceId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -119,15 +120,29 @@ export function modelSelectionsEqual(left: ModelSelection, right: ModelSelection
 /**
  * Whether a composer's draft model pick is what the thread already runs. Web sends
  * `fastMode: false` for models with a fast toggle while mobile omits it, so off counts as unset.
+ * The server drops options the model does not advertise, so those are ignored once the
+ * catalog knows the model; without it the options must match exactly.
  */
-export function draftModelPickMatchesThread(pick: ModelSelection, thread: ModelSelection): boolean {
-  const withoutFastModeOff = (selection: ModelSelection) =>
+export function draftModelPickMatchesThread(
+  pick: ModelSelection,
+  thread: ModelSelection,
+  providers: ReadonlyArray<ServerProvider> | null | undefined,
+): boolean {
+  const advertisedIds = providers
+    ?.find((provider) => provider.instanceId === pick.instanceId)
+    ?.models.find((model) => model.slug === pick.model)
+    ?.capabilities?.optionDescriptors?.map((descriptor) => descriptor.id);
+  const comparable = (selection: ModelSelection) =>
     createModelSelection(
       selection.instanceId,
       selection.model,
-      selection.options?.filter((option) => option.id !== "fastMode" || option.value !== false),
+      selection.options?.filter(
+        (option) =>
+          (option.id !== "fastMode" || option.value !== false) &&
+          (advertisedIds === undefined || advertisedIds.includes(option.id)),
+      ),
     );
-  return modelSelectionsEqual(withoutFastModeOff(pick), withoutFastModeOff(thread));
+  return modelSelectionsEqual(comparable(pick), comparable(thread));
 }
 
 function resolveDescriptorChoiceValue(
