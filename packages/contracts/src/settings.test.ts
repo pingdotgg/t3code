@@ -156,9 +156,25 @@ describe("agent session import settings", () => {
     ["scanBudgetMiB", 0],
     ["scanBudgetMiB", 1025],
     ["scanBudgetMiB", null],
-  ])("rejects %s = %s in stored settings and patches", (key, value) => {
-    expect(() => decodeServerSettings({ agentSessionImport: { [key]: value } })).toThrow();
+  ])("rejects %s = %s in patches and stores the default instead", (key, value) => {
     expect(() => decodeServerSettingsPatch({ agentSessionImport: { [key]: value } })).toThrow();
+    expect(
+      decodeServerSettings({ agentSessionImport: { [key]: value } }).agentSessionImport,
+    ).toEqual(DEFAULT_SERVER_SETTINGS.agentSessionImport);
+  });
+
+  it("keeps the rest of a stored file when one import limit is out of range", () => {
+    const settings = decodeServerSettings({
+      addProjectBaseDirectory: "~/code",
+      agentSessionImport: { windowDays: null, conversationsPerRun: 250, scanBudgetMiB: 4096 },
+    });
+
+    expect(settings.addProjectBaseDirectory).toBe("~/code");
+    expect(settings.agentSessionImport).toEqual({
+      ...DEFAULT_SERVER_SETTINGS.agentSessionImport,
+      windowDays: null,
+      conversationsPerRun: 250,
+    });
   });
 });
 
