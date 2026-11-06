@@ -247,8 +247,8 @@ describe("all-environment PR list", () => {
 describe("mobile PR scan and filters", () => {
   it("sorts each mode by instant on its own field", () => {
     const rows = [
-      entry(1, { updatedAt: "2026-07-05T01:00:00+02:00", createdAt: "2026-07-02T00:00:00Z" }),
-      entry(2, { updatedAt: "2026-07-05T00:30:00Z", createdAt: "2026-07-01T00:00:00Z" }),
+      entry(1, { updatedAt: "2026-07-05T01:00:00+02:00", createdAt: "2026-07-01T00:30:00Z" }),
+      entry(2, { updatedAt: "2026-07-05T00:30:00Z", createdAt: "2026-07-01T01:00:00+02:00" }),
     ];
     const order = (sort: PullRequestListControls["sort"]) =>
       filterPullRequestList(rows, { ...DEFAULT_PR_LIST_CONTROLS, sort }, {}, "", new Set()).map(
