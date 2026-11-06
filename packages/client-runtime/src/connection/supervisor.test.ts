@@ -648,7 +648,7 @@ describe("EnvironmentSupervisor", () => {
         if (from === "offline") yield* goOffline;
 
         yield* harness.wake("application-active-long");
-        if (from === "connected" || primary) yield* TestClock.adjust("3 seconds");
+        if (from === "connected" || primary) yield* TestClock.adjust("1500 millis");
         if (from === "connected, then offline" || from === "offline") {
           yield* TestClock.adjust("0 millis");
           if (from === "connected, then offline") yield* goOffline;
@@ -689,7 +689,7 @@ describe("EnvironmentSupervisor", () => {
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
 
       yield* harness.wake("application-active-long");
-      yield* TestClock.adjust("3 seconds");
+      yield* TestClock.adjust("1500 millis");
       yield* Deferred.await(snapshotStarted);
       yield* TestClock.adjust("20 seconds");
 
@@ -723,7 +723,7 @@ describe("EnvironmentSupervisor", () => {
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
 
       yield* harness.wake("application-active-long");
-      yield* TestClock.adjust("3 seconds");
+      yield* TestClock.adjust("1500 millis");
       expect(yield* Ref.get(harness.prepareCount)).toBe(2);
       yield* TestClock.adjust("3 seconds");
       expect(yield* Ref.get(harness.prepareCount)).toBe(3);
@@ -760,7 +760,7 @@ describe("EnvironmentSupervisor", () => {
           }).pipe(Effect.provide(harness.dependencies));
           yield* awaitState(supervisor.state, (state) => state.phase === "connected");
           yield* harness.wake("application-active-long");
-          yield* TestClock.adjust("3 seconds");
+          yield* TestClock.adjust("1500 millis");
           yield* Deferred.await(stalled);
           if (stop === "disconnect") {
             yield* supervisor.disconnect;
@@ -2062,7 +2062,7 @@ describe("EnvironmentSupervisor routes", () => {
 
         yield* Ref.set(woke, true);
         yield* harness.wake("application-active-long");
-        yield* TestClock.adjust("3 seconds");
+        yield* TestClock.adjust("1500 millis");
         expect(yield* Ref.get(harness.sessionCount)).toBe(2);
         yield* TestClock.adjust("2 seconds");
         const stalledAt = yield* Ref.get(harness.prepareCount);
