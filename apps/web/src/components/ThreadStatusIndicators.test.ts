@@ -103,6 +103,22 @@ describe("resolveDisplayedThreadPr", () => {
     expect(resolveDisplayedThreadPrProvider(input)).toEqual(provider);
   });
 
+  it.each(["open", "merged", "closed"] as const)(
+    "only shows an unlinked branch PR while open (state=%s)",
+    (state) => {
+      const branchPr = { ...mergedPr, state };
+      const input = {
+        threadBranch: featureBranch,
+        gitStatus: status({ pr: branchPr, sourceControlProvider: provider }),
+      };
+
+      expect(resolveDisplayedThreadPr(input)).toEqual(state === "open" ? branchPr : null);
+      expect(resolveDisplayedThreadPrProvider(input)).toEqual(
+        state === "open" ? provider : undefined,
+      );
+    },
+  );
+
   it("never attaches a PR reported by main to the feature thread", () => {
     const mainPr = {
       number: 99,

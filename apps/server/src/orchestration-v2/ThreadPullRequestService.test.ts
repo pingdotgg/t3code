@@ -423,6 +423,130 @@ describe("ThreadPullRequestServiceV2 reads", () => {
     ),
   );
 
+  it.effect.each(["open", "merged", "closed"] as const)(
+    "associates a $state branch PR only with threads that predate its completion",
+    (state) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const reference = {
+            projectId: ProjectId.make("project-1"),
+            repository: "acme/project",
+            number: 42,
+            url: "https://github.com/acme/project/pull/42",
+          };
+          const terminalAt = "2026-09-19T00:00:00.000Z";
+          const detected = {
+            number: 42,
+            url: reference.url,
+            title: "Previous staging work",
+            baseRef: "main",
+            headRef: "staging",
+            state,
+            updatedAt: terminalAt,
+            closedAt: state === "closed" ? terminalAt : null,
+            mergedAt: state === "merged" ? terminalAt : null,
+            repositoryKey: "github.com/acme/project",
+          };
+          const threads = [
+            { ...threadShell("older"), createdAt: DateTime.makeUnsafe("2026-09-18T00:00:00Z") },
+            { ...threadShell("same-time"), createdAt: DateTime.makeUnsafe(terminalAt) },
+            threadShell("new-1"),
+            threadShell("new-2"),
+            { ...threadShell("saved"), branchPullRequest: reference },
+            { ...threadShell("explicit"), linkedPullRequest: reference },
+          ].map((thread) => ({ ...thread, branch: "staging" }));
+          const project: OrchestrationProjectShell = {
+            id: reference.projectId,
+            title: "Project",
+            workspaceRoot: "/workspace/project",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+          };
+          const activation = yield* Deferred.make<void>();
+          const sweepStarted = yield* Deferred.make<void>();
+          const commands: Array<OrchestrationV2ServerCommand> = [];
+          const dependencies = Layer.mergeAll(
+            Layer.mock(Orchestrator.OrchestratorV2)({
+              streamDomainEvents: Stream.never,
+              getPullRequestSnapshot: () =>
+                Deferred.succeed(sweepStarted, undefined).pipe(
+                  Effect.as({ snapshotSequence: 1, threads }),
+                ),
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  commands.push(command);
+                  return { sequence: 2, storedEvents: [] };
+                }),
+            }),
+            Layer.mock(ProjectStore.ProjectStoreV2)({
+              listShells: () => Effect.succeed([project]),
+              getShell: () => Effect.succeedSome(project),
+            }),
+            Layer.mock(GitManager.GitManager)({
+              branchPullRequest: () => Effect.succeed(detected),
+            }),
+            Layer.mock(PullRequestService.PullRequestService)({
+              summary: () =>
+                Effect.succeed({
+                  ...detected,
+                  ...reference,
+                  provider: SourceControlProviderKind.make("github"),
+                  baseBranch: detected.baseRef,
+                  headBranch: detected.headRef,
+                }),
+            }),
+            Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+              resolve: () =>
+                Effect.succeed({
+                  canonicalKey: "github.com/acme/project",
+                  locator: {
+                    source: "git-remote" as const,
+                    remoteName: "origin",
+                    remoteUrl: "git@github.com:acme/project.git",
+                  },
+                  provider: SourceControlProviderKind.make("github"),
+                  owner: "acme",
+                  name: "project",
+                }),
+            }),
+            Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
+            Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+            Layer.succeed(
+              SecureRandom.SecureRandom,
+              SecureRandom.make((size) => new Uint8Array(size).fill(1)),
+            ),
+            FileSystem.layerNoop({}),
+            Path.layer,
+          );
+          yield* Effect.gen(function* () {
+            const service = yield* ThreadPullRequestService.make;
+            yield* service.start();
+            yield* Deferred.succeed(activation, undefined);
+            yield* Deferred.await(sweepStarted);
+            yield* service.drain;
+          }).pipe(Effect.provide(dependencies));
+
+          expect(
+            commands.map((command) => {
+              if (command.type !== "thread.pull-request.sync") throw new Error(command.type);
+              expect(command).not.toHaveProperty("linkedPullRequest");
+              return [command.threadId, command.branchPullRequest];
+            }),
+          ).toEqual(
+            state === "open"
+              ? ["older", "same-time", "new-1", "new-2", "explicit"].map((id) => [id, reference])
+              : [
+                  ["older", reference],
+                  ["same-time", reference],
+                  ["saved", null],
+                ],
+          );
+        }),
+      ),
+  );
+
   it.effect.each([
     { state: "closed", sameBranch: false },
     { state: "merged", sameBranch: false },
@@ -457,6 +581,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           const activation = yield* Deferred.make<void>();
           const sweepStarted = yield* Deferred.make<void>();
           const commands: Array<OrchestrationV2ServerCommand> = [];
+          let snapshotThread: unknown;
           const dependencies = Layer.mergeAll(
             Layer.mock(Orchestrator.OrchestratorV2)({
               streamDomainEvents: Stream.never,
@@ -484,6 +609,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
                   ])
                     yield* sql.unsafe(`DROP TABLE ${table}`);
                   const snapshot = yield* store.getPullRequestSnapshot(options);
+                  snapshotThread = snapshot.threads[0];
                   yield* Deferred.succeed(sweepStarted, undefined);
                   return snapshot;
                 }).pipe(
@@ -548,6 +674,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             yield* service.drain;
           }).pipe(Effect.provide(dependencies));
 
+          expect(snapshotThread).toHaveProperty("createdAt", NOW);
           if (sameBranch) {
             expect(commands).toEqual([]);
           } else {
