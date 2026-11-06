@@ -711,7 +711,15 @@ const make = Effect.gen(function* () {
     const stillFollows = readTask(parentThreadId, task.id).pipe(
       Effect.map(({ task: current }) => current?.remoteChild?.followsAfterRunId === afterRunId),
     );
-    if (task.model === null) {
+    // The thread there may have switched model since the task's run.
+    const { recentRuns } = yield* forwarding.readThread(scope, remote.environmentId, {
+      threadId: remote.threadId,
+      limit: 1,
+      runLimit: 50,
+    });
+    const laterRun = recentRuns.find((run) => run.runId === laterRunId);
+    const model = laterRun?.model ?? task.model;
+    if (model === null) {
       return yield* new OrchestratorMcpFailure({
         code: "orchestration_error",
         message: `Delegated task ${task.id} has no model to record a later run with.`,
@@ -730,7 +738,10 @@ const make = Effect.gen(function* () {
         task: `A later run in ${remote.label} on this task's thread.`,
         ...(task.title === null ? {} : { title: task.title }),
         driver: task.driver,
-        modelSelection: { instanceId: task.providerInstanceId, model: task.model },
+        modelSelection: {
+          instanceId: laterRun?.providerInstanceId ?? task.providerInstanceId,
+          model,
+        },
         remoteChild: {
           environmentId: remote.environmentId,
           threadId: remote.threadId,

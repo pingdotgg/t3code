@@ -537,7 +537,7 @@ export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   ),
   afterRunId: Schema.optional(
     RunId.annotate({
-      description: "Instead return the first later run, not this one's restart, once it starts.",
+      description: "Return the first later run, not its restart.",
     }),
   ),
 });

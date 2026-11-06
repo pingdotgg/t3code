@@ -102,6 +102,8 @@ interface BoxThread {
   readonly laterError: Ref.Ref<string | null>;
   /** A later run's reply, after the task's own, as a follow-up message would leave. */
   readonly laterReply: Ref.Ref<string | null>;
+  /** While set, the thread there lists its later run, with this model. */
+  readonly laterModelSelection: Ref.Ref<OrchestrationV2Run["modelSelection"] | null>;
   /** The run each wait asked for, in order. */
   readonly waitedFor: Ref.Ref<ReadonlyArray<RunId | undefined>>;
   /** The thread's run ends with a task of its own still running, whose result wakes it again. */
@@ -151,6 +153,7 @@ const makeBoxThread = Effect.gen(function* () {
     error: yield* Ref.make<string | null>(null),
     laterError: yield* Ref.make<string | null>(null),
     laterReply: yield* Ref.make<string | null>(null),
+    laterModelSelection: yield* Ref.make<OrchestrationV2Run["modelSelection"] | null>(null),
     waitedFor: yield* Ref.make<ReadonlyArray<RunId | undefined>>([]),
     nested: yield* Ref.make(false),
     nestedWaiting: yield* Deferred.make<void>(),
@@ -243,9 +246,24 @@ const boxToolkitLayer = (thread: BoxThread) => {
       const shell = yield* shellOf(threadId);
       const status = yield* Ref.get(thread.status);
       const runless = yield* Ref.get(thread.runless);
+      const laterModelSelection = yield* Ref.get(thread.laterModelSelection);
+      const laterRun =
+        laterModelSelection === null
+          ? []
+          : [
+              {
+                ...runOf("running"),
+                id: boxLaterRunId,
+                ordinal: 2,
+                modelSelection: laterModelSelection,
+              } as OrchestrationV2Run,
+            ];
       return shell === null
         ? (null as never)
-        : { ...idleThreadProjection(shell), runs: runless ? [] : [runOf(status)] };
+        : {
+            ...idleThreadProjection(shell),
+            runs: runless ? [] : [runOf(status), ...laterRun],
+          };
     });
   // One record per command id, as its receipt replays a repeat.
   const recordStop = (commandId: string, kind: "interrupt" | "thread.stop" | "delegated-tasks") =>
@@ -1479,6 +1497,34 @@ const handedOff = (
     const followUp = yield* taskUpdate(a, (task) => task.remoteChild?.runId === boxLaterRunId);
     return { delegated, followUpId: followUp!.id };
   });
+
+it.effect("a later run there is recorded with the model that run used there", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const delegated = yield* delegateToBox(a);
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      yield* taskResult(a, delegated.taskId);
+
+      // The user switched the thread there to another model before sending again.
+      const switched = ProviderInstanceId.make("codex-other");
+      yield* Ref.set(thread.laterModelSelection, { instanceId: switched, model: "gpt-5.5" });
+      yield* Deferred.succeed(thread.laterStarted, undefined);
+      expect(
+        yield* taskUpdate(a, (task) => task.remoteChild?.runId === boxLaterRunId),
+      ).toMatchObject({ providerInstanceId: switched, model: "gpt-5.5" });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
 
 it.effect("a later run there binds to the parent's run when recorded, not one read before", () =>
   Effect.scoped(
