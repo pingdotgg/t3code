@@ -3503,90 +3503,115 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect.each(["merged", "closed"] as const)("wakes once and stops when the PR is %s", (state) =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make(`runtime-pull-request-watch-${state}`);
-      const projectId = ProjectId.make(`pr-watch-${state}-project`);
-      yield* seedProject({
-        projectId,
-        title: "Watch finished",
-        workspaceRoot: `/workspace/watch-${state}`,
-        defaultModelSelection: null,
-        createdAt: "2026-10-01T00:00:00.000Z",
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make(`pr-watch-${state}-create`),
-        threadId,
-        projectId,
-        title: "Watch finished",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.pull-request.watch",
-        commandId: CommandId.make(`pr-watch-${state}-start`),
-        threadId,
-        host: "github.com",
-        repository: "pingdotgg/t3code",
-        number: 13,
-        watching: true,
-        link: { url: "https://github.com/pingdotgg/t3code/pull/13", source: "agent" },
-      });
+  // "synced" is a merge the link sync saw first while the host still reads open.
+  it.effect.each(["merged", "closed", "synced"] as const)(
+    "wakes once and stops when the PR is %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const state = mode === "synced" ? "merged" : mode;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make(`runtime-pull-request-watch-${mode}`);
+        const projectId = ProjectId.make(`pr-watch-${mode}-project`);
+        yield* seedProject({
+          projectId,
+          title: "Watch finished",
+          workspaceRoot: `/workspace/watch-${mode}`,
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-${mode}-create`),
+          threadId,
+          projectId,
+          title: "Watch finished",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-${mode}-start`),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 13,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/13", source: "agent" },
+        });
 
-      let hostState: "open" | typeof state = "open";
-      const reactor = yield* PullRequestWatchReactor.make.pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            NodeServices.layer,
-            NodeCrypto.layer,
-            Layer.mock(PullRequestService.PullRequestService)({
-              watchFingerprint: () => Effect.succeed(null),
-              detail: () =>
-                Effect.sync(() => ({
-                  ...watchedPullRequestDetail({
-                    projectId,
-                    number: 13,
-                    at: "2026-10-02T12:00:00.000Z",
+        let hostState: "open" | "merged" | "closed" = "open";
+        const reactor = yield* PullRequestWatchReactor.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              NodeCrypto.layer,
+              Layer.mock(PullRequestService.PullRequestService)({
+                watchFingerprint: () => Effect.succeed(null),
+                detail: () =>
+                  Effect.sync(() => ({
+                    ...watchedPullRequestDetail({
+                      projectId,
+                      number: 13,
+                      at: "2026-10-02T12:00:00.000Z",
+                    }),
+                    state: hostState,
+                    checks: [],
+                  })),
+                activity: () =>
+                  Effect.succeed({
+                    comments: [],
+                    commentCount: 0,
+                    commentsTruncated: false,
+                    reviewThreads: [],
+                    commits: [],
                   }),
-                  state: hostState,
-                  checks: [],
-                })),
-              activity: () =>
-                Effect.succeed({
-                  comments: [],
-                  commentCount: 0,
-                  commentsTruncated: false,
-                  reviewThreads: [],
-                  commits: [],
-                }),
-            }),
+              }),
+            ),
           ),
-        ),
-      );
-      const summaries = Effect.map(
-        orchestrator.getThreadRecords(threadId, ["messages"]),
-        ({ messages }) => messages.flatMap((message) => message.notification?.summary ?? []),
-      );
+        );
+        const summaries = Effect.map(
+          orchestrator.getThreadRecords(threadId, ["messages"]),
+          ({ messages }) => messages.flatMap((message) => message.notification?.summary ?? []),
+        );
 
-      yield* reactor.sweep;
-      assert.deepEqual(yield* summaries, []);
-      hostState = state;
-      yield* TestClock.adjust("10 minutes");
-      yield* reactor.sweep;
-      assert.deepEqual(yield* summaries, [`#13: ${state}, stopped watching`]);
-      const thread = yield* orchestrator.getThreadShell(threadId);
-      assert.isUndefined(thread?.pullRequests?.[0]?.watch);
-      yield* TestClock.adjust("10 minutes");
-      yield* reactor.sweep;
-      assert.deepEqual(yield* summaries, [`#13: ${state}, stopped watching`]);
-    }),
+        yield* reactor.sweep;
+        assert.deepEqual(yield* summaries, []);
+        if (mode === "synced") {
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request-link.sync",
+            commandId: CommandId.make("pr-watch-synced-merge"),
+            threadId,
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number: 13,
+            snapshot: {
+              state: "merged",
+              title: "Watched pull request",
+              headBranch: "feature",
+              baseBranch: "main",
+              isDraft: false,
+              updatedAt: null,
+              syncedAt: "2026-10-02T12:05:00.000Z",
+            },
+            stack: null,
+          });
+        } else {
+          hostState = state;
+        }
+        yield* TestClock.adjust("10 minutes");
+        yield* reactor.sweep;
+        assert.deepEqual(yield* summaries, [`#13: ${state}, stopped watching`]);
+        const thread = yield* orchestrator.getThreadShell(threadId);
+        assert.isUndefined(thread?.pullRequests?.[0]?.watch);
+        yield* TestClock.adjust("10 minutes");
+        yield* reactor.sweep;
+        assert.deepEqual(yield* summaries, [`#13: ${state}, stopped watching`]);
+      }),
   );
 
   it.effect("finishes owed checks once after pending sweeps, a restart, and a re-watch", () =>

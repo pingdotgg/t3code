@@ -411,13 +411,16 @@ export const make = Effect.gen(function* () {
       Effect.tap(() => ended(target, state)),
     );
 
-  // A merged snapshot still gets read, so the merge wakes the agent like any other news.
-  const endsWithoutRead = ({ thread }: WatchTarget): WatchEndReason | undefined =>
+  // A merge cannot be undone, so a merged snapshot wakes without a host read that could be
+  // stale or rate limited.
+  const endsWithoutRead = ({ thread, link }: WatchTarget): WatchEndReason | undefined =>
     thread.settledOverride === "settled" || thread.settledAt !== null
       ? "settled"
       : thread.lineage.relationshipToParent === "subagent"
         ? "subagent"
-        : undefined;
+        : link.snapshot?.state === "merged"
+          ? "merged"
+          : undefined;
 
   const eachTarget = <E>(
     group: WatchGroup,
@@ -615,8 +618,10 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(
       ending,
       ([target, reason]) =>
-        record(target, null).pipe(
-          Effect.tap(() => ended(target, reason)),
+        (reason === "merged"
+          ? finished(target, "merged")
+          : record(target, null).pipe(Effect.tap(() => ended(target, reason)))
+        ).pipe(
           Effect.catchCause(
             logFailure("pull request watch stop failed", {
               threadId: target.thread.id,
