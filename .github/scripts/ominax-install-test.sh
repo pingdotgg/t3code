@@ -246,7 +246,7 @@ for launcher_name in ominax t3-learn; do
   fi
 done
 check_learning "the install"
-if [ -f apps/desktop/scripts/plant-saved-connection.mjs ]; then
+if [ -n "${previous_running:-}" ] && [ -f apps/desktop/scripts/plant-saved-connection.mjs ]; then
   # N's renderer migrates saved connections when it loads them, shortly after its server is up.
   secrets_ok=""
   for _ in $(seq 1 30); do
