@@ -1102,6 +1102,7 @@ function TranscriptionTest(props: {
         downloading={speech.setup.downloading}
         error={speech.setup.error}
         onOpenChange={speech.setup.setOpen}
+        onRetryCatalog={speech.setup.retryCatalog}
         onDownload={() => props.onDownload(speech.setup.download)}
         onCancelDownload={() => void speech.setup.cancelDownload()}
         onStartRecording={() => {

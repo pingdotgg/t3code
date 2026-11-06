@@ -50,6 +50,7 @@ const INITIAL_SETUP = {
   model: null as EnvironmentSpeechModel | null,
   language: null as string | null,
   downloading: false,
+  catalogFailed: false,
   error: null as string | null,
 };
 
@@ -448,6 +449,32 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     if (controller.currentState.phase === "recording") void controller.stop();
   });
 
+  const loadSetupCatalog = useStableCallback(
+    async (connection: PreparedConnection, selectedModelId: string, request: number) => {
+      setSetup({ ...INITIAL_SETUP, open: true });
+      const catalog = await runEnvironmentSpeech(getEnvironmentSpeechModels(connection)).catch(
+        () => null,
+      );
+      if (request !== startRequestRef.current) return;
+      const choice = chooseSetupSpeechModel(catalog?.models ?? [], {
+        selectedModelId,
+        intent: latestRef.current.clientSettings.speechLanguage,
+        preferred: preferredSpeechLanguages(),
+      });
+      setSetup((current) => ({
+        ...current,
+        model: choice?.model ?? null,
+        language: choice?.language ?? null,
+        catalogFailed: catalog === null,
+        error: choice
+          ? null
+          : catalog
+            ? "No model matches your language. Choose a model or change the language in Voice settings."
+            : "Could not load transcription models. Check the connection and try again.",
+      }));
+    },
+  );
+
   const start = useStableCallback(async (options?: { readonly setupOnly?: boolean }) => {
     if (latestRef.current.input.disabled) return;
     if (!grantId) {
@@ -485,31 +512,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     }
     if (!stillCurrent()) return;
     setStatus({ prepared, value: latestStatus });
-    if (latestStatus.supported && latestStatus.state === "missing-model") {
-      const catalog = await runEnvironmentSpeech(getEnvironmentSpeechModels(prepared)).catch(
-        () => null,
-      );
-      if (!stillCurrent()) return;
-      setQueuedStart(null);
-      const choice = chooseSetupSpeechModel(catalog?.models ?? [], {
-        selectedModelId: latestStatus.modelId,
-        intent: latestRef.current.clientSettings.speechLanguage,
-        preferred: preferredSpeechLanguages(),
-      });
-      setSetup({
-        ...INITIAL_SETUP,
-        open: true,
-        model: choice?.model ?? null,
-        language: choice?.language ?? null,
-        error: choice
-          ? null
-          : catalog
-            ? "No model matches your language. Choose a model or change the language in Voice settings."
-            : "Could not load transcription models. Check the connection and try again in Voice settings.",
-      });
-      return;
-    }
     setQueuedStart(null);
+    if (latestStatus.supported && latestStatus.state === "missing-model") {
+      return loadSetupCatalog(prepared, latestStatus.modelId, request);
+    }
     if (!latestStatus.supported) {
       toastManager.add({
         type: "error",
@@ -608,6 +614,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     setup: {
       ...setup,
       setOpen: (open: boolean) => setSetup((current) => ({ ...current, open })),
+      retryCatalog:
+        setup.open && setup.catalogFailed && prepared && currentStatus?.supported
+          ? () => loadSetupCatalog(prepared, currentStatus.modelId, ++startRequestRef.current)
+          : null,
       download: downloadSetupModel,
       cancelDownload: cancelSetupDownload,
       startRecording: async () => {

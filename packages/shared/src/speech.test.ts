@@ -131,6 +131,20 @@ describe("chooseSetupSpeechModel", () => {
       { id: "unrecommended", language: "es" },
     ],
     ["offers nothing when no model transcribes the language", "english", "auto", ["ja"], undefined],
+    [
+      "offers the selected model without a language recommendation when Auto has no preferences",
+      "fixed",
+      "auto",
+      [],
+      { id: "fixed", language: null },
+    ],
+    [
+      "does not guess another model when Auto has no preferences or selection",
+      "gone",
+      "auto",
+      [],
+      undefined,
+    ],
   ] as const)("%s", (_, selectedModelId, intent, preferred, expected) => {
     const choice = chooseSetupSpeechModel(catalog, { selectedModelId, intent, preferred });
     expect(choice && { id: choice.model.id, language: choice.language }).toEqual(expected);

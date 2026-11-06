@@ -38,7 +38,8 @@ export function effectiveSpeechLanguage(
 
 /**
  * The model first-run setup offers: the selected one, else a recommended one, else any that the
- * server would really transcribe the person's language with. Undefined when none can.
+ * server would really transcribe the person's language with. Without a language hint,
+ * offer only the selected model, without a recommendation.
  */
 export function chooseSetupSpeechModel<
   Model extends {
@@ -55,6 +56,10 @@ export function chooseSetupSpeechModel<
     readonly preferred: readonly string[];
   },
 ) {
+  if (input.intent === "auto" && input.preferred.length === 0) {
+    const model = models.find(({ id }) => id === input.selectedModelId);
+    return model && { model, language: null };
+  }
   for (const language of input.intent === "auto" ? input.preferred : [input.intent]) {
     const capable = models.filter((model) => {
       const effective = effectiveSpeechLanguage(model, input.intent);

@@ -30,6 +30,7 @@ export function VoiceInputSetup(props: {
   downloading: boolean;
   error: string | null;
   onOpenChange(open: boolean): void;
+  onRetryCatalog: (() => void) | null;
   onDownload(): void;
   onCancelDownload(): void;
   onStartRecording(): void;
@@ -132,6 +133,10 @@ export function VoiceInputSetup(props: {
                     </div>
                   ) : null}
                 </div>
+              ) : !props.error ? (
+                <p role="status" className="text-muted-foreground">
+                  Loading transcription models…
+                </p>
               ) : null}
               {props.error ? (
                 <p role="alert" className="text-destructive">
@@ -215,6 +220,9 @@ export function VoiceInputSetup(props: {
               <Button variant="outline" onClick={() => openSettings("speech-models")}>
                 {model ? "Choose another model or language" : "Choose a model or language"}
               </Button>
+              {props.onRetryCatalog ? (
+                <Button onClick={props.onRetryCatalog}>Retry loading models</Button>
+              ) : null}
               {props.downloading ? (
                 <Button variant="outline" disabled={!canManage} onClick={props.onCancelDownload}>
                   Cancel download

@@ -155,6 +155,8 @@ it("preserves the model test transcript when its model is filtered out", async (
             model: null,
             language: null,
             downloading: false,
+            catalogFailed: false,
+            retryCatalog: null,
             error: null,
             setOpen: () => {},
             download: async () => {},

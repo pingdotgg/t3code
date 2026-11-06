@@ -3713,6 +3713,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       downloading={speechInput.setup.downloading}
                       error={speechInput.setup.error}
                       onOpenChange={speechInput.setup.setOpen}
+                      onRetryCatalog={speechInput.setup.retryCatalog}
                       onDownload={() => void speechInput.setup.download()}
                       onCancelDownload={() => void speechInput.setup.cancelDownload()}
                       onStartRecording={() => void speechInput.setup.startRecording()}
