@@ -125,7 +125,7 @@ geometryView.prepareRows(geometryRows, on: geometryQueue, isCurrent: { true }, c
     DispatchQueue.main.async {
       check(geometryView.rows.isEmpty && geometryView.contentHeight == 0, "Reset must remain empty after obsolete work drains")
       print("Passed sparse geometry, reference heights/widths, font/wrap/collapse, hit testing, direct publication, and cancellation")
-      exit(0)
+      runRowDecodeTests()
     }
   }
 })
