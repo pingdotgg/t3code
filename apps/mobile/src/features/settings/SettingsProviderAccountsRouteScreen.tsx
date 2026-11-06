@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthProvidersManageScope,
+  isManagedDriverAllowed,
   type ProviderAuthResponse,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -27,68 +28,99 @@ import { serverEnvironment } from "../../state/server";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
-import {
-  AndroidSettingsEnvironmentFilter,
-  SettingsEnvironmentFilterHeader,
-} from "./components/SettingsEnvironmentFilterHeader";
+import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { AddClaudeAccount, ClaudeAccount } from "./ClaudeAccounts";
+import { CLAUDE_DRIVER } from "./claude-accounts";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
 export function SettingsProviderAccountsRouteScreen() {
+  const environmentMenu = useSettingsEnvironmentMenu();
   const { selectedTargets } = useSettingsEnvironmentFilter();
   const permittedEnvironments = useEnvironmentsWithScope(selectedTargets, AuthProvidersManageScope);
   const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const insets = useSafeAreaInsets();
   return (
+    <SettingsScreen title="Providers" menus={[environmentMenu]}>
+      <ScreenScrollView
+        className="flex-1"
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerClassName="gap-6 px-5 pt-4"
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
+      >
+        {selectedTargets.length === 0 ? (
+          <Text className="text-foreground-muted">Select a connected environment.</Text>
+        ) : (
+          selectedTargets.map((environment) => (
+            <SettingsSection key={environment.environmentId} title={environment.label}>
+              {!permittedEnvironments.has(environment.environmentId) ? (
+                <View className="gap-1 p-4">
+                  <Text className="text-base text-foreground">Limited permissions</Text>
+                  <Text className="text-sm text-foreground-muted">
+                    {`This session can view ${environment.label}'s providers but can't change their settings.`}
+                  </Text>
+                </View>
+              ) : (
+                <EnvironmentProviders
+                  environment={environment}
+                  providers={managedProviders(environment, providersByEnvironment)}
+                />
+              )}
+            </SettingsSection>
+          ))
+        )}
+      </ScreenScrollView>
+    </SettingsScreen>
+  );
+}
+
+function EnvironmentProviders({
+  environment,
+  providers,
+}: {
+  readonly environment: SettingsTarget;
+  readonly providers: ReadonlyArray<ServerProvider>;
+}) {
+  const accounts = providers.filter(canManageProvider);
+  // Claude has no in-app sign-in; each account is its own instance on a signed-in config folder.
+  const claudeAccounts = providers.filter(
+    (provider) => provider.driver === CLAUDE_DRIVER && !canManageProvider(provider),
+  );
+  const canAddClaude = isManagedDriverAllowed(
+    environment.serverConfig.managedPolicy,
+    CLAUDE_DRIVER,
+  );
+  return (
     <>
-      <SettingsEnvironmentFilterHeader />
-      <SettingsScreen title="Providers" trailing={<AndroidSettingsEnvironmentFilter />}>
-        <ScreenScrollView
-          className="flex-1"
-          contentInsetAdjustmentBehavior="automatic"
-          contentContainerClassName="gap-6 px-5 pt-4"
-          contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
-        >
-          {selectedTargets.length === 0 ? (
-            <Text className="text-foreground-muted">Select a connected environment.</Text>
-          ) : (
-            selectedTargets.map((environment) => (
-              <SettingsSection key={environment.environmentId} title={environment.label}>
-                {!permittedEnvironments.has(environment.environmentId) ? (
-                  <View className="gap-1 p-4">
-                    <Text className="text-base text-foreground">Limited permissions</Text>
-                    <Text className="text-sm text-foreground-muted">
-                      {`This session can view ${environment.label}'s providers but can't change their settings.`}
-                    </Text>
-                  </View>
-                ) : (
-                  <>
-                    {(providersByEnvironment.get(environment.environmentId) ?? [])
-                      .filter(canManageProvider)
-                      .map((provider, index) => (
-                        <ProviderAccount
-                          key={provider.instanceId}
-                          environment={environment}
-                          provider={provider}
-                          divider={index > 0}
-                        />
-                      ))}
-                    {!(providersByEnvironment.get(environment.environmentId) ?? []).some(
-                      canManageProvider,
-                    ) ? (
-                      <Text className="p-4 text-foreground-muted">
-                        Configure a provider with in-app sign-in in web or desktop Settings.
-                      </Text>
-                    ) : null}
-                  </>
-                )}
-              </SettingsSection>
-            ))
-          )}
-        </ScreenScrollView>
-      </SettingsScreen>
+      {accounts.map((provider, index) => (
+        <ProviderAccount
+          key={provider.instanceId}
+          environment={environment}
+          provider={provider}
+          divider={index > 0}
+        />
+      ))}
+      {accounts.length === 0 ? (
+        <Text className="p-4 text-foreground-muted">
+          Configure a provider with in-app sign-in in web or desktop Settings.
+        </Text>
+      ) : null}
+      {claudeAccounts.map((provider) => (
+        <ClaudeAccount key={provider.instanceId} environment={environment} provider={provider} />
+      ))}
+      {canAddClaude ? <AddClaudeAccount environment={environment} /> : null}
     </>
+  );
+}
+
+/** Providers the environment's managed policy allows; the rest cannot run or sign in. */
+function managedProviders(
+  environment: SettingsTarget,
+  providersByEnvironment: ReadonlyMap<string, ReadonlyArray<ServerProvider>>,
+) {
+  return (providersByEnvironment.get(environment.environmentId) ?? []).filter((provider) =>
+    isManagedDriverAllowed(environment.serverConfig.managedPolicy, provider.driver),
   );
 }
 
@@ -204,6 +236,9 @@ function ProviderAccount({
     !active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate);
   const showCallback =
     Boolean(url) && (interaction?.type === "browser" ? interaction.acceptsCallback : !interaction);
+  const usesCredentials =
+    provider.driver === "antigravity" &&
+    (provider.auth.type === "gemini-api-key" || provider.auth.type === "agent-platform");
   const status =
     active || state?.phase === "failed" || state?.phase === "cancelled"
       ? state.message
@@ -217,7 +252,9 @@ function ProviderAccount({
               ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
               : !provider.installed
                 ? "Not installed"
-                : "Not signed in";
+                : usesCredentials
+                  ? "Connect to load models"
+                  : "Not signed in";
   // A provider with several sign-in methods picks one from a menu on the same control.
   const methodActions: MenuAction[] = methods.map((method) => ({
     id: `method:${method.id}`,
@@ -328,8 +365,8 @@ function ProviderAccount({
   ) : canSignIn && !signedIn ? (
     <ControlPill
       variant="primary"
-      label="Sign in"
-      accessibilityLabel={`Sign in to ${name}`}
+      label={usesCredentials ? "Connect" : "Sign in"}
+      accessibilityLabel={usesCredentials ? `Connect to ${name}` : `Sign in to ${name}`}
       disabled={signInDisabled}
       onPress={() => startSignIn()}
     />

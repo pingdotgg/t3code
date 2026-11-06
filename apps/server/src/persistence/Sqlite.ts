@@ -28,6 +28,9 @@ const layerSetup = Layer.effectDiscard(
     yield* sql`PRAGMA synchronous = NORMAL;`;
     // macOS fsync misses drive caches; F_FULLFSYNC flushes them at checkpoints and is ignored elsewhere.
     yield* sql`PRAGMA checkpoint_fullfsync = ON;`;
+    // Keep statement journals and sort spills off the main thread's disk path.
+    // Large statements and open savepoints can increase peak memory use.
+    yield* sql`PRAGMA temp_store = MEMORY;`;
     // PASSIVE checkpoints retain peak WAL size until the last connection closes.
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
     yield* runMigrations();
@@ -38,7 +41,7 @@ const layerSetup = Layer.effectDiscard(
       yield* sql`DELETE FROM sqlite_stat1;`;
       yield* sql`ANALYZE sqlite_schema;`;
     }
-  }),
+  }).pipe(Effect.withSpan("Sqlite.setup")),
 );
 
 export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (dbPath: string) {

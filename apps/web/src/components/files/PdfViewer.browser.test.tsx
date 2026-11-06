@@ -109,3 +109,54 @@ it("fits the width, then finds split and rotated text and jumps to its page", as
     URL.revokeObjectURL(url);
   }
 });
+
+it("restores page, within-page offset and zoom after a remount", async () => {
+  const url = URL.createObjectURL(twoPagePdf());
+  const viewer = (mount: number, positionKey: string) => (
+    <div className="flex h-[300px] w-[320px]">
+      <PdfViewer key={mount} src={url} title="Restored PDF" positionKey={positionKey} />
+    </div>
+  );
+  try {
+    await using screen = await render(viewer(1, "restore:a"));
+    await expect.element(screen.getByText("1 / 2 pages")).toBeVisible();
+    await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await screen.getByRole("button", { name: "Next page", exact: true }).click();
+    await expect.element(screen.getByText("2 / 2 pages")).toBeVisible();
+    const region = () => screen.getByRole("region", { name: "Restored PDF" }).element();
+    const top = region().scrollTop + 40;
+    const scrolled = new Promise((resolve) =>
+      region().addEventListener("scroll", resolve, { once: true }),
+    );
+    region().scrollTop = top;
+    await scrolled;
+    await vi.waitFor(() => expect(region().scrollTop).toBeCloseTo(top, 0));
+    const zoom = screen.container.textContent!.match(/\d+%/)![0];
+
+    await screen.rerender(viewer(2, "restore:a"));
+    await expect.element(screen.getByText("2 / 2 pages")).toBeVisible();
+    await vi.waitFor(() => expect(region().scrollTop).toBeCloseTo(top, 0));
+    await vi.waitFor(() => expect(screen.container.textContent).toContain(zoom));
+
+    await screen.getByRole("button", { name: "Fit width", exact: true }).click();
+    await vi.waitFor(() => {
+      const canvas = region().querySelector("canvas")!;
+      expect(canvas.getBoundingClientRect().width).toBe(region().clientWidth - 32);
+    });
+    const fitTop = region().scrollTop;
+    await screen.rerender(viewer(3, "restore:a"));
+    await expect.element(screen.getByText("2 / 2 pages")).toBeVisible();
+    await vi.waitFor(() => {
+      expect(region().querySelector("canvas")!.getBoundingClientRect().width).toBe(
+        region().clientWidth - 32,
+      );
+      expect(region().scrollTop).toBeCloseTo(fitTop, 0);
+    });
+
+    await screen.rerender(viewer(4, "restore:b"));
+    await expect.element(screen.getByText("1 / 2 pages")).toBeVisible();
+    await expect.element(screen.getByText("Fit width")).toBeVisible();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+});
