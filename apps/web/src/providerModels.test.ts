@@ -5,6 +5,10 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import {
+  getProviderOptionCurrentValue,
+  buildProviderOptionSelectionsFromDescriptors,
+} from "@t3tools/shared/model";
 import { getProviderModelCapabilities } from "./providerModels";
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
@@ -31,6 +35,40 @@ function model(input: {
 }
 
 describe("getProviderModelCapabilities", () => {
+  it.each([undefined, "plan"])(
+    "keeps an unset agent unset when Plan is hidden (current: %s)",
+    (currentValue) => {
+      const models = [
+        model({
+          slug: "opencode/test",
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "agent",
+                label: "Agent",
+                type: "select",
+                options: [
+                  { id: "assistant2", label: "Assistant 2" },
+                  { id: "plan", label: "Plan" },
+                ],
+                ...(currentValue ? { currentValue } : {}),
+              },
+            ],
+          },
+        }),
+      ];
+      const caps = getProviderModelCapabilities(
+        models,
+        "opencode/test",
+        ProviderDriverKind.make("opencode"),
+        false,
+      );
+      const descriptor = caps.optionDescriptors?.[0];
+      expect(getProviderOptionCurrentValue(descriptor)).toBeUndefined();
+      expect(buildProviderOptionSelectionsFromDescriptors(caps.optionDescriptors)).toBeUndefined();
+    },
+  );
+
   it("resolves model-declared aliases", () => {
     const aliasCapabilities = capabilities("aliased-option");
     const models = [

@@ -23,6 +23,7 @@ import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import {
   checkOpenCodeProviderStatus,
+  makeOpenCode2AgentLoader,
   loadOpenCode2Workspace,
   type OpenCode2Model,
   type OpenCode2Workspace,
@@ -506,6 +507,9 @@ const checkProvider = Effect.fn("checkProvider")(function* (
     OpenCodeRuntime.OpenCodeRuntimeError
   > = Effect.succeed([]),
   agents: ReadonlyArray<Agent.Info> = [],
+  loadAgents: Effect.Success<ReturnType<typeof makeOpenCode2AgentLoader>> = Effect.succeed({
+    agents,
+  }),
 ) {
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -524,13 +528,66 @@ const checkProvider = Effect.fn("checkProvider")(function* (
         cwd,
         probe,
         openCode2Models,
-        Effect.succeed(agents),
+        loadAgents,
       ).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner));
     }),
   );
 });
 
 it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
+  it.effect(
+    "retains known agent choices on failure and clears them after a successful empty list",
+    () =>
+      Effect.gen(function* () {
+        runtimeMock.state.versionStdout = "opencode v2.0.18\n";
+        let failed = false;
+        let agents = [Agent.Info.default(Agent.ID.make("assistant2"))];
+        const loadAgents = yield* makeOpenCode2AgentLoader(
+          Effect.suspend(() =>
+            failed
+              ? Effect.fail(
+                  new OpenCodeRuntime.OpenCodeRuntimeError({
+                    operation: "agent.list",
+                    detail: "agents unavailable",
+                  }),
+                )
+              : Effect.succeed(agents),
+          ),
+        );
+        const read = checkProvider(
+          makeOpenCodeSettings(),
+          process.cwd(),
+          undefined,
+          undefined,
+          Effect.succeed([{ providerID: "opencode", id: "test", name: "Test", variants: [] }]),
+          [],
+          loadAgents,
+        );
+        const ready = yield* read;
+        const agentOptions = (snapshot: typeof ready) =>
+          snapshot.models[0]?.capabilities?.optionDescriptors?.find(
+            (option) => option.id === "agent",
+          );
+        NodeAssert.equal(ready.status, "ready");
+        NodeAssert.deepEqual(agentOptions(ready), {
+          id: "agent",
+          label: "Agent",
+          type: "select",
+          options: [{ id: "assistant2", label: "assistant2" }],
+        });
+        failed = true;
+        const stale = yield* read;
+        NodeAssert.equal(stale.status, "warning");
+        NodeAssert.equal(stale.auth.status, "unknown");
+        NodeAssert.deepEqual(agentOptions(stale), agentOptions(ready));
+        failed = false;
+        agents = [];
+        const empty = yield* read;
+        NodeAssert.equal(empty.status, "ready");
+        NodeAssert.equal(agentOptions(empty), undefined);
+      }),
+  );
+
   it.effect.each(["version", "inventory", "models", "empty-v1", "empty-v2"] as const)(
     "records %s discovery failures in the existing trace and logger",
     (failure) =>
