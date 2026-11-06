@@ -14,6 +14,8 @@ export function RightPanelSheet(props: {
   return (
     <Sheet
       open={props.open}
+      // A modal sheet would also lock the other pane.
+      modal={paneElement === undefined}
       onOpenChange={(open) => {
         if (!open) {
           props.onClose();
@@ -26,7 +28,7 @@ export function RightPanelSheet(props: {
         showCloseButton={false}
         keepMounted
         portalContainer={paneElement}
-        className="w-[min(42vw,28rem)] min-w-80 max-w-[28rem] max-[760px]:w-[min(88vw,24rem)] max-[760px]:min-w-0 wco:mt-(--workspace-topbar-height) wco:h-[calc(100%-var(--workspace-topbar-height))] wco:max-h-[calc(100%-var(--workspace-topbar-height))]"
+        className="w-[min(42vw,28rem)] min-w-80 max-w-[min(28rem,100%)] max-[760px]:w-[min(88vw,24rem)] max-[760px]:min-w-0 wco:mt-(--workspace-topbar-height) wco:h-[calc(100%-var(--workspace-topbar-height))] wco:max-h-[calc(100%-var(--workspace-topbar-height))]"
       >
         {props.children}
       </SheetPopup>

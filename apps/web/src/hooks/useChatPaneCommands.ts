@@ -16,15 +16,17 @@ import {
  */
 export function createChatPaneCommands(router: AnyRouter) {
   const readRouteTarget = () => resolveThreadRouteTarget(router.state.matches.at(-1)?.params ?? {});
-  const navigateTo = (target: ThreadRouteTarget) =>
+  const navigateTo = (target: ThreadRouteTarget, replace = false) =>
     void (target.kind === "server"
       ? router.navigate({
           to: "/$environmentId/$threadId",
           params: buildThreadRouteParams(target.threadRef),
+          replace,
         })
       : router.navigate({
           to: "/draft/$draftId",
           params: buildDraftThreadRouteParams(target.draftId),
+          replace,
         }));
 
   /** Opens `threadRef` beside the routed thread and focuses it; false with no thread routed. */
@@ -54,8 +56,8 @@ export function createChatPaneCommands(router: AnyRouter) {
   };
 
   /**
-   * Closes the pane showing a thread that is gone. True when that moved focus to the other pane,
-   * so the caller skips its own fallback navigation.
+   * Closes the pane showing a thread that is gone. True when that moved the route to the other
+   * pane, so the caller skips its own fallback navigation.
    */
   const closePaneShowing = (threadRef: ScopedThreadRef): boolean => {
     const store = useChatPanesStore.getState();
@@ -67,8 +69,14 @@ export function createChatPaneCommands(router: AnyRouter) {
     );
     if (!pane) return false;
     const focusTarget = store.closePane(pane.id);
-    if (focusTarget) navigateTo(focusTarget);
-    return focusTarget !== null;
+    // The removal can finish after the user left the thread, for example for Settings.
+    const routeTarget = readRouteTarget();
+    const routeShowsRemoved =
+      routeTarget?.kind === "server" && scopedThreadKey(routeTarget.threadRef) === key;
+    if (focusTarget === null || !routeShowsRemoved) return false;
+    // Replaces the removed thread's history entry, as the single-pane fallback does.
+    navigateTo(focusTarget, true);
+    return true;
   };
 
   /** Back to one pane, keeping the focused one; the route already shows it. */

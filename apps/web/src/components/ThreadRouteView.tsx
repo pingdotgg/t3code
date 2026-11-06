@@ -218,7 +218,9 @@ export function ThreadRouteContent({
     );
   }
 
-  const showUnavailable = view === null && (target.kind === "draft" || bootstrapComplete);
+  // A thread whose detail is still loading shows nothing yet, as an unsplit route does.
+  const showUnavailable =
+    view === null && (target.kind === "draft" || (bootstrapComplete && renderState !== "loading"));
   return (
     <>
       <BackgroundThreadContext value={!ownsRoute}>

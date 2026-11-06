@@ -155,6 +155,7 @@ export function startThreadNotifications(
       !backgroundChatPaneThreadRefs(
         useChatPanesStore.getState().layout,
         resolveThreadRouteTarget(active),
+        useChatPanesStore.getState().splitFits,
       ).some((ref) => ref.environmentId === environmentId && ref.threadId === thread.id)
     ) {
       const toastKey = threadKey({ environmentId, threadId: thread.id });

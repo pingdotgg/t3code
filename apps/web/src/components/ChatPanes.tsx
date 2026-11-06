@@ -72,11 +72,12 @@ export function ChatPanes({
   const vertical = layout.direction === "column";
   const minPaneSize = vertical ? CHAT_PANE_MIN_HEIGHT : CHAT_PANE_MIN_WIDTH;
   // Too small for two panes: only the focused one renders, and the split returns with room.
-  const [fitsSplit, setFitsSplit] = useState(true);
+  // The store holds it so notifications treat the hidden pane's thread as not visible.
+  const fitsSplit = useChatPanesStore((state) => state.splitFits);
   const observeContainer = (container: HTMLDivElement) => {
     const measure = () => {
       const size = vertical ? container.clientHeight : container.clientWidth;
-      setFitsSplit(size >= minPaneSize * 2 + 1);
+      useChatPanesStore.getState().setSplitFits(size >= minPaneSize * 2 + 1);
     };
     measure();
     return observeResize(container, measure);
@@ -172,6 +173,7 @@ export function ChatPanes({
                 onFocus={() => focusPane(pane.target)}
                 focusIntentRef={focusIntentRef}
                 direction={layout.direction}
+                threadKey={paneThreadKeys[index] ?? null}
                 hostsHiddenTerminals={alone || index === 0}
                 otherPaneThreadKeys={
                   alone
@@ -303,6 +305,7 @@ function ChatPane({
   edges,
   background,
   direction,
+  threadKey,
   hostsHiddenTerminals,
   otherPaneThreadKeys,
   onClose,
@@ -320,6 +323,7 @@ function ChatPane({
   edges: WindowEdges;
   background: boolean;
   direction: ChatPaneDirection;
+  threadKey: string | null;
   hostsHiddenTerminals: boolean;
   /** Newline-joined, so an unchanged set keeps the context value and spares ChatView a render. */
   otherPaneThreadKeys: string;
@@ -379,6 +383,7 @@ function ChatPane({
       data-chat-pane={pane.id}
       data-chat-pane-narrow={(!alone && narrow) || undefined}
       data-chat-pane-below-titlebar={!edges.top || undefined}
+      data-chat-pane-thread={threadKey ?? undefined}
       data-background-thread-view={passive || undefined}
       onPointerDownCapture={passive ? onFocus : undefined}
       onFocusCapture={passive ? onFocusIn : undefined}
@@ -390,7 +395,7 @@ function ChatPane({
             target={pane.target}
             background={background}
             passive={passive}
-            unavailable={<UnavailablePane onClose={close} />}
+            unavailable={inSplit ? <UnavailablePane onClose={close} /> : null}
             onMissing={inSplit ? close : undefined}
           />
         </ChatPaneContext>

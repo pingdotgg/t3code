@@ -80,12 +80,16 @@ export function resolveChatPanes(
   );
 }
 
-/** Threads in unfocused panes for this route; a draft pane has no thread until it sends. */
+/**
+ * Threads the unfocused pane shows for this route; a draft pane has no thread until it sends.
+ * None while the window is too narrow for the split, since only the focused pane renders then.
+ */
 export function backgroundChatPaneThreadRefs(
   layout: ChatPanesLayout,
   routeTarget: ThreadRouteTarget | null,
+  splitFits: boolean,
 ): ReadonlyArray<ScopedThreadRef> {
-  if (routeTarget === null) return [];
+  if (routeTarget === null || !splitFits) return [];
   return resolveChatPanes(layout, routeTarget).flatMap((pane) =>
     !pane.active && pane.target.kind === "server" ? [pane.target.threadRef] : [],
   );
@@ -135,9 +139,15 @@ export function openChatSplit(
 ): ChatPanesLayout {
   const targetKey = chatPaneTargetKey(input.target);
   const current = commitChatPanes(layout, input.routeTarget);
-  if (current.panes.some((pane) => chatPaneTargetKey(pane.target) === targetKey)) return current;
   if (chatPaneTargetKey(input.routeTarget) === targetKey) return current;
   const direction = input.direction ?? current.direction;
+  // A single pane's stored target can be stale; only a split shows its panes' targets.
+  if (
+    isChatSplitOpen(current) &&
+    current.panes.some((pane) => chatPaneTargetKey(pane.target) === targetKey)
+  ) {
+    return current;
+  }
   if (!isChatSplitOpen(current)) {
     const activePaneId = current.panes[0]?.id ?? PRIMARY_CHAT_PANE_ID;
     return {
@@ -234,6 +244,9 @@ function readPersistedLayout(value: unknown): ChatPanesLayout {
 
 interface ChatPanesStoreState {
   readonly layout: ChatPanesLayout;
+  /** Whether the chat area is wide enough to render both panes of a split. */
+  readonly splitFits: boolean;
+  readonly setSplitFits: (splitFits: boolean) => void;
   readonly commit: (routeTarget: ThreadRouteTarget) => void;
   readonly openSplit: (input: {
     readonly routeTarget: ThreadRouteTarget;
@@ -251,6 +264,9 @@ export const useChatPanesStore = create<ChatPanesStoreState>()(
   persist(
     (set, get) => ({
       layout: SINGLE_CHAT_PANE_LAYOUT,
+      splitFits: true,
+      setSplitFits: (splitFits) =>
+        set((state) => (state.splitFits === splitFits ? state : { splitFits })),
       commit: (routeTarget) =>
         set((state) => {
           const layout = commitChatPanes(state.layout, routeTarget);

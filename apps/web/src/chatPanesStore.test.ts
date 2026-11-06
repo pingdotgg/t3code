@@ -3,6 +3,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  backgroundChatPaneThreadRefs,
   chatPaneRestoreTarget,
   closeChatPane,
   isChatSplitOpen,
@@ -16,10 +17,8 @@ import {
 import { DraftId } from "./composerDraftStore";
 import type { ThreadRouteTarget } from "./threadRoutes";
 
-const thread = (id: string): ThreadRouteTarget => ({
-  kind: "server",
-  threadRef: scopeThreadRef(EnvironmentId.make("env"), ThreadId.make(id)),
-});
+const threadRef = (id: string) => scopeThreadRef(EnvironmentId.make("env"), ThreadId.make(id));
+const thread = (id: string): ThreadRouteTarget => ({ kind: "server", threadRef: threadRef(id) });
 const draft = (id: string): ThreadRouteTarget => ({ kind: "draft", draftId: DraftId.make(id) });
 
 function paneIds() {
@@ -70,6 +69,12 @@ describe("chat panes", () => {
       { id: "primary", target: "a", active: true },
       { id: "pane-1", target: "c", active: false },
     ]);
+  });
+
+  it("counts the unfocused pane's thread as visible only while the split fits", () => {
+    const layout = split(thread("a"), thread("b"));
+    expect(backgroundChatPaneThreadRefs(layout, thread("a"), true)).toEqual([threadRef("b")]);
+    expect(backgroundChatPaneThreadRefs(layout, thread("a"), false)).toEqual([]);
   });
 
   it("commits nothing when the route already matches the layout", () => {
@@ -131,6 +136,19 @@ describe("chat panes", () => {
     // The routed pane keeps its id, so its view stays mounted.
     expect(shown(result.layout, thread("a"))).toEqual([
       { id: "primary", target: "a", active: true },
+    ]);
+  });
+
+  it("opens a split again for the thread the remaining pane showed before the route moved", () => {
+    const closed = closeChatPane(split(thread("a"), thread("b")), "pane-1").layout;
+    const reopened = openChatSplit(closed, {
+      routeTarget: thread("c"),
+      target: thread("a"),
+      createPaneId: paneIds(),
+    });
+    expect(shown(reopened, thread("c"))).toEqual([
+      { id: "primary", target: "c", active: true },
+      { id: "pane-1", target: "a", active: false },
     ]);
   });
 

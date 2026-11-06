@@ -1091,7 +1091,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const backgroundPaneThreadKeys = new Set(
     useChatPanesStore(
       useShallow((state) =>
-        backgroundChatPaneThreadRefs(state.layout, routeTarget).map(scopedThreadKey),
+        backgroundChatPaneThreadRefs(state.layout, routeTarget, state.splitFits).map(
+          scopedThreadKey,
+        ),
       ),
     ),
   );
@@ -2692,7 +2694,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         }
         switch (clicked.value) {
           case "open-in-split":
-            openInSplit(threadRef);
+            if (openInSplit(threadRef) && isMobile) setOpenMobile(false);
             return;
           case "filter-by-project":
             if (threadProjectGroup) {

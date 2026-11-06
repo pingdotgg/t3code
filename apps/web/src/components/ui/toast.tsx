@@ -452,7 +452,7 @@ function useVisibleThreadRefsFromRoute(): ReadonlyArray<ScopedThreadRef> {
     routeTarget?.kind === "draft" ? store.getDraftSession(routeTarget.draftId) : null,
   );
   const backgroundRefs = useChatPanesStore(
-    useShallow((state) => backgroundChatPaneThreadRefs(state.layout, routeTarget)),
+    useShallow((state) => backgroundChatPaneThreadRefs(state.layout, routeTarget, state.splitFits)),
   );
 
   if (routeTarget?.kind === "server") {
