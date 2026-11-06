@@ -254,12 +254,43 @@ it.effect.each([
 );
 
 it.effect.each([
-  { child: "a completed subagent", depth: 1, parent: "restoring", live: {}, isolated: true },
-  { child: "a completed sub-subagent", depth: 2, parent: "restoring", live: {}, isolated: true },
+  {
+    child: "a completed subagent",
+    depth: 1,
+    parent: "restoring",
+    record: "completed",
+    live: {},
+    isolated: true,
+  },
+  {
+    child: "a completed sub-subagent",
+    depth: 2,
+    parent: "restoring",
+    record: "completed",
+    live: {},
+    isolated: true,
+  },
+  {
+    child: "a finished native subagent",
+    depth: 1,
+    parent: "restoring",
+    record: "completed",
+    live: { status: "idle" },
+    isolated: true,
+  },
+  {
+    child: "a running native subagent",
+    depth: 1,
+    parent: "restoring",
+    record: "running",
+    live: { status: "idle" },
+    isolated: false,
+  },
   {
     child: "a running subagent",
     depth: 1,
     parent: "restoring",
+    record: "running",
     live: { status: "running", activeRunId: "child-run", activityRunStatus: "running" },
     isolated: false,
   },
@@ -267,6 +298,7 @@ it.effect.each([
     child: "a subagent awaiting approval",
     depth: 1,
     parent: "restoring",
+    record: "waiting",
     live: { status: "waiting", pendingRuntimeRequest: { requestId: "child-request" } },
     isolated: false,
   },
@@ -274,13 +306,21 @@ it.effect.each([
     child: "a subagent with background work",
     depth: 1,
     parent: "restoring",
+    record: "completed",
     live: { pendingBackgroundTasks: [{ taskId: "child-task" }] },
     isolated: false,
   },
-  { child: "another thread's subagent", depth: 1, parent: "other", live: {}, isolated: false },
+  {
+    child: "another thread's subagent",
+    depth: 1,
+    parent: "other",
+    record: "completed",
+    live: {},
+    isolated: false,
+  },
 ] as const)(
   "$child in the parent's worktree leaves file restore isolated: $isolated",
-  ({ depth, parent, live, isolated }) =>
+  ({ depth, parent, record, live, isolated }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -306,6 +346,7 @@ it.effect.each([
         depth === 1
           ? [child]
           : [child, { ...subagent("restore-subagent-grandchild", child.id), ...live }];
+      const tested = threads[threads.length - 1]!;
       const result = yield* isCheckpointRestoreIsolated(
         { id: restoringId, worktreePath },
         { cwd: worktreePath },
@@ -314,7 +355,19 @@ it.effect.each([
           path,
           projections: {
             getShellSnapshot: () => Effect.succeed({ threads, archivedThreads: [] }),
-            getThreadRecords: () => Effect.succeed({ turnItems: [{ type: "file_change" }] }),
+            getThreadRecords: (threadId: ThreadId, fields: ReadonlyArray<string>) =>
+              Effect.succeed(
+                fields.includes("subagents")
+                  ? {
+                      subagents: threads
+                        .filter((candidate) => candidate.lineage.parentThreadId === threadId)
+                        .map((candidate) => ({
+                          childThreadId: candidate.id,
+                          status: candidate === tested ? record : "completed",
+                        })),
+                    }
+                  : { turnItems: [{ type: "file_change" }] },
+              ),
             getCheckpointContext: () =>
               Effect.succeed({ checkpointScopes: [{ cwd: worktreePath }] }),
             getThreadProviderContext: () => Effect.succeed({ providerSessions: [] }),

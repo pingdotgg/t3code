@@ -69,14 +69,27 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
         for (const otherThread of shellThreads) {
           if (otherThread.id === thread.id || otherThread.deletedAt !== null) continue;
           // A finished subagent of this thread worked on its behalf, not as another owner.
+          const parentThreadId = otherThread.lineage.parentThreadId;
           if (
-            otherThread.status === "completed" &&
+            parentThreadId !== null &&
             otherThread.activeRunId === null &&
             !isLiveSubagentShell(otherThread) &&
             otherThread.worktreePath === worktreePath &&
             isSubagentDescendant(otherThread)
           ) {
-            continue;
+            // Native children have no runs of their own; the parent's subagent records say when they finished.
+            const { subagents } = yield* projections.getThreadRecords(parentThreadId, [
+              "subagents",
+            ]);
+            const records = subagents.filter(
+              (subagent) => subagent.childThreadId === otherThread.id,
+            );
+            if (
+              records.length > 0 &&
+              records.every((subagent) => subagent.status === "completed")
+            ) {
+              continue;
+            }
           }
           // An idle side chat that only answered questions never touched the shared worktree.
           if (
