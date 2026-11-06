@@ -132,7 +132,7 @@ function eraseLine(line: Line, col: number, mode: number): Line {
     for (const run of sliceLine(line, col + 1, length)) pushRun(runs, run);
     return runs;
   }
-  return [];
+  return mode === 2 ? [] : line;
 }
 
 function serializeLine(line: Line): string {
@@ -246,6 +246,8 @@ const STRING_SEQUENCE_INTRODUCERS = new Set(["]", "P", "X", "_", "^"]);
 function escapeLength(input: string, index: number): number {
   const next = input[index + 1];
   if (next === undefined) return -1;
+  // A second ESC restarts the sequence.
+  if (next === ESC) return 1;
   if (next === "[") {
     for (let cursor = index + 2; cursor < input.length; cursor += 1) {
       const code = input.charCodeAt(cursor);
@@ -258,9 +260,10 @@ function escapeLength(input: string, index: number): number {
     for (let cursor = index + 2; cursor < input.length; cursor += 1) {
       if (input[cursor] === "\u0007") return cursor - index + 1;
       if (input[cursor] === "\n") return cursor - index;
+      // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.
       if (input[cursor] === ESC) {
         if (cursor + 1 >= input.length) return -1;
-        if (input[cursor + 1] === "\\") return cursor - index + 2;
+        return input[cursor + 1] === "\\" ? cursor - index + 2 : cursor - index;
       }
     }
     return -1;
@@ -393,7 +396,7 @@ class Terminal {
   }
 
   csi(params: string, final: string): void {
-    if (/^[?>=]/u.test(params)) return; // Mode switches (cursor visibility, bracketed paste).
+    if (!/^[\d;:]*$/u.test(params) || (final !== "m" && params.includes(":"))) return;
     if (final === "m") {
       const key = `${this.pen}|${params}`;
       let pen = penTransitions.get(key);
@@ -443,7 +446,7 @@ class Terminal {
           if (this.settledHead !== "" || this.settledTail !== "") this.dropped = true;
           this.settledHead = "";
           this.settledTail = "";
-        } else {
+        } else if (mode === 2) {
           this.lines = [[]];
           this.row = 0;
           this.col = 0;

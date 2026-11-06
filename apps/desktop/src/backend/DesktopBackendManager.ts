@@ -43,6 +43,12 @@ const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
 // Match the service launcher's grace period so backends can stop provider sessions.
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(5);
 const BACKEND_STOP_ACK_TIMEOUT = Duration.seconds(1);
+// Allow the stop ack, SIGKILL and the spawner exit wait around the SIGTERM grace so quit
+// cannot orphan a backend whose shutdown hangs.
+export const BACKEND_QUIT_STOP_TIMEOUT = Duration.sum(
+  Duration.sum(BACKEND_STOP_ACK_TIMEOUT, DEFAULT_BACKEND_TERMINATE_GRACE),
+  Duration.seconds(2),
+);
 const DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT = Duration.seconds(5);
 const BACKEND_READINESS_PATH = "/.well-known/t3/environment";
 // Three restarts without readiness is about 2 s of backoff: past a blip, early enough to help.
