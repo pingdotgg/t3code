@@ -28,7 +28,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { openCodeUsageReader, type OpenCodeUsageReaderEnv } from "./usage.ts";
-import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
+import { readOpenCodeGoUsageLimits, readOpenCodeGoCredentialFingerprint } from "./usageLimits.ts";
 import { loadOpenCode2Catalog } from "./openCode2Catalog.ts";
 import {
   checkOpenCodeProviderStatus,
@@ -377,14 +377,26 @@ export const OpenCodeDriver: ProviderDriver<
           Effect.annotateLogs({ providerInstanceId: instanceId }),
           Effect.annotateSpans({ providerInstanceId: instanceId }),
         ),
+        credentialFingerprint:
+          effectiveConfig.enabled && !effectiveConfig.serverUrl.trim()
+            ? readOpenCodeGoCredentialFingerprint(processEnv).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, pathService),
+                Effect.provideService(Digest.Digest, digest),
+              )
+            : Effect.undefined,
         usageLimits: Effect.flatMap(UsagePolling, (enabled) =>
           enabled ? checkUsageLimits : Effect.succeed(null),
         ),
       },
       { concurrency: "unbounded" },
     ).pipe(
-      Effect.map(({ provider, usageLimits }) => ({
+      Effect.map(({ provider, usageLimits, credentialFingerprint }) => ({
         ...provider,
+        // OpenCode 2 omits account identity; local key selection owns cached Go quotas.
+        auth: credentialFingerprint
+          ? { ...provider.auth, workspaceId: credentialFingerprint }
+          : provider.auth,
         usageLimits:
           usageLimits ??
           (provider.auth.status === "authenticated"

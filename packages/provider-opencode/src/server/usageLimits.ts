@@ -28,6 +28,7 @@ const AuthFile = Schema.Struct({ "opencode-go": Schema.optionalKey(Schema.Unknow
 const ApiAuth = Schema.Struct({ type: Schema.Literal("api"), key: Schema.String });
 const decodeAuthFile = Schema.decodeEffect(Schema.fromJsonString(AuthFile));
 const decodeApiAuth = Schema.decodeUnknownOption(ApiAuth);
+const encodeKeys = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
 // OpenCode 2's database tags a stored key "key"; auth.json tags it "api".
 const StoredKey = Schema.Struct({
   type: Schema.Literal("key"),
@@ -87,6 +88,52 @@ const readStoredApiKey = (databasePath: string, integrationId: "opencode" | "ope
     catch: (cause) => new OpenCodeCredentialReadError({ databasePath, cause }),
   }).pipe(Effect.orElseSucceed(() => undefined));
 
+const readOpenCodeGoKeys = Effect.fn("readOpenCodeGoKeys")(function* (env: NodeJS.ProcessEnv) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dataHome =
+    env.XDG_DATA_HOME ||
+    path.join(env.HOME || env.USERPROFILE || (yield* HostProcess.HomeDirectory), ".local", "share");
+  const authPath = path.join(dataHome, "opencode", "auth.json");
+  const contents =
+    env.OPENCODE_AUTH_CONTENT ||
+    (yield* fs.readFileString(authPath).pipe(
+      Effect.catchTags({
+        PlatformError: (error) =>
+          error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
+      }),
+    ));
+  const auth = yield* decodeAuthFile(contents);
+  const apiAuth = decodeApiAuth(auth["opencode-go"]);
+  // OpenCode overlays stored API credentials after environment credentials.
+  const goKey = (Option.isSome(apiAuth) ? apiAuth.value.key : env.OPENCODE_API_KEY)?.trim();
+  // Console supplies Go credentials in OpenCode 2. Inline auth explicitly
+  // overrides local credentials, including the Console connection.
+  const databaseFile = env.OPENCODE_DB ?? "opencode.db";
+  const databasePath = path.resolve(dataHome, "opencode", databaseFile);
+  const storedKeys =
+    env.OPENCODE_AUTH_CONTENT || databaseFile === ":memory:"
+      ? []
+      : [
+          yield* readStoredApiKey(databasePath, "opencode"),
+          // OpenCode 2 imports auth.json once, so a replaced Go key only exists here.
+          yield* readStoredApiKey(databasePath, "opencode-go"),
+        ];
+  return [...new Set([...storedKeys, goKey].filter((key): key is string => Boolean(key)))];
+});
+
+export const readOpenCodeGoCredentialFingerprint = Effect.fn("readOpenCodeGoCredentialFingerprint")(
+  function* (environment: NodeJS.ProcessEnv) {
+    const keys = yield* readOpenCodeGoKeys(environment);
+    const digest = yield* Digest.Digest;
+    const serialized = yield* encodeKeys(keys);
+    return yield* digest
+      .digest(Digest.sha256, new TextEncoder().encode(serialized))
+      .pipe(Effect.map(Hex.encode));
+  },
+  Effect.orElseSucceed(() => undefined),
+);
+
 /** External OpenCode servers own their credentials; never read the host's account for them. */
 export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(function* (input: {
   readonly enabled: boolean;
@@ -100,42 +147,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
   let credentialFingerprint: string | undefined;
   let refreshAfter: number | undefined;
   return yield* Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const env = input.environment;
-    const dataHome =
-      env.XDG_DATA_HOME ||
-      path.join(
-        env.HOME || env.USERPROFILE || (yield* HostProcess.HomeDirectory),
-        ".local",
-        "share",
-      );
-    const authPath = path.join(dataHome, "opencode", "auth.json");
-    const contents =
-      env.OPENCODE_AUTH_CONTENT ||
-      (yield* fs.readFileString(authPath).pipe(
-        Effect.catchTags({
-          PlatformError: (error) =>
-            error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
-        }),
-      ));
-    const auth = yield* decodeAuthFile(contents);
-    const apiAuth = decodeApiAuth(auth["opencode-go"]);
-    // OpenCode overlays stored API credentials after environment credentials.
-    const goKey = (Option.isSome(apiAuth) ? apiAuth.value.key : env.OPENCODE_API_KEY)?.trim();
-    // Console supplies Go credentials in OpenCode 2. Inline auth explicitly
-    // overrides local credentials, including the Console connection.
-    const databaseFile = env.OPENCODE_DB ?? "opencode.db";
-    const databasePath = path.resolve(dataHome, "opencode", databaseFile);
-    const storedKeys =
-      env.OPENCODE_AUTH_CONTENT || databaseFile === ":memory:"
-        ? []
-        : [
-            yield* readStoredApiKey(databasePath, "opencode"),
-            // OpenCode 2 imports auth.json once, so a replaced Go key only exists here.
-            yield* readStoredApiKey(databasePath, "opencode-go"),
-          ];
-    const keys = [...new Set([...storedKeys, goKey].filter((key): key is string => Boolean(key)))];
+    const keys = yield* readOpenCodeGoKeys(input.environment);
     let apiKey = keys[0];
     if (!apiKey) return unsupported;
 

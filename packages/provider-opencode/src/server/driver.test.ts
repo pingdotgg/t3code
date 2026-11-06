@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -358,33 +359,58 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       { name: "respects a disabled interval", intervalOff: true },
       { name: "skips disabled instances", enabled: false },
       { name: "skips unsupported usage", unsupported: true },
+      { name: "invalidates replaced Go credentials", switchCredentials: true },
     ].map((scenario) => ({
       enabled: true,
       demand: true,
       intervalOff: false,
       unsupported: false,
+      switchCredentials: false,
       ...scenario,
     })),
   )(
-    "Go usage recovery $name only on visible refresh without restarting a ready catalog",
+    "Go usage recovery $name keeps health discovery separate from demand-driven quota reads",
     (scenario) =>
       Effect.gen(function* () {
         const usageStarted = yield* Deferred.make<void>();
         const healthGate = yield* Deferred.make<void>();
+        const replacementHealthStarted = yield* Deferred.make<void>();
+        let replacingCredential = false;
         let usageReads = 0;
         let serverStarts = 0;
         let modelReads = 0;
+        const fs = yield* FileSystem.FileSystem;
+        const dataHome = yield* fs.makeTempDirectoryScoped();
+        yield* fs.makeDirectory(`${dataHome}/opencode`);
+        const database = yield* Effect.acquireRelease(
+          Effect.sync(() => new NodeSqlite.DatabaseSync(`${dataHome}/opencode/opencode.db`)),
+          (database) => Effect.sync(() => database.close()),
+        );
+        database.exec(
+          "CREATE TABLE credential (id text PRIMARY KEY, integration_id text, value text, active integer, time_created integer)",
+        );
+        const replaceCredential = (key: string) => {
+          database.exec("DELETE FROM credential");
+          database
+            .prepare("INSERT INTO credential VALUES ('go', 'opencode-go', ?, 1, 0)")
+            .run(JSON.stringify({ type: "key", key }));
+        };
+        replaceCredential("test-go-key");
+        let currentKey = "test-go-key";
         const server = HttpClient.make((request) => {
           if (request.url === "https://opencode.ai/zen/go/v1/usage") {
             usageReads += 1;
-            assert.strictEqual(request.headers.authorization, "Bearer test-go-key");
+            assert.strictEqual(request.headers.authorization, `Bearer ${currentKey}`);
             if (scenario.unsupported)
-              return Effect.succeed(
-                HttpClientResponse.fromWeb(request, new Response(null, { status: 403 })),
+              return Deferred.succeed(usageStarted, undefined).pipe(
+                Effect.as(HttpClientResponse.fromWeb(request, new Response(null, { status: 403 }))),
               );
             if (usageReads === 1)
               return Deferred.succeed(usageStarted, undefined).pipe(Effect.andThen(Effect.never));
-            const window = { percent: 10, resetsAt: "2026-11-01T00:00:00.000Z" };
+            const window = {
+              percent: currentKey === "test-go-key" ? 10 : 80,
+              resetsAt: "2026-11-01T00:00:00.000Z",
+            };
             return Effect.succeed(
               HttpClientResponse.fromWeb(
                 request,
@@ -422,6 +448,11 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
                       : [],
                 };
           return Deferred.await(healthGate).pipe(
+            Effect.andThen(
+              replacingCredential && path === "/api/model"
+                ? Deferred.succeed(replacementHealthStarted, undefined)
+                : Effect.void,
+            ),
             Effect.as(HttpClientResponse.fromWeb(request, Response.json(body))),
           );
         });
@@ -443,13 +474,10 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           instanceId: ProviderInstanceId.make("opencode-usage-recovery"),
           displayName: undefined,
           environment: [
-            {
-              name: "OPENCODE_AUTH_CONTENT",
-              sensitive: true,
-              value: JSON.stringify({
-                "opencode-go": { type: "api", key: "test-go-key" },
-              }),
-            },
+            { name: "XDG_DATA_HOME", value: dataHome, sensitive: false },
+            { name: "OPENCODE_DB", value: "opencode.db", sensitive: false },
+            { name: "OPENCODE_AUTH_CONTENT", value: "", sensitive: true },
+            { name: "OPENCODE_API_KEY", value: "", sensitive: true },
           ],
           enabled: scenario.enabled,
           config: OpenCodeDriver.defaultConfig(),
@@ -485,7 +513,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         if (ready) yield* Fiber.join(ready);
         assert.strictEqual(usageReads, 0);
         const initial = yield* instance.snapshot.refreshUsage!.pipe(Effect.forkChild);
-        if (scenario.enabled && !scenario.unsupported) yield* Deferred.await(usageStarted);
+        if (scenario.enabled) yield* Deferred.await(usageStarted);
         yield* TestClock.adjust("5 seconds");
         yield* Fiber.join(initial);
         const failed = yield* instance.snapshot.getSnapshot;
@@ -520,10 +548,38 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         );
         assert.strictEqual(modelReads, catalogReads);
         assert.strictEqual(serverStarts, starts);
+        if (scenario.switchCredentials) {
+          const previousAuth = recovered.auth;
+          yield* TestClock.adjust("1 minute");
+          currentKey = "replacement-go-key";
+          replaceCredential(currentKey);
+          replacingCredential = true;
+          const health = yield* instance.snapshot.refresh.pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Deferred.await(replacementHealthStarted);
+          yield* TestClock.adjust("5 seconds");
+          yield* Fiber.join(health);
+          const changed = yield* instance.snapshot.getSnapshot;
+          assert.strictEqual(usageReads, expectedReads, "health discovery must not read quota");
+          assert.notStrictEqual(changed.auth.workspaceId, previousAuth.workspaceId);
+          assert.deepStrictEqual(changed.usageLimits?.windows, []);
+          assert.strictEqual(changed.usageLimits?.refreshAfter, undefined);
+          yield* instance.snapshot.refreshUsage!;
+          const fresh = yield* instance.snapshot.getSnapshot;
+          assert.strictEqual(usageReads, expectedReads + 1);
+          assert.strictEqual(fresh.usageLimits?.windows[0]?.usedPercent, 80);
+          assert.notStrictEqual(
+            fresh.usageLimits?.credentialFingerprint,
+            recovered.usageLimits?.credentialFingerprint,
+          );
+        }
+        const finalModelReads = modelReads;
+        const finalServerStarts = serverStarts;
         yield* TestClock.adjust("15 minutes");
-        assert.strictEqual(usageReads, expectedReads);
-        assert.strictEqual(modelReads, catalogReads);
-        assert.strictEqual(serverStarts, starts);
+        assert.strictEqual(usageReads, expectedReads + Number(scenario.switchCredentials));
+        assert.strictEqual(modelReads, finalModelReads);
+        assert.strictEqual(serverStarts, finalServerStarts);
       }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 });
