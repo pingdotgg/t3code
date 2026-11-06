@@ -69,7 +69,7 @@ it("keeps a refreshing preview's state and title over an older known summary", a
   await userEvent.hover(screen.getByRole("link"));
 
   await expect.element(page.getByText("Renamed title")).toBeVisible();
-  await expect.element(page.getByText("Closed", { exact: true })).toBeVisible();
+  await expect.element(page.getByLabelText("Closed", { exact: true })).toBeInTheDocument();
   expect(page.getByText("Known title").query()).toBeNull();
 });
 
