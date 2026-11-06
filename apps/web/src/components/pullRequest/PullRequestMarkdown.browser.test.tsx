@@ -100,11 +100,11 @@ it("loads the body's host media in the pull request's repository, not the checko
 
 it("keeps forge backslash escapes as literal text when math rendering is on", async () => {
   await using screen = await renderBody("github", {
-    text: "- [CGY-47901](https://x) - \\[Endpoint MFE\\] Language dropdown missing _(New)_\n- \\(foo bar\\)",
+    text: "- [CGY-47901](https://x) - \\[Endpoint MFE\\] Language dropdown missing _(New)_\n- \\(foo bar\\) and $x^2$",
   });
   await expect.element(screen.getByText(/Language dropdown missing/)).toBeInTheDocument();
   const math = [...screen.container.querySelectorAll("[data-markdown-math]")];
-  expect(math.map((node) => node.getAttribute("data-markdown-math"))).toEqual([]);
+  expect(math.map((node) => node.getAttribute("data-markdown-math"))).toEqual(["inline"]);
   expect(screen.container.textContent).toContain("[Endpoint MFE] Language dropdown missing");
   expect(screen.container.textContent).toContain("(foo bar)");
 });
