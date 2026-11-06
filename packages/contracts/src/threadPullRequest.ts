@@ -104,6 +104,10 @@ export const ThreadPullRequestWatch = Schema.Struct({
    * none did. Null once either happened; absent on watches saved before it existed.
    */
   checksAwaitedSince: Schema.optional(Schema.NullOr(IsoDateTime)),
+  /** Also wake when the base branch gets new commits. */
+  wakeOnBaseMove: Schema.optional(Schema.Boolean),
+  /** Commits behind the base the agent was last told; reset by a push. */
+  behindBy: Schema.optional(NonNegativeInt),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 

@@ -3073,6 +3073,32 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(yield* watchOf, recorded);
 
+      // Watching again changes only the base-move setting, and omitting it keeps the setting.
+      const rewatch = (id: string, wakeOnBaseMove?: boolean) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(id),
+          threadId,
+          ...key,
+          watching: true,
+          ...(wakeOnBaseMove === undefined ? {} : { wakeOnBaseMove }),
+        });
+      yield* rewatch("pr-watch-base-on", true);
+      assert.deepEqual(yield* watchOf, { ...recorded, wakeOnBaseMove: true });
+      // A sweep that read the watch before the setting changed must not undo it.
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-watch.sync",
+        commandId: CommandId.make("pr-watch-base-stale-record"),
+        threadId,
+        ...key,
+        startedAt: started.startedAt,
+        watch: { ...recorded, behindBy: 2 },
+      });
+      yield* rewatch("pr-watch-base-kept");
+      assert.deepEqual(yield* watchOf, { ...recorded, behindBy: 2, wakeOnBaseMove: true });
+      yield* rewatch("pr-watch-base-off", false);
+      assert.deepEqual(yield* watchOf, { ...recorded, behindBy: 2, wakeOnBaseMove: false });
+
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
         commandId: CommandId.make("pr-watch-stop"),
@@ -3184,6 +3210,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ...key,
         number: 7,
         watching: true,
+        wakeOnBaseMove: true,
       };
       const blocked = yield* orchestrator
         .dispatch({
@@ -3203,7 +3230,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ...restart,
         commandId: CommandId.make(`pr-watch-settle-restart-${mode}`),
       });
-      assert.isDefined((yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch);
+      assert.isTrue(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.wakeOnBaseMove,
+      );
     }),
   );
 

@@ -59,6 +59,17 @@ export const PullRequestTargetInput = Schema.Struct({
 });
 export type PullRequestTargetInput = typeof PullRequestTargetInput.Type;
 
+export const WatchPullRequestInput = Schema.Struct({
+  ...PullRequestTargetInput.fields,
+  wakeOnBaseMove: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Also wake when the base branch gets new commits. Calling again with a different value updates the existing watch.",
+    }),
+  ),
+});
+export type WatchPullRequestInput = typeof WatchPullRequestInput.Type;
+
 export class PullRequestUrlInvalidError extends Schema.TaggedError<PullRequestUrlInvalidError>()(
   "PullRequestUrlInvalidError",
   {},
@@ -374,8 +385,8 @@ const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
 
 const WatchPullRequestTool = Tool.make("watch_pull_request", {
   description:
-    "Watch an open PR for this thread, linking it first if needed. T3 wakes you on failed checks, passed required checks, new comments or reviews, or conflicts. Handle old comments first. Only later ones wake you. After this call, end your turn. The watch stays on after each wake, so do not call this again on a wake. A wake is not a merge decision. Check readiness yourself.",
-  parameters: PullRequestTargetInput,
+    "Watch an open PR for this thread, linking it first if needed. T3 wakes you on failed checks, passed required checks, new comments or reviews, or conflicts, and with `wakeOnBaseMove` when the base branch moves. Handle old comments first. Only later ones wake you. After this call, end your turn. The watch stays on after each wake, so do not call this again on a wake. A wake is not a merge decision. Check readiness yourself.",
+  parameters: WatchPullRequestInput,
   success: WatchPullRequestResult,
   failure: PullRequestToolError,
   dependencies,

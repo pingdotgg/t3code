@@ -723,6 +723,15 @@ function hasLiveRun(projection: Pick<OrchestrationV2ThreadProjection, "runs">): 
   return projection.runs.some(isLiveRun);
 }
 
+/** The setting belongs to watch commands, so a sync read before a re-watch cannot undo it. */
+function withWakeOnBaseMove(
+  watch: ThreadPullRequestWatch,
+  wakeOnBaseMove: boolean | undefined,
+): ThreadPullRequestWatch {
+  const { wakeOnBaseMove: _previous, ...rest } = watch;
+  return wakeOnBaseMove === undefined ? rest : { ...rest, wakeOnBaseMove };
+}
+
 function withPullRequestWatch(
   link: ThreadPullRequestLink,
   watch: ThreadPullRequestWatch | undefined,
@@ -4136,41 +4145,54 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const watch =
             command.type === "thread.pull-request-watch.sync"
               ? existing.watch?.startedAt === command.startedAt
-                ? (command.watch ?? undefined)
+                ? command.watch === null
+                  ? undefined
+                  : withWakeOnBaseMove(command.watch, existing.watch.wakeOnBaseMove)
                 : existing.watch
               : !command.watching
                 ? undefined
-                : (existing.watch ?? {
-                    startedAt,
-                    headSha: null,
-                    failedChecks: [],
-                    passed: false,
-                    passedChecks: [],
-                    conflicting: false,
-                    // Watching again must not repeat check or conflict news the last watch told.
-                    ...(existing.endedWatch && {
-                      headSha: existing.endedWatch.headSha,
-                      failedChecks: existing.endedWatch.failedChecks,
-                      passed: existing.endedWatch.passed,
-                      passedChecks: existing.endedWatch.passedChecks,
-                      conflicting: existing.endedWatch.conflicting,
-                    }),
-                    ...(existing.endedWatch?.owedChecks !== undefined && {
-                      owedChecks: existing.endedWatch.owedChecks,
-                    }),
-                    ...(existing.endedWatch?.awaitingApproval !== undefined && {
-                      awaitingApproval: existing.endedWatch.awaitingApproval,
-                    }),
-                    ...(existing.endedWatch?.approvalAnnounced !== undefined && {
-                      approvalAnnounced: existing.endedWatch.approvalAnnounced,
-                    }),
-                    ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
-                      checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
-                    }),
-                    remarksThrough: startedAt,
-                    remarkIds: [],
-                    wakes: 0,
-                  });
+                : existing.watch !== undefined
+                  ? command.wakeOnBaseMove === undefined ||
+                    command.wakeOnBaseMove === (existing.watch.wakeOnBaseMove ?? false)
+                    ? existing.watch
+                    : withWakeOnBaseMove(existing.watch, command.wakeOnBaseMove)
+                  : withWakeOnBaseMove(
+                      {
+                        startedAt,
+                        headSha: null,
+                        failedChecks: [],
+                        passed: false,
+                        passedChecks: [],
+                        conflicting: false,
+                        // Watching again must not repeat check or conflict news the last watch told.
+                        ...(existing.endedWatch && {
+                          headSha: existing.endedWatch.headSha,
+                          failedChecks: existing.endedWatch.failedChecks,
+                          passed: existing.endedWatch.passed,
+                          passedChecks: existing.endedWatch.passedChecks,
+                          conflicting: existing.endedWatch.conflicting,
+                        }),
+                        ...(existing.endedWatch?.owedChecks !== undefined && {
+                          owedChecks: existing.endedWatch.owedChecks,
+                        }),
+                        ...(existing.endedWatch?.awaitingApproval !== undefined && {
+                          awaitingApproval: existing.endedWatch.awaitingApproval,
+                        }),
+                        ...(existing.endedWatch?.approvalAnnounced !== undefined && {
+                          approvalAnnounced: existing.endedWatch.approvalAnnounced,
+                        }),
+                        ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
+                          checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
+                        }),
+                        ...(existing.endedWatch?.behindBy !== undefined && {
+                          behindBy: existing.endedWatch.behindBy,
+                        }),
+                        remarksThrough: startedAt,
+                        remarkIds: [],
+                        wakes: 0,
+                      },
+                      command.wakeOnBaseMove,
+                    );
           if (watch === existing.watch && links === linked) return thread;
           const final =
             command.type === "thread.pull-request-watch.sync" && watch === undefined
