@@ -25,6 +25,7 @@ export interface AgentAwarenessState {
   readonly threadTitle: string;
   readonly phase: AgentAwarenessPhase;
   readonly headline: string;
+  readonly retained?: boolean;
   readonly detail?: string;
   readonly modelTitle: string;
   readonly updatedAt: string;
@@ -41,27 +42,47 @@ function buildAgentAwarenessDeepLink(input: {
 export interface ProjectThreadAwarenessV2Input {
   readonly environmentId: EnvironmentId;
   readonly project: Pick<Project, "title">;
-  readonly thread: Pick<
-    OrchestrationV2ThreadShell,
-    | "activityRunStatus"
-    | "id"
-    | "lineage"
-    | "latestRunStopRequested"
-    | "modelSelection"
-    | "pendingBackgroundTasks"
-    | "pendingRuntimeRequest"
-    | "settledOverride"
-    | "status"
-    | "title"
-    | "updatedAt"
-  >;
+  readonly now?: number;
+  readonly thread: Partial<
+    Pick<
+      OrchestrationV2ThreadShell,
+      "archivedAt" | "snoozedUntil" | "snoozedAt" | "latestRunCompletedAt"
+    >
+  > &
+    Pick<
+      OrchestrationV2ThreadShell,
+      | "activityRunStatus"
+      | "id"
+      | "lineage"
+      | "latestRunStopRequested"
+      | "modelSelection"
+      | "pendingBackgroundTasks"
+      | "pendingRuntimeRequest"
+      | "settledOverride"
+      | "status"
+      | "title"
+      | "updatedAt"
+    >;
 }
 
 export function projectThreadAwarenessV2(
   input: ProjectThreadAwarenessV2Input,
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
-  if (!isListedThreadLineage(thread.lineage)) return null;
+  if (!isListedThreadLineage(thread.lineage) || thread.archivedAt != null) return null;
+  if (
+    input.now !== undefined &&
+    thread.snoozedUntil != null &&
+    DateTime.toEpochMillis(thread.snoozedUntil) > input.now
+  ) {
+    const failedAfterSnooze =
+      (thread.activityRunStatus ?? thread.status) === "failed" &&
+      (thread.snoozedAt == null ||
+        (thread.latestRunCompletedAt != null &&
+          DateTime.toEpochMillis(thread.latestRunCompletedAt) >
+            DateTime.toEpochMillis(thread.snoozedAt)));
+    if (thread.pendingRuntimeRequest == null && !failedAfterSnooze) return null;
+  }
   const phase = resolveThreadAwarenessPhaseV2(thread);
   if (phase === null) {
     return null;
@@ -88,6 +109,7 @@ export function projectThreadAwarenessV2(
     threadTitle: thread.title,
     phase,
     headline: headlineForPhase(phase),
+    retained: true,
     ...(detail === undefined ? {} : { detail }),
     modelTitle: thread.modelSelection.model,
     updatedAt: DateTime.formatIso(thread.updatedAt),

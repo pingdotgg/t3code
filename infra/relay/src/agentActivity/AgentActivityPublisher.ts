@@ -21,6 +21,7 @@ import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
+import * as AgentWidgetRefresh from "./AgentWidgetRefresh.ts";
 
 export type AgentActivityPublishError =
   | FcmDeliveries.FcmDeliveryError
@@ -39,6 +40,7 @@ export class AgentActivityPublisher extends Context.Service<
       readonly environmentPublicKey: string;
       readonly threadId: string;
       readonly state: RelayAgentActivityState | null;
+      readonly replay?: boolean;
     }) => Effect.Effect<RelayPublishResponse, AgentActivityPublishError>;
     readonly replayForLiveActivityRegistration: (input: {
       readonly userId: string;
@@ -57,12 +59,23 @@ const make = Effect.gen(function* () {
   const liveActivities = yield* LiveActivities.LiveActivities;
   const apnsDeliveries = yield* ApnsDeliveries.ApnsDeliveries;
   const fcmDeliveries = yield* FcmDeliveries.FcmDeliveries;
+  const widgets = yield* AgentWidgetRefresh.AgentWidgetRefresh;
 
   const publishForDeliveryUser = Effect.fnUntraced(function* (input: {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
     readonly state: RelayAgentActivityState | null;
     readonly nowMs: number;
+    readonly replay?: boolean;
+    readonly refreshWidget: boolean;
   }) {
+    const widgetDeliveries = input.refreshWidget
+      ? yield* widgets.notify({ userId: input.deliveryUser.userId }).pipe(
+          Effect.tapError((cause) => Effect.logWarning("Widget refresh enqueue failed", { cause })),
+          Effect.orElseSucceed(() => []),
+        )
+      : [];
+    if (!input.deliveryUser.notificationsEnabled && !input.deliveryUser.liveActivitiesEnabled)
+      return widgetDeliveries;
     const activeStates = input.deliveryUser.liveActivitiesEnabled
       ? yield* rows.listForUser({ userId: input.deliveryUser.userId })
       : [];
@@ -74,6 +87,7 @@ const make = Effect.gen(function* () {
         })
       : null;
     const notificationOnlyAggregate =
+      !input.replay &&
       input.deliveryUser.notificationsEnabled &&
       !input.deliveryUser.liveActivitiesEnabled &&
       input.state !== null
@@ -88,7 +102,13 @@ const make = Effect.gen(function* () {
       targets,
       Effect.fnUntraced(function* (target) {
         if (target.platform === "android") {
-          return [yield* fcmDeliveries.enqueue({ target, state: input.state })];
+          return [
+            yield* fcmDeliveries.enqueue({
+              target,
+              state: input.state,
+              replay: input.replay ?? false,
+            }),
+          ];
         }
         return yield* Effect.all(
           [
@@ -96,6 +116,7 @@ const make = Effect.gen(function* () {
               target,
               aggregate: liveActivityAggregate,
               nowMs: input.nowMs,
+              replay: input.replay ?? false,
             }),
             notificationOnlyAggregate === null
               ? Effect.succeed(null)
@@ -109,7 +130,7 @@ const make = Effect.gen(function* () {
       }),
       { concurrency: 4 },
     );
-    return deliveriesByTarget.flat();
+    return [...deliveriesByTarget.flat(), ...widgetDeliveries];
   });
 
   return AgentActivityPublisher.of({
@@ -206,9 +227,10 @@ const make = Effect.gen(function* () {
         "relay.thread_id": input.threadId,
         "relay.agent_activity.phase": input.state?.phase ?? "deleted",
       });
+      let changed = true;
       if (input.state) {
-        // Retain terminal rows until cron pruning so completed threads remain visible alongside active ones.
-        yield* rows.upsert({
+        // Inbox rows are removed by settlement or archival, not by elapsed time.
+        changed = yield* rows.upsert({
           environmentPublicKey: input.environmentPublicKey,
           state: input.state,
         });
@@ -223,6 +245,7 @@ const make = Effect.gen(function* () {
       const deliveryUsers = yield* links.listDeliveryUsersForEnvironment({
         environmentId: input.environmentId,
         environmentPublicKey: input.environmentPublicKey,
+        includeDisabled: true,
       });
       const now = yield* DateTime.now;
       const deliveriesByUser = yield* Effect.forEach(
@@ -231,7 +254,9 @@ const make = Effect.gen(function* () {
           publishForDeliveryUser({
             deliveryUser,
             state: input.state,
+            replay: input.replay ?? false,
             nowMs: now.epochMilliseconds,
+            refreshWidget: !input.replay || changed,
           }),
         { concurrency: 4 },
       );

@@ -68,7 +68,7 @@ export class AgentActivityRows extends Context.Service<
     readonly upsert: (input: {
       readonly environmentPublicKey: string;
       readonly state: RelayAgentActivityState;
-    }) => Effect.Effect<void, AgentActivityRowUpsertPersistenceError>;
+    }) => Effect.Effect<boolean, AgentActivityRowUpsertPersistenceError>;
     readonly pruneTerminal: (input: {
       readonly updatedBefore: string;
     }) => Effect.Effect<void, AgentActivityRowPruneTerminalPersistenceError>;
@@ -79,6 +79,7 @@ export class AgentActivityRows extends Context.Service<
     }) => Effect.Effect<void, AgentActivityRowDeletePersistenceError>;
     readonly listForUser: (input: {
       readonly userId: string;
+      readonly includeLiveActivitiesDisabled?: boolean;
     }) => Effect.Effect<
       ReadonlyArray<RelayAgentActivityState>,
       AgentActivityRowListPersistenceError
@@ -121,7 +122,7 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-      yield* db
+      const changed = yield* db
         .insert(relayAgentActivityRows)
         .values({
           environmentId: input.state.environmentId,
@@ -141,7 +142,9 @@ const make = Effect.gen(function* () {
             stateJson,
             updatedAt: input.state.updatedAt,
           },
+          setWhere: sql`${relayAgentActivityRows.stateJson} is distinct from excluded.state_json`,
         })
+        .returning({ threadId: relayAgentActivityRows.threadId })
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -152,6 +155,7 @@ const make = Effect.gen(function* () {
               }),
           ),
         );
+      return changed.length > 0;
     }),
 
     remove: Effect.fn("relay.agent_activity_rows.remove")(function* (input) {
@@ -189,6 +193,7 @@ const make = Effect.gen(function* () {
         .where(
           and(
             sql`${relayAgentActivityRows.stateJson} ->> 'phase' IN ('completed', 'failed')`,
+            sql`COALESCE(${relayAgentActivityRows.stateJson} ->> 'retained', 'false') != 'true'`,
             lt(relayAgentActivityRows.updatedAt, input.updatedBefore),
           ),
         )
@@ -221,7 +226,9 @@ const make = Effect.gen(function* () {
           and(
             eq(relayEnvironmentLinks.userId, input.userId),
             isNull(relayEnvironmentLinks.revokedAt),
-            eq(relayEnvironmentLinks.liveActivitiesEnabled, true),
+            input.includeLiveActivitiesDisabled
+              ? undefined
+              : eq(relayEnvironmentLinks.liveActivitiesEnabled, true),
           ),
         )
         .orderBy(desc(relayAgentActivityRows.updatedAt))
