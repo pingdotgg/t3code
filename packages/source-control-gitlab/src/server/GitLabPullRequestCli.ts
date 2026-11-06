@@ -1287,7 +1287,9 @@ export const make = Effect.gen(function* () {
       host: input.host,
       path: `projects/${projectPath(input.repository)}/users?${query([
         ["per_page", String(MAX_PAGE_SIZE)],
-        ...searchParams(input.search),
+        // GitLab answers nothing for a user search under three characters; callers narrow the
+        // unsearched page instead.
+        ...((input.search?.trim().length ?? 0) >= 3 ? searchParams(input.search) : []),
       ])}`,
     }).pipe(
       Effect.flatMap((result) => {

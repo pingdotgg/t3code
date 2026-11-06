@@ -277,6 +277,8 @@ export const PullRequestCapabilities = Schema.Struct({
   stacks: Schema.optional(Schema.Boolean),
   stackActions: Schema.optional(Schema.Boolean),
   labels: Schema.optional(Schema.Boolean),
+  /** The host searches the repository's users, so composers can complete `@login`. */
+  mentions: Schema.optional(Schema.Boolean),
   /**
    * Every head gets at least one check, so a head that has gone a while without any means none
    * reported rather than that the repository runs none. Absent means an empty list says nothing.

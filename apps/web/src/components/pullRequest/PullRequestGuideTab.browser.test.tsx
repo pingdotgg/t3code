@@ -55,6 +55,7 @@ it("keeps Try again inside a short panel when a failed guide has long diagnostic
       active
       canComment={false}
       rangeComments={false}
+      mentionScope={null}
       onAskAboutLines={null}
       onAskAboutStop={null}
       onFinishReview={null}

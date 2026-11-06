@@ -32,6 +32,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   updateMethods: ["rebase"],
   search: true,
   reactions: true,
+  mentions: true,
   // GitLab's viewed marks live in browser-local storage.
   viewedFiles: "environment",
   review: {
