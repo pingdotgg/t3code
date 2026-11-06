@@ -8,8 +8,6 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
-import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -24,7 +22,6 @@ export function DraftThreadHeader(props: {
   readonly cwd: string | null;
 }) {
   const navigation = useNavigation();
-  const { themeVariables } = useAppearancePreferences();
   const environmentId = props.thread.environmentId;
   const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const canWriteGit = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
@@ -52,15 +49,11 @@ export function DraftThreadHeader(props: {
       draft
       title={props.title}
       subtitle=""
-      headerColor={themeVariables["--color-header"]}
-      usesNativeHeaderGlass={NATIVE_LIQUID_GLASS_SUPPORTED}
       hasThreadCwd={props.cwd !== null}
-      hasWorkspaceRoot={Boolean(props.project.workspaceRoot)}
       fileInspectorSupported={false}
       inspectorMode={null}
       onToggleInspector={openFiles}
       onOpenFilesInspector={openFiles}
-      onOpenGitInspector={requiresThread}
       gitControls={{
         environmentId,
         threadId: props.thread.id,
