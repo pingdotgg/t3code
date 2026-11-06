@@ -216,6 +216,11 @@ export function cursorMcpServers(
   };
 }
 
+const sameMcpEndpoint = (
+  left: McpProviderSession.McpProviderSessionConfig | undefined,
+  right: McpProviderSession.McpProviderSessionConfig | undefined,
+) => left?.endpoint === right?.endpoint && left?.authorizationHeader === right?.authorizationHeader;
+
 function providerSession(input: {
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
   readonly providerInstanceId: ProviderInstanceId;
@@ -955,6 +960,7 @@ interface ActiveCursorTurn {
 interface CursorLiveAgent {
   readonly nativeThreadId: string;
   readonly session: CursorAgentSdk.CursorAgentSdkSession;
+  readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
 }
 
 export interface CursorAdapterV2Options {
@@ -2242,13 +2248,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             yield* existing.session.close.pipe(Effect.ignore);
             yield* Ref.set(liveAgent, null);
           }
+          const mcpSession = yield* mcpSessions.read(openInput.threadId);
           const options = makeCursorAgentOptions({
             ...(apiKey === undefined ? {} : { apiKey }),
             modelSelection: openInput.modelSelection,
             runtimePolicy: openInput.runtimePolicy,
             platform,
             threadId: openInput.threadId,
-            mcpSession: yield* mcpSessions.read(openInput.threadId),
+            mcpSession,
           });
           if (
             platform === "win32" &&
@@ -2273,6 +2280,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           const next = {
             nativeThreadId: sdkSession.agentId,
             session: sdkSession,
+            mcpSession,
           } satisfies CursorLiveAgent;
           yield* Ref.set(liveAgent, next);
           return next;
@@ -2399,7 +2407,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const compacted = message === "/compress";
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
-            // Create-time and send-time mcpServers merge with settingSources (SDK >= 1.0.39).
+            // Send-time mcpServers make the SDK reconnect every MCP server, ambient ones included,
+            // so send them only when they no longer match the set the agent was opened with.
+            const sendMcpServers = sameMcpEndpoint(agent.mcpSession, mcpSession)
+              ? undefined
+              : mcpServers;
             const sdkRun = yield* agent.session
               .send({
                 message,
@@ -2407,7 +2419,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 options: {
                   model: cursorSdkModelSelection(turnInput.modelSelection),
                   mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
-                  ...(mcpServers === undefined ? {} : { mcpServers }),
+                  ...(sendMcpServers === undefined ? {} : { mcpServers: sendMcpServers }),
                 },
                 onDelta: (update) => {
                   if (context === null) {

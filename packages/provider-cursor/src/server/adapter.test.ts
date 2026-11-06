@@ -40,14 +40,14 @@ const { ConfigurationError } = loadCursorSdk();
 
 describe("CursorAdapterV2", () => {
   it.effect.each([
-    { status: "finished", model: undefined, lateModel: undefined },
-    { status: "cancelled", model: "claude-opus-4-6", lateModel: undefined },
-    { status: "error", model: "custom-fable", lateModel: undefined },
-    { status: "finished", model: undefined, lateModel: "gpt-6-sol" },
-    { status: "finished", model: "gpt-6-sol", lateModel: null },
+    { status: "finished", model: undefined, lateModel: undefined, rotateMcpSession: false },
+    { status: "cancelled", model: "claude-opus-4-6", lateModel: undefined, rotateMcpSession: true },
+    { status: "error", model: "custom-fable", lateModel: undefined, rotateMcpSession: false },
+    { status: "finished", model: undefined, lateModel: "gpt-6-sol", rotateMcpSession: false },
+    { status: "finished", model: "gpt-6-sol", lateModel: null, rotateMcpSession: false },
   ] as const)(
     "projects Cursor tasks and unfinished tools: $status, late model $lateModel",
-    ({ status, model, lateModel }) =>
+    ({ status, model, lateModel, rotateMcpSession }) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const workspace = yield* fileSystem.makeTempDirectoryScoped({
@@ -56,7 +56,7 @@ describe("CursorAdapterV2", () => {
         const instanceId = ProviderInstanceId.make("cursor");
         const threadId = ThreadId.make("cursor-lifecycle-thread");
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-        yield* mcpSessions.set({
+        const mcpSession = {
           environmentId: EnvironmentId.make("cursor-lifecycle-environment"),
           threadId,
           providerSessionId: "cursor-lifecycle-session",
@@ -64,8 +64,9 @@ describe("CursorAdapterV2", () => {
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer synthetic-cursor-token",
           browserToolsAvailable: true,
-        });
-        let sentWithMcpOverride = true;
+        };
+        yield* mcpSessions.set(mcpSession);
+        let sentWithMcpOverride: boolean | undefined;
         const modelSelection = { instanceId, model: "composer-2.5" };
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",
@@ -174,6 +175,9 @@ describe("CursorAdapterV2", () => {
           modelSelection,
           runtimePolicy,
         });
+        if (rotateMcpSession) {
+          yield* mcpSessions.set({ ...mcpSession, authorizationHeader: "Bearer rotated-token" });
+        }
         const now = yield* DateTime.now;
         yield* runtime.startTurn({
           threadId,
@@ -220,7 +224,7 @@ describe("CursorAdapterV2", () => {
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
         );
-        assert.isTrue(sentWithMcpOverride);
+        assert.equal(sentWithMcpOverride, rotateMcpSession);
         const rows = events.filter((event) => event.type === "subagent.updated");
         assert.equal(rows[0]?.subagent.status, "running");
         assert.equal(rows[0]?.subagent.model, model ?? null);
