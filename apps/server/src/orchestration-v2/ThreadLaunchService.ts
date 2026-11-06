@@ -464,15 +464,18 @@ const make = Effect.gen(function* () {
           }
         }
         if (shouldFetch) yield* setupTracker.stageStatus(threadId, "fetch", "done");
-        if (
-          !(yield* git
+        // `:/text` bases are commit searches, not refs; `hasCommit` treats the appended
+        // `^{commit}` as part of the pattern (same guard as checkWorktreeBase).
+        const recordedBaseResolves =
+          startRef.startsWith(":") ||
+          (yield* git
             .hasCommit({
               cwd: project.workspaceRoot,
               // `git worktree add` reads `-` as the previous checkout.
               refName: startRef === "-" ? "@{-1}" : startRef,
             })
-            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))))
-        ) {
+            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))));
+        if (!recordedBaseResolves) {
           const remoteName =
             remote?.remoteName ??
             (yield* git

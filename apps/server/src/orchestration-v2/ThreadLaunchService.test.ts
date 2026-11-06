@@ -1214,10 +1214,7 @@ it.effect("re-bases a scheduled task's stored main on the remote default branch"
       const projection = yield* preparationSettled(thread!.id);
       assert.equal(projection.runs[0]?.status, "starting");
       assert.equal(projection.thread.worktreePath, worktreePath);
-      assert.equal(
-        (yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(),
-        remoteHead,
-      );
+      assert.equal((yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(), remoteHead);
     }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerScheduledTasks)));
   }).pipe(
     Effect.provide(
@@ -1285,15 +1282,84 @@ it.effect("re-bases a stored worktree base on the checked-out branch without a r
       const projection = yield* preparationSettled(launched.threadId);
       assert.equal(projection.runs[0]?.status, "starting");
       assert.equal(projection.thread.worktreePath, worktreePath);
-      assert.equal(
-        (yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(),
-        betaHead,
-      );
+      assert.equal((yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(), betaHead);
     }).pipe(Effect.provide(harness.layer));
   }).pipe(
     Effect.provide(
       GitVcsDriver.layer.pipe(
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-local-git-" })),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
+);
+
+it.effect("keeps a `:/` commit-search base instead of re-basing", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-search-base-" });
+    const cwd = `${directory}/repo`;
+    const worktreePath = `${directory}/worktree`;
+    yield* fs.makeDirectory(cwd);
+    const command = (at: string, args: string[]) =>
+      git.execute({ operation: "launch-test", cwd: at, args });
+    yield* command(cwd, ["init", "-b", "beta"]);
+    yield* command(cwd, ["config", "user.name", "Test"]);
+    yield* command(cwd, ["config", "user.email", "test@example.test"]);
+    yield* command(cwd, ["commit", "--allow-empty", "-m", "searched base"]);
+    const searchedHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+    yield* command(cwd, ["commit", "--allow-empty", "-m", "later work"]);
+
+    const harness = makeHarness({
+      hasCommit: ({ refName }) =>
+        command(cwd, ["rev-parse", "--verify", `${refName}^{commit}`]).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        ),
+      git: {
+        resolveWorktreeBaseRemote: (input) => git.resolveWorktreeBaseRemote({ ...input, cwd }),
+        resolvePrimaryRemoteName: () => git.resolvePrimaryRemoteName(cwd),
+        resolveDefaultBranchName: (_cwd, remoteName) =>
+          git.resolveDefaultBranchName(cwd, remoteName),
+        currentBranch: () =>
+          command(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]).pipe(
+            Effect.map((result) => result.stdout.trim() || null),
+            Effect.orElseSucceed(() => null),
+          ),
+        hasRefNamed: () => Effect.succeed(false),
+      },
+      fetchWorktreeBaseCommit: (input) => git.fetchWorktreeBaseCommit({ ...input, cwd }),
+      createWorktree: (input, options) =>
+        git.createWorktree({ ...input, cwd, path: worktreePath }, options),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:search-base",
+          thread: "thread:launch:search-base",
+          message: "Build the feature",
+          workspace: {
+            type: "worktree",
+            baseRef: ":/searched",
+            branch: "feature",
+            startFromOrigin: false,
+          },
+        }),
+      );
+      const projection = yield* preparationSettled(launched.threadId);
+      assert.equal(projection.runs[0]?.status, "starting");
+      assert.equal(projection.thread.worktreePath, worktreePath);
+      assert.equal(
+        (yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(),
+        searchedHead,
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-search-git-" })),
         Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
     ),
