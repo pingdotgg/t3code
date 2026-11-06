@@ -1639,35 +1639,41 @@ export default function GitActionsControl({
           onClick={onOpenChanges}
         >
           <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-          <span className={cn("shrink-0", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
-          {changesBaseLabel ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="pointer-events-auto min-w-0 truncate text-xs text-muted-foreground" />
+          <span className="flex min-w-0 flex-1 items-baseline gap-2.5">
+            <span className="shrink-0">Changes</span>
+            {changesBaseLabel ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span className="pointer-events-auto min-w-0 truncate text-xs text-muted-foreground" />
+                  }
+                >
+                  {changesBaseLabel}
+                </TooltipTrigger>
+                <TooltipPopup side="top" className="max-w-96 break-words">
+                  {changesBaseLabel}
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
+            <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums">
+              <span
+                className={
+                  changesTotals.insertions
+                    ? "text-diff-addition-foreground"
+                    : "text-muted-foreground"
                 }
               >
-                {changesBaseLabel}
-              </TooltipTrigger>
-              <TooltipPopup side="top" className="max-w-96 break-words">
-                {changesBaseLabel}
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
-          <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums">
-            <span
-              className={
-                changesTotals.insertions ? "text-diff-addition-foreground" : "text-muted-foreground"
-              }
-            >
-              +{formatDiffCount(changesTotals.insertions)}
-            </span>
-            <span
-              className={
-                changesTotals.deletions ? "text-diff-deletion-foreground" : "text-muted-foreground"
-              }
-            >
-              -{formatDiffCount(changesTotals.deletions)}
+                +{formatDiffCount(changesTotals.insertions)}
+              </span>
+              <span
+                className={
+                  changesTotals.deletions
+                    ? "text-diff-deletion-foreground"
+                    : "text-muted-foreground"
+                }
+              >
+                -{formatDiffCount(changesTotals.deletions)}
+              </span>
             </span>
           </span>
         </ThreadDetailsControl>
