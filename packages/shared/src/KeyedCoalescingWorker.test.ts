@@ -187,7 +187,7 @@ describe("makeKeyedCoalescingWorker", () => {
       }),
     ),
   );
-  it.live(
+  it.effect(
     "keeps processing and releases the key when a processor throws before returning an effect",
     () =>
       Effect.scoped(
