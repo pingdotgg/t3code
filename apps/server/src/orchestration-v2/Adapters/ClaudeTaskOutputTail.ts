@@ -119,3 +119,31 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
     last = yield* pause;
   }
 });
+
+/** Reads the end of a finished output file, starting on a line so a cut never splits a
+ * character or escape sequence. `omittedBytes` counts the bytes before `text`. */
+export const readClaudeOutputFileTail = Effect.fn("ClaudeTaskOutputTail.readFileTail")(function* (
+  filePath: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const info = yield* fileSystem.stat(filePath);
+  // Opening a FIFO would block until a writer appears.
+  if (info.type !== "File") return Option.none();
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const handle = yield* fileSystem.open(filePath, { flag: "r" });
+      const size = Number((yield* handle.stat).size);
+      let start = Math.max(0, size - MAX_READ_BYTES);
+      yield* handle.seek(BigInt(start), "start");
+      let bytes = Option.getOrElse(yield* handle.readAlloc(size - start), () => new Uint8Array());
+      if (start > 0) {
+        const newline = bytes.indexOf(0x0a);
+        if (newline !== -1 && newline + 1 < bytes.byteLength) {
+          bytes = bytes.subarray(newline + 1);
+          start += newline + 1;
+        }
+      }
+      return Option.some({ text: new TextDecoder().decode(bytes), omittedBytes: start });
+    }),
+  );
+});
