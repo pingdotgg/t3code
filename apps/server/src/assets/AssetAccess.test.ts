@@ -312,6 +312,20 @@ describe("AssetAccess", () => {
       ]) {
         expect(yield* resolveAsset(token, name), name).toBeNull();
       }
+
+      yield* fs.writeFileString(path.join(pageDir, ".env"), "SECRET=1");
+      yield* fs.writeFileString(path.join(pageDir, "accounts.sqlite"), "rows");
+      yield* fs.symlink(path.join(pageDir, ".env"), path.join(pageDir, "environment.css"));
+      yield* fs.symlink(path.join(pageDir, "accounts.sqlite"), path.join(pageDir, "download.png"));
+      yield* fs.symlink(path.join(pageDir, ".hidden"), path.join(pageDir, "public"));
+      for (const name of ["environment.css", "download.png", "public/secret.png"]) {
+        expect(yield* resolveAsset(token, name), name).toBeNull();
+      }
+      yield* fs.symlink(path.join(pageDir, "media"), path.join(pageDir, "shared"));
+      expect(yield* resolveAsset(token, "shared/depth-0.png")).toMatchObject({
+        kind: "file",
+        path: yield* fs.realPath(path.join(pageDir, "media", "depth-0.png")),
+      });
     }).pipe(Effect.provide(layerTest)),
   );
 

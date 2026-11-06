@@ -381,6 +381,9 @@ const resolvePageFolderFile = Effect.fn("AssetAccess.resolvePageFolderFile")(fun
     relativePath,
   });
   if (!canonicalFile || !isWithinRoot(path, canonicalFile, directory.path)) return null;
+  // A visible symlink must not reach a hidden or disallowed file in the folder.
+  const canonicalType = pageFolderFileType(path, path.relative(directory.path, canonicalFile));
+  if (!canonicalType) return null;
   const file = yield* openMediaFile(canonicalFile).pipe(
     Effect.tapError((cause) =>
       Effect.logError("Failed to open page folder file.", { filePath: canonicalFile, cause }),
@@ -393,7 +396,7 @@ const resolvePageFolderFile = Effect.fn("AssetAccess.resolvePageFolderFile")(fun
     Effect.orElseSucceed(() => null),
   );
   if (identity?.device !== directory.device || identity.inode !== directory.inode) return null;
-  return { kind: "file", path: canonicalFile, file, ...type } satisfies ResolvedAsset;
+  return { kind: "file", path: canonicalFile, file, ...canonicalType } satisfies ResolvedAsset;
 });
 
 const HEADER_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
