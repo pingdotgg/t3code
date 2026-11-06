@@ -45,6 +45,8 @@ describe("V2 preview upgrade", () => {
             'client', ${JSON.stringify(projectId === "renamed" ? { title: "repo" } : { autoPull: true })}, '{}', 2)
         `;
       }
+      // Builds of this change before renumbering already added the column.
+      yield* sql`ALTER TABLE projection_projects ADD COLUMN has_custom_title INTEGER NOT NULL DEFAULT 0`;
       yield* runMigrations();
       assert.deepStrictEqual(
         yield* sql`SELECT project_id, has_custom_title FROM projection_projects ORDER BY project_id`,
