@@ -1,11 +1,12 @@
 import { Button } from "./ui/Button";
 import * as Dialog from "./ui/Dialog";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent } from "react";
 import { Modal, View } from "react-native";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { openAttachmentInViewer, shareAttachmentUri } from "../lib/attachmentDownload";
+import { openAttachmentInViewer } from "../lib/attachmentDownload";
+import { useMediaActions } from "../state/mediaActions";
 import type {
   ResolvedFilePreviewDocument,
   ResolvedFilePreviewSource,
@@ -21,34 +22,15 @@ function PdfDocumentPreview(props: {
 }) {
   const insets = useSafeAreaInsets();
   const { uri, name = "PDF", mimeType = "application/pdf", sourceIdentifier } = props.source;
-  const shareRequest = useRef<AbortController | null>(null);
-  const [sharing, setSharing] = useState(false);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the in-flight PDF share when the viewer closes
-  useEffect(() => () => shareRequest.current?.abort(), []);
-  const share = () => {
-    if (shareRequest.current) return;
-    const request = new AbortController();
-    shareRequest.current = request;
-    setSharing(true);
-    void shareAttachmentUri({
+  const media = useMediaActions(
+    props.source.actionsSource ?? {
+      name,
+      mimeType,
       uri,
-      attachment: { name, mimeType },
-      signal: request.signal,
       ...(sourceIdentifier ? { sourceIdentifier } : {}),
-    })
-      .catch((error: unknown) => {
-        if (!request.signal.aborted) {
-          Dialog.alert(
-            "Could not share file",
-            error instanceof Error ? error.message : "Try again.",
-          );
-        }
-      })
-      .finally(() => {
-        shareRequest.current = null;
-        if (!request.signal.aborted) setSharing(false);
-      });
-  };
+    },
+  );
+  const save = media.actions.find(({ id }) => id === "save");
   return (
     <Modal
       animationType="slide"
@@ -68,8 +50,8 @@ function PdfDocumentPreview(props: {
             {
               accessibilityLabel: `Save or share ${name}`,
               icon: "square.and.arrow.up",
-              onPress: share,
-              disabled: sharing,
+              onPress: media.share,
+              disabled: media.sharing || save?.disabled === true,
             },
           ]}
         />

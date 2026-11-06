@@ -727,19 +727,27 @@ function MessageAttachmentFile(props: {
     })();
   };
 
+  const pdfResource = {
+    _tag: "attachment",
+    attachmentId: attachment.id,
+    fileName: attachment.name,
+    mimeType: "application/pdf",
+  } as const;
   const openAttachment = () =>
     isPdf
       ? props.onPressPreview({
           kind: "pdf",
           name: attachment.name,
           environmentId: props.environmentId,
-          resource: {
-            _tag: "attachment",
-            attachmentId: attachment.id,
-            fileName: attachment.name,
-            mimeType: "application/pdf",
-          },
+          resource: pdfResource,
           sourceIdentifier,
+          actionsSource: {
+            name: attachment.name,
+            mimeType: "application/pdf",
+            environmentId: props.environmentId,
+            resource: pdfResource,
+            sourceIdentifier,
+          },
         })
       : navigation.navigate("ThreadAttachment", {
           environmentId: String(props.environmentId),
