@@ -13,32 +13,47 @@
   100% {
     opacity: 1;
   }
-  /* Full foreground at 50% is under 3:1 on some themes, so this is the dimmest that passes. */
+  /* Pitwall's 0.5 stays under 3:1 on 8 of the 12 themes at any clamp. */
   50% {
-    opacity: 0.6;
+    opacity: var(--row-dot-dim);
   }
 }
 
-/* These are the mildest mixes that keep pill text at 4.5:1 on all 12 built-in themes. */
+/* State colours keep their hue and chroma; only lightness is clamped to hold 4.5:1 on these rows. */
 @utility sidebar-variant-tokens {
   --contrast-secondary-label: color-mix(in srgb, var(--foreground) 72%, transparent);
   --row-muted: color-mix(in srgb, var(--foreground) 80%, transparent);
-  --variant-warning: color-mix(in srgb, var(--warning-foreground) 40%, var(--foreground));
-  --variant-success: color-mix(in srgb, var(--success-foreground) 40%, var(--foreground));
-  --variant-info: color-mix(in srgb, var(--info-foreground) 40%, var(--foreground));
-  --variant-error: color-mix(in srgb, var(--error-foreground) 40%, var(--foreground));
-  --variant-guest: color-mix(in srgb, var(--guest-foreground) 40%, var(--foreground));
-  --variant-input: color-mix(in srgb, var(--color-indigo-600) 40%, var(--foreground));
+  --row-state-floor: 0.75;
+  --row-dot-dim: 0.6;
+  --variant-warning: oklch(from var(--warning-foreground) min(l, 0.38) c h);
+  --variant-success: oklch(from var(--success-foreground) min(l, 0.38) c h);
+  --variant-info: oklch(from var(--info-foreground) min(l, 0.38) c h);
+  --variant-error: oklch(from var(--error-foreground) min(l, 0.38) c h);
+  --variant-guest: oklch(from var(--guest-foreground) min(l, 0.38) c h);
+  --variant-input: oklch(from var(--color-indigo-600) min(l, 0.38) c h);
 
   .dark & {
-    --variant-input: color-mix(in srgb, var(--color-indigo-300) 40%, var(--foreground));
+    --variant-warning: oklch(from var(--warning-foreground) max(l, var(--row-state-floor)) c h);
+    --variant-success: oklch(from var(--success-foreground) max(l, var(--row-state-floor)) c h);
+    --variant-info: oklch(from var(--info-foreground) max(l, var(--row-state-floor)) c h);
+    --variant-error: oklch(from var(--error-foreground) max(l, var(--row-state-floor)) c h);
+    --variant-guest: oklch(from var(--guest-foreground) max(l, var(--row-state-floor)) c h);
+    --variant-input: oklch(from var(--color-indigo-300) max(l, var(--row-state-floor)) c h);
   }
 
-  &[aria-current="page"] {
-    --variant-warning: color-mix(in srgb, var(--warning-foreground) 30%, var(--foreground));
-    --variant-success: color-mix(in srgb, var(--success-foreground) 30%, var(--foreground));
-    --variant-info: color-mix(in srgb, var(--info-foreground) 30%, var(--foreground));
-    --variant-error: color-mix(in srgb, var(--error-foreground) 30%, var(--foreground));
+  /* These dark themes have lighter surfaces, so their colours need a higher floor to pass. */
+  .dark[data-theme-id="grove"] & {
+    --row-state-floor: 0.95;
+    --row-dot-dim: 0.7;
+  }
+  .dark[data-theme-id="ocean"] &,
+  .dark[data-theme-id="ember"] & {
+    --row-state-floor: 0.9;
+    --row-dot-dim: 0.7;
+  }
+  .dark[data-theme-id="iris"] & {
+    --row-state-floor: 0.85;
+    --row-dot-dim: 0.7;
   }
 
   & .text-warning-foreground {
@@ -122,7 +137,7 @@
 }
 
 @utility sidebar-status-dot {
-  background-color: color-mix(in srgb, currentColor 30%, var(--foreground));
+  background-color: currentColor;
 
   [data-slot="sidebar"][data-state="collapsed"] & {
     animation: none;
