@@ -327,8 +327,7 @@ function SidebarUpdateControl() {
       setIsCheckAnimationLatched(true);
       setCheckAnimationKey((key) => key + 1);
     }
-    void checkProviderUpdates();
-    void bridge
+    const appCheck = bridge
       .checkForUpdate()
       .then((result) => {
         if (result.checked) return;
@@ -351,8 +350,10 @@ function SidebarUpdateControl() {
             description: error instanceof Error ? error.message : "Update check failed.",
           }),
         );
-      })
-      .finally(() => setIsActionPending(false));
+      });
+    void Promise.allSettled([appCheck, checkProviderUpdates()]).then(() =>
+      setIsActionPending(false),
+    );
   };
 
   const runEverything = async () => {
