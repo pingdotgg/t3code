@@ -163,6 +163,12 @@ Use a thread's Git actions to commit, push, and create a pull request. T3 Code c
 messages, review titles, and descriptions from your changes. Descriptions also draw on the work in
 the thread, including the checks it ran.
 
+Committing while the agent is working asks you to confirm first, because the agent may be partway
+through a change. Choose **Commit when done** to run the commit once the agent finishes, including
+any queued messages. The commit runs only if the agent finishes cleanly, and it waits in the open
+app, so closing the app cancels it. You can cancel it from the same Git action. It isn't offered on
+the default branch when the action also pushes.
+
 An existing fork PR can appear beside the branch even if you pushed without setting an upstream.
 If its badge is missing because several remotes hold that branch, set the branch's upstream to
 the intended remote with `git branch --set-upstream-to=<remote>/<branch>`.

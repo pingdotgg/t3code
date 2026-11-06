@@ -1,4 +1,5 @@
 import {
+  createGitActionQueue,
   createVcsActionManager,
   createVcsEnvironmentAtoms,
   createVcsStatusRevalidationAtomFamily,
@@ -6,9 +7,15 @@ import {
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { subscribeDocumentReturn } from "../lib/documentActivity";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentThreadShells } from "./threads";
 
 export const vcsEnvironment = createVcsEnvironmentAtoms(connectionAtomRuntime);
 export const vcsActionManager = createVcsActionManager(connectionAtomRuntime);
+export const gitActionQueue = createGitActionQueue({
+  registry: appAtomRegistry,
+  threadShellAtom: environmentThreadShells.threadShellAtom,
+});
 
 /**
  * Refreshes a checkout's status when the user comes back to the window, where

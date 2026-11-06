@@ -128,6 +128,8 @@ export const GitRunStackedActionInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   action: GitStackedAction,
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
+  // The ref the client showed and confirmed; its status can trail a checkout by an agent.
+  expectedRefName: Schema.optional(TrimmedNonEmptyStringSchema),
   featureBranch: Schema.optional(Schema.Boolean),
   filePaths: Schema.optional(Schema.Array(GitFilePath).check(Schema.isMinLength(1))),
   threadId: Schema.optional(ThreadId),
@@ -260,6 +262,8 @@ export type VcsStatusRemoteResult = typeof VcsStatusRemoteResult.Type;
 export const VcsStatusResult = Schema.Struct({
   ...VcsStatusLocalShape,
   ...VcsStatusRemoteShape,
+  // The remote fields are placeholders until the first remote read for this ref lands.
+  isRemoteStatusPending: Schema.optional(Schema.Boolean),
 });
 export type VcsStatusResult = typeof VcsStatusResult.Type;
 

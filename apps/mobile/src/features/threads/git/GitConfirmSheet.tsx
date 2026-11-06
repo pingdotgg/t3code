@@ -70,6 +70,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
     navigation.dispatch(StackActions.replace("Thread", { environmentId, threadId }));
     await gitActions.onRunSelectedThreadGitAction({
       action: confirmAction,
+      ...(branchName ? { expectedRefName: branchName } : {}),
       ...(params.commitMessage ? { commitMessage: params.commitMessage } : {}),
       ...(params.filePaths ? { filePaths: params.filePaths.split(",") } : {}),
     });
@@ -83,6 +84,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
       await gitActions.onRunSelectedThreadGitAction({
         action: confirmAction,
         featureBranch: true,
+        ...(branchName ? { expectedRefName: branchName } : {}),
         ...(params.commitMessage ? { commitMessage: params.commitMessage } : {}),
         ...(params.filePaths ? { filePaths: params.filePaths.split(",") } : {}),
       });
@@ -101,8 +103,12 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
     );
     const created = await gitActions.onCreateSelectedThreadBranch(newBranchName);
     if (created === null) return;
-    await gitActions.onRunSelectedThreadGitAction({ action: confirmAction });
+    await gitActions.onRunSelectedThreadGitAction({
+      action: confirmAction,
+      expectedRefName: newBranchName,
+    });
   }, [
+    branchName,
     canChangeThreadBranch,
     confirmAction,
     gitActions,

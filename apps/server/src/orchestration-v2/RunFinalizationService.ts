@@ -106,21 +106,28 @@ export const layerObserver = Layer.effect(
             [workspaceEntries.refresh(cwd), vcsStatus.refreshLocalStatus(cwd)],
             { concurrency: "unbounded" },
           );
-          if (local.refName === null || local.isDefaultRef) return;
-          const thread = yield* projections.getThreadShell(threadId);
-          if (!thread || thread.branch !== local.refName) return;
-          if (thread.activeRunId !== null && thread.activeRunId !== runId) return;
-          // The forge CLI can take minutes, so the next turn must not wait for it. A newer
-          // turn's lookup replaces a running one instead of queueing behind the cwd's lock.
-          yield* vcsStatus.refreshPullRequestStatus(cwd).pipe(
+          if (local.refName === null) return;
+          const thread = local.isDefaultRef ? null : yield* projections.getThreadShell(threadId);
+          const shouldLookUpPullRequest =
+            thread?.branch === local.refName &&
+            (thread.activeRunId === null || thread.activeRunId === runId);
+          // Divergence goes first so a clean tree never reads as up to date while the forge CLI
+          // runs. That CLI can take minutes, so the next turn must not wait for it. A newer
+          // turn's lookup replaces a running one, but divergence alone must not cancel a lookup.
+          const divergence = vcsStatus.refreshDivergence(cwd);
+          yield* (
+            shouldLookUpPullRequest
+              ? divergence.pipe(Effect.andThen(vcsStatus.refreshPullRequestStatus(cwd)))
+              : divergence
+          ).pipe(
             Effect.catch((error) =>
-              Effect.logWarning("failed to refresh pull request status after run completion", {
+              Effect.logWarning("failed to refresh remote status after run completion", {
                 threadId,
                 cwd,
                 detail: error.message,
               }),
             ),
-            FiberMap.run(pullRequestLookups, cwd),
+            FiberMap.run(pullRequestLookups, cwd, { onlyIfMissing: !shouldLookUpPullRequest }),
           );
         },
         (effect, { cwd }) =>

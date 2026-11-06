@@ -343,9 +343,11 @@ export function mergeGitStatusParts(
   local: VcsStatusLocalResult,
   remote: VcsStatusRemoteResult | null,
 ): VcsStatusResult {
+  if (remote !== null) return { ...local, ...remote };
   return {
     ...local,
-    ...(remote ?? EMPTY_GIT_STATUS_REMOTE),
+    ...EMPTY_GIT_STATUS_REMOTE,
+    ...(local.isRepo ? { isRemoteStatusPending: true } : {}),
   };
 }
 
@@ -384,7 +386,10 @@ export function applyGitStatusStreamEvent(
     case "snapshot":
       return mergeGitStatusParts(event.local, event.remote);
     case "localUpdated":
-      return mergeGitStatusParts(event.local, current ? toRemoteStatusPart(current) : null);
+      return mergeGitStatusParts(
+        event.local,
+        current && !current.isRemoteStatusPending ? toRemoteStatusPart(current) : null,
+      );
     case "remoteUpdated":
       if (current === null) {
         return mergeGitStatusParts(

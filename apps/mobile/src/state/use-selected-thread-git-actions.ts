@@ -368,6 +368,7 @@ export function useSelectedThreadGitActions() {
           actionId,
           action: input.action,
           ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
+          ...(input.expectedRefName ? { expectedRefName: input.expectedRefName } : {}),
           ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
           threadId: thread.id,

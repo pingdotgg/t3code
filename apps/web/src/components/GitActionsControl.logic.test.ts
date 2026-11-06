@@ -125,6 +125,44 @@ describe("when: local changes are behind upstream", () => {
   });
 });
 
+describe("when: remote status has not loaded", () => {
+  it("keeps the full action for local changes", () => {
+    const pendingChanges = status({
+      isRemoteStatusPending: true,
+      hasUpstream: false,
+      hasWorkingTreeChanges: true,
+    });
+    assert.deepInclude(resolveQuickAction(pendingChanges, false), {
+      label: "Commit, push & PR",
+      disabled: false,
+      action: "commit_push_pr",
+    });
+    assert.deepInclude(resolveQuickAction(pendingChanges, false, true), {
+      label: "Commit & push",
+      disabled: false,
+      action: "commit_push",
+    });
+  });
+
+  it("does not claim a clean ref has nothing to push", () => {
+    const quick = resolveQuickAction(
+      status({ isRemoteStatusPending: true, hasUpstream: false }),
+      false,
+    );
+    assert.deepInclude(quick, { disabled: true, hint: "Waiting for remote status." });
+  });
+
+  it("still offers publishing when the repository has no remote", () => {
+    const quick = resolveQuickAction(
+      status({ isRemoteStatusPending: true, hasUpstream: false, hasPrimaryRemote: false }),
+      false,
+      false,
+      false,
+    );
+    assert.equal(quick.kind, "open_publish");
+  });
+});
+
 describe("when: ref has no upstream configured", () => {
   it("resolveQuickAction runs push and create PR when no upstream and commits are ahead", () => {
     const quick = resolveQuickAction(

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { sourceControlClients } from "../sourceControlClients.ts";
 import {
+  requiresActiveRunConfirmation,
   buildMenuItems,
   getGitActionDisabledReason,
   resolveDefaultBranchActionDialogCopy,
@@ -41,6 +42,53 @@ const openPr = {
   headRef: "feature/test",
   state: "open" as const,
 };
+
+describe("resolveQuickAction", () => {
+  it("offers a change request for a pushed branch ahead of the default branch", () => {
+    expect(resolveQuickAction(status({ aheadOfDefaultCount: 1 }), false)).toMatchObject({
+      label: "Create PR",
+      disabled: false,
+      action: "create_pr",
+    });
+    expect(resolveQuickAction(status({ aheadOfDefaultCount: 1 }), false, true).disabled).toBe(true);
+  });
+
+  it("keeps the full action for changes but claims nothing else before remote state loads", () => {
+    const pending = { isRemoteStatusPending: true, hasUpstream: false };
+    expect(
+      resolveQuickAction(status({ ...pending, hasWorkingTreeChanges: true }), false),
+    ).toMatchObject({ label: "Commit, push & PR", disabled: false, action: "commit_push_pr" });
+    expect(resolveQuickAction(status(pending), false)).toMatchObject({
+      disabled: true,
+      hint: "Waiting for remote status.",
+    });
+    const [, pushItem] = buildMenuItems(status(pending), false);
+    expect(
+      getGitActionDisabledReason({
+        item: pushItem!,
+        gitStatus: status(pending),
+        isBusy: false,
+        hasOriginRemote: true,
+      }),
+    ).toBe("Waiting for remote status.");
+  });
+});
+
+describe("requiresActiveRunConfirmation", () => {
+  it.each([
+    { action: "commit", running: true, hasChanges: true, expected: true },
+    { action: "commit_push", running: true, hasChanges: true, expected: true },
+    { action: "commit_push_pr", running: true, hasChanges: true, expected: true },
+    { action: "commit_push", running: true, hasChanges: false, expected: false },
+    { action: "push", running: true, hasChanges: true, expected: false },
+    { action: "create_pr", running: true, hasChanges: true, expected: false },
+    { action: "commit", running: false, hasChanges: true, expected: false },
+  ] as const)("$action running=$running changes=$hasChanges", (row) => {
+    expect(requiresActiveRunConfirmation(row.action, row.running, row.hasChanges)).toBe(
+      row.expected,
+    );
+  });
+});
 
 describe("git action copy", () => {
   it("says PR for a GitHub ref", () => {
