@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Installs a T3 Learn release with its one-line installer on a macOS or Linux
 # runner and checks that it runs next to (or without) T3 Code:
-#   t3-learn-install-test.sh <fresh|next-to-t3-code|appimage> <version>
+#   ominax-install-test.sh <fresh|next-to-t3-code|appimage> <version>
 # Screenshots and logs land in $ARTIFACTS.
 set -euo pipefail
 
@@ -115,7 +115,7 @@ if [ "$scenario" = fresh ]; then
         ditto -x -k "$zip" "${zip%.zip}"
         partitions="$partitions,cdhash:$(codesign -dvvv "${zip%.zip}"/*.app 2>&1 | sed -n 's/^CDHash=//p')"
       done
-      keychain="$HOME/Library/Keychains/t3-learn-install-test.keychain-db"
+      keychain="$HOME/Library/Keychains/ominax-install-test.keychain-db"
       security create-keychain -p ci "$keychain"
       security set-keychain-settings "$keychain"
       security unlock-keychain -p ci "$keychain"
@@ -155,7 +155,7 @@ if [ "$os" = Darwin ] && [ "$scenario" = fresh ] && [ -n "$previous" ] && [ "$pr
   [ -n "$app" ] || fail "the installed OminaX app bundle is missing"
   before="$(stat -f %i "$app")"
   executable="$(defaults read "$app/Contents/Info.plist" CFBundleExecutable)"
-  node scripts/t3-learn-update-check.ts --executable "$app/Contents/MacOS/$executable" \
+  node scripts/ominax-update-check.ts --executable "$app/Contents/MacOS/$executable" \
     --feed-port 8765 --expect "$version"
   # The swap moves the bundle away for a moment; a failed stat is not a new bundle.
   replaced() { now="$(stat -f %i "$app" 2>/dev/null)" && [ "$now" != "$before" ]; }

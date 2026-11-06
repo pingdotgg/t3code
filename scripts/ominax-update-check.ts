@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalDate:off
 // Drives an installed T3 Learn through an in-app update from a local feed
 // (T3CODE_DESKTOP_MOCK_UPDATES), up to the point where it quits to install.
-//   node scripts/t3-learn-update-check.ts --executable <app> --feed-port <port> --expect <version>
+//   node scripts/ominax-update-check.ts --executable <app> --feed-port <port> --expect <version>
 import * as NodeTimersPromises from "node:timers/promises";
 import * as NodeUtil from "node:util";
 
@@ -18,7 +18,7 @@ const { executable, expect: expectedVersion } = values;
 const feedPort = values["feed-port"];
 if (!executable || !feedPort || !expectedVersion) {
   throw new Error(
-    "Usage: t3-learn-update-check.ts --executable <app> --feed-port <port> --expect <version>",
+    "Usage: ominax-update-check.ts --executable <app> --feed-port <port> --expect <version>",
   );
 }
 

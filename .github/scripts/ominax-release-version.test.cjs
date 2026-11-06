@@ -5,7 +5,7 @@ const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const test = require("node:test");
 
-const script = join(process.cwd(), ".github/scripts/t3-learn-release-version.sh");
+const script = join(process.cwd(), ".github/scripts/ominax-release-version.sh");
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 const run = (cwd, commit, event = "workflow_run", ref = "") => {
   const output = join(cwd, "..", "output");
@@ -28,7 +28,7 @@ const run = (cwd, commit, event = "workflow_run", ref = "") => {
 };
 
 test("computes the next learn counter and skips docs-only or already-tagged commits", () => {
-  const root = mkdtempSync(join(tmpdir(), "t3-learn-release-"));
+  const root = mkdtempSync(join(tmpdir(), "ominax-release-"));
   const bare = join(root, "origin.git");
   const repo = join(root, "repo");
   git(root, "init", "--bare", bare);
