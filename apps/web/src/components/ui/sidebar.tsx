@@ -128,6 +128,164 @@ function moveFocusOutOfCollapsingSidebar() {
   trigger?.focus({ preventScroll: true });
 }
 
+const SIDEBAR_SLIDE_ID = "sidebar-slide";
+
+function sidebarSlideTargets() {
+  const scope = '[data-panel-animations="true"]';
+  const containers = document.querySelectorAll<HTMLElement>(
+    `${scope} [data-slot="sidebar-container"]`,
+  );
+  const insets = document.querySelectorAll<HTMLElement>(`${scope} [data-slot="sidebar-inset"]`);
+  return [
+    ...Array.from(containers, (element) => ({ element, parent: null, inset: false })),
+    ...Array.from(insets).flatMap((inset) => [
+      { element: inset, parent: null, inset: true },
+      ...Array.from(
+        inset.querySelectorAll<HTMLElement>("[data-sidebar-slide-children] > *"),
+        (element) => ({ element, parent: inset, inset: false }),
+      ),
+    ]),
+  ].map((target) => ({ ...target, start: target.element.getBoundingClientRect().left }));
+}
+
+function sidebarSlideAnchors(insets: HTMLElement[]) {
+  return insets.flatMap((inset) => [
+    ...Array.from(inset.querySelectorAll<HTMLElement>("[data-sidebar-slide-hold]"), (element) => ({
+      element,
+      inset,
+      via: null,
+    })),
+    ...Array.from(
+      inset.querySelectorAll<HTMLElement>(
+        "[data-sidebar-slide-children] > * [data-sidebar-slide-stay]",
+      ),
+      (element) => ({
+        element,
+        inset,
+        via: element.closest<HTMLElement>("[data-sidebar-slide-children] > *"),
+      }),
+    ),
+  ]);
+}
+
+function siblingSlot(element: Element | null, slot: string): HTMLElement | null {
+  return element instanceof HTMLElement && element.dataset.slot === slot ? element : null;
+}
+
+function sidebarInsetEdgeRows(inset: HTMLElement, rect: DOMRect, underNotch: boolean) {
+  const rows = Array.from(inset.querySelectorAll<HTMLElement>("[data-layout-pane-id]")).flatMap(
+    (pane) => {
+      const paneRect = pane.getBoundingClientRect();
+      if (paneRect.width === 0 || paneRect.right < rect.right - 1 || paneRect.left >= rect.right) {
+        return [];
+      }
+      const notch = underNotch
+        ? pane.querySelector<HTMLElement>('[data-pane-notch="right"]')
+        : null;
+      const top = notch?.offsetWidth ? notch.getBoundingClientRect().bottom : paneRect.top;
+      return [{ top: Math.max(top, rect.top), bottom: Math.min(paneRect.bottom, rect.bottom) }];
+    },
+  );
+  return rows.length > 0 ? rows : [{ top: rect.top, bottom: rect.bottom }];
+}
+
+function fillSidebarInsetEdge(
+  inset: HTMLElement,
+  offset: number,
+  timing: KeyframeAnimationOptions,
+) {
+  const opening = offset < 0;
+  const edge = opening
+    ? siblingSlot(inset.previousElementSibling, "sidebar-slide-surface")
+    : siblingSlot(inset.nextElementSibling, "sidebar-slide-frame");
+  if (!edge) return;
+  const rect = inset.getBoundingClientRect();
+  edge.style.left = `${opening ? rect.right + offset : rect.right}px`;
+  edge.style.width = `${opening ? -offset : window.innerWidth - rect.right}px`;
+  edge.replaceChildren(
+    ...sidebarInsetEdgeRows(inset, rect, opening).flatMap(({ top, bottom }) => {
+      if (opening) {
+        const piece = document.createElement("div");
+        piece.className = "absolute inset-x-0 rounded-pane bg-background";
+        Object.assign(piece.style, { top: `${top}px`, height: `${bottom - top}px` });
+        return [piece];
+      }
+      return (["top", "bottom"] as const).map((corner) => {
+        const piece = document.createElement("div");
+        piece.dataset.corner = corner;
+        piece.style.top = `${corner === "top" ? top : bottom}px`;
+        return piece;
+      });
+    }),
+  );
+  edge.animate({ opacity: [1, 1] }, timing);
+}
+
+function cancelSidebarSlide(elements: Iterable<Element | null>) {
+  for (const element of elements) {
+    for (const animation of element?.getAnimations() ?? []) {
+      if (animation.id === SIDEBAR_SLIDE_ID) animation.cancel();
+    }
+  }
+}
+
+function slideSidebar(commit: () => void) {
+  const targets = sidebarSlideTargets();
+  commit();
+  const first = targets[0];
+  if (!first) return;
+  window.requestAnimationFrame(() => {
+    const insets = targets.filter(({ inset }) => inset).map(({ element }) => element);
+    const anchors = sidebarSlideAnchors(insets);
+    cancelSidebarSlide([
+      ...targets.map(({ element }) => element),
+      ...anchors.map(({ element }) => element),
+      ...insets.flatMap((inset) => [inset.previousElementSibling, inset.nextElementSibling]),
+    ]);
+    const offsets = new Map(
+      targets.map(({ element, start }) => [element, start - element.getBoundingClientRect().left]),
+    );
+    const anchorStarts = anchors.map(({ element }) => element.getBoundingClientRect());
+    const duration = Number.parseFloat(
+      getComputedStyle(first.element).getPropertyValue("--panel-animation-duration"),
+    );
+    const timing: KeyframeAnimationOptions = {
+      duration: Number.isFinite(duration) ? duration : 0,
+      easing: "ease-out",
+      id: SIDEBAR_SLIDE_ID,
+    };
+    const slides = new Map<HTMLElement, number>();
+    for (const { element, parent, inset } of targets) {
+      const ownOffset = offsets.get(element) ?? 0;
+      if (parent && Math.abs(ownOffset) < 0.5) continue;
+      const offset = ownOffset - (parent ? (offsets.get(parent) ?? 0) : 0);
+      if (!element.isConnected || Math.abs(offset) < 0.5) continue;
+      if (inset) fillSidebarInsetEdge(element, offset, timing);
+      element.animate({ transform: [`translateX(${offset}px)`, "translateX(0)"] }, timing);
+      slides.set(element, offset);
+    }
+    anchors.forEach(({ element, inset, via }, index) => {
+      const start = anchorStarts[index];
+      const insetOffset = slides.get(inset) ?? 0;
+      const viaOffset = via ? (slides.get(via) ?? 0) : 0;
+      if (!start || (via ? viaOffset === 0 : insetOffset === 0)) return;
+      const contained = element.getBoundingClientRect();
+      const x = start.left - contained.left;
+      const y = start.top - contained.top;
+      const from = via || insetOffset < 0 ? x + insetOffset : x;
+      element.animate(
+        {
+          transform: [
+            `translate(${from}px, ${y}px)`,
+            `translate(${x + insetOffset + viaOffset}px, ${y}px)`,
+          ],
+        },
+        timing,
+      );
+    });
+  });
+}
+
 interface SidebarOpenState {
   readonly open: boolean;
   readonly openMobile: boolean;
@@ -152,7 +310,7 @@ function createSidebarOpenStore(defaultOpen: boolean, storageKey: string | undef
     }
     if (open !== state.open) {
       if (!isMobileViewport()) announceSidebarVisibility(open);
-      publish({ ...state, open });
+      slideSidebar(() => publish({ ...state, open }));
     }
     if (storageKey) writeLocalStorageValue(storageKey, open, defaultOpen, Schema.Boolean);
   };
@@ -366,7 +524,6 @@ function Sidebar({
         <div
           className={cn(
             "relative w-(--sidebar-width) bg-transparent",
-            "[[data-panel-animations=true]_&]:transition-[width] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
             "group-data-[collapsible=offcanvas]:w-0",
             "group-data-[side=right]:rotate-180",
             variant === "floating"
@@ -378,7 +535,6 @@ function Sidebar({
         <div
           className={cn(
             "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) md:flex",
-            "[[data-panel-animations=true]_&]:transition-[left,right,width] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
             side === "left"
               ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
               : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
@@ -625,21 +781,24 @@ function SidebarInset({
   ...props
 }: React.ComponentProps<"main"> & { variant?: "pane" | "split" }) {
   return (
-    <main
-      className={cn(
-        "relative flex min-w-0 w-full flex-1 flex-col",
-        variant === "pane" && "bg-background surface-grain",
-        "[[data-panel-animations=true]_&]:transition-[margin-inline-start] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
-        // The inset pane (pen mSaSF) on the window chrome: 12px from the window
-        // and from the sidebar's content, centered on the chrome row at the top.
-        // It stretches in the flex wrapper, so the route's own height yields.
-        "md:peer-data-[variant=inset]:h-auto md:peer-data-[variant=inset]:overflow-hidden md:peer-data-[variant=inset]:mt-(--workspace-pane-inset-top) md:peer-data-[variant=inset]:me-(--workspace-pane-inset) md:peer-data-[variant=inset]:mb-(--workspace-pane-inset) md:peer-data-[variant=inset]:ms-(--workspace-sidebar-edge-inset) md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ms-(--workspace-pane-inset)",
-        variant === "pane" && "md:peer-data-[variant=inset]:rounded-pane",
-        className,
-      )}
-      data-slot="sidebar-inset"
-      {...props}
-    />
+    <>
+      <div aria-hidden data-slot="sidebar-slide-surface" />
+      <main
+        className={cn(
+          "relative flex min-w-0 w-full flex-1 flex-col",
+          variant === "pane" && "bg-background surface-grain",
+          // The inset pane (pen mSaSF) on the window chrome: 12px from the window
+          // and from the sidebar's content, centered on the chrome row at the top.
+          // It stretches in the flex wrapper, so the route's own height yields.
+          "md:peer-data-[variant=inset]:h-auto md:peer-data-[variant=inset]:overflow-hidden md:peer-data-[variant=inset]:mt-(--workspace-pane-inset-top) md:peer-data-[variant=inset]:me-(--workspace-pane-inset) md:peer-data-[variant=inset]:mb-(--workspace-pane-inset) md:peer-data-[variant=inset]:ms-(--workspace-sidebar-edge-inset) md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ms-(--workspace-pane-inset)",
+          variant === "pane" && "md:peer-data-[variant=inset]:rounded-pane",
+          className,
+        )}
+        data-slot="sidebar-inset"
+        {...props}
+      />
+      <div aria-hidden data-slot="sidebar-slide-frame" />
+    </>
   );
 }
 
