@@ -3,7 +3,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as TestClock from "effect/testing/TestClock";
 import {
   ProviderDriverKind,
@@ -16,6 +18,7 @@ import {
 import {
   baselineFor,
   layerCeilingsAt,
+  layerCeilingsFromStore,
   layerCeilingsMemory,
   NadirCeilings,
   nadirRequestBody,
@@ -108,20 +111,37 @@ describe("baselineFor", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("keeps the ceiling in memory when the disk cannot save it", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const directory = yield* fileSystem.makeTempDirectoryScoped();
-      yield* fileSystem.chmod(directory, 0o500);
-      const routedAgain = yield* Effect.gen(function* () {
-        const ceilings = yield* NadirCeilings;
-        yield* rememberChoice(ceilings, "thread-1", opus, haiku);
-        return yield* baselineFor(ceilings, "thread-1", haiku);
-      }).pipe(Effect.provide(layerCeilingsAt(directory)));
-      yield* fileSystem.chmod(directory, 0o700);
-      expect(routedAgain).toEqual(opus);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
+  it.effect("keeps the ceiling in memory when the disk cannot save it", () => {
+    let failedSaves = 0;
+    const layerFailingSaves = Layer.effect(
+      KeyValueStore.KeyValueStore,
+      Effect.gen(function* () {
+        const memory = yield* KeyValueStore.KeyValueStore;
+        return KeyValueStore.make({
+          get: memory.get,
+          getUint8Array: memory.getUint8Array,
+          remove: memory.remove,
+          clear: memory.clear,
+          size: memory.size,
+          keys: memory.keys,
+          set: (key) =>
+            Effect.sync(() => (failedSaves += 1)).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new KeyValueStore.KeyValueStoreError({ method: "set", key, message: "full" }),
+                ),
+              ),
+            ),
+        });
+      }),
+    ).pipe(Layer.provide(KeyValueStore.layerMemory));
+    return Effect.gen(function* () {
+      const ceilings = yield* NadirCeilings;
+      yield* rememberChoice(ceilings, "thread-1", opus, haiku);
+      expect(failedSaves).toBe(1);
+      expect(yield* baselineFor(ceilings, "thread-1", haiku)).toEqual(opus);
+    }).pipe(Effect.provide(layerCeilingsFromStore.pipe(Layer.provide(layerFailingSaves))));
+  });
 
   it.effect("runs one routing turn at a time for each thread", () =>
     Effect.gen(function* () {

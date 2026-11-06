@@ -33,6 +33,12 @@ const MAX_PROMPT_CHARS = 40_000;
 // A short follow-up ("yes", "do it") depends on context Nadir does not see.
 const MIN_PROMPT_WORDS = 4;
 
+/** A bounded label for a failure; its message can carry arbitrary text. */
+const failureKind = (cause: unknown): string =>
+  typeof cause === "object" && cause !== null && "_tag" in cause && typeof cause._tag === "string"
+    ? cause._tag
+    : "unknown";
+
 const Ceiling = Schema.Struct({ baseline: ModelSelection, chosen: ModelSelection });
 type Ceiling = typeof Ceiling.Type;
 
@@ -53,7 +59,7 @@ export class NadirCeilings extends Context.Service<
 
 // ponytail: the memory copy and the locks hold one small entry per routed thread for the life of
 // the process. The memory copy keeps a ceiling the disk failed to save.
-const layerFromStore = Layer.effect(
+export const layerCeilingsFromStore = Layer.effect(
   NadirCeilings,
   Effect.gen(function* () {
     const store = KeyValueStore.toSchemaStore(yield* KeyValueStore.KeyValueStore, Ceiling);
@@ -76,7 +82,7 @@ const layerFromStore = Layer.effect(
         memory.set(threadId, ceiling);
         yield* (ceiling === undefined ? store.remove(threadId) : store.set(threadId, ceiling)).pipe(
           Effect.catch((cause) =>
-            Effect.logWarning("Nadir ceiling kept in memory only", { cause }),
+            Effect.logWarning("Nadir ceiling kept in memory only", { reason: failureKind(cause) }),
           ),
         );
       }),
@@ -92,10 +98,12 @@ const layerFromStore = Layer.effect(
   }),
 );
 
-export const layerCeilingsMemory = layerFromStore.pipe(Layer.provide(KeyValueStore.layerMemory));
+export const layerCeilingsMemory = layerCeilingsFromStore.pipe(
+  Layer.provide(KeyValueStore.layerMemory),
+);
 
 export const layerCeilingsAt = (directory: string) =>
-  layerFromStore.pipe(Layer.provide(KeyValueStore.layerFileSystem(directory)));
+  layerCeilingsFromStore.pipe(Layer.provide(KeyValueStore.layerFileSystem(directory)));
 
 // ponytail: one small file per thread while it runs below its ceiling; a thread deleted in that
 // state leaves its file. Prune with thread deletion if the directory ever grows.
@@ -328,7 +336,9 @@ export const chooseModelSelection = Effect.fn("NadirRouting.chooseModelSelection
             cache: input.cache,
           }),
         ).pipe(
-          Effect.tapError((cause) => Effect.logDebug("Nadir routing skipped", { cause })),
+          Effect.tapError((cause) =>
+            Effect.logDebug("Nadir routing skipped", { reason: failureKind(cause) }),
+          ),
           Effect.orElseSucceed(() => null),
         );
         const model = pickModel(answer, { baseline: baseline.model, current, menu });

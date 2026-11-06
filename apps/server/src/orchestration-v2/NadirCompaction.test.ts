@@ -27,7 +27,6 @@ it.layer(NodeServices.layer)("NadirCompaction", (it) => {
         const writeJson = (file: string, value: unknown) =>
           fileSystem.writeFileString(file, JSON.stringify(value));
         expect(yield* find()).toBeUndefined();
-        // A directory at the script's path is not a script.
         const labsScript = path.join(claudeHome, "nadir", "context_session.py");
         yield* fileSystem.makeDirectory(labsScript, { recursive: true });
         expect(yield* find()).toBeUndefined();

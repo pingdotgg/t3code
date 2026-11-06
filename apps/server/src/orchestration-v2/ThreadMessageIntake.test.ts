@@ -43,7 +43,8 @@ import {
   OrchestratorDispatchError,
 } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import { dispatchCommand } from "./ThreadMessageIntake.ts";
+import * as ThreadLaunch from "./ThreadLaunchService.ts";
+import { dispatchCommand, launchThread } from "./ThreadMessageIntake.ts";
 
 const layerIntakeTest = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-question-intake-",
@@ -440,6 +441,8 @@ it.effect("sends a guest message with the guest's files, never ones the client n
 describe("Nadir routing at intake", () => {
   const instanceId = ProviderInstanceId.make("claudeAgent");
   const opus = { instanceId, model: "claude-opus-5-5" };
+  const guestMessageId = GuestMessageId.make("guest-message:routed");
+  const prompt = "Rename the helper and update every caller";
   const send = (
     overrides: Partial<Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>> = {},
   ): OrchestrationV2Command => ({
@@ -447,13 +450,21 @@ describe("Nadir routing at intake", () => {
     commandId: CommandId.make("send-routed"),
     threadId: ThreadId.make("thread-routed"),
     messageId: MessageId.make("message-routed"),
-    text: "Rename the helper and update every caller",
+    text: prompt,
     attachments: [],
     dispatchMode: { type: "start_immediately" },
     createdBy: "user",
     creationSource: "web",
     ...overrides,
   });
+  // Only the fields the launch path reads; the launch service is a stub.
+  const launch = (overrides: Record<string, unknown> = {}) =>
+    ({
+      threadId: ThreadId.make("thread-launched"),
+      modelSelection: opus,
+      initialMessage: { text: prompt, attachments: [] },
+      ...overrides,
+    }) as unknown as ThreadLaunch.ThreadLaunchInput;
   const provider: ServerProvider = {
     instanceId,
     driver: ProviderDriverKind.make("claudeAgent"),
@@ -473,30 +484,55 @@ describe("Nadir routing at intake", () => {
     skills: [],
   };
 
-  const route = (command: OrchestrationV2Command, shell: { activeRunId: RunId | null }) =>
+  const run = <A, E, R>(effect: Effect.Effect<A, E, R>, activeRunId: RunId | null) =>
     Effect.gen(function* () {
       let requests = 0;
-      const captured: OrchestrationV2ServerCommand[] = [];
-      yield* dispatchCommand(command).pipe(
+      const dispatched: Array<string | undefined> = [];
+      const record = (model: string | undefined) => {
+        dispatched.push(model);
+        return Effect.fail(
+          new OrchestratorDispatchError({
+            commandId: CommandId.make("stop"),
+            commandType: "message.dispatch",
+            cause: "Stop after intake",
+          }),
+        );
+      };
+      yield* effect.pipe(
         Effect.provide(
           Layer.mergeAll(
             Layer.mock(ThreadManagementService.ThreadManagementService)({
-              dispatch: layerFailingDispatchHandler(captured),
-              // Only these shell fields are read.
+              dispatch: (command) =>
+                record(
+                  command.type === "message.dispatch" ? command.modelSelection?.model : undefined,
+                ),
+              // Only these shell and snapshot fields are read.
               getThreadShell: () =>
                 Effect.succeed({
-                  ...shell,
+                  activeRunId,
                   modelSelection: opus,
                   activeProviderThreadId: null,
                 } as unknown as Effect.Success<
                   ReturnType<ThreadManagementService.ThreadManagementServiceShape["getThreadShell"]>
                 >),
               getThreadSnapshotWindow: () =>
-                Effect.succeed({ projection: { providerThreads: [] } } as unknown as Effect.Success<
+                Effect.succeed({
+                  projection: {
+                    providerThreads: [],
+                    thread: {
+                      guestShare: {
+                        messages: [{ id: guestMessageId, status: "pending", attachments: [] }],
+                      },
+                    },
+                  },
+                } as unknown as Effect.Success<
                   ReturnType<
                     ThreadManagementService.ThreadManagementServiceShape["getThreadSnapshotWindow"]
                   >
                 >),
+            }),
+            Layer.mock(ThreadLaunch.ThreadLaunchService)({
+              launch: (input) => record(input.modelSelection.model) as never,
             }),
             Layer.mock(ProviderRegistry.ProviderRegistry)({
               getProviders: Effect.succeed([provider]),
@@ -530,37 +566,73 @@ describe("Nadir routing at intake", () => {
         ),
         Effect.result,
       );
-      const dispatched = captured[0];
-      return {
-        requests,
-        model: dispatched?.type === "message.dispatch" ? dispatched.modelSelection?.model : null,
-      };
+      return { requests, dispatched };
     });
 
   it.effect("routes a user's new turn and leaves every other send alone", () =>
     Effect.gen(function* () {
-      expect(yield* route(send(), { activeRunId: null })).toEqual({
+      expect(yield* run(dispatchCommand(send()), null)).toEqual({
         requests: 1,
-        model: "claude-haiku-5-5",
+        dispatched: ["claude-haiku-5-5"],
       });
-      // Each case differs from the routed send by one field, so no other guard hides it.
+      // Each case differs from the routed send by one field, and still reaches dispatch, so the
+      // gate under test is what skips Nadir.
       const unrouted: ReadonlyArray<readonly [string, OrchestrationV2Command, RunId | null]> = [
         ["a queued send", send({ dispatchMode: { type: "queue_after_active" } }), null],
         ["a steer", send({ deliveryIntent: "steer" }), null],
+        ["a restart", send({ deliveryIntent: "restart" }), null],
+        ["a guest message", send({ guestMessageId }), null],
         ["a scheduled task", send({ scheduledTaskId: ScheduledTaskId.make("task-1") }), null],
         ["a delegated send", send({ senderThreadId: ThreadId.make("thread-parent") }), null],
         [
+          "a delegated completion",
+          send({
+            delegatedCompletion: {
+              parentRunId: RunId.make("run-parent"),
+              generation: 1 as never,
+              taskIds: [],
+            },
+          }),
+          null,
+        ],
+        ["an idle compaction", send({ idleCompaction: "onReturn" }), null],
+        [
           "a restart continuation",
           send({ restartContinuationOfRunId: RunId.make("run-earlier") }),
+          null,
+        ],
+        [
+          "a usage-limit continuation",
+          send({ usageLimitContinuationOfRunId: RunId.make("run-limited") }),
+          null,
+        ],
+        [
+          "a manual continuation",
+          send({ manualContinuationOfRunId: RunId.make("run-manual") }),
           null,
         ],
         ["a retried command", send({ commandId: CommandId.make("send-replayed") }), null],
         ["a send during a run", send(), RunId.make("run-active")],
       ];
       for (const [label, command, activeRunId] of unrouted) {
-        const result = yield* route(command, { activeRunId });
-        expect(result.requests, label).toBe(0);
-        expect(result.model, label).toBeUndefined();
+        const result = yield* run(dispatchCommand(command), activeRunId);
+        expect(result, label).toEqual({ requests: 0, dispatched: [undefined] });
+      }
+    }).pipe(Effect.provide(layerIntakeTest)),
+  );
+
+  it.effect("routes a new thread's first message but not imported or delegated launches", () =>
+    Effect.gen(function* () {
+      expect(yield* run(launchThread(launch()), null)).toEqual({
+        requests: 1,
+        dispatched: ["claude-haiku-5-5"],
+      });
+      for (const [label, input] of [
+        ["an imported thread", launch({ importedNativeThread: {} })],
+        ["a delegated thread", launch({ delegatedFrom: {} })],
+      ] as const) {
+        const result = yield* run(launchThread(input), null);
+        expect(result, label).toEqual({ requests: 0, dispatched: ["claude-opus-5-5"] });
       }
     }).pipe(Effect.provide(layerIntakeTest)),
   );
