@@ -1,6 +1,6 @@
 # Installs a T3 Learn release with its one-line installer on a Windows runner
 # and checks that it runs next to (or without) T3 Code:
-#   t3-learn-install-test.ps1 <fresh|next-to-t3-code> <version>
+#   ominax-install-test.ps1 <fresh|next-to-t3-code> <version>
 # Screenshots and logs land in $env:ARTIFACTS.
 param([string] $Scenario, [string] $Version)
 $ErrorActionPreference = "Stop"

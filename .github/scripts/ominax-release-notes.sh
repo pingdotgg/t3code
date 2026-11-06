@@ -4,8 +4,8 @@
 # The release job copies the part before <details> into the updater manifests.
 set -euo pipefail
 
-since="${1:?usage: t3-learn-release-notes.sh <previous release tag> <commit>}"
-commit="${2:?usage: t3-learn-release-notes.sh <previous release tag> <commit>}"
+since="${1:?usage: ominax-release-notes.sh <previous release tag> <commit>}"
+commit="${2:?usage: ominax-release-notes.sh <previous release tag> <commit>}"
 
 shas="$(git rev-list --reverse --first-parent "$since..$commit")"
 new=()

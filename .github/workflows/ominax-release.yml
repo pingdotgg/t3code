@@ -1,7 +1,7 @@
-name: T3 Learn Release
+name: OminaX Release
 
 # Builds and publishes a tested T3 Learn release after every successful merge
-# to main. The preflight uses the commit tested by T3 Learn CI, skips docs-only
+# to main. The preflight uses the commit tested by OminaX CI, skips docs-only
 # changes and commits already released, then assigns the next -learn.N version.
 # A person can still cut a release from a tag such as v0.1.3-learn.1; that path
 # keeps the tag's version and commit. Installers and the app updater follow the
@@ -20,12 +20,12 @@ on:
     tags:
       - "v*-learn.*"
   workflow_run:
-    workflows: ["T3 Learn CI"]
+    workflows: ["OminaX CI"]
     types: [completed]
     branches: [main]
 
 concurrency:
-  group: t3-learn-release
+  group: ominax-release
   cancel-in-progress: false
 
 permissions:
@@ -59,7 +59,7 @@ jobs:
         name: Compute release version
         env:
           RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
-        run: bash .github/scripts/t3-learn-release-version.sh
+        run: bash .github/scripts/ominax-release-version.sh
 
       # Lists what changed since the release the updater last offered, so
       # changes in an unpromoted pre-release still reach users.
@@ -72,7 +72,7 @@ jobs:
           set -euo pipefail
           since="$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)" ||
             since="$(git tag --list 'v*-learn.*' | sort -V | tail -n 1)"
-          bash .github/scripts/t3-learn-release-notes.sh "$since" "$RELEASE_COMMIT" > release-notes.md
+          bash .github/scripts/ominax-release-notes.sh "$since" "$RELEASE_COMMIT" > release-notes.md
           cat release-notes.md
 
       - name: Upload release notes
@@ -349,8 +349,8 @@ jobs:
       - name: Add installers and checksums
         run: |
           set -euo pipefail
-          cp scripts/t3-learn-install.sh release-assets/install.sh
-          cp scripts/t3-learn-install.ps1 release-assets/install.ps1
+          cp scripts/ominax-install.sh release-assets/install.sh
+          cp scripts/ominax-install.ps1 release-assets/install.ps1
           cd release-assets
           sha256sum *.dmg *.zip *.AppImage *.deb *.exe t3-*.tar.gz install.sh install.ps1 > SHA256SUMS
           cat SHA256SUMS
@@ -468,12 +468,12 @@ jobs:
       - name: Install and check (macOS, Linux)
         if: runner.os != 'Windows'
         # On the rented Apple silicon Mac, the Intel rows run under Rosetta.
-        run: ${{ matrix.arch == 'x64' && runner.arch == 'ARM64' && 'arch -x86_64 ' || '' }}/bin/bash .github/scripts/t3-learn-install-test.sh "${{ matrix.scenario }}" "$VERSION"
+        run: ${{ matrix.arch == 'x64' && runner.arch == 'ARM64' && 'arch -x86_64 ' || '' }}/bin/bash .github/scripts/ominax-install-test.sh "${{ matrix.scenario }}" "$VERSION"
 
       - name: Install and check (Windows)
         if: runner.os == 'Windows'
         shell: powershell
-        run: .github/scripts/t3-learn-install-test.ps1 -Scenario "${{ matrix.scenario }}" -Version $env:VERSION
+        run: .github/scripts/ominax-install-test.ps1 -Scenario "${{ matrix.scenario }}" -Version $env:VERSION
 
       - name: Explain withheld promotion
         if: failure()
