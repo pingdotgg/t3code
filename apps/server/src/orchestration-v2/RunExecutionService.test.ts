@@ -3134,6 +3134,58 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
   }),
 );
 
+it.effect.each(["completed", "failed"] as const)(
+  "persists a background-task roster clear that arrives after a %s turn",
+  (status) =>
+    Effect.gen(function* () {
+      const pending = yield* Ref.make(true);
+      const ingested = yield* Ref.make<Array<ProviderAdapter.ProviderAdapterV2Event>>([]);
+      yield* captureRootRunTermination({
+        key: `roster-clear-${status}`,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        hasPendingBackgroundWorkForThread: () => Ref.get(pending),
+        events: (ids) => {
+          const roster = (hasTask: boolean) =>
+            ({
+              type: "provider_thread.updated",
+              driver,
+              providerThread: {
+                id: ids.providerThreadId,
+                driver,
+                appThreadId: ids.threadId,
+                providerSessionId: ProviderSessionId.make(`session:roster-clear-${status}`),
+                pendingBackgroundTasks: hasTask
+                  ? [{ taskId: "running-build", kind: "command", awaited: true }]
+                  : [],
+              },
+            }) as ProviderAdapter.ProviderAdapterV2Event;
+          return Stream.fromIterable([
+            roster(true),
+            rootTerminalEvent(ids, status),
+            roster(false),
+          ]).pipe(
+            Stream.mapEffect((event) =>
+              event.type === "provider_thread.updated"
+                ? Ref.set(
+                    pending,
+                    (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
+                  ).pipe(Effect.as(event))
+                : Effect.succeed(event),
+            ),
+          );
+        },
+        ingestNormalized: (input) =>
+          Ref.update(ingested, (all) => [...all, input.event]).pipe(Effect.as([])),
+      });
+      const rosters = (yield* Ref.get(ingested)).flatMap((event) =>
+        event.type === "provider_thread.updated"
+          ? [event.providerThread.pendingBackgroundTasks]
+          : [],
+      );
+      assert.deepEqual(rosters.at(-1), [], "an ended task must leave the persisted roster");
+    }),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;

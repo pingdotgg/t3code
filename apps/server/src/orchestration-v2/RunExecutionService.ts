@@ -1282,10 +1282,11 @@ export const layer: Layer.Layer<
             return false;
           }
           const terminal = yield* Ref.get(terminalEvent);
+          // A failed turn can leave background work running in a live provider process.
           if (
             terminal !== null &&
             terminal.status !== "completed" &&
-            !childTurnsContinue(terminal)
+            terminal.status !== "failed"
           ) {
             return true;
           }
