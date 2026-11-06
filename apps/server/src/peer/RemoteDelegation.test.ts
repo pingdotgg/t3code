@@ -1713,6 +1713,37 @@ it.effect("a retried cancel of a running task stops nothing new there", () =>
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("a cancel that read the task running sends one stop when its run ends first", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const delegated = yield* delegateToBox(a);
+      const { subagents } = yield* a.threads.getThreadRecords(parentThreadId, ["subagents"]);
+      const readRunning = subagents.find((task) => task.id === delegated.taskId)!;
+
+      // Its run ends there and is reported after the cancel read it, before it is recorded.
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      yield* taskResult(a, delegated.taskId);
+      yield* a.remote.cancel(
+        parentScope as McpInvocationContext.McpThreadInvocationScope,
+        readRunning,
+        { clientRequestId: "cancel-after-run-ended" },
+      );
+      yield* stoppedThere(a, delegated.taskId);
+      expect(yield* Ref.get(thread.interrupted)).toBe(1);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("cancelling a running task the box refuses to stop says it may still run there", () =>
   Effect.scoped(
     Effect.gen(function* () {
