@@ -655,17 +655,21 @@ export const layer = Layer.effect(
 
     const refreshUsageForModelSelection = Effect.fn(
       "ProviderRegistry.refreshUsageForModelSelection",
-    )(function* (primary: ModelSelection | null, fallback: ModelSelection | null) {
-      if (!primary || !fallback) return yield* Ref.get(providersRef);
-      const providers = yield* refreshUsage(primary.instanceId);
-      return exhaustedUsageWindow(
-        providers.find((provider) => provider.instanceId === primary.instanceId),
-        DateTime.toEpochMillis(yield* DateTime.now),
-        primary.model,
-      )
-        ? yield* refreshUsage(fallback.instanceId)
-        : providers;
-    });
+    )(
+      function* (primary: ModelSelection | null, fallback: ModelSelection | null) {
+        if (!primary || !fallback) return yield* Ref.get(providersRef);
+        const providers = yield* refreshUsage(primary.instanceId);
+        return exhaustedUsageWindow(
+          providers.find((provider) => provider.instanceId === primary.instanceId),
+          DateTime.toEpochMillis(yield* DateTime.now),
+          primary.model,
+        )
+          ? yield* refreshUsage(fallback.instanceId)
+          : providers;
+      },
+      Effect.timeoutOption("5 seconds"),
+      Effect.flatMap(Option.match({ onNone: () => Ref.get(providersRef), onSome: Effect.succeed })),
+    );
 
     type RefreshAllCompletion = Deferred.Deferred<ReadonlyArray<ServerProvider>>;
     const refreshAllInFlightRef = yield* Ref.make<Option.Option<RefreshAllCompletion>>(

@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -84,10 +85,14 @@ export const make = Effect.gen(function* () {
     ) => Effect.Effect<A, TextGenerationError>,
   ) {
     const instances = yield* registry.listInstances;
+    const usageDeadline = (yield* Clock.currentTimeMillis) + 5_000;
     yield* (
       instances.find((instance) => instance.instanceId === selection.instanceId)?.snapshot
         .refreshUsage ?? Effect.void
-    ).pipe(Effect.ignore);
+    ).pipe(
+      Effect.ignore,
+      Effect.timeoutOption(Math.max(0, usageDeadline - (yield* Clock.currentTimeMillis))),
+    );
     const readSnapshots = Effect.forEach(instances, (instance) => instance.snapshot.getSnapshot);
     let snapshots = yield* readSnapshots;
     const now = DateTime.toEpochMillis(yield* DateTime.now);
@@ -118,17 +123,19 @@ export const make = Effect.gen(function* () {
         isProviderAvailable(provider) &&
         isProviderTextGenerationCapable(provider) &&
         (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(provider.driver));
-      yield* Effect.forEach(
-        instances.filter(
-          (instance) =>
-            instance.enabled &&
-            snapshots.some(
-              (provider) => provider.instanceId === instance.instanceId && canServe(provider),
-            ),
-        ),
-        (instance) => (instance.snapshot.refreshUsage ?? Effect.void).pipe(Effect.ignore),
-        { concurrency: "unbounded", discard: true },
-      );
+      const remaining = usageDeadline - (yield* Clock.currentTimeMillis);
+      if (remaining > 0)
+        yield* Effect.forEach(
+          instances.filter(
+            (instance) =>
+              instance.enabled &&
+              snapshots.some(
+                (provider) => provider.instanceId === instance.instanceId && canServe(provider),
+              ),
+          ),
+          (instance) => (instance.snapshot.refreshUsage ?? Effect.void).pipe(Effect.ignore),
+          { concurrency: "unbounded", discard: true },
+        ).pipe(Effect.timeoutOption(remaining));
       snapshots = yield* readSnapshots;
       selection =
         fallbackTextGenerationModelSelection(

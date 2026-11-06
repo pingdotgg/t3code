@@ -1,3 +1,5 @@
+import * as TestClock from "effect/testing/TestClock";
+import * as Deferred from "effect/Deferred";
 import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   ProviderDriverKind,
@@ -527,11 +529,18 @@ const PREFLIGHT_PRIMARY_STATES = [
   "not installed",
   "signed out",
   "signed out, fallback failed",
+  "primary slow",
+  "fallback slow",
+  "both slow",
 ] as const;
 
 it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (primaryState) =>
   Effect.gen(function* () {
-    const exhausted = primaryState === "exhausted";
+    const slow = primaryState.endsWith("slow");
+    const primaryBlocked = primaryState === "primary slow";
+    const fallbackBlocked = primaryState === "fallback slow" || primaryState === "both slow";
+    const exhausted = primaryState === "exhausted" || slow;
+    let readStarted = yield* Deferred.make<void>();
     const fallbackFailed = primaryState === "signed out, fallback failed";
     const needsFallback =
       exhausted || primaryState === "not installed" || primaryState.startsWith("signed out");
@@ -548,7 +557,7 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
     const reads: ProviderInstanceId[] = [];
     const instances: ProviderInstance[] = [primary, fallback, unrelated, disabled].map(
       (instanceId) => {
-        let quotaRead = false;
+        let quotaRead = slow;
         const driver = ProviderDriverKind.make(
           instanceId === primary
             ? "codex"
@@ -597,8 +606,13 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
             getSnapshot: Effect.sync(() =>
               quotaRead ? snapshot : { ...snapshot, usageLimits: undefined },
             ),
-            refreshUsage: Effect.sync(() => {
+            refreshUsage: Effect.gen(function* () {
               reads.push(instanceId);
+              yield* Deferred.succeed(readStarted, undefined);
+              if (instanceId === primary && primaryBlocked) return yield* Effect.never;
+              if (instanceId === primary && primaryState === "both slow")
+                yield* Effect.sleep("3 seconds");
+              if (instanceId !== primary && fallbackBlocked) return yield* Effect.never;
               quotaRead = true;
             }),
             resolveMaintenance: () => Effect.die("unused"),
@@ -657,29 +671,40 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
     for (const operation of ["review", "title"] as const) {
       calls.length = 0;
       reads.length = 0;
-      if (operation === "title") {
-        expect(
-          yield* service.generateThreadTitle({
+      readStarted = yield* Deferred.make<void>();
+      const generate = Effect.gen(function* () {
+        if (operation === "title")
+          return yield* service.generateThreadTitle({
             cwd: "/tmp",
             message: "hello",
             linkedContext: "",
             modelSelection: selection,
-          }),
-        ).toEqual({ title: "Generated title" });
-      } else {
-        expect(
-          yield* service.generateReviewGuide({
-            cwd: "/tmp",
-            number: 1,
-            title: "Change",
-            description: "",
-            baseBranch: "main",
-            baseCommit: "base",
-            settledReview: "",
-            modelSelection: selection,
-          }),
-        ).toEqual({ stops: [] });
-      }
+          });
+        return yield* service.generateReviewGuide({
+          cwd: "/tmp",
+          number: 1,
+          title: "Change",
+          description: "",
+          baseBranch: "main",
+          baseCommit: "base",
+          settledReview: "",
+          modelSelection: selection,
+        });
+      });
+      let result;
+      if (slow) {
+        const finished = yield* Deferred.make<void>();
+        const fiber = yield* generate.pipe(
+          Effect.tap(() => Deferred.succeed(finished, undefined)),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(readStarted);
+        if (primaryState === "both slow") yield* TestClock.adjust("3 seconds");
+        yield* TestClock.adjust(primaryState === "both slow" ? "2 seconds" : "5 seconds");
+        expect(yield* Deferred.isDone(finished)).toBe(true);
+        result = yield* Fiber.join(fiber);
+      } else result = yield* generate;
+      expect(result).toEqual(operation === "title" ? { title: "Generated title" } : { stops: [] });
       expect(calls).toEqual([
         needsFallback && !fallbackFailed
           ? {
@@ -694,7 +719,7 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       actualReads.push([...reads].sort());
     }
     expect(actualReads).toEqual(
-      (needsFallback && !fallbackFailed
+      (needsFallback && !fallbackFailed && !primaryBlocked
         ? [
             [primary, fallback],
             [primary, fallback, unrelated],
