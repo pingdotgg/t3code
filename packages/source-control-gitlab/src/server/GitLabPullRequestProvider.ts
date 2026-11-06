@@ -5,6 +5,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import type {
+  PullRequestActor,
   PullRequestCapabilities,
   PullRequestReaction,
   PullRequestReviewDecision,
@@ -40,6 +41,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     verdicts: ["comment", "approve"],
   },
   reviewers: { request: true, listCandidates: true },
+  labels: true,
   edit: { changeRequest: true, comment: true },
 };
 
@@ -64,6 +66,7 @@ const MERGE_ACTIONS: ReadonlySet<string> = new Set([
 /** Authors may close/reopen/change draft state regardless of role; REST omits authorship. */
 export function gitLabViewerPermissions(input: {
   readonly viewerCanMerge: boolean;
+  readonly viewerCanEditLabels?: boolean | undefined;
 }): PullRequestViewerPermissions {
   return {
     actions: CAPABILITIES.actions.filter(
@@ -73,6 +76,7 @@ export function gitLabViewerPermissions(input: {
     resolve: true,
     verdicts: CAPABILITIES.review.verdicts,
     requestReviewers: true,
+    labels: input.viewerCanEditLabels === true,
     ...(input.viewerCanMerge ? { updateMethods: CAPABILITIES.updateMethods } : {}),
   };
 }
@@ -330,28 +334,45 @@ export const make = Effect.gen(function* () {
           recoverRead(cli.listReactions(input), {
             reactions: [] as ReadonlyArray<PullRequestReaction>,
             reactionsByNoteId: new Map<string, ReadonlyArray<PullRequestReaction>>(),
+            editedAtByNoteId: new Map<string, string>(),
+            botLogins: new Set<string>(),
           }),
         ],
         { concurrency: 4 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => ({
-          reactions: awards.reactions,
-          comments: notes.comments.map((comment) => ({
-            ...comment,
-            reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
-          })),
-          commentCount: notes.comments.length,
-          commentsTruncated: notes.truncated || discussions.truncated,
-          reviewThreads: discussions.threads.map((thread) => ({
-            ...thread,
-            comments: thread.comments.map((comment) => ({
+        Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => {
+          const edited = (id: string) => {
+            const editedAt = awards.editedAtByNoteId.get(id);
+            return editedAt === undefined ? {} : { editedAt };
+          };
+          const botLogins = new Set([...awards.botLogins].map((login) => login.toLowerCase()));
+          const withBotFlag = (author: PullRequestActor | null) =>
+            author !== null && botLogins.has(author.login.toLowerCase())
+              ? { ...author, isBot: true }
+              : author;
+          return {
+            reactions: awards.reactions,
+            comments: notes.comments.map((comment) => ({
               ...comment,
+              ...edited(comment.id),
+              author: withBotFlag(comment.author),
               reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
             })),
-          })),
-          commits,
-        })),
+            commentCount: notes.comments.length,
+            commentsTruncated: notes.truncated || discussions.truncated,
+            reviewThreads: discussions.threads.map((thread) => ({
+              ...thread,
+              comments: thread.comments.map((comment) => ({
+                ...comment,
+                ...edited(comment.id),
+                author: withBotFlag(comment.author),
+                reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+              })),
+            })),
+            commits,
+          };
+        }),
       ),
 
     // Straight from the host, never the shared read: this is what a write is refused or let
@@ -400,6 +421,29 @@ export const make = Effect.gen(function* () {
           number: input.number,
         })
         .pipe(Effect.mapError(fail("listReviewerCandidates"))),
+
+    listLabelCandidates: (input) =>
+      cli
+        .listLabelCandidates({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+          number: input.number,
+        })
+        .pipe(Effect.mapError(fail("listLabelCandidates"))),
+
+    setLabels: writing((input) =>
+      cli
+        .setLabels({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+          number: input.number,
+          labels: input.labels,
+          applied: input.applied,
+        })
+        .pipe(Effect.mapError(fail("setLabels"))),
+    ),
 
     listRepositoryLabels: (input) =>
       cli
