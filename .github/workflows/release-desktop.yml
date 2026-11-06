@@ -449,6 +449,8 @@ jobs:
           name: cli-${{ inputs.platform }}-${{ inputs.arch }}
           path: release-cli/*
           if-no-files-found: error
+          # The archive is already gzip or zip; deflating it again saves under 2%.
+          compression-level: 0
 
       - name: Install Linux desktop build libraries
         if: inputs.platform == 'linux'
@@ -761,6 +763,8 @@ jobs:
           name: desktop-${{ inputs.platform }}-${{ inputs.arch }}
           path: release-publish/*
           if-no-files-found: error
+          # Installers, zips and blockmaps are already compressed; deflating them again saves under 0.3%.
+          compression-level: 0
 
       - name: Upload resource monitor
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
