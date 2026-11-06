@@ -1,14 +1,11 @@
 import { createContext, useContext } from "react";
-import { Pressable, View } from "react-native";
+import { View } from "react-native";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useMediaActions } from "../state/mediaActions";
-import { AppText } from "./ui/AppText";
-import { SymbolView } from "./ui/AppSymbol";
 import type { FilePreviewImages } from "./FilePreviewModal.types";
-import { MediaActionsMenu } from "./MediaActionsMenu";
-import { MediaSourceCaption } from "./MediaSourceCaption";
+import { MediaPreviewHeader } from "./MediaPreviewHeader";
 
 type MediaImagePreviewProps = {
   readonly source: FilePreviewImages;
@@ -24,21 +21,12 @@ function ImagePreviewHeader(header: { readonly imageIndex: number }) {
   const mediaActions = useMediaActions(source?.actionsSource, props.onRequestClose);
   return (
     <View className="bg-black/70" style={{ paddingTop: insets.top }}>
-      <View className="flex-row items-center gap-2 px-3">
-        <AppText className="flex-1 text-base text-white" numberOfLines={2}>
-          {source?.name ?? "Image"}
-        </AppText>
-        <MediaActionsMenu media={mediaActions} inModal />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Close image"
-          onPress={props.onRequestClose}
-          className="min-h-11 min-w-11 items-center justify-center"
-        >
-          <SymbolView name="xmark" size={20} tintColor="#ffffff" type="monochrome" />
-        </Pressable>
-      </View>
-      <MediaSourceCaption source={mediaActions.title} />
+      <MediaPreviewHeader
+        title={source?.name ?? "Image"}
+        media={mediaActions}
+        closeAccessibilityLabel="Close image"
+        onClose={props.onRequestClose}
+      />
     </View>
   );
 }

@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 import {
   VoiceTranscriptionError,
-  type VoiceStreamingOptions,
+  type LiveVoiceOptions,
 } from "@t3tools/client-runtime/voice-input";
 
 const native = vi.hoisted(() => ({
@@ -24,7 +24,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function options(signal = new AbortController().signal): VoiceStreamingOptions {
+function options(signal = new AbortController().signal): LiveVoiceOptions {
   return { signal, onTranscript: vi.fn(), onError: vi.fn(), onEnd: vi.fn() };
 }
 

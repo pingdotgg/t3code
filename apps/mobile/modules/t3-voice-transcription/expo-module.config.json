@@ -1,7 +1,8 @@
 {
   "platforms": ["apple", "android"],
   "apple": {
-    "modules": ["T3VoiceInputModule"]
+    "modules": ["T3VoiceInputModule", "T3VoiceTranscriptionModule"],
+    "podspecPath": "ios/T3VoiceTranscription.podspec"
   },
   "android": {
     "modules": ["expo.modules.t3voicetranscription.T3VoiceTranscriptionModule"]

@@ -3,8 +3,8 @@ import * as Schema from "effect/Schema";
 import {
   VoiceTranscriptionError,
   throwIfVoiceTranscriptionAborted,
-  type VoiceStreamingOptions,
-  type VoiceStreamingSession,
+  type LiveVoiceOptions,
+  type LiveVoiceSession,
   type VoiceTranscriptionOptions,
 } from "@t3tools/client-runtime/voice-input";
 
@@ -84,7 +84,7 @@ export async function prepareVoiceStreaming(
   if (!supportedLocale) {
     throw new VoiceTranscriptionError({
       code: "unsupported-locale",
-      message: "Voice transcription does not support this device language.",
+      message: "Voice transcription does not support any of your languages.",
     });
   }
   return supportedLocale;
@@ -93,8 +93,8 @@ export async function prepareVoiceStreaming(
 export async function startVoiceStreaming(
   locale: string,
   limitSeconds: number,
-  options: VoiceStreamingOptions,
-): Promise<VoiceStreamingSession> {
+  options: LiveVoiceOptions,
+): Promise<LiveVoiceSession> {
   throwIfVoiceTranscriptionAborted(options.signal);
   if (!native) {
     throw new VoiceTranscriptionError({
@@ -104,7 +104,7 @@ export async function startVoiceStreaming(
   }
   const module = native;
   const sessionId = `voice-${++sessionSequence}`;
-  let status: ReturnType<VoiceStreamingSession["getStatus"]> = null;
+  let status: ReturnType<LiveVoiceSession["getStatus"]> = null;
   let cancellation: Promise<void> | null = null;
   let startupError: string | null = null;
   let started = false;
