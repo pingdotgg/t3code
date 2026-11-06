@@ -1081,15 +1081,7 @@ const make = Effect.gen(function* () {
   const loadProjection = (threadId: ThreadId, includeUserMessages = true) =>
     loadThreadRecords(
       threadId,
-      [
-        "runs",
-        "messages",
-        "providerThreads",
-        "providerTurns",
-        "runtimeRequests",
-        "contextTransfers",
-        "turnItems",
-      ],
+      ["runs", "messages", "runtimeRequests", "contextTransfers", "turnItems"],
       { turnItemTypes: [], messageRoles: includeUserMessages ? ["user"] : [] },
     );
 
@@ -1123,16 +1115,7 @@ const make = Effect.gen(function* () {
     threadManagement
       .getProjectThreadRecords(
         { projectId, threadId },
-        [
-          "runs",
-          "messages",
-          "subagents",
-          "providerThreads",
-          "providerTurns",
-          "runtimeRequests",
-          "contextTransfers",
-          "turnItems",
-        ],
+        ["runs", "messages", "subagents", "runtimeRequests", "contextTransfers", "turnItems"],
         { turnItemTypes: [], messageRoles: ["user"] },
       )
       .pipe(Effect.mapError(threadManagementFailure));

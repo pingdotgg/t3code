@@ -2763,6 +2763,59 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
     }),
   );
 
+  it.effect("settles a child without reading all of the parent's nodes", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:bounded-finalize-parent");
+      const projectId = ProjectId.make("project:bounded-finalize");
+      const runId = RunId.make("run:bounded-finalize-parent");
+      const rootNodeId = NodeId.make("node:bounded-finalize-parent");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId,
+        rootNodeId,
+        taskId: NodeId.make("node:bounded-finalize-seed"),
+        deliveryState: "acknowledged",
+        now,
+      });
+      const child = yield* seedRestartCancelledChild({
+        parentThreadId: threadId,
+        projectId,
+        parentRunId: runId,
+        rootNodeId,
+        name: "bounded-finalize-child",
+        completionWake: "always",
+        continuationPending: false,
+        runStatus: "completed",
+        now,
+      });
+      const statements: string[] = [];
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (time, exit) => {
+            end(time, exit);
+            const query = span.attributes.get("db.query.text");
+            if (typeof query === "string") statements.push(query);
+          };
+          return span;
+        },
+      });
+      yield* orchestrator.recoverDelegatedTasks.pipe(Effect.withTracer(tracer));
+      const settled = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(settled.subagents.find((task) => task.id === child.taskId)?.status, "completed");
+      // A dispatcher parent holds thousands of nodes; settling one child names its own.
+      const nodeReads = statements.filter((query) =>
+        query.includes("FROM orchestration_v2_projection_nodes"),
+      );
+      assert.isNotEmpty(nodeReads);
+      assert.isTrue(nodeReads.every((query) => query.includes("node_id IN")));
+    }),
+  );
+
   it.effect("holds a restart-cancelled child for its continuation's result", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
