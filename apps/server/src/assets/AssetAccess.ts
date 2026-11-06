@@ -60,7 +60,12 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { extractIcnsPng } from "./icns.ts";
-import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
+import {
+  openMediaFile,
+  readDirectoryIdentity,
+  readMediaFileHeader,
+  type OpenMediaFile,
+} from "./MediaFile.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
@@ -101,6 +106,23 @@ const PREVIEW_ASSET_EXTENSIONS = new Set([
   ".woff",
   ".woff2",
 ]);
+const isHtmlPagePath = (filePath: string) => /\.html?$/i.test(filePath);
+// The asset route sends host media only with an explicit audio/video type, uncached.
+const pageFolderFileType = (path: Path.Path, relativePath: string) => {
+  const segments = relativePath.split(/[\\/]/);
+  if (
+    relativePath.length === 0 ||
+    relativePath.includes("\0") ||
+    segments.some((segment) => segment === "." || segment === ".." || segment.startsWith("."))
+  ) {
+    return null;
+  }
+  if (isWorkspaceAudioPreviewPath(relativePath) || isWorkspaceVideoPreviewPath(relativePath)) {
+    const mimeType = hostPreviewMimeTypeFromExtension(path.extname(relativePath));
+    return mimeType ? { mimeType } : null;
+  }
+  return PREVIEW_ASSET_EXTENSIONS.has(path.extname(relativePath).toLowerCase()) ? {} : null;
+};
 
 const AssetClaimsSchema = Schema.Union([
   Schema.Struct({
@@ -124,6 +146,10 @@ const AssetClaimsSchema = Schema.Union([
     download: Schema.optionalKey(Schema.Boolean),
     device: Schema.String,
     inode: Schema.String,
+    // An inline HTML page may load files from its own folder, pinned like the page itself.
+    pageDirectory: Schema.optionalKey(
+      Schema.Struct({ path: Schema.String, device: Schema.String, inode: Schema.String }),
+    ),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -329,6 +355,33 @@ const resolveCanonicalWorkspaceFileForRequest = (input: {
     Effect.orElseSucceed(() => null),
   );
 
+const resolvePageFolderFile = Effect.fn("AssetAccess.resolvePageFolderFile")(function* (
+  directory: { readonly path: string; readonly device: string; readonly inode: string },
+  relativePath: string,
+) {
+  const path = yield* Path.Path;
+  const type = pageFolderFileType(path, relativePath);
+  if (!type) return null;
+  const canonicalFile = yield* resolveCanonicalWorkspaceFileForRequest({
+    workspaceRoot: directory.path,
+    relativePath,
+  });
+  if (!canonicalFile || !isWithinRoot(path, canonicalFile, directory.path)) return null;
+  const file = yield* openMediaFile(canonicalFile).pipe(
+    Effect.tapError((cause) =>
+      Effect.logError("Failed to open page folder file.", { filePath: canonicalFile, cause }),
+    ),
+    Effect.orElseSucceed(() => null),
+  );
+  if (!file) return null;
+  // Checked after opening, so a folder moved or replaced meanwhile is refused too.
+  const identity = yield* readDirectoryIdentity(directory.path).pipe(
+    Effect.orElseSucceed(() => null),
+  );
+  if (identity?.device !== directory.device || identity.inode !== directory.inode) return null;
+  return { kind: "file", path: canonicalFile, file, ...type } satisfies ResolvedAsset;
+});
+
 const HEADER_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
 const readImageDimensionsFromOpenFile = (filePath: string, file: OpenMediaFile) =>
@@ -419,6 +472,16 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
         checkedPath: input.requestedPath,
       });
     }
+    const pageDirectoryPath = path.dirname(canonicalFile);
+    const pageDirectory =
+      !download && isHtmlPagePath(canonicalFile)
+        ? yield* readDirectoryIdentity(pageDirectoryPath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+            ),
+          )
+        : null;
     return {
       claims: {
         version: 1 as const,
@@ -426,6 +489,7 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
         filePath: canonicalFile,
         ...(download ? { download: true } : {}),
         ...opened.identity,
+        ...(pageDirectory ? { pageDirectory: { path: pageDirectoryPath, ...pageDirectory } } : {}),
         expiresAt: input.expiresAt,
       },
       fileName: path.basename(canonicalFile),
@@ -507,7 +571,7 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
       ? yield* readImageDimensionsFromHeader(canonicalFile)
       : null;
     return {
-      claims: !/\.html?$/i.test(resolved.relativePath)
+      claims: !isHtmlPagePath(resolved.relativePath)
         ? {
             version: 1 as const,
             kind: "workspace-file-exact" as const,
@@ -975,7 +1039,11 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   if (decodedPath === null) return null;
   const path = yield* Path.Path;
   if (claims.kind === "media-file-exact") {
-    if (decodedPath !== path.basename(claims.filePath)) return null;
+    if (decodedPath !== path.basename(claims.filePath)) {
+      return claims.pageDirectory
+        ? yield* resolvePageFolderFile(claims.pageDirectory, decodedPath)
+        : null;
+    }
     const canonicalFile = yield* resolveCanonicalFile(claims.filePath).pipe(
       Effect.tapError((cause) =>
         Effect.logError("Failed to resolve canonical media path.", {
@@ -1016,30 +1084,15 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       ? ({ kind: "file", path: exactWorkspaceFile } satisfies ResolvedAsset)
       : null;
   }
-  const segments = decodedPath.split(/[\\/]/);
-  const isMedia =
-    isWorkspaceAudioPreviewPath(decodedPath) || isWorkspaceVideoPreviewPath(decodedPath);
-  if (
-    decodedPath.length === 0 ||
-    decodedPath.includes("\0") ||
-    segments.some((segment) => segment === "." || segment === ".." || segment.startsWith(".")) ||
-    (!isMedia && !PREVIEW_ASSET_EXTENSIONS.has(path.extname(decodedPath).toLowerCase()))
-  ) {
-    return null;
-  }
+  const type = pageFolderFileType(path, decodedPath);
+  if (!type) return null;
   const joinedRelativePath =
     claims.baseRelativePath === "." ? decodedPath : path.join(claims.baseRelativePath, decodedPath);
   const workspaceFile = yield* resolveCanonicalWorkspaceFileForRequest({
     workspaceRoot: claims.workspaceRoot,
     relativePath: joinedRelativePath,
   });
-  // The asset route sends host media only with an explicit audio/video type, uncached.
-  const mimeType = isMedia ? hostPreviewMimeTypeFromExtension(path.extname(decodedPath)) : null;
   return workspaceFile
-    ? ({
-        kind: "file",
-        path: workspaceFile,
-        ...(mimeType ? { mimeType } : {}),
-      } satisfies ResolvedAsset)
+    ? ({ kind: "file", path: workspaceFile, ...type } satisfies ResolvedAsset)
     : null;
 });

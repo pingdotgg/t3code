@@ -225,6 +225,8 @@ describe("AssetAccess", () => {
         ["recording.mp4", "video/mp4"],
         ["recording.webm", "video/webm"],
         ["report.html", "text/html"],
+        [".report.html", "text/html"],
+        [" report.html", "text/html"],
         ["report.pdf", "application/pdf"],
         ["notes.odt", "application/vnd.oasis.opendocument.text"],
         ["budget.ods", "application/vnd.oasis.opendocument.spreadsheet"],
@@ -259,7 +261,8 @@ describe("AssetAccess", () => {
           mimeType,
         });
         yield* fs.writeFileString(path.join(outside, "sibling.png"), "private sibling");
-        expect(yield* resolveAsset(token, "sibling.png")).toBeNull();
+        // Only an HTML page may load its own folder.
+        if (mimeType !== "text/html") expect(yield* resolveAsset(token, "sibling.png")).toBeNull();
         expect(yield* resolveAsset(token, `../${name}`)).toBeNull();
         expect(yield* resolveAsset(`${token}tampered`, name)).toBeNull();
       }
@@ -316,11 +319,13 @@ describe("AssetAccess", () => {
         "sheet.xlsx",
         "slides.pptx",
         "archive.zip",
+        "page.html",
         "no-extension",
       ]) {
         for (const directory of [root, outside]) {
           const filePath = path.join(directory, name);
           yield* fs.writeFileString(filePath, "shared file bytes");
+          yield* fs.writeFileString(path.join(directory, "sibling.png"), "private sibling");
           const resource = {
             _tag: "media-file" as const,
             threadId: ThreadId.make("thread-1"),
@@ -344,6 +349,7 @@ describe("AssetAccess", () => {
           expect(response.headers.get("content-type")).toBe("application/octet-stream");
           expect(yield* Effect.promise(() => response.text())).toBe("shared file bytes");
           expect(yield* resolveAsset(token, "sibling.docx")).toBeNull();
+          expect(yield* resolveAsset(token, "sibling.png")).toBeNull();
           expect(yield* resolveAsset(token, `../${name}`)).toBeNull();
           expect(yield* resolveAsset(`${token}tampered`, name)).toBeNull();
           yield* fs.rename(filePath, `${filePath}.original`);
@@ -800,6 +806,67 @@ describe("AssetAccess", () => {
           yield* fs.remove(filePath);
           yield* fs.rename(savedPath, filePath);
         }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "keeps an outside HTML page bound to the file opened during resolution",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-page-open-file-" });
+        const filePath = path.join(root, "page.html");
+        const secretPath = path.join(root, "secret.txt");
+        yield* fs.writeFileString(filePath, "<p>public</p>");
+        yield* fs.writeFileString(secretPath, "private information");
+        const result = yield* issueAssetUrl({
+          resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: filePath },
+        });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const asset = yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+        if (asset?.kind !== "file") throw new Error("Expected a resolved page");
+
+        yield* fs.rename(filePath, path.join(root, "saved.html"));
+        yield* fs.symlink(secretPath, filePath);
+        const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+        expect(yield* Effect.promise(() => response.text())).toBe("<p>public</p>");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "refuses an outside HTML page's folder once that folder is replaced",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-page-folder-swap-" });
+        const pageDirectory = path.join(root, "page");
+        const privateDirectory = path.join(root, "private");
+        yield* fs.makeDirectory(pageDirectory);
+        yield* fs.makeDirectory(privateDirectory);
+        yield* fs.writeFileString(path.join(pageDirectory, "index.html"), "<p>public</p>");
+        yield* fs.writeFileString(path.join(pageDirectory, "image.png"), "public image");
+        yield* fs.writeFileString(path.join(privateDirectory, "image.png"), "private image");
+        const result = yield* issueAssetUrl({
+          resource: {
+            _tag: "media-file",
+            threadId: ThreadId.make("thread-1"),
+            path: path.join(pageDirectory, "index.html"),
+          },
+        });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const token = suffix.slice(0, suffix.indexOf("/"));
+        expect(yield* resolveAsset(token, "image.png")).toMatchObject({ kind: "file" });
+
+        yield* fs.rename(pageDirectory, path.join(root, "saved"));
+        yield* Effect.promise(() => NodeFSP.symlink(privateDirectory, pageDirectory, "junction"));
+        expect(yield* resolveAsset(token, "image.png")).toBeNull();
+        yield* fs.remove(pageDirectory);
+        yield* fs.makeDirectory(pageDirectory);
+        yield* fs.writeFileString(path.join(pageDirectory, "image.png"), "replacement image");
+        expect(yield* resolveAsset(token, "image.png")).toBeNull();
       }).pipe(Effect.provide(layerTest)),
   );
 
