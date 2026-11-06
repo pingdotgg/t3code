@@ -5,7 +5,6 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Hex from "effect/encoding/Hex";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { requireNativeModule } from "expo";
 import * as ExpoCrypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
 import { DpopProof } from "@t3tools/client-runtime/relay";
@@ -84,7 +83,9 @@ interface NativeDpopKeys {
 }
 
 // Platform crypto: in Hermes, @noble/curves blocks JS for about a second on its first P-256 key.
-const nativeDpopKeys = () => requireNativeModule<NativeDpopKeys>("T3NativeControls");
+// Imported lazily: loading `expo` at module scope breaks Node tests that import this file.
+const nativeDpopKeys = async () =>
+  (await import("expo")).requireNativeModule<NativeDpopKeys>("T3NativeControls");
 
 function base64UrlToBytes(value: string): Uint8Array {
   return Result.getOrThrow(Base64Url.decode(value));
@@ -128,7 +129,7 @@ function privateJwkFromPrivateKey(
 export const generateDpopProofKeyPair = Effect.fn("dpop.generateDpopProofKeyPair")(
   function* (): Effect.fn.Return<DpopProofKeyPair, CloudDpopError> {
     const key = yield* Effect.tryPromise({
-      try: () => nativeDpopKeys().generateDpopKey(),
+      try: async () => (await nativeDpopKeys()).generateDpopKey(),
       catch: cloudDpopError("Could not generate the DPoP key pair."),
     });
     const publicJwk = yield* Effect.try({
@@ -151,8 +152,8 @@ export const loadOrCreateDpopProofKeyPair = Effect.fn("dpop.loadOrCreateDpopProo
       );
       const { d, ...publicJwk } = storedPrivateJwk;
       const matches = yield* Effect.tryPromise({
-        try: () =>
-          nativeDpopKeys().dpopKeyMatches(
+        try: async () =>
+          (await nativeDpopKeys()).dpopKeyMatches(
             base64UrlToBytes(d),
             uncompressedPublicKeyFromJwk(publicJwk),
           ),
@@ -186,7 +187,7 @@ export const loadOrCreateProofKey = Effect.fn("dpop.loadOrCreateProofKey")(funct
     publicJwk: keyPair.publicJwk,
     sign: (signingInput) =>
       Effect.tryPromise({
-        try: () => nativeDpopKeys().signDpop(privateKey, signingInput),
+        try: async () => (await nativeDpopKeys()).signDpop(privateKey, signingInput),
         catch: (cause) =>
           new DpopProof.DpopProofError({ message: "Could not sign DPoP proof.", cause }),
       }),

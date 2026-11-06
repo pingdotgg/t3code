@@ -41,42 +41,11 @@ vi.mock("expo-secure-store", () => ({
   },
 }));
 
-function publicKeyFor(privateKey: Uint8Array) {
-  const ecdh = NodeCrypto.createECDH("prime256v1");
-  ecdh.setPrivateKey(privateKey);
-  return ecdh.getPublicKey();
-}
-
-// The native module's contract, backed by Node's P-256.
-const nativeDpopKeys = {
-  generateDpopKey: () => {
-    const ecdh = NodeCrypto.createECDH("prime256v1");
-    const publicKey = ecdh.generateKeys();
-    const privateKey = ecdh.getPrivateKey();
-    return Promise.resolve(
-      new Uint8Array(Buffer.concat([Buffer.alloc(32 - privateKey.length), privateKey, publicKey])),
-    );
-  },
-  dpopKeyMatches: (privateKey: Uint8Array, publicKey: Uint8Array) =>
-    Promise.resolve(publicKeyFor(privateKey).equals(publicKey)),
-  signDpop: (privateKey: Uint8Array, signingInput: Uint8Array) => {
-    const publicKey = publicKeyFor(privateKey);
-    const key = NodeCrypto.createPrivateKey({
-      format: "jwk",
-      key: {
-        kty: "EC",
-        crv: "P-256",
-        d: Buffer.from(privateKey).toString("base64url"),
-        x: publicKey.subarray(1, 33).toString("base64url"),
-        y: publicKey.subarray(33).toString("base64url"),
-      },
-    });
-    return Promise.resolve(
-      new Uint8Array(NodeCrypto.sign("sha256", signingInput, { key, dsaEncoding: "ieee-p1363" })),
-    );
-  },
-};
-vi.mock("expo", () => ({ requireNativeModule: () => nativeDpopKeys }));
+vi.mock("expo", async () => {
+  const { createNodeDpopKeysModule } = await import("./dpop.testing");
+  const dpopKeys = createNodeDpopKeysModule();
+  return { requireNativeModule: () => dpopKeys };
+});
 
 describe("mobile DPoP", () => {
   it.effect("passes typed-array digest input through the Expo Crypto adapter", () =>
