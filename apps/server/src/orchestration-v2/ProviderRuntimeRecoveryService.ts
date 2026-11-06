@@ -867,39 +867,56 @@ export const make = Effect.gen(function* () {
   const prepareForShutdown = Effect.gen(function* () {
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
     if (!enabled) return;
-    const threadIds = yield* projections.getRecoveryThreadIds("runtime");
-    for (const threadId of threadIds) {
-      yield* Effect.gen(function* () {
-        const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
-        if (
-          !resolveProjectSettings(enabled, projection.thread.projectId).settings
-            .continueThreadsAfterServerUpdate
-        )
-          return;
-        const run = restartContinuationRun(projection, yield* DateTime.now);
-        if (!run) return;
-        const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
-        yield* eventSink.writeWithEffects({
-          commandId,
-          events: [],
-          effects: [
-            {
-              id: `effect:restart-continuation:${run.id}`,
-              commandId,
-              threadId,
-              request: { type: "provider-runtime.continue", sourceRunId: run.id },
-            },
-          ],
-        });
-      }).pipe(
-        Effect.catchCauseIf(
-          (cause) => !Cause.hasInterruptsOnly(cause),
-          (cause) =>
-            Effect.logWarning("Failed to prepare a restart continuation", { threadId, cause }),
+    const enabledProjects = Object.entries(enabled.projectSettingsOverrides)
+      .filter(([, overrides]) => overrides.continueThreadsAfterServerUpdate === true)
+      .map(([id]) => id);
+    if (!enabled.continueThreadsAfterServerUpdate && enabledProjects.length === 0) return;
+    const disabledProjects = Object.entries(enabled.projectSettingsOverrides)
+      .filter(([, overrides]) => overrides.continueThreadsAfterServerUpdate === false)
+      .map(([id]) => id);
+    const threadIds = yield* projections.getRecoveryThreadIds(
+      "restart-continuations",
+      enabled.continueThreadsAfterServerUpdate
+        ? { exclude: disabledProjects }
+        : { include: enabledProjects },
+    );
+    yield* Effect.forEach(
+      threadIds,
+      (threadId) =>
+        Effect.gen(function* () {
+          const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
+          if (
+            !resolveProjectSettings(enabled, projection.thread.projectId).settings
+              .continueThreadsAfterServerUpdate
+          )
+            return;
+          const run = restartContinuationRun(projection, yield* DateTime.now);
+          if (!run) return;
+          const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
+          yield* eventSink.writeWithEffects({
+            commandId,
+            events: [],
+            effects: [
+              {
+                id: `effect:restart-continuation:${run.id}`,
+                commandId,
+                threadId,
+                request: { type: "provider-runtime.continue", sourceRunId: run.id },
+              },
+            ],
+          });
+        }).pipe(
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logWarning("Failed to prepare a restart continuation", { threadId, cause }),
+          ),
         ),
-      );
-    }
+      // Leave room in the four-reader pool for other shutdown reads.
+      { concurrency: 2, discard: true },
+    );
   }).pipe(
+    Effect.withSpan("ProviderRuntimeRecoveryService.prepareForShutdown"),
     Effect.mapError((cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause })),
   );
 
