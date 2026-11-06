@@ -7,7 +7,6 @@ import * as AssistedLearning from "./project/knowledge/AssistedLearning.ts";
 import * as ConversationSummaries from "./project/conversationSummaries/ConversationSummaries.ts";
 import * as ModelEvaluations from "./modelEvaluations/ModelEvaluations.ts";
 import * as ExternalHistory from "./project/externalHistory/ExternalHistory.ts";
-import * as ProjectLoom from "./project/loom/ProjectLoom.ts";
 import * as CodeIntelligence from "./project/knowledge/CodeIntelligence.ts";
 import * as FileHistory from "./project/knowledge/FileHistory.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -219,6 +218,7 @@ import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementSer
 import * as IdleCompactionService from "./orchestration-v2/IdleCompactionService.ts";
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
 import * as RunFinalizationService from "./orchestration-v2/RunFinalizationService.ts";
+import * as WorktreeBranches from "./orchestration-v2/WorktreeBranches.ts";
 import * as EffectOutboxV2 from "./orchestration-v2/EffectOutbox.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
@@ -661,7 +661,9 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,
-  StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
+  StorageCleanup.layer.pipe(
+    Layer.provide(Layer.merge(ProjectionStoreV2.layer, WorktreeBranches.layer)),
+  ),
   DatabaseStorage.layer.pipe(Layer.provide(ProjectionMaintenance.layer)),
   layerThreadPullRequestWorker,
   DelegatedTaskAnalytics.layer,
@@ -710,7 +712,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       ),
     ),
   ),
-  Layer.provideMerge(Layer.merge(ProjectLoom.layer, ExternalHistory.layer)),
+  Layer.provideMerge(ExternalHistory.layer),
   Layer.provideMerge(
     ProjectKnowledge.layer.pipe(
       Layer.provide(ProjectionStoreV2.layer),

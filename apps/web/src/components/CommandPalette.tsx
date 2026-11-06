@@ -56,7 +56,6 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
   BrainIcon,
-  ChartGanttIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
   CheckIcon,
@@ -221,7 +220,7 @@ import {
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
-import { isSidebarHiddenThread, resolveLoomTargets } from "./Sidebar.logic";
+import { isSidebarHiddenThread } from "./Sidebar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
 import {
   selectCommandPaletteClientSettings,
@@ -1706,31 +1705,6 @@ function OpenCommandPaletteDialog(props: {
         });
       },
     });
-    const loomTargets = resolveLoomTargets({
-      members: contextualProjectGroup.memberProjects,
-      activeProjectRef: contextualProjectRef,
-      supportsLoom: (environmentId) =>
-        serverConfigs.get(environmentId)?.environment.capabilities.projectLoom === true,
-    });
-    for (const member of loomTargets) {
-      actionItems.push({
-        kind: "action",
-        value: `action:open-loom:${member.environmentId}:${member.id}`,
-        searchTerms: ["loom", "timeline", "activity", "agents", "history", "project"],
-        title: "Open Loom",
-        description:
-          loomTargets.length > 1 && member.environmentLabel !== null
-            ? `${contextualProjectGroup.displayName} on ${member.environmentLabel}`
-            : contextualProjectGroup.displayName,
-        icon: <ChartGanttIcon className={ITEM_ICON_CLASS} />,
-        run: async () => {
-          await navigate({
-            to: "/loom/$environmentId/$projectId",
-            params: { environmentId: member.environmentId, projectId: member.id },
-          });
-        },
-      });
-    }
   }
 
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });

@@ -55,6 +55,7 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as WorktreeBranches from "./WorktreeBranches.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
   | { readonly type: "root"; readonly branch?: string | undefined }
@@ -216,6 +217,7 @@ const make = Effect.gen(function* () {
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const worktreeBranches = yield* WorktreeBranches.WorktreeBranches;
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const preparationScope = yield* Scope.make("sequential");
   const scheduledLaunches = yield* Ref.make<ReadonlySet<CommandId>>(new Set());
@@ -509,55 +511,10 @@ const make = Effect.gen(function* () {
                 Effect.uninterruptible,
               ),
           ),
-          Effect.flatMap((renamed) =>
-            Effect.gen(function* () {
-              yield* threads
-                .dispatch({
-                  type: "thread.metadata.update",
-                  commandId: CommandId.make(`${input.commandId}:branch-rename`),
-                  threadId,
-                  branch: renamed.branch,
-                  worktreePath: worktreeCwd,
-                  expectedBranch: oldBranch,
-                  expectedWorktreePath: worktreeCwd,
-                })
-                .pipe(
-                  Effect.catchCause((cause) =>
-                    Effect.logWarning("Parent thread worktree branch update failed", {
-                      threadId,
-                      cause,
-                    }),
-                  ),
-                );
-              // Update parents first so children inherit names; reread each pass for newly updated descendants.
-              const visited = new Set([threadId]);
-              while (true) {
-                const snapshot = yield* threads.getShellSnapshot({ worktreePath: worktreeCwd });
-                const sharing = [...snapshot.threads, ...snapshot.archivedThreads].filter(
-                  (thread) => !visited.has(thread.id) && thread.branch === oldBranch,
-                );
-                if (sharing.length === 0) break;
-                for (const thread of sharing) {
-                  visited.add(thread.id);
-                  yield* threads
-                    .dispatch({
-                      type: "thread.metadata.update",
-                      commandId: CommandId.make(`${input.commandId}:branch-rename:${thread.id}`),
-                      threadId: thread.id,
-                      branch: renamed.branch,
-                      expectedBranch: oldBranch,
-                      expectedWorktreePath: worktreeCwd,
-                    })
-                    .pipe(
-                      Effect.catchCause((cause) =>
-                        Effect.logWarning("Shared thread worktree branch update failed", {
-                          threadId: thread.id,
-                          cause,
-                        }),
-                      ),
-                    );
-                }
-              }
+          Effect.flatMap(() =>
+            worktreeBranches.sync({
+              worktreePath: worktreeCwd,
+              ...(runId === null ? {} : { runId }),
             }),
           ),
           Effect.catchCause((cause) =>

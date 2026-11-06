@@ -2068,10 +2068,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     const defaultBranch = yield* resolveDefaultBranchName(cwd, "origin");
-    const isDefaultBranch =
-      branch !== null &&
-      (branch === defaultBranch ||
-        (defaultBranch === null && (branch === "main" || branch === "master")));
+    const isDefaultBranch = GitVcsDriver.isDefaultBranchName(branch, defaultBranch);
     const aheadOfDefaultCount =
       branch && !isDefaultBranch
         ? upstreamRef === null
@@ -2294,10 +2291,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
     }
 
-    const isDefaultBranch =
-      refName !== null &&
-      (refName === defaultBranch ||
-        (defaultBranch === null && (refName === "main" || refName === "master")));
+    const isDefaultBranch = GitVcsDriver.isDefaultBranchName(refName, defaultBranch);
     const needsFallbackAhead = includeDivergence && !upstreamRef && refName !== null;
     const needsAheadOfDefault = includeDivergence && refName !== null && !isDefaultBranch;
     const [baseAheadCount, branchChanges] = yield* Effect.all(

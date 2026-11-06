@@ -58,6 +58,7 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import * as WorktreeBranches from "./WorktreeBranches.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 
@@ -185,10 +186,6 @@ const layerCheckpointCaptureServiceProvided = CheckpointCaptureService.layer.pip
     ),
   ),
 );
-const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
-  Layer.provide(Layer.merge(layerCheckpointCaptureServiceProvided, ProjectionStore.layer)),
-);
-
 const layerOrchestratorProvided = Orchestrator.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -208,6 +205,20 @@ const layerOrchestratorProvided = Orchestrator.layer.pipe(
       layerProviderSessionManagerProvided,
       layerProviderSwitchServiceProvided,
       ThreadForkService.layer,
+    ),
+  ),
+);
+
+const layerWorktreeBranchesProvided = WorktreeBranches.layer.pipe(
+  Layer.provide(Layer.mergeAll(layerOrchestratorProvided, GitVcsDriver.layer, ProjectStore.layer)),
+);
+
+const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerCheckpointCaptureServiceProvided,
+      ProjectionStore.layer,
+      layerWorktreeBranchesProvided,
     ),
   ),
 );
@@ -285,6 +296,7 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
       layerManagedProjectFoldersProvided,
       layerThreadManagementProvided,
       layerCommandReceiptStoreProvided,
+      layerWorktreeBranchesProvided,
       IdAllocator.layer,
     ),
   ),

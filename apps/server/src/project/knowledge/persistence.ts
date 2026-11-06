@@ -24,6 +24,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import { normalizeFactContent } from "./knowledgeConflicts.ts";
 
 const encodeDeliveryBudget = Schema.encodeEffect(
   Schema.fromJsonString(ProjectKnowledgeDeliveryBudget),
@@ -303,6 +304,26 @@ export const makeStore = Effect.gen(function* () {
       ranks: new Map(lexical.map((row) => [row.id, row.rank])),
       partial: ids.length > 1000,
     };
+  });
+  const hasDuplicateContent = Effect.fn("ProjectKnowledgeStore.hasDuplicateContent")(function* (
+    projectId: ProjectId,
+    content: string,
+  ) {
+    type ContentRow = { readonly id: ProjectFactId; readonly content: string };
+    const normalized = normalizeFactContent(content);
+    let afterId: ProjectFactId | null = null;
+    // Automatic saves need exact matching across all current facts, including text that the
+    // lexical tokenizer cannot index. Page only content so this does not hydrate every fact.
+    while (true) {
+      const rows: ReadonlyArray<ContentRow> = yield* sql<ContentRow>`
+        SELECT id, content FROM project_knowledge_facts
+        WHERE project_id = ${projectId} AND status = 'saved' AND superseded_by_id IS NULL
+          AND content IS NOT NULL AND id > ${afterId ?? ""}
+        ORDER BY id ASC LIMIT 100`;
+      if (rows.some((row) => normalizeFactContent(row.content) === normalized)) return true;
+      if (rows.length < 100) return false;
+      afterId = rows.at(-1)!.id;
+    }
   });
   // Lexical neighbours for duplicate and conflict hints; bounded so a write stays cheap.
   const similar = Effect.fn("ProjectKnowledgeStore.similar")(function* (
@@ -705,6 +726,7 @@ export const makeStore = Effect.gen(function* () {
     recordSearch,
     candidates,
     similar,
+    hasDuplicateContent,
     recordHistory,
     eraseHistory,
     history,

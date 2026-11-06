@@ -8,6 +8,8 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
+import ProjectLoomTimeIndexes from "./Migrations/075_ProjectLoomTimeIndexes.ts";
+import ProjectLoomBoundedReads from "./Migrations/077_ProjectLoomBoundedReads.ts";
 
 const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
 const newerMigrationId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
@@ -22,7 +24,8 @@ const correlationIndexMigration = [87, "DropOrchestrationEventCorrelationIndex"]
 const modelEvaluationMigration = [88, "ModelEvaluations"] as const;
 const delegatedRecoveryMigration = [89, "DelegatedRecoveryIndexes"] as const;
 const scheduledTaskThreadModeMigration = [90, "ScheduledTaskThreadMode"] as const;
-const savedLifecycleMigration = [91, "ProjectKnowledgeSavedLifecycle"] as const;
+const dropProjectLoomIndexesMigration = [91, "DropProjectLoomIndexes"] as const;
+const savedLifecycleMigration = [92, "ProjectKnowledgeSavedLifecycle"] as const;
 
 it.effect("upgrades attempt receipts atomically and preserves distinct steering messages", () =>
   Effect.gen(function* () {
@@ -48,6 +51,7 @@ it.effect("upgrades attempt receipts atomically and preserves distinct steering 
       modelEvaluationMigration,
       delegatedRecoveryMigration,
       scheduledTaskThreadModeMigration,
+      dropProjectLoomIndexesMigration,
       savedLifecycleMigration,
     ]);
     assert.deepStrictEqual(yield* sql`SELECT * FROM project_knowledge_deliveries`, before);
@@ -70,7 +74,7 @@ it.effect("upgrades attempt receipts atomically and preserves distinct steering 
 it.effect("rebuilds knowledge facts as saved or forgotten, atomically and in place", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* runMigrations({ toMigrationInclusive: 90 });
+    yield* runMigrations({ toMigrationInclusive: 91 });
     const insertFact = (fact: {
       readonly rowid: number;
       readonly id: string;
@@ -275,6 +279,70 @@ it.effect("rebuilds knowledge facts as saved or forgotten, atomically and in pla
       ),
     );
     assert.deepStrictEqual(yield* runMigrations(), []);
+
+    // The published preview recorded this same saved schema at 91, before Loom cleanup.
+    const savedFacts = yield* facts;
+    const savedHistory = yield* history;
+    const savedCommands = yield* commands;
+    const savedRuns = yield* sql`SELECT * FROM project_knowledge_assisted_runs`;
+    const savedSchema = yield* schema;
+    yield* ProjectLoomTimeIndexes;
+    yield* ProjectLoomBoundedReads;
+    yield* previewLoomIndexes;
+    yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 91`;
+    yield* sql`UPDATE effect_sql_migrations SET migration_id = 91 WHERE migration_id = 92`;
+    const migrations = sql<{
+      readonly migration_id: number;
+      readonly name: string;
+      readonly created_at: string;
+    }>`SELECT migration_id, name, created_at FROM effect_sql_migrations ORDER BY migration_id`;
+    const previewHistory = yield* migrations;
+    const previewSchema = yield* schema;
+
+    yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (93, 'UnknownPreview')`;
+    const unknownHistory = yield* migrations;
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(runMigrations())));
+    assert.deepStrictEqual(yield* migrations, unknownHistory);
+    assert.deepStrictEqual(yield* schema, previewSchema);
+    yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 93`;
+
+    yield* sql`ALTER TABLE project_knowledge_assisted_runs RENAME COLUMN saved TO proposed`;
+    const incompleteSchema = yield* schema;
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(runMigrations())));
+    assert.deepStrictEqual(yield* migrations, previewHistory);
+    assert.deepStrictEqual(yield* schema, incompleteSchema);
+    yield* sql`ALTER TABLE project_knowledge_assisted_runs RENAME COLUMN proposed TO saved`;
+
+    yield* sql`
+      CREATE TRIGGER reject_saved_preview_receipt BEFORE UPDATE ON effect_sql_migrations
+      WHEN new.migration_id = 92 BEGIN
+        SELECT RAISE(ABORT, 'receipt update failed');
+      END
+    `;
+    const rollbackSchema = yield* schema;
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(runMigrations())));
+    assert.deepStrictEqual(yield* migrations, previewHistory);
+    assert.deepStrictEqual(yield* schema, rollbackSchema);
+    yield* sql`DROP TRIGGER reject_saved_preview_receipt`;
+
+    assert.deepStrictEqual(yield* runMigrations(), [dropProjectLoomIndexesMigration]);
+    assert.deepStrictEqual(yield* facts, savedFacts);
+    assert.deepStrictEqual(yield* history, savedHistory);
+    assert.deepStrictEqual(yield* commands, savedCommands);
+    assert.deepStrictEqual(yield* sql`SELECT * FROM project_knowledge_assisted_runs`, savedRuns);
+    assert.deepStrictEqual(yield* schema, savedSchema);
+    const reconciledHistory = yield* migrations;
+    assert.deepStrictEqual(
+      reconciledHistory.map(({ migration_id, name }) => [migration_id, name] as const),
+      migrationManifest,
+    );
+    assert.deepStrictEqual(
+      reconciledHistory.find(({ migration_id }) => migration_id === 92),
+      { ...previewHistory.find(({ migration_id }) => migration_id === 91), migration_id: 92 },
+    );
+    assert.deepStrictEqual(yield* matches("wordfresh"), ["fresh"]);
+    assert.deepStrictEqual(yield* runMigrations(), []);
+    assert.deepStrictEqual(yield* migrations, reconciledHistory);
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
 
@@ -388,12 +456,20 @@ const assertConsolidatedSchema = Effect.gen(function* () {
   `;
   for (const name of [
     "orchestration_v2_projection_turn_items_stop_request_idx",
-    "orchestration_v2_projection_turn_items_run_updated_idx",
-    "orchestration_v2_projection_turn_items_run_command_at_idx",
-    "orchestration_v2_projection_turn_items_run_command_updated_idx",
     "orchestration_v2_projection_turn_items_waiting_link_idx",
+    "orchestration_v2_projection_threads_project_linked_idx",
   ]) {
     assert.ok(indexes.some((index) => index.name === name));
+  }
+  for (const name of [
+    "orchestration_v2_projection_runs_thread_requested_idx",
+    "orchestration_v2_projection_runs_thread_completed_idx",
+    "orchestration_v2_projection_checkpoints_thread_captured_idx",
+    "orchestration_v2_projection_turn_items_run_command_updated_idx",
+    "orchestration_v2_projection_turn_items_run_updated_idx",
+    "orchestration_v2_projection_turn_items_run_command_at_idx",
+  ]) {
+    assert.notOk(indexes.some((index) => index.name === name));
   }
   const peerColumns = yield* sql<{
     readonly name: string;
@@ -598,6 +674,7 @@ describe("runMigrations", () => {
             modelEvaluationMigration,
             delegatedRecoveryMigration,
             scheduledTaskThreadModeMigration,
+            dropProjectLoomIndexesMigration,
             savedLifecycleMigration,
           ],
         );
@@ -640,6 +717,7 @@ describe("runMigrations", () => {
           modelEvaluationMigration,
           delegatedRecoveryMigration,
           scheduledTaskThreadModeMigration,
+          dropProjectLoomIndexesMigration,
           savedLifecycleMigration,
         ],
       );
@@ -655,6 +733,7 @@ describe("runMigrations", () => {
         modelEvaluationMigration,
         delegatedRecoveryMigration,
         scheduledTaskThreadModeMigration,
+        dropProjectLoomIndexesMigration,
         savedLifecycleMigration,
       ]);
       yield* assertConsolidatedSchema;
@@ -692,6 +771,7 @@ describe("runMigrations", () => {
           modelEvaluationMigration,
           delegatedRecoveryMigration,
           scheduledTaskThreadModeMigration,
+          dropProjectLoomIndexesMigration,
           savedLifecycleMigration,
         ]);
 
@@ -799,6 +879,7 @@ describe("runMigrations", () => {
         modelEvaluationMigration,
         delegatedRecoveryMigration,
         scheduledTaskThreadModeMigration,
+        dropProjectLoomIndexesMigration,
         savedLifecycleMigration,
       ]);
       yield* assertConsolidatedSchema;
@@ -855,6 +936,7 @@ describe("runMigrations", () => {
           modelEvaluationMigration,
           delegatedRecoveryMigration,
           scheduledTaskThreadModeMigration,
+          dropProjectLoomIndexesMigration,
           savedLifecycleMigration,
         ]);
         assert.deepStrictEqual(yield* history, migrationManifest);
@@ -916,6 +998,7 @@ describe("runMigrations", () => {
           modelEvaluationMigration,
           delegatedRecoveryMigration,
           scheduledTaskThreadModeMigration,
+          dropProjectLoomIndexesMigration,
           savedLifecycleMigration,
         ]);
         assert.deepStrictEqual(yield* history, migrationManifest);

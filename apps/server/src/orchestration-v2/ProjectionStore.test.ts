@@ -6571,8 +6571,20 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         WHERE run_id = ${runId}
       `;
       yield* assertShellIndexCoversShells();
-      const secretOnlyShell = (yield* projectionStore.getShellSnapshot()).threads.find(
-        (thread) => thread.id === threadId,
+      const { statements, tracer } = traceSqlStatements();
+      const secretOnlyShell = (yield* projectionStore
+        .getShellSnapshot()
+        .pipe(Effect.withTracer(tracer))).threads.find((thread) => thread.id === threadId);
+      const shellQuery = statements.find((statement) =>
+        statement.includes("AS pending_secret_request_payload_json"),
+      );
+      assert.isDefined(shellQuery);
+      const shellPlan = (yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${shellQuery}`,
+      )).map((row) => row.detail);
+      assert.include(
+        shellPlan,
+        "SEARCH r USING INDEX orchestration_v2_projection_runs_thread_status_idx (thread_id=? AND status=?)",
       );
       const secretOnlyProjection = yield* projectionStore.getThreadProjection(threadId);
       for (const shell of [

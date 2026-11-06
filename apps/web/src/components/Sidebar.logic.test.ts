@@ -14,7 +14,6 @@ import {
   resolveSidebarRowThreadRef,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
-  resolveLoomTargets,
   resolveSidebarSweepKeys,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
@@ -1624,48 +1623,6 @@ describe("pendingSidebarRouteReveal", () => {
     pendingSidebarRouteReveal(reveal, "env:a1");
     expect(pendingSidebarRouteReveal(reveal, null)).toBeNull();
     expect(pendingSidebarRouteReveal(reveal, "env:a1")).toBe("env:a1");
-  });
-});
-
-describe("resolveLoomTargets", () => {
-  const local = EnvironmentId.make("local");
-  const remote = EnvironmentId.make("remote");
-  const legacy = EnvironmentId.make("legacy");
-  const member = (environmentId: EnvironmentId) => ({
-    environmentId,
-    id: ProjectId.make(`project-${environmentId}`),
-  });
-  const members = [member(local), member(remote), member(legacy)];
-  const supportsLoom = (environmentId: EnvironmentId) => environmentId !== legacy;
-
-  it("opens the active member's Loom when the active project is in the group", () => {
-    expect(
-      resolveLoomTargets({
-        members,
-        activeProjectRef: { environmentId: remote, projectId: ProjectId.make("project-remote") },
-        supportsLoom,
-      }),
-    ).toEqual([member(remote)]);
-  });
-
-  it("offers every member whose environment has the Loom when no active member decides", () => {
-    expect(resolveLoomTargets({ members, activeProjectRef: null, supportsLoom })).toEqual([
-      member(local),
-      member(remote),
-    ]);
-    expect(
-      resolveLoomTargets({
-        members,
-        activeProjectRef: { environmentId: legacy, projectId: ProjectId.make("project-legacy") },
-        supportsLoom,
-      }),
-    ).toEqual([member(local), member(remote)]);
-  });
-
-  it("offers nothing when no member's environment has the Loom", () => {
-    expect(
-      resolveLoomTargets({ members, activeProjectRef: null, supportsLoom: () => false }),
-    ).toEqual([]);
   });
 });
 

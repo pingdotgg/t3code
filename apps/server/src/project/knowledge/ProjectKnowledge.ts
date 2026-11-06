@@ -1305,8 +1305,7 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           if ((yield* store.find(input.projectId, input.factId)) !== null)
             return { outcome: "existing" as const };
-          const hints = yield* hintsForContent(input.projectId, input.content, [input.factId]);
-          if (hints.some((hint) => hint.kind === "duplicate"))
+          if (yield* store.hasDuplicateContent(input.projectId, input.content))
             return { outcome: "duplicate" as const };
           yield* mutate(input, actor);
           return { outcome: "saved" as const };

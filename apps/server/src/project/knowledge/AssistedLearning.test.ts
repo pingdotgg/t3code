@@ -380,6 +380,25 @@ it.effect(
         assert.equal(fact.supersededBy ?? null, null);
         assert.equal(fact.revision, 1);
       }
+      // Exact matching cannot depend on the three UI hints or the forty lexical neighbours.
+      for (let index = 0; index < 101; index++) {
+        yield* seed(
+          `crowded-${String(index).padStart(3, "0")}`,
+          `workers restart then services deploy${"!".repeat(index + 1)}`,
+        );
+      }
+      yield* seed("z-crowded-exact", "deploy services then restart workers");
+      yield* seed("unicode-exact", "测试需要先运行单元测试。");
+      for (const [index, content] of [
+        "  DEPLOY   services then RESTART workers\n",
+        "测试需要先运行单元测试。",
+      ].entries()) {
+        const result = yield* knowledge.saveAutomatic(
+          { ...create(`crowded-auto-${index}`, content), sources: facts[0]!.sources },
+          { kind: "assisted", threadId, runId, runOutcome: "completed" },
+        );
+        assert.equal(result.outcome, "duplicate");
+      }
       const recalled = yield* knowledge.search({
         projectId,
         query: "primary database store",
