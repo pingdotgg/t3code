@@ -377,6 +377,9 @@ function SidebarControl() {
       className={cn(
         "pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center",
         isMobile && mobileSheetMounted && "hidden",
+        // Transparent rather than hidden, so focus can still return to the toggle.
+        "in-[[data-slot=sidebar-wrapper]:has([data-peek])]:opacity-0 in-[[data-slot=sidebar-wrapper]:has([data-peek])]:**:pointer-events-none!",
+        "has-focus-visible:opacity-100",
       )}
       data-sidebar-control=""
     >

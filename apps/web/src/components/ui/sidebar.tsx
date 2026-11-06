@@ -19,6 +19,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useResizeDrag } from "~/hooks/useResizeDrag";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { setLocalStorageItem } from "~/hooks/useLocalStorage";
+import { PEEK_EDGE_PX, useSidebarPeek } from "./sidebarPeek";
 import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
 import * as Schema from "effect/Schema";
 import { announceSidebarVisibility } from "~/lib/accessibilityAnnouncements";
@@ -275,7 +276,15 @@ function Sidebar({
   resizable?: boolean | SidebarResizableOptions;
 }) {
   const { isMobile, state, openMobile, setOpenMobile, setMobileSheetElement } = useSidebar();
+  const containerRef = React.useRef<HTMLDivElement>(null);
   const offcanvasCollapsed = !isMobile && collapsible === "offcanvas" && state === "collapsed";
+  const peekEnabled = offcanvasCollapsed && side === "left";
+  const { peek, onEdgePointerEnter } = useSidebarPeek({
+    enabled: peekEnabled,
+    containerRef,
+    onLeave: moveFocusOutOfCollapsingSidebar,
+  });
+  const inert = offcanvasCollapsed && peek !== "shown";
 
   const resolvedResizable = resolveSidebarResizable({ collapsible, isMobile, resizable });
   const instanceContextValue: SidebarInstanceContextProps = { side, resizable: resolvedResizable };
@@ -344,7 +353,7 @@ function Sidebar({
         className="group peer hidden text-sidebar-foreground md:block"
         data-collapsible={state === "collapsed" ? collapsible : ""}
         data-collapsible-mode={collapsible}
-        inert={offcanvasCollapsed}
+        inert={inert}
         data-side={side}
         data-slot="sidebar"
         data-state={state}
@@ -372,9 +381,16 @@ function Sidebar({
             variant === "floating" || variant === "inset"
               ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
               : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
+            // Peeking floats the card over the pane without moving `left`, which
+            // panel animations transition. Modals portal after it on the same layer.
+            "data-peek:inset-y-2 data-peek:z-50 data-peek:h-auto data-peek:overflow-hidden data-peek:rounded-xl data-peek:border data-peek:shadow-xl/15",
+            "data-[peek=entering]:-translate-x-6 data-[peek=leaving]:-translate-x-6 data-[peek=shown]:translate-x-[calc(100%+--spacing(2))]",
+            "data-[peek=entering]:transition-none! data-[peek=leaving]:transition-transform! data-[peek=shown]:transition-transform! data-peek:duration-200! data-peek:ease-out! motion-reduce:data-peek:transition-none!",
             className,
           )}
+          data-peek={peek === "hidden" ? undefined : peek}
           data-slot="sidebar-container"
+          ref={containerRef}
           {...props}
         >
           <div
@@ -386,6 +402,15 @@ function Sidebar({
           </div>
         </div>
       </div>
+      {peekEnabled && peek !== "shown" ? (
+        <div
+          aria-hidden
+          className="fixed inset-y-0 left-0 z-10 hidden md:block"
+          data-slot="sidebar-peek-edge"
+          onPointerEnter={onEdgePointerEnter}
+          style={{ width: PEEK_EDGE_PX }}
+        />
+      ) : null}
     </SidebarInstanceContext>
   );
 }
