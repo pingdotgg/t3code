@@ -117,6 +117,7 @@ setting removes it from `settings.json`.
 Limits refresh every five minutes while a limits view is visible. Closing the view or hiding the
 window stops periodic usage requests; provider health checks continue. Refreshing can reuse a
 recent reading, and rate-limited accounts wait before retrying, including manual refreshes.
+Choosing a default or fallback model can also request a reading while Limits is closed.
 
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
 or Claude accounts across your enabled environments and hubs you read one number per window rather than a
@@ -142,14 +143,14 @@ and a partly spent session may only regain its unused portion when the week rese
 stale reset times have no refill estimate; refresh Limits for a new reading. Claude's
 model-specific weekly allowances keep their reported values.
 
-Opening Limits checks the selected connected environments automatically. Each client waits at
-least five minutes between automatic checks of an environment, including after a failed check.
+Opening Limits checks the selected connected environments automatically. Automatic checks
+follow the shared five-minute cache deadline, including after failed probes.
 If a window still looks stale, refresh Limits to re-check every provider and hub.
 
 Pick `/usage-limits` from the composer's command menu, or send it as a message, to check the
 current model's limits without leaving the conversation. The result opens above the composer and
-closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh
-anything. The command is offered only for providers that appear under **Usage → Limits**.
+closes when you dismiss it or send your next message. It shares the reading and refresh schedule
+with **Usage → Limits** without running the agent. The command is offered only for providers that appear under **Usage → Limits**.
 
 To keep them in view on web and desktop, turn on **Usage limits** in **Settings → Appearance → Thread details**, or right-click the thread details card.
 The bottom of the thread details card then shows how much is left in each limit window of the

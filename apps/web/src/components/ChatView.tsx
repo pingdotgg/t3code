@@ -791,6 +791,7 @@ export default function ChatView(props: ChatViewProps) {
   const draftUsage = useNewThreadUsage(
     draftThread?.environmentId ?? environmentId,
     draftSelectionInput,
+    routeThreadKey,
   );
   const draftModelResolution = draftSelectionInput
     ? resolveNewThreadModelSelection({ ...draftSelectionInput, providers: draftUsage.providers })

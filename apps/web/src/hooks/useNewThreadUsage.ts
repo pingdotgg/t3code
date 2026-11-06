@@ -9,7 +9,11 @@ import { serverEnvironment } from "../state/server";
 
 type SelectionInput = Parameters<typeof resolveNewThreadModelSelection>[0];
 
-export function useNewThreadUsage(environmentId: EnvironmentId, input: SelectionInput | null) {
+export function useNewThreadUsage(
+  environmentId: EnvironmentId,
+  input: SelectionInput | null,
+  draftKey: string,
+) {
   const presentation = useAtomValue(environmentPresentations.presentationAtom(environmentId));
   const enabled = Boolean(
     input?.defaultSelection &&
@@ -18,6 +22,7 @@ export function useNewThreadUsage(environmentId: EnvironmentId, input: Selection
     presentation?.connection.phase === "connected",
   );
   const key = JSON.stringify([
+    draftKey,
     environmentId,
     input?.defaultSelection,
     input?.fallbackSelection,
