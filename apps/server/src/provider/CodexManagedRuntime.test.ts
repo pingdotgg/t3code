@@ -337,13 +337,14 @@ it.live.skipIf(!symlinksSupported)(
         });
         yield* store.set(new TextEncoder().encode(json));
 
+        const hostEnv = yield* HostProcess.Environment;
         const runtime = yield* makeCodexManagedRuntime({
           instanceId,
           enabled: true,
           config: decodeSettings({ setupMode: "managed", homePath: sharedHome }),
           environment: {
-            PATH: process.env.PATH,
-            SystemRoot: process.env.SystemRoot,
+            PATH: hostEnv.PATH,
+            SystemRoot: hostEnv.SystemRoot,
           },
         });
         assert.equal(runtime.homeLayout.mode, "authOverlay");
