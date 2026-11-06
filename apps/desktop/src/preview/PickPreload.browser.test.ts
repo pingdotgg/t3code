@@ -29,8 +29,8 @@ const emit = (channel: string) => {
   for (const listener of ipc.listeners.get(channel) ?? []) listener({});
 };
 
-it.each(["select", "region", "reload"])(
-  "captures iframe elements with %s in top-viewport coordinates",
+it.each(["select", "region", "reload", "remove"])(
+  "annotates iframe elements with %s in top-viewport coordinates",
   async (mode) => {
     ipc.send.mockClear();
     const frame = document.createElement("iframe");
@@ -74,6 +74,13 @@ it.each(["select", "region", "reload"])(
       await vi.waitFor(() =>
         expect(document.activeElement?.hasAttribute("data-t3code-annotation-ui")).toBe(true),
       );
+      if (mode === "remove") {
+        frame.remove();
+        await vi.waitFor(() =>
+          expect(document.activeElement?.hasAttribute("data-t3code-annotation-ui")).toBe(false),
+        );
+        return;
+      }
       await userEvent.keyboard("{Enter}");
       await vi.waitFor(() =>
         expect(ipc.send).toHaveBeenCalledWith(
