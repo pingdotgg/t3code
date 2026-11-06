@@ -754,6 +754,63 @@ jobs:
       resource_key: win32-arm64
       cli_archive: true
 
+  # Nightlies attach Play's internal APK (~280 MB). The Play download is slow,
+  # so it runs here beside the desktop builds and the publish job only copies a
+  # finished artifact. The APK is optional: every step tolerates failure, and
+  # job-level continue-on-error keeps a runner fault from failing the release.
+  android_apk:
+    name: Stage nightly Android APK
+    needs: [preflight]
+    if: needs.preflight.outputs.release_channel == 'nightly'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - id: credentials
+        name: Check for Play credentials
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON is not available; skipping the APK."
+          fi
+
+      - name: Checkout
+        if: steps.credentials.outputs.present == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: .github/scripts
+
+      # Writes the APK only when Play has a processed internal build.
+      - id: mirror
+        name: Download internal Android APK
+        if: steps.credentials.outputs.present == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          PACKAGE_NAME: com.t3tools.t3code
+          APK_OUTPUT_DIR: android-apk
+        run: node .github/scripts/mirror-play-apk.cjs
+
+      - name: Upload Android APK
+        if: steps.mirror.outcome == 'success' && hashFiles('android-apk/*.apk') != ''
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-apk
+          path: android-apk/*.apk
+          if-no-files-found: ignore
+          # APKs are already zip-compressed.
+          compression-level: 0
+          retention-days: 1
+
   release:
     name: Publish GitHub Release
     needs:
@@ -770,7 +827,10 @@ jobs:
         desktop_linux_arm64,
         desktop_win_x64,
         desktop_win_arm64,
+        android_apk,
       ]
+    # android_apk is absent from this check on purpose: it is optional and
+    # skipped outside nightly.
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.quality.result == 'success' && needs.test.result == 'success' && needs.test_web.result == 'success' && needs.test_server.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_mac_x64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
@@ -810,16 +870,27 @@ jobs:
           merge-multiple: true
           path: release-assets
 
-      - name: Download internal Android APK for Nightly
+      # Downloads go to a staging directory so a failed transfer cannot leave a
+      # partial APK among the release assets.
+      - id: android_apk
+        name: Download nightly Android APK
         if: needs.preflight.outputs.release_channel == 'nightly'
         continue-on-error: true
-        env:
-          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-          PACKAGE_NAME: com.t3tools.t3code
-          APK_OUTPUT_DIR: release-assets
+        timeout-minutes: 2
+        uses: actions/download-artifact@v8
+        with:
+          pattern: android-apk
+          merge-multiple: true
+          path: android-apk
+
+      - name: Add nightly Android APK
+        if: steps.android_apk.outcome == 'success'
+        shell: bash
         run: |
-          if [ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]; then
-            node .github/scripts/mirror-play-apk.cjs
+          shopt -s nullglob
+          apks=(android-apk/*.apk)
+          if [[ ${#apks[@]} -gt 0 ]]; then
+            mv "${apks[@]}" release-assets/
           fi
 
       # Installers verify archives against this file, so it is written from the
