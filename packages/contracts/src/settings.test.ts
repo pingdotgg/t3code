@@ -311,6 +311,20 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings project folder picker", () => {
+  it("keeps the native picker opt-in and preserves saved values", () => {
+    expect(decodeClientSettings({}).preferNativeProjectFolderPicker).toBe(false);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("preferNativeProjectFolderPicker");
+    for (const value of [true, false]) {
+      const input = { preferNativeProjectFolderPicker: value };
+      expect(
+        encodeClientSettings(decodeClientSettings(input)).preferNativeProjectFolderPicker,
+      ).toBe(value);
+      expect(decodeClientSettingsPatch(input)).toEqual(input);
+    }
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],

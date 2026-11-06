@@ -540,6 +540,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["notification toast popup completion input approval failure"],
   },
   {
+    id: "native-project-folder-picker",
+    title: "Use native folder picker",
+    to: "/settings/general",
+    searchTerms: ["add project local folder directory system finder explorer browse"],
+  },
+  {
     id: "time-format",
     title: "Time format",
     to: "/settings/general",
