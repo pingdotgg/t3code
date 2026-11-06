@@ -76,6 +76,11 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("azure-devops"),
+    // Azure lists fork pull requests by source branch with no owner filter, so read a full page.
+    headBranchProbe: ({ headSelectors }) => ({
+      headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
+      limit: 100,
+    }),
     listChangeRequests: Effect.fn("AzureDevOpsSourceControlProvider.listChangeRequests")(
       function (input) {
         const source = SourceControlProvider.sourceControlRefFromInput(input);
