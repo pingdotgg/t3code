@@ -542,8 +542,9 @@ export function useComposerCommandMenu({
           ? buildComposerModelItems(modelOptions, trigger.query, modelProviders)
           : [];
       return [
-        ...threadItems,
+        // Machines lead: there are few, and the user names one on purpose.
         ...environmentItems,
+        ...threadItems,
         ...modelItems,
         ...pathSearch.entries.map((entry) => {
           const parts = entry.path.normalize("NFC").split("/");
