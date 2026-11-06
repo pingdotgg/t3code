@@ -212,9 +212,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
           "--proxy-bypass-list=<-loopback>",
           // WebRTC would otherwise send UDP, which no proxy carries.
           "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
-          ...(egressProxy !== undefined
-            ? ["--disable-quic", "--webrtc-ip-handling-policy=disable_non_proxied_udp"]
-            : []),
+          ...(egressProxy !== undefined ? ["--disable-quic"] : []),
           ...(input.noSandbox ? ["--no-sandbox"] : []),
           `--user-data-dir=${input.profileDirectory}`,
           "about:blank",
