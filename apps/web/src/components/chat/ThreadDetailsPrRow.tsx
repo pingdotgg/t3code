@@ -211,6 +211,8 @@ export function ThreadDetailsPrRow({
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
         reviewThreads: [],
         comments: [],
         checks: detail.checks,
