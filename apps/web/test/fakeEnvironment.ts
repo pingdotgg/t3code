@@ -390,6 +390,7 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
     runtimeRequests: [...(thread.runtimeRequests ?? [])],
     messages: [],
     plans: [],
+    artifacts: [],
     turnItems: [...thread.items],
     checkpointScopes: [],
     checkpoints: [],
