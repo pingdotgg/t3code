@@ -81,7 +81,9 @@ function comparePrereleaseIdentifier(left: string, right: string): number {
   const rightNumeric = SEMVER_NUMBER_SEGMENT.test(right);
 
   if (leftNumeric && rightNumeric) {
-    return Number.parseInt(left, 10) - Number.parseInt(right, 10);
+    const leftNumber = BigInt(left);
+    const rightNumber = BigInt(right);
+    return leftNumber === rightNumber ? 0 : leftNumber < rightNumber ? -1 : 1;
   }
   if (leftNumeric) {
     return -1;
@@ -89,7 +91,7 @@ function comparePrereleaseIdentifier(left: string, right: string): number {
   if (rightNumeric) {
     return 1;
   }
-  return left.localeCompare(right);
+  return left === right ? 0 : left < right ? -1 : 1;
 }
 
 export function compareSemverVersions(left: string, right: string): number {
