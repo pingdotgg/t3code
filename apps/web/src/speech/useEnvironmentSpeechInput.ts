@@ -131,12 +131,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const prepared = destination.prepared;
   const grantId = destination.grantId;
   const cloudProvider = destination.cloudProvider;
-  const originatingEnvironment = useEnvironment(input.environmentId);
+  const draftCapabilities = useEnvironment(input.environmentId)?.serverConfig?.environment
+    .capabilities;
   const originatingConnection = Option.getOrNull(usePreparedConnection(input.environmentId));
   const canCleanUp = useEnvironmentScope(input.environmentId, AuthOrchestrationOperateScope);
   const cleanupPrepared =
     canCleanUp &&
-    originatingEnvironment?.serverConfig?.environment.capabilities.voiceTranscription === true
+    (draftCapabilities?.voiceTranscription || draftCapabilities?.cloudVoiceTranscription)
       ? originatingConnection
       : null;
   const clientSettings = useClientSettings();

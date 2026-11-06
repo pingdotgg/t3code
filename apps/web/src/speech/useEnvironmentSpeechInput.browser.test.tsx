@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   settings: {} as Record<string, unknown>,
   connected: new Set<string>(),
   voiceCapable: new Set<string>(),
+  cloudVoiceCapable: new Set<string>(),
   canDictate: new Set<string>(),
   prepared: new Map<string, unknown>(),
   primaryEnvironmentId: "primary-env",
@@ -68,7 +69,10 @@ vi.mock("../state/environments", () => ({
           environmentId,
           serverConfig: {
             environment: {
-              capabilities: { voiceTranscription: mocks.voiceCapable.has(environmentId) },
+              capabilities: {
+                voiceTranscription: mocks.voiceCapable.has(environmentId),
+                cloudVoiceTranscription: mocks.cloudVoiceCapable.has(environmentId),
+              },
             },
           },
         }
@@ -176,6 +180,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.primaryEnvironmentId = "primary-env";
   mocks.connected = new Set(["primary-env", THREAD_ENV, "env-a", "env-b"]);
   mocks.voiceCapable = new Set(["primary-env", THREAD_ENV, "env-a", "env-b"]);
+  mocks.cloudVoiceCapable.clear();
   mocks.canDictate = new Set(mocks.voiceCapable);
   mocks.prepared.clear();
   mocks.statusRequests = [];
@@ -435,15 +440,18 @@ it("uses neither destination when the cloud save marker cannot be read", async (
   expectNoAudioSent();
 });
 
-it("cleans the transcript only after cleanup is separately enabled", async () => {
+it("cleans text on a cloud-only draft environment only while cleanup is separately enabled", async () => {
   setup({ destination: "env-a" });
+  mocks.voiceCapable.delete(THREAD_ENV);
+  mocks.cloudVoiceCapable.add(THREAD_ENV);
   chooseTranscriptCleanup(true);
   const nearby = "x".repeat(1_024);
   mocks.draft = "unrelated private paragraph " + nearby;
   await using screen = await render(<Probe />);
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.stop());
-  expect(mocks.cleanupCalls).toHaveLength(1);
+  expect(mocks.transcribeCalls).toEqual(["env-a"]);
+  expect(mocks.cleanupCalls).toEqual([THREAD_ENV]);
   expect(mocks.cleanupDraft).toHaveBeenCalledExactlyOnceWith({
     text: nearby,
     selection: { start: nearby.length, end: nearby.length },
@@ -468,6 +476,7 @@ it.each([
   "keeps a recording without authorized cleanup off the provider: $cleanup / $authorized",
   async ({ cleanup, authorized }) => {
     setup({ destination: "env-a" });
+    mocks.cloudVoiceCapable.add(THREAD_ENV);
     chooseTranscriptCleanup(true);
     mocks.settings.speechCorrectionWord = "sorry";
     if (!authorized) mocks.canDictate.delete(THREAD_ENV);
