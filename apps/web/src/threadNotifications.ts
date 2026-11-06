@@ -1,4 +1,3 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 
 import completionUrl from "./assets/notification-completion.mp3";
@@ -24,9 +23,8 @@ const TAG_HASH_OFFSET_BASIS = 0xcbf29ce484222325n;
 const TAG_HASH_PRIME = 0x100000001b3n;
 const TAG_HASH_MASK = 0xffffffffffffffffn;
 
-/** Windows drops toast notifications with the 73-character environment/thread tag. */
-export function threadNotificationTag(environmentId: EnvironmentId, threadId: ThreadId): string {
-  const key = `${environmentId}:${threadId}`;
+/** Windows drops toast notifications whose tag is longer than 64 characters. */
+export function notificationTag(key: string): string {
   let hash = TAG_HASH_OFFSET_BASIS;
   for (let index = 0; index < key.length; index += 1) {
     hash ^= BigInt(key.charCodeAt(index));

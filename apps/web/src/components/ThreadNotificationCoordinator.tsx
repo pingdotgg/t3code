@@ -27,7 +27,7 @@ import {
   hasNotificationSound,
   playNotificationSound,
   setNotificationBadge,
-  threadNotificationTag,
+  notificationTag,
   unlockNotificationAudio,
 } from "../threadNotifications";
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "./Sidebar.logic";
@@ -196,7 +196,7 @@ export function startThreadNotifications(
     try {
       const notification = new Notification(title, {
         body: thread.title,
-        tag: threadNotificationTag(environmentId, thread.id),
+        tag: notificationTag(`${environmentId}:${thread.id}`),
         silent: true,
         // Windows drops clicks after a toast moves into Notification Center.
         requireInteraction: kind === "completion" && isWindowsPlatform(navigator.platform),

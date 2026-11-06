@@ -8,6 +8,7 @@ import { observedPullRequestTitle, pullRequestEnvironment } from "~/state/pullRe
 import {
   hasDesktopNotifications,
   hasNotificationSound,
+  notificationTag,
   playNotificationSound,
 } from "~/threadNotifications";
 
@@ -145,7 +146,11 @@ function watchGuideRun(
     )
       return;
     try {
-      const notification = new Notification(title, { body, tag: `guide:${runKey}`, silent: true });
+      const notification = new Notification(title, {
+        body,
+        tag: notificationTag(`guide:${runKey}`),
+        silent: true,
+      });
       notification.addEventListener("click", () => {
         notification.close();
         window.focus();
