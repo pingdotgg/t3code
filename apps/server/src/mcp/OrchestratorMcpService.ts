@@ -2965,7 +2965,7 @@ const make = Effect.gen(function* () {
       const projectThreads = yield* threadManagement
         .listProjectThreads({
           projectId: projectId ?? undefined,
-          includeSubagents: input.includeSubagents === true,
+          includeSubagents: input.includeSubagents !== false,
         })
         .pipe(
           Effect.mapError((error) =>

@@ -117,10 +117,13 @@
         "src/features/browser/preview-stream.browser.ts!",
       ],
       // Fonts are configured as asset paths; Expo autolinks the native packages.
+      // generate:nitro runs `cd modules/t3-highlights && nitrogen`; knip does not
+      // treat that shell form as a binary use.
       "ignoreDependencies": [
         "@expo-google-fonts/dm-sans",
         "@t3tools/mobile-review-diff-native",
         "@t3tools/mobile-terminal-native",
+        "nitrogen",
       ],
     },
     "apps/mobile/modules/t3-highlights": {
