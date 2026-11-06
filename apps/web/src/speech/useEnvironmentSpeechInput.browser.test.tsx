@@ -7,13 +7,14 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   type EnvironmentId,
+  type EnvironmentSpeechModel,
   type ProjectId,
   type SpeechCustomWords,
   type SpeechPostProcessingOptions,
   type SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 
-import { act, render } from "../../test/render";
+import { act, render, stubGlobal } from "../../test/render";
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
 import { chooseAudioDestination, chooseTranscriptCleanup, bindAudioGrant } from "./voiceConsent";
 import { writeBrowserClientSettings } from "../clientPersistenceStorage";
@@ -29,7 +30,10 @@ const mocks = vi.hoisted(() => ({
   statusRequests: [] as string[],
   statusUnavailable: false,
   modelState: "ready" as "ready" | "missing-model",
-  download: vi.fn<() => Promise<void>>(),
+  download: vi.fn<(modelId: string) => Promise<void>>(),
+  models: [] as EnvironmentSpeechModel[],
+  selected: [] as string[],
+  cancelled: [] as string[],
   platforms: [] as string[],
   microphoneRequests: [] as string[],
   transcribeCalls: [] as string[],
@@ -109,8 +113,20 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
         gpuDevices: [],
       };
     }),
-  downloadEnvironmentSpeechModel: () => Effect.promise(mocks.download),
-  getEnvironmentSpeechModels: () => Effect.succeed({ models: [] }),
+  downloadEnvironmentSpeechModel: (_prepared: PreparedConnection, modelId: string) =>
+    Effect.promise(async () => {
+      await mocks.download(modelId);
+      return { models: mocks.models };
+    }),
+  selectEnvironmentSpeechModel: (_prepared: PreparedConnection, modelId: string) =>
+    Effect.sync(() => {
+      mocks.selected.push(modelId);
+    }),
+  cancelEnvironmentSpeechModelDownload: (_prepared: PreparedConnection, modelId: string) =>
+    Effect.sync(() => {
+      mocks.cancelled.push(modelId);
+    }),
+  getEnvironmentSpeechModels: () => Effect.succeed({ models: mocks.models }),
   postProcessEnvironmentTranscript: (
     prepared: PreparedConnection,
     transcript: string,
@@ -177,6 +193,9 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.statusUnavailable = false;
   mocks.modelState = "ready";
   mocks.download.mockReset();
+  mocks.models = [];
+  mocks.selected = [];
+  mocks.cancelled = [];
   mocks.platforms = [];
   mocks.microphoneRequests = [];
   mocks.transcribeCalls = [];
@@ -338,6 +357,95 @@ it("reopens setup after reconnecting during a download and ignores its stale com
   });
   expect(mocks.voice.setup.error).toBeNull();
 });
+
+const speechModel = (
+  id: string,
+  languages: string[],
+  state: EnvironmentSpeechModel["state"] = "downloadable",
+): EnvironmentSpeechModel => ({
+  id,
+  name: id,
+  description: "",
+  size: 1,
+  languages,
+  accuracy: 0,
+  speed: 0,
+  recommended: true,
+  supportsStreaming: false,
+  supportsLanguageDetection: true,
+  supportsTranslation: false,
+  active: false,
+  state,
+});
+
+it("offers a model for the desktop's system languages and selects it only once it is installed", async () => {
+  setup({ destination: "env-a" });
+  mocks.modelState = "missing-model";
+  mocks.models = [speechModel("test-model", ["en"]), speechModel("multilingual", ["en", "de"])];
+  let finishDownload!: () => void;
+  mocks.download.mockReturnValue(
+    new Promise<void>((resolve) => {
+      finishDownload = resolve;
+    }),
+  );
+  await using _screen = await render(<Probe />);
+  using _bridge = stubGlobal("desktopBridge", { getPreferredSystemLanguages: () => ["de-DE"] });
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.setup).toMatchObject({
+    open: true,
+    language: "de",
+    model: { id: "multilingual" },
+  });
+  let done: Promise<void> | undefined;
+  await act(() => {
+    done = mocks.voice.setup.download();
+  });
+  expect(mocks.download).toHaveBeenCalledExactlyOnceWith("multilingual");
+  expect(mocks.selected).toEqual([]);
+  mocks.models = [
+    speechModel("test-model", ["en"]),
+    speechModel("multilingual", ["en", "de"], "installed"),
+  ];
+  mocks.modelState = "ready";
+  finishDownload();
+  await act(async () => {
+    await done;
+  });
+  expect(mocks.selected).toEqual(["multilingual"]);
+  expect(mocks.voice.setup).toMatchObject({ step: 1, downloading: false, error: null });
+});
+
+it.each([
+  { by: "setup", cancelled: ["multilingual"] },
+  { by: "another window", cancelled: [] },
+])(
+  "does not select the recommended model when $by cancels its download",
+  async ({ by, cancelled }) => {
+    setup({ destination: "env-a" });
+    mocks.modelState = "missing-model";
+    mocks.models = [speechModel("test-model", ["en"]), speechModel("multilingual", ["en", "de"])];
+    let finishDownload!: () => void;
+    mocks.download.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finishDownload = resolve;
+      }),
+    );
+    await using _screen = await render(<Probe />);
+    using _bridge = stubGlobal("desktopBridge", { getPreferredSystemLanguages: () => ["de-DE"] });
+    await act(() => mocks.voice.start());
+    let done: Promise<void> | undefined;
+    await act(() => {
+      done = mocks.voice.setup.download();
+    });
+    if (by === "setup") await act(() => mocks.voice.setup.cancelDownload());
+    finishDownload();
+    await act(async () => {
+      await done;
+    });
+    expect(mocks.cancelled).toEqual(cancelled);
+    expect(mocks.selected).toEqual([]);
+  },
+);
 
 it("does not resend a failed recording after consent is revoked", async () => {
   setup({ destination: "env-a" });

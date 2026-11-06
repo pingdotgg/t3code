@@ -25,8 +25,8 @@ substitutes another environment.
 
 ## Set up a model
 
-The first time you dictate, T3 Code offers to download the recommended English
-model to the chosen environment. In **Settings → Voice → Transcription**, select
+The first time you dictate, T3 Code offers to download a recommended model for
+your language to the chosen environment. In **Settings → Voice → Transcription**, select
 the languages you dictate in to compare models that support all of them.
 Accuracy shows how often the model got words or characters wrong in each
 language; speed is the time to transcribe 30 seconds on a reference GPU. Choose

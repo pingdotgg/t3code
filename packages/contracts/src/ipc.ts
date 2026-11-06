@@ -1048,6 +1048,8 @@ export interface DesktopBridge {
    * regardless of OS settings.
    */
   getSystemLocale: () => string | null;
+  /** The OS languages, most preferred first. Read the person's language here: the system locale keeps the app's en language. */
+  getPreferredSystemLanguages: () => readonly string[];
   getLocalEnvironmentBootstraps: () => readonly DesktopEnvironmentBootstrap[];
   getLocalEnvironmentEnabled: () => boolean;
   setLocalEnvironmentEnabled: (enabled: boolean) => Promise<void>;

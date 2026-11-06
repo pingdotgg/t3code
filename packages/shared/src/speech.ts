@@ -19,6 +19,36 @@ export function effectiveSpeechLanguage(
   return model.languages.find((language) => language === "en") ?? model.languages[0] ?? "auto";
 }
 
+/** A model counts for a language only if the server would transcribe that language with it. */
+export function recommendSpeechModel<
+  M extends {
+    readonly id: string;
+    readonly languages: readonly string[];
+    readonly supportsLanguageDetection: boolean;
+    readonly recommended: boolean;
+  },
+>(
+  models: readonly M[],
+  input: {
+    readonly selectedModelId: string;
+    readonly intent: string;
+    readonly preferred: readonly string[];
+  },
+) {
+  for (const language of input.intent === "auto" ? input.preferred : [input.intent]) {
+    const capable = models.filter((model) => {
+      const effective = effectiveSpeechLanguage(model, input.intent);
+      return effective === language || (effective === "auto" && model.languages.includes(language));
+    });
+    const model =
+      capable.find(({ id }) => id === input.selectedModelId) ??
+      capable.find(({ recommended }) => recommended) ??
+      capable[0];
+    if (model) return { model, language };
+  }
+  return undefined;
+}
+
 const vocabularyKey = (value: string) => value.trim().normalize("NFC").toLocaleLowerCase();
 
 /**

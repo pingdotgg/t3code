@@ -4,6 +4,7 @@ import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, SPEECH_MAX_OPTIONS_BYTES } from "
 import {
   decodeSpeechPcmRequest,
   encodeSpeechPcmRequest,
+  recommendSpeechModel,
   resolveSpeechVocabulary,
 } from "./speech.ts";
 
@@ -69,5 +70,67 @@ describe("resolveSpeechVocabulary", () => {
     ]);
     expect(resolved.filter(({ term }) => term === "word1")).toHaveLength(1);
     expect(resolved.at(-1)?.term).toBe("word97");
+  });
+});
+
+describe("recommendSpeechModel", () => {
+  const catalog = [
+    {
+      id: "unrecommended",
+      languages: ["en", "de", "es"],
+      supportsLanguageDetection: true,
+      recommended: false,
+    },
+    { id: "english", languages: ["en"], supportsLanguageDetection: false, recommended: true },
+    { id: "fixed", languages: ["en", "de"], supportsLanguageDetection: false, recommended: true },
+    {
+      id: "detecting",
+      languages: ["en", "de", "fr"],
+      supportsLanguageDetection: true,
+      recommended: true,
+    },
+  ];
+
+  it.each([
+    {
+      name: "keeps the English default for an English speaker",
+      input: { selectedModelId: "english", intent: "auto", preferred: ["en"] },
+      expected: { id: "english", language: "en" },
+    },
+    {
+      name: "skips a recommended model that would transcribe English instead of German",
+      input: { selectedModelId: "english", intent: "auto", preferred: ["de", "en"] },
+      expected: { id: "detecting", language: "de" },
+    },
+    {
+      name: "accepts a model without language detection for an explicit language",
+      input: { selectedModelId: "english", intent: "de", preferred: ["en"] },
+      expected: { id: "fixed", language: "de" },
+    },
+    {
+      name: "keeps a selected model that is not recommended but transcribes German",
+      input: { selectedModelId: "unrecommended", intent: "auto", preferred: ["de"] },
+      expected: { id: "unrecommended", language: "de" },
+    },
+    {
+      name: "moves on to the next preferred language that a model transcribes",
+      input: { selectedModelId: "english", intent: "auto", preferred: ["ja", "fr"] },
+      expected: { id: "detecting", language: "fr" },
+    },
+    {
+      name: "falls back to a model that is not recommended when no other transcribes the language",
+      input: { selectedModelId: "english", intent: "auto", preferred: ["es"] },
+      expected: { id: "unrecommended", language: "es" },
+    },
+    {
+      name: "offers nothing when no model transcribes the language",
+      input: { selectedModelId: "english", intent: "auto", preferred: ["ja"] },
+      expected: undefined,
+    },
+  ])("$name", ({ input, expected }) => {
+    const choice = recommendSpeechModel(catalog, input);
+    expect(choice ? { id: choice.model.id, language: choice.language } : undefined).toEqual(
+      expected,
+    );
   });
 });

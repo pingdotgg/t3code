@@ -101,6 +101,7 @@ it("preserves the model test transcript when its model is filtered out", async (
             open: false,
             step: 0,
             model: null,
+            language: null,
             downloading: false,
             error: null,
             setOpen: () => {},
