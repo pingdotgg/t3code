@@ -4044,6 +4044,7 @@ export default function ChatView(props: ChatViewProps) {
           environmentId={activeThread.environmentId}
           workspaceRoot={activeWorkspaceRoot}
           projectName={activeProject?.title ?? null}
+          projectId={activeProject?.id}
           composerDraftTarget={composerDraftTarget}
           keybindings={keybindings}
           availableEditors={availableEditors}

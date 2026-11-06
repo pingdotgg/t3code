@@ -3,6 +3,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type {
   EditorId,
   EnvironmentId,
+  ProjectId,
   ResolvedKeybindingsConfig,
   ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -36,7 +37,7 @@ export function openFilePreviewDialog(
   relativePath: string,
   line: number | undefined,
 ): void {
-  if (relativePath === "." || relativePath.endsWith("/")) {
+  if (relativePath === "." || relativePath.endsWith("/") || relativePath.endsWith("\\")) {
     closeFilePreviewDialog();
     useRightPanelStore.getState().openFile(threadRef, relativePath, line);
     return;
@@ -70,6 +71,7 @@ export function FilePreviewDialogHost(props: {
   readonly environmentId: EnvironmentId;
   readonly workspaceRoot: string | undefined;
   readonly projectName: string | null;
+  readonly projectId: ProjectId | undefined;
   readonly composerDraftTarget: ScopedThreadRef | DraftId;
   readonly keybindings: ResolvedKeybindingsConfig;
   readonly availableEditors: ReadonlyArray<EditorId>;
@@ -118,6 +120,7 @@ export function FilePreviewDialogHost(props: {
               environmentId={props.environmentId}
               cwd={props.workspaceRoot}
               projectName={props.projectName}
+              projectId={props.projectId}
               threadRef={props.threadRef}
               composerDraftTarget={props.composerDraftTarget}
               keybindings={props.keybindings}
