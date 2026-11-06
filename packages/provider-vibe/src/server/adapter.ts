@@ -279,6 +279,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
     const child = yield* spawner
       .spawn(
         ChildProcess.make(spawn.command, [...spawn.args], {
+          forceKillAfter: "1 second",
           ...(spawn.cwd !== undefined ? { cwd: spawn.cwd } : {}),
           ...(spawn.env !== undefined ? { env: spawn.env } : {}),
         }),
@@ -952,15 +953,26 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
             checkpointId: rollbackInput.target.checkpointId,
           });
         }
-        const history = yield* Effect.mapError(
-          client.sessionHistoryList({ sessionId: nativeSessionId, limit: 500 }),
-          protocolError,
-        );
-        const entryId = history.items
-          .map((item) => asRecord(item))
-          .find(
-            (entry) => str(entry?.["turnId"]) === targetTurnId && str(entry?.["role"]) === "user",
-          )?.["id"];
+        // session/rewind takes a history entry id, not a turn id: resolve the input entry of the
+        // target turn, following nextCursor across all pages so older targets are found too.
+        let entryId: string | undefined;
+        let cursor: string | null | undefined = null;
+        while (entryId === undefined) {
+          const page: {
+            readonly items: ReadonlyArray<unknown>;
+            readonly nextCursor?: string | null | undefined;
+          } = yield* Effect.mapError(
+            client.sessionHistoryList({ sessionId: nativeSessionId, limit: 500, cursor }),
+            protocolError,
+          );
+          entryId = page.items
+            .map((item) => asRecord(item))
+            .find(
+              (entry) => str(entry?.["turnId"]) === targetTurnId && str(entry?.["role"]) === "user",
+            )?.["id"] as string | undefined;
+          cursor = page.nextCursor ?? null;
+          if (cursor === null) break;
+        }
         if (typeof entryId !== "string" || entryId.length === 0) {
           return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
             driver: VIBE_PROVIDER,
