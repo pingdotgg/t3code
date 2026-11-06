@@ -14,6 +14,7 @@ import {
 } from "@t3tools/client-runtime/state/usage";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
+import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 
 /**
@@ -28,18 +29,29 @@ export function instanceLimitsRefreshSelection(
   instanceId: ProviderInstanceId,
   driver?: ProviderDriverKind,
   providers: readonly Pick<ServerProvider, "instanceId" | "driver" | "auth">[] = [],
+  generation = 0,
 ) {
   return {
-    key: JSON.stringify([instanceId, driver, usageRefreshAccountKey(providers, driver)]),
+    key: JSON.stringify([
+      instanceId,
+      driver,
+      usageRefreshAccountKey(providers, driver, null, generation),
+    ]),
     resources: [
       ...(driver
-        ? [JSON.stringify(["provider", driver, usageRefreshAccountKey(providers, driver)])]
+        ? [
+            JSON.stringify([
+              "provider",
+              driver,
+              usageRefreshAccountKey(providers, driver, null, generation),
+            ]),
+          ]
         : []),
       JSON.stringify([
         "instance",
         instanceId,
         driver,
-        usageRefreshAccountKey(providers, driver, instanceId),
+        usageRefreshAccountKey(providers, driver, instanceId, generation),
       ]),
     ],
   };
@@ -50,15 +62,28 @@ function environmentLimitsRefreshKeys(
   environmentId: EnvironmentId,
 ) {
   const config = registry.get(serverEnvironment.configValueAtom(environmentId));
+  const generation =
+    registry.get(environmentPresentations.presentationAtom(environmentId))?.connection.generation ??
+    0;
   const keys = (config?.providers ?? []).flatMap(
     (provider) =>
-      instanceLimitsRefreshSelection(provider.instanceId, provider.driver, config?.providers ?? [])
-        .resources,
+      instanceLimitsRefreshSelection(
+        provider.instanceId,
+        provider.driver,
+        config?.providers ?? [],
+        generation,
+      ).resources,
   );
   for (const source of config?.usageLimitSources ?? []) {
     keys.push(
-      JSON.stringify(["source", source.id]),
-      ...source.accounts.map((account) => JSON.stringify(["provider", account.driver])),
+      JSON.stringify(["source", source.id, generation]),
+      ...source.accounts.map((account) =>
+        JSON.stringify([
+          "provider",
+          account.driver,
+          usageRefreshAccountKey(config?.providers ?? [], account.driver, null, generation),
+        ]),
+      ),
     );
   }
   return keys.length ? [...new Set(keys)] : [""];
@@ -76,6 +101,9 @@ export async function refreshEnvironmentLimits(
 ): Promise<void> {
   if (!isAppActive()) return;
   const providers = registry.get(serverEnvironment.configValueAtom(environmentId))?.providers ?? [];
+  const generation =
+    registry.get(environmentPresentations.presentationAtom(environmentId))?.connection.generation ??
+    0;
   const result = await refreshUsageLimits(
     environmentId,
     () =>
@@ -94,9 +122,9 @@ export async function refreshEnvironmentLimits(
     options.afterPending,
     {
       ...(options.instanceId
-        ? instanceLimitsRefreshSelection(options.instanceId, options.driver, providers)
+        ? instanceLimitsRefreshSelection(options.instanceId, options.driver, providers, generation)
         : {
-            key: usageRefreshAccountKey(providers),
+            key: usageRefreshAccountKey(providers, null, null, generation),
             resources: environmentLimitsRefreshKeys(registry, environmentId),
           }),
       refreshDeadline: (result) =>
@@ -135,7 +163,12 @@ export async function refreshEnvironmentLimits(
 
 const limitsAccountKeyAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get) =>
-    usageRefreshAccountKey(get(serverEnvironment.configValueAtom(environmentId))?.providers ?? []),
+    usageRefreshAccountKey(
+      get(serverEnvironment.configValueAtom(environmentId))?.providers ?? [],
+      null,
+      null,
+      get(environmentPresentations.presentationAtom(environmentId))?.connection.generation,
+    ),
   ),
 );
 

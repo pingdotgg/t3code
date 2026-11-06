@@ -2,7 +2,7 @@ export {
   makeUsageHttpClient,
   usageRetryDelay,
   usageResponseCheckedAt,
-  usageResponseRefreshAfter,
+  usageReadRefreshAfter,
   UsageAccountIdentity,
 } from "./usageHttpClient.ts";
 import type {

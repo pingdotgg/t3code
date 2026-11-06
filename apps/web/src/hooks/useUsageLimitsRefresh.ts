@@ -18,6 +18,7 @@ export function useUsageLimitsRefresh(
 ) {
   const presentation = useAtomValue(environmentPresentations.presentationAtom(environmentId));
   const connected = presentation?.connection.phase === "connected";
+  const generation = presentation?.connection.generation ?? 0;
   const chatVisible = useRouterState({
     select: (state) => !isAppModalPage(state.location.pathname),
   });
@@ -59,13 +60,19 @@ export function useUsageLimitsRefresh(
       key: `usage:${environmentId}:${instanceId}:${driver ?? ""}`,
       refreshKeys: [
         ...(driver
-          ? [JSON.stringify([environmentId, driver, usageRefreshAccountKey(providers, driver)])]
+          ? [
+              JSON.stringify([
+                environmentId,
+                driver,
+                usageRefreshAccountKey(providers, driver, null, generation),
+              ]),
+            ]
           : []),
         JSON.stringify([
           environmentId,
           driver,
           instanceId,
-          usageRefreshAccountKey(providers, driver, instanceId),
+          usageRefreshAccountKey(providers, driver, instanceId, generation),
         ]),
       ],
       refreshDeadline: (result) => (typeof result === "number" ? result : undefined),

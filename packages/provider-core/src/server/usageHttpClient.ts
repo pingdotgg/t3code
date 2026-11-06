@@ -14,8 +14,8 @@ const accountCacheKey = (origin: string, authorization: string, identity: string
   encodeKey([origin, identity === undefined ? authorization : ["account", identity]]);
 
 const samples = new WeakMap<
-  HttpClientResponse.HttpClientResponse,
-  { readonly checkedAt: string; readonly refreshAfter: number }
+  object,
+  { readonly checkedAt?: string; readonly refreshAfter: number }
 >();
 
 export function usageResponseCheckedAt(
@@ -25,8 +25,8 @@ export function usageResponseCheckedAt(
   return samples.get(response)?.checkedAt ?? fallback;
 }
 
-export function usageResponseRefreshAfter(response: HttpClientResponse.HttpClientResponse) {
-  return samples.get(response)?.refreshAfter;
+export function usageReadRefreshAfter(read: object) {
+  return samples.get(read)?.refreshAfter;
 }
 
 export const UsageAccountIdentity = Context.Reference<string | undefined>(
@@ -112,7 +112,13 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
               if (saved.expiresAt <= now) cached.delete(cachedKey);
             const previous = cached.get(tokenKey) ?? cached.get(key);
             if (previous && now < previous.expiresAt) {
-              const saved = yield* previous.result;
+              const saved = yield* previous.result.pipe(
+                Effect.tapError((error) =>
+                  Effect.sync(() => {
+                    samples.set(error, { refreshAfter: previous.expiresAt });
+                  }),
+                ),
+              );
               const response = HttpClientResponse.fromWeb(
                 request,
                 new Response(saved.body.slice(0), saved),
@@ -173,7 +179,13 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
                   expiresAt: refreshAfter,
                 },
               );
-            const saved = yield* result;
+            const saved = yield* result.pipe(
+              Effect.tapError((error) =>
+                Effect.sync(() => {
+                  samples.set(error, { refreshAfter });
+                }),
+              ),
+            );
             const response = HttpClientResponse.fromWeb(
               request,
               new Response(saved.body.slice(0), saved),

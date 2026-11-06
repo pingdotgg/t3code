@@ -1,7 +1,7 @@
 import {
   UsageAccountIdentity,
   usageResponseCheckedAt,
-  usageResponseRefreshAfter,
+  usageReadRefreshAfter,
 } from "@t3tools/provider-core/server/usageLimits";
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -206,7 +206,7 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
         HttpClientRequest.bearerToken(token),
       ),
     );
-    refreshAfter = usageResponseRefreshAfter(response);
+    refreshAfter = usageReadRefreshAfter(response);
     if (response.status === 403) {
       const { error } = yield* HttpClientResponse.schemaBodyJson(GrokErrorResponse)(response);
       // xAI refuses Grok Build while the account's privacy setting is a legacy mode.
@@ -225,6 +225,11 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
   }).pipe(
     Effect.provideService(UsageAccountIdentity, credentialFingerprint),
     Effect.timeout("10 seconds"),
+    Effect.tapError((error) =>
+      Effect.sync(() => {
+        refreshAfter ??= usageReadRefreshAfter(error);
+      }),
+    ),
     Effect.orElseSucceed(() => probeFailed),
   );
   return {

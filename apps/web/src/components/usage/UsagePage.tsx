@@ -278,7 +278,12 @@ export function UsagePage() {
               afterPending,
               JSON.stringify([
                 [...hiddenProviders].sort(),
-                usageRefreshAccountKey(presentation.serverConfig?.providers ?? []),
+                usageRefreshAccountKey(
+                  presentation.serverConfig?.providers ?? [],
+                  null,
+                  null,
+                  presentation.connection.generation,
+                ),
               ]),
             ).then((response) =>
               response !== undefined && AsyncResult.isSuccess(response)
@@ -394,7 +399,12 @@ export function UsagePage() {
               JSON.stringify([
                 environmentId,
                 driver,
-                usageRefreshAccountKey(presentation.serverConfig?.providers ?? [], driver),
+                usageRefreshAccountKey(
+                  presentation.serverConfig?.providers ?? [],
+                  driver,
+                  null,
+                  presentation.connection.generation,
+                ),
               ]),
             ),
             ...presentation.serverConfig.providers
@@ -408,6 +418,7 @@ export function UsagePage() {
                     presentation.serverConfig?.providers ?? [],
                     provider.driver,
                     provider.instanceId,
+                    presentation.connection.generation,
                   ),
                 ]),
               ),

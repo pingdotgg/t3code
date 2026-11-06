@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useIsFocused } from "@react-navigation/native";
 import { useEffect } from "react";
@@ -17,8 +18,14 @@ export function useInstanceLimitsRefresh(
 ) {
   const focused = useIsFocused();
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const presentation = useAtomValue(environmentPresentations.presentationAtom(environmentId));
   const selectionKeyJson = JSON.stringify(
-    instanceLimitsRefreshSelection(instanceId, driver, config?.providers ?? []),
+    instanceLimitsRefreshSelection(
+      instanceId,
+      driver,
+      config?.providers ?? [],
+      presentation?.connection.generation,
+    ),
   );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- quota demand follows the native panel and app lifecycle
   useEffect(() => {

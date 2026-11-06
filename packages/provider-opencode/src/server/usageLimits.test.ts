@@ -4,18 +4,22 @@ import { assert, it } from "@effect/vitest";
 import { makeUsageHttpClient } from "@t3tools/provider-core/server/usageLimits";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientResponse, HttpClientError } from "effect/http";
 import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
 
-it.effect.each([200, 503])(
+it.effect.each([200, 503, "transport"] as const)(
   "preserves the original Go cache deadline for another instance (HTTP %s)",
   (status) =>
     Effect.gen(function* () {
       let reads = 0;
       const client = yield* makeUsageHttpClient(
         HttpClient.make((request) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
             reads++;
+            if (status === "transport")
+              return yield* new HttpClientError.HttpClientError({
+                reason: new HttpClientError.TransportError({ request, description: "offline" }),
+              });
             const window = { percent: 10, resetsAt: "2026-11-01T00:00:00Z" };
             return HttpClientResponse.fromWeb(
               request,

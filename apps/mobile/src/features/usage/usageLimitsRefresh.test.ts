@@ -12,6 +12,7 @@ import { expect, it, vi } from "vite-plus/test";
 type RefreshResult = AsyncResult.AsyncResult<{ providers: readonly ServerProvider[] }, string>;
 
 const state = vi.hoisted(() => ({
+  generation: 0,
   providers: [] as Array<{
     instanceId: ProviderInstanceId;
     driver: ProviderDriverKind;
@@ -21,6 +22,14 @@ const state = vi.hoisted(() => ({
     throw new Error("refresh not set up");
   },
 }));
+vi.mock("../../state/presentation", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    environmentPresentations: {
+      presentationAtom: () => Atom.make({ connection: { generation: state.generation } }),
+    },
+  };
+});
 vi.mock("../../lib/appState", () => ({
   isAppActive: () => true,
   subscribeAppState: () => () => {},
@@ -52,6 +61,7 @@ const failure: RefreshResult = AsyncResult.failure(Cause.fail("offline"));
 
 function setup(refresh: (environmentId: string) => Promise<RefreshResult>) {
   state.refresh = refresh;
+  state.generation = 0;
   state.providers = [
     {
       instanceId: ProviderInstanceId.make("cursor-instance"),
@@ -166,7 +176,7 @@ it.each(["limits", "thread", "thread-and-other-provider"] as const)(
   },
 );
 
-it.each(["sign-in", "account-switch"] as const)(
+it.each(["sign-in", "account-switch", "restart"] as const)(
   "reads fresh quotas after %s",
   async (transition) => {
     vi.useFakeTimers({ now: 8_000_000 });
@@ -181,7 +191,8 @@ it.each(["sign-in", "account-switch"] as const)(
       await refreshEnvironmentLimits(registry, a, { automatic: true });
       expect(refresh).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(60_000);
-      state.providers[0]!.auth = { status: "authenticated", email: "new@example.com" };
+      if (transition === "restart") state.generation++;
+      else state.providers[0]!.auth = { status: "authenticated", email: "new@example.com" };
       await refreshEnvironmentLimits(registry, a, { automatic: true });
       expect(refresh).toHaveBeenCalledTimes(2);
       await refreshEnvironmentLimits(registry, a, { automatic: true });

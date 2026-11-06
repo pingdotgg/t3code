@@ -1,6 +1,6 @@
 import {
   usageResponseCheckedAt,
-  usageResponseRefreshAfter,
+  usageReadRefreshAfter,
   UsageAccountIdentity,
 } from "@t3tools/provider-core/server/usageLimits";
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
@@ -155,13 +155,18 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
         ),
       )
       .pipe(Effect.provideService(UsageAccountIdentity, usageIdentity));
-    refreshAfter = usageResponseRefreshAfter(response);
+    refreshAfter = usageReadRefreshAfter(response);
     const body = yield* HttpClientResponse.schemaBodyJson(CursorUsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );
     return cursorUsageResponseToLimits(body, usageResponseCheckedAt(response, checkedAt));
   }).pipe(
     Effect.timeout("10 seconds"),
+    Effect.tapError((error) =>
+      Effect.sync(() => {
+        refreshAfter ??= usageReadRefreshAfter(error);
+      }),
+    ),
     Effect.orElseSucceed(() =>
       makeUnavailableUsageLimits({
         checkedAt,

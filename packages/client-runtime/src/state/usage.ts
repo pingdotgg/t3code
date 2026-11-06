@@ -128,8 +128,10 @@ export function usageRefreshAccountKey(
   providers: readonly Pick<ServerProvider, "instanceId" | "driver" | "auth">[],
   driver?: ProviderDriverKind | null,
   instanceId?: ProviderInstanceId | null,
+  generation = 0,
 ) {
-  return JSON.stringify(
+  return JSON.stringify([
+    generation,
     providers
       .filter(
         (provider) =>
@@ -144,7 +146,7 @@ export function usageRefreshAccountKey(
         provider.auth?.email?.toLowerCase(),
         provider.auth?.workspaceId,
       ]),
-  );
+  ]);
 }
 
 const limitsRefreshAfter = new Map<string, number>();

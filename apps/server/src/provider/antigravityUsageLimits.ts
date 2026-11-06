@@ -1,6 +1,6 @@
 import {
   usageResponseCheckedAt,
-  usageResponseRefreshAfter,
+  usageReadRefreshAfter,
   UsageAccountIdentity,
 } from "@t3tools/provider-core/server/usageLimits";
 import type { AntigravitySettings, ServerProviderUsageWindow } from "@t3tools/contracts";
@@ -219,11 +219,14 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   ) =>
     client.execute(request).pipe(
       Effect.provideService(FetchHttpClient.RequestInit, MANUAL_REDIRECT),
+      Effect.tap((response) =>
+        Effect.sync(() =>
+          onSample?.(usageResponseCheckedAt(response, ""), usageReadRefreshAfter(response)),
+        ),
+      ),
+      Effect.tapError((error) => Effect.sync(() => onSample?.("", usageReadRefreshAfter(error)))),
       Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap((response) => {
-        onSample?.(usageResponseCheckedAt(response, ""), usageResponseRefreshAfter(response));
-        return response.json;
-      }),
+      Effect.flatMap((response) => response.json),
       Effect.timeout("10 seconds"),
     );
   const read = Effect.fn("AntigravityUsageProbe.read")(function* (
@@ -345,6 +348,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       : yield* fetchWindows("fetchAvailableModels", (response) =>
           decodeModels(response).pipe(Effect.map(modelWindows)),
         );
+    const refreshAfter = sampleDeadlines.length ? Math.min(...sampleDeadlines) : undefined;
     if (windows.length === 0) {
       return {
         ...makeUnavailableUsageLimits({
@@ -353,13 +357,14 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
           message: "Antigravity did not return usable quota information.",
         }),
         credentialFingerprint: quotaOwner,
+        ...(refreshAfter !== undefined ? { refreshAfter } : {}),
       };
     }
     if (generation === startedGeneration) quotaOwners.set(fingerprint, account);
     return {
       ...makeUsageLimits({ checkedAt: sampleTimes.toSorted()[0] ?? checkedAt, windows }),
       credentialFingerprint: account,
-      ...(sampleDeadlines.length ? { refreshAfter: Math.min(...sampleDeadlines) } : {}),
+      ...(refreshAfter !== undefined ? { refreshAfter } : {}),
     };
   });
   const probe = Effect.gen(function* () {

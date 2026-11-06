@@ -28,25 +28,36 @@ function Probe(props: {
 }
 
 describe("useLiveRefresh", () => {
-  it("reads a newly signed-in account without reusing its signed-out deadline", async () => {
+  it.each(["sign-in", "reconnect"] as const)("reads fresh quotas after %s", async (transition) => {
     const refresh = vi.fn();
     using _timers = fakeTimers({ now: 9_000_000 });
-    const instanceId = ProviderInstanceId.make("web-auth-change");
+    const instanceId = ProviderInstanceId.make(`web-auth-change-${transition}`);
     const driver = ProviderDriverKind.make("codex");
+    let generation = 0;
     const probe = (auth: ServerProvider["auth"]) => (
       <Probe
         refresh={refresh}
         viewKey="web-auth-change"
-        refreshKeys={[usageRefreshAccountKey([{ instanceId, driver, auth }], driver)]}
+        refreshKeys={[
+          usageRefreshAccountKey([{ instanceId, driver, auth }], driver, null, generation),
+        ]}
         refreshOnShow
         refreshWhileIdle
       />
     );
     // Bare usage hook; nothing here navigates.
-    await using screen = await render(probe({ status: "unauthenticated" }), { router: false });
+    await using screen = await render(
+      probe(
+        transition === "sign-in"
+          ? { status: "unauthenticated" }
+          : { status: "authenticated", email: "new@example.com" },
+      ),
+      { router: false },
+    );
     expect(refresh).toHaveBeenCalledTimes(1);
     await screen.rerender(<></>);
     await act(() => vi.advanceTimersByTime(60_000));
+    if (transition === "reconnect") generation++;
     await screen.rerender(probe({ status: "authenticated", email: "new@example.com" }));
     expect(refresh).toHaveBeenCalledTimes(2);
     await screen.rerender(<></>);
