@@ -1,3 +1,4 @@
+import { addGitFailureToComposer } from "./gitFixPrompt";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import {
@@ -940,11 +941,7 @@ export default function GitActionsControl({
       actionProps: {
         children: "Fix with agent",
         onClick: () => {
-          const store = useComposerDraftStore.getState();
-          const existing = store.getComposerDraft(target)?.prompt ?? "";
-          const message = error instanceof Error ? error.message : "An error occurred.";
-          const prompt = `Help me fix this Git error:\n\n${message}`;
-          store.setPrompt(target, existing ? `${existing}\n\n${prompt}` : prompt);
+          addGitFailureToComposer(target, error);
         },
       },
     };
