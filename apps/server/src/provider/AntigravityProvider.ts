@@ -531,7 +531,17 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   return {
     snapshot: {
       ...managed,
-      getSnapshot,
+      getSnapshot: Effect.gen(function* () {
+        const snapshot = yield* getSnapshot;
+        const published = (yield* managed.getSnapshot).usageLimits;
+        const limits = snapshot.usageLimits;
+        return limits &&
+          published?.refreshAfter !== undefined &&
+          limits.checkedAt === published.checkedAt &&
+          limits.credentialFingerprint === published.credentialFingerprint
+          ? { ...snapshot, usageLimits: { ...limits, refreshAfter: published.refreshAfter } }
+          : snapshot;
+      }),
       refreshUsage: managed.refreshUsage!.pipe(Effect.andThen(FiberHandle.awaitEmpty(usageRead))),
     },
     onSessionStarted,

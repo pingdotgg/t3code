@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import { UsagePolling, UsageAfterReset } from "@t3tools/provider-core/server/usageLimits";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -732,7 +733,10 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
               snapshot.usageLimits !== undefined && snapshot.usageLimits.unavailable === undefined,
           );
           yield* harness.initialize;
-          expect((yield* published)?.usageLimits).toEqual(limits);
+          expect((yield* published)?.usageLimits).toEqual({
+            ...limits,
+            refreshAfter: (yield* Clock.currentTimeMillis) + 300_000,
+          });
           // The second health check is the one the failed background read triggers.
           const checks = yield* Ref.make(0);
           const failedReadApplied = yield* Deferred.make<void>();
@@ -754,6 +758,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           yield* Deferred.await(failedReadApplied);
           expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual({
             ...limits,
+            refreshAfter: (yield* Clock.currentTimeMillis) + 300_000,
             stale: true,
           });
           yield* harness.provider.onSignedOut;
@@ -844,7 +849,10 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         } satisfies ServerProviderUsageLimits;
         yield* Deferred.succeed(readResult, limits);
         yield* Fiber.join(demand);
-        expect((yield* published)?.usageLimits).toEqual(limits);
+        expect((yield* published)?.usageLimits).toEqual({
+          ...limits,
+          refreshAfter: (yield* Clock.currentTimeMillis) + 300_000,
+        });
       }),
     ).pipe(Effect.provideService(UsagePolling, true), Effect.provideService(UsageAfterReset, true)),
   );
@@ -870,7 +878,10 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         yield* Ref.set(usage, Effect.succeed(newLimits));
         yield* harness.provider.onSignedIn;
         yield* harness.provider.onSessionStarted(started);
-        expect((yield* published)?.usageLimits).toEqual(newLimits);
+        expect((yield* published)?.usageLimits).toEqual({
+          ...newLimits,
+          refreshAfter: (yield* Clock.currentTimeMillis) + 300_000,
+        });
         // Switching again must not republish the previous account's limits, even if the read fails.
         const failed = {
           checkedAt: "2026-10-09T12:02:00.000Z",
@@ -884,7 +895,10 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         yield* harness.provider.onSignedIn.pipe(Effect.provideService(UsagePolling, false));
         expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
         yield* harness.provider.onSessionStarted(started);
-        expect((yield* republished)?.usageLimits).toEqual(failed);
+        expect((yield* republished)?.usageLimits).toEqual({
+          ...failed,
+          refreshAfter: (yield* Clock.currentTimeMillis) + 300_000,
+        });
       }),
     ).pipe(Effect.provideService(UsagePolling, true), Effect.provideService(UsageAfterReset, true)),
   );
