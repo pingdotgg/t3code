@@ -1,5 +1,5 @@
 import {
-  type EnvironmentId,
+  EnvironmentId,
   OrchestratorMcpFailure,
   type PeerLinkError,
   type ProviderInteractionMode,
@@ -8,6 +8,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -16,6 +17,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import * as PeerEnvironmentRegistry from "./PeerEnvironmentRegistry.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 
 /** The only MCP protocol version a T3 Code `/mcp` registers. */
@@ -77,6 +79,16 @@ const fromLinkError = (error: PeerLinkError) =>
     message: error.message,
   });
 
+/** How the agent hears a fleet registry problem when it asked to call a peer. */
+const fromRegistryError = (error: PeerEnvironmentRegistry.PeerEnvironmentRegistryError) =>
+  new OrchestratorMcpFailure({
+    code:
+      error.reason === "unknown_peer" || error.reason === "not_paired"
+        ? "invalid_request"
+        : "orchestration_error",
+    message: error.message,
+  });
+
 /** Not final, so a task already running there resumes once the beta is on there again. */
 const linkedEnvironmentsOffThere = new OrchestratorMcpFailure({
   code: "orchestration_error",
@@ -96,6 +108,9 @@ const responseJson = (contentType: string | undefined, text: string) =>
 
 const make = Effect.gen(function* () {
   const links = yield* PeerLinks.PeerLinks;
+  // Optional so environments without a fleet registry build without it; where
+  // the registry is provided, its delegation sessions answer for their peers.
+  const registry = yield* Effect.serviceOption(PeerEnvironmentRegistry.PeerEnvironmentRegistry);
   const httpClient = yield* HttpClient.HttpClient;
   // One MCP session per peer and address, reused across calls. The peer keeps
   // sessions in memory, so a restart there answers 404 and we start a new one.
@@ -153,11 +168,31 @@ const make = Effect.gen(function* () {
     return sessionId;
   });
 
+  /**
+   * Where a peer is reached and with what credential: its link if one is
+   * stored, else its fleet registry delegation session. Both spellings reach
+   * the peer's `/mcp`, so the bridge, forwarding and delegation work the same
+   * for linked environments and registered workers.
+   */
+  const resolvePeer = (environmentId: EnvironmentId) =>
+    links.resolve(environmentId).pipe(
+      Effect.map((resolved) => ({ url: resolved.url, token: resolved.token })),
+      Effect.result,
+      Effect.flatMap((fromLink) => {
+        if (Result.isSuccess(fromLink)) return Effect.succeed(fromLink.success);
+        if (Option.isNone(registry) || fromLink.failure.reason !== "unknown_link") {
+          return Effect.fail(fromLinkError(fromLink.failure));
+        }
+        return registry.value.resolveSession(environmentId).pipe(
+          Effect.map(({ url, token }) => ({ url, token })),
+          Effect.mapError(fromRegistryError),
+        );
+      }),
+    );
+
   const call: PeerMcpClient["Service"]["call"] = Effect.fn("PeerMcpClient.call")(
     function* (input) {
-      const resolved = yield* links
-        .resolve(input.environmentId)
-        .pipe(Effect.mapError(fromLinkError));
+      const resolved = yield* resolvePeer(input.environmentId);
       const limitHeader = {
         [McpInvocationContext.MODE_LIMIT_HEADER]: `${input.limits.runtimeMode}/${input.limits.interactionMode}`,
       };
