@@ -36,6 +36,36 @@ const quoteSh = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`
 const escapeAppleScriptString = (value: string): string =>
   value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 
+/** wt.exe treats `;` as a command separator even inside quoted argv. */
+const escapeWindowsTerminalArg = (value: string): string => value.replaceAll(";", "\\;");
+
+/** cmd.exe expands `%NAME%` in the /c string before start runs. */
+const escapeCmdPercent = (value: string): string => value.replaceAll("%", "%%");
+
+export const windowsTerminalRemoteArgs = (
+  sshCommand: string,
+  sshArgs: ReadonlyArray<string>,
+): ReadonlyArray<string> => [
+  // `-w -1` opens a new window; `-w 0` would reuse the last focused window.
+  "-w",
+  "-1",
+  "nt",
+  "--",
+  escapeWindowsTerminalArg(sshCommand),
+  ...sshArgs.map(escapeWindowsTerminalArg),
+];
+
+export const cmdStartRemoteArgs = (
+  sshCommand: string,
+  sshArgs: ReadonlyArray<string>,
+): ReadonlyArray<string> => [
+  "/c",
+  "start",
+  "",
+  escapeCmdPercent(sshCommand),
+  ...sshArgs.map(escapeCmdPercent),
+];
+
 const launchAndUnref = Effect.fn("desktop.openRemoteTerminal.launchAndUnref")(function* (
   command: string,
   args: ReadonlyArray<string>,
@@ -49,7 +79,7 @@ const launchAndUnref = Effect.fn("desktop.openRemoteTerminal.launchAndUnref")(fu
   );
 });
 
-const linuxTerminalArgs = (
+export const linuxRemoteTerminalArgs = (
   command: string,
   sshCommand: string,
   sshArgs: ReadonlyArray<string>,
@@ -57,8 +87,10 @@ const linuxTerminalArgs = (
   switch (command) {
     case "gnome-terminal":
     case "kgx":
-    case "xfce4-terminal":
       return ["--", sshCommand, ...sshArgs];
+    case "xfce4-terminal":
+      // `--` only ends Xfce options; `-x` is required to run a command.
+      return ["-x", sshCommand, ...sshArgs];
     default:
       return ["-e", sshCommand, ...sshArgs];
   }
@@ -92,11 +124,11 @@ const launchWindows = Effect.fn("desktop.openRemoteTerminal.launchWindows")(func
   env: NodeJS.ProcessEnv,
 ) {
   if (yield* isCommandAvailable("wt.exe", { env })) {
-    yield* launchAndUnref("wt.exe", ["-w", "0", "nt", "--", sshCommand, ...sshArgs]);
+    yield* launchAndUnref("wt.exe", windowsTerminalRemoteArgs(sshCommand, sshArgs));
     return;
   }
   // `start`'s first quoted token is the window title; keep it empty so ssh is the command.
-  yield* launchAndUnref("cmd.exe", ["/c", "start", "", sshCommand, ...sshArgs], {
+  yield* launchAndUnref("cmd.exe", cmdStartRemoteArgs(sshCommand, sshArgs), {
     ...DETACHED_IGNORE_STDIO,
     shell: false,
   });
@@ -109,7 +141,7 @@ const launchLinux = Effect.fn("desktop.openRemoteTerminal.launchLinux")(function
 ) {
   const terminal = yield* resolveLinuxTerminalCommand(env);
   if (terminal === undefined) return false;
-  yield* launchAndUnref(terminal, linuxTerminalArgs(terminal, sshCommand, sshArgs));
+  yield* launchAndUnref(terminal, linuxRemoteTerminalArgs(terminal, sshCommand, sshArgs));
   return true;
 });
 
@@ -123,7 +155,8 @@ export const openRemoteTerminal = Effect.fn("desktop.openRemoteTerminal")(functi
   const destination = buildRemoteSshTerminalDestination(input.host, input.username);
   const remoteCommand = buildRemoteSshTerminalRemoteCommand(directory);
   const sshCommand = yield* resolveSshCommand;
-  const sshArgs = ["-t", destination, remoteCommand] as const;
+  // `--` ends option parsing so a destination that starts with `-` stays a hostname.
+  const sshArgs = ["-t", "--", destination, remoteCommand] as const;
 
   if (platform === "linux") {
     return yield* launchLinux(sshCommand, sshArgs, env).pipe(Effect.orElseSucceed(() => false));

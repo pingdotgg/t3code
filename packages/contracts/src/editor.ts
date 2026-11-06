@@ -246,10 +246,24 @@ export function buildRemoteSshTerminalDestination(host: string, username?: strin
   return username === undefined || username.length === 0 ? host : `${username}@${host}`;
 }
 
-/** Single ssh remote-command argv: cd into the path, then replace with a login shell. */
+/**
+ * Host or username for a desktop SSH terminal launch. Leading dashes would be
+ * parsed as ssh options without `--`, so reject them at the IPC boundary too.
+ */
+export const SshTerminalDestinationSegment = TrimmedNonEmptyString.check(
+  Schema.makeFilter((value: string) => !value.startsWith("-"), {
+    expected: "a host or username that does not start with '-'",
+  }),
+);
+export type SshTerminalDestinationSegment = typeof SshTerminalDestinationSegment.Type;
+
+/**
+ * Single ssh remote-command argv: run POSIX cd + login shell through /bin/sh so
+ * fish/csh login shells do not have to parse parameter expansion.
+ */
 export function buildRemoteSshTerminalRemoteCommand(directory: string): string {
   const quoted = `'${directory.replaceAll("'", `'\\''`)}'`;
-  return `cd -- ${quoted} && exec "\${SHELL:-/bin/sh}" -l`;
+  return `exec /bin/sh -c 'cd -- "$1" && exec "\${SHELL:-/bin/sh}" -l' sh ${quoted}`;
 }
 
 export const RemoteOpenTargetKind = Schema.Literals(["tailscale", "mdns"]);

@@ -29,7 +29,9 @@ starting with your desktop's default.
 When you are connected to a remote environment over SSH or an advertised
 Tailscale or local network host, Terminal (desktop app) opens a local system
 terminal that SSHs into that host and starts in the project folder, the same way
-Open in opens editors over SSH.
+Open in opens editors over SSH. The remote host needs a POSIX `/bin/sh` (Linux
+and macOS SSH servers); Windows OpenSSH targets are not supported for this
+action. On Windows desktop, T3 Code prefers Windows Terminal in a new window.
 
 ## fish
 
