@@ -331,6 +331,13 @@ default Jira site. You can browse and search issues, load more results and comme
 public replies or **Add internal note** in Jira Service Management. Internal and restricted
 comments carry audience badges. Editing fields and changing status stay in Jira. Jira cannot search issue mentions.
 
+Jira and Linear issues have a **Properties** tab. Search fields by name or ID, show empty
+fields when needed, and pin fields to keep them on Summary. Pins are saved in this browser
+for the issue. Jira uses field names where metadata is available and shows field IDs otherwise.
+Linked issues appear separately with their relationship and status; select one to open it in
+T3 Code. Web links have their own section and open the linked page. For long Linear relationship
+or attachment lists, **View all** opens the complete list in Linear.
+
 Writing to a tracker over a remote connection requires the `source-control:write` scope.
 
 ## GitHub stacks

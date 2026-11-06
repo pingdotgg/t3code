@@ -19,6 +19,9 @@ import type {
   IssueLinkedPullRequest,
   IssueListState,
   IssueReaction,
+  IssueProperty,
+  IssueRelatedIssue,
+  IssueWebLink,
   IssueReactionContent,
   IssueSummary,
   IssueTemplateList,
@@ -82,6 +85,12 @@ export interface TrackerIssuePage {
 }
 
 export interface TrackerIssueDetail extends TrackerIssueSummary {
+  readonly nativeId?: string;
+  readonly properties?: ReadonlyArray<IssueProperty>;
+  readonly relatedIssues?: ReadonlyArray<IssueRelatedIssue>;
+  readonly relatedIssuesTruncated?: boolean;
+  readonly webLinks?: ReadonlyArray<IssueWebLink>;
+  readonly webLinksTruncated?: boolean;
   readonly body: string;
   readonly viewer: string | null;
   readonly viewerPermissions: IssueViewerPermissions;

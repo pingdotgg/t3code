@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { jiraProperties, jiraRelatedIssues, jiraWebLinks } from "./jiraProperties.ts";
 import { IssueTrackerKind, type IssueCapabilities } from "@t3tools/contracts";
 import {
   IssueTrackerError,
@@ -39,7 +40,7 @@ const permissions = {
   labels: false,
   assignees: false,
 };
-const fields = `${JIRA_LIST_FIELDS},description,comment`;
+
 const NativeIssue = Schema.Struct({
   id: Schema.String,
   key: Schema.String,
@@ -55,6 +56,12 @@ const Search = Schema.Struct({
   ),
 });
 const Get = Schema.Struct({ data: Schema.Array(NativeIssue) });
+const RawGet = Schema.Struct({ data: Schema.Array(Schema.JsonObject) });
+const FieldNames = Schema.Struct({
+  data: Schema.Struct({
+    fields: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String })),
+  }),
+});
 const quote = (value: string) => `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 const fail = (operation: string, reason: IssueTrackerError["reason"] = "failed") =>
   new IssueTrackerError({
@@ -259,10 +266,31 @@ export const make = Effect.gen(function* () {
       const text = yield* run(
         "getIssue",
         input.host,
-        ["jira", "workitem", "get", input.key, "--fields", fields],
+        ["jira", "workitem", "get", input.key, "--fields", "*all", "--remote-links"],
         input.cwd,
       );
       const data = yield* decode(Get, "getIssue", text);
+      const raw = (yield* decode(RawGet, "getIssue", text)).data[0]!;
+      const names = yield* run(
+        "fieldNames",
+        input.host,
+        [
+          "jira",
+          "workitem",
+          "field",
+          "update-metadata",
+          "--id",
+          input.key,
+          "--include-system-fields",
+        ],
+        input.cwd,
+      ).pipe(
+        Effect.flatMap((text) => decode(FieldNames, "fieldNames", text)),
+        Effect.map(
+          (metadata) => new Map(metadata.data.fields.map((field) => [field.id, field.name])),
+        ),
+        Effect.orElseSucceed(() => new Map<string, string>()),
+      );
       const issue = data.data[0];
       if (!issue || issue.key !== input.key) return yield* fail("getIssue", "not-found");
       const body = yield* renderJiraBody("getIssue", issue.description).pipe(
@@ -273,6 +301,10 @@ export const make = Effect.gen(function* () {
         ...toJiraSummary({ id: issue.id, key: issue.key, fields: issue }, input.host),
         commentCount: Math.max(issue.comment?.total ?? 0, page.total),
         body,
+        nativeId: issue.id,
+        properties: jiraProperties(raw, names),
+        relatedIssues: jiraRelatedIssues(raw, input.host),
+        webLinks: jiraWebLinks(raw),
         viewer: null,
         viewerPermissions: permissions,
         comments: page.comments,

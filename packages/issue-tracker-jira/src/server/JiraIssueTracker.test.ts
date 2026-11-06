@@ -8,6 +8,25 @@ const issue = {
   id: "123",
   key: "DEMO-1",
   summary: "Fix login",
+  customfield_123: 0,
+  customfield_456: false,
+  issuelinks: [
+    {
+      type: { name: "Blocks", inward: "is blocked by", outward: "blocks" },
+      outwardIssue: {
+        key: "DEMO-2",
+        fields: { summary: "Checkout", status: { name: "Done", statusCategory: { key: "done" } } },
+      },
+    },
+    {
+      type: { name: "Blocks", inward: "is blocked by", outward: "blocks" },
+      inwardIssue: { key: "OTHER-3", fields: { summary: "Dependency" } },
+    },
+  ],
+  remoteLinks: [
+    { object: { title: "Runbook", url: "https://docs.example.test/runbook" } },
+    { object: { title: "Unsafe", url: "javascript:alert(1)" } },
+  ],
   status: { name: "Open", statusCategory: { key: "new" } },
   created: "2026-10-01T00:00:00.000Z",
   updated: "2026-10-02T00:00:00.000Z",
@@ -35,6 +54,19 @@ it.effect(
       assert.strictEqual(page.nextCursor, "next-issues");
       const detail = yield* api.getIssue(target);
       assert.strictEqual(detail.body, "Example");
+      assert.ok(detail.properties?.some((p) => p.id === "customfield_123" && p.value === 0));
+      assert.ok(detail.properties?.some((p) => p.id === "customfield_456" && p.value === false));
+      assert.ok(!detail.properties?.some((p) => p.id === "issuelinks" || p.id === "remoteLinks"));
+      assert.deepStrictEqual(
+        detail.relatedIssues?.map((issue) => [issue.key, issue.relation, issue.state?.category]),
+        [
+          ["DEMO-2", "blocks", "closed"],
+          ["OTHER-3", "is blocked by", undefined],
+        ],
+      );
+      assert.deepStrictEqual(detail.webLinks, [
+        { title: "Runbook", url: "https://docs.example.test/runbook" },
+      ]);
       assert.deepStrictEqual(
         detail.comments.map((c) => c.visibility),
         ["public", "internal", "restricted"],

@@ -803,6 +803,16 @@ function IssuesRoute() {
                   scope: renderedSurface.scope,
                   key: renderedSurface.key,
                 }}
+                onSelectIssue={(reference) =>
+                  useRightPanelStore.getState().openIssue(rightPanelRef, {
+                    projectId: reference.projectId,
+                    tracker: reference.tracker,
+                    scope: reference.scope,
+                    key: reference.key,
+                    ...(reference.host ? { host: reference.host } : {}),
+                    environmentId: panelEnvironmentId,
+                  })
+                }
                 onSelectPullRequest={(reference) => {
                   useRightPanelStore.getState().openPullRequest(rightPanelRef, {
                     projectId: reference.projectId,

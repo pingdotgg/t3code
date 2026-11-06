@@ -234,7 +234,36 @@ export const IssueViewerPermissions = Schema.Struct({
 });
 export type IssueViewerPermissions = typeof IssueViewerPermissions.Type;
 
+export const IssueProperty = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  value: Schema.Json,
+});
+export type IssueProperty = typeof IssueProperty.Type;
+
+export const IssueRelatedIssue = Schema.Struct({
+  key: TrimmedNonEmptyString,
+  scope: TrimmedNonEmptyString,
+  title: Schema.String,
+  url: TrimmedNonEmptyString,
+  relation: TrimmedNonEmptyString,
+  state: Schema.optional(IssueState),
+});
+export type IssueRelatedIssue = typeof IssueRelatedIssue.Type;
+
+export const IssueWebLink = Schema.Struct({
+  title: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+});
+export type IssueWebLink = typeof IssueWebLink.Type;
+
 export const IssueDetail = Schema.Struct({
+  nativeId: Schema.optional(TrimmedNonEmptyString),
+  properties: Schema.optional(Schema.Array(IssueProperty).check(Schema.isMaxLength(2_000))),
+  relatedIssues: Schema.optional(Schema.Array(IssueRelatedIssue).check(Schema.isMaxLength(2_000))),
+  relatedIssuesTruncated: Schema.optional(Schema.Boolean),
+  webLinks: Schema.optional(Schema.Array(IssueWebLink).check(Schema.isMaxLength(2_000))),
+  webLinksTruncated: Schema.optional(Schema.Boolean),
   ...IssueSummary.fields,
   projectId: ProjectId,
   projectTitle: TrimmedNonEmptyString,
