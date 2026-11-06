@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { deadlineStore } from "@t3tools/client-runtime/clock";
+import { limitRecoveryOwnsSnooze } from "@t3tools/client-runtime/state/thread-execution";
 import {
   CHATGPT_USAGE_LIMIT_CODE,
   CHATGPT_WORKSPACE_USAGE_LIMIT_CODE,
@@ -26,6 +27,8 @@ type RecoveryProps = {
   errorCode: string | null;
   resetAt: string | null;
   stoppedAt: string;
+  settled: boolean;
+  requestPending: boolean;
   snoozedUntil: string | null;
   recovery: OrchestrationV2LimitRecovery | null;
   timestampFormat: TimestampFormat;
@@ -52,19 +55,36 @@ function ResetCountdown({ resetAt }: { resetAt: string }) {
 }
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
-  const { runId, errorCode, resetAt, stoppedAt, timestampFormat } = props;
-  const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
+  const {
+    runId,
+    errorCode,
+    resetAt,
+    stoppedAt,
+    settled,
+    requestPending,
+    recovery,
+    snoozedUntil,
+    timestampFormat,
+  } = props;
+  // The server refuses recovery changes while a request is pending.
+  const canSchedule =
+    !settled && !requestPending && resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
+  const resumes =
+    canSchedule && recovery?.runId === runId && recovery.resetAt === resetAt && recovery.autoResume;
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
   const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
   const recoveryActions = canSchedule ? (
     <RecoveryActions key={`${runId}:${resetAt}`} {...props} />
   ) : null;
-  const scheduled = resetAt !== null && isAutoResumeScheduled(props);
+  const displayAt =
+    resumes && resetAt && snoozedUntil && Date.parse(snoozedUntil) > Date.parse(resetAt)
+      ? snoozedUntil
+      : resetAt;
   const resetDescription =
-    scheduled && resetAt ? (
-      <ResetCountdown resetAt={resetAt} />
-    ) : resetAt ? (
-      `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}`
+    resumes && displayAt ? (
+      <ResetCountdown resetAt={displayAt} />
+    ) : displayAt ? (
+      `Resets ${formatUpcomingTimestamp(displayAt, timestampFormat)}`
     ) : (
       "Reset time unavailable; retry manually"
     );
@@ -75,10 +95,11 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     return {
       id: `usage-limit-recovery:${runId}`,
       variant: "warning",
-      icon: scheduled ? <TimerIcon /> : <GaugeIcon />,
+      group: "environment",
+      icon: resumes ? <TimerIcon /> : <GaugeIcon />,
       title:
-        scheduled && resetAt
-          ? `Resumes ${formatUpcomingTimestamp(resetAt, timestampFormat)}`
+        resumes && displayAt
+          ? `Resumes ${formatUpcomingTimestamp(displayAt, timestampFormat)}`
           : "Usage limit reached",
       description: resetDescription,
       actions: recoveryActions,
@@ -89,6 +110,7 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
   return {
     id: `usage-limit-recovery:${runId}`,
     variant: "warning",
+    group: "environment",
     icon: <OpenAI aria-hidden="true" />,
     title: "ChatGPT usage limit reached",
     description: workspaceLimit
@@ -119,13 +141,7 @@ function RecoveryActions(props: RecoveryProps) {
   // so a snooze whose reset has passed is no longer active.
   const resetPassed = useDeadlinePassed(resetAt === null ? null : Date.parse(resetAt));
   const snoozed =
-    recovery?.snooze === true &&
-    recovery.runId === runId &&
-    recovery.resetAt === resetAt &&
-    resetAt !== null &&
-    snoozedUntil !== null &&
-    Date.parse(snoozedUntil) === Date.parse(resetAt) &&
-    !resetPassed;
+    limitRecoveryOwnsSnooze({ runId, resetAt, recovery, snoozedUntil }) && !resetPassed;
   async function toggle(action: "resume" | "snooze") {
     if (resetAt === null) return;
     if (action === "snooze" && !snoozed && Date.parse(resetAt) <= Date.now()) {
