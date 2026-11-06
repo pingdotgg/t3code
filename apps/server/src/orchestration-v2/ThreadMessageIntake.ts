@@ -8,6 +8,7 @@ import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
+import * as NadirRouting from "./NadirRouting.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
@@ -82,11 +83,60 @@ const withGuestAttachments = Effect.fn("ThreadMessageIntake.withGuestAttachments
   return { ...command, attachments: message?.attachments ?? [] };
 });
 
+/**
+ * A user's own new turn gets Nadir's model pick. Steering into a running turn, continuations,
+ * compactions, and scheduled, delegated or guest sends keep the model they came with.
+ */
+const withNadirModel = Effect.fn("ThreadMessageIntake.withNadirModel")(function* (
+  command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+) {
+  const plainUserTurn =
+    command.guestMessageId === undefined &&
+    command.scheduledTaskId === undefined &&
+    command.senderThreadId === undefined &&
+    command.delegatedCompletion === undefined &&
+    command.idleCompaction === undefined &&
+    command.restartContinuationOfRunId === undefined &&
+    command.usageLimitContinuationOfRunId === undefined &&
+    command.manualContinuationOfRunId === undefined &&
+    command.deliveryIntent !== "steer" &&
+    command.deliveryIntent !== "restart" &&
+    command.dispatchMode.type === "start_immediately";
+  if (!plainUserTurn || !(yield* NadirRouting.isEnabled)) return command;
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const shell = yield* threads
+    .getThreadShell(command.threadId)
+    .pipe(Effect.orElseSucceed(() => null));
+  // A message sent during a run steers it, and a run cannot change model mid-turn.
+  if (shell === null || shell.activeRunId !== null) return command;
+  const usage = yield* threads.getThreadSnapshotWindow(command.threadId, { rowLimit: 1 }).pipe(
+    Effect.map(
+      ({ projection }) =>
+        projection.providerThreads.find((thread) => thread.id === shell.activeProviderThreadId)
+          ?.contextUsage ?? null,
+    ),
+    Effect.orElseSucceed(() => null),
+  );
+  const selection = command.modelSelection ?? shell.modelSelection;
+  const chosen = yield* NadirRouting.chooseModelSelection({
+    threadId: command.threadId,
+    text: command.text,
+    selection,
+    cache:
+      usage === null
+        ? undefined
+        : { model: shell.modelSelection.model, contextTokens: usage.usedTokens },
+  });
+  return chosen === selection ? command : { ...command, modelSelection: chosen };
+});
+
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
   incoming: OrchestrationV2Command,
 ) {
   const command =
-    incoming.type === "message.dispatch" ? yield* withGuestAttachments(incoming) : incoming;
+    incoming.type === "message.dispatch"
+      ? yield* withGuestAttachments(incoming).pipe(Effect.flatMap(withNadirModel))
+      : incoming;
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
@@ -208,8 +258,23 @@ export const sendToThread = Effect.fn("ThreadMessageIntake.sendToThread")(functi
 });
 
 export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(function* (
-  input: ThreadLaunch.ThreadLaunchInput,
+  launchInput: ThreadLaunch.ThreadLaunchInput,
 ) {
+  // A new thread has no warm cache, so its first turn is the cheapest place to pick a model.
+  const input =
+    launchInput.initialMessage === undefined ||
+    launchInput.threadId === undefined ||
+    launchInput.importedNativeThread !== undefined ||
+    launchInput.delegatedFrom !== undefined
+      ? launchInput
+      : {
+          ...launchInput,
+          modelSelection: yield* NadirRouting.chooseModelSelection({
+            threadId: launchInput.threadId,
+            text: launchInput.initialMessage.text,
+            selection: launchInput.modelSelection,
+          }),
+        };
   const launches = yield* ThreadLaunch.ThreadLaunchService;
   yield* AttachmentClaims.validateAttachmentLimits(input.initialMessage?.attachments ?? []);
   if (!input.initialMessage?.attachments.some(AttachmentClaims.attachmentIsPendingUpload)) {

@@ -626,6 +626,8 @@ interface ComposerDraftStoreState {
     attachments: PersistedComposerImageAttachment[],
   ) => Promise<void>;
   clearComposerContent: (threadRef: ComposerThreadTarget) => void;
+  /** Drops the draft's model pick so the picker follows the thread's model again. */
+  releaseModelPick: (threadRef: ComposerThreadTarget) => void;
   /** Clears text and attachments, preserving terminal/element contexts, preview annotations, and review comments. */
   clearComposerPromptAndImages: (threadRef: ComposerThreadTarget) => void;
   /** Keeps attachments over destination limits, other environments' uploads, terminal/element contexts, annotations, and review comments in source. */
@@ -4034,6 +4036,19 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           });
           await Promise.resolve();
           verifyPersistedAttachments(threadKey, attachments, set);
+        },
+        releaseModelPick: (threadRef) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current || current.activeProvider === null) return state;
+            const { modelSelectionExplicit: _explicit, ...retained } = current;
+            const draft = { ...retained, activeProvider: null, modelSelectionByProvider: {} };
+            const drafts = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(draft)) delete drafts[threadKey];
+            else drafts[threadKey] = draft;
+            return { draftsByThreadKey: drafts };
+          });
         },
         clearComposerContent: (threadRef) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";

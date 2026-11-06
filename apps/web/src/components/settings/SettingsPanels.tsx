@@ -1433,6 +1433,42 @@ export function DiffsSettingsPanel() {
   );
 }
 
+export function NadirRoutingRow() {
+  return useOptionalSettingsScope() === null ? null : <ScopedNadirRoutingRow />;
+}
+
+function ScopedNadirRoutingRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["nadirRouting"]);
+
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["nadirRouting"]}
+      mixed={mixed}
+      {...searchableSetting("nadir-routing")}
+      description="Before each message you send, Nadir picks the model from the selected provider's list, never above the one you chose, and the model picker shows what ran. Sends the message text to getnadir.com. Set NADIR_API_KEY on the host to use your Nadir account."
+      resetAction={
+        settings.nadirRouting !== DEFAULT_UNIFIED_SETTINGS.nadirRouting ? (
+          <SettingResetButton
+            label="Nadir model routing"
+            onClick={() => updateSettings({ nadirRouting: DEFAULT_UNIFIED_SETTINGS.nadirRouting })}
+          />
+        ) : null
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["nadirRouting"]}
+          checked={settings.nadirRouting}
+          onCheckedChange={(checked) => updateSettings({ nadirRouting: Boolean(checked) })}
+          aria-label="Nadir model routing"
+        />
+      }
+    />
+  );
+}
+
 /** The Providers panel can render without a settings scope, as its tests do; this row needs one. */
 export function CompactIdleThreadsRow() {
   return useOptionalSettingsScope() === null ? null : <ScopedCompactIdleThreadsRow />;

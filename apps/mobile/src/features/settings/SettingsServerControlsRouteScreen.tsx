@@ -394,6 +394,21 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
                   />
                 </SettingsSection>
+                <SettingsSection title="Model routing">
+                  <SettingsSwitchRow
+                    icon="arrow.triangle.branch"
+                    label="Nadir model routing"
+                    subtitle={managedSubtitle(
+                      "nadirRouting",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "Nadir picks each turn's model from the selected provider's list, never above yours. Sends the message text to getnadir.com.",
+                    )}
+                    value={uniform("nadirRouting")}
+                    disabled={disabledFor("nadirRouting")}
+                    onValueChange={(value) => write({ nadirRouting: value })}
+                  />
+                </SettingsSection>
                 <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
               </>
             ) : null}
