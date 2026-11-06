@@ -342,9 +342,9 @@ uploads resume on the next check.
 
 Normal Nightly releases include the newest processed internal-testing APK available
 when the release publishes. Internal builds do not create separate Android releases.
-If Play credentials or a processed APK are unavailable, the Nightly can still publish
-without an APK. Android submissions continue to go to internal testing; promote a
-build to Alpha to publish it as a beta.
+If Play credentials or a processed APK are unavailable, or the download takes more
+than five minutes, the Nightly can still publish without an APK. Android submissions
+continue to go to internal testing; promote a build to Alpha to publish it as a beta.
 
 The APK is the universal APK Play generates and signs from the
 uploaded bundle, so no signing key lives in GitHub. The job skips itself until

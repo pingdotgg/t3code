@@ -806,6 +806,24 @@ jobs:
         with:
           install-args: --filter=@t3tools/scripts...
 
+      # Overlaps the artifact downloads. The wait below ends it before any
+      # workspace script runs, so the Play key lives only in this process.
+      # `exec` lets the runner's stop signals reach node directly.
+      - id: android_apk
+        name: Download nightly Android APK
+        if: needs.preflight.outputs.release_channel == 'nightly'
+        background: true
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          PACKAGE_NAME: com.t3tools.t3code
+          APK_OUTPUT_DIR: ${{ runner.temp }}/android-apk
+        run: |
+          if [ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            exec node .github/scripts/mirror-play-apk.cjs
+          fi
+
       - name: Download all desktop artifacts
         uses: actions/download-artifact@v8
         with:
@@ -819,18 +837,6 @@ jobs:
           pattern: cli-*
           merge-multiple: true
           path: release-assets
-
-      - name: Download internal Android APK for Nightly
-        if: needs.preflight.outputs.release_channel == 'nightly'
-        continue-on-error: true
-        env:
-          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-          PACKAGE_NAME: com.t3tools.t3code
-          APK_OUTPUT_DIR: release-assets
-        run: |
-          if [ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]; then
-            node .github/scripts/mirror-play-apk.cjs
-          fi
 
       # Installers verify archives against this file, so it is written from the
       # signed bytes that get uploaded, never from an earlier stage.
@@ -847,6 +853,10 @@ jobs:
           fi
           sha256sum "${archives[@]}" > SHA256SUMS
           cat SHA256SUMS
+
+      # Always runs, even after a failed step, and keeps that failure.
+      - name: Wait for nightly Android APK
+        wait: android_apk
 
       # The desktop build omits the publish config for preview versions, so
       # electron-builder emits no updater manifests for them. Refuse to publish
@@ -913,10 +923,13 @@ jobs:
               echo 'release-assets/*.yml'
             fi
             echo 'release-assets/*.tar.gz'
-            # Only list APKs when Play has a processed internal build available.
-            for apk in release-assets/*.apk; do
-              [[ -f "$apk" ]] && echo "$apk"
-            done
+            # A failed or timed-out fetch can leave partial bytes, so list the APK
+            # only when this attempt's fetch succeeded and Play had one ready.
+            if [[ "${{ steps.android_apk.outcome }}" == "success" ]]; then
+              for apk in "$RUNNER_TEMP"/android-apk/*.apk; do
+                [[ -f "$apk" ]] && echo "$apk"
+              done
+            fi
             echo 'release-assets/SHA256SUMS'
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
