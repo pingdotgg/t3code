@@ -1,11 +1,5 @@
-export {
-  Action,
-  isAction,
-  type Action as ActionInstance,
-  type ActionLike,
-} from "./Action.ts";
+export { Action, isAction, type Action as ActionInstance, type ActionLike } from "./Action.ts";
 export * as AdoptPolicy from "./AdoptPolicy.ts";
-export * from "./AI/index.ts";
 export * from "./AlchemyContext.ts";
 export * from "./Apply.ts";
 export * from "./Callback.ts";
@@ -33,10 +27,9 @@ export * from "./Ref.ts";
 export * as RemovalPolicy from "./RemovalPolicy.ts";
 export { renamedFrom } from "./Rename.ts";
 export * from "./Resource.ts";
+export * from "./ResourceContext.ts";
 export * as Schema from "./Schema.ts";
 export * as Secrets from "./Secrets/index.ts";
-export * as Server from "./Server/index.ts";
-export * as Serverless from "./Serverless/index.ts";
 export { Stack, type SecretProviders, type StackSecrets } from "./Stack.ts";
 export * from "./Stage.ts";
 export { inMemoryState, localState } from "./State/index.ts";
@@ -47,6 +40,7 @@ export * as Telemetry from "./Telemetry.ts";
 // downstream `.d.ts` emissions (fixes TS2883 in user files).
 export { AuthProviders } from "./Auth/AuthProvider.ts";
 export { Cli } from "./Report.ts";
+export * as Events from "./Events.ts";
 export * as Report from "./Report.ts";
 export type { Dependencies } from "./Dependencies.ts";
 export type { Named } from "./Named.ts";
