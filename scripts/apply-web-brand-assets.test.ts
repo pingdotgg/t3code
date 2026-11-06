@@ -3,15 +3,42 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
+import type { WebAssetBrand } from "./lib/brand-assets.ts";
+import { readPngDimensions } from "./lib/icon-export.ts";
 
 const WEB_ICON_FILENAMES = [
   "apple-touch-icon.png",
   "favicon-16x16.png",
   "favicon-32x32.png",
   "favicon.ico",
+  "icon-192.png",
+  "icon-512.png",
 ];
+
+const WEB_ASSET_BRANDS: ReadonlyArray<WebAssetBrand> = ["development", "nightly", "production"];
+
+// Firefox for Android only offers an installable web app with an any/maskable icon of at least 192px.
+const MIN_INSTALLABLE_ICON_SIZE = 192;
+
+const decodeWebManifest = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      icons: Schema.Array(
+        Schema.Struct({
+          src: Schema.String,
+          sizes: Schema.String,
+          purpose: Schema.optional(Schema.String),
+        }),
+      ),
+    }),
+  ),
+);
+
+const declaredSizes = (sizes: string) =>
+  sizes.split(/\s+/).map((size) => size.split("x").map(Number));
 
 it.layer(NodeServices.layer)("apply-web-brand-assets", (it) => {
   it.effect("copies the icons into an absolute target directory as given", () =>
@@ -57,6 +84,46 @@ it.layer(NodeServices.layer)("apply-web-brand-assets", (it) => {
 
       for (const destination of destinations) {
         assert.isTrue(yield* fs.exists(destination));
+      }
+    }),
+  );
+
+  it.effect("ships an installable manifest icon in every brand", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repoRoot = yield* path.fromFileUrl(new URL("..", import.meta.url));
+      const { icons } = decodeWebManifest(
+        yield* fs.readFileString(path.join(repoRoot, "apps/web/public/manifest.webmanifest")),
+      );
+
+      assert.isTrue(
+        icons.some(
+          (icon) =>
+            (icon.purpose ?? "any").split(/\s+/).some((p) => p === "any" || p === "maskable") &&
+            declaredSizes(icon.sizes).some(
+              ([width = 0, height = 0]) => Math.min(width, height) >= MIN_INSTALLABLE_ICON_SIZE,
+            ),
+        ),
+        `manifest declares no any/maskable icon of at least ${MIN_INSTALLABLE_ICON_SIZE}px: ${JSON.stringify(icons)}`,
+      );
+
+      for (const brand of WEB_ASSET_BRANDS) {
+        const targetDirectory = yield* fs.makeTempDirectoryScoped({
+          prefix: "apply-web-brand-assets-",
+        });
+        yield* applyWebBrandAssets(brand, targetDirectory);
+
+        for (const icon of icons) {
+          const iconPath = path.join(targetDirectory, icon.src);
+          assert.isTrue(yield* fs.exists(iconPath), `${brand} does not supply ${icon.src}`);
+          const { width, height } = readPngDimensions(Buffer.from(yield* fs.readFile(iconPath)));
+          assert.deepInclude(
+            declaredSizes(icon.sizes),
+            [width, height],
+            `${brand} ${icon.src} does not match its declared sizes ${icon.sizes}`,
+          );
+        }
       }
     }),
   );
