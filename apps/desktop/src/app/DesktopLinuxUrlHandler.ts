@@ -50,7 +50,7 @@ export class DesktopLinuxUrlHandlerCacheRefreshError extends Schema.TaggedError<
 
 const isCacheRefreshError = Schema.is(DesktopLinuxUrlHandlerCacheRefreshError);
 
-const escapeDesktopEntryString = (value: string): string =>
+export const escapeDesktopEntryString = (value: string): string =>
   value
     .replaceAll("\\", "\\\\")
     .replaceAll("\n", "\\n")
@@ -107,6 +107,21 @@ function linuxThemeIconNames(desktopEntryName: string): readonly string[] {
 const sameBytes = (left: Uint8Array, right: Uint8Array): boolean =>
   left.length === right.length && left.every((byte, index) => byte === right[index]);
 
+// Distribution packages that run on a shared Electron set
+// T3CODE_DESKTOP_LAUNCHER_PATH, because process.execPath is that Electron.
+// Inside the mounted AppImage, process.execPath points at a transient
+// /tmp/.mount_* path — desktop entries must launch the AppImage itself.
+export const resolveLinuxExecTarget = (
+  environment: Pick<
+    DesktopEnvironment.DesktopEnvironment["Service"],
+    "desktopLauncherPath" | "appImagePath"
+  >,
+): string =>
+  environment.desktopLauncherPath.pipe(
+    Option.orElse(() => environment.appImagePath),
+    Option.getOrElse(() => process.execPath),
+  );
+
 export class DesktopLinuxUrlHandler extends Context.Service<
   DesktopLinuxUrlHandler,
   {
@@ -132,14 +147,7 @@ export const make = Effect.gen(function* () {
   const themeIconDir = environment.path.join(hicolorDir, LINUX_THEME_ICON_SIZE, "apps");
 
   const writeDesktopEntry = Effect.gen(function* () {
-    // Distribution packages that run on a shared Electron set
-    // T3CODE_DESKTOP_LAUNCHER_PATH, because process.execPath is that Electron.
-    // Inside the mounted AppImage, process.execPath points at a transient
-    // /tmp/.mount_* path — the handler must launch the AppImage itself.
-    const execTarget = environment.desktopLauncherPath.pipe(
-      Option.orElse(() => environment.appImagePath),
-      Option.getOrElse(() => process.execPath),
-    );
+    const execTarget = resolveLinuxExecTarget(environment);
     const content = renderUrlHandlerDesktopEntry({
       displayName: environment.displayName,
       execTarget,
