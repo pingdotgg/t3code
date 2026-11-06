@@ -196,7 +196,7 @@ export function PullRequestComposer({
         {canComment ? (
           <div hidden={sendsReview}>
             <PullRequestCommentForm
-              active={open && !sendsReview}
+              active={open && mode === "comment"}
               environmentId={environmentId}
               reference={reference}
               detail={detail}
