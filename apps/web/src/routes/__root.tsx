@@ -12,6 +12,7 @@ import {
 } from "@tanstack/react-router";
 import { Check, Copy } from "lucide";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { PoppedOutAnnotationReceiver } from "~/components/preview/previewAnnotationDelivery";
 
 import { APP_DISPLAY_NAME, APP_VERSION } from "../branding";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
@@ -195,6 +196,7 @@ function RootRouteBranch() {
   return (
     <>
       <ChatGptWelcomeCoordinator />
+      <PoppedOutAnnotationReceiver />
       <FirstRunGate
         enabled={primaryEnvironmentAuthenticated}
         hostedStatic={authGateState.status === "hosted-static"}
