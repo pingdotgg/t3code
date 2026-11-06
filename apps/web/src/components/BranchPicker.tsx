@@ -185,9 +185,7 @@ export function BranchPicker({
                 return (
                   <>
                     {group && group !== previous ? (
-                      <div className="px-2.5 pt-2 pb-1 text-caption text-dim-foreground">
-                        {group}
-                      </div>
+                      <div className="px-2 py-1.5 text-meta text-dim-foreground">{group}</div>
                     ) : null}
                     {renderItem(item, index)}
                   </>
@@ -221,7 +219,7 @@ export function BranchPicker({
               render={
                 <label
                   htmlFor={startFromOriginSwitchId}
-                  className="mx-1.5 mb-1.5 flex cursor-pointer items-center gap-2 border-t border-divider px-2.5 pt-2 pb-1 text-meta"
+                  className="mx-1 mb-1 flex cursor-pointer items-center gap-2 border-t border-divider px-2 pt-2 pb-1 text-meta"
                 >
                   <Switch
                     id={startFromOriginSwitchId}
