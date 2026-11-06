@@ -836,7 +836,13 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       origin: running.hub.origin,
       http: httpClient,
       run,
-      androidAvailable: Effect.succeed(sdk.adb && sdk.emulator),
+      // Android gates AVD listing, which needs the emulator; adb alone lists phones.
+      platformAvailable: (platform) =>
+        platform === "android"
+          ? Effect.succeed(sdk.adb && sdk.emulator)
+          : platformAvailability(platform).pipe(
+              Effect.map((availability) => availability.available),
+            ),
     }),
     nodePath: running.hub.nodePath,
     run,
