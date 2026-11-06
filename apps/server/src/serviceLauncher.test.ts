@@ -251,14 +251,25 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       using otherOwner = new NodeSqlite.DatabaseSync(ownerPath);
       otherOwner.exec("BEGIN EXCLUSIVE;");
       let refused = Promise.withResolvers<void>();
+      let onRefused: (() => void) | undefined;
       const owned = Promise.withResolvers<void>();
       yield* Effect.acquireRelease(
         Effect.sync(() =>
           vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
-            if (String(chunk).includes("owns this T3 home")) refused.resolve();
+            if (!String(chunk).includes("owns this T3 home")) return true;
+            onRefused?.();
+            refused.resolve();
             return true;
           }),
         ),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
+      const setIntervalSpy = yield* Effect.acquireRelease(
+        Effect.sync(() => vi.spyOn(globalThis, "setInterval")),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
+      const clearTimeoutSpy = yield* Effect.acquireRelease(
+        Effect.sync(() => vi.spyOn(globalThis, "clearTimeout")),
         (spy) => Effect.sync(() => spy.mockRestore()),
       );
       yield* Effect.acquireRelease(
@@ -278,15 +289,14 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
           stateDirOwnerPollMs: 10,
         },
       );
-      let completed = false;
-      const running = launcher.run().finally(() => {
-        completed = true;
-      });
-      yield* Effect.promise(() => refused.promise);
-      assert.isFalse(completed);
-      yield* Effect.promise(() => launcher.stop("SIGTERM"));
-      yield* Effect.promise(() => running);
+      // Stop lands after the exit-78 transition starts but before it installs the owner poll.
+      onRefused = () => void launcher.stop("SIGTERM");
+      yield* Effect.promise(() => launcher.run());
+      const poll = setIntervalSpy.mock.results.at(-1)?.value;
+      assert.isDefined(poll);
+      assert.isTrue(clearTimeoutSpy.mock.calls.some(([timer]) => timer === poll));
 
+      onRefused = undefined;
       refused = Promise.withResolvers<void>();
       const restarted = new Launcher(
         root,
@@ -295,8 +305,12 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
           stateDirOwnerPollMs: 10,
         },
       );
-      const recovering = restarted.run();
+      let completed = false;
+      const recovering = restarted.run().finally(() => {
+        completed = true;
+      });
       yield* Effect.promise(() => refused.promise);
+      assert.isFalse(completed);
       otherOwner.close();
       yield* Effect.promise(() => owned.promise);
       yield* Effect.promise(() => restarted.stop("SIGTERM"));
@@ -313,20 +327,26 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       const stateDir = path.join(root, "userdata");
       const recordPath = path.join(stateDir, "server-runtime.json");
       yield* fs.makeDirectory(stateDir, { recursive: true });
-      assert.isFalse(stateDirOwned(root));
+      assert.isFalse(yield* Effect.promise(() => stateDirOwned(root)));
 
       using owner = new NodeSqlite.DatabaseSync(path.join(stateDir, "server-owner.sqlite"));
       owner.exec("BEGIN EXCLUSIVE;");
-      assert.isTrue(stateDirOwned(root));
+      assert.isTrue(yield* Effect.promise(() => stateDirOwned(root)));
       owner.close();
 
       const record = { version: 1, pid: process.pid, port: 1, origin: "", startedAt: "" };
       yield* fs.writeFileString(recordPath, JSON.stringify(record));
-      assert.isTrue(stateDirOwned(root));
+      assert.isTrue(yield* Effect.promise(() => stateDirOwned(root)));
       yield* fs.writeFileString(recordPath, JSON.stringify({ ...record, ownerId: "lock-aware" }));
-      assert.isFalse(stateDirOwned(root));
+      assert.isFalse(yield* Effect.promise(() => stateDirOwned(root)));
+      // This process started after 1970, so its PID was reused since that record.
+      yield* fs.writeFileString(
+        recordPath,
+        JSON.stringify({ ...record, startedAt: "1970-01-01T00:00:00Z" }),
+      );
+      assert.isFalse(yield* Effect.promise(() => stateDirOwned(root)));
       yield* fs.writeFileString(recordPath, JSON.stringify({ ...record, pid: 2 ** 22 + 1 }));
-      assert.isFalse(stateDirOwned(root));
+      assert.isFalse(yield* Effect.promise(() => stateDirOwned(root)));
     }),
   );
 

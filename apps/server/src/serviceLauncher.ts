@@ -29,6 +29,10 @@ import {
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
+import {
+  legacyOwnerStartedBeforeRecord,
+  legacyOwnerStartTimeCommand,
+} from "./legacyServerOwner.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
 /**
@@ -448,10 +452,9 @@ const isSqliteBusy = (cause: unknown) =>
   (("errcode" in cause && cause.errcode === 5) ||
     ("code" in cause && cause.code === "SQLITE_BUSY"));
 
-// Mirror acquireServerOwnership: the lock, then a live pre-lock server-runtime.json PID.
-// Skip its PID-reuse check so a reused PID waits instead of restarting a refused server;
+// Mirror acquireServerOwnership: the lock, then a live pre-lock server-runtime.json owner;
 // leave other failures for server startup to report.
-export function stateDirOwned(baseDir: string): boolean {
+export async function stateDirOwned(baseDir: string): Promise<boolean> {
   const stateDir = NodePath.join(baseDir, "userdata");
   let db: NodeSqlite.DatabaseSync | undefined;
   try {
@@ -465,7 +468,7 @@ export function stateDirOwned(baseDir: string): boolean {
   let record: unknown;
   try {
     record = JSON.parse(
-      NodeFS.readFileSync(NodePath.join(stateDir, "server-runtime.json"), "utf8"),
+      await NodeFSP.readFile(NodePath.join(stateDir, "server-runtime.json"), "utf8"),
     );
   } catch {
     return false;
@@ -475,10 +478,25 @@ export function stateDirOwned(baseDir: string): boolean {
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
-    return true;
   } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "EPERM";
+    if (!(error instanceof Error && "code" in error && error.code === "EPERM")) return false;
   }
+  const recordedAt = Date.parse(
+    "startedAt" in record && typeof record.startedAt === "string" ? record.startedAt : "",
+  );
+  if (!Number.isFinite(recordedAt)) return true;
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
+  const platform = process.platform;
+  const { command, args, env } = legacyOwnerStartTimeCommand(pid, platform);
+  const output = await new Promise<string | undefined>((resolve) =>
+    NodeChildProcess.execFile(
+      command,
+      args,
+      { env: { ...process.env, ...env }, timeout: 2_000, maxBuffer: 16_384 },
+      (error, stdout) => resolve(error === null ? stdout : undefined),
+    ),
+  );
+  return legacyOwnerStartedBeforeRecord(output, recordedAt, platform);
 }
 
 const stopMarkerPath = (baseDir: string) =>
@@ -859,7 +877,8 @@ export class Launcher {
       return;
     }
     if (this.#timer === undefined || this.#child !== null) return;
-    if (stateDirOwned(this.#baseDir)) return;
+    // A stop during the probe clears the timer.
+    if ((await stateDirOwned(this.#baseDir)) || this.#timer === undefined) return;
     this.#clearTimer();
     process.stderr.write("[service-launcher] The T3 home is free again. Starting the server.\n");
     await this.#startChild(this.#state.activeVersion, "active", this.#state.update);
