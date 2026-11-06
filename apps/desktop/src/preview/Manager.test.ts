@@ -1401,6 +1401,45 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("keeps a stale tab window from attaching to a recreated tab", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostHandlers = new Map<string, (...args: ReadonlyArray<unknown>) => void>();
+        const tabWindow = {
+          webContents: {
+            id: 900,
+            on: (event: string, handler: (...args: ReadonlyArray<unknown>) => void) =>
+              hostHandlers.set(event, handler),
+            setWindowOpenHandler: vi.fn(),
+          },
+          isDestroyed: () => false,
+          once: vi.fn(),
+          close: vi.fn(),
+          loadURL: vi.fn(async () => undefined),
+        };
+        browserWindowConstructor.mockImplementation(function () {
+          return tabWindow;
+        });
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: { getURL: () => "t3code://app/" },
+        } as never);
+
+        yield* manager.createTab("tab_stale_window");
+        yield* manager.openTabWindow("tab_stale_window", "persist:t3code-preview-test");
+        yield* manager.closeTab("tab_stale_window");
+        yield* manager.createTab("tab_stale_window");
+        const guest = { id: 77, on: vi.fn() };
+        tabWindow.close.mockClear();
+        hostHandlers.get("did-attach-webview")!({}, guest);
+
+        expect(tabWindow.close).toHaveBeenCalledOnce();
+        expect(guest.on).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
   effectIt.effect("preserves both screenshots of the same site in the same millisecond", () =>
     withManager((manager) =>
       Effect.gen(function* () {

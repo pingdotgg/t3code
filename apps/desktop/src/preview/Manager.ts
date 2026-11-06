@@ -2828,14 +2828,35 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     partition: string,
   ) {
+    // Fail fast instead of queueing behind an in-flight close.
+    if ((yield* Ref.get(closingTabIdsRef)).has(tabId)) {
+      return yield* new PreviewTabNotFoundError({ tabId });
+    }
+    const created = yield* withTabLifecycleLock(tabId, createTabWindowUnlocked(tabId, partition));
+    if (!created) return;
+    const { window, appUrl } = created;
+    yield* attemptPromise({ operation: "tabWindow.load", tabId }, () =>
+      window.loadURL(appUrl.href),
+    ).pipe(
+      Effect.onError(() =>
+        attempt({ operation: "tabWindow.close", tabId }, () => window.close()).pipe(Effect.ignore),
+      ),
+    );
+  });
+
+  const createTabWindowUnlocked = Effect.fn("PreviewManager.createTabWindowUnlocked")(function* (
+    tabId: string,
+    partition: string,
+  ) {
     const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
     if (!tab || (yield* Ref.get(closingTabIdsRef)).has(tabId)) {
       return yield* new PreviewTabNotFoundError({ tabId });
     }
+    const generation = tabLifecycleGenerations.get(tabId);
     const existing = tabWindows.get(tabId);
     if (existing && !existing.isDestroyed()) {
       yield* attempt({ operation: "tabWindow.focus", tabId }, () => existing.focus());
-      return;
+      return null;
     }
     if (!isBrowserPartition(partition)) {
       return yield* new PreviewOperationError({
@@ -2883,12 +2904,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       hardenPreviewWebviewPreferences(webPreferences, passkeys.bridgeEnabled);
     });
     host.on("did-attach-webview", (_event, contents) => {
+      // The tab was closed or recreated since this window opened; never bind to the replacement.
+      if (tabLifecycleGenerations.get(tabId) !== generation) {
+        window.close();
+        return;
+      }
       contents.on("page-title-updated", (_titleEvent, nextTitle) => {
         if (!window.isDestroyed()) window.setTitle(nextTitle);
       });
       runFork(
         prepareWebview(contents).pipe(
-          Effect.andThen(registerWebview(tabId, contents.id)),
+          Effect.andThen(
+            withTabLifecycleLock(tabId, registerWebviewUnlocked(tabId, contents.id, generation)),
+          ),
           Effect.andThen(update(tabId, { detached: true })),
           // A close that landed before this commit already cleared detached; undo our stale write.
           Effect.andThen(
@@ -2912,15 +2940,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     window.once("closed", () => {
       tabWindowHostIds.delete(hostId);
       if (tabWindows.get(tabId) === window) tabWindows.delete(tabId);
+      if (tabLifecycleGenerations.get(tabId) !== generation) return;
       runFork(update(tabId, { detached: false }).pipe(Effect.ignore));
     });
-    yield* attemptPromise({ operation: "tabWindow.load", tabId }, () =>
-      window.loadURL(appUrl.href),
-    ).pipe(
-      Effect.onError(() =>
-        attempt({ operation: "tabWindow.close", tabId }, () => window.close()).pipe(Effect.ignore),
-      ),
-    );
+    return { window, appUrl };
   });
 
   const openPictureInPicture = Effect.fn("PreviewManager.openPictureInPicture")(function* (
