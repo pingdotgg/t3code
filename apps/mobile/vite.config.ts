@@ -6,7 +6,7 @@ import "vite-plus/test/config";
 const reactTests = [
   "src/features/threads/git/GitBranchesSheet.test.tsx",
   "src/features/threads/new-task-flow-provider.test.tsx",
-  "src/features/workspace/workspace-tabs-state.test.ts",
+  "src/features/layout/workspace/workspace-tabs-state.test.ts",
   "src/state/use-thread-pr.demand.test.tsx",
   "src/features/threads/git/GitBranchesSheet.occupancy.test.tsx",
   "src/features/files/useFileTreeEntries.test.tsx",
@@ -40,9 +40,10 @@ const reactTests = [
   "src/features/threads/use-thread-list-now.test.tsx",
   "src/features/threads/useThreadListV2.test.tsx",
   "src/features/home/home-list-options.test.tsx",
-  "src/features/workspace/useSearchScrollRestoration.test.tsx",
+  "src/features/layout/workspace/useSearchScrollRestoration.test.tsx",
   "src/features/connection/ConnectionsNewRouteScreen.test.tsx",
   "src/features/devices/device-stream.browser.test.ts",
+  "src/features/keyboard/keyboardControllerState.test.tsx",
 ];
 
 const sourceRoot = `${normalizePath(NodeURL.fileURLToPath(new URL("./src", import.meta.url)))}/`;
