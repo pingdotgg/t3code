@@ -447,6 +447,34 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
 
             {props.page === "worktrees" ? (
               <>
+                {!projectSelected ? (
+                  <SettingsSection
+                    title="Fork workspace"
+                    footer={managed("forkThreadEnvMode")}
+                    trailing={
+                      pendingWrites === 0 && isMixed("forkThreadEnvMode") ? (
+                        <MixedValuesLabel projectSelected={projectSelected} />
+                      ) : null
+                    }
+                  >
+                    {(
+                      [
+                        { mode: "inherit", label: "Same as new threads" },
+                        { mode: "same", label: "Same worktree" },
+                        { mode: "worktree", label: "New worktree" },
+                      ] as const
+                    ).map((choice, index) => (
+                      <SettingsChoiceRow
+                        key={choice.mode}
+                        label={choice.label}
+                        selected={uniform("forkThreadEnvMode") === choice.mode}
+                        separated={index > 0}
+                        disabled={disabledFor("forkThreadEnvMode")}
+                        onPress={() => write({ forkThreadEnvMode: choice.mode })}
+                      />
+                    ))}
+                  </SettingsSection>
+                ) : null}
                 <SettingsSection title="New worktrees">
                   <SettingsSwitchRow
                     icon="arrow.triangle.branch"

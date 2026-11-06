@@ -1034,7 +1034,9 @@ const make = Effect.gen(function* () {
         const runIsPreparing =
           runId !== null &&
           projection.runs.some((run) => run.id === runId && run.status === "preparing");
-        const shouldSchedule = runId === null ? Option.isNone(launchReceipt) : runIsPreparing;
+        const shouldSchedule =
+          projection.thread.forkWorkspacePreparation === undefined &&
+          (runId === null ? Option.isNone(launchReceipt) : runIsPreparing);
         const boundWorktreePath = projection.thread.worktreePath;
         const preparationStrategy: ThreadLaunchWorkspaceStrategy =
           Option.isSome(launchReceipt) &&

@@ -748,6 +748,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["new worktrees start remote origin latest fetched branch local"],
   },
   {
+    id: "fork-workspace",
+    title: "Fork workspace",
+    to: "/settings/worktrees",
+    scope: "environment-defaults",
+    searchTerms: ["fork thread same new worktree checkout inherit workspace"],
+  },
+  {
     id: "add-project-starts-in",
     title: "Add project starts in",
     to: "/settings/threads",

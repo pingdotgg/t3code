@@ -1,5 +1,6 @@
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { BranchNamingSettings } from "./BranchNamingSettings";
 import { WorktreeSubmodulesRow } from "./ProjectDefaultsSettings";
@@ -13,7 +14,62 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { WorktreeCleanupSection, WorktreesDirectoryRow } from "./StorageSettings";
-import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import {
+  useScopedSettings,
+  useScopedSettingsMixed,
+  useUpdateScopedSettings,
+} from "./useScopedSettings";
+
+const FORK_WORKSPACE_ITEMS = {
+  inherit: "Same as new threads",
+  same: "Same worktree",
+  worktree: "New worktree",
+};
+
+function ForkWorkspaceRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["forkThreadEnvMode"]);
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["forkThreadEnvMode"]}
+      {...searchableSetting("fork-workspace")}
+      description="Where forks run. Side chats always share their parent's workspace."
+      resetAction={
+        mixed || settings.forkThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.forkThreadEnvMode ? (
+          <SettingResetButton
+            label="fork workspace"
+            onClick={() =>
+              updateSettings({ forkThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.forkThreadEnvMode })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Select
+          items={FORK_WORKSPACE_ITEMS}
+          value={mixed ? null : settings.forkThreadEnvMode}
+          onValueChange={(value) => {
+            if (value === "inherit" || value === "same" || value === "worktree")
+              updateSettings({ forkThreadEnvMode: value });
+          }}
+        >
+          <SelectTrigger size="sm" aria-label="Fork workspace">
+            <SelectValue placeholder="Mixed" />
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {Object.entries(FORK_WORKSPACE_ITEMS).map(([value, label]) => (
+              <SelectItem key={value} value={value}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
+  );
+}
 
 function StartFromRemoteRow() {
   const settings = useScopedSettings();
@@ -59,6 +115,7 @@ export function WorktreesSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="worktree-creation" title="Creation">
         {!isProjectScope && <WorktreesDirectoryRow />}
+        {!isProjectScope && <ForkWorkspaceRow />}
         <StartFromRemoteRow />
         <AdvancedSettings targetIds={[searchableSetting("worktree-submodules").id]}>
           <WorktreeSubmodulesRow />
