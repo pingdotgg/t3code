@@ -533,9 +533,11 @@ blockmaps, with a 60 MB maximum for a representative sidecar-to-sidecar update.
 
 ## 0) npm OIDC trusted publishing setup (CLI)
 
-After the GitHub Release is published, the workflow runs `node scripts/build-npm-launcher.ts`, then
-`node apps/server/scripts/cli.ts publish --packages-dir npm-packages`, which runs `npm publish` on
-`t3.tgz`. That is the only package published per release.
+`build_bundle` builds the version-matched `t3.tgz` with `node scripts/build-npm-launcher.ts` and
+uploads it as the `npm-launcher` artifact. After the GitHub Release is published, `publish_cli`
+checks out only what it needs to set up the project's Node.js, downloads that exact upload by the
+artifact ID `build_bundle` outputs (never by name), checks the tarball version, and runs
+`npm publish --provenance` on it. That is the only package published per release.
 
 Checklist:
 
@@ -663,7 +665,7 @@ Checklist:
    - preflight passes
    - release quality checks pass
    - `build_bundle` and all platform builds pass
-   - `publish_cli` publishes the exact release version before the release job
+   - `publish_cli` publishes the exact release version after the release job
    - release job uploads expected files
 5. Smoke test downloaded artifacts.
 
