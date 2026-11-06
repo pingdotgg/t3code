@@ -877,7 +877,7 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
 );
 
 it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
-  const seedFailingRollbackThread = (name: string) =>
+  const seedFailingRollbackThread = (name: string, copied = false) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -908,6 +908,29 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         attachments: [],
         dispatchMode: { type: "start_immediately" },
       });
+      if (copied) {
+        const thread = (yield* orchestrator.getThreadProjection(threadId)).thread;
+        yield* eventSink.commitCommand({
+          commandId: CommandId.make(`${name}-copied-marker`),
+          threadId,
+          commandType: "test.copied-marker",
+          acceptedAt: yield* DateTime.now,
+          events: [
+            {
+              id: EventId.make(`${name}-copied-marker-event`),
+              type: "thread.metadata-updated",
+              threadId,
+              occurredAt: yield* DateTime.now,
+              payload: { ...thread, t3CodeCopiedAt: "2026-11-05T00:00:00.000Z" },
+            },
+          ],
+          effects: [],
+        });
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).thread.t3CodeCopiedAt,
+          "2026-11-05T00:00:00.000Z",
+        );
+      }
       const scope = (yield* orchestrator.getThreadProjection(threadId)).checkpointScopes[0]!;
       const now = yield* DateTime.now;
       const checkpointId = CheckpointId.make(`${name}-checkpoint`);
@@ -981,6 +1004,60 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       const retried = yield* orchestrator.getThreadProjection(threadId);
       assert.isNull(retried.thread.rollbackFailure);
     }),
+  );
+
+  it.effect("blocks copied chat turns and rollback while allowing ordinary threads", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const copied = yield* seedFailingRollbackThread("runtime-copied-guard", true);
+      const copiedMessage = yield* orchestrator
+        .dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("runtime-copied-guard-followup"),
+          threadId: copied.threadId,
+          messageId: MessageId.make("runtime-copied-guard-followup"),
+          text: "Do not resume this session.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+        })
+        .pipe(Effect.flip);
+      assert.equal(
+        copiedMessage.cause,
+        "This chat was copied from T3 Code. Use Continue in OminaX to keep going.",
+      );
+      const copiedRollback = yield* copied
+        .rollback(CommandId.make("runtime-copied-guard-rollback"))
+        .pipe(Effect.flip);
+      assert.equal(copiedRollback.cause, copiedMessage.cause);
+      const copiedResume = yield* orchestrator
+        .dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make("runtime-copied-guard-resume"),
+          threadId: copied.threadId,
+        })
+        .pipe(Effect.flip);
+      assert.equal(copiedResume.cause, copiedMessage.cause);
+
+      const ordinary = yield* seedFailingRollbackThread("runtime-ordinary-guard");
+      const ordinaryMessage = yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-ordinary-guard-message"),
+        threadId: ordinary.threadId,
+        messageId: MessageId.make("runtime-ordinary-guard-message"),
+        text: "This remains accepted.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+      });
+      assert.isAtLeast(ordinaryMessage.storedEvents.length, 1);
+      const ordinaryRollback = yield* ordinary.rollback(
+        CommandId.make("runtime-ordinary-guard-rollback"),
+      );
+      assert.isAtLeast(ordinaryRollback.storedEvents.length, 1);
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
   it.effect("rejects non-ready rollback targets before persisting events or effects", () =>

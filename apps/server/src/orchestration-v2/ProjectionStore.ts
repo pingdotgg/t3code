@@ -1649,6 +1649,9 @@ export function threadShellFromProjection(
     ...(projection.thread.historyOrigin === undefined
       ? {}
       : { historyOrigin: projection.thread.historyOrigin }),
+    ...(projection.thread.t3CodeCopiedAt === undefined
+      ? {}
+      : { t3CodeCopiedAt: projection.thread.t3CodeCopiedAt }),
     ...(projection.thread.sideChat === undefined
       ? {}
       : { sideChat: threadShellSideChatOf(projection.thread.sideChat) }),
@@ -1933,6 +1936,9 @@ function shellFromState(input: {
     ...(input.state.thread.historyOrigin === undefined
       ? {}
       : { historyOrigin: input.state.thread.historyOrigin }),
+    ...(input.state.thread.t3CodeCopiedAt === undefined
+      ? {}
+      : { t3CodeCopiedAt: input.state.thread.t3CodeCopiedAt }),
     ...(input.state.thread.sideChat === undefined
       ? {}
       : { sideChat: threadShellSideChatOf(input.state.thread.sideChat) }),

@@ -194,6 +194,9 @@ import { cn } from "~/lib/utils";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { toastManager } from "./ui/toast";
+import { Alert, AlertAction, AlertDescription } from "./ui/alert";
+import { Button } from "./ui/button";
+import { T3_LEARN_PRODUCT_NAME } from "@t3tools/shared/t3LearnIdentity";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
 import { isInSideChatPane, type SideChatParentPanel } from "~/lib/sideChatPane";
@@ -811,6 +814,10 @@ export default function ChatView(props: ChatViewProps) {
     : undefined;
   const isServerThread = serverThread !== null;
   const activeThread = isServerThread ? serverThread : localDraftThread;
+  const copiedThread = isServerThread && activeThread?.source.t3CodeCopiedAt !== undefined;
+  const copiedThreadRunId = copiedThread
+    ? (serverProjection?.runs.findLast((run) => run.status === "completed")?.id ?? null)
+    : null;
   const serverLatestRun =
     serverProjection === null ? null : deriveLatestThreadRun(serverProjection);
   const serverActivityRun =
@@ -1353,6 +1360,7 @@ export default function ChatView(props: ChatViewProps) {
     providerStatuses.find((status) => status.instanceId === activeRuntime?.providerInstanceId) ??
     activeProviderStatus;
   const supportsConversationRollback =
+    !copiedThread &&
     canOperateThread &&
     conversationProviderStatus !== null &&
     conversationProviderStatus.supportsConversationRollback !== false;
@@ -3638,7 +3646,29 @@ export default function ChatView(props: ChatViewProps) {
                               }
                             />
                           ) : null}
-                          {!composerMounted ? null : (
+                          {copiedThread ? (
+                            <Alert variant="info">
+                              <AlertDescription>
+                                This chat was copied from T3 Code.
+                              </AlertDescription>
+                              {copiedThreadRunId === null ? null : (
+                                <AlertAction>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() =>
+                                      void onForkFromRunStable({
+                                        sourceThreadId: activeThread.id,
+                                        runId: copiedThreadRunId,
+                                      })
+                                    }
+                                  >
+                                    Continue in {T3_LEARN_PRODUCT_NAME}
+                                  </Button>
+                                </AlertAction>
+                              )}
+                            </Alert>
+                          ) : !composerMounted ? null : (
                             <ChatComposer
                               canOperateThread={canOperateThread}
                               reportedModelSelection={reportedModelSelection}

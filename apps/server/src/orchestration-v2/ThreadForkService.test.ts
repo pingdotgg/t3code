@@ -423,6 +423,28 @@ it("plans a side chat from its anchor without pins, title regeneration, limit re
   assert.isTrue(DateTime.Equivalence(thread.updatedAt, forkCreatedAt));
 });
 
+it.effect("does not carry the T3 Code copy marker into a fork", () =>
+  Effect.gen(function* () {
+    const sourceRun = makeSourceRun("completed");
+    const source = makeSourceProjection(sourceRun);
+    const service = yield* ThreadForkService.ThreadForkServiceV2;
+    const result = yield* service.plan({
+      sourceProjection: {
+        thread: { ...source.thread, t3CodeCopiedAt: "2026-11-05T00:00:00.000Z" },
+      },
+      sourceRun,
+      sourceProviderThread: source.providerThreads[0],
+      canonicalSourcePoint: { threadId: source.thread.id, runId: sourceRun.id },
+      transferId: ContextTransferId.make("context-transfer:copy-marker"),
+      targetThreadId: ThreadId.make("thread:copy-marker-fork"),
+      createdBy: "user",
+      creationSource: "web",
+      createdAt: forkCreatedAt,
+    });
+    assert.isFalse("t3CodeCopiedAt" in result.targetThread);
+  }).pipe(Effect.provide(ThreadForkService.layer)),
+);
+
 it.effect("marks only requested forks as supervised side chats", () =>
   Effect.gen(function* () {
     const sourceRun = makeSourceRun("completed");

@@ -69,6 +69,7 @@ function planForkTargetThread(input: {
   const {
     sideChat: _sideChat,
     sideChatNoteDeliveries: _sideChatNoteDeliveries,
+    t3CodeCopiedAt: _t3CodeCopiedAt,
     // The remote parent delegated the source thread, not its forks.
     delegatedFrom: _delegatedFrom,
     ...sourceThread

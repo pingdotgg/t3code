@@ -212,6 +212,7 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import { T3_LEARN_PRODUCT_NAME } from "@t3tools/shared/t3LearnIdentity";
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -549,6 +550,24 @@ function wakeWorkStartedAt(
 }
 
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
+
+const COPIED_THREAD_GUARD_MESSAGE = `This chat was copied from T3 Code. Use Continue in ${T3_LEARN_PRODUCT_NAME} to keep going.`;
+
+/** A copy keeps T3 Code's session and refs, so nothing may run or revert in it (APP-49). */
+function refuseCopiedThread(
+  command: { readonly commandId: CommandId; readonly type: OrchestrationV2Command["type"] },
+  thread: { readonly t3CodeCopiedAt?: unknown },
+) {
+  return thread.t3CodeCopiedAt === undefined
+    ? Effect.void
+    : Effect.fail(
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: COPIED_THREAD_GUARD_MESSAGE,
+        }),
+      );
+}
 
 /** Unfinished runs (including queued) or open requests block moving a thread to another project. */
 export function threadHasUnfinishedWork(records: {
@@ -1704,6 +1723,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
+        projection.thread.t3CodeCopiedAt !== undefined ||
         // A finished side chat's queue waits for the learner's own message to reopen it.
         projection.thread.sideChat?.done != null ||
         projection.runs.some(isActiveRun)
@@ -4908,6 +4928,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+    // Merged context waits for the target's next message, which a copy never takes.
+    yield* refuseCopiedThread(command, targetProjection.thread);
 
     if (
       sourceProjection.thread.lineage.relationshipToParent !== "fork" ||
@@ -5774,6 +5796,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+    yield* refuseCopiedThread(command, projection.thread);
     if (command.manualContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
       const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
@@ -10411,6 +10434,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ["runs", "attempts", "nodes", "providerThreads", "turnItems"],
         { turnItemTypes: ["command_execution"], turnItemRunId: command.runId },
       );
+      yield* refuseCopiedThread(command, projection.thread);
       const state = preparedRunState(command, projection);
       if (state === null) {
         return yield* new OrchestratorDispatchError({
@@ -10596,6 +10620,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ["runs", "attempts", "nodes", "providerThreads", "turnItems"],
       { turnItemTypes: ["command_execution", "error"], turnItemRunId: command.runId },
     );
+    yield* refuseCopiedThread(command, projection.thread);
     const state = preparedRunState(command, projection);
     const failureItem = projection.turnItems.find(
       (candidate): candidate is Extract<OrchestrationV2TurnItem, { readonly type: "error" }> =>
@@ -12874,6 +12899,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ["providerThreads", "checkpoints", "checkpointScopes", "runs", "providerTurns", "attempts"],
         { turnItemTypes: [], messageRoles: ["user"] },
       );
+      yield* refuseCopiedThread(command, projection.thread);
       const providerThread = projection.providerThreads.find(
         (candidate) => candidate.id === projection.thread.activeProviderThreadId,
       );
@@ -14305,6 +14331,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Thread ${command.threadId} is not active.`,
           });
         }
+        yield* refuseCopiedThread(command, projection.thread);
         const selectedRunId = command.type === "queued-run.start" ? command.runId : undefined;
         const selectedRun =
           selectedRunId === undefined
