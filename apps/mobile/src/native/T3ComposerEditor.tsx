@@ -35,6 +35,7 @@ export function ComposerEditor({
       blur: () => inputRef.current?.blur(),
       setSelection: (nextSelection) =>
         inputRef.current?.setSelection(nextSelection.start, nextSelection.end),
+      flushPendingInput: async () => {},
     }),
     [],
   );

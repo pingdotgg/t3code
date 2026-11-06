@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeUtil from "node:util";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";

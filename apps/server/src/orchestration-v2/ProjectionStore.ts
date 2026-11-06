@@ -168,6 +168,7 @@ export type ProjectionStoreV2Error = typeof ProjectionStoreV2Error.Type;
 export type ProjectionRecoveryKind =
   | "queued-runs"
   | "runtime"
+  | "restart-continuations"
   | "subagent-results"
   | "delegated-completions";
 
@@ -353,6 +354,7 @@ export interface ProjectionRecordFilter {
   readonly subagentIds?: ReadonlyArray<NodeId>;
   readonly subagentRunIds?: ReadonlyArray<RunId>;
   readonly nodeIds?: ReadonlyArray<NodeId>;
+  readonly turnItemRequestIds?: ReadonlyArray<RuntimeRequestId>;
   readonly turnItemTypes?: ReadonlyArray<OrchestrationV2TurnItem["type"]>;
   readonly turnItemStatuses?: ReadonlyArray<OrchestrationV2TurnItem["status"]>;
   readonly omitSettledLeafNodes?: boolean;
@@ -678,6 +680,10 @@ export interface ProjectionStoreV2Shape {
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2Run>, ProjectionStoreV2Error>;
   readonly getRecoveryThreadIds: (
     kind: ProjectionRecoveryKind,
+    projects?: {
+      readonly include?: ReadonlyArray<string>;
+      readonly exclude?: ReadonlyArray<string>;
+    },
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
   readonly getUnreadableThreadIds: () => Effect.Effect<
     ReadonlyArray<ThreadId>,
@@ -1559,9 +1565,11 @@ export function threadShellFromProjection(
       .filter((request) => request.status === "pending")
       .toSorted(
         (left, right) =>
+          Number(left.kind === "user_input") - Number(right.kind === "user_input") ||
           DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
       )[0] ?? null,
   );
+
   const userMessages = projection.messages
     .filter((message) => message.role === "user" && idleCompactionOf(message) === undefined)
     .toSorted(
@@ -1570,20 +1578,26 @@ export function threadShellFromProjection(
     );
   const latestUserAuthoredMessageAt =
     userMessages.find((message) => message.createdBy === "user")?.updatedAt ?? null;
-  if (pendingRuntimeRequest === null || pendingRuntimeRequest.blocking === false) {
-    pendingRuntimeRequest =
-      secretRequestAsPendingInput(
-        projection.turnItems
-          .filter(
-            (item) =>
-              item.status === "waiting" &&
-              waitsOnUser(item, liveRunIds, latestUserAuthoredMessageAt),
-          )
-          .toSorted(
-            (left, right) =>
-              DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-          )[0] ?? null,
-      ) ?? pendingRuntimeRequest;
+  if (pendingRuntimeRequest === null || pendingRuntimeRequest.kind === "user_input") {
+    const waitingCard = secretRequestAsPendingInput(
+      projection.turnItems
+        .filter(
+          (item) =>
+            item.status === "waiting" && waitsOnUser(item, liveRunIds, latestUserAuthoredMessageAt),
+        )
+        .toSorted(
+          (left, right) =>
+            DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+        )[0] ?? null,
+    );
+    if (
+      waitingCard !== null &&
+      (pendingRuntimeRequest === null ||
+        DateTime.toEpochMillis(waitingCard.createdAt) >=
+          DateTime.toEpochMillis(pendingRuntimeRequest.createdAt))
+    ) {
+      pendingRuntimeRequest = waitingCard;
+    }
   }
   const latestUserMessage = userMessages[0] ?? null;
   const pendingBackgroundTasks = derivePendingBackgroundWork({
@@ -3121,6 +3135,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           (fields !== undefined && !fields.includes("turnItems")) ||
           (window === undefined &&
             matchesNothing(
+              filter?.turnItemRequestIds,
               filter?.turnItemTypes,
               filter?.turnItemStatuses,
               filter?.turnItemRunIds,
@@ -3132,6 +3147,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT payload_json
                 FROM orchestration_v2_projection_turn_items
                 WHERE thread_id = ${threadId}
+                  ${filter?.turnItemRequestIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.requestId') IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRequestIds)}))`}
                   ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
                   ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
                   ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
@@ -4034,12 +4050,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ${booleanInt(options.autoResume)}
                   OR (${booleanInt(options.snooze)} AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)}))
                 )
-                -- A subagent of a settled parent is abandoned work; resuming it would wake the parent.
+                -- A subagent of a settled, archived or deleted parent is abandoned work.
                 AND NOT EXISTS (
                   SELECT 1 FROM orchestration_v2_projection_threads parent
                   WHERE json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
                     AND parent.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
-                    AND json_extract(parent.payload_json, '$.settledOverride') = 'settled'
+                    AND (
+                      json_extract(parent.payload_json, '$.settledOverride') = 'settled'
+                      OR json_extract(parent.payload_json, '$.archivedAt') IS NOT NULL
+                      OR parent.deleted_at IS NOT NULL
+                    )
                 )
               )
             )
@@ -4108,7 +4128,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     );
 
     const getRecoveryThreadIds = Effect.fn("ProjectionStore.getRecoveryThreadIds")(
-      function* (kind: ProjectionRecoveryKind) {
+      function* (
+        kind: ProjectionRecoveryKind,
+        projects?: {
+          readonly include?: ReadonlyArray<string>;
+          readonly exclude?: ReadonlyArray<string>;
+        },
+      ) {
         const candidates = (() => {
           switch (kind) {
             case "queued-runs":
@@ -4159,6 +4185,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND type = 'subagent_result'
                   )))
               `;
+            case "restart-continuations":
+              return sql`
+                SELECT bindings.thread_id
+                FROM orchestration_v2_projection_provider_sessions AS sessions
+                JOIN orchestration_v2_projection_provider_session_bindings AS bindings
+                  ON bindings.provider_session_id = sessions.provider_session_id
+                WHERE sessions.status NOT IN ('stopped', 'error')
+                UNION
+                SELECT thread_id FROM orchestration_v2_projection_provider_sessions AS sessions
+                WHERE status NOT IN ('stopped', 'error') AND thread_id IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_provider_session_bindings AS bindings
+                    WHERE bindings.provider_session_id = sessions.provider_session_id
+                  )
+                UNION
+                SELECT thread_id FROM orchestration_v2_projection_runs
+                WHERE status = 'starting'
+                  AND CASE WHEN json_valid(payload_json)
+                    THEN json_extract(payload_json, '$.restartContinuationOfRunId') IS NOT NULL
+                    ELSE 0 END
+              `;
             case "runtime":
               return sql`
                 WITH pending_provider_threads AS MATERIALIZED (
@@ -4188,6 +4235,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 CROSS JOIN orchestration_v2_projection_provider_session_bindings AS bindings
                   ON bindings.provider_session_id = sessions.provider_session_id
                 WHERE sessions.status NOT IN ('stopped', 'error')
+                  OR (sessions.status = 'error' AND CASE WHEN json_valid(sessions.payload_json)
+                    THEN json_array_length(sessions.payload_json, '$.extensionStatuses') > 0
+                    ELSE 0 END)
                 UNION
                 -- A detach drops the binding but keeps the session's status.
                 SELECT sessions.thread_id
@@ -4242,6 +4292,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT thread_id FROM orchestration_v2_projection_threads
           WHERE deleted_at IS NULL
             AND thread_id IN (${candidates})
+            ${projects?.include === undefined ? sql`` : sql`AND project_id IN (SELECT value FROM json_each(${encodeIdList(projects.include)}))`}
+            ${projects?.exclude === undefined ? sql`` : sql`AND project_id NOT IN (SELECT value FROM json_each(${encodeIdList(projects.exclude)}))`}
             ${kind === "queued-runs" ? sql`AND archived_at IS NULL` : sql``}
           ORDER BY updated_at ASC, thread_id ASC
         `;
@@ -4690,6 +4742,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   )
                   AND (
                     session.status NOT IN ('stopped', 'error')
+                    OR (session.status = 'error' AND CASE WHEN json_valid(session.payload_json)
+                      THEN json_array_length(session.payload_json, '$.extensionStatuses') > 0
+                      ELSE 0 END)
                     OR session.provider_session_id IN (
                       SELECT provider_thread.provider_session_id
                       FROM orchestration_v2_projection_provider_threads AS provider_thread
@@ -6230,7 +6285,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_runtime_requests request
                 WHERE request.thread_id = t.thread_id
                   AND request.status = 'pending'
-                ORDER BY request.created_at DESC, request.runtime_request_id DESC
+                ORDER BY (request.kind = 'user_input') ASC,
+                  request.created_at DESC, request.runtime_request_id DESC
                 LIMIT 1
               ) AS pending_request_payload_json,
               (
@@ -6760,16 +6816,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               )
             : null;
         if (
-          (pendingRuntimeRequest === null || pendingRuntimeRequest.blocking === false) &&
+          (pendingRuntimeRequest === null || pendingRuntimeRequest.kind === "user_input") &&
           waitingCards.length > 0
         ) {
-          pendingRuntimeRequest =
-            secretRequestAsPendingInput(
-              waitingCards.toSorted(
-                (left, right) =>
-                  DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-              )[0] ?? null,
-            ) ?? pendingRuntimeRequest;
+          const waitingCard = secretRequestAsPendingInput(
+            waitingCards.toSorted(
+              (left, right) =>
+                DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+            )[0] ?? null,
+          );
+          if (
+            waitingCard !== null &&
+            (pendingRuntimeRequest === null ||
+              DateTime.toEpochMillis(waitingCard.createdAt) >=
+                DateTime.toEpochMillis(pendingRuntimeRequest.createdAt))
+          ) {
+            pendingRuntimeRequest = waitingCard;
+          }
         }
         let terminalFailureItem =
           row.terminal_failure_payload_json === null
