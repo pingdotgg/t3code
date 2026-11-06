@@ -5,7 +5,12 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
+import {
+  foldSearchQuery,
+  rankSearchItems,
+  scoreThreadSearch,
+  startsSearchWord,
+} from "@t3tools/shared/paletteSearch";
 
 import type { EnvironmentThreadShell } from "./state/models.ts";
 import { threadSearchSubject, type ThreadSearchShell } from "./state/threadSearch.ts";
@@ -101,18 +106,6 @@ export interface ComposerEnvironmentItem {
   readonly description: string;
 }
 
-function startsWord(label: string, lowerCaseQuery: string): boolean {
-  const text = label.toLowerCase();
-  for (
-    let index = text.indexOf(lowerCaseQuery);
-    index !== -1;
-    index = text.indexOf(lowerCaseQuery, index + 1)
-  ) {
-    if (index === 0 || !/[\p{L}\p{N}]/u.test(text.charAt(index - 1))) return true;
-  }
-  return false;
-}
-
 /**
  * The machines the `@` picker offers, so the agent can link or work there: the client's paired
  * machines and those the composer's environment links to. The composer's own environment is
@@ -128,7 +121,7 @@ export function matchComposerEnvironmentItems(
   },
   resolve: MFunctionType = mFallback,
 ): ComposerEnvironmentItem[] {
-  const query = input.query.trim().toLowerCase();
+  const query = foldSearchQuery(input.query);
   if (query.length === 0) return [];
   const paired = new Set(input.environments.map((environment) => environment.environmentId));
   const linkedOnly = Array.from(input.linkedEnvironments, ([environmentId, label]) => ({
@@ -139,7 +132,8 @@ export function matchComposerEnvironmentItems(
   return [...input.environments, ...linkedOnly]
     .filter(
       (environment) =>
-        environment.environmentId !== input.environmentId && startsWord(environment.label, query),
+        environment.environmentId !== input.environmentId &&
+        startsSearchWord(environment.label, query),
     )
     .map((environment) => ({
       id: `environment:${environment.environmentId}`,
@@ -158,12 +152,12 @@ export function matchComposerEnvironmentItems(
 export function rankComposerMentionItems<
   T extends { readonly type: string; readonly label: string },
 >(items: ReadonlyArray<T>, rawQuery: string): T[] {
-  const query = rawQuery.trim().toLowerCase();
+  const query = foldSearchQuery(rawQuery);
   if (query.length === 0) return [...items];
   const rank = ({ type, label }: T) => {
     if (type === "environment") return 1;
-    if (type === "thread") return startsWord(label, query) ? 2 : 4;
-    const name = label.toLowerCase();
+    if (type === "thread") return startsSearchWord(label, query) ? 2 : 4;
+    const name = foldSearchQuery(label);
     if (name === query || name.startsWith(`${query}.`)) return 0;
     return name.startsWith(query) ? 3 : 5;
   };
