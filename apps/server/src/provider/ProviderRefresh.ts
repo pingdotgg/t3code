@@ -26,10 +26,44 @@ export class ProviderRefresh extends Context.Service<
   }
 >()("t3/provider/ProviderRefresh") {}
 
+// A failed scan leaves no cwd snapshot, so a client without the machine catalog gets it
+// as a pending snapshot, which it shows while it retries the scan.
+function workspaceSnapshotOrCatalog(
+  provider: ServerProvider,
+  cwd: string,
+  catalogOnDemand: boolean,
+) {
+  const snapshots = (provider.workspaceSnapshots ?? []).filter((snapshot) => snapshot.cwd === cwd);
+  if (snapshots.length > 0 || !catalogOnDemand) return snapshots;
+  return [
+    {
+      cwd,
+      checkedAt: provider.checkedAt,
+      slashCommands: provider.slashCommands,
+      slashCommandsPending: true,
+      skills: provider.skills,
+    },
+  ];
+}
+
+// On-demand catalog clients read full entries from the cwd snapshot they fetch. Names still
+// change the config when the machine catalog does, so the client refetches, and skill names
+// and labels keep skill links working where no snapshot is fetched.
 export function withoutWorkspaceSnapshots(
   providers: ReadonlyArray<ServerProvider>,
+  catalogsPerCwd: ReadonlySet<string> = new Set(),
 ): ServerProvider[] {
-  return providers.map(({ workspaceSnapshots: _workspaceSnapshots, ...provider }) => provider);
+  return providers.map(({ workspaceSnapshots: _workspaceSnapshots, ...provider }) =>
+    catalogsPerCwd.has(provider.instanceId)
+      ? {
+          ...provider,
+          slashCommands: provider.slashCommands.map(({ name }) => ({ name })),
+          skills: provider.skills.map(
+            ({ description: _d, shortDescription: _s, ...skill }) => skill,
+          ),
+        }
+      : provider,
+  );
 }
 
 const make = Effect.gen(function* () {
@@ -129,6 +163,9 @@ const make = Effect.gen(function* () {
     if (instanceId === undefined || cwd === undefined) {
       return { providers: withoutWorkspaceSnapshots(commandProviders) };
     }
+    const catalogOnDemand =
+      input.providerCatalogsOnDemand === true &&
+      (yield* providerInstances.getInstance(instanceId))?.snapshotForCwd !== undefined;
     return {
       providers: commandProviders
         .filter((provider) => provider.instanceId === instanceId)
@@ -138,9 +175,7 @@ const make = Effect.gen(function* () {
           models: [],
           slashCommands: [],
           skills: [],
-          workspaceSnapshots: (provider.workspaceSnapshots ?? []).filter(
-            (snapshot) => snapshot.cwd === cwd,
-          ),
+          workspaceSnapshots: workspaceSnapshotOrCatalog(provider, cwd, catalogOnDemand),
         })),
     };
   });

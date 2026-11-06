@@ -1,4 +1,5 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import { VcsProcessExitError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
@@ -65,6 +66,11 @@ function notes(count: number, firstId: number): string {
 }
 
 const author = { id: 1, username: "bilal" };
+const labelPermission = output(
+  JSON.stringify({
+    data: { project: { mergeRequest: { userPermissions: { adminMergeRequest: false } } } },
+  }),
+);
 const reviewer = { id: 5, username: "octocat" };
 
 function mergeRequestJson(overrides: Record<string, unknown>): string {
@@ -78,6 +84,23 @@ function mergeRequestJson(overrides: Record<string, unknown>): string {
     updated_at: "2026-07-02T00:00:00Z",
     author,
     ...overrides,
+  });
+}
+
+function sourceBranchJson(overrides: Record<string, unknown>): string {
+  return JSON.stringify({
+    data: {
+      project: {
+        mergeRequest: {
+          state: "merged",
+          sourceBranch: "feat/page",
+          diffHeadSha: "head",
+          sourceProject: { fullPath: "acme/web" },
+          userPermissions: { removeSourceBranch: true },
+          ...overrides,
+        },
+      },
+    },
   });
 }
 
@@ -1223,6 +1246,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
             ),
           ),
         )
+        .mockReturnValueOnce(Effect.succeed(labelPermission))
         .mockReturnValueOnce(
           Effect.succeed(
             output(
@@ -1252,7 +1276,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         ["Pipeline", "success", "https://gitlab.com/bilal/web/-/pipelines/31"],
         ["deploy", "failure", "https://gitlab.com/bilal/web/-/pipelines/32"],
       ]);
-      expect(argsOfCall(1)[1]).toBe("projects/12/pipelines/31/bridges?per_page=100");
+      expect(argsOfCall(2)[1]).toBe("projects/12/pipelines/31/bridges?per_page=100");
     }),
   );
 
@@ -1264,6 +1288,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
       const failedChild = { name: "deploy", downstream_pipeline: { status: "failed" } };
       mockedExecute
         .mockReturnValueOnce(Effect.succeed(detailOutput))
+        .mockReturnValueOnce(Effect.succeed(labelPermission))
         .mockReturnValueOnce(
           Effect.fail(
             new GitLabCli.GitLabCliCommandError({
@@ -1275,6 +1300,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
           ),
         )
         .mockReturnValueOnce(Effect.succeed(detailOutput))
+        .mockReturnValueOnce(Effect.succeed(labelPermission))
         // A full page may have left out the trigger job whose pipeline failed.
         .mockReturnValueOnce(
           Effect.succeed(output(JSON.stringify(Array.from({ length: 100 }, () => failedChild)))),
@@ -1295,15 +1321,25 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads merge permissions without reading the trigger jobs", () =>
+  it.effect.each([
+    {
+      answer: JSON.stringify({
+        data: { project: { mergeRequest: { userPermissions: { adminMergeRequest: true } } } },
+      }),
+      expected: true,
+    },
+    { answer: JSON.stringify({ errors: [{ message: "Field unknown" }] }), expected: false },
+  ])("reads merge and label permissions without reading the trigger jobs", ({ answer, expected }) =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
+      mockedExecute.mockImplementation(({ args }) =>
         Effect.succeed(
           output(
-            mergeRequestJson({
-              head_pipeline: { id: 31, project_id: 12, status: "success" },
-              user: { can_merge: false },
-            }),
+            args[1] === "graphql"
+              ? answer
+              : mergeRequestJson({
+                  head_pipeline: { id: 31, project_id: 12, status: "success" },
+                  user: { can_merge: false },
+                }),
           ),
         ),
       );
@@ -1317,7 +1353,224 @@ layer("GitLabPullRequestCli.layer", (it) => {
       });
 
       expect(detail.viewerCanMerge).toBe(false);
+      expect(detail.viewerCanEditLabels).toBe(expected);
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+    }),
+  );
+
+  it.effect(
+    "offers the project's and its groups' labels, marking those already applied, and keeps an applied label past the page",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute.mockImplementation(({ args }) =>
+          Effect.succeed(
+            output(
+              args[1]?.includes("/labels?")
+                ? JSON.stringify([
+                    { name: "bug", color: "#d9534f", description: "Something is broken" },
+                    { name: "docs", color: null, description: null },
+                    { name: "legacy", color: null, description: null, archived: true },
+                    { name: "wontfix", color: null, description: null, archived: true },
+                  ])
+                : mergeRequestJson({ labels: ["bug", "wontfix", "stale"] }),
+            ),
+          ),
+        );
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+        const list = yield* cli.listLabelCandidates({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+        });
+
+        expect(
+          mockedExecute.mock.calls
+            .map(([call]) => call.args[1])
+            .find((path) => path?.includes("/labels?")),
+        ).toBe("projects/acme%2Fweb/labels?per_page=100&include_ancestor_groups=true");
+        expect(list).toEqual({
+          candidates: [
+            { name: "stale", color: null, description: null, isApplied: true },
+            { name: "bug", color: "#d9534f", description: "Something is broken", isApplied: true },
+            { name: "docs", color: null, description: null, isApplied: false },
+            { name: "wontfix", color: null, description: null, isApplied: true },
+          ],
+          truncated: false,
+        });
+      }),
+  );
+
+  it.effect("adds labels the project has in one write", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation(({ args }) =>
+        Effect.succeed(
+          output(
+            args.includes("PUT")
+              ? "{}"
+              : JSON.stringify({
+                  name: decodeURIComponent(args[1]?.split("/labels/")[1]?.split("?")[0] ?? ""),
+                  color: null,
+                }),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.setLabels({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        labels: ["bug", "docs"],
+        applied: true,
+      });
+
+      const write = mockedExecute.mock.calls.find(([call]) => call.args.includes("PUT"))?.[0];
+      assert.isDefined(write);
+      expect(write.args[1]).toBe("projects/acme%2Fweb/merge_requests/7");
+      expect(JSON.parse(write.stdin ?? "")).toEqual({ add_labels: "bug,docs" });
+      expect(argsOfCall(0)[1]).toBe("projects/acme%2Fweb/labels/bug?include_ancestor_groups=true");
+    }),
+  );
+
+  it.effect("refuses to add a label the project lacks, since GitLab would create it", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation(() =>
+        Effect.fail(
+          new GitLabCli.GitLabCliCommandError({
+            operation: "execute",
+            command: "glab",
+            cwd: "/w",
+            cause: new VcsProcessExitError({
+              operation: "GitLabCli.execute",
+              command: "glab",
+              cwd: "/w",
+              exitCode: 1,
+              detail: "404 Label Not Found",
+              failureKind: "not-found",
+            }),
+          }),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const result = yield* cli
+        .setLabels({ cwd: "/w", repository: "acme/web", number: 7, labels: ["bug"], applied: true })
+        .pipe(Effect.flip);
+
+      expect(result).toMatchObject({ _tag: "GitLabUnknownLabelError", labels: ["bug"] });
+      expect(argsOfCall(0)[1]).toBe("projects/acme%2Fweb/labels/bug?include_ancestor_groups=true");
+      expect(mockedExecute.mock.calls.some(([call]) => call.args.includes("PUT"))).toBe(false);
+    }),
+  );
+
+  it.effect("removes labels without looking them up", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.setLabels({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        labels: ["bug"],
+        applied: false,
+      });
+
       expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(callAt(0).stdin ?? "")).toEqual({ remove_labels: "bug" });
+    }),
+  );
+
+  it.effect.each([
+    { answer: sourceBranchJson({}), expected: true },
+    { answer: "not json", expected: false },
+  ])("asks GitLab whether a merged merge request's branch can be deleted", ({ answer, expected }) =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({ state: "merged" }))))
+        .mockReturnValueOnce(Effect.succeed(labelPermission))
+        .mockReturnValueOnce(Effect.succeed(output(answer)));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(detail.viewerCanDeleteBranch).toBe(expected);
+      expect(argsOfCall(2)).toContain("graphql");
+    }),
+  );
+
+  it.effect("deletes the source branch in the source project once its head is the merged one", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(sourceBranchJson({ sourceProject: { fullPath: "fork/web" } }))),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              JSON.stringify({
+                default: false,
+                commit: { id: "head", authored_date: "2026-11-03T20:29:40.000-07:00" },
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output("")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.runMergeRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        action: "delete-branch",
+      });
+
+      expect(argsOfCall(1)).toEqual(["api", "projects/fork%2Fweb/repository/branches/feat%2Fpage"]);
+      expect(argsOfCall(2)).toEqual([
+        "api",
+        "projects/fork%2Fweb/repository/branches/feat%2Fpage",
+        "--method",
+        "DELETE",
+        "--header",
+        "If-Unmodified-Since: Wed, 04 Nov 2026 03:29:40 GMT",
+      ]);
+    }),
+  );
+
+  it.effect.each([
+    { reason: "open", source: { state: "opened" }, branch: undefined },
+    { reason: "open", source: { state: "locked" }, branch: undefined },
+    {
+      reason: "not-allowed",
+      source: { userPermissions: { removeSourceBranch: false } },
+      branch: undefined,
+    },
+    { reason: "default-branch", source: {}, branch: { default: true, commit: { id: "head" } } },
+    { reason: "head-changed", source: {}, branch: { default: false, commit: { id: "newer" } } },
+  ])("refuses to delete the source branch when it is $reason", ({ reason, source, branch }) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(sourceBranchJson(source))));
+      if (branch !== undefined) {
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output(JSON.stringify(branch))));
+      }
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const error = yield* cli
+        .runMergeRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          action: "delete-branch",
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "GitLabBranchDeletionRefusedError", reason });
+      expect(mockedExecute).toHaveBeenCalledTimes(branch === undefined ? 1 : 2);
     }),
   );
 

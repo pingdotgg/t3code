@@ -117,6 +117,7 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfigModule from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
+import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 
@@ -1029,13 +1030,21 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       auth: { status: "authenticated" },
       checkedAt: "2026-10-25T00:00:00.000Z",
       models: [],
-      slashCommands: [{ name: "machine-command" }],
-      skills: [],
+      slashCommands: [{ name: "machine-command", description: "A machine command" }],
+      skills: [
+        {
+          name: "machine-skill",
+          description: "Machine skill",
+          path: "/skills/machine-skill",
+          enabled: true,
+        },
+      ],
       workspaceSnapshots: [
         snapshotFor("/a", "2026-10-25T00:00:00.000Z"),
         snapshotFor("/b", "2026-10-25T00:00:00.000Z"),
       ],
     };
+    let scansCwd = true;
     const providerChanges = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
     const pulled = yield* Queue.unbounded<void>();
     const responses = yield* Queue.unbounded<unknown>();
@@ -1072,6 +1081,20 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
             refreshModes.push(usage);
             return [provider];
           }),
+      }),
+      Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+        listInstances: Effect.sync(() => [
+          (scansCwd
+            ? { instanceId, snapshotForCwd: () => Effect.die("unused") }
+            : { instanceId }) as never,
+        ]),
+        getInstance: () =>
+          Effect.sync(
+            () =>
+              (scansCwd
+                ? { instanceId, snapshotForCwd: () => Effect.die("unused") }
+                : { instanceId }) as never,
+          ),
       }),
       Layer.mock(UsageLimitSources.UsageLimitSources)({
         current: Effect.succeed([]),
@@ -1145,12 +1168,17 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       _tag: "Request",
       id: configRequest,
       tag: WS_METHODS.subscribeServerConfig,
-      payload: { workspaceSnapshotsOnDemand: true },
+      payload: { workspaceSnapshotsOnDemand: true, providerCatalogsOnDemand: true },
       headers: Headers.empty,
     });
     const snapshot = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
     if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
     assert.isUndefined(snapshot.config.providers[0]?.workspaceSnapshots);
+    // The cwd snapshot the client fetches carries the catalog, so only command names are sent.
+    assert.deepEqual(snapshot.config.providers[0]?.slashCommands, [{ name: "machine-command" }]);
+    assert.deepEqual(snapshot.config.providers[0]?.skills, [
+      { name: "machine-skill", path: "/skills/machine-skill", enabled: true },
+    ]);
     yield* server.write(0, { _tag: "Ack", requestId: configRequest });
 
     // A rescan that only touches a snapshot sends nothing; the next real change does.
@@ -1159,13 +1187,34 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     ]);
     yield* Queue.take(pulled);
     yield* TestClock.adjust("1 second");
-    yield* Queue.offer(providerChanges, [{ ...provider, status: "warning" }]);
+    // Late /usage-limits discovery still reaches the client, so it refetches its cwd snapshot.
+    yield* Queue.offer(providerChanges, [
+      {
+        ...provider,
+        status: "warning",
+        slashCommands: [...provider.slashCommands, USAGE_LIMITS_COMMAND],
+      },
+    ]);
     yield* Queue.take(pulled);
     yield* TestClock.adjust("1 second");
     const update = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
     if (update.type !== "providerStatuses") return yield* Effect.die("Expected provider update");
     assert.equal(update.payload.providers[0]?.status, "warning");
     assert.isUndefined(update.payload.providers[0]?.workspaceSnapshots);
+    assert.deepEqual(update.payload.providers[0]?.slashCommands, [
+      { name: "machine-command" },
+      { name: USAGE_LIMITS_COMMAND.name },
+    ]);
+    yield* server.write(0, { _tag: "Ack", requestId: configRequest });
+    // A replacement that cannot scan a cwd sends its full machine catalog.
+    scansCwd = false;
+    yield* Queue.offer(providerChanges, [{ ...provider, status: "warning" }]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    const replaced = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (replaced.type !== "providerStatuses") return yield* Effect.die("Expected provider update");
+    assert.deepEqual(replaced.payload.providers[0]?.slashCommands, provider.slashCommands);
+    assert.deepEqual(replaced.payload.providers[0]?.skills, provider.skills);
 
     yield* server.write(0, {
       _tag: "Request",
@@ -1224,6 +1273,32 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
           : [false, true, false, true, true, false],
       );
     }
+    // A failed scan still gives a client without the machine catalog its commands.
+    scansCwd = true;
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("refresh-failed-scan"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: {
+        instanceId,
+        cwd: "/c",
+        workspaceSnapshotsOnDemand: true,
+        providerCatalogsOnDemand: true,
+      },
+      headers: Headers.empty,
+    });
+    const fallback = (yield* Queue.take(responses)) as {
+      readonly providers: ReadonlyArray<ServerProvider>;
+    };
+    assert.deepEqual(fallback.providers[0]?.workspaceSnapshots, [
+      {
+        cwd: "/c",
+        checkedAt: provider.checkedAt,
+        slashCommands: provider.slashCommands,
+        slashCommandsPending: true,
+        skills: provider.skills,
+      },
+    ]);
     yield* server.write(0, { _tag: "Interrupt", requestId: configRequest, interruptors: [] });
   }).pipe(
     Effect.provide(
