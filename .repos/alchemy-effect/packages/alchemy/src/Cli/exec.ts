@@ -1,47 +1,45 @@
+import { fileURLToPath } from "node:url";
+import { watchImport } from "@alchemy.run/node-utils/watch-import";
+import { trackBunImports } from "@alchemy.run/node-utils/watch-import-bun";
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
-import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import { watchImport } from "@alchemy.run/node-utils/watch-import";
-import { trackBunImports } from "@alchemy.run/node-utils/watch-import-bun";
-import { fileURLToPath } from "node:url";
-
-import { AlchemyContextLive } from "../AlchemyContext.ts";
 import { resolveStackEntrypoint } from "../Alchemist/Entrypoint.ts";
-import { StackModuleLoader } from "../Alchemist/Session.ts";
+import { StackModuleLoader } from "../Alchemist/Entrypoint.ts";
+import * as Alchemist from "../Alchemist/index.ts";
+import { AlchemyContextLive } from "../AlchemyContext.ts";
 import { ArtifactStore, createArtifactStore } from "../Artifacts.ts";
 import { CredentialsStoreLive } from "../Auth/Credentials.ts";
 import { ProfileStoreLive } from "../Auth/Profile.ts";
-import { makeDevLogOpener } from "../Local/DevLog.ts";
+import * as Interaction from "../Interaction.ts";
 import * as RpcProviderProxy from "../Local/RpcProviderProxy.ts";
 import { forwardSidecarLogs } from "../Local/RpcSpawner.ts";
+import { renderApply } from "../Report.ts";
 import { TelemetryLive } from "../Telemetry/Layer.ts";
+import { LogProcess, parentLogLayer } from "../Util/LogRecord.ts";
 import { initialCwd } from "../Util/Node.ts";
 import { PlatformServices } from "../Util/PlatformServices.ts";
-import * as Stacks from "../Alchemist/routes/stack.ts";
+import { logShutdown } from "../Util/Shutdown.ts";
+import { processTrace, withTraceParent } from "../Util/TraceParent.ts";
+import { handleCliErrors, installShutdownFeedback } from "./commands/errors.ts";
+import { renderPlanning } from "./commands/render.ts";
+import { stackOutputsView } from "./components/view/StackOutputs.tsx";
 import { DEV_RELOAD_EXIT_CODE, DevOptions } from "./DevOptions.ts";
 import { ConsoleLogLive } from "./GlobalLog.ts";
-import { handleCliErrors, installShutdownFeedback } from "./commands/errors.ts";
-import { renderApply, renderPlanning } from "./commands/render.ts";
-import * as CliKit from "./CliKit/index.ts";
-import { stackOutputsView } from "./components/view/StackOutputs.tsx";
 import { selectCliServices } from "./selectCli.ts";
 
 // Interactive dev/deploy runs use the Sigil progress UI; CI, redirected output,
 // and other non-interactive terminals still select the append-only renderer.
 // `ALCHEMY_TUI` remains the explicit override in either direction.
 const services = Layer.mergeAll(
-  Layer.provideMerge(
-    Layer.mergeAll(selectCliServices(), CliKit.CliKitInteraction),
-    CliKit.layer(),
-  ),
+  Layer.provideMerge(selectCliServices(), Interaction.layer()),
   RpcProviderProxy.fromEnv(),
   Layer.succeed(ArtifactStore, createArtifactStore()),
   // Dev runs live in this exec child, not the `alchemy` CLI process, so
@@ -49,17 +47,10 @@ const services = Layer.mergeAll(
   // `cli.dev` span though: dev remains alive across reloads, so a wrapping
   // span would not end (and export) until shutdown — plan/apply spans are the
   // trace roots instead.
-  //
-  // Telemetry is layered *on top of* the console logger so the OTLP logger
-  // merges with it. As `mergeAll` siblings the last `CurrentLoggers` wins,
-  // and telemetry would replace the console logger — every `Effect.log*`
-  // (plan, apply progress, stack outputs) silently vanished from the
-  // terminal whenever telemetry was enabled.
-  Layer.provideMerge(TelemetryLive, ConsoleLogLive),
+  TelemetryLive,
+  ConsoleLogLive,
 ).pipe(
-  Layer.provideMerge(
-    Layer.mergeAll(AlchemyContextLive, ProfileStoreLive, CredentialsStoreLive),
-  ),
+  Layer.provideMerge(Layer.mergeAll(AlchemyContextLive, ProfileStoreLive, CredentialsStoreLive)),
   Layer.provideMerge(
     Layer.mergeAll(
       PlatformServices,
@@ -76,43 +67,41 @@ const devOnce = Config.String("ALCHEMY_DEV_ONCE").pipe(
 );
 
 const runDev = Effect.fn(function* (options: DevOptions) {
-  const target = {
-    entrypoint: options.main,
-    stage: options.stage,
-    profile: options.profile,
-    envFile: Option.getOrUndefined(options.envFile),
-  };
-  const snapshot = yield* Stacks.plan({
-    target,
-    operation: "deploy",
-    force: options.force,
-    include: options.include,
-    exclude: options.exclude,
-    updateStateStore: true,
-    dev: true,
-  }).pipe(renderPlanning({ operation: "Dev", stage: options.stage }));
+  const snapshot = yield* Alchemist.importStack(options.main).pipe(
+    Effect.flatMap((stack) =>
+      Alchemist.plan({
+        stack,
+        operation: "deploy",
+        stage: options.stage,
+        profile: options.profile,
+        envFile: Option.getOrUndefined(options.envFile),
+        updateStateStore: true,
+        dev: true,
+        force: options.force,
+        include: options.include,
+        exclude: options.exclude,
+      }),
+    ),
+    renderPlanning({ operation: "Dev", stage: options.stage }),
+  );
   const once = yield* devOnce;
-  const applyPlan = Stacks.apply(snapshot).pipe(
+  const applyAndRender = Alchemist.apply(snapshot).pipe(
     renderApply(snapshot.native, {
       stage: options.stage,
       dev: !once,
     }),
   );
   const result = yield* once
-    ? applyPlan
-    : applyPlan.pipe(
+    ? applyAndRender
+    : applyAndRender.pipe(
         Effect.catchCause((cause) =>
-          Console.error(
-            describeFailure(
-              "apply",
-              cause,
-              "keeping dev alive so healthy resources keep serving",
-            ),
+          Effect.logError(
+            describeFailure("apply", cause, "keeping dev alive so healthy resources keep serving"),
           ).pipe(Effect.as(undefined)),
         ),
       );
   if (result !== undefined && once) {
-    const kit = yield* CliKit.CliKit;
+    const kit = yield* Interaction.Interaction;
     yield* kit.output.print(stackOutputsView(result));
   }
   return once ? undefined : yield* Effect.never;
@@ -125,9 +114,7 @@ const runDev = Effect.fn(function* (options: DevOptions) {
  * past generation on every later change.
  */
 const nextChange = (watcher: {
-  subscribe: (
-    listener: (change: { paths: ReadonlySet<string> }) => void,
-  ) => () => void;
+  subscribe: (listener: (change: { paths: ReadonlySet<string> }) => void) => () => void;
 }) =>
   Effect.callback<ReadonlySet<string>>((resume) => {
     const unsubscribe = watcher.subscribe(({ paths }) => {
@@ -159,9 +146,7 @@ const runNodeDevWatcher = Effect.fn(function* (options: DevOptions) {
   // `/tmp`), so the project root the graph is scoped to must be real too.
   // Scope to the invocation directory, not the entrypoint's directory: a
   // config under `infra/` commonly imports application code from `src/`.
-  const entrypoint = yield* fs.realPath(
-    yield* resolveStackEntrypoint(options.main),
-  );
+  const entrypoint = yield* fs.realPath(yield* resolveStackEntrypoint(options.main));
   const root = yield* fs.realPath(initialCwd);
   const nodeModules = `${path.sep}node_modules${path.sep}`;
   return yield* Effect.acquireRelease(
@@ -193,9 +178,7 @@ const runNodeDevWatcher = Effect.fn(function* (options: DevOptions) {
       );
       return Effect.forever(
         Effect.raceFirst(generation, nextChange(watcher)).pipe(
-          Effect.flatMap((paths) =>
-            paths === undefined ? Effect.void : logReload(paths),
-          ),
+          Effect.flatMap((paths) => (paths === undefined ? Effect.void : logReload(paths))),
         ),
       );
     }),
@@ -218,10 +201,7 @@ const runBunDevWatcher = (options: DevOptions) =>
     (tracker) => Effect.promise(() => tracker.close()),
   ).pipe(
     Effect.flatMap((tracker) =>
-      Effect.raceFirst(
-        devKeepAlive(runDev(options)).pipe(Effect.scoped),
-        nextChange(tracker),
-      ),
+      Effect.raceFirst(devKeepAlive(runDev(options)).pipe(Effect.scoped), nextChange(tracker)),
     ),
     Effect.flatMap((paths) =>
       paths === undefined
@@ -243,48 +223,35 @@ const runBunDevWatcher = (options: DevOptions) =>
  * interrupts the fiber running this code, so `catchCause` never gets to
  * park it (a parked `Effect.never` is interrupted straight away too).
  */
-const describeFailure = (
-  what: string,
-  cause: Cause.Cause<unknown>,
-  next: string,
-) =>
+const describeFailure = (what: string, cause: Cause.Cause<unknown>, next: string) =>
   Cause.hasInterruptsOnly(cause)
     ? `alchemy dev: ${what} was interrupted internally (a bug in a provider or the engine — please report it with the trace below); ${next}.\n${Cause.pretty(cause)}`
     : `alchemy dev: ${what} failed; ${next}.\n${Cause.pretty(cause)}`;
 
 // A mid-edit import or planning failure must keep the watch process alive so
 // the next save can restart it. Ctrl+C still tears the run down.
-export const devKeepAlive = <A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> =>
+export const devKeepAlive = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   effect.pipe(
     Effect.catchCause((cause) =>
-      Console.error(
-        describeFailure(
-          "run",
-          cause,
-          "waiting for the next file change to retry",
-        ),
+      Effect.logError(
+        describeFailure("run", cause, "waiting for the next file change to retry"),
       ).pipe(Effect.andThen(Effect.never)),
     ),
   );
 
 const makeExec = () => {
-  const options = Schema.decodeSync(DevOptions)(
-    JSON.parse(process.env.ALCHEMY_EXEC_OPTIONS!),
-  );
+  // Decoded eagerly when the program is constructed, not when it runs.
+  // oxlint-disable-next-line effecttsgo/schema-sync
+  const options = Schema.decodeSync(DevOptions)(JSON.parse(process.env.ALCHEMY_EXEC_OPTIONS!));
   return Effect.gen(function* () {
     yield* installShutdownFeedback;
     // Subscribe to the spawner's sidecar log stream BEFORE the stack runs:
     // this process owns the terminal renderer, so sidecar output printed
     // here lands in chronological order with the run's own lines instead of
-    // racing the shared tty. No-op outside dev. The mixed tail is also teed
-    // to log/{stage}/{timestamp}.log; per-resource output lands in
-    // log/{stage}/{fqn…}/ via the local providers.
-    const devLog = yield* (yield* makeDevLogOpener)(options.stage);
-    yield* forwardSidecarLogs((entry) =>
-      devLog.writeLine(`[${entry.channel}] ${entry.line}`),
-    );
+    // racing the shared tty. No-op outside dev. Like every record of this
+    // process, they also go up to the `alchemy dev` process, which writes
+    // the run log (see `parentLogLayer`).
+    yield* forwardSidecarLogs;
     // Single-pass runs park nothing. Otherwise Node reloads the stack graph in
     // this process; Bun exits for the supervisor to respawn (see above).
     return yield* (yield* devOnce)
@@ -292,11 +259,17 @@ const makeExec = () => {
       : process.versions.bun !== undefined
         ? runBunDevWatcher(options)
         : runNodeDevWatcher(options);
-  }).pipe(Effect.provide(services), Effect.scoped, handleCliErrors);
+  }).pipe(
+    logShutdown("exec"),
+    // Spans join the trace `alchemy dev` passed down, like the records
+    // logged outside them already do.
+    withTraceParent(processTrace),
+    Effect.provide(Layer.provideMerge(parentLogLayer(), services)),
+    Effect.provideService(LogProcess, "exec"),
+    Effect.scoped,
+    handleCliErrors,
+  );
 };
 
 /** Fully wired sidecar CLI program. */
-export const exec: () => Effect.Effect<
-  void,
-  Effect.Error<ReturnType<typeof makeExec>>
-> = makeExec;
+export const exec: () => Effect.Effect<void, Effect.Error<ReturnType<typeof makeExec>>> = makeExec;

@@ -15,6 +15,7 @@ import {
   type OrchestrationV2CommandOutputFrame,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2GetTurnItemResult,
+  type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2TurnItem,
   ThreadId,
   TurnItemId,
@@ -22,7 +23,7 @@ import {
 import { chatMarkdownImageSources } from "@t3tools/shared/markdownPipeline";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -33,13 +34,8 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import {
-  base64UrlDecodeUtf8,
-  base64UrlEncode,
-  signPayload,
-  timingSafeEqualBase64Url,
-} from "../auth/utils.ts";
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { base64UrlDecodeUtf8, base64UrlEncode, timingSafeEqualBase64Url } from "../auth/utils.ts";
+import * as PayloadSigner from "../auth/PayloadSigner.ts";
 import {
   attachmentFileExtension,
   createAttachmentId,
@@ -140,15 +136,6 @@ const SessionClaims = Schema.Struct({
 type SessionClaims = typeof SessionClaims.Type;
 const decodeSessionClaims = Schema.decodeUnknownOption(Schema.fromJsonString(SessionClaims));
 
-/** A truncated HMAC keeps invite links short. 128 bits is still far beyond guessing range. */
-const inviteSignature = (shareId: string, key: Uint8Array) =>
-  base64UrlEncode(
-    Buffer.from(signPayload(`guest-invite:${shareId}`, key), "base64url").subarray(
-      0,
-      INVITE_SIGNATURE_BYTES,
-    ),
-  );
-
 const inactive = new GuestShareAccessError({ reason: "inactive" });
 
 export class GuestShareService extends Context.Service<
@@ -185,6 +172,11 @@ export class GuestShareService extends Context.Service<
       session: string,
       itemId: string,
     ) => Effect.Effect<OrchestrationV2GetTurnItemResult, GuestShareAccessError>;
+    /** Older turns of the shared thread, as the owner's client pages them. */
+    readonly history: (
+      session: string,
+      cursor: string,
+    ) => Effect.Effect<OrchestrationV2ThreadHistoryPage, GuestShareAccessError>;
     /** A command's output frames, as the owner's expanded row gets them, until the link ends. */
     readonly commandOutput: (
       session: string,
@@ -233,24 +225,31 @@ const make = Effect.gen(function* () {
   const managedEndpoint = yield* CloudManagedEndpointRuntime;
   const { attachmentsDir } = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
-  const crypto = yield* Crypto.Crypto;
-  const secretStore = yield* ServerSecretStore.ServerSecretStore;
+  const random = yield* SecureRandom.SecureRandom;
   const analytics = yield* AnalyticsService.AnalyticsService;
-  const signingKey = yield* Effect.cached(
-    secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(Effect.orDie),
-  );
+  const signer = yield* PayloadSigner.make(SIGNING_SECRET_NAME);
+  /** A truncated HMAC keeps invite links short. 128 bits is still far beyond guessing range. */
+  const inviteSignature = (shareId: string) =>
+    signer.sign(`guest-invite:${shareId}`).pipe(
+      Effect.orDie,
+      Effect.map((signature) =>
+        base64UrlEncode(Buffer.from(signature, "base64url").subarray(0, INVITE_SIGNATURE_BYTES)),
+      ),
+    );
 
   // Tokens are derived from the share id, so nothing secret is stored and replacing or closing
   // the share in the thread projection revokes every token for it. An invite is
   // `<shareId>.<signature>` and the thread is looked up by share id; a session token carries
   // signed claims.
   const signInvite = (shareId: GuestShareId) =>
-    Effect.map(signingKey, (key) => `${shareId}.${inviteSignature(shareId, key)}`);
-  const signSession = (claims: SessionClaims) =>
-    Effect.map(signingKey, (key) => {
-      const payload = base64UrlEncode(JSON.stringify(claims));
-      return `${payload}.${signPayload(payload, key)}`;
-    });
+    inviteSignature(shareId).pipe(Effect.map((signature) => `${shareId}.${signature}`));
+  const signSession = (claims: SessionClaims) => {
+    const payload = base64UrlEncode(JSON.stringify(claims));
+    return signer.sign(payload).pipe(
+      Effect.orDie,
+      Effect.map((signature) => `${payload}.${signature}`),
+    );
+  };
   const splitToken = (token: string) => {
     const [payload, signature, extra] = token.split(".");
     return payload && signature && extra === undefined ? { payload, signature } : null;
@@ -258,8 +257,8 @@ const make = Effect.gen(function* () {
   const verifyInvite = Effect.fn("GuestShareService.verifyInvite")(function* (token: string) {
     const parts = splitToken(token);
     if (parts === null) return Option.none<SessionClaims>();
-    const key = yield* signingKey;
-    if (!timingSafeEqualBase64Url(parts.signature, inviteSignature(parts.payload, key))) {
+    const expected = yield* inviteSignature(parts.payload);
+    if (!timingSafeEqualBase64Url(parts.signature, expected)) {
       return Option.none<SessionClaims>();
     }
     const shareId = GuestShareId.make(parts.payload);
@@ -270,15 +269,15 @@ const make = Effect.gen(function* () {
       ? Option.none<SessionClaims>()
       : Option.some<SessionClaims>({ kind: "session", threadId, shareId });
   });
-  const verifySession = (token: string) =>
-    Effect.map(signingKey, (key) => {
-      const parts = splitToken(token);
-      if (parts === null) return Option.none<SessionClaims>();
-      if (!timingSafeEqualBase64Url(parts.signature, signPayload(parts.payload, key))) {
-        return Option.none<SessionClaims>();
-      }
-      return decodeSessionClaims(base64UrlDecodeUtf8(parts.payload));
-    });
+  // Untraced: runs on every guest request, like the Effect.map it replaced.
+  const verifySession = Effect.fnUntraced(function* (token: string) {
+    const parts = splitToken(token);
+    if (parts === null) return Option.none<SessionClaims>();
+    if (!(yield* signer.verify(parts.payload, parts.signature).pipe(Effect.orDie))) {
+      return Option.none<SessionClaims>();
+    }
+    return decodeSessionClaims(base64UrlDecodeUtf8(parts.payload));
+  });
 
   const connectHostname = managedEndpoint.inspectConnector.pipe(
     Effect.map((facts) => facts?.hostname ?? null),
@@ -302,7 +301,7 @@ const make = Effect.gen(function* () {
     );
 
   const commandId = (label: string) =>
-    crypto.randomUUIDv4().pipe(
+    random.uuidV4().pipe(
       Effect.map((uuid) => CommandId.make(`server:guest-share:${label}:${uuid}`)),
       Effect.orDie,
     );
@@ -344,9 +343,7 @@ const make = Effect.gen(function* () {
     if (host === null) {
       return yield* new GuestShareCreateError({ reason: "connect_unavailable" });
     }
-    const shareId = GuestShareId.make(
-      base64UrlEncode(yield* crypto.randomBytes(SHARE_ID_BYTES).pipe(Effect.orDie)),
-    );
+    const shareId = GuestShareId.make(base64UrlEncode(yield* random.randomBytes(SHARE_ID_BYTES)));
     const now = yield* DateTime.now;
     const expiresAt = DateTime.formatIso(DateTime.add(now, { milliseconds: GUEST_SHARE_TTL_MS }));
     yield* orchestrator
@@ -466,7 +463,7 @@ const make = Effect.gen(function* () {
       commandId: yield* commandId("submit"),
       threadId: thread.id,
       shareId: share.id,
-      guestMessageId: GuestMessageId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie)),
+      guestMessageId: GuestMessageId.make(yield* random.uuidV4()),
       text: request.text,
       ...(attachments.length === 0 ? {} : { attachments }),
     }).pipe(Effect.onError(() => removeStored(attachments)));
@@ -665,6 +662,21 @@ const make = Effect.gen(function* () {
     };
   });
 
+  const history = Effect.fn("GuestShareService.history")(function* (
+    session: string,
+    cursor: string,
+  ) {
+    const { thread, share } = yield* authorize(session, "session");
+    const page = yield* orchestrator
+      .getThreadHistoryPage(thread.id, cursor)
+      .pipe(Effect.mapError(() => unavailable));
+    rememberSent(
+      share.id,
+      page.items.map((row) => row.item),
+    );
+    return page;
+  });
+
   const commandOutput = Effect.fn("GuestShareService.commandOutput")(function* (
     session: string,
     itemId: string,
@@ -696,7 +708,18 @@ const make = Effect.gen(function* () {
             .find((candidate) => candidate.id === attachmentId),
         ),
         Effect.mapError(() => unavailable),
-      ));
+      )) ??
+      // A fork shows its source's earlier messages, which stay in the source thread.
+      (thread.forkedFrom === null
+        ? undefined
+        : yield* orchestrator.getTimelinePage(thread.id, { attachmentId, limit: 1 }).pipe(
+            Effect.map(({ items }) =>
+              items
+                .flatMap(({ item }) => (item.type === "user_message" ? item.attachments : []))
+                .find((candidate) => candidate.id === attachmentId),
+            ),
+            Effect.mapError(() => unavailable),
+          ));
     const path =
       found === undefined ? null : resolveAttachmentPath({ attachmentsDir, attachment: found });
     if (found === undefined || path === null) return yield* unavailable;
@@ -739,6 +762,7 @@ const make = Effect.gen(function* () {
     stream,
     render,
     item,
+    history,
     commandOutput,
     attachment,
     media,

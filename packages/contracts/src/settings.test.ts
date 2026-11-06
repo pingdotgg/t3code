@@ -2,7 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { type CommandId, ProjectId } from "./baseSchemas.ts";
-import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceEnvironment,
+  ProviderInstanceId,
+} from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
   ClientSettingsPatch,
@@ -10,6 +14,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
   idleCompactionPatch,
+  PROJECT_SCOPED_SERVER_SETTING_KEYS,
   requiredScopesForProjectMutation,
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
@@ -23,6 +28,14 @@ const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
 const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
+const encodeProviderInstanceEnvironment = Schema.encodeSync(ProviderInstanceEnvironment);
+const decodeProviderInstanceEnvironment = Schema.decodeSync(ProviderInstanceEnvironment);
+// The environment variable shape builds released before secret references decode.
+const decodeStringOnlyEnvironment = Schema.decodeUnknownSync(
+  Schema.Array(
+    Schema.Struct({ name: Schema.String, value: Schema.String, sensitive: Schema.Boolean }),
+  ),
+);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
@@ -114,6 +127,26 @@ describe("ServerSettings usage price overrides", () => {
       expect(() => decodeServerSettingsPatch({ usagePriceOverrides })).toThrow();
     }
   });
+
+  it("ignores an invalid model filter without dropping the other settings", () => {
+    const valid = { include: [{ provider: "newer-provider", model: "orbit-1" }] };
+    expect(decodeServerSettings({ usageModelFilter: valid }).usageModelFilter).toEqual(valid);
+    const settings = decodeServerSettings({
+      usageModelFilter: { exclude: [{ model: "" }] },
+      usageModelAliases: { "drift-9": "orbit-1" },
+    });
+    expect(settings.usageModelFilter).toBeUndefined();
+    expect(settings.usageModelAliases).toEqual({ "drift-9": "orbit-1" });
+  });
+});
+
+it("drops a hand-edited non-string hidden tag and keeps the rest of the settings", () => {
+  const settings = decodeServerSettings({
+    hiddenThreadTags: ["private", 123],
+    hideTaggedThreads: true,
+  });
+  expect(settings.hiddenThreadTags).toEqual(["private"]);
+  expect(settings.hideTaggedThreads).toBe(true);
 });
 
 describe("ServerSettings secret providers", () => {
@@ -154,14 +187,45 @@ describe("ServerSettings secret providers", () => {
     ).toThrow();
   });
 
-  it("rejects writes of an unknown kind or an account op could misread", () => {
-    const write = (entry: unknown) => () =>
-      decodeServerSettingsPatch({ secretProviders: { personal: entry } });
-    for (const account of ["", "my account", "--help"]) {
-      expect(write(onePassword(account))).toThrow();
+  it("stores a provider environment secret reference in a layout older builds still decode", () => {
+    const providerInstances = (secret: unknown) => ({
+      codex: {
+        driver: "codex",
+        environment: [
+          { name: "OPENAI_API_KEY", sensitive: true, value: "", secret },
+          { name: "BASE_URL", value: "https://example.test" },
+        ],
+      },
+    });
+    const secret = { provider: "personal", reference: "op://Private/OpenAI/credential" };
+    const environment = decodeServerSettings({ providerInstances: providerInstances(secret) })
+      .providerInstances[ProviderInstanceId.make("codex")]?.environment;
+    expect(environment).toEqual([
+      { name: "OPENAI_API_KEY", value: secret, sensitive: true },
+      { name: "BASE_URL", value: "https://example.test", sensitive: false },
+    ]);
+
+    const encoded = encodeProviderInstanceEnvironment(environment ?? []);
+    expect(encoded).toEqual([
+      { name: "OPENAI_API_KEY", value: "", sensitive: true, secret },
+      { name: "BASE_URL", value: "https://example.test", sensitive: false },
+    ]);
+    expect(decodeProviderInstanceEnvironment(encoded)).toEqual(environment);
+    expect(decodeStringOnlyEnvironment(encoded)).toEqual([
+      { name: "OPENAI_API_KEY", value: "", sensitive: true },
+      { name: "BASE_URL", value: "https://example.test", sensitive: false },
+    ]);
+
+    for (const invalid of [
+      { provider: "My Vault", reference: "op://a/b/c" },
+      { provider: "personal", reference: " " },
+      { provider: "personal", reference: "op://Private/OpenAI\n/credential" },
+      { provider: "personal", reference: "x".repeat(1025) },
+    ]) {
+      expect(() =>
+        decodeServerSettings({ providerInstances: providerInstances(invalid) }),
+      ).toThrow();
     }
-    expect(write({ kind: "one_password", label: "Personal" })).toThrow();
-    expect(write({ kind: "openbao", label: "Vault", config: { address: "https://x" } })).toThrow();
   });
 });
 
@@ -427,6 +491,39 @@ describe("requiredScopesForProjectMutation", () => {
         scripts: [],
       }),
     ).toEqual(["orchestration:operate", "settings:write"]);
+  });
+});
+
+describe("voice settings", () => {
+  it("does not import voice consent from ordinary device preferences", () => {
+    const imported = {
+      voiceTranscriptionEnvironmentId: "env-1",
+      voiceTranscriptionDestination: { kind: "environment", environmentId: "env-1" },
+      speechPostProcessingEnabled: true,
+    };
+    expect(decodeClientSettings({}).speechSilenceFiltering).toBe(true);
+    expect(decodeClientSettingsPatch({ speechSilenceFiltering: false })).toEqual({
+      speechSilenceFiltering: false,
+    });
+    for (const key of Object.keys(imported)) {
+      expect(decodeClientSettings(imported)).not.toHaveProperty(key);
+      expect(decodeClientSettingsPatch(imported)).not.toHaveProperty(key);
+    }
+  });
+
+  it("keeps the correction cue personal and project vocabulary on the environment", () => {
+    expect(decodeClientSettings({}).speechCorrectionWord).toBe("");
+    expect(() => decodeClientSettingsPatch({ speechCorrectionWord: "x".repeat(51) })).toThrow();
+    expect(DEFAULT_SERVER_SETTINGS.speechProjectCustomWords).toEqual([]);
+    expect(PROJECT_SCOPED_SERVER_SETTING_KEYS).toContain("speechProjectCustomWords");
+  });
+
+  it("stores the transcription model and resources on the environment", () => {
+    expect(DEFAULT_SERVER_SETTINGS).toMatchObject({
+      speechModelId: "handy-computer/parakeet-unified-en-0.6b-gguf",
+      speechAcceleration: "auto",
+      speechModelUnloadTimeout: "min_15",
+    });
   });
 });
 
