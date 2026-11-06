@@ -4,6 +4,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import type { PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
 import { previewTabServerRun } from "@t3tools/shared/preview";
@@ -34,8 +35,13 @@ export async function addBrowserSurface<E>(input: {
 
 const REOPEN_TIMEOUT_MS = 15_000;
 
-class ReopenBrowserTimeoutError extends Error {
-  override readonly message = "The browser tab took too long to reopen.";
+class ReopenBrowserTimeoutError extends Schema.TaggedError<ReopenBrowserTimeoutError>()(
+  "ReopenBrowserTimeoutError",
+  {},
+) {
+  override get message(): string {
+    return "The browser tab took too long to reopen.";
+  }
 }
 
 const reopening = new Map<string, Promise<AtomCommandResult<PreviewSessionSnapshot, unknown>>>();
