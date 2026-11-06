@@ -1,3 +1,5 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { listBrowserMicrophones, type BrowserMicrophone } from "../../speech/browserMicrophones";
 import type {
   EnvironmentId,
   EnvironmentSpeechModel,
@@ -5,16 +7,17 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { RefreshCwIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { useEnvironment } from "../../state/environments";
+import { AuthSettingsWriteScope } from "@t3tools/contracts";
+import { useEnvironmentScope } from "../../state/session";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Text } from "../ui/text";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
-import { VoiceModelDownloadProgress } from "./VoiceModelDownloadProgress";
 
 export function VoiceInputSetup(props: {
   environmentId: EnvironmentId | null;
@@ -23,7 +26,6 @@ export function VoiceInputSetup(props: {
   status: EnvironmentSpeechStatus | null;
   model: EnvironmentSpeechModel | null;
   downloading: boolean;
-  cancelled: boolean;
   error: string | null;
   onOpenChange(open: boolean): void;
   onDownload(): void;
@@ -31,25 +33,24 @@ export function VoiceInputSetup(props: {
   onStartRecording(): void;
 }) {
   const navigate = useNavigate();
-  const popupRef = useRef<HTMLDivElement>(null);
   const environment = useEnvironment(props.environmentId);
+  const canManage = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
-  const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
+  const [microphones, setMicrophones] = useState<BrowserMicrophone[]>([]);
   const [loadingMicrophones, setLoadingMicrophones] = useState(false);
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
-  const refreshMicrophones = async () => {
+  const refreshMicrophones = useStableCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
     setLoadingMicrophones(true);
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      setMicrophones(devices.filter((device) => device.kind === "audioinput"));
+      setMicrophones(await listBrowserMicrophones());
       setMicrophoneError(null);
     } catch {
       setMicrophoneError("Could not list microphones. You can still use the system default.");
     }
     setLoadingMicrophones(false);
-  };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Enumerate hardware microphones when the setup dialog reaches its device step.
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to native microphone changes while the device setup step is visible
   useEffect(() => {
     if (!props.open || props.step !== 1) return;
     queueMicrotask(() => void refreshMicrophones());
@@ -66,6 +67,8 @@ export function VoiceInputSetup(props: {
     : "System default";
   const status = props.status?.supported ? props.status : null;
   const model = props.model;
+  const progress =
+    model?.downloaded === undefined ? null : Math.round((model.downloaded / model.size) * 100);
   const openSettings = (hash: string) => {
     props.onOpenChange(false);
     void navigate({ to: "/settings/voice", hash });
@@ -73,9 +76,7 @@ export function VoiceInputSetup(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      {/* Focus the dialog itself: the mic keeps the composer focused, so a button focused on open
-          would inherit its keyboard focus ring after a click. Tab reaches the actions. */}
-      <WizardPopup ref={popupRef} initialFocus={popupRef}>
+      <WizardPopup>
         <WizardHeader
           title="Set up voice input"
           description={`Transcribe speech on ${environment?.label ?? "your transcription environment"} and use voice input across environments.`}
@@ -89,28 +90,47 @@ export function VoiceInputSetup(props: {
                 <div className="flex items-center justify-between gap-2">
                   <h3 className="text-label">{status?.model ?? "English transcription model"}</h3>
                   {status?.modelId === "handy-computer/parakeet-unified-en-0.6b-gguf" ? (
-                    <span className="text-meta text-primary">Recommended for English</span>
+                    <Text variant="meta" tone="muted">
+                      Recommended for English
+                    </Text>
                   ) : null}
                 </div>
                 <p className="mt-2 text-muted-foreground">
                   Download the {status ? Math.round(status.size / 1024 / 1024) : 697} MB model to{" "}
                   {environment?.label ?? "your transcription environment"}. Microphone audio is sent
-                  there for transcription. You can choose another environment in Voice settings.
+                  there for transcription, as chosen in Voice settings.
                 </p>
-                {props.downloading && status ? (
-                  <div className="mt-4">
-                    <VoiceModelDownloadProgress model={model} size={status.size} />
-                  </div>
-                ) : props.cancelled && !props.error ? (
-                  <div className="mt-3">
-                    <Text variant="meta" tone="muted" render={<p role="status" />}>
-                      Download cancelled. You can start again.
+                <p className="mt-2 text-muted-foreground">
+                  Silero (1.2 MB), used for silence filtering and pause detection, downloads
+                  alongside the speech model. An installed copy is reused.
+                </p>
+                {props.downloading ? (
+                  <div role="status" className="mt-4 space-y-1 text-muted-foreground">
+                    <div
+                      role="progressbar"
+                      aria-label="Speech model download progress"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={progress ?? undefined}
+                      className="h-1 overflow-hidden rounded-full bg-muted"
+                    >
+                      <div
+                        className="h-full bg-primary transition-[width] duration-200"
+                        style={{ width: `${progress ?? 0}%` }}
+                      />
+                    </div>
+                    <Text variant="meta" tone="muted" render={<p />}>
+                      {model?.state === "verifying"
+                        ? "Verifying download…"
+                        : progress === null
+                          ? "Starting download…"
+                          : `${progress}% downloaded`}
                     </Text>
                   </div>
                 ) : null}
               </div>
               {props.error ? (
-                <Text variant="body" tone="destructive" render={<p role="alert" />}>
+                <Text tone="destructive" render={<p role="alert" />}>
                   {props.error}
                 </Text>
               ) : null}
@@ -118,9 +138,12 @@ export function VoiceInputSetup(props: {
           ) : (
             <section className="space-y-4 text-body">
               <div className="space-y-2">
-                <label className="text-label" htmlFor="voice-setup-microphone">
+                <Text
+                  variant="label"
+                  render={<label htmlFor="voice-setup-microphone" className="block" />}
+                >
                   Microphone
-                </label>
+                </Text>
                 <div className="flex items-center gap-2">
                   <Select
                     value={selectedMicrophone ? `device:${selectedMicrophone}` : "system-default"}
@@ -148,9 +171,9 @@ export function VoiceInputSetup(props: {
                           Selected microphone (Unavailable)
                         </SelectItem>
                       ) : null}
-                      {microphones.map((device, index) => (
+                      {microphones.map((device) => (
                         <SelectItem key={device.deviceId} value={`device:${device.deviceId}`}>
-                          {device.label || `Microphone ${index + 1}`}
+                          {device.label}
                         </SelectItem>
                       ))}
                     </SelectPopup>
@@ -163,25 +186,24 @@ export function VoiceInputSetup(props: {
                     aria-label="Refresh microphones"
                     onClick={() => void refreshMicrophones()}
                   >
-                    <RefreshCwIcon className="size-3.5" />
+                    <RefreshCwIcon />
                   </Button>
                 </div>
                 {selectedIsUnavailable ? (
-                  <p className="text-meta text-destructive">
+                  <Text variant="meta" tone="destructive" render={<p />}>
                     The selected microphone is unavailable. Choose another or use the system
                     default.
-                  </p>
+                  </Text>
                 ) : null}
                 {microphoneError ? (
-                  <p role="alert" className="text-meta text-muted-foreground">
+                  <Text variant="meta" tone="muted" render={<p role="alert" />}>
                     {microphoneError}
-                  </p>
+                  </Text>
                 ) : null}
               </div>
               <p className="text-muted-foreground">
-                Speak and transcribe in multiple languages or translate into English, get names and
-                technical terms right with the dictionary, fix recurring misspellings, and correct
-                yourself as you speak.
+                Speak and transcribe in multiple languages or translate into English, and get names
+                and technical terms right with the dictionary in Voice settings.
               </p>
             </section>
           )}
@@ -189,19 +211,26 @@ export function VoiceInputSetup(props: {
         <WizardFooter>
           {props.step === 0 ? (
             <>
-              <Button variant="secondary" onClick={() => openSettings("local-voice-input")}>
+              <Button variant="secondary" onClick={() => openSettings("speech-models")}>
                 Choose another model or language
               </Button>
               {props.downloading ? (
-                <Button variant="secondary" onClick={props.onCancelDownload}>
+                <Button variant="secondary" disabled={!canManage} onClick={props.onCancelDownload}>
                   Cancel download
                 </Button>
               ) : null}
-              {!props.downloading ? (
-                <Button disabled={!status} onClick={props.onDownload}>
-                  {props.error ? "Retry download" : "Download model"}
-                </Button>
-              ) : null}
+              <Button
+                disabled={!canManage || props.downloading || !status}
+                onClick={props.onDownload}
+              >
+                {props.downloading
+                  ? "Downloading…"
+                  : props.error
+                    ? "Retry download"
+                    : canManage
+                      ? "Download model"
+                      : "Ask an environment admin to download"}
+              </Button>
             </>
           ) : (
             <>

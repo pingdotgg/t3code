@@ -767,16 +767,15 @@ describe("isRichTextBoldShortcut", () => {
 });
 
 describe("composer and pull request shortcuts", () => {
-  it("dictates on mod+alt+v and keeps mod+shift+d for the terminal split", () => {
+  it("uses the dictation chord outside the terminal and preserves terminal split", () => {
+    const chord = event({ key: "d", ctrlKey: true, shiftKey: true });
     assert.strictEqual(
-      resolveShortcutCommand(
-        event({ key: "v", ctrlKey: true, altKey: true }),
-        DEFAULT_RESOLVED_KEYBINDINGS,
-        { platform: "Linux", context: { terminalFocus: false } },
-      ),
+      resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
       "composer.dictation",
     );
-    const chord = event({ key: "d", ctrlKey: true, shiftKey: true });
     assert.strictEqual(
       resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {
         platform: "Linux",
