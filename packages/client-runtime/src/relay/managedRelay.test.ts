@@ -36,7 +36,7 @@ function layerManagedRelayTest(
 function clerkToken(subject: string, nonce: string): string {
   const encode = (value: unknown) =>
     btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
-  return `${encode({ alg: "none" })}.${encode({ sub: subject, nonce })}.signature`;
+  return `${encode({ alg: "RS256" })}.${encode({ sub: subject, nonce })}.c2lnbmF0dXJl`;
 }
 
 describe("ManagedRelayClient", () => {
