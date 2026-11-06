@@ -23,9 +23,11 @@ running T3 Code can reach.
 For a saved remote environment, open **Settings → Environments**, open the
 environment's menu, and choose **Copy MCP URL**.
 
-The copied URL uses the environment's T3 Connect address when it has one, and
-otherwise the route this device is connected over, so an agent on the same
-device can reach it.
+For the local environment, the copied URL uses its T3 Connect address when the
+tunnel is available, and otherwise a loopback or `https` route.
+
+For a saved remote environment, the copied URL uses the connected route when
+that route has an address, and otherwise the first saved route with one.
 
 - **An agent on your own computers** can use `localhost` on the host, T3
   Connect, or any `https` address, such as

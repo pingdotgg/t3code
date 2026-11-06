@@ -57,6 +57,7 @@ import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
 import { TunnelLimitAlert, TunnelUsageMeter } from "../cloud/TunnelUsage";
 import { environmentCatalog } from "~/connection/catalog";
+import { isLoopbackHostname } from "~/environments/primary/target";
 import { readEnvironmentScope } from "~/state/session";
 import { type EnvironmentPresentation, useRelayEnvironmentDiscovery } from "~/state/environments";
 import { APP_VERSION } from "~/branding";
@@ -449,14 +450,17 @@ export function LocalEnvironmentMcpUrlRow({ entry }: { readonly entry: Connectio
     tunnelHttpBaseUrl: cloudLink.data?.managedTunnelHttpBaseUrl,
   });
   if (mcpUrl === null) return null;
-  const hosted = cloudLink.data?.managedTunnelHttpBaseUrl != null;
+  const tunnelAvailable = cloudLink.data?.managedTunnelHttpBaseUrl != null;
+  const loopback = isLoopbackHostname(new URL(mcpUrl).hostname);
   return (
     <SettingsRow
       {...searchableSetting("mcp-url")}
       description={
-        hosted
+        tunnelAvailable
           ? `Give this URL to a hosted agent, such as ChatGPT: ${mcpUrl}`
-          : `Give this URL to an agent outside T3 Code: ${mcpUrl}`
+          : loopback
+            ? `Give this URL to an agent running on this machine: ${mcpUrl}`
+            : `Give this URL to an agent that can reach this environment: ${mcpUrl}`
       }
       control={
         <Button size="sm" variant="outline" onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>
