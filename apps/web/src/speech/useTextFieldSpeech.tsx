@@ -1,32 +1,38 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 
+import {
+  ComposerSpeechButton,
+  ComposerSpeechRecordingPill,
+} from "~/components/chat/ComposerSpeechButton";
+import { VoiceInputSetup } from "~/components/chat/VoiceInputSetup";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useDictationShortcut } from "./useDictationShortcut";
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
-import { ComposerSpeechMicButton } from "~/components/chat/ComposerSpeechButton";
-import { VoiceInputSetup } from "~/components/chat/VoiceInputSetup";
 
-/** Bind dictation to a plain-text draft and keep the insertion cursor in that editor. */
+/** Binds dictation to a plain textarea draft; the shortcut targets it only while it has focus. */
 export function useTextFieldSpeech(input: {
-  environmentId: EnvironmentId;
-  ownerKey: string;
-  text: string;
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
-  onTextChange(text: string): void;
-  disabled?: boolean;
+  readonly environmentId: EnvironmentId;
+  readonly projectId?: ProjectId | null | undefined;
+  readonly ownerKey: string;
+  readonly text: string;
+  readonly textareaRef: RefObject<HTMLTextAreaElement | null>;
+  readonly onTextChange: (text: string) => void;
+  readonly disabled?: boolean | undefined;
 }) {
   const latest = useRef(input);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Publish committed text-field callbacks before asynchronous transcription inserts its result.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed field callbacks to the asynchronous recording controller
   useEffect(() => {
     latest.current = input;
   });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const speech = useEnvironmentSpeechInput({
     environmentId: input.environmentId,
+    projectId: input.projectId,
     ownerKey: input.ownerKey,
     draftText: input.text,
+    disabled: input.disabled,
     readDraft: () => {
       const field = latest.current.textareaRef.current;
       const cursor = field?.selectionStart ?? latest.current.text.length;
@@ -56,28 +62,47 @@ export function useTextFieldSpeech(input: {
   return { ...speech, shortcutLabel };
 }
 
+export type TextFieldSpeech = ReturnType<typeof useTextFieldSpeech>;
+
 export function TextFieldSpeechControls({
   speech,
   disabled = false,
 }: {
-  speech: ReturnType<typeof useTextFieldSpeech>;
+  speech: TextFieldSpeech;
   disabled?: boolean;
 }) {
   return (
     <>
-      {speech.available ? (
-        <ComposerSpeechMicButton
-          appearance="field"
+      {speech.preview ? (
+        <p role="status" className="w-full text-body text-muted-foreground">
+          {speech.preview.committed}
+          <span className="opacity-70">{speech.preview.tentative}</span>
+        </p>
+      ) : null}
+      <div className="flex min-w-0 items-center gap-1">
+        <ComposerSpeechRecordingPill
           state={speech.state}
+          progress={null}
           level={speech.level}
-          shortcutLabel={speech.shortcutLabel}
+          finishShortcutLabel={speech.shortcutLabel}
+          cancelShortcutLabel="Esc"
           disabled={disabled}
           onStart={() => void speech.start()}
           onStop={() => void speech.stop()}
           onCancel={speech.cancel}
           onSkipPostProcessing={speech.skipPostProcessing}
         />
-      ) : null}
+        {speech.available ? (
+          <ComposerSpeechButton
+            state={speech.state}
+            progress={null}
+            shortcutLabel={speech.shortcutLabel}
+            disabled={disabled}
+            onStart={() => void speech.start()}
+            onCancel={speech.cancel}
+          />
+        ) : null}
+      </div>
       <VoiceInputSetup
         environmentId={speech.transcriptionEnvironmentId}
         open={speech.setup.open}
@@ -85,7 +110,6 @@ export function TextFieldSpeechControls({
         status={speech.status}
         model={speech.setup.model}
         downloading={speech.setup.downloading}
-        cancelled={speech.setup.cancelled}
         error={speech.setup.error}
         onOpenChange={speech.setup.setOpen}
         onDownload={() => void speech.setup.download()}
@@ -96,12 +120,12 @@ export function TextFieldSpeechControls({
   );
 }
 
+/** Render-prop form for editors that only sometimes have an environment to dictate on. */
 export function SpeechTextField({
   children,
   ...input
 }: Parameters<typeof useTextFieldSpeech>[0] & {
-  children(speech: ReturnType<typeof useTextFieldSpeech>): ReactNode;
+  children: (speech: TextFieldSpeech) => ReactNode;
 }) {
-  const speech = useTextFieldSpeech(input);
-  return children(speech);
+  return children(useTextFieldSpeech(input));
 }

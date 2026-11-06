@@ -77,7 +77,7 @@ function ConfiguredConnectOnboardingDialog() {
   const sessionScopesKnown =
     primaryEnvironmentId === null ? environmentsReady : primarySessionState._tag !== "Initial";
 
-  const controller = useCloudLinkController();
+  const controller = useCloudLinkController(primaryEnvironmentId);
   const accountPage = useT3ConnectAccountPage();
   const showPublishStep = canManageRelay && controller.linkState.target !== null;
   const steps: ReadonlyArray<OnboardingStep> = showPublishStep
