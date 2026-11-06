@@ -23,7 +23,8 @@ export function ChatCodeBlockRunOutput({ run }: { readonly run: ChatShellRun }) 
         ? `Exited with code ${exitCode}`
         : session.status === "exited"
           ? "Ended without an exit status"
-          : session.status === "closed"
+          : // A session that has not attached yet also reports "closed", at version 0.
+            session.status === "closed" && session.version > 0
             ? "Terminal closed"
             : "Running…";
 

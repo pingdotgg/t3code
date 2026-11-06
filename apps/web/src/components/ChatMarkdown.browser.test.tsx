@@ -68,6 +68,7 @@ vi.mock(import("../remoteOpen"), async (original) => ({
   useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }) as never,
 }));
 const terminalOutput = vi.hoisted(() => ({ text: "" }));
+const terminalState = vi.hoisted(() => ({ status: "running" as string, version: 1 }));
 const sessionAtoms = vi.hoisted(() => new Map<string, unknown>());
 vi.mock(import("../state/terminalSessions"), async (original) => {
   const { Atom } = await import("effect/reactivity");
@@ -77,7 +78,8 @@ vi.mock(import("../state/terminalSessions"), async (original) => {
     const atom = Atom.make({
       output: { chunks: [{ data: terminalOutput.text }] },
       error: null,
-      status: "running",
+      status: terminalState.status,
+      version: terminalState.version,
     });
     sessionAtoms.set(input.terminalId, atom);
     return atom;
@@ -159,6 +161,8 @@ function setup() {
   parsedSources.length = 0;
   sessionAtoms.clear();
   terminalOutput.text = "";
+  terminalState.status = "running";
+  terminalState.version = 1;
   settingsOverrides.mathRenderingEnabled = false;
   renderDiagram.mockReset();
   workspaceSearch.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
@@ -306,6 +310,37 @@ describe("ChatMarkdown inline run output", () => {
     );
     await runAndWait(screen.container);
     await expect.element(screen.getByText("Running…")).toBeVisible();
+  });
+
+  it("shows a terminal that has not attached yet as running, not closed", async () => {
+    setup();
+    terminalState.status = "closed";
+    terminalState.version = 0;
+    await using screen = await render(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={"```bash\nnpm run dev\n```"}
+        onRunShellCommand={(_command, onStarted) => onStarted(run)}
+      />,
+    );
+    await runAndWait(screen.container);
+    await expect.element(screen.getByText("Running…")).toBeVisible();
+    expect(screen.container.textContent).not.toContain("Terminal closed");
+  });
+
+  it("shows a terminal that closed before the run finished", async () => {
+    setup();
+    terminalState.status = "closed";
+    terminalState.version = 2;
+    await using screen = await render(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={"```bash\nnpm run dev\n```"}
+        onRunShellCommand={(_command, onStarted) => onStarted(run)}
+      />,
+    );
+    await runAndWait(screen.container);
+    await expect.element(screen.getByText("Terminal closed")).toBeVisible();
   });
 });
 
