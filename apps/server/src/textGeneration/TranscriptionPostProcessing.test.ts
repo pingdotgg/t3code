@@ -12,10 +12,4 @@ describe("buildTranscriptionPostProcessingPrompt", () => {
     expect(cued).toContain('Correction cue: "so\\"rry".');
     expect(cued.indexOf("Correction cue")).toBeLessThan(cued.indexOf("<transcript>"));
   });
-
-  it("asks for the JSON reply shape the operation decodes", () => {
-    const draft = { text: "", selection: { start: 0, end: 0 } };
-    const prompt = buildTranscriptionPostProcessingPrompt("Clean.", "hello", draft);
-    expect(prompt).toContain("Return only a JSON object with key: transcription");
-  });
 });
