@@ -341,42 +341,52 @@ export const make = Effect.gen(function* () {
             editedAtByNoteId: new Map<string, string>(),
             botLogins: new Set<string>(),
           }),
+          // Usually cached by the detail read beside this one; web_url holds the real web origin.
+          recoverRead(
+            mergeRequestDetail(input).pipe(Effect.map((mergeRequest) => mergeRequest.url)),
+            null,
+          ),
         ],
-        { concurrency: 4 },
+        { concurrency: 5 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => {
-          const edited = (id: string) => {
-            const editedAt = awards.editedAtByNoteId.get(id);
-            return editedAt === undefined ? {} : { editedAt };
-          };
-          const botLogins = new Set([...awards.botLogins].map((login) => login.toLowerCase()));
-          const withBotFlag = (author: PullRequestActor | null) =>
-            author !== null && botLogins.has(author.login.toLowerCase())
-              ? { ...author, isBot: true }
-              : author;
-          return {
-            reactions: awards.reactions,
-            comments: notes.comments.map((comment) => ({
-              ...comment,
-              ...edited(comment.id),
-              author: withBotFlag(comment.author),
-              reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
-            })),
-            commentCount: notes.comments.length,
-            commentsTruncated: notes.truncated || discussions.truncated,
-            reviewThreads: discussions.threads.map((thread) => ({
-              ...thread,
-              comments: thread.comments.map((comment) => ({
+        Effect.map(
+          ([notes, commits, discussions, awards, webUrl]): ProviderChangeRequestActivity => {
+            const noteUrl = (id: string) => (webUrl === null ? null : `${webUrl}#note_${id}`);
+            const edited = (id: string) => {
+              const editedAt = awards.editedAtByNoteId.get(id);
+              return editedAt === undefined ? {} : { editedAt };
+            };
+            const botLogins = new Set([...awards.botLogins].map((login) => login.toLowerCase()));
+            const withBotFlag = (author: PullRequestActor | null) =>
+              author !== null && botLogins.has(author.login.toLowerCase())
+                ? { ...author, isBot: true }
+                : author;
+            return {
+              reactions: awards.reactions,
+              comments: notes.comments.map((comment) => ({
                 ...comment,
                 ...edited(comment.id),
                 author: withBotFlag(comment.author),
+                url: noteUrl(comment.id),
                 reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
               })),
-            })),
-            commits,
-          };
-        }),
+              commentCount: notes.comments.length,
+              commentsTruncated: notes.truncated || discussions.truncated,
+              reviewThreads: discussions.threads.map((thread) => ({
+                ...thread,
+                comments: thread.comments.map((comment) => ({
+                  ...comment,
+                  ...edited(comment.id),
+                  author: withBotFlag(comment.author),
+                  url: noteUrl(comment.id),
+                  reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+                })),
+              })),
+              commits,
+            };
+          },
+        ),
       ),
 
     // Straight from the host, never the shared read: this is what a write is refused or let
