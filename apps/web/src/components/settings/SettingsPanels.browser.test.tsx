@@ -9,6 +9,7 @@ import { AboutVersionSection } from "./SettingsPanels";
 const mocks = vi.hoisted(() => ({
   status: "downloaded" as DesktopUpdateState["status"],
   skipReason: null as string | null,
+  run: vi.fn(async () => {}),
   confirm: null as unknown as (message: string) => Promise<boolean>,
 }));
 vi.mock("../../state/desktopUpdate", async (importOriginal) => ({
@@ -54,7 +55,7 @@ vi.mock("../sidebar/useUpdateEverything", () => ({
       },
     ],
     restarts: [],
-    run: async () => {},
+    run: mocks.run,
   }),
 }));
 vi.mock("./CliCommandSettingsRow", () => ({ CliCommandSettingsRow: () => null }));
@@ -62,6 +63,7 @@ vi.mock("./CliCommandSettingsRow", () => ({ CliCommandSettingsRow: () => null })
 function setup(skipReason: string | null) {
   mocks.status = "downloaded";
   mocks.skipReason = skipReason;
+  mocks.run.mockClear();
   const confirm = vi.fn(async () => false);
   mocks.confirm = confirm;
   return { confirm };
@@ -97,5 +99,6 @@ it.each([null, "no permission"])(
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
     expect(installUpdate).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
   },
 );
