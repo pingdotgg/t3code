@@ -535,7 +535,8 @@ blockmaps, with a 60 MB maximum for a representative sidecar-to-sidecar update.
 
 `build_bundle` builds the version-matched `t3.tgz` with `node scripts/build-npm-launcher.ts` and
 uploads it as the `npm-launcher` artifact. After the GitHub Release is published, `publish_cli`
-checks out only what it needs to set up the project's Node.js, checks the tarball version, and runs
+checks out only what it needs to set up the project's Node.js, downloads that exact upload by the
+artifact ID `build_bundle` outputs (never by name), checks the tarball version, and runs
 `npm publish --provenance` on it. That is the only package published per release.
 
 Checklist:

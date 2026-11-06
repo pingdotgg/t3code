@@ -517,6 +517,8 @@ jobs:
     if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' }}
     runs-on: blacksmith-32vcpu-ubuntu-2404
     timeout-minutes: 30
+    outputs:
+      npm_launcher_artifact_id: ${{ steps.npm_launcher.outputs.artifact-id }}
     env:
       T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
       T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
@@ -599,9 +601,10 @@ jobs:
       - name: Build the npm launcher
         run: node scripts/build-npm-launcher.ts --version "${{ needs.preflight.outputs.version }}" --output-dir npm-packages
 
-      # GitHub allows a failed-jobs rerun for 30 days, and a publish_cli rerun
-      # reads this artifact from the original attempt.
+      # GitHub allows a failed-jobs rerun for 30 days. publish_cli downloads
+      # this upload by its ID, which a publish_cli-only rerun keeps.
       - name: Upload the npm launcher
+        id: npm_launcher
         uses: actions/upload-artifact@v7
         with:
           name: npm-launcher
@@ -1015,7 +1018,7 @@ jobs:
   # nothing resolves unless asked for by name.
   publish_cli:
     name: Publish CLI to npm
-    needs: [preflight, release]
+    needs: [preflight, build_bundle, release]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' }}
     runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
@@ -1039,11 +1042,24 @@ jobs:
         with:
           install: "false"
 
+      # Bind to build_bundle's exact upload: a name lookup takes the newest
+      # same-name artifact, and an empty ID downloads every artifact in the
+      # run. A later same-name upload hides this ID, so the download fails.
+      - name: Check the npm launcher artifact ID
+        env:
+          ARTIFACT_ID: ${{ needs.build_bundle.outputs.npm_launcher_artifact_id }}
+        run: |
+          if [[ ! "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::build_bundle gave no valid npm-launcher artifact ID: '$ARTIFACT_ID'." >&2
+            exit 1
+          fi
+
       - name: Download the npm launcher
         uses: actions/download-artifact@v8
         with:
-          name: npm-launcher
+          artifact-ids: ${{ needs.build_bundle.outputs.npm_launcher_artifact_id }}
           path: npm-packages
+          digest-mismatch: error
 
       - name: Check the npm launcher version
         env:
