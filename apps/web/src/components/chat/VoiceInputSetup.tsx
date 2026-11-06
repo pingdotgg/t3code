@@ -16,6 +16,7 @@ import { useEnvironmentScope } from "../../state/session";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Text } from "../ui/text";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
 
 export function VoiceInputSetup(props: {
@@ -84,14 +85,14 @@ export function VoiceInputSetup(props: {
         </WizardHeader>
         <WizardPanel>
           {props.step === 0 ? (
-            <section className="space-y-3 text-sm">
-              <div className="rounded-lg border border-border/70 bg-card/60 p-4">
+            <section className="space-y-3 text-body">
+              <div className="rounded-card surface-card p-4">
                 <div className="flex items-center justify-between gap-2">
-                  <h3 className="font-medium">{status?.model ?? "English transcription model"}</h3>
+                  <h3 className="text-label">{status?.model ?? "English transcription model"}</h3>
                   {status?.modelId === "handy-computer/parakeet-unified-en-0.6b-gguf" ? (
-                    <span className="text-xs font-medium text-primary">
+                    <Text variant="meta" tone="muted">
                       Recommended for English
-                    </span>
+                    </Text>
                   ) : null}
                 </div>
                 <p className="mt-2 text-muted-foreground">
@@ -118,28 +119,31 @@ export function VoiceInputSetup(props: {
                         style={{ width: `${progress ?? 0}%` }}
                       />
                     </div>
-                    <p className="text-xs">
+                    <Text variant="meta" tone="muted" render={<p />}>
                       {model?.state === "verifying"
                         ? "Verifying download…"
                         : progress === null
                           ? "Starting download…"
                           : `${progress}% downloaded`}
-                    </p>
+                    </Text>
                   </div>
                 ) : null}
               </div>
               {props.error ? (
-                <p role="alert" className="text-destructive">
+                <Text tone="destructive" render={<p role="alert" />}>
                   {props.error}
-                </p>
+                </Text>
               ) : null}
             </section>
           ) : (
-            <section className="space-y-4 text-sm">
+            <section className="space-y-4 text-body">
               <div className="space-y-2">
-                <label className="font-medium" htmlFor="voice-setup-microphone">
+                <Text
+                  variant="label"
+                  render={<label htmlFor="voice-setup-microphone" className="block" />}
+                >
                   Microphone
-                </label>
+                </Text>
                 <div className="flex items-center gap-2">
                   <Select
                     value={selectedMicrophone ? `device:${selectedMicrophone}` : "system-default"}
@@ -182,19 +186,19 @@ export function VoiceInputSetup(props: {
                     aria-label="Refresh microphones"
                     onClick={() => void refreshMicrophones()}
                   >
-                    <RefreshCwIcon className="size-3.5" />
+                    <RefreshCwIcon />
                   </Button>
                 </div>
                 {selectedIsUnavailable ? (
-                  <p className="text-xs text-destructive">
+                  <Text variant="meta" tone="destructive" render={<p />}>
                     The selected microphone is unavailable. Choose another or use the system
                     default.
-                  </p>
+                  </Text>
                 ) : null}
                 {microphoneError ? (
-                  <p role="alert" className="text-xs text-muted-foreground">
+                  <Text variant="meta" tone="muted" render={<p role="alert" />}>
                     {microphoneError}
-                  </p>
+                  </Text>
                 ) : null}
               </div>
               <p className="text-muted-foreground">

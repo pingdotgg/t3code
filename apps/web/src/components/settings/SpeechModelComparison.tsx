@@ -1,7 +1,8 @@
 import type { EnvironmentSpeechModel } from "@t3tools/contracts";
 import { CheckIcon } from "lucide-react";
 
-import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
+import { Text } from "../ui/text";
 import { languageLabel } from "./SpeechLanguageSelect";
 
 const commonLanguages = [
@@ -55,18 +56,18 @@ export function LanguageRow({
   onClick: () => void;
 }) {
   return (
-    <button
+    <Button
       type="button"
+      size="sm"
+      variant="ghost"
       aria-pressed={selected}
+      data-pressed={selected || undefined}
       onClick={onClick}
-      className={cn(
-        "flex shrink-0 cursor-pointer items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-sm outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-        selected && "bg-muted font-medium",
-      )}
+      className="shrink-0 justify-between"
     >
       {label}
-      {selected && <CheckIcon className="size-3.5 shrink-0" />}
-    </button>
+      {selected && <CheckIcon />}
+    </Button>
   );
 }
 
@@ -89,7 +90,7 @@ export function ModelBenchmarks({
           (code): code is string => code !== undefined,
         );
   return (
-    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
+    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-meta text-muted-foreground tabular-nums">
       {visible.map((code) => {
         const score = data?.accuracy[code];
         return (
@@ -97,8 +98,10 @@ export function ModelBenchmarks({
             {languageLabel(code)}:{" "}
             {score ? (
               <>
-                <strong className="font-medium text-foreground">{score.grade}</strong> (
-                {score.errorPercent}% error)
+                <Text variant="meta" tone="strong" emphasis>
+                  {score.grade}
+                </Text>{" "}
+                ({score.errorPercent}% error)
               </>
             ) : (
               "not benchmarked"
@@ -113,7 +116,10 @@ export function ModelBenchmarks({
             "not benchmarked"
           ) : (
             <>
-              <strong className="font-medium text-foreground">{data.secondsPer30s} s</strong> / 30 s
+              <Text variant="meta" tone="strong" emphasis>
+                {data.secondsPer30s} s
+              </Text>{" "}
+              / 30 s
             </>
           )}
         </span>
