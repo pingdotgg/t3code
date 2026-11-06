@@ -10,7 +10,7 @@ import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
 import { CheckIcon, ChevronRightIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
 
-import { cn } from "~/lib/utils";
+import { cn, titleWhenTruncated } from "~/lib/utils";
 import {
   Menu,
   MenuPopup,
@@ -515,7 +515,10 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
           <span className="text-muted-foreground">
             {controls?.effort?.descriptor.label ?? (controls?.others.length ? "Options" : "Effort")}
           </span>
-          <span className="ms-auto min-w-0 truncate text-muted-foreground text-xs">
+          <span
+            className="ms-auto min-w-0 truncate text-muted-foreground text-xs"
+            onPointerEnter={titleWhenTruncated(picker.modelLabel)}
+          >
             {picker.modelLabel}
           </span>
         </div>

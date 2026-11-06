@@ -20,6 +20,14 @@ export function cn(...inputs: CxOptions) {
 
 export { isMacPlatform };
 
+/** `onPointerEnter` for a truncating element: shows `text` as its title only when it is cut off. */
+export function titleWhenTruncated(text: string) {
+  return (event: { currentTarget: HTMLElement }) => {
+    const element = event.currentTarget;
+    element.title = element.scrollWidth > element.clientWidth ? text : "";
+  };
+}
+
 export function isWindowsPlatform(platform: string): boolean {
   return /^win(dows)?/i.test(platform);
 }

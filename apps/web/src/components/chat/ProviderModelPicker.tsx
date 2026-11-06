@@ -9,7 +9,7 @@ import { createContext, memo, type ReactNode, useRef, useState } from "react";
 import { Badge } from "../ui/badge";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { cn } from "~/lib/utils";
+import { cn, titleWhenTruncated } from "~/lib/utils";
 import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
@@ -388,7 +388,15 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </span>
           ) : null}
           {props.isComposerOwned ? (
-            <span {...triggerTextProps}>{triggerText}</span>
+            // The composer trigger has no hover tooltip; a cut-off name still shows in full.
+            <span
+              {...triggerTextProps}
+              onPointerEnter={titleWhenTruncated(
+                props.triggerLabel ?? allModelNames ?? triggerLabel,
+              )}
+            >
+              {triggerText}
+            </span>
           ) : (
             <Tooltip>
               <TooltipTrigger render={<span {...triggerTextProps} />}>{triggerText}</TooltipTrigger>

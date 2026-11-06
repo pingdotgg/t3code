@@ -7,7 +7,7 @@ import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { Kbd } from "../ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { cn } from "~/lib/utils";
+import { cn, titleWhenTruncated } from "~/lib/utils";
 import { modelPickerModelKey } from "./modelPickerKeys";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 
@@ -69,11 +69,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
       <div className="flex min-w-0 flex-1 items-center gap-2 text-left">
         <div
           className="min-w-0 truncate text-sm font-normal leading-snug"
-          // Names the row in full on hover only when it is cut off.
-          onPointerEnter={(event) => {
-            const name = event.currentTarget;
-            name.title = name.scrollWidth > name.clientWidth ? getDisplayModelName(model) : "";
-          }}
+          onPointerEnter={titleWhenTruncated(getDisplayModelName(model))}
         >
           {getDisplayModelName(model)}
           {/* The logo is decorative, so name the provider for screen readers. */}
@@ -81,7 +77,10 @@ export const ModelListRow = memo(function ModelListRow(props: {
         </div>
         {props.isSelected ? <CheckIcon className="size-3.5 shrink-0" aria-hidden="true" /> : null}
         {props.subProvider ? (
-          <span className="min-w-0 shrink truncate text-xs text-muted-foreground/70">
+          <span
+            className="min-w-0 shrink truncate text-xs text-muted-foreground/70"
+            onPointerEnter={titleWhenTruncated(props.subProvider)}
+          >
             {props.subProvider}
           </span>
         ) : null}
