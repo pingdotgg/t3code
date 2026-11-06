@@ -364,3 +364,6 @@ export function prepareTurnAttachments(input: {
     }),
   );
 }
+
+// A failed launch can promote a draft before its first turn starts.
+export const typedThreadNamesByThreadKey = new Map<string, string>();
