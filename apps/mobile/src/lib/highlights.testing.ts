@@ -7,8 +7,8 @@ interface LineRecordHighlighter {
 }
 
 /**
- * Stands in for the T3Highlights native module with the WebAssembly build it is
- * compiled from. Mock `expo`'s `requireOptionalNativeModule` with this.
+ * Stands in for the T3Highlights hybrid object with the WebAssembly build it is
+ * compiled from. Return it from a mocked `NitroModules.createHybridObject`.
  */
 export function createWasmHighlightsModule() {
   const highlighter = createHighlighter() as unknown as LineRecordHighlighter;

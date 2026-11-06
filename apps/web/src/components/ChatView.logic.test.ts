@@ -1111,6 +1111,7 @@ describe("planComposerTurn", () => {
     keepFullHistory: false,
     phase: "ready" as const,
     dispatchMode: "auto" as const,
+    freshContext: false,
   };
 
   it("prepares a worktree from the selected branch on a new thread", () => {
@@ -1159,6 +1160,19 @@ describe("planComposerTurn", () => {
     expect(planComposerTurn({ ...running, dispatchMode: "steer" })).toMatchObject({
       shouldQueueBehindActiveRun: false,
       baseBranchForWorktree: null,
+    });
+    // A fresh session cannot join the running turn, and a stale one is not compacted first.
+    expect(
+      planComposerTurn({
+        ...running,
+        dispatchMode: "steer",
+        freshContext: true,
+        resumeCompactionTokens: 120_000,
+      }),
+    ).toMatchObject({
+      compactBeforeSend: false,
+      turnDispatchMode: "queue",
+      shouldQueueBehindActiveRun: true,
     });
   });
 });
