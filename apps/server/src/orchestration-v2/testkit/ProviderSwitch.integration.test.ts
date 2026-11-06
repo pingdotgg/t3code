@@ -1021,7 +1021,16 @@ describe("orchestration v2 provider switching", () => {
             );
           } else {
             assert.equal(handoff.delivery?.status, "injected");
-            assert.equal((yield* Ref.get(capturedTurns)).at(-1)!.text, current);
+            const text = (yield* Ref.get(capturedTurns)).at(-1)!.text;
+            if (
+              scenario === "large-current-input" ||
+              scenario === "screenshot-reported-capacity-native"
+            ) {
+              assert.match(text, /^Note: the user moved this thread /);
+              assert.isTrue(text.endsWith(`\n\nUser message:\n${current}`));
+            } else {
+              assert.equal(text, current);
+            }
             assert.include(
               yield* encodeJson(yield* Ref.get(injectedHistory)),
               "Original request with constraints",
@@ -1749,7 +1758,10 @@ describe("orchestration v2 provider switching", () => {
           assert.include(deliveredHistory, partialResponse);
           assert.include(deliveredHistory, `run-status=${status}`);
           if (native) {
-            assert.equal(delivered.text, "Continue");
+            assert.match(
+              delivered.text,
+              /^Note: the user moved this thread .+\n\nUser message:\nContinue$/s,
+            );
             assert.notInclude(deliveredHistory, '"text":"Continue"');
             assert.include(deliveredHistory, '"role":"assistant"');
             assert.include(deliveredHistory, '"role":"user"');
@@ -2300,7 +2312,10 @@ describe("orchestration v2 provider switching", () => {
         assert.lengthOf(projection.contextHandoffs, 0);
         assert.deepEqual(
           (yield* Ref.get(capturedTurns)).map((turn) => turn.text),
-          ["First account turn", "Alternate account turn"],
+          [
+            "First account turn",
+            "Note: the user moved this thread from `codex` to `codex-alternate`. Earlier provider choices and usage limits in this conversation may be out of date. To keep subagents on `codex-alternate`, leave `providerInstanceId` unset.\n\nUser message:\nAlternate account turn",
+          ],
         );
       }),
     ),

@@ -12,7 +12,9 @@ import {
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
   parseGoalCommand,
+  type ProviderInstanceId,
   RunId,
+  type ServerSettings as ServerSettingsValue,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -116,6 +118,19 @@ const refusedBeforePrompt = (error: unknown): boolean =>
   PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
+// A same-driver account switch resumes the native conversation, so nothing else tells the agent.
+export const providerSwitchNote = (
+  instances: ServerSettingsValue["providerInstances"],
+  from: ProviderInstanceId,
+  to: ProviderInstanceId,
+): string => {
+  const name = (id: ProviderInstanceId) => {
+    const displayName = instances[id]?.displayName;
+    return displayName === undefined ? `\`${id}\`` : `${displayName} (\`${id}\`)`;
+  };
+  return `Note: the user moved this thread from ${name(from)} to ${name(to)}. Earlier provider choices and usage limits in this conversation may be out of date. To keep subagents on ${name(to)}, leave \`providerInstanceId\` unset.`;
+};
+
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {
     readonly threadId: ThreadId;
@@ -164,6 +179,7 @@ export const layer: Layer.Layer<
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
     const resolveRecreateBase = Effect.fn("ProviderTurnStartService.resolveRecreateBase")(
@@ -859,25 +875,63 @@ export const layer: Layer.Layer<
         projection.providerTurns,
         projection.attempts,
       );
+      const commandMessageIds = new Set(
+        projection.messages
+          .filter(
+            (candidate) =>
+              isCompactionCommandMessage(candidate) ||
+              (goalDriver && parseGoalCommand(candidate) !== null),
+          )
+          .map((candidate) => candidate.id),
+      );
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,
         providerTurns: projection.providerTurns,
-        compactionMessageIds: new Set(
-          projection.messages
-            .filter(
-              (candidate) =>
-                isCompactionCommandMessage(candidate) ||
-                (goalDriver && parseGoalCommand(candidate) !== null),
-            )
-            .map((candidate) => candidate.id),
-        ),
+        compactionMessageIds: commandMessageIds,
         run,
         attempts: projection.attempts,
       });
-      const restartNote =
+      // A restart of the active run moves that run to the new account, so compare attempts.
+      // Commands go verbatim, so the note waits for the next prompted turn.
+      const promptedRuns = new Map(
+        projection.runs
+          .filter((source) => !commandMessageIds.has(source.userMessageId))
+          .map((source) => [source.id, source.ordinal]),
+      );
+      const previousAttempt = projection.attempts
+        .filter(
+          (source) =>
+            source.id !== attempt.id &&
+            source.startedAt !== null &&
+            (promptedRuns.get(source.runId) ?? Infinity) <= run.ordinal,
+        )
+        .toSorted(
+          (a, b) =>
+            promptedRuns.get(a.runId)! - promptedRuns.get(b.runId)! ||
+            a.attemptOrdinal - b.attemptOrdinal,
+        )
+        .at(-1);
+      const switchNote =
+        commandMessageIds.has(message.id) ||
+        previousAttempt === undefined ||
+        previousAttempt.providerInstanceId === run.providerInstanceId
+          ? ""
+          : providerSwitchNote(
+              yield* serverSettings.getSettings.pipe(
+                Effect.map((settings) => settings.providerInstances),
+                Effect.orElseSucceed(() => ({})),
+              ),
+              previousAttempt.providerInstanceId,
+              run.providerInstanceId,
+            );
+      const turnNote = [
         restartCancelledWork.length === 0
           ? ""
-          : restartCancelledBackgroundWorkNote(restartCancelledWork);
+          : restartCancelledBackgroundWorkNote(restartCancelledWork),
+        switchNote,
+      ]
+        .filter((note) => note !== "")
+        .join("\n\n");
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );
@@ -1023,7 +1077,7 @@ export const layer: Layer.Layer<
             return handoffBudget({
               tokenCap,
               modelContextWindow,
-              userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
+              userText: turnNote === "" ? userText : `${turnNote}\n\n${userText}`,
               attachments: message.attachments,
               providerThread: budgetProviderThread,
               nativeContextEstimate:
@@ -1668,7 +1722,7 @@ export const layer: Layer.Layer<
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
-          const context = [delivery.context, sideChatContext, restartNote]
+          const context = [delivery.context, sideChatContext, turnNote]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -1735,7 +1789,7 @@ export const layer: Layer.Layer<
         effectiveHandoffs.length === 0 &&
         retryHandoff.length === 0 &&
         sideChatHandoff === undefined &&
-        restartNote === "" &&
+        turnNote === "" &&
         !noteContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);
