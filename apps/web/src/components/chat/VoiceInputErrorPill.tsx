@@ -75,7 +75,7 @@ export function VoiceInputErrorPill(props: {
               tabIndex={0}
               role="status"
               aria-label={props.error ?? "Voice input failed"}
-              className="min-w-0 flex-1 truncate text-sm text-destructive"
+              className="min-w-0 flex-1 truncate text-body text-destructive-foreground"
             />
           }
         >
