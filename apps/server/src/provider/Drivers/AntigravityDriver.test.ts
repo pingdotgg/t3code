@@ -3,7 +3,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  EnvironmentId,
   ProviderInstanceId,
+  ProviderSessionId,
+  ThreadId,
   type AntigravitySettings,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -28,6 +31,7 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ModelManifest from "../ModelManifest.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { AntigravityDriver } from "./AntigravityDriver.ts";
 import * as ProviderHostLive from "../ProviderHostLive.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
@@ -124,6 +128,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     tempDirectory: string | undefined;
     handle: ChildProcessSpawner.ChildProcessHandle;
   }> = [];
+  const agentThreadIds: Array<string | undefined> = [];
 
   const layerInstallation = Layer.mock(AntigravityInstallation.AntigravityInstallation)({
     managedDirectory: root,
@@ -160,12 +165,15 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     Effect.gen(function* () {
       if (command._tag !== "StandardCommand")
         return yield* Effect.die("Unexpected process pipeline.");
-      const handle = yield* spawner.spawn(command);
       const environment = command.options.env ?? {};
       const env = (name: string) => {
         const value = environment[name];
         return Redacted.isRedacted(value) ? Redacted.value(value) : value;
       };
+      if (environment.ANTIGRAVITY_HARNESS_PATH !== undefined) {
+        agentThreadIds.push(env("T3CODE_THREAD_ID"));
+      }
+      const handle = yield* spawner.spawn(command);
       launches.push({
         command: command.command,
         args: command.args.map(String),
@@ -224,6 +232,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     }
   });
   return {
+    instanceId,
     instance,
     refresh,
     fs,
@@ -238,6 +247,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     acquisitions,
     releases,
     launches,
+    agentThreadIds,
     readRequests,
     assertClosed,
   };
@@ -357,6 +367,35 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(h.releases).toEqual([h.first.version, h.signedOut.version]);
         yield* h.assertClosed;
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("launches a thread's agent with the thread id its tools inherit", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const threadId = ThreadId.make("antigravity-thread-env");
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("antigravity-thread-env"),
+        threadId,
+        providerSessionId: "antigravity-thread-env",
+        providerInstanceId: h.instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer antigravity-thread-env",
+        browserToolsAvailable: false,
+      });
+      yield* h.instance.orchestrationAdapter
+        .openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("antigravity-thread-env"),
+          modelSelection: { instanceId: h.instanceId, model: ANTIGRAVITY_DEFAULT_MODEL },
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+          }),
+        })
+        .pipe(Effect.scoped, Effect.exit);
+      expect(h.agentThreadIds).toEqual([threadId]);
+    }).pipe(Effect.scoped),
   );
 
   it.effect.skipIf(windowsHost)("keeps the previous catalog when executable resolution fails", () =>

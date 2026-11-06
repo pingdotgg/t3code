@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  EnvironmentId,
   ProjectId,
   MessageId,
   NodeId,
@@ -246,11 +247,16 @@ describe("Grok launch permission mode", () => {
     layerHost,
   );
 
-  const launchArgs = (runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
+  const launches = (runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
     Effect.gen(function* () {
-      const launches: Array<ReadonlyArray<string>> = [];
+      const launches: Array<{
+        readonly args: ReadonlyArray<string>;
+        readonly env: Record<string, unknown> | undefined;
+      }> = [];
       const childProcessSpawner = ChildProcessSpawner.make((command) => {
-        if (command._tag === "StandardCommand") launches.push(command.args.map(String));
+        if (command._tag === "StandardCommand") {
+          launches.push({ args: command.args.map(String), env: command.options.env });
+        }
         return Effect.fail(
           PlatformError.systemError({
             _tag: "NotFound",
@@ -260,6 +266,16 @@ describe("Grok launch permission mode", () => {
         );
       });
       const instanceId = ProviderInstanceId.make("grok-launch-test");
+      const threadId = ThreadId.make("grok-launch-test");
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("grok-launch-test"),
+        threadId,
+        providerSessionId: "grok-launch-test",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer grok-launch-test",
+        browserToolsAvailable: false,
+      });
       const adapter = yield* makeGrokAdapterV2({
         instanceId,
         settings: LAUNCH_TEST_GROK_SETTINGS,
@@ -269,7 +285,7 @@ describe("Grok launch permission mode", () => {
       }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner));
       yield* adapter
         .openSession({
-          threadId: ThreadId.make("grok-launch-test"),
+          threadId,
           providerSessionId: ProviderSessionId.make("grok-launch-test"),
           modelSelection: { instanceId, model: "grok-build" },
           runtimePolicy,
@@ -277,6 +293,8 @@ describe("Grok launch permission mode", () => {
         .pipe(Effect.scoped, Effect.ignore);
       return launches;
     }).pipe(Effect.provideService(HostProcess.Platform, "darwin"), Effect.provide(layerTest));
+  const launchArgs = (runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
+    launches(runtimePolicy).pipe(Effect.map((all) => all.map(({ args }) => args)));
 
   const policy = (
     runtimeMode: RuntimeMode,
@@ -300,6 +318,13 @@ describe("Grok launch permission mode", () => {
   )("launches %s threads with %s", ([runtimeMode, , args]) =>
     Effect.gen(function* () {
       assert.deepEqual(yield* launchArgs(policy(runtimeMode)), [args]);
+    }),
+  );
+
+  it.effect("launches Grok with the thread id its tools inherit", () =>
+    Effect.gen(function* () {
+      const [launch] = yield* launches(policy("full-access"));
+      assert.equal(launch?.env?.T3CODE_THREAD_ID, "grok-launch-test");
     }),
   );
 
