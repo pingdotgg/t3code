@@ -33,6 +33,7 @@ import type {
 import * as GitLabCli from "./GitLabCli.ts";
 import {
   AWARD_EMOJI_GRAPHQL_QUERY,
+  PIPELINE_STAGES_GRAPHQL_QUERY,
   decodeAwardEmojiJson,
   decodeBranchJson,
   decodeCommitDiffRefsJson,
@@ -52,6 +53,7 @@ import {
   decodeMergeRequestStatsJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
+  decodePipelineStageChecksJson,
   decodeProjectMergeCapabilitiesJson,
   decodeProjectLabelsJson,
   decodeProjectUsersJson,
@@ -283,6 +285,13 @@ const DIFF_TIMEOUT_MS = 60_000;
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 
+export interface GitLabDiscussionThreads {
+  readonly threads: ReadonlyArray<PullRequestReviewThread>;
+  readonly diffRefsByThreadId: ReadonlyMap<string, GitLabDiffRefs>;
+  readonly overviewFindingIds: ReadonlyArray<string>;
+  readonly truncated: boolean;
+}
+
 export interface GitLabMergeRequestListBatch {
   readonly items: ReadonlyArray<GitLabMergeRequestListItem>;
   readonly truncated: boolean;
@@ -336,7 +345,7 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly host?: string | undefined;
       readonly repository: string;
       readonly number: number;
-      /** `false` skips the trigger job read; the permission check before every write does. */
+      /** `false` skips the stage and trigger job reads, as write permission checks do. */
       readonly downstreamChecks?: boolean;
     }) => Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError>;
 
@@ -523,10 +532,7 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly host?: string | undefined;
       readonly repository: string;
       readonly number: number;
-    }) => Effect.Effect<
-      { readonly threads: ReadonlyArray<PullRequestReviewThread>; readonly truncated: boolean },
-      GitLabPullRequestCliError
-    >;
+    }) => Effect.Effect<GitLabDiscussionThreads, GitLabPullRequestCliError>;
 
     readonly submitReview: (input: {
       readonly cwd: string;
@@ -1069,10 +1075,9 @@ export const make = Effect.gen(function* () {
     readonly number: number;
     readonly page: number;
     readonly collected: ReadonlyArray<PullRequestReviewThread>;
-  }): Effect.Effect<
-    { readonly threads: ReadonlyArray<PullRequestReviewThread>; readonly truncated: boolean },
-    GitLabPullRequestCliError
-  > =>
+    readonly collectedDiffRefs: ReadonlyMap<string, GitLabDiffRefs>;
+    readonly collectedFindingIds: ReadonlyArray<string>;
+  }): Effect.Effect<GitLabDiscussionThreads, GitLabPullRequestCliError> =>
     api({
       cwd: input.cwd,
       host: input.host,
@@ -1096,13 +1101,31 @@ export const make = Effect.gen(function* () {
           );
         }
         const collected = [...input.collected, ...decoded.success.threads];
+        const collectedDiffRefs = new Map([
+          ...input.collectedDiffRefs,
+          ...decoded.success.diffRefsByThreadId,
+        ]);
+        const collectedFindingIds = [
+          ...input.collectedFindingIds,
+          ...decoded.success.overviewFindingIds,
+        ];
+        const read = (truncated: boolean) => ({
+          threads: collected,
+          diffRefsByThreadId: collectedDiffRefs,
+          overviewFindingIds: collectedFindingIds,
+          truncated,
+        });
         // Plain notes count toward the page size even when no positioned threads survive decoding.
-        if (decoded.success.rawCount < MAX_PAGE_SIZE) {
-          return Effect.succeed({ threads: collected, truncated: false });
-        }
+        if (decoded.success.rawCount < MAX_PAGE_SIZE) return Effect.succeed(read(false));
         return input.page >= CONVERSATION_PAGES
-          ? Effect.succeed({ threads: collected, truncated: true })
-          : discussionsPage({ ...input, page: input.page + 1, collected });
+          ? Effect.succeed(read(true))
+          : discussionsPage({
+              ...input,
+              page: input.page + 1,
+              collected,
+              collectedDiffRefs,
+              collectedFindingIds,
+            });
       }),
     );
 
@@ -1235,6 +1258,25 @@ export const make = Effect.gen(function* () {
       }),
       Effect.orElseSucceed((): ReadonlyArray<PullRequestCheck> => []),
     );
+
+  // Best-effort: stages that can't be read keep the merge request's single pipeline check.
+  const pipelineStageChecks = (input: {
+    readonly cwd: string;
+    readonly host?: string | undefined;
+    readonly repository: string;
+    readonly number: number;
+    readonly url: string;
+  }): Effect.Effect<ReadonlyArray<PullRequestCheck> | null> =>
+    URL.canParse(input.url)
+      ? graphqlRead({
+          cwd: input.cwd,
+          host: input.host,
+          operation: "getPipelineStageChecks",
+          query: PIPELINE_STAGES_GRAPHQL_QUERY,
+          variables: { fullPath: input.repository, iid: String(input.number) },
+          decode: (raw) => decodePipelineStageChecksJson(raw, new URL(input.url).origin),
+        }).pipe(Effect.orElseSucceed(() => null))
+      : Effect.succeed(null);
 
   const projectUsers = (input: {
     readonly cwd: string;
@@ -1829,6 +1871,9 @@ export const make = Effect.gen(function* () {
                 ),
               };
         if (input.downstreamChecks === false || detail.headPipeline === undefined) return detail;
+        // The stages already carry each trigger job's downstream pipeline.
+        const stages = yield* pipelineStageChecks({ ...input, url: detail.url });
+        if (stages !== null) return { ...detail, checks: stages };
         const downstream = yield* triggerJobChecks({
           cwd: input.cwd,
           host: input.host,
@@ -2281,7 +2326,13 @@ export const make = Effect.gen(function* () {
     }),
 
     listDiscussions: Effect.fn("GitLabPullRequestCli.listDiscussions")(function (input) {
-      return discussionsPage({ ...input, page: 1, collected: [] });
+      return discussionsPage({
+        ...input,
+        page: 1,
+        collected: [],
+        collectedDiffRefs: new Map(),
+        collectedFindingIds: [],
+      });
     }),
 
     submitReview: Effect.fn("GitLabPullRequestCli.submitReview")(function* (input) {

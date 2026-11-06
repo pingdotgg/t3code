@@ -1,4 +1,4 @@
-import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import { afterEach, assert, describe, expect, it, vi } from "@effect/vitest";
 import { VcsProcessExitError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -1236,93 +1236,133 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads a positioned discussion as a thread anchored to its line", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            JSON.stringify([
-              {
-                id: "abc123",
-                notes: [
-                  {
-                    id: 1,
-                    body: "rename this",
-                    author: { username: "bilal", avatar_url: "https://avatars/b.png" },
-                    created_at: "2026-07-01T00:00:00Z",
-                    resolvable: true,
-                    resolved: true,
-                    position: {
-                      position_type: "text",
-                      new_path: "src/a.ts",
-                      old_path: "src/a.ts",
-                      new_line: 12,
-                      old_line: null,
+  it.effect(
+    "reads a positioned discussion as a thread and an open overview discussion as a finding",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              JSON.stringify([
+                {
+                  id: "abc123",
+                  notes: [
+                    {
+                      id: 1,
+                      body: "rename this",
+                      author: { username: "bilal", avatar_url: "https://avatars/b.png" },
+                      created_at: "2026-07-01T00:00:00Z",
+                      resolvable: true,
+                      resolved: true,
+                      position: {
+                        position_type: "text",
+                        new_path: "src/a.ts",
+                        old_path: "src/a.ts",
+                        new_line: 12,
+                        old_line: null,
+                        base_sha: "base",
+                        start_sha: "start",
+                        head_sha: "head",
+                      },
                     },
-                  },
-                  {
-                    id: 2,
-                    body: "done",
-                    author: { username: "julius" },
-                    created_at: "2026-07-01T01:00:00Z",
-                  },
-                ],
-              },
-              { id: "def456", notes: [{ id: 3, body: "ship it", created_at: "2026-07-01Z" }] },
-              {
-                id: "file789",
-                notes: [
-                  {
-                    id: 4,
-                    body: "split this file",
-                    created_at: "2026-07-01Z",
-                    position: {
-                      position_type: "file",
-                      new_path: "src/b.ts",
-                      old_path: "src/b.ts",
-                      new_line: null,
-                      old_line: null,
+                    {
+                      id: 2,
+                      body: "done",
+                      author: { username: "julius" },
+                      created_at: "2026-07-01T01:00:00Z",
                     },
-                  },
-                ],
-              },
-              {
-                id: "img012",
-                notes: [
-                  {
-                    id: 5,
-                    body: "logo is blurry",
-                    created_at: "2026-07-01Z",
-                    position: {
-                      position_type: "image",
-                      new_path: "logo.png",
-                      old_path: "logo.png",
-                      new_line: null,
-                      old_line: null,
+                  ],
+                },
+                { id: "def456", notes: [{ id: 3, body: "ship it", created_at: "2026-07-01Z" }] },
+                {
+                  id: "ghi789",
+                  notes: [
+                    {
+                      id: 4,
+                      body: "mention the new flag in the README",
+                      created_at: "2026-07-01T02:00:00Z",
+                      resolvable: true,
+                      resolved: false,
                     },
-                  },
-                ],
-              },
-            ]),
+                    {
+                      id: 5,
+                      body: "will do",
+                      created_at: "2026-07-01T03:00:00Z",
+                      resolvable: true,
+                      resolved: false,
+                    },
+                  ],
+                },
+                {
+                  id: "jkl012",
+                  notes: [
+                    {
+                      id: 6,
+                      body: "already addressed",
+                      created_at: "2026-07-01T04:00:00Z",
+                      resolvable: true,
+                      resolved: true,
+                    },
+                  ],
+                },
+                {
+                  id: "file789",
+                  notes: [
+                    {
+                      id: 7,
+                      body: "split this file",
+                      created_at: "2026-07-01Z",
+                      position: {
+                        position_type: "file",
+                        new_path: "src/b.ts",
+                        old_path: "src/b.ts",
+                        new_line: null,
+                        old_line: null,
+                      },
+                    },
+                  ],
+                },
+                {
+                  id: "img012",
+                  notes: [
+                    {
+                      id: 8,
+                      body: "logo is blurry",
+                      created_at: "2026-07-01Z",
+                      position: {
+                        position_type: "image",
+                        new_path: "logo.png",
+                        old_path: "logo.png",
+                        new_line: null,
+                        old_line: null,
+                      },
+                    },
+                  ],
+                },
+              ]),
+            ),
           ),
-        ),
-      );
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+        );
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      const { threads } = yield* cli.listDiscussions({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-      });
+        const { threads, diffRefsByThreadId, overviewFindingIds } = yield* cli.listDiscussions({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+        });
 
-      expect(threads.map(({ id, path, line, side }) => ({ id, path, line, side }))).toEqual([
-        { id: "abc123", path: "src/a.ts", line: 12, side: "right" },
-        { id: "file789", path: "src/b.ts", line: null, side: "right" },
-        { id: "img012", path: "logo.png", line: null, side: "right" },
-      ]);
-      expect(threads[0]).toMatchObject({ isResolved: true });
-      assert.strictEqual(threads[0]?.comments.length, 2);
-    }),
+        expect(overviewFindingIds).toEqual(["4"]);
+        expect(threads.map(({ id, path, line, side }) => ({ id, path, line, side }))).toEqual([
+          { id: "abc123", path: "src/a.ts", line: 12, side: "right" },
+          { id: "file789", path: "src/b.ts", line: null, side: "right" },
+          { id: "img012", path: "logo.png", line: null, side: "right" },
+        ]);
+        expect([...diffRefsByThreadId]).toEqual([
+          ["abc123", { baseSha: "base", startSha: "start", headSha: "head" }],
+        ]);
+        expect(threads[0]).toMatchObject({ isResolved: true });
+        assert.strictEqual(threads[0]?.comments.length, 2);
+      }),
   );
 
   it.effect("sends a review as its comments, then its summary, then the verdict", () =>
@@ -1454,40 +1494,42 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
   it.effect("shows a failed child pipeline that left the head pipeline green", () =>
     Effect.gen(function* () {
-      mockedExecute
-        .mockReturnValueOnce(
-          Effect.succeed(
-            output(
-              mergeRequestJson({
-                // A fork's pipeline runs in the source project, so its id is not the target's.
-                head_pipeline: {
-                  id: 31,
-                  project_id: 12,
-                  status: "success",
-                  web_url: "https://gitlab.com/bilal/web/-/pipelines/31",
-                },
-              }),
-            ),
-          ),
-        )
-        .mockReturnValueOnce(Effect.succeed(labelPermission))
-        .mockReturnValueOnce(
-          Effect.succeed(
-            output(
-              JSON.stringify([
-                {
-                  name: "deploy",
-                  status: "success",
-                  downstream_pipeline: {
-                    status: "failed",
-                    web_url: "https://gitlab.com/bilal/web/-/pipelines/32",
+      mockedExecute.mockImplementation((request) => {
+        switch (request.args[1]) {
+          case "graphql":
+            return Effect.succeed(output("{}"));
+          case "projects/12/pipelines/31/bridges?per_page=100":
+            return Effect.succeed(
+              output(
+                JSON.stringify([
+                  {
+                    name: "deploy",
+                    status: "success",
+                    downstream_pipeline: {
+                      status: "failed",
+                      web_url: "https://gitlab.com/bilal/web/-/pipelines/32",
+                    },
                   },
-                },
-                { name: "docs", status: "created", downstream_pipeline: null },
-              ]),
-            ),
-          ),
-        );
+                  { name: "docs", status: "created", downstream_pipeline: null },
+                ]),
+              ),
+            );
+          default:
+            return Effect.succeed(
+              output(
+                mergeRequestJson({
+                  // A fork's pipeline runs in the source project, so its id is not the target's.
+                  head_pipeline: {
+                    id: 31,
+                    project_id: 12,
+                    status: "success",
+                    web_url: "https://gitlab.com/bilal/web/-/pipelines/31",
+                  },
+                }),
+              ),
+            );
+        }
+      });
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
       const detail = yield* cli.getMergeRequestDetail({
@@ -1501,8 +1543,10 @@ layer("GitLabPullRequestCli.layer", (it) => {
         ["Pipeline", "success", "https://gitlab.com/bilal/web/-/pipelines/31"],
         ["deploy", "failure", "https://gitlab.com/bilal/web/-/pipelines/32"],
       ]);
-      expect(argsOfCall(2)[1]).toBe("projects/12/pipelines/31/bridges?per_page=100");
-      expect(callAt(2).host).toBe("gitlab.internal");
+      const bridgesCall = mockedExecute.mock.calls.find(
+        ([request]) => request.args[1] === "projects/12/pipelines/31/bridges?per_page=100",
+      );
+      expect(bridgesCall?.[0].host).toBe("gitlab.internal");
     }),
   );
 
@@ -1512,10 +1556,11 @@ layer("GitLabPullRequestCli.layer", (it) => {
         mergeRequestJson({ head_pipeline: { id: 31, project_id: 12, status: "success" } }),
       );
       const failedChild = { name: "deploy", downstream_pipeline: { status: "failed" } };
-      mockedExecute
-        .mockReturnValueOnce(Effect.succeed(detailOutput))
-        .mockReturnValueOnce(Effect.succeed(labelPermission))
-        .mockReturnValueOnce(
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      for (const [scenario, bridges] of [
+        [
+          "read fails",
           Effect.fail(
             new GitLabCli.GitLabCliCommandError({
               operation: "execute",
@@ -1524,16 +1569,20 @@ layer("GitLabPullRequestCli.layer", (it) => {
               cause: new Error("403 Forbidden"),
             }),
           ),
-        )
-        .mockReturnValueOnce(Effect.succeed(detailOutput))
-        .mockReturnValueOnce(Effect.succeed(labelPermission))
+        ],
         // A full page may have left out the trigger job whose pipeline failed.
-        .mockReturnValueOnce(
+        [
+          "page is full",
           Effect.succeed(output(JSON.stringify(Array.from({ length: 100 }, () => failedChild)))),
+        ],
+      ] as const) {
+        mockedExecute.mockImplementation((request) =>
+          request.args[1] === "graphql"
+            ? Effect.succeed(output("{}"))
+            : request.args[1]?.includes("/bridges")
+              ? bridges
+              : Effect.succeed(detailOutput),
         );
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      for (const scenario of ["read fails", "page is full"]) {
         const detail = yield* cli.getMergeRequestDetail({
           cwd: "/w",
           repository: "acme/web",
@@ -2109,4 +2158,171 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect(result).toMatchObject({ _tag: "Failure", failure: error });
     }),
   );
+  describe("the head pipeline's stages", () => {
+    const pipeline = {
+      id: 9,
+      project_id: 12,
+      status: "failed",
+      web_url: "https://gitlab.com/acme/web/-/pipelines/9",
+      source: "merge_request_event",
+    };
+    const stages = JSON.stringify({
+      data: {
+        project: {
+          mergeRequest: {
+            headPipeline: {
+              path: "/acme/web/-/pipelines/9",
+              stages: {
+                nodes: [
+                  { name: "build", status: "success", detailedStatus: { label: "passed" } },
+                  {
+                    name: "test",
+                    status: "failed",
+                    jobs: {
+                      nodes: [{ name: "unit", status: "FAILED", webPath: "/acme/web/-/jobs/3" }],
+                    },
+                  },
+                  {
+                    name: "deploy",
+                    status: "success",
+                    jobs: {
+                      nodes: [
+                        // A trigger job without `strategy: depend` succeeds whatever its child does.
+                        {
+                          name: "child-pipeline",
+                          status: "SUCCESS",
+                          webPath: null,
+                          downstreamPipeline: {
+                            status: "FAILED",
+                            path: "/acme/child/-/pipelines/10",
+                          },
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+    });
+
+    function answer(graphql: Effect.Effect<ReturnType<typeof output>, GitLabCli.GitLabCliError>) {
+      mockedExecute.mockImplementation((request) =>
+        request.args[1] === "graphql"
+          ? request.stdin?.includes("adminMergeRequest")
+            ? Effect.succeed(labelPermission)
+            : graphql
+          : request.args[1]?.includes("/bridges")
+            ? Effect.succeed(
+                output(
+                  JSON.stringify([
+                    {
+                      name: "child-pipeline",
+                      status: "success",
+                      downstream_pipeline: {
+                        status: "failed",
+                        web_url: "https://gitlab.com/acme/child/-/pipelines/10",
+                      },
+                    },
+                  ]),
+                ),
+              )
+            : Effect.succeed(output(mergeRequestJson({ head_pipeline: pipeline }))),
+      );
+    }
+
+    const read = (downstreamChecks: boolean) =>
+      GitLabPullRequestCli.GitLabPullRequestCli.pipe(
+        Effect.flatMap((cli) =>
+          cli.getMergeRequestDetail({
+            cwd: "/w",
+            repository: "group/acme/web",
+            number: 7,
+            downstreamChecks,
+          }),
+        ),
+      );
+
+    it.effect("shows the stage jobs, and a stage GitLab listed no jobs for", () =>
+      Effect.gen(function* () {
+        answer(Effect.succeed(output(stages)));
+
+        const detail = yield* read(true);
+
+        const graphql = mockedExecute.mock.calls.find(([call]) => call.stdin?.includes("stages"));
+        assert.isDefined(graphql);
+        expect(JSON.parse(graphql[0].stdin ?? "").variables).toEqual({
+          fullPath: "group/acme/web",
+          iid: "7",
+        });
+        expect(detail.checks).toEqual([
+          {
+            name: "build",
+            status: "success",
+            description: "passed",
+            url: "https://gitlab.com/acme/web/-/pipelines/9",
+          },
+          {
+            name: "test / unit",
+            status: "failure",
+            description: null,
+            url: "https://gitlab.com/acme/web/-/jobs/3",
+          },
+          {
+            name: "deploy / child-pipeline",
+            status: "failure",
+            description: "Downstream pipeline",
+            url: "https://gitlab.com/acme/child/-/pipelines/10",
+          },
+        ]);
+      }),
+    );
+
+    it.effect("keeps the pipeline check where the stages cannot be read", () =>
+      Effect.gen(function* () {
+        answer(
+          Effect.fail(
+            new GitLabCli.GitLabCliCommandError({
+              operation: "execute",
+              command: "glab",
+              cwd: "/w",
+              cause: new Error("graphql unavailable"),
+            }),
+          ),
+        );
+
+        const detail = yield* read(true);
+
+        expect(detail.checks).toEqual([
+          {
+            name: "Pipeline",
+            status: "failure",
+            description: "merge_request_event",
+            url: "https://gitlab.com/acme/web/-/pipelines/9",
+          },
+          {
+            name: "child-pipeline",
+            status: "failure",
+            description: "Downstream pipeline",
+            url: "https://gitlab.com/acme/child/-/pipelines/10",
+          },
+        ]);
+      }),
+    );
+
+    it.effect("asks for no stages when the caller only needs the merge request", () =>
+      Effect.gen(function* () {
+        answer(Effect.succeed(output(stages)));
+
+        const detail = yield* read(false);
+
+        expect(
+          mockedExecute.mock.calls.filter(([call]) => call.stdin?.includes("stages")),
+        ).toHaveLength(0);
+        expect(detail.checks.map((check) => check.name)).toEqual(["Pipeline"]);
+      }),
+    );
+  });
 });
