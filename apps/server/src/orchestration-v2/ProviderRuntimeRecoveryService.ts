@@ -51,6 +51,8 @@ export class ProviderRuntimeRecoveryError extends Schema.TaggedError<ProviderRun
   }
 }
 
+const isProviderRuntimeRecoveryError = Schema.is(ProviderRuntimeRecoveryError);
+
 export interface ProviderRuntimeRecoverySummary {
   readonly terminalizedRuns: number;
   readonly stoppedSessions: number;
@@ -762,6 +764,7 @@ export const make = Effect.gen(function* () {
         (candidate) => candidate.status !== "stopped" && candidate.status !== "error",
       ).length;
       let retiredEffects: number;
+      let cancelledEffectIds: ReadonlyArray<string> = [];
       if (events.length === 0) {
         const retiredEffectIds = yield* outbox
           .cancelUnsettled({
@@ -779,7 +782,7 @@ export const make = Effect.gen(function* () {
                 }),
             ),
           );
-        yield* outbox.signalCancellations(retiredEffectIds);
+        cancelledEffectIds = retiredEffectIds;
         retiredEffects = retiredEffectIds.length;
       } else {
         const result = yield* eventSink
@@ -812,6 +815,7 @@ export const make = Effect.gen(function* () {
         stoppedSessions,
         closedRequests: requests.length,
         retiredEffects,
+        cancelledEffectIds,
       };
     },
   );
@@ -832,31 +836,49 @@ export const make = Effect.gen(function* () {
     let closedRequests = 0;
     let retiredEffects = 0;
     const stoppedThisPass = new Map<string, RecoverySession>();
-    for (const threadId of threadIds) {
-      const projection = yield* projections.getRuntimeRecoveryProjection(threadId).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderRuntimeRecoveryError({
-              operation: "read-projections",
-              threadId,
-              cause,
-            }),
+    const grouped = trigger === "shutdown" && threadIds.length > 1;
+    const groupSize = grouped ? 32 : 1;
+    for (let offset = 0; offset < threadIds.length; offset += groupSize) {
+      const cancelledEffectIds: string[] = [];
+      // Read and decide on the writer so shared sessions see earlier updates in this group.
+      const reconcileGroup = Effect.gen(function* () {
+        for (const threadId of threadIds.slice(offset, offset + groupSize)) {
+          const projection = yield* projections.getRuntimeRecoveryProjection(threadId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderRuntimeRecoveryError({
+                  operation: "read-projections",
+                  threadId,
+                  cause,
+                }),
+            ),
+          );
+          const enabled =
+            continueAfterRestart !== null &&
+            resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
+              .continueThreadsAfterServerUpdate;
+          const result = yield* reconcileProjection(projection, trigger, enabled, stoppedThisPass);
+          for (const session of projection.providerSessions) {
+            if (session.status !== "stopped" && session.status !== "error") {
+              stoppedThisPass.set(session.id, session);
+            }
+          }
+          cancelledEffectIds.push(...result.cancelledEffectIds);
+          terminalizedRuns += result.terminalizedRuns;
+          stoppedSessions += result.stoppedSessions;
+          closedRequests += result.closedRequests;
+          retiredEffects += result.retiredEffects;
+        }
+      });
+      yield* (grouped ? eventSink.withProviderBatch(reconcileGroup) : reconcileGroup).pipe(
+        Effect.mapError((cause) =>
+          isProviderRuntimeRecoveryError(cause)
+            ? cause
+            : new ProviderRuntimeRecoveryError({ operation: "reconcile", cause }),
         ),
       );
-      const enabled =
-        continueAfterRestart !== null &&
-        resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
-          .continueThreadsAfterServerUpdate;
-      const result = yield* reconcileProjection(projection, trigger, enabled, stoppedThisPass);
-      for (const session of projection.providerSessions) {
-        if (session.status !== "stopped" && session.status !== "error") {
-          stoppedThisPass.set(session.id, session);
-        }
-      }
-      terminalizedRuns += result.terminalizedRuns;
-      stoppedSessions += result.stoppedSessions;
-      closedRequests += result.closedRequests;
-      retiredEffects += result.retiredEffects;
+      // Eventless outbox cancellations also wait for the group's durable commit.
+      if (cancelledEffectIds.length > 0) yield* outbox.signalCancellations(cancelledEffectIds);
     }
     const outboxReconciliation = yield* outbox.reconcileAfterProcessLoss.pipe(
       Effect.mapError(
