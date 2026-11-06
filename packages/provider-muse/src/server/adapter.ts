@@ -1879,6 +1879,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           );
           if (result.session.sessionId !== nativeSessionId)
             return yield* protocolError("Muse returned a different session identity");
+          if (result.history?.noneReason === "projectionUnavailable")
+            return yield* protocolError(
+              "Muse cannot stream this session because its live view is unavailable",
+            );
           if (requestedId)
             yield* request("session/setApprovalMode", {
               mode: museApprovalMode(args.runtimePolicy.runtimeMode),
