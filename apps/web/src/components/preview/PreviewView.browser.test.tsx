@@ -202,6 +202,7 @@ function PanelCloseAction() {
     deviceState: {} as Parameters<typeof useRightPanelActions>[0]["deviceState"],
     pullRequestPanelTarget: null,
     threadPanelPresentation: "inline",
+    embedded: false,
     isServerThread: true,
     isGitRepo: false,
     browserAvailable: true,
