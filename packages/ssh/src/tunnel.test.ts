@@ -108,7 +108,13 @@ describe("ssh tunnel scripts", () => {
     );
   });
 
-  it.effect("accepts launch JSON after remote shell startup noise", () => {
+  it.effect.each([
+    "loaded nvm default",
+    "loaded nvm {default}",
+    '{"shell":"ready"}',
+    '{"remotePort":9999,"credential":"startup-log"}',
+    "loaded nvm {",
+  ])("accepts launch JSON after remote shell startup noise %j", (noise) => {
     const target = {
       alias: "devbox",
       hostname: "devbox.example.com",
@@ -119,7 +125,7 @@ describe("ssh tunnel scripts", () => {
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.sync(() => {
         spawnedCommands.push(commandArgs(command));
-        return makeSuccessfulProcess('loaded nvm default\n{"remotePort":3774}\n');
+        return makeSuccessfulProcess(`${noise}\n{"remotePort":3774}\n`);
       }),
     );
     const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
@@ -135,7 +141,13 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(layerProcess));
   });
 
-  it.effect("accepts pretty-printed pairing JSON after remote shell startup noise", () => {
+  it.effect.each([
+    "loaded nvm default",
+    "loaded nvm {default}",
+    '{"shell":"ready"}',
+    '{"remotePort":9999,"credential":"startup-log"}',
+    "loaded nvm {",
+  ])("accepts pretty-printed pairing JSON after remote shell startup noise %j", (noise) => {
     const target = {
       alias: "devbox",
       hostname: "devbox.example.com",
@@ -144,10 +156,10 @@ describe("ssh tunnel scripts", () => {
     } as const;
     const spawner = ChildProcessSpawner.make(() =>
       Effect.succeed(
-        makeSuccessfulProcess(`loaded nvm default
+        makeSuccessfulProcess(`${noise}
 {
   "id": "88941235-6ed5-4184-a2ff-5339e2075958",
-  "credential": "LCL4R2TPHDKQ",
+  "credential": "LCL4R2TPHDKQ{opaque}",
   "scopes": ["orchestration:read"],
   "expiresAt": "2026-04-29T01:01:20.994Z"
 }
@@ -162,7 +174,7 @@ describe("ssh tunnel scripts", () => {
     );
     return Effect.gen(function* () {
       const result = yield* SshTunnel.issueRemotePairingToken(target, undefined, ARCHIVE);
-      assert.equal(result.credential, "LCL4R2TPHDKQ");
+      assert.equal(result.credential, "LCL4R2TPHDKQ{opaque}");
     }).pipe(Effect.provide(layerProcess));
   });
 

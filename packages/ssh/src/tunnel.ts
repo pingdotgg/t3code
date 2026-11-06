@@ -162,13 +162,15 @@ const decodeRemoteJsonOutput = <A, E>(
   decode(stdout).pipe(
     Effect.catch((error) =>
       Effect.gen(function* () {
-        const jsonObject = extractJsonObject(stdout);
-        if (jsonObject === stdout.trim()) {
-          return yield* Effect.fail(error);
-        }
-        const exit = yield* Effect.exit(decode(jsonObject));
-        if (Exit.isSuccess(exit)) {
-          return exit.value;
+        // Both scripts emit their response at the start of a line, after login-profile output.
+        const starts = [0, ...Array.from(stdout.matchAll(/\n(?=\{)/g), (match) => match.index + 1)];
+        for (const start of starts.toReversed()) {
+          const jsonObject = extractJsonObject(stdout.slice(start));
+          if (jsonObject === stdout.trim()) continue;
+          const exit = yield* Effect.exit(decode(jsonObject));
+          if (Exit.isSuccess(exit)) {
+            return exit.value;
+          }
         }
         return yield* Effect.fail(error);
       }),
