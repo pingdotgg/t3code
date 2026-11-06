@@ -800,6 +800,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "whats-new",
+    title: "What's new",
+    to: "/settings/about",
+    searchTerms: ["what's new updates release guides new features"],
+  },
+  {
     id: "mobile-app",
     title: "Mobile app",
     to: "/settings/about",

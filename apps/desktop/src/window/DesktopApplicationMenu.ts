@@ -142,6 +142,9 @@ export const make = Effect.gen(function* () {
     const settingsClick = () => {
       runMenuEffect("open-settings", dispatchMenuAction("open-settings"));
     };
+    const whatsNewClick = () => {
+      runMenuEffect("open-whats-new", dispatchMenuAction("open-whats-new"));
+    };
     const welcomeGuideClick = () => {
       runMenuEffect("open-welcome-guide", dispatchMenuAction("open-welcome-guide"));
     };
@@ -309,6 +312,10 @@ export const make = Effect.gen(function* () {
       {
         role: "help",
         submenu: [
+          {
+            label: "What's New",
+            click: whatsNewClick,
+          },
           {
             label: "Welcome Guide",
             click: welcomeGuideClick,

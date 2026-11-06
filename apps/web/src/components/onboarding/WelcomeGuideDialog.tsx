@@ -46,7 +46,7 @@ if (typeof window !== "undefined") {
 }
 
 // The host sits at the app root, so it reads one boolean instead of every environment's config.
-const sideChatsAvailableAtom = Atom.make((get) => {
+export const sideChatsAvailableAtom = Atom.make((get) => {
   for (const config of get(environmentPresentations.serverConfigsAtom).values()) {
     if (supportsLessonSideChats(config.environment)) return true;
   }
