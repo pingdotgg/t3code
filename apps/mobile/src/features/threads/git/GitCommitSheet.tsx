@@ -38,7 +38,9 @@ type GitCommitSheetProps = StaticScreenProps<{
 }>;
 
 export function GitCommitSheet(_props: GitCommitSheetProps) {
-  const isWorkflow = _props.route.params.workflow === true;
+  const rewriteHistory = _props.route.params.workflow === true;
+  const [commitMode, setCommitMode] = useState("single");
+  const isWorkflow = rewriteHistory || commitMode === "logical";
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -75,8 +77,9 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
 
-  const [workflowScope, setWorkflowScope] = useState<"working_tree" | "branch">("working_tree");
+  const workflowScope = rewriteHistory ? "branch" : "working_tree";
   const [baseRef, setBaseRef] = useState("");
+  const [workflowInstructions, setWorkflowInstructions] = useState("");
   const submittedWorkflow = useRef(false);
   const startWorkflow = useAtomCommand(gitEnvironment.startCommitWorkflow, {
     reportFailure: false,
@@ -121,7 +124,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
               type: "working_tree" as const,
               ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
             },
-      ...(dialogCommitMessage.trim() ? { instructions: dialogCommitMessage.trim() } : {}),
+      ...(workflowInstructions.trim() ? { instructions: workflowInstructions.trim() } : {}),
     };
     submittedWorkflow.current = true;
     const completion = startWorkflow({
@@ -156,7 +159,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const android = Platform.OS === "android";
   const header = (
     <SheetHeader
-      title={isWorkflow ? "Split into logical commits" : "Commit changes"}
+      title={rewriteHistory ? "Rewrite commits" : "Commit changes"}
       subtitle={gitStatus.data?.refName ?? "(detached HEAD)"}
       onCancel={() => navigation.goBack()}
       accessibilityLabel="Cancel commit"
@@ -182,6 +185,24 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           contentContainerClassName="px-5 pt-4 pb-6 gap-5"
           contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         >
+          {!rewriteHistory && (
+            <View accessibilityRole="radiogroup" accessibilityLabel="Commit mode" className="gap-2">
+              {(["single", "logical"] as const).map((mode) => (
+                <Pressable
+                  key={mode}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: commitMode === mode }}
+                  onPress={() => setCommitMode(mode)}
+                  className="min-h-12 flex-row items-center gap-2"
+                >
+                  <Text className="text-foreground text-sm">
+                    {commitMode === mode ? "●" : "○"}{" "}
+                    {mode === "single" ? "Single commit" : "Logical commits"}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
           {isWorkflow && (
             <View className="gap-3 bg-card p-4 android:rounded-[20px] ios:rounded-[22px]">
               <Text className="text-foreground-secondary text-sm">
@@ -190,20 +211,6 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                 history are preserved. Tests run only if requested in additional instructions.
                 Nothing is pushed.
               </Text>
-              {(["working_tree", "branch"] as const).map((scope) => (
-                <Pressable
-                  key={scope}
-                  accessibilityRole="radio"
-                  accessibilityState={{ checked: workflowScope === scope }}
-                  onPress={() => setWorkflowScope(scope)}
-                  className="min-h-12 flex-row items-center gap-2"
-                >
-                  <Text className="text-foreground text-sm">
-                    {workflowScope === scope ? "●" : "○"}{" "}
-                    {scope === "working_tree" ? "Uncommitted changes" : "Existing branch commits"}
-                  </Text>
-                </Pressable>
-              ))}
               {workflowScope === "working_tree" && gitStatus.data?.refName === null && (
                 <Text className="text-foreground-secondary text-sm">
                   Commits will be created on detached HEAD. Any paused rebase will stay paused.
@@ -242,8 +249,8 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             <TextInput
               multiline
               accessibilityLabel={isWorkflow ? "Additional instructions" : "Commit message"}
-              value={dialogCommitMessage}
-              onChangeText={setDialogCommitMessage}
+              value={isWorkflow ? workflowInstructions : dialogCommitMessage}
+              onChangeText={isWorkflow ? setWorkflowInstructions : setDialogCommitMessage}
               placeholder={
                 isWorkflow ? "Describe the desired commit sequence…" : "Describe your changes…"
               }
@@ -458,7 +465,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           </View>
           {isWorkflow ? (
             <Button
-              label="Split into logical commits"
+              label={rewriteHistory ? "Rebuild history" : "Create logical commits"}
               icon="arrow.branch"
               tone="primary"
               fullWidth
