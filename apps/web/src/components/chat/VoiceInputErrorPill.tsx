@@ -79,7 +79,7 @@ export function VoiceInputErrorPill(props: {
               tabIndex={0}
               role="status"
               aria-label={message}
-              className="flex min-w-0 items-center gap-1.5 rounded-sm text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+              className="flex min-w-0 items-center gap-1.5 rounded-sm text-label outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
             />
           }
         >
