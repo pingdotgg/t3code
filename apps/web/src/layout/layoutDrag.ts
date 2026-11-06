@@ -239,8 +239,8 @@ function isLayoutDropUseful(
 }
 
 /** The label on the pill under the pointer (pen MI18S "Side by side", nYpzc "Below"). */
-export function layoutDropLabel(target: LayoutDropTarget): string {
-  if (target.kind === "into") return "Add as tab";
+export function layoutDropLabel(target: LayoutDropTarget, reorder: boolean): string {
+  if (target.kind === "into") return reorder ? "Move here" : "Add as tab";
   if (target.kind === "extend") {
     return target.edge === "bottom" ? "New workspace" : "New column";
   }
