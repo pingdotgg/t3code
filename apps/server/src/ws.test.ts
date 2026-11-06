@@ -933,7 +933,7 @@ it.live.each([
       ),
       (socket) => Effect.sync(() => socket.terminate()),
     );
-    yield* Effect.tryPromise(
+    yield* Effect.promise(
       () =>
         new Promise<void>((resolve, reject) => {
           socket.once("open", resolve);
