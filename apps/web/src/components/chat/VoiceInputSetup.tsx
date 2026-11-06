@@ -238,7 +238,7 @@ export function VoiceInputSetup(props: {
               <Button onClick={props.onRetryCatalog}>Retry loading models</Button>
             ) : null}
             {props.downloading ? (
-              <Button variant="outline" disabled={!canManage} onClick={props.onCancelDownload}>
+              <Button variant="secondary" disabled={!canManage} onClick={props.onCancelDownload}>
                 Cancel download
               </Button>
             ) : null}

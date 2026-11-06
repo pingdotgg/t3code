@@ -194,7 +194,7 @@ export function MicrophoneTest({
     phase === "recording" || phase === "starting" ? (
       <Button
         size="sm"
-        variant="outline"
+        variant="secondary"
         aria-label="Stop recording"
         disabled={phase !== "recording"}
         onClick={() => {
@@ -206,7 +206,7 @@ export function MicrophoneTest({
         Stop
       </Button>
     ) : (
-      <Button size="sm" variant="outline" onClick={() => void start()}>
+      <Button size="sm" variant="secondary" onClick={() => void start()}>
         {phase === "ready" ? <RotateCcwIcon /> : <MicIcon />}
         {phase === "ready" ? "Record again" : "Record"}
       </Button>
@@ -309,7 +309,7 @@ function MicrophonePlayback({ src, duration }: { src: string; duration: number }
       />
       <Button
         size="icon-sm-pill"
-        variant="outline"
+        variant="secondary"
         aria-label={playing ? "Pause recording" : "Play recording"}
         onClick={() => void togglePlayback()}
       >

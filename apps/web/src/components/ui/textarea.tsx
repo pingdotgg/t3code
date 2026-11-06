@@ -42,7 +42,7 @@ function Textarea({
               rows === undefined
                 ? undefined
                 : {
-                    minHeight: `calc(${rows}lh + 2 * (var(--spacing) * ${size === "sm" ? 1 : size === "lg" ? 2 : 1.5} - 1px))`,
+                    minHeight: `calc(${rows}lh + 2 * (var(--spacing) * ${size === "sm" ? 1 : 1.5} - 1px))`,
                   }
             }
             data-slot="textarea"
