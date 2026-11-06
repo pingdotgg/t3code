@@ -4,6 +4,7 @@ import {
   ChatAttachmentId,
   ChatFileAttachment,
   CommandId,
+  EventId,
   MessageId,
   NodeId,
   type OrchestrationV2AppThread,
@@ -39,15 +40,18 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { CodexAppServerRequestError } from "effect-codex-app-server/errors";
-import { SqlError, classifySqliteError } from "effect/sql/SqlError";
+import { SqlError, classifySqliteError, isSqlError } from "effect/sql/SqlError";
 
 import { toPersistenceSqlError } from "../persistence/Errors.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
+import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -3709,6 +3713,8 @@ function runBackgroundItemScenario(
     ) => Effect.Effect<void>;
     // Consumes through the real commit coordinator, as the event sink does.
     readonly batched?: boolean;
+    // Consumes through this sink instead; `onIngest` makes its own writes.
+    readonly eventSink?: EventSink.EventSinkV2["Service"];
     readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterTurnStartError>;
     readonly keepEventStreamOpen?: boolean;
     readonly hasPendingBackgroundWorkForThread?: (
@@ -3764,6 +3770,9 @@ function runBackgroundItemScenario(
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           layerTurnItemPositionsTest,
           mockEventSink({
+            ...(options?.eventSink === undefined
+              ? {}
+              : { consumeProviderEvents: options.eventSink.consumeProviderEvents }),
             ...(coordinator === undefined ? {} : { consumeProviderEvents: coordinator.consume }),
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
@@ -4184,16 +4193,89 @@ it.effect.each([
   }),
 );
 
+const layerPersistedEventSink = EventSink.layer.pipe(
+  Layer.provideMerge(Layer.merge(EventStore.layer, ProjectionStore.layer)),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
+);
+
+/** Writes turn items through a real event sink and SQLite, failing each COMMIT until restored. */
+const persistTurnItemsWithFailingCommit = Effect.fn(function* (
+  sentinel: OrchestrationV2TurnItem,
+  onPublished: (turnItem: OrchestrationV2TurnItem) => Effect.Effect<void>,
+) {
+  const eventSink = yield* EventSink.EventSinkV2;
+  const sql = yield* SqlClient.SqlClient;
+  let written = 0;
+  const write = (turnItem: OrchestrationV2TurnItem) =>
+    eventSink
+      .write({
+        events: [
+          {
+            id: EventId.make(`event:commit-fault:${written++}`),
+            type: "turn-item.updated",
+            threadId: turnItem.threadId,
+            ...(turnItem.runId === null ? {} : { runId: turnItem.runId }),
+            occurredAt: DateTime.makeUnsafe("2026-07-21T12:00:00.000Z"),
+            payload: turnItem,
+          },
+        ],
+      })
+      .pipe(
+        // Only a failed COMMIT leaves its transaction open here. A full disk's ends it, so end
+        // this one the same way; the ROLLBACK fails if the write failed before COMMIT.
+        Effect.tapError(() => sql`ROLLBACK`.pipe(Effect.orDie)),
+      );
+  const subscribed = yield* Deferred.make<void>();
+  yield* eventSink.stream({ eventType: "turn-item.updated" }).pipe(
+    Stream.runForEach(({ event }) =>
+      event.type !== "turn-item.updated"
+        ? Effect.void
+        : event.payload.id === sentinel.id
+          ? Deferred.succeed(subscribed, undefined)
+          : onPublished(event.payload),
+    ),
+    Effect.forkChild,
+  );
+  yield* write(sentinel);
+  yield* Deferred.await(subscribed);
+  // Every write statement succeeds; the deferred dangling reference fails only the COMMIT.
+  yield* sql`CREATE TABLE commit_fault_parent (id TEXT PRIMARY KEY)`;
+  yield* sql`CREATE TABLE commit_fault_child (
+    parent_id TEXT REFERENCES commit_fault_parent (id) DEFERRABLE INITIALLY DEFERRED
+  )`;
+  yield* sql`CREATE TABLE commit_fault (enabled INTEGER NOT NULL)`;
+  yield* sql`INSERT INTO commit_fault VALUES (1)`;
+  yield* sql`CREATE TRIGGER commit_fault AFTER INSERT ON orchestration_events
+    WHEN (SELECT enabled FROM commit_fault) = 1
+    BEGIN INSERT INTO commit_fault_child VALUES ('missing'); END`;
+  return {
+    eventSink,
+    write,
+    restore: sql`UPDATE commit_fault SET enabled = 0`.pipe(Effect.orDie),
+    persistedTexts: (itemId: TurnItemId) =>
+      sql<{ readonly text: string }>`
+        SELECT json_extract(payload_json, '$.text') AS text FROM orchestration_events
+        WHERE event_type = 'turn-item.updated' AND json_extract(payload_json, '$.id') = ${itemId}
+        ORDER BY sequence
+      `.pipe(
+        Effect.map((rows) => rows.map((row) => row.text)),
+        Effect.orDie,
+      ),
+  };
+});
+
 it.effect.each([
-  { name: "before", afterRoot: false, batched: false },
-  { name: "after", afterRoot: true, batched: false },
-  { name: "before", afterRoot: false, batched: true },
-  { name: "after", afterRoot: true, batched: true },
+  { name: "before", afterRoot: false, batched: false, persisted: false },
+  { name: "after", afterRoot: true, batched: false, persisted: false },
+  { name: "before", afterRoot: false, batched: true, persisted: false },
+  { name: "after", afterRoot: true, batched: true, persisted: false },
+  // The idle write's body runs and only its COMMIT fails.
+  { name: "before", afterRoot: false, batched: true, persisted: true },
 ])(
-  "retries a failed idle flush $name the root completes and keeps the run live (batched: $batched)",
-  ({ afterRoot, batched }) =>
+  "retries a failed idle flush $name the root completes and keeps the run live (batched: $batched, persisted: $persisted)",
+  ({ afterRoot, batched, persisted }) =>
     Effect.gen(function* () {
-      const key = `idle-flush-retry-${afterRoot ? "after" : "before"}-root${batched ? "-batched" : ""}`;
+      const key = `idle-flush-retry-${afterRoot ? "after" : "before"}-root${batched ? "-batched" : ""}${persisted ? "-persisted" : ""}`;
       const ids = backgroundScenarioIds(key);
       const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
       const subagentIngested = yield* Deferred.make<void>();
@@ -4202,10 +4284,30 @@ it.effect.each([
       const failureHandled = yield* Deferred.make<void>();
       const retried = yield* Deferred.make<void>();
       const attempts = yield* Ref.make(0);
+      // What subscribers saw when persisted; otherwise what the write received.
       const childWrites = yield* Ref.make<ReadonlyArray<string>>([]);
       const interrupts = yield* Ref.make(0);
+      const recordChildWrite = Effect.fnUntraced(function* (turnItem: OrchestrationV2TurnItem) {
+        if (turnItem.type !== "assistant_message") return;
+        const { text, streaming } = turnItem;
+        yield* Ref.update(childWrites, (current) => [
+          ...current,
+          `${streaming ? "streaming" : "final"}:${text}`,
+        ]);
+        if (text === heldChildText) yield* Deferred.succeed(retried, undefined);
+      });
+      const snapshot = childAssistantSnapshot(ids);
+      assert(snapshot.type === "turn_item.updated");
+      const persistence = persisted
+        ? yield* persistTurnItemsWithFailingCommit(
+            { ...snapshot.turnItem, id: TurnItemId.make(`${ids.childItemId}:sentinel`) },
+            recordChildWrite,
+          ).pipe(Effect.provideContext(yield* Layer.build(layerPersistedEventSink)))
+        : undefined;
+      const commitFailure = yield* Ref.make<string | null>(null);
       const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(events), {
-        batched,
+        batched: batched && persistence === undefined,
+        ...(persistence === undefined ? {} : { eventSink: persistence.eventSink }),
         onIngest: (event) =>
           Effect.gen(function* () {
             if (event.type === "subagent.updated") {
@@ -4222,14 +4324,16 @@ it.effect.each([
             ) {
               yield* Deferred.succeed(firstWriteFailed, undefined);
               yield* Effect.sleep("2 seconds");
-              return yield* Effect.die(new Error("disk I/O error"));
+              if (persistence === undefined) return yield* Effect.die(new Error("disk I/O error"));
+              return yield* persistence.write(event.turnItem).pipe(
+                Effect.tapError((error) =>
+                  Ref.set(commitFailure, isSqlError(error.cause) ? error.cause.reason._tag : null),
+                ),
+                Effect.orDie,
+              );
             }
-            const { text, streaming } = event.turnItem;
-            yield* Ref.update(childWrites, (current) => [
-              ...current,
-              `${streaming ? "streaming" : "final"}:${text}`,
-            ]);
-            if (isHeldChildSnapshot(event)) yield* Deferred.succeed(retried, undefined);
+            if (persistence === undefined) return yield* recordChildWrite(event.turnItem);
+            yield* persistence.write(event.turnItem).pipe(Effect.orDie);
           }),
         onFinalized: () => Deferred.succeed(rootFinalized, undefined),
         onInterruptTurn: () => Ref.update(interrupts, (n) => n + 1),
@@ -4247,17 +4351,18 @@ it.effect.each([
       yield* Deferred.await(failureHandled);
       assert.equal(yield* Ref.get(attempts), 1);
       assert.deepEqual(yield* Ref.get(childWrites), []);
+      if (persistence !== undefined) {
+        assert.equal(yield* Ref.get(commitFailure), "ConstraintError");
+        assert.deepEqual(yield* persistence.persistedTexts(ids.childItemId), []);
+        yield* persistence.restore;
+      }
       yield* TestClock.adjust("1 second");
       yield* Deferred.await(retried);
-      const childText = (text: string, streaming: boolean) => {
-        const snapshot = childAssistantSnapshot(ids);
-        return snapshot.type === "turn_item.updated"
-          ? ({
-              ...snapshot,
-              turnItem: { ...snapshot.turnItem, text, streaming },
-            } as ProviderAdapter.ProviderAdapterV2Event)
-          : snapshot;
-      };
+      const childText = (text: string, streaming: boolean) =>
+        ({
+          ...snapshot,
+          turnItem: { ...snapshot.turnItem, text, streaming },
+        }) as ProviderAdapter.ProviderAdapterV2Event;
       yield* Queue.offerAll(events, [
         childText(`${heldChildText} and more`, true),
         childText(`${heldChildText} and more.`, false),
@@ -4270,6 +4375,12 @@ it.effect.each([
         `streaming:${heldChildText}`,
         `final:${heldChildText} and more.`,
       ]);
+      if (persistence !== undefined) {
+        assert.deepEqual(yield* persistence.persistedTexts(ids.childItemId), [
+          heldChildText,
+          `${heldChildText} and more.`,
+        ]);
+      }
       assert.equal(yield* Ref.get(interrupts), 0);
       assert.include(observed, "root-finalized");
       assert.equal(observed.at(-1), "subagent:completed");
