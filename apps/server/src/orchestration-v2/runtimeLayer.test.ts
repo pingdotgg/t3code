@@ -2863,7 +2863,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               Layer.mock(GitManager.GitManager)({
                 branchPullRequest: (input, options) =>
                   Effect.gen(function* () {
-                    if (!options?.freshGitState) {
+                    if (!options?.freshGitState && input.branch in openPullRequests) {
                       yield* Queue.offer(lookups, input.branch);
                       if (input.branch === "theo/update-13.4.0") {
                         yield* Deferred.await(releaseNewBranchLookup);
