@@ -133,12 +133,16 @@ private final class TerminalInputField: UITextField {
     action: #selector(handleHardwareKeyCommand(_:))
   )
 
+  // While an IME composes, arrows, Tab and Escape pick or cancel candidates instead.
   override var keyCommands: [UIKeyCommand]? {
-    Self.hardwareKeyCommands
+    markedTextRange == nil ? Self.hardwareKeyCommands : nil
   }
 
   override func deleteBackward() {
-    onDeleteBackward?()
+    // Backspace edits marked or committed field text first; the field diff sends that DEL.
+    if markedTextRange == nil, !hasText {
+      onDeleteBackward?()
+    }
     super.deleteBackward()
   }
 
@@ -198,6 +202,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private var lastAppliedBuffer = ""
   private var streamedOutput: TerminalOutputBuffer?
   private var pendingVerticalScrollPoints: CGFloat = 0
+  private var sentInput = ""
   private var app: ghostty_app_t?
   private var surface: ghostty_surface_t?
   private var isCreatingSurface = false
@@ -348,19 +353,22 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     inputField.spellCheckingType = .no
     inputField.smartDashesType = .no
     inputField.smartQuotesType = .no
+    inputField.smartInsertDeleteType = .no
     inputField.returnKeyType = .send
-    inputField.keyboardType = .asciiCapable
+    inputField.keyboardType = .default
     inputField.enablesReturnKeyAutomatically = false
     inputField.translatesAutoresizingMaskIntoConstraints = false
     inputField.alpha = 0.02
     inputField.isAccessibilityElement = false
     inputField.accessibilityElementsHidden = true
     inputField.addTarget(self, action: #selector(handleInputEditingDidBegin), for: .editingDidBegin)
+    inputField.addTarget(self, action: #selector(handleInputEditingChanged), for: .editingChanged)
     inputField.onDeleteBackward = { [weak self] in
       self?.emitInput("\u{7F}")
     }
     inputField.onInsert = { [weak self] data in
       self?.emitInput(data)
+      self?.resetInputField()
     }
 
     focusTapGesture.addTarget(self, action: #selector(handleViewportTap))
@@ -417,21 +425,11 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     }
   }
 
-  public func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
-    if !string.isEmpty {
-      // Some software keyboards deliver Return through this delegate instead of
-      // textFieldShouldReturn, so normalize that path too.
-      emitInput(TerminalInputSequence.normalizingReturn(string))
-      return false
-    }
-
-    emitInput("\u{7F}")
-    return false
-  }
-
   public func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+    // Return during a composition commits it; that is not Enter.
+    guard textField.markedTextRange == nil else { return false }
     emitInput(TerminalInputSequence.carriageReturn)
-    textField.text = ""
+    resetInputField()
     return false
   }
 
@@ -480,9 +478,42 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     }
   }
 
+  // Korean keyboards build a syllable by replacing the committed character before the cursor,
+  // so the field keeps what was sent and each change goes out as DELs plus the new suffix.
+  // Scalars, not Characters: a Thai or Indic mark joins the previous grapheme, and resending
+  // that grapheme after one DEL would leave its base twice in a code-point line editor.
+  @objc
+  private func handleInputEditingChanged() {
+    guard inputField.markedTextRange == nil else { return }
+    let text = inputField.text ?? ""
+    let fieldScalars = text.unicodeScalars
+    let sentScalars = sentInput.unicodeScalars
+    let commonCount = zip(fieldScalars, sentScalars).prefix { $0.0 == $0.1 }.count
+    let unsent = String(String.UnicodeScalarView(sentScalars.dropFirst(commonCount)))
+    let added = String(String.UnicodeScalarView(fieldScalars.dropFirst(commonCount)))
+    // Some software keyboards deliver Return as an inserted newline instead of textFieldShouldReturn.
+    emitInput(String(repeating: "\u{7F}", count: unsent.count) + TerminalInputSequence.normalizingReturn(added))
+    sentInput = text
+    // A Hangul syllable never spans whitespace; past the cap, keep the last character to compose onto.
+    if text.last?.isWhitespace == true {
+      resetInputField()
+    } else if text.count > 64 {
+      let last = String(text.suffix(1))
+      inputField.text = last
+      sentInput = last
+    }
+  }
+
   @objc
   private func handleInputEditingDidBegin() {
+    // A composition abandoned by losing focus must not reach the PTY with the next keystroke.
+    resetInputField()
     textInputModeDidChange()
+  }
+
+  func resetInputField() {
+    inputField.text = ""
+    sentInput = ""
   }
 
   private func createSurfaceIfPossible() {

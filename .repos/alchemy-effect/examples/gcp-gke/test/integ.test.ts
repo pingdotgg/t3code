@@ -1,20 +1,19 @@
+import { describe, expect } from "bun:test";
+import * as GCP from "@alchemy.run/gcp";
+import * as Kubernetes from "@alchemy.run/kubernetes";
+import * as Test from "@alchemy.run/test/Bun";
+import * as resourcemanager from "@distilled.cloud/gcp/cloudresourcemanager_v3";
 import * as compute from "@distilled.cloud/gcp/compute_v1";
 import * as container from "@distilled.cloud/gcp/container_v1";
-import * as resourcemanager from "@distilled.cloud/gcp/cloudresourcemanager_v3";
 import * as firestore from "@distilled.cloud/gcp/firestore_v1";
 import * as Alchemy from "alchemy";
-import * as GCP from "alchemy/GCP";
-import * as Kubernetes from "alchemy/Kubernetes";
-import * as Test from "alchemy/Test/Bun";
-import { describe, expect } from "bun:test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import { spawnSync } from "node:child_process";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import Stack from "../alchemy.run.ts";
 import { seedEntries } from "../src/SeedJob.ts";
 
@@ -25,17 +24,7 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
 
 // Out-of-band calls to the Google APIs resolve the same stored credentials
 // the deploy uses, so the test runs against the configured profile.
-const GcpHttp = Layer.mergeAll(
-  GCP.GcpAuth,
-  GCP.fromAuthProvider(),
-  FetchHttpClient.layer,
-);
-
-// `Api` and `SeedJob` are built from `main`, and `Web`'s image is mirrored
-// into Artifact Registry — both need a local Docker daemon.
-const dockerAvailable =
-  spawnSync("docker", ["info"], { stdio: "ignore", timeout: 15_000 }).status ===
-  0;
+const GcpHttp = Layer.mergeAll(GCP.GcpAuth, GCP.fromAuthProvider(), FetchHttpClient.layer);
 
 // The project comes from the same credential the deploy uses.
 const currentProject = GCP.GcpEnvironment.current.pipe(
@@ -44,7 +33,7 @@ const currentProject = GCP.GcpEnvironment.current.pipe(
 );
 
 // Deploy, tests and destroy all sit behind the same Docker guard.
-describe.skipIf(!dockerAvailable)("gcp-gke", () => {
+describe("gcp-gke", () => {
   // Autopilot cluster creation dominates the deploy (~5–10 min).
   const stack = beforeAll(deploy(Stack), { timeout: 1_800_000 });
 
@@ -52,19 +41,14 @@ describe.skipIf(!dockerAvailable)("gcp-gke", () => {
   const gone = () => Effect.succeed("gone" as const);
 
   /** Poll until a deleted resource reads as gone. */
-  const expectGone = <E, R>(
-    what: string,
-    status: Effect.Effect<"found" | "gone", E, R>,
-  ) =>
+  const expectGone = <E, R>(what: string, status: Effect.Effect<"found" | "gone", E, R>) =>
     status.pipe(
       Effect.repeat({
         schedule: Schedule.spaced("5 seconds"),
         until: (status) => status === "gone",
         times: 12,
       }),
-      Effect.tap((status) =>
-        Effect.sync(() => expect(`${what}: ${status}`).toBe(`${what}: gone`)),
-      ),
+      Effect.tap((status) => Effect.sync(() => expect(`${what}: ${status}`).toBe(`${what}: gone`))),
     );
 
   const projectNumber = (project: string) =>
@@ -73,12 +57,7 @@ describe.skipIf(!dockerAvailable)("gcp-gke", () => {
       .pipe(Effect.map((p) => (p.name ?? "").split("/").pop() ?? ""));
 
   /** The Workload Identity Federation principal of a Kubernetes ServiceAccount. */
-  const ksaPrincipal = (
-    project: string,
-    number: string,
-    namespace: string,
-    ksa: string,
-  ) =>
+  const ksaPrincipal = (project: string, number: string, namespace: string, ksa: string) =>
     `principal://iam.googleapis.com/projects/${number}/locations/global/` +
     `workloadIdentityPools/${project}.svc.id.goog/subject/ns/${namespace}/sa/${ksa}`;
 
@@ -92,22 +71,16 @@ describe.skipIf(!dockerAvailable)("gcp-gke", () => {
         }),
       ),
       Effect.map((policy) =>
-        (policy.bindings ?? []).filter((binding) =>
-          (binding.members ?? []).includes(member),
-        ),
+        (policy.bindings ?? []).filter((binding) => (binding.members ?? []).includes(member)),
       ),
     );
 
   /** Forwarding rules GKE created for Services in the `guestbook` namespace. */
   const guestbookForwardingRules = currentProject.pipe(
-    Effect.flatMap((project) =>
-      compute.listForwardingRules({ project, region: "us-central1" }),
-    ),
+    Effect.flatMap((project) => compute.listForwardingRules({ project, region: "us-central1" })),
     Effect.map((page) =>
       (page.items ?? []).filter((rule) =>
-        (rule.description ?? "").includes(
-          '"kubernetes.io/service-name":"guestbook/',
-        ),
+        (rule.description ?? "").includes('"kubernetes.io/service-name":"guestbook/'),
       ),
     ),
   );
@@ -125,19 +98,14 @@ describe.skipIf(!dockerAvailable)("gcp-gke", () => {
     times: number,
   ) =>
     attempt.pipe(
-      Effect.filterOrFail(
-        ready,
-        (value) => new NotReady({ detail: JSON.stringify(value) }),
-      ),
+      Effect.filterOrFail(ready, (value) => new NotReady({ detail: JSON.stringify(value) })),
       Effect.retry({ schedule: Schedule.spaced("10 seconds"), times }),
     );
 
   const get = (url: string) =>
     HttpClient.execute(HttpClientRequest.get(url)).pipe(
       Effect.flatMap((response) =>
-        response.text.pipe(
-          Effect.map((text) => ({ status: response.status, text })),
-        ),
+        response.text.pipe(Effect.map((text) => ({ status: response.status, text }))),
       ),
     );
 
@@ -151,60 +119,37 @@ describe.skipIf(!dockerAvailable)("gcp-gke", () => {
       const project = yield* currentProject;
       const number = yield* projectNumber(project);
       return [
-        ksaPrincipal(
-          project,
-          number,
-          outputs.namespace,
-          outputs.apiServiceAccount,
-        ),
-        ksaPrincipal(
-          project,
-          number,
-          outputs.namespace,
-          outputs.seedJobServiceAccount,
-        ),
+        ksaPrincipal(project, number, outputs.namespace, outputs.apiServiceAccount),
+        ksaPrincipal(project, number, outputs.namespace, outputs.seedJobServiceAccount),
       ];
     }).pipe(Effect.provide(GcpHttp));
 
   afterAll.skipIf(!!process.env.NO_DESTROY)(
     Effect.gen(function* () {
       const outputs = yield* stack;
-      const principals =
-        outputs === undefined ? [] : yield* principalsOf(outputs);
+      const principals = outputs === undefined ? [] : yield* principalsOf(outputs);
       yield* destroy(Stack);
       if (outputs === undefined) return;
 
       // Every grant is revoked from the workloads' principals.
       for (const principal of principals) {
-        const bindings = yield* projectBindingsOf(principal).pipe(
-          Effect.provide(GcpHttp),
-        );
+        const bindings = yield* projectBindingsOf(principal).pipe(Effect.provide(GcpHttp));
         expect(bindings).toEqual([]);
       }
       // The LoadBalancer Services were drained before the cluster went, so
       // no load balancer leaked.
-      expect(
-        yield* guestbookForwardingRules.pipe(Effect.provide(GcpHttp)),
-      ).toEqual([]);
+      expect(yield* guestbookForwardingRules.pipe(Effect.provide(GcpHttp))).toEqual([]);
       yield* expectGone(
         "cluster",
         container
           .getProjectsLocationsClusters({ name: outputs.clusterName })
-          .pipe(
-            found,
-            Effect.catchTag("NotFound", gone),
-            Effect.provide(GcpHttp),
-          ),
+          .pipe(found, Effect.catchTag("NotFound", gone), Effect.provide(GcpHttp)),
       );
       yield* expectGone(
         "database",
         firestore
           .getProjectsDatabases({ name: outputs.databaseName })
-          .pipe(
-            found,
-            Effect.catchTag("NotFound", gone),
-            Effect.provide(GcpHttp),
-          ),
+          .pipe(found, Effect.catchTag("NotFound", gone), Effect.provide(GcpHttp)),
       );
     }),
     { timeout: 1_800_000 },
@@ -226,9 +171,7 @@ describe.skipIf(!dockerAvailable)("gcp-gke", () => {
     Effect.gen(function* () {
       const outputs = yield* stack;
       for (const principal of yield* principalsOf(outputs)) {
-        const bindings = yield* projectBindingsOf(principal).pipe(
-          Effect.provide(GcpHttp),
-        );
+        const bindings = yield* projectBindingsOf(principal).pipe(Effect.provide(GcpHttp));
         // `roles/datastore.user` on the project, conditioned to the
         // guestbook database only.
         expect(bindings).toHaveLength(1);
@@ -259,10 +202,7 @@ describe.skipIf(!dockerAvailable)("gcp-gke", () => {
               : { entries: [] as Entry[] },
           ),
         ),
-        (body) =>
-          seedEntries.every((seed) =>
-            body.entries.some((entry) => entry.id === seed.id),
-          ),
+        (body) => seedEntries.every((seed) => body.entries.some((entry) => entry.id === seed.id)),
         60,
       );
       for (const seed of seedEntries) {
@@ -289,14 +229,10 @@ describe.skipIf(!dockerAvailable)("gcp-gke", () => {
       // Until the Firestore grant has propagated the API answers 500.
       const created = yield* until(
         HttpClient.execute(
-          HttpClientRequest.post(
-            `${baseUrl}/entries?author=integ&message=hello%20from%20gke`,
-          ),
+          HttpClientRequest.post(`${baseUrl}/entries?author=integ&message=hello%20from%20gke`),
         ).pipe(
           Effect.flatMap((response) =>
-            response.text.pipe(
-              Effect.map((text) => ({ status: response.status, text })),
-            ),
+            response.text.pipe(Effect.map((text) => ({ status: response.status, text }))),
           ),
         ),
         (response) => response.status !== 500,
