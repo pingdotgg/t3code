@@ -598,8 +598,8 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
     expect(actualReads).toEqual(
       (exhausted
         ? [
-            [primary, fallback, unrelated],
             [primary, fallback],
+            [primary, fallback, unrelated],
           ]
         : [[primary], [primary]]
       ).map((ids) => ids.sort()),
