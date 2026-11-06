@@ -1,5 +1,5 @@
 import type { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
-import type { ContextWindowSnapshot } from "../../lib/contextWindow";
+import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import {
   resolveSelectableProviderInstanceEntry,
   type ProviderInstanceEntry,
