@@ -36,7 +36,9 @@ import {
 import * as ServerConfig from "../config.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import type * as RuntimeLayer from "./runtimeLayer.ts";
 import { layerCeilingsMemory } from "./NadirRouting.ts";
 import {
   OrchestratorCommandPreviouslyRejectedError,
@@ -484,7 +486,19 @@ describe("Nadir routing at intake", () => {
     skills: [],
   };
 
-  const run = <A, E, R>(effect: Effect.Effect<A, E, R>, activeRunId: RunId | null) =>
+  const layerMockReceipts = Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({
+    getByCommandId: (commandId) =>
+      commandId === "send-lookup-fails"
+        ? Effect.fail({} as never)
+        : Effect.succeed(commandId === "send-replayed" ? Option.some({} as never) : Option.none()),
+  });
+
+  const run = <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+    activeRunId: RunId | null,
+    // Layer.empty leaves the receipt store to the caller's context.
+    layerReceipts: typeof layerMockReceipts | typeof Layer.empty = layerMockReceipts,
+  ) =>
     Effect.gen(function* () {
       let requests = 0;
       const dispatched: Array<string | undefined> = [];
@@ -537,14 +551,7 @@ describe("Nadir routing at intake", () => {
             Layer.mock(ProviderRegistry.ProviderRegistry)({
               getProviders: Effect.succeed([provider]),
             }),
-            Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({
-              getByCommandId: (commandId) =>
-                commandId === "send-lookup-fails"
-                  ? Effect.fail({} as never)
-                  : Effect.succeed(
-                      commandId === "send-replayed" ? Option.some({} as never) : Option.none(),
-                    ),
-            }),
+            layerReceipts,
             Layer.succeed(
               HttpClient.HttpClient,
               HttpClient.make((request) => {
@@ -626,6 +633,39 @@ describe("Nadir routing at intake", () => {
         expect(result, label).toEqual({ requests: 0, dispatched: [undefined] });
       }
     }).pipe(Effect.provide(layerIntakeTest)),
+  );
+
+  it.effect("does not route a command the server's receipt store already accepted", () =>
+    Effect.gen(function* () {
+      // The server runs layerProduction; intake can only see receipts if it exposes the store.
+      const productionExposesReceipts: CommandReceiptStore.CommandReceiptStoreV2 extends Layer.Success<
+        typeof RuntimeLayer.layerProduction
+      >
+        ? true
+        : false = true;
+      expect(productionExposesReceipts).toBe(true);
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+      yield* receipts.insertIfAbsent({
+        commandId: CommandId.make("send-routed"),
+        threadId: ThreadId.make("thread-routed"),
+        commandType: "message.dispatch",
+        acceptedAt: NOW,
+        resultSequence: 1,
+        status: "accepted",
+        error: null,
+      });
+      expect(yield* run(dispatchCommand(send()), null, Layer.empty)).toEqual({
+        requests: 0,
+        dispatched: [undefined],
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+          layerIntakeTest,
+        ),
+      ),
+    ),
   );
 
   it.effect("asks Nadir once for a command retried while its first attempt routes", () =>
