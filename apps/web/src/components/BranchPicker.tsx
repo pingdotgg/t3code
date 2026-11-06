@@ -1,16 +1,9 @@
 import type { VcsRef } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import {
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ComponentProps,
-  type ReactNode,
-} from "react";
+import { useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
 
 import { MiddleTruncate } from "./ui/middle-truncate";
+import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
 import { shouldLoadNextBranchPageAfterScroll } from "../state/paginatedBranches";
 import { RefreshIcon } from "./ui/refresh-icon";
@@ -32,7 +25,6 @@ export function BranchPicker({
   filteredItems,
   value,
   query,
-  resultsQuery,
   onQueryChange,
   open,
   onOpenChange,
@@ -51,7 +43,6 @@ export function BranchPicker({
   filteredItems: string[];
   value: string | null;
   query: string;
-  resultsQuery: string;
   onQueryChange: (value: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -121,32 +112,22 @@ export function BranchPicker({
     setShowBottomBranchScrollFade(maxScrollOffset - scrollElement.scrollTop > 1);
   };
 
-  useLayoutEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    let nestedFrame = 0;
-    const frame = requestAnimationFrame(() => {
-      updateBranchListScrollFades();
-      nestedFrame = requestAnimationFrame(updateBranchListScrollFades);
-    });
+  // The popup mounts the list when it opens. Its content settles over a few
+  // frames as rows measure, so the fades follow the scroller and its content.
+  const attachBranchList = (list: LegendListRef | null) => {
+    branchListRef.current = list;
+    const scrollElement = list?.getScrollableNode?.();
+    if (!(scrollElement instanceof HTMLElement)) return;
+    const content = scrollElement.firstElementChild;
+    const stopObserving = observeResize(
+      content ? [scrollElement, content] : scrollElement,
+      updateBranchListScrollFades,
+    );
     return () => {
-      cancelAnimationFrame(frame);
-      cancelAnimationFrame(nestedFrame);
+      stopObserving();
+      branchListRef.current = null;
     };
-  }, [open, updateBranchListScrollFades]);
-
-  const previousResultsQuery = useRef<string | null>(null);
-  useEffect(() => {
-    if (!open) {
-      previousResultsQuery.current = null;
-      return;
-    }
-    if (previousResultsQuery.current === resultsQuery) return;
-    previousResultsQuery.current = resultsQuery;
-    void branchListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
-  }, [resultsQuery, open]);
+  };
 
   return (
     <Combobox
@@ -173,7 +154,10 @@ export function BranchPicker({
         <ComboboxSearchInput
           placeholder="Search refs..."
           value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
+          onChange={(event) => {
+            onQueryChange(event.target.value);
+            void branchListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+          }}
           onKeyDown={(event) => {
             if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229)
               return;
@@ -193,7 +177,7 @@ export function BranchPicker({
           <div className="relative flex min-h-0 w-full max-h-56 flex-1 flex-col overflow-hidden">
             <ComboboxListVirtualized className="flex size-full min-h-0 min-w-0 flex-col">
               <LegendList<string>
-                ref={branchListRef}
+                ref={attachBranchList}
                 data={filteredItems}
                 keyExtractor={(item) => item}
                 {...(getItemType ? { getItemType } : {})}
@@ -229,21 +213,22 @@ export function BranchPicker({
                   >
                     <span className="flex min-w-0 items-center gap-1.5 font-medium text-muted-foreground">
                       <RefreshIcon aria-hidden="true" className="size-3 shrink-0" />
-                      <span className="truncate">Start from origin</span>
+                      <span className="truncate">Start from remote</span>
                     </span>
                     <Switch
                       id={startFromOriginSwitchId}
                       checked={originControl.checked}
                       size="sm"
-                      aria-label="Start worktree from origin"
+                      aria-label="Start worktree from remote"
                       onCheckedChange={(checked) => originControl.onCheckedChange(Boolean(checked))}
                     />
                   </label>
                 }
               />
               <TooltipPopup side="top" className="max-w-72 whitespace-normal">
-                Creates the worktree from the latest matching branch on origin instead of your local
-                branch.
+                Uses the latest commit of the base branch’s tracked remote branch, even if its name
+                differs. Otherwise uses the same-named branch on origin. Uses your local branch if
+                that remote branch is missing.
               </TooltipPopup>
             </Tooltip>
           ) : null}

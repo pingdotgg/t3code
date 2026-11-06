@@ -10,6 +10,7 @@ import {
   Wakeups,
 } from "@t3tools/client-runtime/connection";
 import { managedRelayAccountChanges, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -82,12 +83,7 @@ const layerConnectivity = Connectivity.layer({
   ),
 });
 
-/**
- * Wakes connections when the device moves between networks while staying
- * online, such as Wi-Fi to cellular. Connectivity only reports online or
- * offline, so leaving home on cellular would otherwise go unnoticed until the
- * LAN socket times out.
- */
+/** Wake connections on network path changes; online/offline misses Wi-Fi-to-cellular moves. */
 const networkPathChanges = Stream.callback<"network-changed">((queue) =>
   Effect.acquireRelease(
     Effect.sync(() => {
@@ -100,8 +96,7 @@ const networkPathChanges = Stream.callback<"network-changed">((queue) =>
         }
         previous = type ?? previous;
       };
-      // The listener reports changes only, so seed the current type; without
-      // it the first Wi-Fi to cellular move would go unnoticed.
+      // Seed the current type: the listener reports only changes and would miss the first move.
       void Network.getNetworkStateAsync()
         .then((state) => {
           if (active && previous === undefined && state.isConnected === true) {
@@ -124,10 +119,11 @@ const networkPathChanges = Stream.callback<"network-changed">((queue) =>
 const layerWakeups = Wakeups.layer({
   changes: Stream.mergeAll(
     [
-      Stream.callback<"application-active-probe" | "application-active-reconnect">((queue) =>
+      Stream.callback<"application-active-probe" | "application-active-long">((queue) =>
         Effect.acquireRelease(
-          Effect.sync(() => {
-            let backgroundedAtMs = AppState.currentState === "background" ? Date.now() : null;
+          Effect.gen(function* () {
+            const nowMs = yield* Clock.currentTimeMillis;
+            let backgroundedAtMs = AppState.currentState === "background" ? nowMs : null;
             return AppState.addEventListener("change", (state) => {
               if (state === "background") {
                 backgroundedAtMs = Date.now();
@@ -193,9 +189,13 @@ const layerCapabilities = Layer.effectContext(
       Context.add(
         ClientCapabilities.PrimaryEnvironmentAuth,
         ClientCapabilities.PrimaryEnvironmentAuth.of({
-          bearerToken: Effect.succeed(Option.none()),
+          bearerToken: Effect.succeedNone,
         }),
       ),
+      // The relay device id already persists in secure storage; analytics only sends its hash.
+      Context.add(ClientCapabilities.AnalyticsDevice, {
+        id: storage.loadOrCreateAgentAwarenessDeviceId.pipe(Effect.option),
+      }),
       Context.add(
         ClientCapabilities.RelayDeviceIdentity,
         ClientCapabilities.RelayDeviceIdentity.of({
@@ -207,7 +207,7 @@ const layerCapabilities = Layer.effectContext(
                   detail: `Could not load the mobile device identity: ${String(cause)}`,
                 }),
             ),
-            Effect.map(Option.some),
+            Effect.asSome,
           ),
         }),
       ),
@@ -220,21 +220,25 @@ const layerCapabilities = Layer.effectContext(
       Context.add(
         ClientCapabilities.SshEnvironmentGateway,
         ClientCapabilities.SshEnvironmentGateway.of({
-          provision: () =>
+          provision: Effect.fn("ClientCapabilities.SshEnvironmentGateway.provision")(() =>
             Effect.fail(
               new ConnectionBlockedError({
                 reason: "unsupported",
                 detail: "SSH environments are only available in the desktop app.",
               }),
             ),
-          prepare: () =>
+          ),
+          prepare: Effect.fn("ClientCapabilities.SshEnvironmentGateway.prepare")(() =>
             Effect.fail(
               new ConnectionBlockedError({
                 reason: "unsupported",
                 detail: "SSH environments are only available in the desktop app.",
               }),
             ),
-          disconnect: () => Effect.void,
+          ),
+          disconnect: Effect.fn("ClientCapabilities.SshEnvironmentGateway.disconnect")(
+            () => Effect.void,
+          ),
         }),
       ),
     );
@@ -254,7 +258,7 @@ const layerProvidedCapabilities = layerCapabilities.pipe(Layer.provide(Runtime.l
 const layerEnvironmentOwnedDataCleanup = Layer.succeed(
   Persistence.EnvironmentOwnedDataCleanup,
   Persistence.EnvironmentOwnedDataCleanup.of({
-    clear: (environmentId) =>
+    clear: Effect.fn("Persistence.EnvironmentOwnedDataCleanup.clear")((environmentId) =>
       Effect.all(
         [
           Effect.promise(() => clearThreadOutboxEnvironment(environmentId)),
@@ -262,14 +266,8 @@ const layerEnvironmentOwnedDataCleanup = Layer.succeed(
           Effect.sync(() => clearThreadComposerErrorsForEnvironment(environmentId)),
         ],
         { concurrency: "unbounded", discard: true },
-      ).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not clear mobile environment-owned data.", {
-            environmentId,
-            cause,
-          }),
-        ),
       ),
+    ),
   }),
 );
 

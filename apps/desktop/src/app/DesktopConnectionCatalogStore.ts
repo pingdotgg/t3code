@@ -13,7 +13,7 @@ import {
 import type { PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
@@ -168,7 +168,6 @@ export class DesktopConnectionCatalogStore extends Context.Service<
       | DesktopConnectionCatalogStoreDocumentDecodeError
       | DesktopConnectionCatalogStoreDecodeError
     >;
-    readonly clear: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopConnectionCatalogStore") {}
 
@@ -387,7 +386,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
   const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
   const decryptWindowsCatalog =
@@ -446,16 +445,7 @@ export const make = Effect.gen(function* () {
         ),
       ),
     );
-    const suffix = (yield* crypto.randomUUIDv4().pipe(
-      Effect.mapError(
-        (cause) =>
-          new DesktopConnectionCatalogStoreWriteError({
-            operation: "create-temporary-file-name",
-            path: catalogPath,
-            cause,
-          }),
-      ),
-    )).replace(/-/g, "");
+    const suffix = (yield* random.uuidV4()).replace(/-/g, "");
     yield* writeDocument({
       fileSystem,
       path,
@@ -527,15 +517,6 @@ export const make = Effect.gen(function* () {
       yield* writeCatalog(catalog);
       return true;
     }),
-    clear: fileSystem.remove(catalogPath, { force: true }).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Could not clear the desktop connection catalog.", {
-          catalogPath,
-          error,
-        }),
-      ),
-      Effect.withSpan("desktop.connectionCatalogStore.clear"),
-    ),
   });
 });
 

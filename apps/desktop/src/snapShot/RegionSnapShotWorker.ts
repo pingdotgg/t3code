@@ -1,5 +1,4 @@
-// Runs in a forked Node-mode child so the native screenshot call cannot crash
-// or stall the main process.
+// Isolate native screenshot crashes and stalls in a Node-mode child.
 import type { RegionSnapShotRequest, RegionSnapShotResult } from "./RegionSnapShot.ts";
 
 process.once("disconnect", () => process.exit(0));

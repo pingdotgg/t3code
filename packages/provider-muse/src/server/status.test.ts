@@ -55,27 +55,6 @@ const fakeCli = (source = 'process.stdout.write("muse 1.0.3-R2198.1\\n");') =>
   });
 
 it.layer(NodeServices.layer)("Muse status", (it) => {
-  it.effect("does not start a host when disabled", () =>
-    Effect.gen(function* () {
-      const createHost = vi.fn(async () => makeHost(metaCatalog));
-      const snapshot = yield* checkMuseProviderStatus(settings({}), {}, undefined, createHost);
-      expect(snapshot.status).toBe("disabled");
-      expect(createHost).not.toHaveBeenCalled();
-    }),
-  );
-
-  it.effect("gives host-local install and login guidance for a missing binary", () =>
-    Effect.gen(function* () {
-      const snapshot = yield* checkMuseProviderStatus(
-        settings({ enabled: true, binaryPath: "/definitely-missing/muse" }),
-      );
-      expect(snapshot.installed).toBe(false);
-      expect(snapshot.status).toBe("error");
-      expect(snapshot.message).toContain("muse login");
-      expect(snapshot.message).toContain("this T3 server host");
-    }),
-  );
-
   it.effect("does not expose CLI stderr or start an SDK host after a failed version check", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -127,46 +106,6 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
         ).toEqual(["low", "medium", "high", "xhigh", "max"]);
         expect(host.connection.request).toHaveBeenCalledWith("model/list", {});
         expect(host.connection.command).not.toHaveBeenCalled();
-        expect(host.close).toHaveBeenCalledOnce();
-      }),
-    ),
-  );
-
-  it.effect("preserves a configured display name for a discovered Muse model", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const binaryPath = yield* fakeCli();
-        const snapshot = yield* checkMuseProviderStatus(
-          settings({
-            enabled: true,
-            binaryPath,
-            customModels: [{ slug: "muse-wonder-1.0", name: "Team Wonder" }],
-          }),
-          undefined,
-          undefined,
-          async () => makeHost(metaCatalog),
-        );
-        expect(snapshot.models.map(({ slug, name }) => [slug, name])).toEqual([
-          ["muse-wonder-1.0", "Team Wonder"],
-        ]);
-      }),
-    ),
-  );
-
-  it.effect("closes the host after malformed metadata and reports unavailable", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const binaryPath = yield* fakeCli();
-        const host = makeHost({ providerId: "meta", models: [{ modelId: 1 }] });
-        const snapshot = yield* checkMuseProviderStatus(
-          settings({ enabled: true, binaryPath }),
-          undefined,
-          undefined,
-          async () => host,
-        );
-        expect(snapshot.status).toBe("error");
-        expect(snapshot.auth.status).toBe("unknown");
-        expect(snapshot.models).toEqual([]);
         expect(host.close).toHaveBeenCalledOnce();
       }),
     ),

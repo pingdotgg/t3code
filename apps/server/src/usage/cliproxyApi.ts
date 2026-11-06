@@ -6,7 +6,7 @@ import {
   type UsageLimitSourceConfig,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -18,6 +18,12 @@ import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 
+/** A hub with its management key already read from wherever the setting keeps it. */
+export interface CliproxyHub {
+  readonly url: UsageLimitSourceConfig["url"];
+  readonly managementKey: string;
+}
+
 const AuthFile = Schema.Struct({
   id: Schema.String,
   auth_index: Schema.String,
@@ -28,6 +34,7 @@ const AuthFile = Schema.Struct({
     Schema.Struct({
       chatgpt_account_id: Schema.optional(Schema.String),
       chatgpt_plan_type: Schema.optional(Schema.String),
+      plan_type: Schema.optional(Schema.String),
     }),
   ),
 });
@@ -54,6 +61,17 @@ const ClaudeWindow = Schema.Struct({
 const ClaudeUsage = Schema.Struct({
   five_hour: Schema.optional(Schema.NullOr(ClaudeWindow)),
   seven_day: Schema.optional(Schema.NullOr(ClaudeWindow)),
+  spend: Schema.optional(Schema.Unknown),
+  extra_usage: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        is_enabled: Schema.Boolean,
+        monthly_limit: Schema.NullOr(Schema.Number),
+        used_credits: Schema.NullOr(Schema.Number),
+        utilization: Schema.NullOr(Schema.Number),
+      }),
+    ),
+  ),
   limits: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -90,8 +108,7 @@ const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(Claud
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
 
-// Codes that mean the certificate chain is not trusted, which an extra CA can fix. Expired or
-// mismatched certificates are reported by code only.
+// Extra CAs can fix untrusted chains; expiry/hostname failures report codes only.
 const UNTRUSTED_CERTIFICATE_CODES = new Set([
   "DEPTH_ZERO_SELF_SIGNED_CERT",
   "SELF_SIGNED_CERT_IN_CHAIN",
@@ -99,7 +116,7 @@ const UNTRUSTED_CERTIFICATE_CODES = new Set([
   "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
 ]);
 
-/** The Node error code under a failed fetch, which wraps it in a generic `TypeError`. */
+// fetch wraps Node error codes in generic TypeErrors.
 const nodeErrorCode = (cause: unknown) => {
   for (let error = cause, depth = 0; error instanceof Error && depth < 3; depth += 1) {
     const code = (error as { readonly code?: unknown }).code;
@@ -109,8 +126,7 @@ const nodeErrorCode = (cause: unknown) => {
   return undefined;
 };
 
-// Hub responses and nested error messages can carry keys or tokens, so only the failure's kind,
-// HTTP status, or Node error code reaches the client.
+// Hub responses can contain credentials; expose only failure kind, HTTP status or Node code.
 const describeManagementFailure = (error: unknown) => {
   if (Cause.isTimeoutError(error)) return "The hub did not answer within 15 seconds.";
   if (HttpClientError.isHttpClientError(error)) {
@@ -146,12 +162,12 @@ const creditRedeemRequestId = Effect.fn("CliproxyApi.creditRedeemRequestId")(fun
   accountId: string,
   creditId: string,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const name = new TextEncoder().encode(`${accountId}:${creditId}`);
   const input = new Uint8Array(CREDIT_REDEEM_NAMESPACE.length + name.length);
   input.set(CREDIT_REDEEM_NAMESPACE);
   input.set(name, CREDIT_REDEEM_NAMESPACE.length);
-  const bytes = (yield* crypto.digest("SHA-1", input).pipe(Effect.orDie)).slice(0, 16);
+  const bytes = (yield* digest.digest(Digest.sha1, input).pipe(Effect.orDie)).slice(0, 16);
   bytes[6] = (bytes[6]! & 0x0f) | 0x50;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = Hex.encode(bytes);
@@ -160,24 +176,25 @@ const creditRedeemRequestId = Effect.fn("CliproxyApi.creditRedeemRequestId")(fun
 
 export const makeCliproxyApi = Effect.gen(function* () {
   const client = yield* HttpClient.HttpClient;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
 
   const management = Effect.fn("CliproxyApi.management")(function* (
-    config: UsageLimitSourceConfig,
+    hub: CliproxyHub,
     path: string,
     body?: unknown,
   ) {
     const url = yield* Effect.try({
-      try: () =>
-        new URL(
-          `v0/management/${path}`,
-          config.url.endsWith("/") ? config.url : `${config.url}/`,
-        ).toString(),
+      try: () => {
+        const base = new URL(hub.url);
+        // Users often paste the hub's web panel URL, which ends in management.html.
+        base.pathname = base.pathname.replace(/(\/management\.html)?\/?$/i, "/");
+        return new URL(`v0/management/${path}`, base).toString();
+      },
       catch: () => new UsageLimitSourceError({ detail: "The hub URL is not valid." }),
     });
     const request = (
       body === undefined ? HttpClientRequest.get(url) : HttpClientRequest.post(url)
-    ).pipe(HttpClientRequest.setHeader("Authorization", `Bearer ${config.managementKey}`));
+    ).pipe(HttpClientRequest.setHeader("Authorization", `Bearer ${hub.managementKey}`));
     const response = yield* client
       .execute(body === undefined ? request : request.pipe(HttpClientRequest.bodyJsonUnsafe(body)))
       .pipe(
@@ -191,13 +208,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return response;
   });
 
-  const authFiles = Effect.fn("CliproxyApi.authFiles")(function* (config: UsageLimitSourceConfig) {
-    const response = yield* management(config, "auth-files");
+  const authFiles = Effect.fn("CliproxyApi.authFiles")(function* (hub: CliproxyHub) {
+    const response = yield* management(hub, "auth-files");
     return (yield* decodeAuthFiles(response)).files;
   });
 
   const apiCall = Effect.fn("CliproxyApi.apiCall")(function* (
-    config: UsageLimitSourceConfig,
+    hub: CliproxyHub,
     account: typeof AuthFile.Type,
     url: string,
     data?: unknown,
@@ -213,8 +230,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
               ? { "Chatgpt-Account-Id": account.id_token.chatgpt_account_id }
               : {}),
           }
-        : { Authorization: "Bearer $TOKEN$", "anthropic-beta": "oauth-2025-04-20" };
-    const raw = yield* management(config, "api-call", {
+        : {
+            Authorization: "Bearer $TOKEN$",
+            "anthropic-beta": "oauth-2025-04-20",
+            // The OAuth usage endpoint can return 429 without a Claude Code user agent.
+            "User-Agent": "claude-code/2.1.273",
+          };
+    const raw = yield* management(hub, "api-call", {
       auth_index: account.auth_index,
       method: data === undefined ? "GET" : "POST",
       url,
@@ -231,10 +253,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
   });
 
   const credits = Effect.fn("CliproxyApi.credits")(function* (
-    config: UsageLimitSourceConfig,
+    hub: CliproxyHub,
     account: typeof AuthFile.Type,
   ) {
-    const body = yield* apiCall(config, account, CREDIT_URL);
+    const body = yield* apiCall(hub, account, CREDIT_URL);
     const response = yield* decodeCreditList(body);
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     return response.credits
@@ -248,7 +270,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
   });
 
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
-    config: UsageLimitSourceConfig,
+    hub: CliproxyHub,
     account: typeof AuthFile.Type,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -262,7 +284,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
-        const body = yield* apiCall(config, account, "https://api.anthropic.com/api/oauth/usage");
+        const body = yield* apiCall(hub, account, "https://api.anthropic.com/api/oauth/usage");
         const usage = yield* decodeClaudeUsage(body);
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
@@ -275,6 +297,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
               ]
             : [],
         );
+        const rateLimits = {
+          five_hour: usage.five_hour ?? null,
+          seven_day: usage.seven_day ?? null,
+          model_scoped,
+          spend: usage.spend,
+          extra_usage: usage.extra_usage ?? null,
+        };
         return {
           ...base,
           plan: "Claude Subscription",
@@ -282,16 +311,12 @@ export const makeCliproxyApi = Effect.gen(function* () {
             checkedAt,
             response: {
               rate_limits_available: true,
-              rate_limits: {
-                five_hour: usage.five_hour ?? null,
-                seven_day: usage.seven_day ?? null,
-                model_scoped,
-              },
+              rate_limits: rateLimits,
             },
           }).limits,
         };
       }
-      const body = yield* apiCall(config, account, `${CODEX_BASE}/usage`);
+      const body = yield* apiCall(hub, account, `${CODEX_BASE}/usage`);
       const usage = yield* decodeCodexUsage(body);
       const toWindow = (window: typeof CodexWindow.Type | null | undefined) =>
         window
@@ -303,16 +328,18 @@ export const makeCliproxyApi = Effect.gen(function* () {
                 : { windowDurationMins: window.limit_window_seconds / 60 }),
             }
           : null;
-      const available = yield* credits(config, account).pipe(Effect.orElseSucceed(() => undefined));
+      const available = yield* credits(hub, account).pipe(Effect.orElseSucceed(() => undefined));
       const next = available?.[0];
+      const planType =
+        usage.plan_type ?? account.id_token?.plan_type ?? account.id_token?.chatgpt_plan_type;
       return {
         ...base,
-        plan: codexPlanLabel(usage.plan_type ?? account.id_token?.chatgpt_plan_type),
+        plan: codexPlanLabel(planType),
         usageLimits: {
           ...codexRateLimitsToLimits({
             checkedAt,
             snapshot: {
-              planType: usage.plan_type ?? null,
+              planType: planType ?? null,
               primary: toWindow(usage.rate_limit?.primary_window),
               secondary: toWindow(usage.rate_limit?.secondary_window),
             },
@@ -346,9 +373,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
   });
 
   const readAccounts = Effect.fn("CliproxyApi.readAccounts")(function* (
-    config: UsageLimitSourceConfig,
+    hub: CliproxyHub,
   ): Effect.fn.Return<ReadonlyArray<UsageLimitSourceAccount>, UsageLimitSourceError> {
-    const accounts = yield* authFiles(config).pipe(
+    const accounts = yield* authFiles(hub).pipe(
       Effect.mapError((error) =>
         isUsageLimitSourceError(error)
           ? error
@@ -360,28 +387,28 @@ export const makeCliproxyApi = Effect.gen(function* () {
         (account) =>
           !account.disabled && (account.provider === "codex" || account.provider === "claude"),
       ),
-      (account) => readAccount(config, account),
+      (account) => readAccount(hub, account),
       { concurrency: 4 },
     );
   });
 
   const consume = Effect.fn("CliproxyApi.consume")(function* (
-    config: UsageLimitSourceConfig,
+    hub: CliproxyHub,
     accountId: string,
     creditId: string,
   ): Effect.fn.Return<ProviderConsumeResetCreditResult, UsageLimitSourceError> {
     const operation = Effect.gen(function* () {
-      const account = (yield* authFiles(config)).find((account) => account.id === accountId);
+      const account = (yield* authFiles(hub)).find((account) => account.id === accountId);
       if (!account || account.disabled || account.provider !== "codex") {
         return yield* new UsageLimitSourceError({
           detail: "The Codex hub account is missing or disabled.",
         });
       }
-      const body = yield* apiCall(config, account, `${CREDIT_URL}/consume`, {
+      const body = yield* apiCall(hub, account, `${CREDIT_URL}/consume`, {
         redeem_request_id: yield* creditRedeemRequestId(
           account.id_token?.chatgpt_account_id ?? account.id,
           creditId,
-        ).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+        ).pipe(Effect.provideService(Digest.Digest, digest)),
         credit_id: creditId,
       });
       const response = yield* decodeConsumeResponse(body);
@@ -394,7 +421,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
         } as const
       )[response.code];
       if (outcome !== "reset" && outcome !== "alreadyRedeemed") return { outcome };
-      const cleared = yield* management(config, "reset-quota", {
+      const cleared = yield* management(hub, "reset-quota", {
         auth_index: account.auth_index,
       }).pipe(Effect.result);
       return {
