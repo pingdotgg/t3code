@@ -20,7 +20,7 @@ fail() {
   exit 1
 }
 # Keep the app's logs with the screenshots when anything fails.
-trap 'status=$?; [ "$status" -eq 0 ] || cp -R "$(if [ -d "$HOME/.ominax/userdata/logs" ]; then printf %s "$HOME/.ominax/userdata/logs"; else printf %s "$HOME/.t3-learn/userdata/logs"; fi)" "$artifacts/ominax-logs" 2>/dev/null || true' EXIT
+trap 'status=$?; [ "$status" -eq 0 ] || cp -R "$HOME/.ominax/userdata/logs" "$artifacts/ominax-logs" 2>/dev/null || true' EXIT
 
 screenshot() {
   if [ "$os" = Darwin ]; then
@@ -123,10 +123,8 @@ if [ "$scenario" = fresh ]; then
       security unlock-keychain -p ci "$keychain"
       security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
       security default-keychain -d user -s "$keychain"
-      for key_name in "t3learn Safe Storage" "ominax Safe Storage"; do
-        security add-generic-password -A -s "$key_name" -a "${key_name% Safe Storage} Key" -w "$(openssl rand -base64 24)" "$keychain"
-        security set-generic-password-partition-list -S "$partitions" -k ci -s "$key_name" "$keychain" >/dev/null
-      done
+      security add-generic-password -A -s "ominax Safe Storage" -a "ominax Key" -w "$(openssl rand -base64 24)" "$keychain"
+      security set-generic-password-partition-list -S "$partitions" -k ci -s "ominax Safe Storage" "$keychain" >/dev/null
     fi
     curl -fsSL "https://github.com/$repo/releases/download/v$previous/install.sh" |
       env OMINAX_VERSION="$previous" OMINAX_FORMAT="$format" T3LEARN_VERSION="$previous" T3LEARN_FORMAT="$format" sh 2>&1 | tee "$artifacts/install-previous.log"

@@ -166,7 +166,7 @@ if (Test-Path (Join-Path $learnDir "OminaX.exe")) { Fail "OminaX is still instal
 foreach ($scheme in @("ominax", "t3learn")) {
   if (Test-Path "HKCU:\Software\Classes\$scheme") { Fail "uninstall left the ${scheme}:// link registered" }
 }
-if (-not (Test-Path (Join-Path $newData "userdata")) -and -not (Test-Path (Join-Path $legacyData "userdata"))) { Fail "uninstall removed OminaX's data" }
+if (-not (Test-Path (Join-Path $newData "userdata"))) { Fail "uninstall removed OminaX's data" }
 if ($Scenario -eq "next-to-t3-code") {
   if ((Wait-Server (Join-Path $HOME ".t3") $t3CodeVersion) -ne $t3CodeVersion) { Fail "T3 Code stopped after uninstalling OminaX" }
 }
