@@ -753,10 +753,12 @@ function startAnnotation(
     // An active dictation takes the textarea's place; it stays focused (sr-only) so Enter still attaches.
     voiceRow.hidden = state.phase === "idle" || active;
     comment.classList.toggle("sr-only", active);
-    if (active) comment.after(voicePill);
-    else voiceRow.appendChild(voicePill);
+    composerRow.classList.toggle("flex-wrap", active);
+    // Re-inserting on every level update would blur a focused Finish or Cancel.
+    if (active && voicePill.parentElement !== composerRow) comment.after(voicePill);
+    else if (!active && voicePill.parentElement !== voiceRow) voiceRow.appendChild(voicePill);
     voicePill.className = active
-      ? "flex h-8 min-w-0 flex-1 items-center gap-2 rounded-full border border-border bg-background px-0.5"
+      ? "flex h-8 min-w-36 flex-1 items-center gap-2 rounded-full border border-border bg-background px-0.5"
       : "flex min-w-0 items-center gap-1";
     if (phaseChanged) queueEditorLayout();
     voiceCancel.title =
