@@ -1297,3 +1297,50 @@ describe("inline code entry", () => {
     expect(marked(editor, mark)).toEqual(["foo"]);
   });
 });
+
+describe("block shortcut undo", () => {
+  it.each(["+ ", "* ", "1. ", "> "])(
+    "Backspace right after %j undoes the shortcut and keeps the typed text",
+    (shortcut) => {
+      const editor = new Editor({
+        element: null,
+        extensions: [
+          StarterKit.configure({
+            blockquote: false,
+            bulletList: false,
+            heading: false,
+            horizontalRule: false,
+            listItem: false,
+            listKeymap: false,
+            orderedList: false,
+            trailingNode: false,
+          }),
+          ...ComposerListExtensions,
+          ...ComposerBlockExtensions,
+        ],
+        content: { type: "doc", content: [{ type: "paragraph" }] },
+      });
+      // Unmounted editors need the same plugins that Tiptap installs on mount.
+      editor.view.updateState(
+        editor.state.reconfigure({ plugins: editor.extensionManager.plugins }),
+      );
+      onTestFinished(() => editor.destroy());
+      for (const ch of shortcut) {
+        const { from, to } = editor.state.selection;
+        const insert = () => editor.state.tr.insertText(ch, from, to);
+        const handled = editor.state.plugins.some((plugin) =>
+          plugin.props.handleTextInput?.call(plugin, editor.view, from, to, ch, insert),
+        );
+        if (!handled) editor.view.dispatch(insert());
+      }
+      expect(editor.state.doc.firstChild?.type.name).not.toBe("paragraph");
+
+      const backspace = { key: "Backspace", preventDefault() {} } as unknown as KeyboardEvent;
+      editor.state.plugins.some((plugin) =>
+        plugin.props.handleKeyDown?.call(plugin, editor.view, backspace),
+      );
+
+      expect(serializeEditorDoc(editor.state.doc).value).toBe(shortcut);
+    },
+  );
+});
