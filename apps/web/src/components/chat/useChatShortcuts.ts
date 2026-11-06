@@ -73,6 +73,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       !shortcutContext.terminalFocus &&
       !shortcutContext.modelPickerOpen &&
       shouldTypeToFocusComposer(event) &&
+      !input.composerRef.current?.questionTakesKey(event.key) &&
       input.composerRef.current?.insertTextAtEnd(event.key) === true
     ) {
       event.preventDefault();

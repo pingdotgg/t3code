@@ -1,6 +1,6 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
 import { markdownProseDirection, textDirection } from "~/textDirection";
-import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
+import { memo, use, useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { type PendingUserInput } from "../../session-logic";
@@ -25,6 +25,10 @@ interface PendingUserInputPanelProps {
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
+  /** Dictation is running, so keys belong to it and pick nothing. */
+  voiceInputActive?: boolean;
+  /** Set while the shortcuts listen; says whether a key picks an option, so it is not typed. */
+  optionKeyRef?: RefObject<((key: string) => boolean) | null>;
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
@@ -38,6 +42,8 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   onToggleOption,
   onAdvance,
   onDismiss,
+  voiceInputActive = false,
+  optionKeyRef,
 }: PendingUserInputPanelProps) {
   if (pendingUserInputs.length === 0) return null;
   const activePrompt = pendingUserInputs[0];
@@ -56,6 +62,8 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
       onDismiss={onDismiss}
+      voiceInputActive={voiceInputActive}
+      optionKeyRef={optionKeyRef}
     />
   );
 });
@@ -71,6 +79,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption,
   onAdvance,
   onDismiss,
+  voiceInputActive,
+  optionKeyRef,
 }: {
   prompt: PendingUserInput;
   cwd: string | undefined;
@@ -82,6 +92,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
+  voiceInputActive: boolean;
+  optionKeyRef: RefObject<((key: string) => boolean) | null> | undefined;
 }) {
   // Message-mode requests remain answerable after their provider turn ends.
   const canRespond = prompt.responseCapability !== "not_resumable";
@@ -149,7 +161,17 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for digit shortcuts while a question is answerable
   useEffect(() => {
-    if (!activeQuestion || responseDisabled || isCollapsed || backgroundThread) return;
+    if (
+      !activeQuestion ||
+      responseDisabled ||
+      isCollapsed ||
+      backgroundThread ||
+      voiceInputActive
+    ) {
+      return;
+    }
+    const optionForKey = (key: string) =>
+      /^[1-9]$/.test(key) ? activeQuestion.options[Number(key) - 1] : undefined;
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
@@ -157,23 +179,31 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
         return;
       }
-      if (target instanceof HTMLElement) {
-        // The composer takes focus on load, so an empty one must still answer to the shortcuts.
-        const editor = target.closest('[contenteditable]:not([contenteditable="false"])');
-        if (editor?.textContent?.trim()) return;
+      if (
+        target instanceof HTMLElement &&
+        target.closest('[contenteditable]:not([contenteditable="false"])')
+      ) {
+        return;
       }
-      const digit = Number.parseInt(event.key, 10);
-      if (Number.isNaN(digit) || digit < 1 || digit > 9) return;
-      const optionIndex = digit - 1;
-      if (optionIndex >= activeQuestion.options.length) return;
-      const option = activeQuestion.options[optionIndex];
+      const option = optionForKey(event.key);
       if (!option) return;
       event.preventDefault();
       selectOptionFromShortcut(activeQuestion.id, option.value ?? option.label);
     };
+    if (optionKeyRef) optionKeyRef.current = (key) => optionForKey(key) !== undefined;
     document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, backgroundThread, isCollapsed, responseDisabled]);
+    return () => {
+      if (optionKeyRef) optionKeyRef.current = null;
+      document.removeEventListener("keydown", handler);
+    };
+  }, [
+    activeQuestion,
+    backgroundThread,
+    isCollapsed,
+    optionKeyRef,
+    responseDisabled,
+    voiceInputActive,
+  ]);
 
   if (!activeQuestion) {
     return null;
