@@ -175,7 +175,7 @@ it.effect.each(["DPoP", "dpop"])("challenges a refused %s request with DPoP", (s
     return yield* Effect.acquireUseRelease(
       Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
       (environment) =>
-        Effect.tryPromise(async () => {
+        Effect.promise(async () => {
           const refused = await environment.handler(
             postJson(
               "/api/auth/pairing-token",
