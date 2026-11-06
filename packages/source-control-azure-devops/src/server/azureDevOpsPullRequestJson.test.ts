@@ -248,6 +248,41 @@ describe("decodeThreadsJson", () => {
     expect(comments.map((comment) => comment.id)).toEqual(["4:1", "4:2", "4:3"]);
   });
 
+  it("marks a comment whose text was edited, not one only otherwise updated", () => {
+    const comments = expectSuccess(
+      decodeThreadsJson(
+        asJson({
+          value: [
+            {
+              id: 5,
+              comments: [
+                {
+                  id: 1,
+                  content: "Edited remark.",
+                  publishedDate: "2026-07-02T00:00:00Z",
+                  lastUpdatedDate: "2026-07-02T03:00:00Z",
+                  lastContentUpdatedDate: "2026-07-02T03:00:00Z",
+                },
+                {
+                  id: 2,
+                  content: "Updated remark.",
+                  publishedDate: "2026-07-02T01:00:00Z",
+                  lastUpdatedDate: "2026-07-02T04:00:00Z",
+                  lastContentUpdatedDate: "2026-07-02T01:00:00Z",
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(comments.map((comment) => comment.editedAt)).toEqual([
+      "2026-07-02T03:00:00Z",
+      undefined,
+    ]);
+  });
+
   it("drops deleted threads and threads with nothing to show", () => {
     const comments = expectSuccess(
       decodeThreadsJson(
