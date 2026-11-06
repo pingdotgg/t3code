@@ -36,19 +36,20 @@ describe("buildRuntimeInstructions", () => {
     assert.notInclude(instructions, "On a wake");
     assert.include(
       instructions,
-      "Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch",
+      "Call watch_pull_request when asked to monitor, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch",
     );
     assert.notInclude(instructions, "merge it now");
     assert.include(instructions, "Otherwise act now or hand back.");
     assert.include(instructions, "then watch and end your turn");
-    assert.include(instructions, "never watch, even if the brief says babysit");
+    assert.include(instructions, "never watch, even if told to");
+    assert.notInclude(instructions, "babysit");
     assert.include(
       instructions,
       "After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>.",
     );
     assert.include(
       instructions,
-      "For PR waits, no sleep, loops, gh --watch, Monitor or ScheduleWakeup.",
+      "T3 Code runs each PR wait: no skills, sleep, loops, gh --watch, Monitor or ScheduleWakeup.",
     );
     assert.include(instructions, "call unwatch_pull_request");
   });
