@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - shared by the server and the analysis worker, which runs outside the Effect runtime; every call is a bounded synchronous filesystem step.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as Schema from "effect/Schema";
 
 /**
  * The control directory holds only the `published` pointer. Each index generation is a sibling
@@ -13,9 +14,12 @@ const GENERATION_NAME = /^\.codegraph-t3-g([1-9][0-9]{0,8})$/;
 const PUBLISHED_FILE = "published";
 const INDEX_GITIGNORE = "# T3 code index, local to this machine.\n*\n";
 
-export class IndexOutsideCheckout extends Error {
-  constructor() {
-    super("index-outside-checkout");
+export class IndexOutsideCheckout extends Schema.TaggedError<IndexOutsideCheckout>()(
+  "IndexOutsideCheckout",
+  {},
+) {
+  override get message(): string {
+    return "index-outside-checkout";
   }
 }
 
@@ -25,6 +29,8 @@ function generationOf(name: string): number | null {
   const match = GENERATION_NAME.exec(name);
   return match === null ? null : Number(match[1]);
 }
+
+const isIndexOutsideCheckout = Schema.is(IndexOutsideCheckout);
 
 /** Whether a checkout-relative path lies in the control directory or a generation. */
 export function isIndexPath(relativePath: string): boolean {
@@ -68,7 +74,7 @@ export function validateIndexDirectory(checkoutPath: string, name: string): void
       }
     }
   } catch (cause) {
-    if (cause instanceof IndexOutsideCheckout) throw cause;
+    if (isIndexOutsideCheckout(cause)) throw cause;
     if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
   }
 }

@@ -10,6 +10,7 @@ Write or run an eval when a change affects what a model sees or does: agent inst
 | [thread-titles](thread-titles/)         | Whether generated thread titles name the right subject.                                                                                    |
 | [thread-split](thread-split/)           | Offline local-model evaluation of whether a message can start an independent thread.                                                       |
 | [model-evaluations](model-evaluations/) | Whether blind judges use outcome evidence, respect task scope, ignore injected scoring instructions, and abstain when evidence is missing. |
+| [voice-cleanup](voice-cleanup/)         | Whether optional dictation cleanup edits only the spoken text and preserves its meaning.                                                   |
 | [test-signal](test-signal/)             | Whether a cheap model running the test-signal check flags low-signal tests.                                                                |
 
 ## Run an eval

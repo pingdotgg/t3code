@@ -30,8 +30,8 @@ import { projectLoom } from "../../state/projectLoom";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironments } from "../../state/environments";
-import { ListFilterMenu } from "../workspace/ListFilterMenu";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { buildLoomActivityList, type LoomActivityListItem } from "./loomActivityList";
 
 const WINDOWS = { "24h": 1, "7d": 7, "30d": 30 } as const;

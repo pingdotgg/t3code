@@ -3,7 +3,7 @@ import { useNavigation } from "@react-navigation/native";
 import { View } from "react-native";
 
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
-import { ListFilterMenu } from "../workspace/ListFilterMenu";
+import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
 
 export function ProjectLoomEntry(props: { readonly projects: ReadonlyArray<EnvironmentProject> }) {
   const navigation = useNavigation();

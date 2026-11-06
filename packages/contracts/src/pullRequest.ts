@@ -481,6 +481,8 @@ export const PullRequestPreview = Schema.Struct({
   state: PullRequestState,
   isDraft: Schema.Boolean,
   createdAt: IsoDateTime,
+  updatedAt: Schema.optional(IsoDateTime),
+  observedAt: Schema.optional(Schema.Finite),
 });
 export type PullRequestPreview = typeof PullRequestPreview.Type;
 
@@ -493,7 +495,6 @@ export const PullRequestSummary = Schema.Struct({
   url: TrimmedNonEmptyString,
   state: PullRequestState,
   isDraft: Schema.optional(Schema.Boolean),
-  headSha: Schema.optional(TrimmedNonEmptyString),
   headBranch: TrimmedNonEmptyString,
   baseBranch: TrimmedNonEmptyString,
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
@@ -509,6 +510,10 @@ export const PullRequestSummary = Schema.Struct({
   mergeability: Schema.optional(PullRequestMergeability),
   /** Null when the host says the pull request is in no stack; absent when the read did not ask. */
   stack: Schema.optional(Schema.NullOr(PullRequestStackMembership)),
+  headSha: Schema.optional(TrimmedNonEmptyString),
+  /** Absent means the read did not report auto-merge state, not that it is off. */
+  autoMergeEnabled: Schema.optional(Schema.Boolean),
+  autoMergeMethod: Schema.optional(PullRequestMergeMethod),
 });
 export type PullRequestSummary = typeof PullRequestSummary.Type;
 
@@ -768,6 +773,8 @@ export const PullRequestActionInput = Schema.Struct({
   action: PullRequestAction,
   mergeMethod: Schema.optional(PullRequestMergeMethod),
   updateMethod: Schema.optional(PullRequestUpdateMethod),
+  /** Opt-in, because older clients decode the action's success as void and reject a summary. */
+  replyWithSummary: Schema.optional(Schema.Literal(true)),
 });
 export type PullRequestActionInput = typeof PullRequestActionInput.Type;
 

@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, TextGenerationError } from "@t3tools/contracts";
+import { NonNegativeInt, settingsSecretLiteral, TextGenerationError } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
@@ -21,6 +21,7 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateKnowledgeCandidates",
   "generateConversationSummary",
   "generateModelEvaluation",
+  "generateTranscriptionPostProcessing",
 ]);
 
 const openCodeTextGenerationErrorContext = {
@@ -361,8 +362,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
               binaryPath: openCodeSettings.binaryPath,
               directory: input.cwd,
               serverUrl: openCodeSettings.serverUrl,
-              ...(openCodeSettings.serverPassword
-                ? { serverPassword: openCodeSettings.serverPassword }
+              ...(settingsSecretLiteral(openCodeSettings.serverPassword)
+                ? { serverPassword: settingsSecretLiteral(openCodeSettings.serverPassword) }
                 : {}),
             })
             .pipe(Effect.flatMap(runAgainstServer), Effect.scoped)

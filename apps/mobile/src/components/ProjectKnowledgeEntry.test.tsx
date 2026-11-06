@@ -21,6 +21,7 @@ import { Sheet as AndroidSheet } from "./ui/Sheet.android";
 import type { SheetProps } from "./ui/Sheet.types";
 
 const state = vi.hoisted(() => ({
+  uuidSequence: 0,
   deliveryCapabilities: {} as Record<string, boolean | undefined>,
   deliveries: null as unknown,
   readDeliveries: vi.fn(),
@@ -41,7 +42,9 @@ const state = vi.hoisted(() => ({
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: () => new Error("Request failed"),
 }));
-vi.mock("../lib/uuid", () => ({ uuidv4: () => crypto.randomUUID() }));
+vi.mock("../lib/uuid", () => ({
+  uuidv4: () => "00000000-0000-4000-8000-" + (++state.uuidSequence).toString(16).padStart(12, "0"),
+}));
 vi.mock("@react-navigation/native", () => ({ useIsFocused: () => state.focused }));
 vi.mock("uniwind", () => ({ useResolveClassNames: () => ({}) }));
 vi.mock("react-native-screens", () => ({
@@ -282,6 +285,7 @@ const deliveryRecord: ProjectKnowledgeDeliveries = {
   ],
 };
 function setup(entries = [scope]) {
+  state.uuidSequence = 0;
   state.deliveryCapabilities = {};
   state.deliveries = null;
   state.readDeliveries.mockReset();

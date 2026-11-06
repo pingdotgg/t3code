@@ -297,6 +297,11 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       protect("generateKnowledgeCandidates", nativeGeneration.generateKnowledgeCandidates(value)),
     generateConversationSummary: (value) =>
       protect("generateConversationSummary", nativeGeneration.generateConversationSummary(value)),
+    generateTranscriptionPostProcessing: (value) =>
+      protect(
+        "generateTranscriptionPostProcessing",
+        nativeGeneration.generateTranscriptionPostProcessing(value),
+      ),
   };
   const nativeHistory = yield* makeCodexNativeHistory({
     enabled,

@@ -18,6 +18,7 @@ export function Sheet(props: SheetProps) {
   const screenId = useId();
   const [isOpen, setIsOpen] = useState(true);
   const close = () => {
+    if (props.dismissDisabled) return;
     if (props.onRequestClose) props.onRequestClose();
     else setIsOpen(false);
   };
@@ -32,7 +33,7 @@ export function Sheet(props: SheetProps) {
       nativeContainerStyle={containerStyle}
       onDismiss={props.onClose}
       onNativeDismiss={props.onClose}
-      preventNativeDismiss={Boolean(props.onRequestClose)}
+      preventNativeDismiss={Boolean(props.dismissDisabled || props.onRequestClose)}
       onNativeDismissPrevented={close}
     >
       <View collapsable={false} className="flex-1 bg-sheet">
@@ -62,6 +63,7 @@ export function Sheet(props: SheetProps) {
                   icon: { name: "xmark", type: "sfSymbol" },
                   accessibilityLabel: `Close ${props.title}`,
                   identifier: `app-sheet-close-${screenId}`,
+                  disabled: props.dismissDisabled,
                   onPress: close,
                 },
               ]}

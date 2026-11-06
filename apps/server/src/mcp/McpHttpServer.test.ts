@@ -1009,7 +1009,7 @@ it.effect(
           Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
           Layer.provide(
             Layer.mock(McpSessionRegistry.McpSessionRegistry)({
-              resolve: () => Effect.sync(() => undefined),
+              resolve: () => Effect.undefined,
             }),
           ),
           Layer.provide(

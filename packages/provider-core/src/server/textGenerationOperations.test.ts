@@ -16,7 +16,9 @@ it.effect("keeps structured intelligence available without allowing checkout inv
         return decodeJsonReply(
           request,
           "Fixture",
-          '{"statements":[{"text":"Keep the API.","citations":["M1"]}]}',
+          request.operation === "generateTranscriptionPostProcessing"
+            ? '{"transcription":"Keep the API."}'
+            : '{"statements":[{"text":"Keep the API.","citations":["M1"]}]}',
         );
       },
       { supportsInvestigation: false },
@@ -28,6 +30,13 @@ it.effect("keeps structured intelligence available without allowing checkout inv
         messages: [{ ref: "M1", role: "user", text: "Keep the API." }],
       }),
     ).toEqual({ statements: [{ text: "Keep the API.", citations: ["M1"] }] });
+    expect(
+      yield* runtime.generateTranscriptionPostProcessing({
+        cwd: "/project",
+        modelSelection,
+        prompt: "Remove filler: um, keep the API.",
+      }),
+    ).toEqual({ transcription: "Keep the API." });
     const error = yield* runtime
       .generateReviewGuide({
         cwd: "/project",
@@ -41,9 +50,10 @@ it.effect("keeps structured intelligence available without allowing checkout inv
       })
       .pipe(Effect.flip);
     expect(error.operation).toBe("generateReviewGuide");
-    expect(calls).toEqual(["generateConversationSummary"]);
+    expect(calls).toEqual(["generateConversationSummary", "generateTranscriptionPostProcessing"]);
     expect(runtime.supportedOperations).toContain("generateConversationSummary");
     expect(runtime.supportedOperations).toContain("generateKnowledgeCandidates");
+    expect(runtime.supportedOperations).toContain("generateTranscriptionPostProcessing");
     expect(runtime.supportedOperations).not.toContain("generateReviewGuide");
     expect(runtime.supportedOperations).not.toContain("generateModelEvaluation");
     const evaluationError = yield* runtime
@@ -63,7 +73,7 @@ it.effect("keeps structured intelligence available without allowing checkout inv
       })
       .pipe(Effect.flip);
     expect(evaluationError.operation).toBe("generateModelEvaluation");
-    expect(calls).toEqual(["generateConversationSummary"]);
+    expect(calls).toEqual(["generateConversationSummary", "generateTranscriptionPostProcessing"]);
   }),
 );
 

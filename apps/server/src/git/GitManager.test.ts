@@ -293,6 +293,8 @@ function createTextGeneration(
         title: "Update workflow",
       }),
     generateReviewGuide: () => Effect.succeed({ stops: [] }),
+    generateTranscriptionPostProcessing: () =>
+      Effect.succeed({ transcription: "processed transcript" }),
     ...overrides,
   };
 
@@ -345,6 +347,8 @@ function createTextGeneration(
     generateKnowledgeCandidates: (input) => implementation.generateKnowledgeCandidates(input),
     generateConversationSummary: (input) => implementation.generateConversationSummary(input),
     generateModelEvaluation: (input) => implementation.generateModelEvaluation(input),
+    generateTranscriptionPostProcessing: (input) =>
+      implementation.generateTranscriptionPostProcessing(input),
   };
 }
 

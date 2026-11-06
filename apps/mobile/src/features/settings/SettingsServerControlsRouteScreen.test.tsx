@@ -95,7 +95,6 @@ vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
     icon: "line.3.horizontal.decrease.circle",
     items: [],
   }),
-  SettingsEnvironmentFilterHeader: () => null,
 }));
 vi.mock("./components/DatabaseStorageNotice", () => ({ DatabaseStorageNotice: () => null }));
 vi.mock("./components/SettingsSection", () => ({ SettingsSection: Children }));

@@ -792,6 +792,10 @@ const makeClaudeMemberRegistry = (scripts: ReadonlyMap<ProviderInstanceId, Claud
                         setPermissionMode: () => Effect.void,
                         backgroundTasks: () => Effect.succeed(false),
                         stopTask: () => Effect.void,
+                        mcpServerStatus: Effect.die("unused MCP server status"),
+                        readMcpResource: () => Effect.die("unused MCP resource read"),
+                        callMcpTool: () => Effect.die("unused MCP tool call"),
+                        listPermissionRules: Effect.die("unused permission rules read"),
                         interrupt: Effect.void,
                         close: Effect.void,
                       };

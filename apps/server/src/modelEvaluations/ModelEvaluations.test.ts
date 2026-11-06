@@ -52,7 +52,7 @@ const decodeProvider = Schema.decodeSync(ServerProvider);
 const makeLayer = (
   generate: Generate,
   enabled = true,
-  published: ReadonlyArray<typeof ServerProvider.Type> = [],
+  published: ReadonlyArray<ServerProvider> = [],
 ) =>
   ModelEvaluations.layer.pipe(
     Layer.provide(Layer.mock(TextGeneration.TextGeneration)({ generateModelEvaluation: generate })),

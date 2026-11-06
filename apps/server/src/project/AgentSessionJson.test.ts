@@ -48,7 +48,7 @@ describe("transcript JSON projection", () => {
   it("retains the import allocation and depth limits", () => {
     const limited = createTranscriptJsonReader(
       () => {
-        throw new TranscriptJsonLimitError("budget");
+        throw new TranscriptJsonLimitError({ message: "budget" });
       },
       () => true,
     );

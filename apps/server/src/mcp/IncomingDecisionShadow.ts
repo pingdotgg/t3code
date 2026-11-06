@@ -5,6 +5,15 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+class IncomingDecisionRequestError extends Schema.TaggedError<IncomingDecisionRequestError>()(
+  "IncomingDecisionRequestError",
+  { cause: Schema.Defect() },
+) {
+  override get message() {
+    return "Local incoming decision request failed.";
+  }
+}
+
 const Configuration = Schema.Struct({
   mode: Schema.Literal("shadow"),
   port: Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 1024, maximum: 65535 })),
@@ -259,9 +268,10 @@ export const makeIncomingDecisionShadow = Effect.fn("IncomingDecisionShadow.make
     if (remainingMs <= 0) return yield* finish("failed", { model });
     busy = true;
     return yield* Effect.gen(function* () {
-      const proposed = yield* Effect.tryPromise((signal) =>
-        requestDecision(config.value, blocks, fetchImplementation, signal),
-      );
+      const proposed = yield* Effect.tryPromise({
+        try: (signal) => requestDecision(config.value, blocks, fetchImplementation, signal),
+        catch: (cause) => new IncomingDecisionRequestError({ cause }),
+      });
       const selected =
         applicationPolicy === "test-select" ? select(result, blocks, proposed) : result;
       const completed = yield* finish(

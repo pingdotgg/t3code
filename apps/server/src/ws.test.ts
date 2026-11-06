@@ -1186,7 +1186,7 @@ it.effect(
           resolve: () => Effect.succeed([]),
           resolveAvailable: () => Effect.succeed([]),
         }),
-        Layer.mock(PstackPack.PstackPack)({ catalog: Effect.sync(() => undefined) }),
+        Layer.mock(PstackPack.PstackPack)({ catalog: Effect.undefined }),
         Layer.mock(SkillsLibrary.SkillsLibrary)({}),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           scratchRoot: Effect.succeedNone,

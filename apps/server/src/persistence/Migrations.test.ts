@@ -21,6 +21,7 @@ const settledOverrideMigration = [86, "RepairBooleanSettledOverride"] as const;
 const correlationIndexMigration = [87, "DropOrchestrationEventCorrelationIndex"] as const;
 const modelEvaluationMigration = [88, "ModelEvaluations"] as const;
 const delegatedRecoveryMigration = [89, "DelegatedRecoveryIndexes"] as const;
+const scheduledTaskThreadModeMigration = [90, "ScheduledTaskThreadMode"] as const;
 
 it.effect("upgrades attempt receipts atomically and preserves distinct steering messages", () =>
   Effect.gen(function* () {
@@ -45,6 +46,7 @@ it.effect("upgrades attempt receipts atomically and preserves distinct steering 
       correlationIndexMigration,
       modelEvaluationMigration,
       delegatedRecoveryMigration,
+      scheduledTaskThreadModeMigration,
     ]);
     assert.deepStrictEqual(yield* sql`SELECT * FROM project_knowledge_deliveries`, before);
     yield* sql`INSERT INTO project_knowledge_deliveries (
@@ -272,26 +274,44 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  it.effect("adds upstream indexes to an existing fork database", () =>
+  it.effect.each([77, 89])("adds upstream schema to an existing fork database at %s", (through) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 77 });
+      yield* runMigrations({ toMigrationInclusive: through });
+      for (const threadId of [null, "thread:scheduled"] as const) {
+        yield* sql`INSERT INTO scheduled_tasks ${sql.insert({
+          task_id: threadId === null ? "new-thread" : "continue",
+          title: "Existing task",
+          prompt: "Run the audit",
+          enabled: 1,
+          schedule_json: '{"type":"interval","everyMs":60000}',
+          project_id: "project:scheduled",
+          thread_id: threadId,
+          workspace_strategy_json: '{"type":"root"}',
+          model_selection_json: '{"instanceId":"codex","model":"gpt-5"}',
+          runtime_mode: "full-access",
+          interaction_mode: "default",
+          created_by: "user",
+          creation_source: "web",
+          created_at: "2026-11-05",
+          updated_at: "2026-11-05",
+          last_run_status: "never",
+          run_count: 0,
+        })}`;
+      }
       const before = yield* history;
-      assert.deepStrictEqual(yield* runMigrations(), [
-        [78, "ShellStopRequestIndex"],
-        [79, "ThreadMessageSearch"],
-        consolidatedMigration,
-        messageDeliveryMigration,
-        activeTurnItemMigration,
-        attachmentPlaceholderMigration,
-        subagentDeliveryMigration,
-        projectPinArchiveMigration,
-        settledOverrideMigration,
-        correlationIndexMigration,
-        modelEvaluationMigration,
-        delegatedRecoveryMigration,
-      ]);
+      assert.deepStrictEqual(
+        yield* runMigrations(),
+        migrationManifest.filter(([id]) => id > through),
+      );
       assert.deepStrictEqual((yield* history).slice(0, before.length), before);
+      assert.deepStrictEqual(
+        yield* sql`SELECT task_id, thread_id, thread_mode FROM scheduled_tasks ORDER BY task_id`,
+        [
+          { task_id: "continue", thread_id: "thread:scheduled", thread_mode: "continue" },
+          { task_id: "new-thread", thread_id: null, thread_mode: "new_thread" },
+        ],
+      );
       const indexes = yield* sql`
         SELECT name FROM sqlite_master
         WHERE name = 'orchestration_v2_projection_turn_items_stop_request_idx'
@@ -364,6 +384,7 @@ describe("runMigrations", () => {
             correlationIndexMigration,
             modelEvaluationMigration,
             delegatedRecoveryMigration,
+            scheduledTaskThreadModeMigration,
           ],
         );
         yield* assertConsolidatedSchema;
@@ -404,6 +425,7 @@ describe("runMigrations", () => {
           correlationIndexMigration,
           modelEvaluationMigration,
           delegatedRecoveryMigration,
+          scheduledTaskThreadModeMigration,
         ],
       );
       assert.deepStrictEqual(yield* runMigrations(), [
@@ -417,6 +439,7 @@ describe("runMigrations", () => {
         correlationIndexMigration,
         modelEvaluationMigration,
         delegatedRecoveryMigration,
+        scheduledTaskThreadModeMigration,
       ]);
       yield* assertConsolidatedSchema;
       assert.deepStrictEqual(
@@ -452,6 +475,7 @@ describe("runMigrations", () => {
           correlationIndexMigration,
           modelEvaluationMigration,
           delegatedRecoveryMigration,
+          scheduledTaskThreadModeMigration,
         ]);
 
         yield* assertConsolidatedSchema;
@@ -557,6 +581,7 @@ describe("runMigrations", () => {
         correlationIndexMigration,
         modelEvaluationMigration,
         delegatedRecoveryMigration,
+        scheduledTaskThreadModeMigration,
       ]);
       yield* assertConsolidatedSchema;
       assert.deepStrictEqual(yield* sql`SELECT secret_name, fenced FROM peer_environment_links`, [
@@ -611,6 +636,7 @@ describe("runMigrations", () => {
           correlationIndexMigration,
           modelEvaluationMigration,
           delegatedRecoveryMigration,
+          scheduledTaskThreadModeMigration,
         ]);
         assert.deepStrictEqual(yield* history, migrationManifest);
         assert.deepStrictEqual(
@@ -670,6 +696,7 @@ describe("runMigrations", () => {
           correlationIndexMigration,
           modelEvaluationMigration,
           delegatedRecoveryMigration,
+          scheduledTaskThreadModeMigration,
         ]);
         assert.deepStrictEqual(yield* history, migrationManifest);
         assert.deepStrictEqual(yield* sql`SELECT * FROM cross_environment_launches`, routes);

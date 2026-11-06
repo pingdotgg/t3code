@@ -381,6 +381,11 @@ export const ClaudeDriver: ProviderDriver<
             protect("generateModelEvaluation", nativeGeneration.generateModelEvaluation(input)),
           generateReviewGuide: (input) =>
             protect("generateReviewGuide", nativeGeneration.generateReviewGuide(input)),
+          generateTranscriptionPostProcessing: (input) =>
+            protect(
+              "generateTranscriptionPostProcessing",
+              nativeGeneration.generateTranscriptionPostProcessing(input),
+            ),
           generateKnowledgeCandidates: (input) =>
             protect(
               "generateKnowledgeCandidates",

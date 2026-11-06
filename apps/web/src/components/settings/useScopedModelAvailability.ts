@@ -22,6 +22,7 @@ const OPERATION_LABELS: Record<TextGenerationOperation, string> = {
   generateBranchName: "branch names",
   generateThreadTitle: "thread titles",
   generateReviewGuide: "review guides",
+  generateTranscriptionPostProcessing: "dictation cleanup",
   generateKnowledgeCandidates: "project knowledge",
   generateConversationSummary: "conversation summaries",
   generateModelEvaluation: "model evaluations",

@@ -71,6 +71,7 @@ const encodeSearchCursor = Schema.encodeSync(Schema.fromJsonString(SearchCursor)
 const decodeReadCursor = Schema.decodeUnknownEffect(Schema.fromJsonString(ReadCursor));
 const encodeReadCursor = Schema.encodeSync(Schema.fromJsonString(ReadCursor));
 const isHistoryError = Schema.is(ExternalHistoryError);
+const isTranscriptJsonLimitError = Schema.is(TranscriptJsonLimitError);
 const encodeFileIdentity = Schema.encodeSync(
   Schema.fromJsonString(
     Schema.Struct({
@@ -183,12 +184,11 @@ export const makeChatGptExportHistory = Effect.gen(function* () {
     isHistoryError(cause)
       ? cause
       : new ExternalHistoryError({
-          reason:
-            cause instanceof TranscriptJsonLimitError
-              ? "limit_exceeded"
-              : PlatformError.isPlatformError(cause) && cause.reason._tag === "NotFound"
-                ? "missing"
-                : "unavailable",
+          reason: isTranscriptJsonLimitError(cause)
+            ? "limit_exceeded"
+            : PlatformError.isPlatformError(cause) && cause.reason._tag === "NotFound"
+              ? "missing"
+              : "unavailable",
           cause,
         });
 
@@ -213,7 +213,7 @@ export const makeChatGptExportHistory = Effect.gen(function* () {
           (bytes) => {
             allocated += bytes;
             if (allocated > MAX_CONVERSATION_BYTES)
-              throw new TranscriptJsonLimitError("Export conversation limit");
+              throw new TranscriptJsonLimitError({ message: "Export conversation limit" });
           },
           (path) => selectExportPath(path, index),
           {

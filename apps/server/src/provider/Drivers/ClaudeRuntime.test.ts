@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
+import { ClaudeSettings, ProviderInstanceId, ProviderSetupError } from "@t3tools/contracts";
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -86,8 +86,8 @@ it.effect.each(["adapter", "probe"] as const)(
       if (consumer === "probe")
         expect(options.settingSources).toEqual(["user", "project", "local"]);
       expect(options.extraArgs?.settings).toBeUndefined();
-      const observed = yield* Effect.tryPromise(
-        () =>
+      const observed = yield* Effect.tryPromise({
+        try: () =>
           new Promise<string>((resolve, reject) => {
             const child = options.spawnClaudeCodeProcess!({
               command: process.execPath,
@@ -105,7 +105,14 @@ it.effect.each(["adapter", "probe"] as const)(
               if (code !== 0) reject(new Error("Fixture child failed"));
             });
           }),
-      );
+        catch: (cause) =>
+          new ProviderSetupError({
+            instanceId: ProviderInstanceId.make("one"),
+            operation: "observeFixtureEnvironment",
+            detail: "Could not observe the Claude fixture child environment.",
+            cause,
+          }),
+      });
       const env = JSON.parse(observed);
       expect({
         config: env.CLAUDE_CONFIG_DIR,

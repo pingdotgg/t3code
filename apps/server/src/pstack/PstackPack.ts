@@ -159,7 +159,13 @@ const make = Effect.fn("PstackPack.make")(function* (sourceRoot?: string) {
             Effect.provideService(FileSystem.FileSystem, fs),
             Effect.provideService(Path.Path, path),
           ));
-        source = { root, hash: yield* Effect.try(() => pstackContentHash(root)) };
+        source = {
+          root,
+          hash: yield* Effect.try({
+            try: () => pstackContentHash(root),
+            catch: (cause) => new PstackPackError({ path: root, operation: "materialize", cause }),
+          }),
+        };
       }
       const { root, hash } = source;
       yield* fs.makeDirectory(directory, { recursive: true });
@@ -189,7 +195,10 @@ const make = Effect.fn("PstackPack.make")(function* (sourceRoot?: string) {
             remove,
           );
           const trash = temporary.replace(/\.pack-tmp-([^/\\]+)$/, ".pack-trash-$1");
-          const entries = yield* Effect.try(() => pstackPackEntries(root));
+          const entries = yield* Effect.try({
+            try: () => pstackPackEntries(root),
+            catch: (cause) => new PstackPackError({ path: root, operation: "materialize", cause }),
+          });
           for (const entry of entries) {
             const destination = path.join(temporary, entry.packPath);
             yield* fs.makeDirectory(path.dirname(destination), { recursive: true });

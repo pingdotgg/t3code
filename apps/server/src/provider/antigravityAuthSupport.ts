@@ -231,6 +231,15 @@ function antigravityEnvironment(
   };
 }
 
+class AntigravitySkillLinkError extends Schema.TaggedError<AntigravitySkillLinkError>()(
+  "AntigravitySkillLinkError",
+  { link: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not link Antigravity user skills at ${this.link}.`;
+  }
+}
+
 /** Private GEMINI_HOME isolates credentials/hooks/MCP; link global skills from the real ~/.gemini. */
 const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(function* (input: {
   readonly profileDirectory: string;
@@ -251,12 +260,14 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
       path.basename(path.dirname(link)),
     );
     yield* Effect.gen(function* () {
-      const existing = yield* Effect.tryPromise(() =>
-        NodeFSP.lstat(link).catch((cause: NodeJS.ErrnoException) => {
-          if (cause.code === "ENOENT") return undefined;
-          throw cause;
-        }),
-      );
+      const existing = yield* Effect.tryPromise({
+        try: () =>
+          NodeFSP.lstat(link).catch((cause: NodeJS.ErrnoException) => {
+            if (cause.code === "ENOENT") return undefined;
+            throw cause;
+          }),
+        catch: (cause) => new AntigravitySkillLinkError({ link, cause }),
+      });
       if (!(yield* fs.exists(target))) {
         if (existing?.isSymbolicLink()) yield* fs.remove(link);
         yield* fs.remove(snapshotDirectory, { recursive: true, force: true });
@@ -265,7 +276,10 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
       // Preserve private skills; only an empty harness placeholder is replaceable.
       if (existing !== undefined && !existing.isSymbolicLink()) {
         if (!existing.isDirectory() || (yield* fs.readDirectory(link)).length > 0) return;
-        yield* Effect.tryPromise(() => NodeFSP.rmdir(link));
+        yield* Effect.tryPromise({
+          try: () => NodeFSP.rmdir(link),
+          catch: (cause) => new AntigravitySkillLinkError({ link, cause }),
+        });
       }
       const readableTarget = yield* prepareAntigravitySkillSnapshot({
         sourceDirectory: target,
@@ -279,9 +293,11 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
       if (current !== readableTarget) {
         if (existing?.isSymbolicLink()) yield* fs.remove(link);
         yield* fs.makeDirectory(path.dirname(link), { recursive: true });
-        yield* Effect.tryPromise(() =>
-          NodeFSP.symlink(readableTarget, link, input.platform === "win32" ? "junction" : "dir"),
-        );
+        yield* Effect.tryPromise({
+          try: () =>
+            NodeFSP.symlink(readableTarget, link, input.platform === "win32" ? "junction" : "dir"),
+          catch: (cause) => new AntigravitySkillLinkError({ link, cause }),
+        });
       }
       if (readableTarget !== snapshotDirectory)
         yield* fs.remove(snapshotDirectory, { recursive: true, force: true });

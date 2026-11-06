@@ -82,7 +82,7 @@ vi.mock("@react-navigation/native", () => ({
     addListener: () => () => {},
   }),
 }));
-vi.mock("../workspace/useSelectWorkspaceDetail", () => ({
+vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => (detail: unknown) => state.actions.push(detail),
 }));
 vi.mock("../../components/ui/AppText", () => ({
@@ -105,7 +105,7 @@ vi.mock("../../components/ui/Button", () => ({
     </button>
   ),
 }));
-vi.mock("../workspace/ListFilterMenu", () => ({
+vi.mock("../layout/workspace/ListFilterMenu", () => ({
   ListFilterMenu: ({
     accessibilityLabel,
     actions,

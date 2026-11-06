@@ -28,7 +28,7 @@ export const claudeProvider: ServerProvider = {
 const encodeManifest = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export const disabledLayer = Layer.mock(PstackPack.PstackPack)({
-  catalog: Effect.sync(() => undefined),
+  catalog: Effect.undefined,
   expandComposer: (input) => Effect.succeed(input),
 });
 

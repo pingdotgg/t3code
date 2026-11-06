@@ -47,6 +47,8 @@ import type { CodeIntelligenceCommand } from "./codeIntelligenceWorkerThread.ts"
 
 const MAX_LISTED_FILES = 10_000;
 
+const isIndexOutsideCheckout = Schema.is(IndexOutsideCheckout);
+
 export class CodeIntelligenceProjectNotFound extends Schema.TaggedError<CodeIntelligenceProjectNotFound>()(
   "CodeIntelligenceProjectNotFound",
   { projectId: Schema.String },
@@ -474,8 +476,7 @@ const make = Effect.fn("CodeIntelligence.make")(function* (options: CodeIntellig
       },
       catch: (cause) =>
         new CodeIntelligenceWorkerError({
-          reason:
-            cause instanceof IndexOutsideCheckout ? "index-outside-checkout" : "worker-failed",
+          reason: isIndexOutsideCheckout(cause) ? "index-outside-checkout" : "worker-failed",
         }),
     });
     // Interrupted builds, and superseded generations whose last reader is gone. The build lock
@@ -507,8 +508,7 @@ const make = Effect.fn("CodeIntelligence.make")(function* (options: CodeIntellig
       try: () => publishGeneration(checkoutPath, generation),
       catch: (cause) =>
         new CodeIntelligenceWorkerError({
-          reason:
-            cause instanceof IndexOutsideCheckout ? "index-outside-checkout" : "worker-failed",
+          reason: isIndexOutsideCheckout(cause) ? "index-outside-checkout" : "worker-failed",
         }),
     }).pipe(Effect.onError(() => removeGeneration(checkoutPath, generation)));
     const previous = plan.published;
@@ -523,8 +523,7 @@ const make = Effect.fn("CodeIntelligence.make")(function* (options: CodeIntellig
         try: () => tryLockBuild(checkoutPath),
         catch: (cause) =>
           new CodeIntelligenceWorkerError({
-            reason:
-              cause instanceof IndexOutsideCheckout ? "index-outside-checkout" : "worker-failed",
+            reason: isIndexOutsideCheckout(cause) ? "index-outside-checkout" : "worker-failed",
           }),
       }),
       // Waiting would tie this server to another's build; that build covers the checkout.
@@ -630,7 +629,7 @@ const make = Effect.fn("CodeIntelligence.make")(function* (options: CodeIntellig
         Effect.try({
           try: () => pinPublishedGeneration(checkoutPath),
           catch: (cause) =>
-            cause instanceof IndexOutsideCheckout
+            isIndexOutsideCheckout(cause)
               ? new CodeIntelligencePathOutsideCheckout({ path: INDEX_DIRECTORY })
               : new CodeIntelligenceInspectionFailed({
                   projectId: input.projectId,
