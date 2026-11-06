@@ -1,3 +1,4 @@
+import type { OnePasswordAccountSummary } from "@t3tools/contracts";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { defineSecretProviderDriver } from "@t3tools/secret-provider-core/server/driver";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -7,8 +8,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import { ChildProcess } from "effect/process";
-
-import type { OnePasswordAccountSummary } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { definition, OnePasswordAccount } from "../shared/definition.ts";
@@ -114,24 +113,27 @@ export const driver = defineSecretProviderDriver({
   }),
 });
 
-const AccountListJson = Schema.fromJsonString(
-  Schema.Array(Schema.Struct({ url: OnePasswordAccount, email: Schema.String })),
+const decodeAccountList = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Array(Schema.Struct({ url: OnePasswordAccount, email: Schema.String })),
+  ),
 );
-const decodeAccountList = Schema.decodeUnknownOption(AccountListJson);
 
 /** Signed-in accounts by the address `op --account` accepts; empty when `op` cannot answer. */
 export const listAccounts = Effect.fn("OnePasswordDriver.listAccounts")(function* () {
   const result = yield* runOnePassword(["account", "list", "--format", "json"]).pipe(
     Effect.timeoutOption(READ_TIMEOUT),
-    Effect.orElseSucceed(() => Option.none()),
+    Effect.orElseSucceed(Option.none),
   );
-  if (Option.isNone(result) || result.value.code !== 0) {
+  const accounts = Option.filter(result, ({ code }) => code === 0).pipe(
+    Option.flatMap(({ stdout }) => decodeAccountList(stdout)),
+  );
+  if (Option.isNone(accounts)) {
     yield* Effect.logWarning("Could not list 1Password accounts");
     return [];
   }
-  return Option.match(decodeAccountList(result.value.stdout), {
-    onNone: (): ReadonlyArray<OnePasswordAccountSummary> => [],
-    onSome: (accounts) =>
-      accounts.map(({ url, email }): OnePasswordAccountSummary => ({ account: url, email })),
-  });
+  return accounts.value.map(({ url, email }): OnePasswordAccountSummary => ({
+    account: url,
+    email,
+  }));
 });

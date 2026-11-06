@@ -15,11 +15,11 @@ export class OnePasswordAccounts extends Context.Service<
 
 const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const list = OnePasswordDriver.listAccounts().pipe(
-    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    Effect.withSpan("OnePasswordAccounts.list"),
-  );
-  return OnePasswordAccounts.of({ list });
+  return OnePasswordAccounts.of({
+    list: OnePasswordDriver.listAccounts().pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    ),
+  });
 });
 
 export const layer = Layer.effect(OnePasswordAccounts, make);

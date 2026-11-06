@@ -38,7 +38,6 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { OnePasswordAccountSummary } from "./settingsSecretValue.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -356,6 +355,7 @@ import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from ".
 import {
   StorageCleanupReport,
   DatabaseStorageStatus,
+  OnePasswordAccountSummary,
   ServerSettings,
   ServerSettingsError,
   ServerSettingsPatch,

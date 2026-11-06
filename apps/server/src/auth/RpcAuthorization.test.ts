@@ -51,6 +51,12 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("lists 1Password accounts only with the grant that saves a secret provider", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.serverListOnePasswordAccounts)).toBe(
+      AuthProvidersManageScope,
+    );
+  });
+
   it("separates passive terminal observation from operations that can change a shell", () => {
     for (const method of [WS_METHODS.terminalObserve, WS_METHODS.subscribeTerminalMetadata]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);

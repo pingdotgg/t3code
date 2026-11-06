@@ -134,6 +134,7 @@ export function SecretProviderDialog({
                 <AutocompleteInput
                   id="secret-provider-account"
                   placeholder="my.1password.com"
+                  maxLength={253}
                   spellCheck={false}
                   showTrigger={listedAccounts.length > 0}
                   aria-invalid={accountError !== undefined}
@@ -143,7 +144,7 @@ export function SecretProviderDialog({
                 />
                 {listedAccounts.length > 0 ? (
                   <AutocompletePopup>
-                    <AutocompleteList className="max-h-72">
+                    <AutocompleteList>
                       {listedAccounts.map((item) => (
                         <AutocompleteItem key={item.account} value={item}>
                           <span className="min-w-0 truncate text-sm font-medium">

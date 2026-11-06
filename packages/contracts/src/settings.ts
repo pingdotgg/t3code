@@ -920,6 +920,13 @@ const SecretProviderConfigWrite = Schema.Struct({
   label: SecretProviderLabel,
 });
 
+/** A 1Password account signed in on the server, as `op account list` reports it. */
+export const OnePasswordAccountSummary = Schema.Struct({
+  account: TrimmedNonEmptyString,
+  email: Schema.String,
+});
+export type OnePasswordAccountSummary = typeof OnePasswordAccountSummary.Type;
+
 export const SourceControlHostSettings = Schema.Record(Schema.String, Schema.Unknown);
 export type SourceControlHostSettings = typeof SourceControlHostSettings.Type;
 

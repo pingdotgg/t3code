@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
 
-import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { TrimmedString } from "./baseSchemas.ts";
 import { SecretReference } from "./secretReference.ts";
 
 /**
@@ -121,10 +121,3 @@ export function withSettingsSecrets<Settings extends Readonly<Record<string, unk
   }
   return next as Settings;
 }
-
-/** A 1Password account signed in on the server, as `op account list` reports it. */
-export const OnePasswordAccountSummary = Schema.Struct({
-  account: TrimmedNonEmptyString,
-  email: Schema.String,
-});
-export type OnePasswordAccountSummary = typeof OnePasswordAccountSummary.Type;
