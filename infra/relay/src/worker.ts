@@ -60,7 +60,6 @@ import * as AgentActivityPublisher from "./agentActivity/AgentActivityPublisher.
 import * as ApnsClient from "./agentActivity/ApnsClient.ts";
 import * as ApnsProviderTokens from "./agentActivity/ApnsProviderTokens.ts";
 import * as ApnsDeliveryQueue from "./agentActivity/ApnsDeliveryQueue.ts";
-import * as ApnsDeliveryQueueConsumer from "./agentActivity/ApnsDeliveryQueueConsumer.ts";
 import * as ApnsDeliveries from "./agentActivity/ApnsDeliveries.ts";
 import * as CloudflareApiPause from "./environments/CloudflareApiPause.ts";
 import * as EnvironmentConnector from "./environments/EnvironmentConnector.ts";
@@ -448,7 +447,10 @@ export const layer = Api.make(
         retryDelay: "30 seconds",
         deadLetterQueue: apnsDeliveryDeadLetterQueue.queueName as unknown as string,
       },
-      (stream) => stream.pipe(ApnsDeliveryQueueConsumer.processBatch, Effect.provide(layerRuntime)),
+      (stream) =>
+        Effect.flatMap(ApnsDeliveries.ApnsDeliveries, (deliveries) =>
+          deliveries.processBatch(stream),
+        ).pipe(Effect.provide(layerRuntime)),
     );
 
     yield* Cloudflare.Queues.consumeQueueMessages<unknown>(

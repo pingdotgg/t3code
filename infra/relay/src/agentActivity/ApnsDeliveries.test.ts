@@ -26,7 +26,6 @@ import * as DeliveryAttempts from "./DeliveryAttempts.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
-import * as ApnsDeliveryQueueConsumer from "./ApnsDeliveryQueueConsumer.ts";
 import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 import * as ApnsClient from "./ApnsClient.ts";
@@ -705,8 +704,8 @@ describe("ApnsDeliveries", () => {
           }),
         }),
       );
-      const batch = yield* ApnsDeliveryQueueConsumer.processBatch(
-        Stream.fromIterable(jobs.map((body) => ({ body }))),
+      const batch = yield* Effect.flatMap(ApnsDeliveries.ApnsDeliveries, (deliveries) =>
+        deliveries.processBatch(Stream.fromIterable(jobs.map((body) => ({ body })))),
       ).pipe(
         Effect.provide(
           layerFor({
@@ -967,10 +966,9 @@ describe("ApnsDeliveries", () => {
       });
 
     return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
       const result = yield* Effect.exit(
-        ApnsDeliveryQueueConsumer.processBatch(
-          Stream.fromIterable((yield* signed).map((body) => ({ body }))),
-        ),
+        deliveries.processBatch(Stream.fromIterable((yield* signed).map((body) => ({ body })))),
       );
 
       expect(result._tag).toBe("Failure");
