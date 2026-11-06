@@ -120,11 +120,13 @@ export const makeUpdatePass = Effect.fn("updates.ServerAutoUpdater.makeUpdatePas
     );
     if (!(yield* canRestart)) return;
     yield* Effect.logInfo("Installing a background server update", { targetVersion });
+    let windowClosed = false;
     const accepted = yield* selfUpdate
       .update({ targetVersion }, (stage) =>
         Effect.gen(function* () {
           // Preflight can take 30 seconds; work may have started under the restart lock.
           if (stage === "installing" && !(yield* canRestart)) {
+            windowClosed = true;
             return yield* new ServerSelfUpdateError({
               reason: "The background update window closed before the restart.",
             });
@@ -142,6 +144,12 @@ export const makeUpdatePass = Effect.fn("updates.ServerAutoUpdater.makeUpdatePas
                 ).pipe(Effect.as(false))
               : Effect.fail(error),
         }),
+        // Any other failure waits for the next release check instead of preflighting every minute.
+        Effect.tapError(() =>
+          Effect.sync(() => {
+            if (!windowClosed) staged = undefined;
+          }),
+        ),
       );
     staged = undefined;
     skipped.add(targetVersion);

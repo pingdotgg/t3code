@@ -638,6 +638,33 @@ it.layer(NodeServices.layer)("background server updates", (it) => {
       }),
   );
 
+  it.effect("retries a refused handoff at the next release check, not every minute", () =>
+    Effect.gen(function* () {
+      let requests = 0;
+      const harness = yield* makeHarness({
+        requestUpdate: () =>
+          Effect.sync(() => void requests++).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ServiceLauncherClient.ServiceLauncherClientError({ operation: "send" }),
+              ),
+            ),
+          ),
+      });
+      const pass = yield* backgroundUpdates(harness, { open: { value: true } }).pass;
+      yield* pass;
+      expect(requests).toBe(1);
+      const preflights = harness.order.filter((step) => step === "preflight").length;
+      yield* TestClock.adjust(Duration.minutes(1));
+      yield* pass;
+      expect(requests).toBe(1);
+      expect(harness.order.filter((step) => step === "preflight")).toHaveLength(preflights);
+      yield* TestClock.adjust(Duration.hours(1));
+      yield* pass;
+      expect(requests).toBe(2);
+    }),
+  );
+
   it.effect("skips a target the launcher rolled back or failed", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
