@@ -19,6 +19,8 @@ import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { splitPullRequestBody } from "./pullRequestMarkdown.logic";
 
 export const PullRequestMarkdownContext = createContext<{
+  /** Stable per repository, so comments share one renderer and its parse cache. */
+  remarkPlugins: PluggableList;
   rehypePlugins: PluggableList;
   lineBreaks: boolean;
   threadRef: ScopedThreadRef | null;
@@ -103,7 +105,12 @@ export function PullRequestMarkdown({
               threadRef={resolvedThreadRef}
               pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
               environmentId={environmentId}
-              {...(context ? { extraRehypePlugins: context.rehypePlugins } : {})}
+              {...(context
+                ? {
+                    extraRemarkPlugins: context.remarkPlugins,
+                    extraRehypePlugins: context.rehypePlugins,
+                  }
+                : {})}
               lineBreaks={lineBreaks ?? context?.lineBreaks ?? false}
               sourceControlMedia
               sourceControlMediaRepository={repository}

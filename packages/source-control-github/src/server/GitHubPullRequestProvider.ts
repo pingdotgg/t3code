@@ -41,6 +41,8 @@ const CAPABILITIES: PullRequestCapabilities = {
   updateMethods: ["merge", "rebase"],
   search: true,
   reactions: true,
+  mentions: true,
+  referenceSigils: ["#"],
   viewedFiles: "host",
   review: {
     inlineComment: true,
@@ -111,6 +113,7 @@ function gitHubProviderFailure(
       return { reason: "missing-tool" };
     case "GitHubNotSignedInError":
     case "GitHubHostDisabledError":
+    case "SettingsSecretUnresolvedError":
     case "GitHubApiAuthenticationError":
       return { reason: "unauthenticated" };
     case "GitHubApiRateLimitError":
@@ -654,6 +657,11 @@ export const make = Effect.gen(function* () {
 
     searchRepositoryAuthors: (input) =>
       cli.searchRepositoryAuthors(input).pipe(Effect.mapError(fail("searchRepositoryAuthors"))),
+
+    searchRepositoryReferences: (input) =>
+      cli
+        .searchRepositoryReferences(input)
+        .pipe(Effect.mapError(fail("searchRepositoryReferences"))),
 
     setLabels: (input) =>
       cli
