@@ -1092,8 +1092,10 @@ const connectTabHost = Effect.fn("connectTabHost")(function* (
 ) {
   const openTabs: PreviewTabId[] = [];
   const routed: RoutedRequest[] = [];
+  const connected = yield* Deferred.make<void>();
   const requests = requestsFrom(
     yield* broker.connect(makeHost({ supportedOperations: ["open", "snapshot", "close"] })),
+    () => Deferred.doneUnsafe(connected, Effect.void),
   );
   yield* Stream.runForEach(requests, (request) => {
     routed.push(request);
@@ -1120,7 +1122,7 @@ const connectTabHost = Effect.fn("connectTabHost")(function* (
     if (request.operation === "close") openTabs.splice(openTabs.indexOf(tabId), 1);
     return broker.respond({ ...reply, requestId: request.requestId, ok: true, result: {} });
   }).pipe(Effect.forkScoped);
-  yield* Effect.yieldNow;
+  yield* Deferred.await(connected);
   return { routed, openTabs };
 });
 
