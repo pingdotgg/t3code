@@ -222,7 +222,9 @@ describe("MessagesTimeline work rows", () => {
     const props = baseProps();
     const runId = RunId.make("completed-run");
     const container = document.createElement("div");
-    container.style.cssText = "height: 600px; width: 900px; display: flex; flex-direction: column;";
+    // Keep the heading on screen so Playwright does not scroll it before clicking.
+    container.style.cssText =
+      "height: min(600px, 100vh); width: 900px; display: flex; flex-direction: column;";
     await using screen = await render(
       <MessagesTimeline
         {...props}
@@ -251,6 +253,7 @@ describe("MessagesTimeline work rows", () => {
           document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2),
         ),
       ).toBe(true);
+      expect(button.checkVisibility({ opacityProperty: true })).toBe(true);
       expect(props.listRef.current!.getState().sizes.has("entry-final")).toBe(true);
       expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
     });
