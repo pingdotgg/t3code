@@ -9026,6 +9026,152 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  // A dev server started as a background shell never exits, so it must not hold the root turn.
+  it.effect("completes a settled Grok turn while a background shell keeps running", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const promptStarted = yield* Deferred.make<void>();
+      const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+      const promptHeld = yield* Deferred.make<void>();
+      const finalizeScheduled = yield* Deferred.make<Duration.Input>();
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const grokFlavor = makeGrokAcpAdapterFlavor(
+        {
+          instanceId,
+          settings: DEFAULT_GROK_SETTINGS,
+          environment: {},
+          hostPlatform: yield* HostProcess.Platform,
+          selfInvocation,
+        },
+        yield* HostProcess.HomeDirectory,
+      );
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation,
+        testHooks: {
+          afterPromptSettledWithBackgroundWork: () =>
+            Deferred.succeed(promptHeld, undefined).pipe(Effect.asVoid),
+          onDeferredFinalizeScheduled: (debounce) =>
+            Deferred.succeed(finalizeScheduled, debounce).pipe(Effect.asVoid),
+        },
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          enablePostSettleContinuation: true,
+          deferFinalizeForBackgroundWork: grokFlavor.deferFinalizeForBackgroundWork!,
+          normalizeToolCall: grokFlavor.normalizeToolCall!,
+          extractBackgroundTaskId: grokFlavor.extractBackgroundTaskId!,
+          isBackgroundCommandTool: grokFlavor.isBackgroundCommandTool!,
+          isPersistentBackgroundTool: grokFlavor.isPersistentBackgroundTool!,
+          registerExtensions: ({ runtime, applyBackgroundTaskMutation }) =>
+            registerXAiBackgroundTaskTracking(runtime, applyBackgroundTaskMutation),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdateHandler = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: () =>
+                Deferred.succeed(promptStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(promptGate)),
+                ),
+            }),
+          }),
+        },
+      });
+      const threadId = ThreadId.make("thread-acp-grok-dev-server");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-grok-dev-server"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(promptStarted);
+      assert.isDefined(sessionUpdateHandler);
+      const update = (update: EffectAcpSchema.SessionUpdate) =>
+        sessionUpdateHandler!({ sessionId: "mock-session-1", update });
+      yield* update({
+        sessionUpdate: "tool_call",
+        toolCallId: "call-dev-server",
+        title: "run_terminal_command",
+        kind: "execute",
+        status: "in_progress",
+        rawInput: { command: "vp run dev" },
+      });
+      yield* update({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-dev-server",
+        status: "completed",
+        rawOutput: {
+          type: "BackgroundTaskStarted",
+          task_id: "call-dev-server",
+          task_type: "bash",
+          status: "running",
+          command: "vp run dev",
+        },
+      });
+      yield* update({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "The dev server is running." },
+      });
+
+      const takeTerminal = Effect.gen(function* () {
+        while (true) {
+          const event = yield* Queue.take(events);
+          if (event.type === "turn.terminal") return event.status;
+        }
+      });
+      yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
+      const terminalStatus = yield* Effect.raceAll([
+        takeTerminal,
+        Deferred.await(finalizeScheduled).pipe(
+          Effect.flatMap(TestClock.adjust),
+          Effect.andThen(takeTerminal),
+        ),
+        // The hold never ends on its own, so report it instead of waiting forever.
+        Deferred.await(promptHeld).pipe(Effect.as("held open by the background shell")),
+      ]);
+      assert.equal(terminalStatus, "completed");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("durably poisons start and resume when required hard teardown is unavailable", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
