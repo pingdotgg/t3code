@@ -23,13 +23,21 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
+import { PROJECT_FAVICON_EXTENSIONS, isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 
 // fff-node's native library stays external; single-executables require disk packages instead of importing them.
 const requireForFff = NodeModule.createRequire(import.meta.url);
 const { FileFinder } = requireForFff("@ff-labs/fff-node") as typeof import("@ff-labs/fff-node");
+
+// A glob intersects existing extension constraints; fff ORs bare `*.ext` constraints together.
+const IMAGE_SEARCH_CONSTRAINT = `**/*.{${PROJECT_FAVICON_EXTENSIONS.map((extension) =>
+  extension.slice(1).replace(/[a-z]/g, (letter) => `[${letter}${letter.toUpperCase()}]`),
+).join(",")}}`;
+
+// fff 0.11 disables filename fallback above this match count per base/overflow segment.
+const FFF_FILENAME_FALLBACK_MAX_MATCHES = 15_000;
 
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
@@ -155,6 +163,14 @@ function toFileEntry(item: FileItem, hostIsWindows: boolean): ProjectEntry | nul
 function toDirectoryEntry(item: DirItem, hostIsWindows: boolean): ProjectEntry | null {
   const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath, hostIsWindows));
   return normalizedPath ? { path: normalizedPath, kind: "directory" } : null;
+}
+
+function isLoneFuzzyPath(query: string): boolean {
+  const trimmed = query.trim();
+  return (
+    !/\s/u.test(trimmed) &&
+    (trimmed.startsWith("/") || (trimmed.endsWith("/") && !/^[*!\\]/u.test(trimmed)))
+  );
 }
 
 type SearchPage<I> = { readonly items: ReadonlyArray<I>; readonly totalMatched: number };
@@ -461,13 +477,13 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   });
 
   // Grows the first page until hidden entries can no longer crowd visible ones out of it.
-  const searchVisible = Effect.fn("WorkspaceSearchIndex.searchVisible")(function* <I>(
+  const searchVisible = Effect.fn("WorkspaceSearchIndex.searchVisible")(function* <I, Metadata>(
     query: string,
     pageSize: number,
     operation: "directorySearch" | "fileSearch" | "mixedSearch",
-    execute: (pageSize: number) => Result<SearchPage<I>>,
+    execute: (pageSize: number) => Result<SearchPage<I> & Metadata>,
     pathOf: (item: I) => string,
-  ): Effect.fn.Return<SearchPage<I>, WorkspaceSearchIndexSearchFailed> {
+  ): Effect.fn.Return<SearchPage<I> & Metadata, WorkspaceSearchIndexSearchFailed> {
     let size = pageSize;
     while (true) {
       const fetchSize = size;
@@ -482,6 +498,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         fetchSize >= WORKSPACE_INDEX_PAGE_SIZE
       ) {
         return {
+          ...result,
           items,
           totalMatched: result.totalMatched - (result.items.length - items.length),
         };
@@ -553,16 +570,42 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     kind: ProjectEntryKind | undefined,
     imageOnly: boolean | undefined,
   ) {
-    const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
+    const pageSize = Math.max(1, limit + 1);
     if (kind === "file" || imageOnly) {
-      const result = yield* searchVisible(
+      // Adding a constraint changes fff's lone-path parse; offset pages can skip tied matches.
+      let postFilterImages = imageOnly && isLoneFuzzyPath(query);
+      const nativePageSize = postFilterImages ? WORKSPACE_INDEX_PAGE_SIZE : pageSize;
+      const nativeQuery =
+        imageOnly && !postFilterImages ? `${query} ${IMAGE_SEARCH_CONSTRAINT}` : query;
+      let result = yield* searchVisible(
         query,
-        pageSize,
+        nativePageSize,
         "fileSearch",
-        (size) => finder.fileSearch(query, { pageSize: size }),
-        (item) => item.relativePath,
+        (size) => finder.fileSearch(nativeQuery, { pageSize: size }),
+        (item: FileItem) => item.relativePath,
       );
-      return mapFileSearchResult(result, limit, hostIsWindows, imageOnly);
+      if (
+        imageOnly &&
+        !postFilterImages &&
+        query.trim() &&
+        result.totalFiles > FFF_FILENAME_FALLBACK_MAX_MATCHES &&
+        result.totalMatched > 0
+      ) {
+        const unfiltered = yield* runSearch(query, 1, "fileSearch", () =>
+          finder.fileSearch(query, { pageSize: 1 }),
+        );
+        if (unfiltered.totalMatched > FFF_FILENAME_FALLBACK_MAX_MATCHES) {
+          postFilterImages = true;
+          result = yield* searchVisible(
+            query,
+            WORKSPACE_INDEX_PAGE_SIZE,
+            "fileSearch",
+            (size) => finder.fileSearch(query, { pageSize: size }),
+            (item: FileItem) => item.relativePath,
+          );
+        }
+      }
+      return mapFileSearchResult(result, limit, hostIsWindows, postFilterImages);
     }
     if (kind === "directory") {
       const result = yield* searchVisible(
@@ -570,7 +613,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         pageSize,
         "directorySearch",
         (size) => finder.directorySearch(query, { pageSize: size }),
-        (item) => item.relativePath,
+        (item: DirItem) => item.relativePath,
       );
       return mapDirectorySearchResult(result, limit, hostIsWindows);
     }
