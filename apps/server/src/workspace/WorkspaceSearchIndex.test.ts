@@ -216,3 +216,51 @@ it.effect.each([false, true])(
       }),
     ),
 );
+
+it.effect("reruns an enforced page whose path constraint filtered every file", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const grep = vi.fn((_query: string, options?: GrepOptions) => {
+        const fellBack = options?.enforceTimeBudget === false;
+        const value: GrepResult = {
+          items: fellBack
+            ? [
+                {
+                  ...fileItem("arch/x86/kernel/head64.c"),
+                  isBinary: false,
+                  lineNumber: 1,
+                  col: 0,
+                  byteOffset: 0,
+                  lineContent: "asmlinkage __visible void start_kernel(void)",
+                  matchRanges: [[0, 44]],
+                },
+              ]
+            : [],
+          totalMatched: fellBack ? 1 : 0,
+          totalFilesSearched: fellBack ? 3 : 0,
+          totalFiles: 3,
+          filteredFileCount: fellBack ? 3 : 0,
+          nextCursor: null,
+        };
+        return { ok: true as const, value };
+      });
+      const finder = {
+        destroy: vi.fn(),
+        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+        grep,
+      } as unknown as FileFinder;
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
+      const result = yield* searchIndex.searchContents({
+        query: "[a-z]{90}[-+*/]{5}|asmlinkage __visible.*start_kernel",
+        limit: 10,
+        caseSensitive: true,
+        wholeWord: false,
+        useRegex: true,
+      });
+
+      expect(result.matches.map((match) => match.path)).toEqual(["arch/x86/kernel/head64.c"]);
+    }),
+  ),
+);

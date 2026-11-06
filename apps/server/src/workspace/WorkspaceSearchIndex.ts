@@ -488,8 +488,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     let regexFallbackError: string | undefined;
     let retryLiterally = false;
 
-    do {
-      const result = yield* runSearch(input.query, input.limit, "grep", () =>
+    const grepPage = (enforceTimeBudget: boolean) =>
+      runSearch(input.query, input.limit, "grep", () =>
         finder.grep(searchQuery, {
           mode: regexMode ? "regex" : "plain",
           smartCase: !input.caseSensitive && !regexMode,
@@ -497,9 +497,16 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           pageSize: rawPageSize,
           cursor: nextCursor,
           timeBudgetMs: CONTENT_SEARCH_TIME_BUDGET_MS,
-          enforceTimeBudget: true,
+          enforceTimeBudget,
         }),
       );
+
+    do {
+      let result = yield* grepPage(true);
+      // fff 0.11 drops an empty enforced raw-query fallback page's cursor when a parsed path constraint matches no files.
+      if (result.filteredFileCount === 0 && result.totalFiles > 0) {
+        result = yield* grepPage(false);
+      }
       // fff searches an invalid pattern as a literal, which would keep the `(?i)` prefix.
       retryLiterally = regexMode && !input.caseSensitive && result.regexFallbackError !== undefined;
       if (retryLiterally) {
