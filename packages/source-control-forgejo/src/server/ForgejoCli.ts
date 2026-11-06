@@ -167,7 +167,7 @@ export function parseForgejoRemote(value: string) {
     }
   }
   // SCP remotes may omit the username; URL treats these as a custom scheme.
-  const ssh = /^(?:[^@/]+@)?([^:/]+):([^/].*)$/.exec(value);
+  const ssh = /^(?:[^@/]+@)?(\[[^\]@/]+\]|[^:/[\]]+):([^/].*)$/.exec(value);
   return ssh?.[1] && ssh[2]
     ? {
         host: ssh[1].toLowerCase(),
