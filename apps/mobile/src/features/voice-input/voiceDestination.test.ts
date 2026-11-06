@@ -149,6 +149,7 @@ it("keeps local as the default and never reuses consent for an offline or resele
           acceleration: "cpu",
           modelUnloadTimeout: "never",
           gpuDevices: [],
+          benchmarkTier: "cpu",
         }),
       )
       .mockResolvedValueOnce(Response.json({ text: "hello" }));

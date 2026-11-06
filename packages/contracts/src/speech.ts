@@ -45,6 +45,9 @@ export type SpeechLanguage = typeof SpeechLanguage.Type;
 
 export const SpeechGpuDevice = Schema.Struct({ id: Schema.String, name: Schema.String });
 
+export const SpeechBenchmarkTier = Schema.Literals(["cpu", "accelerated"]);
+export type SpeechBenchmarkTier = typeof SpeechBenchmarkTier.Type;
+
 export const EnvironmentSpeechModelState = Schema.Literals([
   "downloadable",
   "downloading",
@@ -67,7 +70,10 @@ export const EnvironmentSpeechModel = Schema.Struct({
         Schema.String,
         Schema.Struct({ grade: Schema.String, errorPercent: Schema.Finite }),
       ),
-      secondsPer30s: Schema.NullOr(Schema.Finite),
+      secondsPer30s: Schema.Struct({
+        cpu: Schema.NullOr(Schema.Finite),
+        accelerated: Schema.NullOr(Schema.Finite),
+      }),
     }),
   ),
   recommended: Schema.Boolean,
@@ -107,6 +113,7 @@ export const EnvironmentSpeechStatus = Schema.Union([
     languages: Schema.optionalKey(Schema.Array(Schema.String)),
     supportsLanguageDetection: Schema.optionalKey(Schema.Boolean),
     acceleration: SpeechAcceleration,
+    benchmarkTier: SpeechBenchmarkTier,
     modelUnloadTimeout: SpeechModelUnloadTimeout,
     gpuDevices: Schema.Array(SpeechGpuDevice),
   }),
