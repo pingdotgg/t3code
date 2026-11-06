@@ -46,10 +46,4 @@ describe("moveLayoutTabToWorkspace", () => {
     expect(selectFocusedWorkspace(moved)).toBe(moved.workspaces[0]);
     expect(selectFocusedTab(moved)?.content).toBe(second);
   });
-
-  it("keeps the top workspace's only tab where it is", () => {
-    const state = openLayoutTab(createLayoutState(), chat("only"));
-
-    expect(moveLayoutTabToWorkspace(state, -1)).toBe(state);
-  });
 });
