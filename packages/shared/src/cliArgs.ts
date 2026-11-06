@@ -20,6 +20,11 @@ export function tokenizeCliArgs(args?: string): ReadonlyArray<string> {
     const char = input[index];
     if (char === undefined) continue;
 
+    if (char === "\\" && input[index + 1] === "\n" && quote !== "'") {
+      index++;
+      continue;
+    }
+
     if (quote) {
       if (char === quote) {
         quote = undefined;
