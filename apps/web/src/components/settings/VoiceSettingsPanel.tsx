@@ -31,6 +31,7 @@ import {
   MicIcon,
   RefreshCwIcon,
   StarIcon,
+  SlidersHorizontalIcon,
   Trash2Icon,
   XIcon,
 } from "lucide-react";
@@ -65,6 +66,19 @@ import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRadioItemIndicator,
+  MenuSeparator,
+  MenuTrigger,
+} from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
@@ -72,6 +86,7 @@ import { toastManager } from "../ui/toast";
 import { MicrophoneTest } from "./MicrophoneTest";
 import { LanguageRow, ModelBenchmarks, orderSpeechLanguages } from "./SpeechModelComparison";
 import { languageLabel, SpeechLanguageSelect } from "./SpeechLanguageSelect";
+import { filterSpeechModels, type SpeechModelSort } from "./speechModelBrowser";
 import { AdvancedSettings } from "./AdvancedSettings";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
@@ -110,12 +125,6 @@ const spellingsOf = (words: SpeechCustomWords) =>
       [term, ...aliases].map((spelling) => spelling.toLocaleLowerCase()),
     ),
   );
-const modelSortOrder = (model: EnvironmentSpeechModel) => {
-  if (model.active) return 0;
-  if (model.state === "installed") return 1;
-  if (model.state === "downloading" || model.state === "verifying") return 2;
-  return model.recommended ? 3 : 4;
-};
 
 type ModelCardProps = {
   readonly model: EnvironmentSpeechModel;
@@ -717,6 +726,8 @@ function SpeechModelBrowser(props: {
     catalog: { status, models, run, controlsDisabled, canCancel, requestedDownload },
   } = props;
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<SpeechModelSort>("recommended");
+  const [downloadedOnly, setDownloadedOnly] = useState(false);
   const [languageSearch, setLanguageSearch] = useState("");
   const [selection, setSelection] = useState<string[] | null>(null);
   const preferred = navigator.languages.map((language) => language.toLowerCase().split("-")[0]!);
@@ -729,14 +740,20 @@ function SpeechModelBrowser(props: {
     (code) =>
       !needle || code.includes(needle) || languageLabel(code).toLocaleLowerCase().includes(needle),
   );
-  const query = search.trim().toLocaleLowerCase();
-  const sortedModels = models
-    .filter(
-      (model) =>
-        selectedLanguages.every((language) => model.languages.includes(language)) &&
-        (!query || (model.name + " " + model.description).toLocaleLowerCase().includes(query)),
-    )
-    .toSorted((left, right) => modelSortOrder(left) - modelSortOrder(right));
+  const accuracyLanguage = selectedLanguages[0] ?? "en";
+  const sortLabels: Record<SpeechModelSort, string> = {
+    recommended: "Recommended",
+    size: "Smallest download",
+    accuracy: `Best ${languageLabel(accuracyLanguage)} accuracy`,
+    speed: "Fastest transcription",
+  };
+  const sortedModels = filterSpeechModels(models, {
+    search,
+    languages: selectedLanguages,
+    downloadedOnly,
+    sort,
+    accuracyLanguage,
+  });
   const activeModel = models.find((model) => model.active);
   const renderedModels =
     activeModel && !sortedModels.includes(activeModel)
@@ -808,13 +825,54 @@ function SpeechModelBrowser(props: {
                     ? "Models for " + selectedLanguages.map(languageLabel).join(", ")
                     : "All models"}
                 </p>
-                <Input
-                  size="compact"
-                  aria-label="Search transcription models"
-                  placeholder="Search models"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
+                <InputGroup>
+                  <InputGroupInput
+                    size="compact"
+                    aria-label="Search transcription models"
+                    placeholder="Search models"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                  <InputGroupAddon align="inline-end">
+                    <Menu>
+                      <MenuTrigger
+                        render={<Button size="compact" variant="ghost-muted" />}
+                        aria-label={`Sort and filter models: ${sortLabels[sort]}${downloadedOnly ? ", downloaded only" : ""}`}
+                      >
+                        <SlidersHorizontalIcon />
+                        <span className="hidden @min-[40rem]/voice-models:inline">
+                          {sortLabels[sort]}
+                        </span>
+                        {downloadedOnly && <span>1</span>}
+                      </MenuTrigger>
+                      <MenuPopup align="end">
+                        <MenuGroup>
+                          <MenuGroupLabel>Sort by</MenuGroupLabel>
+                          <MenuRadioGroup
+                            value={sort}
+                            onValueChange={(value) => setSort(value as SpeechModelSort)}
+                          >
+                            {(Object.keys(sortLabels) as SpeechModelSort[]).map((value) => (
+                              <MenuRadioItem key={value} value={value} closeOnClick>
+                                <span className="flex items-center justify-between gap-3">
+                                  {sortLabels[value]}
+                                  <MenuRadioItemIndicator />
+                                </span>
+                              </MenuRadioItem>
+                            ))}
+                          </MenuRadioGroup>
+                        </MenuGroup>
+                        <MenuSeparator />
+                        <MenuCheckboxItem
+                          checked={downloadedOnly}
+                          onCheckedChange={setDownloadedOnly}
+                        >
+                          Downloaded only
+                        </MenuCheckboxItem>
+                      </MenuPopup>
+                    </Menu>
+                  </InputGroupAddon>
+                </InputGroup>
               </div>
               <div
                 className="h-72 overflow-y-auto divide-y divide-border/60"
@@ -1283,7 +1341,7 @@ export function VoiceSettingsPanel() {
       <SettingsSection id={searchableSetting("speech-post-processing").id} title="Cleanup">
         <SettingsRow
           title="Clean up transcripts with a provider"
-          description="Sends each transcript, plus the draft text around your cursor, to the text generation provider on the draft’s environment to fix punctuation, numbers, and spoken corrections. Your audio is never sent. Off by default."
+          description="Sends each transcript and the draft text around your cursor to the draft environment’s text generation provider to fix punctuation, numbers, and spoken corrections. Your audio is never sent."
           control={
             <Switch
               aria-label="Clean up transcripts with a provider"
