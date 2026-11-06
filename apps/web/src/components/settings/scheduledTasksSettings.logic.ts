@@ -260,7 +260,9 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     projectId: task.projectId,
     threadId: task.threadId ?? "",
     threadMode: scheduledTaskThreadMode(task),
-    workspaceMode: task.workspaceStrategy.type,
+    // ThreadLaunchService refuses sandbox launches, so editing one falls back to a worktree.
+    workspaceMode:
+      task.workspaceStrategy.type === "sandbox" ? "worktree" : task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
     startFromOrigin:
       task.workspaceStrategy.type === "worktree"

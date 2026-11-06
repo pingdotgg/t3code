@@ -320,7 +320,8 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
     modelSelectionIsExplicit: true,
     schedule: scheduleDraftForTask(task),
     threadMode: scheduledTaskThreadMode(task),
-    workspace: task.workspaceStrategy.type,
+    // ThreadLaunchService refuses sandbox launches, so editing one falls back to a worktree.
+    workspace: task.workspaceStrategy.type === "sandbox" ? "worktree" : task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
     checkoutPath:
       task.workspaceStrategy.type === "existing_worktree"
