@@ -443,12 +443,14 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
 
 export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
   const ctx = use(TimelineRowCtx);
-  const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
+  const { isCompacting, isPreparingWorktree, liveAnswerPreview } = use(TimelineRowActivityCtx);
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
   // A failed group keeps this disclosure while an approval waits, but nothing is thinking then.
   const live = ctx.pendingApprovals.size === 0;
   const { groupId } = row;
-  const activity = <LiveActivityRow label="Thinking" iconName="brain" active={live} />;
+  const activity = (
+    <LiveActivityRow label={liveAnswerPreview ?? "Thinking"} iconName="brain" active={live} />
+  );
   if (groupId === undefined) return activity;
   return (
     <LiveWorkToggle
@@ -893,7 +895,7 @@ function WorkingWindowView({
   onOverflowChange: (overflows: boolean) => void;
 }) {
   const ctx = use(TimelineRowCtx);
-  const { isCompacting, isPreparingWorktree, turnEnded, pendingRequest } =
+  const { isCompacting, isPreparingWorktree, turnEnded, pendingRequest, liveAnswerPreview } =
     use(TimelineRowActivityCtx);
   const open = window.historyOpen;
   const [history, setHistory] = useState<{ head: number; tailStart: number } | null>(null);
@@ -1027,7 +1029,9 @@ function WorkingWindowView({
               />
             ) : null}
             {shown.map(renderItem)}
-            {showThinking ? <LiveActivityRow label="Thinking" iconName="brain" active /> : null}
+            {showThinking ? (
+              <LiveActivityRow label={liveAnswerPreview ?? "Thinking"} iconName="brain" active />
+            ) : null}
           </>
         )}
       </div>

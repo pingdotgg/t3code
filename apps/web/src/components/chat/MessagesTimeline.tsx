@@ -125,6 +125,7 @@ import {
   resolveTimelineMinimapVisibleRange,
   resolveTimelineMinimapHitStripWidth,
   timelineTurnFoldRunIdsByEntryId,
+  liveAnswerPreview,
   type MessagesTimelineRow,
   type TimelineLatestRun,
   turnFoldStartsOpen,
@@ -155,6 +156,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { DiffStatBlocks } from "./DiffStatLabel";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useDeadlinePassed } from "../../hooks/useDeadline";
+import { useClientSettings } from "../../hooks/useSettings";
 
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
@@ -597,6 +599,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       return next;
     });
   };
+  const preferredToolCallVisibility = useClientSettings((settings) => settings.toolCallVisibility);
+  const toolCallVisibility =
+    findActive && preferredToolCallVisibility === "zen" ? "hideAll" : preferredToolCallVisibility;
+  const revealedMessageId = citationRequest?.citation.messageId ?? null;
   // Find the fold that hides the match: imported turns have no run id but still
   // fold under a synthetic key, so the match's own run id cannot open them.
   const findFoldRunIds = (() =>
@@ -607,6 +613,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
           runningRunId,
           isWorking,
           runlessWorkActive,
+          toolCallVisibility,
+          revealedMessageId,
         })
       : null)();
   const activeFindFold = activeFindMatch ? findFoldRunIds?.get(activeFindMatch.entryId) : undefined;
@@ -669,6 +677,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     threadStartCheckpointReady,
     availableRevertTurnCounts,
     worktreeSetup,
+    toolCallVisibility,
+    revealedMessageId,
     slashCommands: slashCommandCatalog,
   });
   // A find match or citation inside the running turn needs its rows, not the window that replaces them.
@@ -686,6 +696,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     hasThreadError: threadErrorMessage !== null,
     isWorking,
     runlessWorkActive,
+    toolCallVisibility,
+    revealedMessageId,
     workingHistoryKey,
     windowlessCitation,
     activeFindEntryId,
@@ -715,6 +727,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
       runningRunId,
       isWorking,
       runlessWorkActive,
+      toolCallVisibility,
+      revealedMessageId,
     }).get(entryId);
     const runs = fold ? withTurnFoldOpen(expandedRunIds, fold) : expandedRunIds;
     const groups = runId
@@ -1242,6 +1256,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     pendingRequest: isWorking ? pendingRequest : null,
     usageLimit,
     threadErrorMessage,
+    liveAnswerPreview:
+      isWorking && toolCallVisibility === "zen" ? liveAnswerPreview(timelineEntries) : null,
   };
   // Mounted in both the empty and filled timeline so a thread's first turn
   // starts from a baseline instead of a fresh, silent region.
@@ -1347,6 +1363,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     runningRunId,
     isWorking,
     runlessWorkActive,
+    toolCallVisibility,
     rows,
     contentInsetEndAdjustment,
   });

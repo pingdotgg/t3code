@@ -111,6 +111,7 @@ export interface TimelineRowActivityState {
   isPreparingWorktree: boolean;
   latestRunId: RunId | null;
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
+  liveAnswerPreview: string | null;
   /** The approval or question the running turn waits on; it pauses the clock. */
   pendingRequest: TimelinePendingRequest | null;
   /** Background work that outlived the latest turn, named on its fold. */
