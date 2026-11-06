@@ -301,6 +301,11 @@ export interface GitRemoteStatusOptions {
   readonly refreshUpstream?: boolean;
 }
 
+/** Set by background discovery so its Git commands run in their own small lane, not the user's. */
+export const BackgroundGitWork = Context.Reference<boolean>("t3/vcs/BackgroundGitWork", {
+  defaultValue: () => false,
+});
+
 export class GitVcsDriver extends Context.Service<
   GitVcsDriver,
   {
