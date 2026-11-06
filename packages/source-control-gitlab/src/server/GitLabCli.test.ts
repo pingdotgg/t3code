@@ -1,12 +1,9 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
-
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, afterEach, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/process";
 
 import { VcsProcessExitError } from "@t3tools/contracts";
@@ -19,7 +16,7 @@ const mockedRun = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"
 const layer = it.layer(
   GitLabCli.layer.pipe(
     Layer.provide(TestSourceControlHost.layer({ process: { run: mockedRun } })),
-    Layer.provide(NodeServices.layer),
+    Layer.provideMerge(NodeServices.layer),
   ),
 );
 
@@ -110,12 +107,11 @@ layer("GitLabCli.layer", (it) => {
   // A strictly confined glab (Snap) has a private /tmp, so it cannot open the server's body file.
   it.effect("sends the merge request description to glab on stdin, not as a file path", () =>
     Effect.gen(function* () {
-      const bodyDir = yield* Effect.acquireRelease(
-        Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-gitlab-mr-body-"))),
-        (dir) => Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
-      );
-      const bodyFile = NodePath.join(bodyDir, "t3code-pr-body.md");
-      NodeFS.writeFileSync(bodyFile, "## Summary\n\nFixes the thing.\n");
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const bodyDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-gitlab-mr-body-" });
+      const bodyFile = path.join(bodyDir, "t3code-pr-body.md");
+      yield* fileSystem.writeFileString(bodyFile, "## Summary\n\nFixes the thing.\n");
       mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
 
       const glab = yield* GitLabCli.GitLabCli;
@@ -136,6 +132,9 @@ layer("GitLabCli.layer", (it) => {
 
   it.effect("fails with a typed error and skips glab when the description cannot be read", () =>
     Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const bodyDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-gitlab-mr-body-" });
       const glab = yield* GitLabCli.GitLabCli;
       const error = yield* glab
         .createMergeRequest({
@@ -143,14 +142,14 @@ layer("GitLabCli.layer", (it) => {
           baseBranch: "main",
           headSelector: "feature/mr",
           title: "Add MR",
-          bodyFile: NodePath.join(NodeOS.tmpdir(), "t3-gitlab-missing", "t3code-pr-body.md"),
+          bodyFile: path.join(bodyDir, "missing.md"),
         })
         .pipe(Effect.flip);
 
       assert.strictEqual(error._tag, "GitLabMergeRequestBodyReadError");
       assert.strictEqual(error.detail, "The merge request description could not be read.");
       expect(mockedRun).not.toHaveBeenCalled();
-    }),
+    }).pipe(Effect.scoped),
   );
 
   it.effect("skips invalid entries when parsing MR lists", () =>
