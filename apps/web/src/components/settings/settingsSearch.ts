@@ -136,6 +136,7 @@ export const SETTINGS_SECTION_LABEL_KEYS: Readonly<Record<SettingsPath, MessageK
   "/settings/maintenance": "settings.nav.maintenance",
   "/settings/labs": "settings.nav.labs",
   "/settings/about": "settings.nav.about",
+  "/settings/voice": "settings.nav.voice",
   "/settings/archived": "settings.nav.archived",
 };
 
