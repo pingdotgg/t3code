@@ -163,6 +163,17 @@ describe("sidebar keyboard navigation", () => {
     expect(tree.root.scrollTop).toBe(0);
   });
 
+  it("leaves focus on a rename input inside a row", () => {
+    using tree = setup();
+    const row = tree.row("first");
+    const input = document.createElement("input");
+    row.append(input);
+    tree.install();
+    input.focus();
+    releaseSidebarRowFocus();
+    expect(document.activeElement).toBe(input);
+  });
+
   it("does not pull focus back to a row that let go of it", async () => {
     using tree = setup();
     const first = tree.row("first");

@@ -4,7 +4,8 @@ const RELEASE_FOCUS_EVENT = "sidebar-tree:release-focus";
 /** Takes focus off the active sidebar row, so the tree does not restore it to that row. */
 export function releaseSidebarRowFocus() {
   const active = document.activeElement;
-  if (!(active instanceof HTMLElement) || !active.closest(ROW)) return;
+  // why: a rename input inside a row commits its title on blur.
+  if (!(active instanceof HTMLElement) || !active.matches(ROW)) return;
   active.dispatchEvent(new Event(RELEASE_FOCUS_EVENT, { bubbles: true }));
   active.blur();
 }
