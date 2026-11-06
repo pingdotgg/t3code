@@ -853,8 +853,14 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           ...limits,
           refreshAfter: (yield* Clock.currentTimeMillis) + 300_000,
         });
+        yield* TestClock.adjust("290 seconds");
+        yield* harness.provider.snapshot.refreshUsage!;
+        expect(yield* Ref.get(reads)).toBe(1);
+        yield* TestClock.adjust("10 seconds");
+        yield* harness.provider.snapshot.refreshUsage!;
+        expect(yield* Ref.get(reads)).toBe(2);
       }),
-    ).pipe(Effect.provideService(UsagePolling, true), Effect.provideService(UsageAfterReset, true)),
+    ).pipe(Effect.provideService(UsagePolling, true)),
   );
 
   it.effect("a quota read for the previous account is dropped after a new sign-in", () =>

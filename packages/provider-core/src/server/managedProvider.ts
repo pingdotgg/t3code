@@ -179,7 +179,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       current.auth.status === "authenticated"
         ? withUsageLimits(current, yield* input.checkUsageLimits)
         : yield* input.checkProvider.pipe(Effect.provideService(UsagePolling, pollingUsage));
-    if (pollingUsage) usageRefreshAfter = (yield* Clock.currentTimeMillis) + 5 * 60_000;
+    if (probedSnapshot.usageLimits?.refreshAfter !== undefined) {
+      usageRefreshAfter = probedSnapshot.usageLimits.refreshAfter;
+    } else if (pollingUsage) usageRefreshAfter = (yield* Clock.currentTimeMillis) + 5 * 60_000;
     const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
       snapshotStateRef,
       (state) => {

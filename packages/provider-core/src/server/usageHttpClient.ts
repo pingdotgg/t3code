@@ -13,13 +13,20 @@ const encodeKey = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const accountCacheKey = (origin: string, authorization: string, identity: string | undefined) =>
   encodeKey([origin, identity === undefined ? authorization : ["account", identity]]);
 
-const sampleTimes = new WeakMap<HttpClientResponse.HttpClientResponse, string>();
+const samples = new WeakMap<
+  HttpClientResponse.HttpClientResponse,
+  { readonly checkedAt: string; readonly refreshAfter: number }
+>();
 
 export function usageResponseCheckedAt(
   response: HttpClientResponse.HttpClientResponse,
   fallback: string,
 ) {
-  return sampleTimes.get(response) ?? fallback;
+  return samples.get(response)?.checkedAt ?? fallback;
+}
+
+export function usageResponseRefreshAfter(response: HttpClientResponse.HttpClientResponse) {
+  return samples.get(response)?.refreshAfter;
 }
 
 export const UsageAccountIdentity = Context.Reference<string | undefined>(
@@ -110,7 +117,10 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
                 request,
                 new Response(saved.body.slice(0), saved),
               );
-              sampleTimes.set(response, saved.checkedAt);
+              samples.set(response, {
+                checkedAt: saved.checkedAt,
+                refreshAfter: previous.expiresAt,
+              });
               return response;
             }
             if (now < state.retryAt) {
@@ -148,6 +158,7 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
               Effect.exit,
             );
             const finishedAt = yield* Clock.currentTimeMillis;
+            const refreshAfter = Math.max(finishedAt + TTL_MS, state.retryAt);
             if (
               !Exit.hasInterrupts(result) &&
               (generation === state.generation ||
@@ -159,7 +170,7 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
                 {
                   accountKey,
                   result,
-                  expiresAt: Math.max(finishedAt + TTL_MS, state.retryAt),
+                  expiresAt: refreshAfter,
                 },
               );
             const saved = yield* result;
@@ -167,7 +178,7 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
               request,
               new Response(saved.body.slice(0), saved),
             );
-            sampleTimes.set(response, saved.checkedAt);
+            samples.set(response, { checkedAt: saved.checkedAt, refreshAfter });
             return response;
           }),
         );

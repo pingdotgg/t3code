@@ -728,10 +728,15 @@ export function NewTaskFlowProvider(
     }
     const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
     const text = draft.text.trim();
+    const savedSelection = resolveSelectableModelSelection(
+      selectedEnvironmentServerConfig,
+      draft.modelSelection ?? null,
+      selectedProject.id,
+    );
     const selectionInput = {
       defaultSelection: selectedDefaultModel,
       explicitSelection:
-        draft.modelSelection ?? (projectDefaultModelSelection ? null : stickyModelSelection),
+        savedSelection ?? (projectDefaultModelSelection ? null : stickyModelSelection),
       fallbackSelection: selectedEnvironmentServerConfig?.settings.fallbackModelSelection ?? null,
       providers: selectedEnvironmentServerConfig?.providers ?? [],
       ...(selectedEnvironmentServerConfig
@@ -750,12 +755,7 @@ export function NewTaskFlowProvider(
       ...selectionInput,
       providers,
     }).selection;
-    const draftModelSelection =
-      resolveSelectableModelSelection(
-        selectedEnvironmentServerConfig,
-        draft.modelSelection ?? null,
-        selectedProject.id,
-      ) ?? refreshedSelection;
+    const draftModelSelection = savedSelection ?? refreshedSelection;
     if ((text.length === 0 && draft.attachments.length === 0) || !draftModelSelection) {
       return null;
     }

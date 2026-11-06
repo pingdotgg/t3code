@@ -14,6 +14,7 @@ import {
   type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -248,16 +249,20 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       usageRead,
       options.probeUsage.pipe(
         Effect.flatMap((probed) =>
-          SubscriptionRef.update(metadata, (state) => ({
-            ...state,
-            draft: {
-              ...state.draft,
-              usageLimits: resolveUsageLimitsAfterProbe({
-                published: state.draft.usageLimits,
-                probed,
-              }),
-            },
-          })),
+          Effect.gen(function* () {
+            const refreshAfter =
+              probed.refreshAfter ?? (yield* Clock.currentTimeMillis) + 5 * 60_000;
+            yield* SubscriptionRef.update(metadata, (state) => ({
+              ...state,
+              draft: {
+                ...state.draft,
+                usageLimits: resolveUsageLimitsAfterProbe({
+                  published: state.draft.usageLimits,
+                  probed: { ...probed, refreshAfter },
+                }),
+              },
+            }));
+          }),
         ),
         // Enrichment cannot change published limits; a health check publishes them.
         Effect.andThen(
@@ -531,17 +536,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   return {
     snapshot: {
       ...managed,
-      getSnapshot: Effect.gen(function* () {
-        const snapshot = yield* getSnapshot;
-        const published = (yield* managed.getSnapshot).usageLimits;
-        const limits = snapshot.usageLimits;
-        return limits &&
-          published?.refreshAfter !== undefined &&
-          limits.checkedAt === published.checkedAt &&
-          limits.credentialFingerprint === published.credentialFingerprint
-          ? { ...snapshot, usageLimits: { ...limits, refreshAfter: published.refreshAfter } }
-          : snapshot;
-      }),
+      getSnapshot,
       refreshUsage: managed.refreshUsage!.pipe(Effect.andThen(FiberHandle.awaitEmpty(usageRead))),
     },
     onSessionStarted,

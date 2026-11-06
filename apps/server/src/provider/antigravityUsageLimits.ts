@@ -1,5 +1,6 @@
 import {
   usageResponseCheckedAt,
+  usageResponseRefreshAfter,
   UsageAccountIdentity,
 } from "@t3tools/provider-core/server/usageLimits";
 import type { AntigravitySettings, ServerProviderUsageWindow } from "@t3tools/contracts";
@@ -214,13 +215,13 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
 
   const request = (
     request: HttpClientRequest.HttpClientRequest,
-    onSample?: (checkedAt: string) => void,
+    onSample?: (checkedAt: string, refreshAfter: number | undefined) => void,
   ) =>
     client.execute(request).pipe(
       Effect.provideService(FetchHttpClient.RequestInit, MANUAL_REDIRECT),
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.flatMap((response) => {
-        onSample?.(usageResponseCheckedAt(response, ""));
+        onSample?.(usageResponseCheckedAt(response, ""), usageResponseRefreshAfter(response));
         return response.json;
       }),
       Effect.timeout("10 seconds"),
@@ -291,6 +292,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     const throttleIdentity = throttleIdentities.get(fingerprint) ?? account;
     throttleIdentities.set(fingerprint, throttleIdentity);
     const sampleTimes: string[] = [];
+    const sampleDeadlines: number[] = [];
     // Merge endpoints because quota groups differ; keep each bucket's most-used reading.
     const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* <E>(
       operation: string,
@@ -315,7 +317,8 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
                   token.project_id ? { project: token.project_id } : {},
                 ),
               ),
-              (sampleAt) => {
+              (sampleAt, refreshAfter) => {
+                if (refreshAfter !== undefined) sampleDeadlines.push(refreshAfter);
                 if (sampleAt) requestedAt = Date.parse(sampleAt);
                 sampleTimes.push(sampleAt || DateTime.formatIso(DateTime.makeUnsafe(requestedAt)));
               },
@@ -356,6 +359,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     return {
       ...makeUsageLimits({ checkedAt: sampleTimes.toSorted()[0] ?? checkedAt, windows }),
       credentialFingerprint: account,
+      ...(sampleDeadlines.length ? { refreshAfter: Math.min(...sampleDeadlines) } : {}),
     };
   });
   const probe = Effect.gen(function* () {

@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -171,6 +172,9 @@ describe("Antigravity subscription limits", () => {
         yield* TestClock.adjust("4 minutes");
         const cached = yield* probe;
         expect(cached.checkedAt).toBe(first.checkedAt);
+        expect(first.refreshAfter).toBe(300_000);
+        expect(cached.refreshAfter).toBe(first.refreshAfter);
+        expect(cached.refreshAfter).toBeLessThan((yield* Clock.currentTimeMillis) + 300_000);
         expect(quotaCalls()).toBe(2);
         yield* TestClock.adjust("51 minutes");
         options.summaryStatus = 429;
