@@ -265,8 +265,9 @@ export const buildWslRuntimeInstallScript = (
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
     "set -eu",
+    // The backend's home is ~/.ominax; a distro with only the pre-rename home links to it.
+    '[ -e "$HOME/.ominax" ] || [ ! -d "$HOME/.t3-learn" ] || ln -s "$HOME/.t3-learn" "$HOME/.ominax"',
     'home_parent="$HOME/.ominax"',
-    '[ -d "$home_parent" ] || [ ! -d "$HOME/.t3-learn" ] || home_parent="$HOME/.t3-learn"',
     'runtime_parent="$home_parent/wsl-runtime"',
     `runtime_root="$runtime_parent/${safeRuntimeId}"`,
     `ready_marker="$runtime_root/${WSL_RUNTIME_READY_MARKER}"`,

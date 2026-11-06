@@ -110,10 +110,11 @@ ancestors, and empty ones stay open because their composer may hold an unsent dr
 
 ## Downgrade safety and the capability gate
 
-T3 Learn installs beside T3 Code with its own home, `~/.t3-learn`, so an official build opens a
-T3 Learn database only when pointed at it: upstream `t3` or the T3 Code desktop app with
-`T3CODE_HOME=~/.t3-learn`, or `t3 --base-dir ~/.t3-learn`. The user guides tell people to export
-that variable for T3 Learn's plain CLI, so an upstream `t3` run from the same shell lands there.
+OminaX installs beside T3 Code with its own home, `~/.ominax` (older installs move there from
+`~/.t3-learn` and keep a link back), so an official build opens an OminaX database only when
+pointed at it: upstream `t3` or the T3 Code desktop app with `T3CODE_HOME=~/.ominax`, or
+`t3 --base-dir ~/.ominax`. The user guides tell people to export that variable for OminaX's plain
+CLI, so an upstream `t3` run from the same shell lands there.
 
 Side chats create no `fork` or `merge_back` transfer, which an official server would replay in full:
 a fork of a side chat drops `sideChat`, and merge-back from one is refused. The database is then safe

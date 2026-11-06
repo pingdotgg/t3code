@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { afterAll, expect } from "vite-plus/test";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 
 import { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
 
@@ -165,6 +166,16 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         buildWslRuntimeProbeScript(fixture.runtimeRoot),
       ].join("\n"),
     );
+
+  it("links ~/.ominax to a pre-rename ~/.t3-learn home", () => {
+    const fixture = createFixture();
+    expect(runShell(`mkdir -p ${sh(`${fixture.work}/home/.t3-learn/userdata`)}`).status).toBe(0);
+    const result = fixture.install();
+    expect(result.status, result.stderr).toBe(0);
+    expect(NodeFS.realpathSync(`${fixture.work}/home/.ominax`)).toBe(
+      NodeFS.realpathSync(`${fixture.work}/home/.t3-learn`),
+    );
+  });
 
   it("discovers version-managed Node for providers with a standalone runtime", () => {
     const fixture = createFixture();
