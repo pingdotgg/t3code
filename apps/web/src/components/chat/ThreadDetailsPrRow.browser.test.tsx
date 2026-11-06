@@ -216,7 +216,6 @@ it("adds unresolved review feedback to the composer as chips", async () => {
     "findings",
     expect.objectContaining({
       prompt: "",
-      additive: true,
       reviewComments: expect.arrayContaining([
         expect.objectContaining({
           filePath: "Review feedback on #1",

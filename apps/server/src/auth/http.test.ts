@@ -94,7 +94,7 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
           ] as const,
       ),
       ([environmentA, environmentB]) =>
-        Effect.tryPromise(async () => {
+        Effect.promise(async () => {
           const devResponse = await environmentA.handler(
             postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
             requestContext,

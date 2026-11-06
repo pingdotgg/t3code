@@ -181,7 +181,6 @@ export function ThreadDetailsPrRow({
     reference,
     terminology,
     onSuccess: () => {
-      detailQuery.refresh();
       checksQuery.refresh();
       activityQuery.refresh();
       onActed?.();
@@ -242,6 +241,8 @@ export function ThreadDetailsPrRow({
             url: detail.url,
             headBranch: detail.headBranch,
             baseBranch: detail.baseBranch,
+            state: detail.state,
+            isDraft: detail.isDraft,
             reviewThreads: feedback.reviewThreads,
             comments: feedback.comments,
             commentsTruncated: activity?.commentsTruncated ?? false,
@@ -254,11 +255,13 @@ export function ThreadDetailsPrRow({
             url: detail.url,
             headBranch: detail.headBranch,
             baseBranch: detail.baseBranch,
+            state: detail.state,
+            isDraft: detail.isDraft,
             checks: detail.checks,
           }).reviewComments
         : []),
     ];
-    void startHandoff("findings", { prompt: "", reviewComments, additive: true });
+    void startHandoff("findings", { prompt: "", reviewComments });
   };
 
   const statePresentation =
