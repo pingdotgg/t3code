@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { buildRemoteSshTerminalRemoteCommand } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -11,6 +12,7 @@ import {
   linuxRemoteTerminalArgs,
   openRemoteTerminal,
   powerShellStartRemoteArgs,
+  serializeWindowsSshArgumentList,
   windowsTerminalRemoteArgs,
 } from "./openRemoteTerminal.ts";
 
@@ -109,13 +111,13 @@ describe("openRemoteTerminal", () => {
       ]);
       const script = decodePowerShellEncodedCommand(spawned[0]?.args[5] ?? "");
       assert.match(script, /Start-Process -FilePath 'ssh\.exe'/);
-      assert.match(script, /'-t','--','box'/);
+      assert.match(script, /ArgumentList '-t -- box "/);
       assert.match(script, /exec \/bin\/sh -c/);
-      assert.match(script, /'\/home\/theo\/app'/);
+      assert.match(script, /\/home\/theo\/app/);
     }),
   );
 
-  it.effect("keeps ampersand destinations inside PowerShell string literals", () =>
+  it.effect("keeps ampersand destinations inside the Windows ArgumentList string", () =>
     Effect.gen(function* () {
       const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
       const opened = yield* openRemoteTerminal({
@@ -133,7 +135,7 @@ describe("openRemoteTerminal", () => {
       );
       assert.isTrue(opened);
       const script = decodePowerShellEncodedCommand(spawned[0]?.args[5] ?? "");
-      assert.match(script, /ArgumentList @\('-t','--','box&calc&rem',/);
+      assert.match(script, /ArgumentList '-t -- box&calc&rem "/);
       assert.match(script, /%USERPROFILE%/);
     }),
   );
@@ -185,23 +187,18 @@ describe("Windows launch argv", () => {
     );
   });
 
-  it("encodes PowerShell Start-Process argv without cmd metacharacter splits", () => {
-    const args = powerShellStartRemoteArgs("ssh.exe", [
-      "-t",
-      "--",
-      "box&calc&rem",
-      "exec /bin/sh -c 'cd -- \"$1\" && exec \"${SHELL:-/bin/sh}\" -l' sh '/home/%USERPROFILE%/app'",
-    ]);
-    assert.deepEqual(args.slice(0, 5), [
-      "-NoProfile",
-      "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-EncodedCommand",
-    ]);
+  it("quotes spaces, quotes, and backslashes for Start-Process ArgumentList", () => {
+    const remoteCommand = buildRemoteSshTerminalRemoteCommand(String.raw`/work/my "proj"\path`);
+    const serialized = serializeWindowsSshArgumentList(["-t", "--", "box", remoteCommand]);
+    assert.equal(
+      serialized,
+      `-t -- box "exec /bin/sh -c 'cd -- \\"$1\\" && exec \\"\${SHELL:-/bin/sh}\\" -l' sh '/work/my \\"proj\\"\\path'"`,
+    );
+
+    const args = powerShellStartRemoteArgs("ssh.exe", ["-t", "--", "box&calc&rem", remoteCommand]);
     const script = decodePowerShellEncodedCommand(args[5] ?? "");
     assert.match(script, /Start-Process -FilePath 'ssh\.exe'/);
-    assert.match(script, /ArgumentList @\('-t','--','box&calc&rem',/);
-    assert.match(script, /%USERPROFILE%/);
+    assert.match(script, /ArgumentList '-t -- box&calc&rem "/);
+    assert.match(script, /my \\"proj\\"\\path/);
   });
 });
