@@ -189,7 +189,7 @@ export function vibeTurnFailure(turn: {
 }): ReturnType<typeof makeProviderFailure> | undefined {
   const error = asRecord(turn.error);
   const code = error?.["code"];
-  const message = str(error?.["message"]) ?? str(turn.stopReason) ?? "Mistral Vibe turn failed.";
+  const message = str(error?.["message"]) ?? str(turn.stopReason) ?? "Vibe turn failed.";
   return makeProviderFailure({
     message,
     ...(typeof code === "number" || typeof code === "string"
@@ -242,7 +242,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
   const protocolError = (cause: unknown) =>
     new ProviderAdapter.ProviderAdapterProtocolError({
       driver: VIBE_PROVIDER,
-      detail: "Mistral Vibe app-server request failed.",
+      detail: "Vibe app-server request failed.",
       cause,
     });
 
@@ -821,12 +821,9 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         protocolError,
       ).pipe(
         Effect.catchCause((cause) =>
-          Effect.logWarning(
-            "Mistral Vibe rejected the model write; the turn keeps the session model.",
-            {
-              cause,
-            },
-          ),
+          Effect.logWarning("Vibe rejected the model write; the turn keeps the session model.", {
+            cause,
+          }),
         ),
       );
       const mcpSession = yield* mcpSessions.read(turnInput.threadId);

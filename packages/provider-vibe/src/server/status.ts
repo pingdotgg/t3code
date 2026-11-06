@@ -21,7 +21,7 @@ import { DEFAULT_VIBE_MODEL, withVibeAppServerClient } from "./appServerSupport.
 import { accountViewToUsageLimits } from "./usageLimits.ts";
 
 const VIBE_PRESENTATION = {
-  displayName: "Mistral Vibe",
+  displayName: "Vibe",
   badgeLabel: "Early Access",
   showInteractionModeToggle: true,
   supportedRuntimeModes: ["approval-required", "auto-accept-edits", "auto", "full-access"] as const,
@@ -49,11 +49,11 @@ function authFromAccount(account: AccountView): ServerProviderAuth {
       return {
         status: "authenticated",
         type: "vibe",
-        label: account.plan?.title ?? account.plan?.name ?? "Mistral Vibe",
+        label: account.plan?.title ?? account.plan?.name ?? "Vibe",
       };
     case "missing_key":
     case "unauthorized":
-      return { status: "unauthenticated", type: "vibe", label: "Mistral Vibe" };
+      return { status: "unauthenticated", type: "vibe", label: "Vibe" };
     default:
       return { status: "unknown" };
   }
@@ -133,7 +133,7 @@ export const buildInitialVibeProviderSnapshot = Effect.fn(
           version: null,
           status: "warning",
           auth: { status: "unknown" },
-          message: "Mistral Vibe is disabled in T3 Code settings.",
+          message: "Vibe is disabled in T3 Code settings.",
         },
   });
 });
@@ -207,19 +207,19 @@ const probeVibeAppServer = Effect.fn("VibeStatus.probeVibeAppServer")(function* 
             models: [...FALLBACK_MODELS],
             defaultAgent: undefined,
             installed: true,
-            message: "Mistral Vibe app server timed out while probing.",
+            message: "Vibe app server timed out while probing.",
           } satisfies VibeProbeResult)
         : option.value,
     ),
     Effect.catchCause((cause) =>
-      Effect.as(Effect.logWarning("Mistral Vibe app server probe failed", { cause }), {
+      Effect.as(Effect.logWarning("Vibe app server probe failed", { cause }), {
         version: null,
         auth: { status: "unknown" },
         usageLimits: undefined,
         models: [...FALLBACK_MODELS],
         defaultAgent: undefined,
         installed: false,
-        message: "Mistral Vibe app server probe failed.",
+        message: "Vibe app server probe failed.",
       } satisfies VibeProbeResult),
     ),
   );

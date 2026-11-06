@@ -85,6 +85,14 @@ describe("vibeHistoryTurnItem", () => {
         title: "Summary",
       },
     ],
+    [
+      "Vibe-named MCP tool",
+      effect(
+        { kind: "tool", toolName: "mcp_t3_code.t3_thread_read", input: { threadId: "t" } },
+        { status: "completed", output: "{}" },
+      ),
+      { type: "dynamic_tool", toolName: "mcp__t3_code__t3_thread_read" },
+    ],
     ["reasoning", { type: "reasoning", text: "thinking" }, { type: "reasoning", text: "thinking" }],
   ])("projects %s entries", (_name, entry, expected) => {
     expect(vibeHistoryTurnItem(base, entry)).toMatchObject(expected);

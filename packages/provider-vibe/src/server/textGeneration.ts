@@ -89,7 +89,7 @@ export const makeVibeTextGeneration = Effect.fn("makeVibeTextGeneration")(functi
               const error = asRecord(terminalTurn?.error);
               return yield* new TextGenerationError({
                 operation,
-                detail: `Mistral Vibe turn ended as ${terminalTurn?.status ?? "unknown"}: ${str(error?.["message"]) ?? "no assistant reply"}`,
+                detail: `Vibe turn ended as ${terminalTurn?.status ?? "unknown"}: ${str(error?.["message"]) ?? "no assistant reply"}`,
               });
             }
             const history = yield* client.sessionHistoryList({ sessionId, limit: 100 });
@@ -109,9 +109,7 @@ export const makeVibeTextGeneration = Effect.fn("makeVibeTextGeneration")(functi
         Effect.timeoutOption(VIBE_TEXT_GEN_TIMEOUT_MS),
         Effect.flatMap((option) =>
           option._tag === "None"
-            ? Effect.fail(
-                new TextGenerationError({ operation, detail: "Mistral Vibe request timed out." }),
-              )
+            ? Effect.fail(new TextGenerationError({ operation, detail: "Vibe request timed out." }))
             : Effect.succeed(option.value),
         ),
         Effect.mapError((cause: VibeError.VibeAppServerError | TextGenerationError) =>
@@ -119,7 +117,7 @@ export const makeVibeTextGeneration = Effect.fn("makeVibeTextGeneration")(functi
             ? cause
             : new TextGenerationError({
                 operation,
-                detail: "Mistral Vibe app server request failed.",
+                detail: "Vibe app server request failed.",
                 cause,
               }),
         ),
@@ -128,10 +126,10 @@ export const makeVibeTextGeneration = Effect.fn("makeVibeTextGeneration")(functi
       if (!output) {
         return yield* new TextGenerationError({
           operation,
-          detail: "Mistral Vibe returned empty output.",
+          detail: "Vibe returned empty output.",
         });
       }
-      return yield* TextGenerationOperations.decodeJsonReply(request, "Mistral Vibe", output);
+      return yield* TextGenerationOperations.decodeJsonReply(request, "Vibe", output);
     },
     (effect, request) => {
       const { operation } = request;
@@ -141,7 +139,7 @@ export const makeVibeTextGeneration = Effect.fn("makeVibeTextGeneration")(functi
             ? cause
             : new TextGenerationError({
                 operation,
-                detail: "Mistral Vibe text generation failed.",
+                detail: "Vibe text generation failed.",
                 cause,
               }),
         ),
@@ -151,6 +149,6 @@ export const makeVibeTextGeneration = Effect.fn("makeVibeTextGeneration")(functi
 
   return TextGenerationOperations.fromRunner(
     "VibeTextGeneration",
-    TextGenerationOperations.withoutInvestigation("Mistral Vibe", runVibeJson),
+    TextGenerationOperations.withoutInvestigation("Vibe", runVibeJson),
   );
 });
