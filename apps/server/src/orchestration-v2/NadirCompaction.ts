@@ -65,9 +65,12 @@ export const findNadirCompactionScript = Effect.fn("NadirCompaction.findScript")
       path.join(home, "plugins", "installed_plugins.json"),
     );
     const entries = field(field(installed, "plugins"), PLUGIN_ID);
-    const pluginPath = Array.isArray(entries) ? field(entries[0], "installPath") : undefined;
-    if (typeof pluginPath === "string")
-      pluginScripts.push(path.join(pluginPath, "scripts", SCRIPT));
+    // Every install counts: an earlier one can be stale.
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const pluginPath = field(entry, "installPath");
+      if (typeof pluginPath === "string")
+        pluginScripts.push(path.join(pluginPath, "scripts", SCRIPT));
+    }
   }
   const candidates = [...homes.map((home) => path.join(home, "nadir", SCRIPT)), ...pluginScripts];
   for (const script of candidates) {

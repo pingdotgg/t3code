@@ -15,6 +15,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
 
@@ -33,6 +34,7 @@ const MAX_PROMPT_CHARS = 40_000;
 const MIN_PROMPT_WORDS = 4;
 
 const Ceiling = Schema.Struct({ baseline: ModelSelection, chosen: ModelSelection });
+type Ceiling = typeof Ceiling.Type;
 
 /**
  * A thread's routed turn: the user's pick (the ceiling) and the model Nadir ran instead. It
@@ -40,13 +42,53 @@ const Ceiling = Schema.Struct({ baseline: ModelSelection, chosen: ModelSelection
  */
 export class NadirCeilings extends Context.Service<
   NadirCeilings,
-  KeyValueStore.SchemaStore<typeof Ceiling>
+  {
+    readonly get: (threadId: string) => Effect.Effect<Option.Option<Ceiling>>;
+    /** Undefined clears the thread's record. */
+    readonly save: (threadId: string, ceiling: Ceiling | undefined) => Effect.Effect<void>;
+    /** Holds one turn's read, Nadir call and write at a time for each thread. */
+    readonly lock: (threadId: string) => Semaphore.Semaphore;
+  }
 >()("t3/orchestration-v2/NadirRouting/NadirCeilings") {}
 
+// ponytail: the memory copy and the locks hold one small entry per routed thread for the life of
+// the process. The memory copy keeps a ceiling the disk failed to save.
 const layerFromStore = Layer.effect(
   NadirCeilings,
   Effect.gen(function* () {
-    return KeyValueStore.toSchemaStore(yield* KeyValueStore.KeyValueStore, Ceiling);
+    const store = KeyValueStore.toSchemaStore(yield* KeyValueStore.KeyValueStore, Ceiling);
+    const memory = new Map<string, Ceiling | undefined>();
+    const locks = new Map<string, Semaphore.Semaphore>();
+    return {
+      get: Effect.fn("NadirCeilings.get")(function* (threadId: string) {
+        if (memory.has(threadId)) return Option.fromUndefinedOr(memory.get(threadId));
+        return yield* store.get(threadId).pipe(
+          Effect.tap((found) =>
+            Effect.sync(() => memory.set(threadId, Option.getOrUndefined(found))),
+          ),
+          Effect.orElseSucceed(() => Option.none<Ceiling>()),
+        );
+      }),
+      save: Effect.fn("NadirCeilings.save")(function* (
+        threadId: string,
+        ceiling: Ceiling | undefined,
+      ) {
+        memory.set(threadId, ceiling);
+        yield* (ceiling === undefined ? store.remove(threadId) : store.set(threadId, ceiling)).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Nadir ceiling kept in memory only", { cause }),
+          ),
+        );
+      }),
+      lock: (threadId) => {
+        let lock = locks.get(threadId);
+        if (lock === undefined) {
+          lock = Semaphore.makeUnsafe(1);
+          locks.set(threadId, lock);
+        }
+        return lock;
+      },
+    };
   }),
 );
 
@@ -77,14 +119,15 @@ export const baselineFor = (
   threadId: string,
   incoming: ModelSelection,
 ) =>
-  ceilings.get(threadId).pipe(
-    Effect.map((prior) =>
-      Option.isSome(prior) && draftModelPickMatchesThread(incoming, prior.value.chosen)
-        ? prior.value.baseline
-        : incoming,
-    ),
-    Effect.orElseSucceed(() => incoming),
-  );
+  ceilings
+    .get(threadId)
+    .pipe(
+      Effect.map((prior) =>
+        Option.isSome(prior) && draftModelPickMatchesThread(incoming, prior.value.chosen)
+          ? prior.value.baseline
+          : incoming,
+      ),
+    );
 
 /** Keeps the ceiling only while the thread runs below it. */
 export const rememberChoice = (
@@ -92,11 +135,7 @@ export const rememberChoice = (
   threadId: string,
   baseline: ModelSelection,
   chosen: ModelSelection,
-) =>
-  (baseline === chosen
-    ? ceilings.remove(threadId)
-    : ceilings.set(threadId, { baseline, chosen })
-  ).pipe(Effect.catch((cause) => Effect.logWarning("Nadir ceiling not saved", { cause })));
+) => ceilings.save(threadId, baseline === chosen ? undefined : { baseline, chosen });
 
 /** Models the user can pick for this instance, the menu Nadir chooses from. */
 function modelMenu(provider: ServerProvider | undefined): ReadonlyArray<string> {
@@ -261,38 +300,46 @@ export const chooseModelSelection = Effect.fn("NadirRouting.chooseModelSelection
     ) {
       return input.selection;
     }
-    const baseline = yield* baselineFor(ceilings.value, input.threadId, input.selection);
-    const text = input.text.trim();
-    const judgeable =
-      text.length <= MAX_PROMPT_CHARS &&
-      !text.startsWith("/") &&
-      text.split(/\s+/).length >= MIN_PROMPT_WORDS;
-    const providers = yield* registry.value.getProviders;
-    const provider = providers.find((candidate) => candidate.instanceId === baseline.instanceId);
-    const menu = modelMenu(provider);
-    // A short follow-up or a slash command continues on the thread's model; the ceiling stays.
-    if (!judgeable || !menu.includes(baseline.model)) return input.selection;
-    const current = input.cache?.model ?? input.selection.model;
-    const answer = yield* askNadir(
-      client.value,
-      nadirRequestBody({
-        text,
-        baseline: baseline.model,
-        menu,
-        driver: provider?.driver,
-        threadId: input.threadId,
-        cache: input.cache,
+    const store = ceilings.value;
+    return yield* store.lock(input.threadId).withPermits(1)(
+      Effect.gen(function* () {
+        const baseline = yield* baselineFor(store, input.threadId, input.selection);
+        const text = input.text.trim();
+        const judgeable =
+          text.length <= MAX_PROMPT_CHARS &&
+          !text.startsWith("/") &&
+          text.split(/\s+/).length >= MIN_PROMPT_WORDS;
+        const providers = yield* registry.value.getProviders;
+        const provider = providers.find(
+          (candidate) => candidate.instanceId === baseline.instanceId,
+        );
+        const menu = modelMenu(provider);
+        // A short follow-up or a slash command continues on the thread's model; the ceiling stays.
+        if (!judgeable || !menu.includes(baseline.model)) return input.selection;
+        const current = input.cache?.model ?? input.selection.model;
+        const answer = yield* askNadir(
+          client.value,
+          nadirRequestBody({
+            text,
+            baseline: baseline.model,
+            menu,
+            driver: provider?.driver,
+            threadId: input.threadId,
+            cache: input.cache,
+          }),
+        ).pipe(
+          Effect.tapError((cause) => Effect.logDebug("Nadir routing skipped", { cause })),
+          Effect.orElseSucceed(() => null),
+        );
+        const model = pickModel(answer, { baseline: baseline.model, current, menu });
+        const chosen =
+          model === baseline.model ? baseline : routedSelection(baseline, model, provider);
+        yield* rememberChoice(store, input.threadId, baseline, chosen);
+        if (model !== baseline.model) {
+          yield* Effect.logInfo("Nadir routed turn", { from: baseline.model, to: model });
+        }
+        return chosen;
       }),
-    ).pipe(
-      Effect.tapError((cause) => Effect.logDebug("Nadir routing skipped", { cause })),
-      Effect.orElseSucceed(() => null),
     );
-    const model = pickModel(answer, { baseline: baseline.model, current, menu });
-    const chosen = model === baseline.model ? baseline : routedSelection(baseline, model, provider);
-    yield* rememberChoice(ceilings.value, input.threadId, baseline, chosen);
-    if (model !== baseline.model) {
-      yield* Effect.logInfo("Nadir routed turn", { from: baseline.model, to: model });
-    }
-    return chosen;
   },
 );

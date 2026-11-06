@@ -1,7 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -87,7 +90,7 @@ describe("baselineFor", () => {
       expect(yield* baselineFor(ceilings, "thread-1", haiku)).toEqual(opus);
       // Kept only while the thread runs below its ceiling.
       yield* rememberChoice(ceilings, "thread-1", opus, opus);
-      expect(yield* ceilings.has("thread-1")).toBe(false);
+      expect(Option.isNone(yield* ceilings.get("thread-1"))).toBe(true);
     }).pipe(Effect.provide(layerCeilingsMemory)),
   );
 
@@ -103,6 +106,50 @@ describe("baselineFor", () => {
       }).pipe(Effect.provide(layerCeilingsAt(directory)));
       expect(restarted).toEqual(opus);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps the ceiling in memory when the disk cannot save it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped();
+      yield* fileSystem.chmod(directory, 0o500);
+      const routedAgain = yield* Effect.gen(function* () {
+        const ceilings = yield* NadirCeilings;
+        yield* rememberChoice(ceilings, "thread-1", opus, haiku);
+        return yield* baselineFor(ceilings, "thread-1", haiku);
+      }).pipe(Effect.provide(layerCeilingsAt(directory)));
+      yield* fileSystem.chmod(directory, 0o700);
+      expect(routedAgain).toEqual(opus);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("runs one routing turn at a time for each thread", () =>
+    Effect.gen(function* () {
+      const ceilings = yield* NadirCeilings;
+      const order: string[] = [];
+      const first = yield* ceilings
+        .lock("thread-1")
+        .withPermits(1)(
+          Effect.sync(() => order.push("first started")).pipe(
+            Effect.andThen(Effect.sleep("1 second")),
+            Effect.andThen(Effect.sync(() => order.push("first finished"))),
+          ),
+        )
+        .pipe(Effect.forkChild);
+      const second = yield* ceilings
+        .lock("thread-1")
+        .withPermits(1)(Effect.sync(() => order.push("second")))
+        .pipe(Effect.forkChild);
+      const other = yield* ceilings
+        .lock("thread-2")
+        .withPermits(1)(Effect.sync(() => order.push("other thread")))
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(first);
+      yield* Fiber.join(second);
+      yield* Fiber.join(other);
+      expect(order).toEqual(["first started", "other thread", "first finished", "second"]);
+    }).pipe(Effect.provide(layerCeilingsMemory)),
   );
 
   it.effect("treats a model the user picks by hand as the new ceiling", () =>

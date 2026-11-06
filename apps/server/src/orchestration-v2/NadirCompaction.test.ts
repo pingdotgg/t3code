@@ -74,8 +74,14 @@ it.layer(NodeServices.layer)("NadirCompaction", (it) => {
         const hostPluginPath = path.join(hostHome, ".claude", "plugins", "cache", "nadir-route");
         const hostPluginScript = path.join(hostPluginPath, "scripts", "context_session.py");
         yield* touch(hostPluginScript);
+        // The first install is stale; the second still has the script.
         yield* writeJson(path.join(hostHome, ".claude", "plugins", "installed_plugins.json"), {
-          plugins: { "nadir-route@nadir": [{ scope: "user", installPath: hostPluginPath }] },
+          plugins: {
+            "nadir-route@nadir": [
+              { scope: "user", installPath: path.join(hostHome, "gone") },
+              { scope: "project", installPath: hostPluginPath },
+            ],
+          },
         });
         expect(
           yield* findNadirCompactionScript({
