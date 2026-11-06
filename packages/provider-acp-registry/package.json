@@ -26,6 +26,10 @@
     "./server/AcpRegistryRuntimeCoordinator": {
       "types": "./src/server/AcpRegistryRuntimeCoordinator.ts",
       "import": "./src/server/AcpRegistryRuntimeCoordinator.ts"
+    },
+    "./server/copilotAcp": {
+      "types": "./src/server/copilotAcp.ts",
+      "import": "./src/server/copilotAcp.ts"
     }
   },
   "scripts": {

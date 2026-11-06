@@ -138,6 +138,7 @@ import {
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 
 export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
 
@@ -441,6 +442,37 @@ export interface AcpAdapterV2Flavor {
   ) => Effect.Effect<void>;
   readonly subagentsIdleOnTurnCompletion?: boolean;
   readonly supportsCompaction?: boolean;
+  /** Reads a finished plan from a live update, for an agent that ends planning inside its turn. */
+  readonly proposedPlanMarkdown?: (
+    notification: EffectAcpSchema.SessionNotification,
+  ) => string | undefined;
+  /** Reads the UI document a finished MCP tool returned, for T3 to snapshot and render. */
+  readonly mcpAppDocument?: (toolCall: AcpToolCallState) =>
+    | {
+        readonly resourceUri: string;
+        readonly contents: ReadonlyArray<unknown>;
+        readonly result: unknown;
+      }
+    | undefined;
+  /** Serves a rendered MCP App's own tool and resource calls through the agent's session. */
+  readonly mcpApps?: (
+    runtime: () => AcpSessionRuntime.AcpSessionRuntime["Service"],
+  ) => ProviderAdapter.ProviderAdapterV2McpApps;
+  /** Lets a rejection carry the user's reason, delivered in the response's `_meta.feedback`. */
+  readonly approvalFeedback?: boolean;
+  /** Rewinds a session to just after a turn, keeping its conversation; a failure starts afresh. */
+  readonly rollbackSession?: (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+    sessionId: string,
+    nativeTurnId: string,
+  ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  /** Stops one background task while the turn that started it keeps running. */
+  readonly stopBackgroundTask?: (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+    taskId: string,
+  ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  /** Marks the end of an assistant message, for an agent whose turn outlives its replies. */
+  readonly closesAssistantMessage?: (notification: EffectAcpSchema.SessionNotification) => boolean;
   /**
    * Native steering: `send` queues a message into the running turn and returns the
    * agent's id for it, which `injectedSteerId` reads from the update that delivers it.
@@ -450,7 +482,10 @@ export interface AcpAdapterV2Flavor {
       runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
       sessionId: string,
       text: string,
+      images: ReadonlyArray<{ readonly data: string; readonly mimeType: string }>,
     ) => Effect.Effect<string, EffectAcpErrors.AcpError>;
+    /** Without this, a steer with attachments waits for the next turn. */
+    readonly acceptsAttachments?: boolean;
     readonly injectedSteerId: (
       notification: EffectAcpSchema.SessionNotification,
     ) => string | undefined;
@@ -1881,6 +1916,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const activeTurn = yield* Ref.make<ActiveAcpTurn | null>(null);
         // Keyed by the agent's steer id; an injection can arrive before its send returns.
         const steerInjections = new Map<string, Deferred.Deferred<void>>();
+        const approvalFeedback = new Map<string, string>();
         const steerInjection = (steerId: string) => {
           const existing = steerInjections.get(steerId);
           if (existing !== undefined) return existing;
@@ -2603,7 +2639,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               runId: context.input.runId,
               nodeId,
               kind: "proposed_plan",
-              status: "completed",
+              status: "active",
               markdown,
             },
           });
@@ -4117,6 +4153,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const input =
               mcpIdentity.input ?? unknownRecord(rawInputRecord?.arguments) ?? rawInputRecord ?? {};
             let output = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
+            const appDocument =
+              status === "completed" ? flavor.mcpAppDocument?.(toolCall) : undefined;
+            if (appDocument !== undefined && host.snapshotMcpApp !== undefined) {
+              const reference = yield* host.snapshotMcpApp({
+                threadId: context.input.threadId,
+                server: mcpIdentity.server,
+                tool: mcpIdentity.tool,
+                resourceUri: appDocument.resourceUri,
+                contents: appDocument.contents,
+              });
+              if (reference !== undefined) {
+                output = { [MCP_APP_OUTPUT_KEY]: reference, result: appDocument.result };
+              }
+            }
             const isHtmlRender = resolveT3McpToolId(toolName) === HTML_RENDER_TOOL_NAME;
             const isError =
               compactDynamicToolOutput(output)?.isError === true ||
@@ -5620,6 +5670,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             responseCapability: {
               type: "live",
               providerSessionId: input.providerSessionId,
+              ...(flavor.approvalFeedback === true ? { supportsFeedback: true } : {}),
             },
             createdAt: now,
             resolvedAt: null,
@@ -6302,6 +6353,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               if (injectedSteerId !== undefined) {
                 yield* Deferred.succeed(steerInjection(injectedSteerId), undefined);
               }
+              const proposedPlan = flavor.proposedPlanMarkdown?.(rawNotification);
+              if (proposedPlan !== undefined) {
+                yield* captureProposedPlan({ planMarkdown: proposedPlan });
+              }
+              if (flavor.closesAssistantMessage?.(rawNotification) === true) {
+                const context = yield* Ref.get(activeTurn);
+                if (context !== null && !context.finalized) {
+                  yield* closeTextStream(context, "assistant");
+                }
+              }
               yield* markPromptStarted(rawNotification);
               const embedded = embeddedTerminalIdsFromSessionUpdate(rawNotification);
               if (embedded !== undefined) {
@@ -6637,6 +6698,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   turnKey: String(context.providerTurnId),
                 });
               }
+              const feedback = approvalFeedback.get(String(requestId));
+              approvalFeedback.delete(String(requestId));
               const response = (() => {
                 if (decision === "cancel") {
                   return { outcome: { outcome: "cancelled" } } as const;
@@ -6644,7 +6707,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 const optionId = selectPermissionOptionId(params, decision);
                 return optionId === undefined
                   ? ({ outcome: { outcome: "cancelled" } } as const)
-                  : ({ outcome: { outcome: "selected", optionId } } as const);
+                  : ({
+                      outcome: { outcome: "selected", optionId },
+                      ...(feedback === undefined ? {} : { _meta: { feedback } }),
+                    } as const);
               })();
               const checked = yield* runRuntimeCallbackAtGeneration(
                 handlerGeneration,
@@ -7904,6 +7970,33 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
         });
 
+        const readImageAttachment = Effect.fnUntraced(function* (
+          attachment: ProviderAdapter.ProviderAdapterV2TurnMessage["attachments"][number],
+        ) {
+          const path = host.resolveAttachmentPath(attachment as ChatAttachment);
+          if (path === null) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver,
+              detail: `Invalid attachment id '${attachment.id}'`,
+            });
+          }
+          const bytes = yield* fileSystem.readFile(path).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver,
+                  detail: `Failed to read attachment '${attachment.id}'`,
+                  reason: "attachment_unreadable",
+                  payload: cause,
+                }),
+            ),
+          );
+          return {
+            data: Buffer.from(bytes).toString("base64"),
+            mimeType: attachment.mimeType,
+          };
+        });
+
         const resolvePromptParts = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           sessionId: string,
@@ -7988,29 +8081,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             prompt.splice(0, prompt.length, ...blocks);
           }
           for (const attachment of flavor.buildPrompt ? [] : imageAttachments) {
-            const path = host.resolveAttachmentPath(attachment as ChatAttachment);
-            if (path === null) {
-              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                driver,
-                detail: `Invalid attachment id '${attachment.id}'`,
-              });
-            }
-            const bytes = yield* fileSystem.readFile(path).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterProtocolError({
-                    driver,
-                    detail: `Failed to read attachment '${attachment.id}'`,
-                    reason: "attachment_unreadable",
-                    payload: cause,
-                  }),
-              ),
-            );
-            prompt.push({
-              type: "image",
-              data: Buffer.from(bytes).toString("base64"),
-              mimeType: attachment.mimeType,
-            });
+            prompt.push({ type: "image", ...(yield* readImageAttachment(attachment)) });
           }
           if (prompt.length === 0) {
             return yield* new ProviderAdapter.ProviderAdapterProtocolError({
@@ -8785,11 +8856,28 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   }),
               }
             : {}),
+          ...(flavor.mcpApps === undefined ? {} : { mcpApps: flavor.mcpApps(() => runtime) }),
+          ...(flavor.stopBackgroundTask === undefined
+            ? {}
+            : {
+                stopSubagent: (stopInput: { readonly nativeTaskId: string }) =>
+                  flavor.stopBackgroundTask!(runtime, stopInput.nativeTaskId).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderAdapter.ProviderAdapterProtocolError({
+                          driver,
+                          detail: `Could not stop task ${stopInput.nativeTaskId}: ${cause.message}`,
+                        }),
+                    ),
+                  ),
+              }),
           steerTurn: Effect.fn("AcpAdapterV2.steerTurn")(
             function* (turnInput) {
               const steering = flavor.steering;
-              // The agent takes text only, so a steer with attachments waits for the next turn.
-              if (steering === undefined || turnInput.message.attachments.length > 0) {
+              if (
+                steering === undefined ||
+                (turnInput.message.attachments.length > 0 && steering.acceptsAttachments !== true)
+              ) {
                 return yield* new ProviderAdapter.ProviderAdapterSteerRunUnsupportedError({
                   driver,
                   providerThreadId: turnInput.providerThread.id,
@@ -8813,10 +8901,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   Effect.timeoutOption(startHold.bound),
                 );
               }
+              const images = yield* Effect.forEach(
+                turnInput.message.attachments.filter(isProviderNativeImageAttachment),
+                readImageAttachment,
+              );
               const steerId = yield* steering.send(
                 runtime,
                 context.nativeThreadId,
-                turnInput.message.text,
+                yield* providerMessageTextWithAttachmentPaths({
+                  text: turnInput.message.text,
+                  attachments: turnInput.message.attachments,
+                  resolveAttachmentPath: host.resolveAttachmentPath,
+                  resolveExtractedTextPath: host.resolveExtractedTextPath,
+                }),
+                images,
               );
               const injected = steerInjection(steerId);
               // The agent reads a steer at its next step. One that lands after the last
@@ -9197,7 +9295,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                             driver,
                             detail: `ACP approval request ${requestInput.requestId} requires a decision`,
                           })
-                        : yield* Deferred.succeed(pending.decision, requestInput.decision);
+                        : yield* Effect.suspend(() => {
+                            if (requestInput.feedback !== undefined) {
+                              approvalFeedback.set(
+                                String(requestInput.requestId),
+                                requestInput.feedback,
+                              );
+                            }
+                            return Deferred.succeed(pending.decision, requestInput.decision!);
+                          });
                   if (!settled) {
                     return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                       driver,
@@ -9309,6 +9415,41 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   prepareTerminalEnvironment(
                     yield* readMcpContext(rollbackInput.providerThread.appThreadId),
                   );
+                  const rewoundTurn =
+                    rollbackInput.target.type === "provider_turn"
+                      ? rollbackInput.target.providerTurn.nativeTurnRef
+                      : null;
+                  const activeNativeSession = yield* Ref.get(activeSessionId);
+                  if (
+                    flavor.rollbackSession !== undefined &&
+                    rewoundTurn?.strength === "strong" &&
+                    rewoundTurn.nativeId !== null &&
+                    activeNativeSession !== null
+                  ) {
+                    const rewound = yield* flavor
+                      .rollbackSession(runtime, activeNativeSession, rewoundTurn.nativeId)
+                      .pipe(
+                        Effect.as(true),
+                        Effect.catch((error) =>
+                          Effect.logWarning("ACP session rewind failed; starting afresh", {
+                            driver,
+                            detail: error.message,
+                          }).pipe(Effect.as(false)),
+                        ),
+                      );
+                    if (rewound) {
+                      return {
+                        providerThread: {
+                          ...rollbackInput.providerThread,
+                          status: "idle" as const,
+                          updatedAt: yield* DateTime.now,
+                        },
+                        providerTurns: [],
+                        messages: [],
+                        runtimeRequests: [],
+                      };
+                    }
+                  }
                   const replacement = yield* startReplacementAcpRuntime(
                     rollbackInput.providerThread.appThreadId,
                     (candidate) =>
