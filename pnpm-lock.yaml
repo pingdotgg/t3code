@@ -13514,7 +13514,7 @@ snapshots:
 
   '@config-plugins/react-native-webrtc@15.0.2(expo@58.0.14)':
     dependencies:
-      expo: 58.0.14(277a83826bb26ba15256633fefeb0bc2)
+      expo: 58.0.14(ecd3689b2bda1172f8915f190f5c7383)
 
   '@connectrpc/connect-web@1.7.0(@bufbuild/protobuf@1.10.0)(@connectrpc/connect@1.7.0(@bufbuild/protobuf@1.10.0))':
     dependencies:
