@@ -670,35 +670,48 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         onSome: (value) => Effect.succeed(value as A),
       });
     });
-    const result = yield* awaitResponse().pipe(Effect.ensuring(removePending));
+    const assignmentKey = hostAssignmentKey(input.scope);
+    const rememberCurrentTab = (tabId: PreviewTabId | null) =>
+      SynchronizedRef.update(state, (current) => {
+        const assignment = current.assignments.get(assignmentKey);
+        if (
+          !assignment ||
+          assignment.connectionId !== connection.connectionId ||
+          assignment.queue !== connection.queue ||
+          (assignment.tabSequence ?? -1) > requestSequence
+        ) {
+          return current;
+        }
+        const { tabId: _tabId, ...withoutTabId } = assignment;
+        const assignments = new Map(current.assignments);
+        assignments.set(assignmentKey, {
+          ...withoutTabId,
+          ...(tabId === null ? {} : { tabId }),
+          tabSequence: requestSequence,
+        });
+        return { ...current, assignments };
+      });
+    const result = yield* awaitResponse().pipe(
+      Effect.ensuring(removePending),
+      Effect.catchTags({
+        PreviewAutomationTabNotFoundError: (error) => {
+          if (input.tabId !== undefined || error.tabId === undefined) return Effect.fail(error);
+          // The tab came from the assignment, so neither name it nor keep targeting it.
+          const { tabId: _tabId, ...fields } = error;
+          const implicitError = new PreviewAutomationTabNotFoundError({
+            ...fields,
+            cause: error.cause,
+          });
+          return input.updateCurrentTab === false
+            ? Effect.fail(implicitError)
+            : rememberCurrentTab(null).pipe(Effect.andThen(Effect.fail(implicitError)));
+        },
+      }),
+    );
     if (input.updateCurrentTab === false) return result;
     const responseTabId = readResultTabId(result);
     const resultTabId = responseTabId === undefined ? input.tabId : responseTabId;
-    if (resultTabId === undefined) return result;
-    const assignmentKey = hostAssignmentKey(input.scope);
-    yield* SynchronizedRef.update(state, (current) => {
-      const assignment = current.assignments.get(assignmentKey);
-      if (
-        !assignment ||
-        assignment.connectionId !== connection.connectionId ||
-        assignment.queue !== connection.queue ||
-        (assignment.tabSequence ?? -1) > requestSequence
-      ) {
-        return current;
-      }
-      const assignments = new Map(current.assignments);
-      if (resultTabId === null) {
-        const { tabId: _tabId, ...withoutTabId } = assignment;
-        assignments.set(assignmentKey, { ...withoutTabId, tabSequence: requestSequence });
-      } else {
-        assignments.set(assignmentKey, {
-          ...assignment,
-          ...(resultTabId === undefined ? {} : { tabId: resultTabId }),
-          tabSequence: requestSequence,
-        });
-      }
-      return { ...current, assignments };
-    });
+    if (resultTabId !== undefined) yield* rememberCurrentTab(resultTabId);
     return result;
   });
 
