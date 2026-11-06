@@ -76,6 +76,8 @@ export interface ThreadActionMenuState {
     readonly isActive: boolean;
   } | null;
   readonly isPinned: boolean;
+  /** Subagents and side chats have no list row, so pinning one would show nothing. */
+  readonly isUnlisted?: boolean;
   readonly isSettled: boolean;
   readonly autoSettleEnabled: boolean;
   readonly isSnoozed: boolean;
@@ -129,13 +131,11 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    ...(state.supports.pinning
-      ? [
-          state.isPinned
-            ? { id: "unpin" as const, label: "Unpin thread", icon: "pin-off" }
-            : { id: "pin" as const, label: "Pin thread", icon: "pin" },
-        ]
-      : []),
+    ...(state.supports.pinning && state.isPinned
+      ? [{ id: "unpin" as const, label: "Unpin thread", icon: "pin-off" }]
+      : state.supports.pinning && !state.isUnlisted
+        ? [{ id: "pin" as const, label: "Pin thread", icon: "pin" }]
+        : []),
     ...(state.supports.settlement
       ? [
           state.isSettled

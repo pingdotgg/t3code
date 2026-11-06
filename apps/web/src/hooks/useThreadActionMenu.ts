@@ -10,6 +10,7 @@ import {
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
+  isListedThreadLineage,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -139,6 +140,7 @@ export function useThreadActionMenu(input: {
         branch: thread.branch ?? null,
         projectFilter: null,
         isPinned: thread.pinnedAt != null,
+        isUnlisted: !isListedThreadLineage(thread.lineage),
         isSettled: supports.settlement && thread.settledOverride === "settled",
         autoSettleEnabled: thread.autoSettleDisabledAt == null,
         isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),

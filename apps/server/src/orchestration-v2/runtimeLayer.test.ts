@@ -2860,7 +2860,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             Effect.catchTags({ OrchestratorDispatchError: () => Effect.succeed(false) }),
           );
         assert.isFalse(accepted, `thread.pin was accepted for a ${kind} thread`);
-        assert.isNull((yield* orchestrator.getThreadProjection(childThreadId)).thread.pinnedAt);
+        assert.notExists((yield* orchestrator.getThreadProjection(childThreadId)).thread.pinnedAt);
 
         yield* orchestrator.dispatch({
           type: "thread.unpin",

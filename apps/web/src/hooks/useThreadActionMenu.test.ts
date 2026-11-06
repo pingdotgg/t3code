@@ -56,6 +56,7 @@ vi.mock("../state/entities", () => ({
     title: "Thread",
     branch: "main",
     worktreePath: null,
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thread" },
     runtime: null,
     latestRun: null,
   }),
