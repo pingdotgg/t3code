@@ -498,7 +498,7 @@ describe("merge request viewer fields", () => {
 });
 
 describe("decodeAwardEmojiJson", () => {
-  it("reads MR-level awards, keys per-note awards by the REST id inside their gid, and ignores an award outside the eight", () => {
+  it("reads MR-level awards, keys per-note awards by the REST id inside their gid, ignores an award outside the eight, and collects bot note authors", () => {
     const result = expectSuccess(
       decodeAwardEmojiJson(
         JSON.stringify({
@@ -517,10 +517,12 @@ describe("decodeAwardEmojiJson", () => {
                   nodes: [
                     {
                       id: "gid://gitlab/DiffNote/42",
+                      author: { username: "julius", bot: false },
                       awardEmoji: { nodes: [{ name: "heart", user: { username: "julius" } }] },
                     },
                     {
                       id: "gid://gitlab/Note/7",
+                      author: { username: "project_278964_bot_89f97e2c", bot: true },
                       awardEmoji: {
                         nodes: [{ name: "partyparrot", user: { username: "bilal" } }],
                       },
@@ -540,7 +542,50 @@ describe("decodeAwardEmojiJson", () => {
     expect([...result.reactionsByNoteId]).toEqual([
       ["42", [{ content: "heart", count: 1, actors: ["julius"], viewerHasReacted: false }]],
     ]);
+    expect([...result.botLogins]).toEqual(["project_278964_bot_89f97e2c"]);
     expect(result.nextCursor).toBeNull();
+  });
+
+  it("dates a note's edit only when someone edited its text, not when its thread was resolved", () => {
+    const result = expectSuccess(
+      decodeAwardEmojiJson(
+        JSON.stringify({
+          data: {
+            currentUser: { username: "bilal" },
+            project: {
+              mergeRequest: {
+                awardEmoji: { nodes: [] },
+                notes: {
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                  nodes: [
+                    {
+                      id: "gid://gitlab/Note/1",
+                      lastEditedAt: "2026-07-02T00:00:00Z",
+                      lastEditedBy: { username: "julius" },
+                      resolved: false,
+                    },
+                    {
+                      id: "gid://gitlab/Note/2",
+                      lastEditedAt: "2026-07-01T00:00:00Z",
+                      lastEditedBy: null,
+                      resolved: false,
+                    },
+                    {
+                      id: "gid://gitlab/DiscussionNote/3",
+                      lastEditedAt: "2026-07-03T00:00:00Z",
+                      lastEditedBy: { username: "julius" },
+                      resolved: true,
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect([...result.editedAtByNoteId]).toEqual([["1", "2026-07-02T00:00:00Z"]]);
   });
 
   it("matches the viewer's username case-insensitively, since GitLab is not consistent about case", () => {

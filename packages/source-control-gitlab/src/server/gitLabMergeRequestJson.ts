@@ -202,6 +202,10 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly checks: ReadonlyArray<PullRequestCheck>;
   readonly viewerCanMerge: boolean;
+  /** Read only for a closed or merged merge request; absent on an open one. */
+  readonly viewerCanDeleteBranch?: boolean;
+  /** Set by the detail read, which asks GraphQL; REST carries no label permission. */
+  readonly viewerCanEditLabels?: boolean;
   readonly reviewerIds: ReadonlyArray<number>;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
@@ -483,11 +487,23 @@ export function decodeProjectUsersJson(
 const RawLabelSchema = Schema.Struct({
   name: Schema.String,
   color: Schema.optional(Schema.NullOr(Schema.String)),
+  description: Schema.optional(Schema.NullOr(Schema.String)),
+  archived: Schema.optional(Schema.Boolean),
 });
 const decodeLabelEntry = Schema.decodeUnknownExit(RawLabelSchema);
+const decodeLabel = decodeJsonResult(RawLabelSchema);
+
+export function decodeLabelNameJson(raw: string): Result.Result<string | null, DecodeFailure> {
+  return Result.map(decodeLabel(raw), (label) => trimmed(label.name));
+}
+
+export interface GitLabProjectLabel extends PullRequestLabel {
+  readonly description: string | null;
+  readonly archived: boolean;
+}
 
 export interface GitLabProjectLabels {
-  readonly labels: ReadonlyArray<PullRequestLabel>;
+  readonly labels: ReadonlyArray<GitLabProjectLabel>;
   readonly rawCount: number;
 }
 
@@ -498,12 +514,19 @@ export function decodeProjectLabelsJson(
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
   }
-  const labels: PullRequestLabel[] = [];
+  const labels: GitLabProjectLabel[] = [];
   for (const entry of decoded.success) {
     const label = decodeLabelEntry(entry);
     if (Exit.isFailure(label)) continue;
     const name = trimmed(label.value.name);
-    if (name !== null) labels.push({ name, color: trimmed(label.value.color) });
+    if (name !== null) {
+      labels.push({
+        name,
+        color: trimmed(label.value.color),
+        description: trimmed(label.value.description),
+        archived: label.value.archived === true,
+      });
+    }
   }
   return Result.succeed({ labels, rawCount: decoded.success.length });
 }
@@ -783,7 +806,7 @@ export const AWARD_EMOJI_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!, $
       awardEmoji { nodes { name user { username } } }
       notes(first: 100, after: $cursor) {
         pageInfo { hasNextPage endCursor }
-        nodes { id awardEmoji { nodes { name user { username } } } }
+        nodes { id author { username bot } lastEditedAt lastEditedBy { username } resolved awardEmoji { nodes { name user { username } } } }
       }
     }
   }
@@ -835,6 +858,24 @@ const RawAwardEmojiPageSchema = Schema.Struct({
                     Schema.NullOr(
                       Schema.Struct({
                         id: Schema.optional(Schema.NullOr(Schema.String)),
+                        lastEditedAt: Schema.optional(Schema.NullOr(Schema.String)),
+                        lastEditedBy: Schema.optional(
+                          Schema.NullOr(
+                            Schema.Struct({
+                              username: Schema.optional(Schema.NullOr(Schema.String)),
+                            }),
+                          ),
+                        ),
+                        resolved: Schema.optional(Schema.NullOr(Schema.Boolean)),
+                        // REST note authors carry no bot flag; GraphQL's does.
+                        author: Schema.optional(
+                          Schema.NullOr(
+                            Schema.Struct({
+                              username: Schema.optional(Schema.NullOr(Schema.String)),
+                              bot: Schema.optional(Schema.NullOr(Schema.Boolean)),
+                            }),
+                          ),
+                        ),
                         awardEmoji: RawAwardEmojiNodesSchema,
                       }),
                     ),
@@ -889,6 +930,8 @@ function noteIdOf(gid: string | null | undefined): string | null {
 export interface GitLabAwardEmojiPage {
   readonly reactions: ReadonlyArray<PullRequestReaction>;
   readonly reactionsByNoteId: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
+  readonly editedAtByNoteId: ReadonlyMap<string, string>;
+  readonly botLogins: ReadonlySet<string>;
   readonly nextCursor: string | null;
 }
 
@@ -903,16 +946,32 @@ export function decodeAwardEmojiJson(
   const viewer = trimmed(data.currentUser?.username);
   const mergeRequest = data.project?.mergeRequest;
   const reactionsByNoteId = new Map<string, ReadonlyArray<PullRequestReaction>>();
+  const editedAtByNoteId = new Map<string, string>();
+  const botLogins = new Set<string>();
   for (const node of mergeRequest?.notes?.nodes ?? []) {
+    const author = trimmed(node?.author?.username);
+    if (author !== null && node?.author?.bot === true) botLogins.add(author);
     const id = noteIdOf(node?.id);
     if (id === null) continue;
     const reactions = toReactions(node?.awardEmoji, viewer);
     if (reactions.length > 0) reactionsByNoteId.set(id, reactions);
+    // Resolving a thread moves lastEditedAt on every note in it; only lastEditedBy marks a
+    // text edit, and a resolved note's stamp may be the resolve rather than that edit.
+    const editedAt = trimmed(node?.lastEditedAt);
+    if (
+      editedAt !== null &&
+      trimmed(node?.lastEditedBy?.username) !== null &&
+      node?.resolved !== true
+    ) {
+      editedAtByNoteId.set(id, editedAt);
+    }
   }
   const pageInfo = mergeRequest?.notes?.pageInfo;
   return Result.succeed({
     reactions: toReactions(mergeRequest?.awardEmoji, viewer),
     reactionsByNoteId,
+    editedAtByNoteId,
+    botLogins,
     nextCursor: pageInfo?.hasNextPage === true ? (trimmed(pageInfo.endCursor) ?? null) : null,
   });
 }
@@ -1011,6 +1070,100 @@ export function decodeRepositoryBlobsJson(
     blobs.set(path, oid);
   }
   return Result.succeed(blobs);
+}
+
+export const SOURCE_BRANCH_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
+  project(fullPath: $fullPath) {
+    mergeRequest(iid: $iid) {
+      state sourceBranch diffHeadSha
+      sourceProject { fullPath }
+      userPermissions { removeSourceBranch }
+    }
+  }
+}`;
+
+const RawSourceBranchSchema = Schema.Struct({
+  data: Schema.Struct({
+    project: Schema.NullOr(
+      Schema.Struct({
+        mergeRequest: Schema.NullOr(
+          Schema.Struct({
+            state: Schema.String,
+            sourceBranch: Schema.String,
+            diffHeadSha: Schema.optional(Schema.NullOr(Schema.String)),
+            sourceProject: Schema.optional(
+              Schema.NullOr(Schema.Struct({ fullPath: Schema.String })),
+            ),
+            userPermissions: Schema.optional(
+              Schema.NullOr(
+                Schema.Struct({
+                  removeSourceBranch: Schema.optional(Schema.NullOr(Schema.Boolean)),
+                }),
+              ),
+            ),
+          }),
+        ),
+      }),
+    ),
+  }),
+});
+
+const decodeSourceBranch = decodeJsonResult(RawSourceBranchSchema);
+
+export interface GitLabSourceBranch {
+  readonly open: boolean;
+  readonly branch: string;
+  readonly headSha: string | null;
+  /** Null when the source project is gone or hidden from the viewer, as a deleted fork is. */
+  readonly sourceProject: string | null;
+  /** GitLab's own answer: false once the branch is gone, protected, or out of the viewer's reach. */
+  readonly canDelete: boolean;
+}
+
+export function decodeSourceBranchJson(
+  raw: string,
+): Result.Result<GitLabSourceBranch | null, DecodeFailure> {
+  return Result.map(decodeSourceBranch(raw), (decoded) => {
+    const mergeRequest = decoded.data.project?.mergeRequest;
+    if (mergeRequest == null) return null;
+    return {
+      // `locked` is GitLab's transient state while a merge runs, so only these two are settled.
+      open: mergeRequest.state !== "merged" && mergeRequest.state !== "closed",
+      branch: mergeRequest.sourceBranch,
+      headSha: trimmed(mergeRequest.diffHeadSha),
+      sourceProject: mergeRequest.sourceProject?.fullPath ?? null,
+      canDelete: mergeRequest.userPermissions?.removeSourceBranch === true,
+    };
+  });
+}
+
+const decodeBranch = decodeJsonResult(
+  Schema.Struct({
+    default: Schema.optional(Schema.NullOr(Schema.Boolean)),
+    commit: Schema.optional(
+      Schema.NullOr(
+        Schema.Struct({
+          id: Schema.String,
+          authored_date: Schema.optional(Schema.NullOr(Schema.String)),
+        }),
+      ),
+    ),
+  }),
+);
+
+export function decodeBranchJson(raw: string): Result.Result<
+  {
+    readonly isDefault: boolean;
+    readonly headSha: string | null;
+    readonly headAuthoredDate: string | null;
+  },
+  DecodeFailure
+> {
+  return Result.map(decodeBranch(raw), (branch) => ({
+    isDefault: branch.default === true,
+    headSha: trimmed(branch.commit?.id),
+    headAuthoredDate: trimmed(branch.commit?.authored_date),
+  }));
 }
 
 export const MERGE_MESSAGES_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
@@ -1424,6 +1577,40 @@ export function decodeMergeRequestStatsJson(
     stats.set(iid, node.diffStatsSummary);
   }
   return Result.succeed(stats);
+}
+
+/** GitLab lets whoever may change a merge request's metadata set its labels. */
+export const LABEL_PERMISSION_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
+  project(fullPath: $fullPath) {
+    mergeRequest(iid: $iid) {
+      userPermissions { adminMergeRequest }
+    }
+  }
+}`;
+
+const decodeLabelPermission = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.Struct({
+      project: Schema.NullOr(
+        Schema.Struct({
+          mergeRequest: Schema.NullOr(
+            Schema.Struct({
+              userPermissions: Schema.Struct({ adminMergeRequest: Schema.Boolean }),
+            }),
+          ),
+        }),
+      ),
+    }),
+  }),
+);
+
+export function decodeLabelPermissionJson(raw: string): Result.Result<boolean, DecodeFailure> {
+  const decoded = decodeLabelPermission(raw);
+  return Result.isSuccess(decoded)
+    ? Result.succeed(
+        decoded.success.data.project?.mergeRequest?.userPermissions.adminMergeRequest === true,
+      )
+    : Result.fail(decoded.failure);
 }
 
 /** Per-file line counts for one merge request, which the code/tests/generated breakdown sorts. */
