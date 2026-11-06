@@ -1,0 +1,412 @@
+---
+title: DNS Adapters
+description: Publish a custom domain's DNS records in Route 53, Cloudflare, or Hetzner DNS from any platform, and build an adapter for another DNS host.
+---
+
+A custom domain has two parts. The platform that **serves** the hostname
+(CloudFront, a load balancer, API Gateway, a Worker, a Fly App) issues or
+attaches a certificate and tells you which DNS records it needs. The DNS
+host that **publishes** the hostname's records is often somewhere else:
+a domain registered with Cloudflare Registrar can point at an AWS website,
+and a Route 53 zone can point at a Fly App.
+
+A DNS adapter connects the two. Set `domain.dns` to the DNS host, and the
+platform publishes its certificate-validation records and the records that
+point the hostname at it through that host:
+
+```typescript
+yield* AWS.Website.StaticSite("Site", {
+  path: "./dist",
+  domain: {
+    name: "app.example.com",
+    dns: Cloudflare.DNS.Adapter(),
+  },
+});
+```
+
+The stack's `providers` must include the DNS host's `providers()` layer
+alongside the platform's, here `Layer.mergeAll(AWS.providers(),
+Cloudflare.providers())`.
+
+## Built-in adapters
+
+| Adapter | DNS host | Options |
+| --- | --- | --- |
+| `Cloudflare.DNS.Adapter()` | A Cloudflare zone | `zone` (zone id, zone name, or `Zone` resource), `proxied` |
+| `AWS.Route53.Adapter()` | A Route 53 hosted zone | `hostedZoneId` |
+| `Hetzner.DNS.Adapter()` | A Hetzner DNS zone | `zone` (zone id, zone name, or `Hetzner.Zone` resource) |
+
+Each adapter infers the zone from every hostname by walking its parent
+domains. Pass `zone` (or `hostedZoneId`) to pin it.
+
+`Cloudflare.DNS.Adapter({ proxied: true })` sends the alias records through
+Cloudflare's proxy. Validation and verification records are always
+DNS-only. Cloudflare flattens a `CNAME` at the zone apex; Route 53 and
+Hetzner can't, so an apex hostname on those hosts needs an AWS alias target
+(Route 53) or an address target.
+
+## Where `dns` works
+
+| Platform | `dns` omitted | Records published through the adapter |
+| --- | --- | --- |
+| `AWS.Website.*` sites and `AWS.Website.Router` | Route 53 | ACM validation `CNAME`s; each hostname aliased to CloudFront |
+| `AWS.ECS.Service` load balancer `domain` | Route 53 | ACM validation `CNAME`s; each hostname aliased to the load balancer |
+| `AWS.Lambda.Function` `domain` | Route 53 | ACM validation `CNAME`s; each hostname aliased to its API Gateway domain |
+| `Cloudflare.Worker` and `Cloudflare.Website.*` | Native Worker custom domain | Custom-hostname ownership and certificate `TXT` records; a `CNAME` to your Cloudflare for SaaS zone |
+| `Fly.Website.*` | You publish the records | The ACME challenge `CNAME`; `A`/`AAAA` records at the site |
+| `Railway.Website.*` | You publish the records | The `CNAME` and verification `TXT` Railway requires |
+| `Neon.Website.*` | You publish the records | A `CNAME` to the custom domain's target |
+| `Prisma.Website.*` | You publish the records | A `CNAME` to the app's regional switchboard, published before the domain is registered |
+| `Hetzner.Website.*` | An `A` record in `zone` | An `A` record at the server |
+
+A plain string `domain` keeps each platform's default. Setting `dns` never
+changes how the platform serves the hostname, only where its records live.
+
+### AWS websites and load balancers
+
+`dns` sits next to the other `domain` fields:
+
+```typescript
+const router = yield* AWS.Website.Router("Router", {
+  domain: {
+    name: "example.com",
+    aliases: ["www.example.com"],
+    dns: Cloudflare.DNS.Adapter({ zone: "example.com" }),
+  },
+});
+```
+
+ACM still issues the certificate. With Route 53 the certificate resource
+publishes its own validation records. With any other host the composite
+requests the certificate with `dnsValidation: "external"`, publishes the
+validation `CNAME`s through the adapter, and waits for issuance with
+`AWS.ACM.CertificateValidation` before CloudFront or the listener uses it.
+Hostnames that sites attached to a `Router` bind onto its record set go
+through the same adapter.
+
+`AWS.ECS.Service` takes the same field on its load balancer domain:
+
+```typescript
+yield* AWS.ECS.Service("Api", {
+  cluster,
+  image: "my-org/api:latest",
+  port: 3000,
+  loadBalancer: {
+    domain: { name: "api.example.com", dns: Cloudflare.DNS.Adapter() },
+  },
+});
+```
+
+### Lambda Functions
+
+Function URLs can't serve a custom hostname, so a Function's `domain`
+composes an API Gateway v2 HTTP API in front of it, with a regional ACM
+certificate and an API Gateway domain name per hostname. The HTTP API uses
+payload format 2.0, the same event shape as a Function URL, so a `fetch`
+handler works unchanged:
+
+```typescript
+const api = yield* AWS.Lambda.Function("Api", {
+  main: "./src/handler.ts",
+  domain: {
+    name: "api.example.com",
+    dns: Cloudflare.DNS.Adapter({ zone: "example.com" }),
+  },
+});
+// api.domainUrl → "https://api.example.com"
+```
+
+### Cloudflare Workers on another DNS host
+
+A Worker's native custom domain requires the hostname to be in a Cloudflare
+zone. When the hostname's DNS lives in Route 53 or Hetzner, the Worker
+serves it through
+[Cloudflare for SaaS](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/start/advanced-settings/worker-as-origin/)
+on a Cloudflare zone you own, called the SaaS zone:
+
+```typescript
+// Once per SaaS zone: an originless proxied record as the fallback origin.
+const origin = yield* Cloudflare.DNS.Record("SaasOrigin", {
+  zoneId: saasZone.zoneId,
+  name: "customers.my-saas.com",
+  type: "AAAA",
+  content: "100::",
+  proxied: true,
+});
+const fallback = yield* Cloudflare.CustomHostname.FallbackOrigin(
+  "SaasFallback",
+  { zoneId: saasZone.zoneId, origin: origin.name },
+);
+
+yield* Cloudflare.Worker("Api", {
+  main: "./src/api.ts",
+  domain: {
+    name: "app.example.com",
+    zoneId: saasZone.zoneId,
+    cnameTarget: fallback.origin,
+    dns: AWS.Route53.Adapter(),
+  },
+});
+```
+
+Each hostname becomes a `Cloudflare.CustomHostname.CustomHostname` on the
+SaaS zone. The adapter publishes its ownership and certificate `TXT`
+records and a `CNAME` to `cnameTarget`, and the Worker gets a
+`{hostname}/*` route on the SaaS zone. Cloudflare for SaaS must be enabled
+on the zone; without it Cloudflare rejects the custom hostname with
+`SaasQuotaNotAllocated`. This path doesn't support `redirects`, `previews`,
+or apex hostnames, and the Worker's `url` stays its `workers.dev` URL.
+
+With `dns` omitted, or set to `Cloudflare.DNS.Adapter()`, the Worker attaches
+native custom domains exactly as before.
+
+### Fly, Railway, Neon, Prisma, and Hetzner websites
+
+These platforms host no DNS, so without `dns` you publish the records their
+custom-domain resources list. Use the object form of `domain` to publish
+them through an adapter:
+
+```typescript
+yield* Fly.Website.Vite("Web", {
+  domain: {
+    name: "app.example.com",
+    dns: AWS.Route53.Adapter(),
+  },
+});
+```
+
+On `Hetzner.Website.*`, `dns` replaces the `zone` prop, so the site can
+also publish its `A` record in Cloudflare or Route 53.
+
+## What gets created
+
+An adapter declares ordinary record resources of its own cloud, so they
+appear in the plan and in state like any other resource:
+
+| Adapter | Hostname aliases | Validation and verification records |
+| --- | --- | --- |
+| Cloudflare | `Cloudflare.DNS.Records` (`CNAME`), or `Cloudflare.DNS.RecordList` for addresses | `Cloudflare.DNS.RecordList` |
+| Route 53 | `AWS.Route53.Record` (`A`/`AAAA` alias or `CNAME`), `AWS.Route53.Records` for a Router | `AWS.Route53.RecordList` |
+| Hetzner | `Hetzner.DNS.RecordList` | `Hetzner.DNS.RecordList` |
+
+Record ownership follows the rest of Alchemy:
+
+- **Alias records** are owned by the stack. The first deploy refuses to
+  overwrite a record that already exists at a hostname unless you pass
+  `--adopt`. Removing the domain deletes the records.
+- **Validation and verification records** are added next to any other
+  values at the same name and removed on destroy. ACM validation `CNAME`s
+  are the exception: ACM reuses one `CNAME` per name for every certificate,
+  so they stay in the zone when the certificate is deleted.
+
+The Route 53 adapter declares the same resources, with the same logical
+IDs, that AWS composites declared before `dns` existed, so upgrading a
+stack that uses Route 53 plans no changes.
+
+## Switching DNS hosts
+
+Changing `domain.dns` swaps the record resources: the next deploy creates
+the records at the new host and deletes them from the old one, each through
+its own provider. Update the domain's nameservers at the registrar once the
+new records are in place.
+
+## How adapters work
+
+`domain.dns` holds plain data, for example
+`{ type: "Cloudflare.DNS", zone: "example.com" }`. That keeps it safe in any
+resource's props, in state, and across the `alchemy dev` sidecar.
+
+While the stack program runs, the platform resolves the adapter registered
+for that `type`. Each DNS host's `providers()` layer registers its adapter.
+The adapter's methods only declare resources. No provider calls an adapter
+while it deploys, so destroying a stack or cleaning up an orphan needs
+nothing but state and the record resources' own providers.
+
+An adapter is three functions that declare record resources. Each receives
+the zone and options from the user's `domain.dns` alongside its own
+arguments:
+
+| Function | Declares |
+| --- | --- |
+| `alias(id, { zone, name, target, ipv6? })` | Records pointing one hostname at a hostname target (`CNAME`, or a Route 53 alias when `target.route53Alias` is set) or an address target (`A`/`AAAA`) |
+| `aliasSet(id, { zone, names?, target })` | A record set that other composites add hostnames to by binding `{ names }`, used by `AWS.Website.Router` |
+| `records(id, { zone, records, retain? })` | Explicit records whose values usually come from another resource's outputs |
+
+## Build your own adapter
+
+This walkthrough adds an adapter for a hypothetical "Acme DNS" API. Any
+platform's `domain.dns` can then publish records there.
+
+### Write the record resource
+
+An adapter declares resources, so your DNS host first needs a resource that
+manages DNS records. The simplest one that covers every adapter function is
+a **record list**: one resource that owns a list of
+`{ name, type, value }` records. A list fits because platforms often don't
+know how many records they need until deploy time. ACM, for example,
+returns one validation record per hostname on the certificate.
+
+```typescript
+// src/acme-dns/RecordList.ts
+import { Resource } from "alchemy";
+import type { DnsRecord } from "alchemy/DNS";
+
+export interface RecordListProps {
+  /** Zone that owns the records. Inferred from each name when omitted. */
+  zone?: string;
+  /** Records to publish, e.g. `{ name: "www.example.com", type: "CNAME", value: "d123.cloudfront.net" }`. */
+  records: DnsRecord[];
+}
+
+export type RecordList = Resource<
+  "AcmeDns.RecordList",
+  RecordListProps,
+  { records: DnsRecord[] }
+>;
+
+export const RecordList = Resource<RecordList>("AcmeDns.RecordList");
+```
+
+Its provider's `reconcile` creates each listed record and deletes the ones
+it created before that are no longer listed; `delete` removes the records it
+created. Build it as described in
+[Custom Provider](/infrastructure-as-code/custom-provider).
+`Cloudflare.DNS.RecordList` and `AWS.Route53.RecordList` are complete
+references.
+
+### Write the data constructor
+
+The constructor returns the plain data users put in `domain.dns`. Pick a
+`type` that's unique to your adapter:
+
+```typescript
+// src/acme-dns/Adapter.ts
+import type { DnsConfig } from "alchemy/DNS";
+
+export const Adapter = (
+  options: { zone?: string } = {},
+): DnsConfig<"AcmeDns"> => ({
+  type: "AcmeDns",
+  ...(options.zone === undefined ? {} : { zone: options.zone }),
+});
+```
+
+### Implement the adapter
+
+The adapter is an object with three functions, each returning the resource
+it declares:
+
+```typescript
+// src/acme-dns/Adapter.ts
+import * as DNS from "alchemy/DNS";
+import * as RemovalPolicy from "alchemy/RemovalPolicy";
+import type { Providers } from "./Providers.ts";
+import { RecordList } from "./RecordList.ts";
+
+export const adapter = {
+  // Point one hostname at the platform: a CNAME, or A/AAAA records.
+  alias: (id, { zone, name, target }) =>
+    RecordList(id, { zone, records: DNS.aliasRecords(name, target) as DNS.DnsRecord[] }),
+  // Several hostnames at one hostname target. Give RecordList a `{ names }`
+  // binding contract to let sites attached to an AWS.Website.Router add theirs.
+  aliasSet: (id, { zone, names = [], target }) =>
+    RecordList(id, {
+      zone,
+      records: names.map((name) => ({ name, type: "CNAME" as const, value: target.hostname as string })),
+    }),
+  // Records the platform computed, e.g. certificate validation CNAMEs.
+  records: (id, { zone, records, retain }) =>
+    RecordList(id, { zone, records: records as DNS.DnsRecord[] }).pipe(
+      retain ? RemovalPolicy.retain() : (effect) => effect,
+    ),
+} satisfies DNS.DnsAdapter<Providers>;
+```
+
+`satisfies DNS.DnsAdapter<Providers>` types the arguments and checks that
+each function declares resources of your cloud. Honor `retain`: platforms
+set it for records that must outlive the resource, such as ACM validation
+`CNAME`s.
+
+### Register it in your providers layer
+
+`adapterLayer` only registers the adapter service. It does not register the
+native record providers declared by `alias`, `aliasSet`, or `records`, so
+include those providers in the host package's `providers()` layer as well.
+
+`DNS.adapterLayer` registers the adapter under the `type` your constructor
+returns. Merge it into the same `providers()` layer that registers your
+record providers:
+
+```typescript
+// src/acme-dns/Providers.ts
+import * as DNS from "alchemy/DNS";
+import * as Layer from "effect/Layer";
+import { adapter } from "./Adapter.ts";
+
+export const providers = () =>
+  Layer.mergeAll(RecordListProvider(), DNS.adapterLayer("AcmeDns", adapter));
+```
+
+### Use it from a stack
+
+Pass the data constructor as `domain.dns` on any platform, and add your
+layer to the stack's providers:
+
+```typescript
+const stack = Alchemy.Stack(
+  "Web",
+  { providers: Layer.mergeAll(AWS.providers(), AcmeDns.providers()) },
+  Effect.gen(function* () {
+    yield* AWS.Website.StaticSite("Site", {
+      path: "./dist",
+      domain: { name: "app.example.com", dns: AcmeDns.Adapter() },
+    });
+  }),
+);
+```
+
+### Test it
+
+Test against the real DNS host. Deploy a stack that calls each adapter
+function, check the records out of band with the host's API, update the
+stack and check that the records converge, then destroy it and check that
+they're gone. Start and end every test with `stack.destroy()`:
+
+```typescript
+test.provider("publishes an alias", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+    yield* stack.deploy(
+      Effect.gen(function* () {
+        const dns = yield* DNS.resolve(AcmeDns.Adapter({ zone: "example.com" }));
+        yield* dns.alias("Web", { name: "www.example.com", target: { hostname: "example.net" } });
+      }),
+    );
+    // read the CNAME back through the Acme DNS API and assert on it
+    yield* stack.destroy();
+    // assert the CNAME is gone
+  }),
+);
+```
+
+`packages/integration-tests/test/DNS/Adapter.test.ts` does this for the
+built-in adapters.
+
+## Troubleshooting
+
+| Error | Cause and fix |
+| --- | --- |
+| `DnsAdapterNotRegistered` | `domain.dns` names a host whose `providers()` layer isn't in the stack. Add it, for example `Cloudflare.providers()` for `Cloudflare.DNS.Adapter()`. |
+| `OwnedBySomeoneElse` | A record already exists at a hostname the domain aliases. Delete it, or deploy with `--adopt` to take it over. |
+| `CertificateCaaError` | A `CAA` record on the domain doesn't authorize Amazon, so ACM refused to issue the certificate. Add `0 issue "amazon.com"` (and `issuewild` for wildcard names) at the zone apex and redeploy. Alchemy never writes `CAA` records. |
+| `DnsAdapterError` | The DNS host can't publish a record as requested, for example a `CNAME` at the apex of a pinned Hetzner zone. Use an address target or a host that flattens `CNAME`s. |
+| `SaasQuotaNotAllocated` | A Worker's `domain.dns` names another host, but Cloudflare for SaaS isn't enabled on the SaaS zone. |
+
+## Where to go next
+
+- [AWS custom domains](/aws/networking/custom-domains): certificates, hosted
+  zones, and API Gateway domains on AWS.
+- [Cloudflare domains](/cloudflare/networking/domains): zones and DNS
+  records on Cloudflare.
+- [Custom Provider](/infrastructure-as-code/custom-provider): implement the
+  record resources behind a new adapter.

@@ -1,4 +1,4 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -14,8 +14,7 @@ const sameKey = (expected: string, given: string | undefined) => {
   return diff === 0;
 };
 
-const toBase64 = (text: string) =>
-  Effect.sync(() => Buffer.from(text, "utf8").toString("base64"));
+const toBase64 = (text: string) => Effect.sync(() => Buffer.from(text, "utf8").toString("base64"));
 
 const fromBase64 = (data: string) =>
   Effect.sync(() => Buffer.from(data, "base64").toString("utf8"));
@@ -74,9 +73,7 @@ export default class Api extends GCP.Function<Api>()(
       request.json.pipe(
         Effect.map((body) => {
           const value = (body as Record<string, unknown> | null)?.[field];
-          return typeof value === "string" && value.length > 0
-            ? value
-            : undefined;
+          return typeof value === "string" && value.length > 0 ? value : undefined;
         }),
         Effect.catch(() => Effect.succeed(undefined)),
       );
@@ -91,18 +88,14 @@ export default class Api extends GCP.Function<Api>()(
         }
 
         const route =
-          request.method === "POST" &&
-          (pathname === "/encrypt" || pathname === "/decrypt")
+          request.method === "POST" && (pathname === "/encrypt" || pathname === "/decrypt")
             ? pathname
             : undefined;
         if (route === undefined) return yield* error(404, "not found");
 
         const auth = yield* authorize(request);
         if (auth === "unconfigured") {
-          return yield* error(
-            503,
-            "no api key version has been added to the secret",
-          );
+          return yield* error(503, "no api key version has been added to the secret");
         }
         if (auth === "denied") return yield* error(401, "invalid api key");
 
@@ -137,10 +130,6 @@ export default class Api extends GCP.Function<Api>()(
       }),
     };
   }).pipe(
-    Effect.provide([
-      GCP.KMS.EncryptHttp,
-      GCP.KMS.DecryptHttp,
-      GCP.SecretManager.ReadSecretHttp,
-    ]),
+    Effect.provide([GCP.KMS.EncryptHttp, GCP.KMS.DecryptHttp, GCP.SecretManager.ReadSecretHttp]),
   ),
 ) {}
