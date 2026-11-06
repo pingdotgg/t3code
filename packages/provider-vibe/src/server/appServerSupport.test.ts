@@ -1,7 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 
+import { ProviderThreadId, RunId, ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { t3OrchestrationPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { VibeAppServerRequestError } from "@t3tools/vibe-app-server/errors";
 
 import { VibeSettings } from "../settings.ts";
 import {
@@ -14,6 +19,8 @@ import {
   buildVibeSpawnInput,
   resolveVibeModelId,
   vibeAgentForRuntimeMode,
+  vibeModelWriteError,
+  VIBE_PROVIDER,
 } from "./appServerSupport.ts";
 
 const decodeSettings = Schema.decodeSync(VibeSettings);
@@ -89,6 +96,38 @@ describe("resolveVibeModelId", () => {
     expect(resolveVibeModelId(undefined)).toBe(DEFAULT_VIBE_MODEL);
     expect(resolveVibeModelId("  ")).toBe(DEFAULT_VIBE_MODEL);
     expect(resolveVibeModelId("devstral-small")).toBe("devstral-small");
+  });
+});
+
+describe("vibeModelWriteError", () => {
+  it("shows the user that Vibe rejected the selected model, and hides other write failures", () => {
+    const failureMessage = (detail: string, code: string) =>
+      makeProviderFailure({
+        cause: Cause.fail(
+          new ProviderAdapter.ProviderAdapterTurnStartError({
+            driver: VIBE_PROVIDER,
+            threadId: ThreadId.make("thread:vibe-model"),
+            providerThreadId: ProviderThreadId.make("provider-thread:vibe-model"),
+            runId: RunId.make("run:vibe-model"),
+            cause: vibeModelWriteError(
+              "mistral-large-4-0-3",
+              new VibeAppServerRequestError({ method: "config/model/write", code, detail }),
+            ),
+          }),
+        ),
+      }).message;
+
+    expect(
+      failureMessage(
+        "Unknown model: mistral-large-4-0-3. Available: devstral-small, mistral-medium-3.5",
+        "invalid_params",
+      ),
+    ).toBe(
+      'Vibe can\'t run the model "mistral-large-4-0-3" on your Mistral account right now. Choose another Vibe model, then retry.',
+    );
+    expect(
+      failureMessage("The session's workspace could not be prepared", "conflict"),
+    ).not.toContain("mistral-large-4-0-3");
   });
 });
 
