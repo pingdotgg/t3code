@@ -6,6 +6,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -23,6 +24,7 @@ type OpResult = {
   readonly stderr?: string;
   readonly code?: number;
   readonly hang?: boolean;
+  readonly missing?: boolean;
 };
 
 function fakeOp(answer: (args: ReadonlyArray<string>) => OpResult) {
@@ -32,26 +34,38 @@ function fakeOp(answer: (args: ReadonlyArray<string>) => OpResult) {
     Layer.succeed(
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make((command) =>
-        Effect.sync(() => {
+        Effect.suspend(() => {
           const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
           invocations.push(args);
           Deferred.doneUnsafe(spawned, Effect.void);
           const result = answer(args);
-          return ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(1),
-            exitCode: result.hang
-              ? Effect.never
-              : Effect.succeed(ChildProcessSpawner.ExitCode(result.code ?? 0)),
-            isRunning: Effect.succeed(false),
-            kill: () => Effect.void,
-            unref: Effect.succeed(Effect.void),
-            stdin: Sink.drain,
-            stdout: Stream.make(encoder.encode(result.stdout ?? "")),
-            stderr: Stream.make(encoder.encode(result.stderr ?? "")),
-            all: Stream.empty,
-            getInputFd: () => Sink.drain,
-            getOutputFd: () => Stream.empty,
-          });
+          if (result.missing) {
+            return Effect.fail(
+              PlatformError.systemError({
+                _tag: "NotFound",
+                module: "ChildProcess",
+                method: "spawn",
+                pathOrDescriptor: "op",
+              }),
+            );
+          }
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: result.hang
+                ? Effect.never
+                : Effect.succeed(ChildProcessSpawner.ExitCode(result.code ?? 0)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.make(encoder.encode(result.stdout ?? "")),
+              stderr: Stream.make(encoder.encode(result.stderr ?? "")),
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          );
         }),
       ),
     ),
@@ -155,7 +169,7 @@ describe("1Password driver", () => {
 });
 
 describe("1Password listAccounts", () => {
-  it.effect("offers each signed-in account by the address `op --account` accepts", () => {
+  it.effect("lists each signed-in account by the address `op --account` accepts", () => {
     const op = fakeOp(() => ({
       stdout: JSON.stringify([
         { url: "my.1password.com", email: "me@example.com", user_uuid: "U1" },
@@ -173,17 +187,24 @@ describe("1Password listAccounts", () => {
     }).pipe(Effect.provide(op.layer));
   });
 
-  it.effect("offers no accounts when `op` fails", () => {
-    const op = fakeOp(() => ({ code: 1, stderr: "not configured" }));
-    return Effect.gen(function* () {
-      assert.deepStrictEqual(yield* listAccounts(), []);
-    }).pipe(Effect.provide(op.layer));
-  });
-
-  it.effect("offers no accounts when `op` prints something unexpected", () => {
-    const op = fakeOp(() => ({ stdout: "not json" }));
-    return Effect.gen(function* () {
-      assert.deepStrictEqual(yield* listAccounts(), []);
-    }).pipe(Effect.provide(op.layer));
-  });
+  it.effect("lists no accounts when `op` cannot answer", () =>
+    Effect.forEach(
+      [
+        { missing: true },
+        { code: 1, stderr: "not configured" },
+        { stdout: "not json" },
+        { hang: true },
+      ],
+      (answer: OpResult) => {
+        const op = fakeOp(() => answer);
+        return Effect.gen(function* () {
+          const listing = yield* listAccounts().pipe(Effect.forkChild);
+          yield* Deferred.await(op.spawned);
+          yield* TestClock.adjust("1 minute");
+          assert.deepStrictEqual(yield* Fiber.join(listing), []);
+        }).pipe(Effect.provide(op.layer));
+      },
+      { discard: true },
+    ),
+  );
 });
