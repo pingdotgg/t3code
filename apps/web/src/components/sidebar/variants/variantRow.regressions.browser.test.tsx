@@ -107,6 +107,54 @@ it("hides the time under Settle while Settle has keyboard focus", async () => {
   expect(getComputedStyle(time).opacity).toBe("0");
 });
 
+it("closes an expanded fold chip with Left, and keeps focus on it", async () => {
+  const onToggle = vi.fn();
+  await using screen = await render(
+    <div data-testid="tree">
+      <WorkerFoldChip
+        threadKey="env:parent"
+        open
+        summary="2 workers · 1 working"
+        total="2 workers"
+        onToggle={onToggle}
+      />
+    </div>,
+  );
+  const cleanup = installSidebarTree(screen.getByTestId("tree").element() as HTMLElement);
+  const chip = screen.getByRole("button", { name: "2 workers · 1 working", exact: true });
+  const element = chip.element() as HTMLElement;
+  expect(element.getAttribute("aria-expanded")).toBe("true");
+  element.focus();
+  element.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+  expect(onToggle).toHaveBeenCalledOnce();
+  expect(document.activeElement).toBe(element);
+  cleanup();
+});
+
+it("returns focus to the worker's parent when a focused worker row goes away", async () => {
+  await using screen = await render(
+    <div data-testid="tree">
+      <div role="button" aria-label="Parent" tabIndex={0} data-sidebar-row="env:parent" />
+      <div role="button" aria-label="Between" tabIndex={0} data-sidebar-row="env:between" />
+      <div
+        role="button"
+        aria-label="Worker"
+        tabIndex={0}
+        data-sidebar-row="env:worker"
+        data-sidebar-parent="env:parent"
+      />
+      <div role="button" aria-label="After" tabIndex={0} data-sidebar-row="env:after" />
+    </div>,
+  );
+  const cleanup = installSidebarTree(screen.getByTestId("tree").element() as HTMLElement);
+  const parent = screen.getByRole("button", { name: "Parent" }).element();
+  const worker = screen.getByRole("button", { name: "Worker" }).element() as HTMLElement;
+  worker.focus();
+  worker.remove();
+  await vi.waitFor(() => expect(document.activeElement).toBe(parent));
+  cleanup();
+});
+
 it("counts Slim's workers with a static robot and a name", async () => {
   await using screen = await render(
     <div>
