@@ -588,9 +588,7 @@ export function ThreadRelationshipsPanel(props: {
       runningCount > 0 ||
       remoteActive.length > 0 ||
       remotePrevious.length > 0 ||
-      delegatedFrom !== undefined ||
-      // Disconnect lives in this heading, so a thread with only side chats still shows it.
-      (canDetach && sideChats.length > 0));
+      delegatedFrom !== undefined);
   const sideChatsVisible = props.showSideChats && sideChats.length > 0;
   const runningSideChats = sideChats.filter(({ edge }) => edge.status === "running").length;
 
@@ -937,6 +935,30 @@ export function ThreadRelationshipsPanel(props: {
     );
   };
 
+  const detachMenu = canDetach ? (
+    <Menu>
+      <MenuTrigger
+        render={
+          <ThreadDetailsControl
+            size="icon-xs"
+            variant="ghost"
+            part="icon"
+            aria-label="More thread actions"
+            disabled={busyAction !== null}
+          />
+        }
+      >
+        <MoreHorizontalIcon className="size-3.5" />
+      </MenuTrigger>
+      <MenuPopup align="end" className="min-w-60 max-w-(--available-width)">
+        <MenuItem onClick={() => void detach()}>
+          <UnplugIcon className="size-3.5" />
+          Disconnect agent session
+        </MenuItem>
+      </MenuPopup>
+    </Menu>
+  ) : null;
+
   return (
     <>
       {lineageVisible ? (
@@ -953,31 +975,7 @@ export function ThreadRelationshipsPanel(props: {
             delegatedFrom !== undefined
           }
           data-thread-relationships-panel
-          actions={
-            canDetach ? (
-              <Menu>
-                <MenuTrigger
-                  render={
-                    <ThreadDetailsControl
-                      size="icon-xs"
-                      variant="ghost"
-                      part="icon"
-                      aria-label="More thread actions"
-                      disabled={busyAction !== null}
-                    />
-                  }
-                >
-                  <MoreHorizontalIcon className="size-3.5" />
-                </MenuTrigger>
-                <MenuPopup align="end" className="min-w-60 max-w-(--available-width)">
-                  <MenuItem onClick={() => void detach()}>
-                    <UnplugIcon className="size-3.5" />
-                    Disconnect agent session
-                  </MenuItem>
-                </MenuPopup>
-              </Menu>
-            ) : null
-          }
+          actions={detachMenu}
         >
           {delegatedFrom === undefined ? null : (
             <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
@@ -1014,6 +1012,8 @@ export function ThreadRelationshipsPanel(props: {
           headingId="thread-details-side-chats-heading"
           title={runningSideChats > 0 ? `Side chats · ${runningSideChats} running` : "Side chats"}
           data-thread-side-chats-panel
+          // Without Lineage, its heading is not there to hold Disconnect.
+          actions={lineageVisible ? null : detachMenu}
         >
           <ThreadLineageGroup
             key={`${scopedThreadKey(ref)}:side-chats`}
