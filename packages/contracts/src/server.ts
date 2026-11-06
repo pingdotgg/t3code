@@ -209,6 +209,8 @@ export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 export const ServerProvider = Schema.Struct({
   // Only instanceId is stable enough for provider routing.
   instanceId: ProviderInstanceId,
+  // Stable across snapshots; changes when the provider instance is rebuilt.
+  instanceRevision: Schema.optional(NonNegativeInt),
   driver: ProviderDriverKind,
   displayName: Schema.optional(TrimmedNonEmptyString),
   accentColor: Schema.optional(TrimmedNonEmptyString),

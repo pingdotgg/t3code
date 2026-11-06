@@ -179,16 +179,20 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
     readGrokCredential(environment).pipe(Effect.timeout("10 seconds")),
   );
   if (Option.isNone(credential))
-    return { email: undefined, usageLimits: probeFailed, supportsUsageLimits: false };
+    return {
+      email: undefined,
+      usageLimits: probeFailed,
+      supportsUsageLimits: false,
+      usageRefreshKey: undefined,
+    };
   const email = credential.value?.email?.trim() || undefined;
   const token = credential.value?.key?.trim();
-  if (!includeUsage)
-    return { email, usageLimits: probeFailed, supportsUsageLimits: Boolean(token) };
   if (!token) {
     return {
       email,
       usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }),
       supportsUsageLimits: false,
+      usageRefreshKey: undefined,
     };
   }
   const digest = yield* Digest.Digest;
@@ -198,6 +202,13 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
       new TextEncoder().encode(email ? `grok\0account\0${email}` : `grok\0token\0${token}`),
     )
     .pipe(Effect.map(Hex.encode), Effect.orDie);
+  if (!includeUsage)
+    return {
+      email,
+      usageLimits: probeFailed,
+      supportsUsageLimits: true,
+      usageRefreshKey: credentialFingerprint,
+    };
   let refreshAfter: number | undefined;
   const usageLimits = yield* Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
@@ -240,5 +251,6 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
       ...(refreshAfter !== undefined ? { refreshAfter } : {}),
     },
     supportsUsageLimits: true,
+    usageRefreshKey: credentialFingerprint,
   };
 });

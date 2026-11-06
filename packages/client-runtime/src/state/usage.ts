@@ -124,7 +124,7 @@ export function usageRefreshDeadline(
 }
 
 export function usageRefreshAccountKey(
-  providers: readonly Pick<ServerProvider, "instanceId" | "driver" | "auth">[],
+  providers: readonly Pick<ServerProvider, "instanceId" | "instanceRevision" | "driver" | "auth">[],
   driver?: ProviderDriverKind | null,
   instanceId?: ProviderInstanceId | null,
   generation = 0,
@@ -140,6 +140,7 @@ export function usageRefreshAccountKey(
       .sort((a, b) => a.instanceId.localeCompare(b.instanceId))
       .map((provider) => [
         provider.instanceId,
+        provider.instanceRevision,
         provider.auth?.status,
         provider.auth?.type,
         provider.auth?.email?.toLowerCase(),

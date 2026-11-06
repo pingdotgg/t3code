@@ -176,7 +176,7 @@ it.layer(layerTest)("GrokDriver", (it) => {
     });
   }
 
-  it.effect.each(["subscription", "api-key", "custom-auth", "missing-token"] as const)(
+  it.effect.each(["subscription", "api-key", "custom-auth", "missing-token", "key-only"] as const)(
     "keeps health-only usage capability accurate for %s",
     (mode) =>
       Effect.scoped(
@@ -194,6 +194,12 @@ it.layer(layerTest)("GrokDriver", (it) => {
           );
           const fs = yield* FileSystem.FileSystem;
           const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-usage-" });
+          const writeCredential = (key: string) =>
+            fs.writeFileString(
+              `${home}/auth.json`,
+              JSON.stringify({ "https://accounts.x.ai/sign-in": { key } }),
+            );
+          if (mode === "key-only") yield* writeCredential("test-token");
           let requests = 0;
           const instance = yield* GrokDriver.create({
             instanceId: ProviderInstanceId.make("grok-usage"),
@@ -210,12 +216,15 @@ it.layer(layerTest)("GrokDriver", (it) => {
               },
               {
                 name: "GROK_AUTH",
-                value: JSON.stringify({
-                  "https://accounts.x.ai/sign-in": {
-                    key: mode === "missing-token" ? "" : "test-token",
-                    email: "account@example.com",
-                  },
-                }),
+                value:
+                  mode === "key-only"
+                    ? ""
+                    : JSON.stringify({
+                        "https://accounts.x.ai/sign-in": {
+                          key: mode === "missing-token" ? "" : "test-token",
+                          email: "account@example.com",
+                        },
+                      }),
                 sensitive: true,
               },
             ],
@@ -225,15 +234,27 @@ it.layer(layerTest)("GrokDriver", (it) => {
               HttpClient.make((request) => {
                 requests += 1;
                 return Effect.succeed(
-                  HttpClientResponse.fromWeb(request, new Response(null, { status: 503 })),
+                  HttpClientResponse.fromWeb(
+                    request,
+                    mode === "key-only"
+                      ? Response.json({
+                          config: {
+                            creditUsagePercent:
+                              request.headers.authorization === "Bearer test-token" ? 80 : 25,
+                          },
+                        })
+                      : new Response(null, { status: 503 }),
+                  ),
                 );
               }),
             ),
           );
           const health = yield* instance.snapshot.refresh;
-          const supported = mode === "subscription";
+          const supported = mode === "subscription" || mode === "key-only";
           expect(health.auth.email).toBe(
-            mode === "api-key" || mode === "custom-auth" ? undefined : "account@example.com",
+            mode === "api-key" || mode === "custom-auth" || mode === "key-only"
+              ? undefined
+              : "account@example.com",
           );
           expect(health.supportsUsageLimits).toBe(supported);
           expect(hasProviderUsageLimits(health.driver, [health], [])).toBe(supported);
@@ -242,9 +263,27 @@ it.layer(layerTest)("GrokDriver", (it) => {
           yield* instance.snapshot.refreshUsage!;
           const usage = yield* instance.snapshot.getSnapshot;
           expect(usage.usageLimits?.unavailable?.reason).toBe(
-            supported ? "probeFailed" : "unsupported",
+            mode === "key-only" ? undefined : supported ? "probeFailed" : "unsupported",
           );
           expect(requests).toBe(supported ? 1 : 0);
+          if (mode === "key-only") {
+            expect(usage.usageLimits?.windows[0]?.usedPercent).toBe(80);
+            yield* writeCredential("account-b");
+            const changed = yield* instance.snapshot.refresh;
+            expect(requests).toBe(1);
+            expect(changed.auth.usageRefreshKey).not.toBe(health.auth.usageRefreshKey);
+            expect(changed.usageLimits?.windows.length ?? 0).toBe(0);
+            yield* instance.snapshot.refreshUsage!;
+            const fresh = yield* instance.snapshot.getSnapshot;
+            expect(requests).toBe(2);
+            expect(fresh.usageLimits?.windows[0]?.usedPercent).toBe(25);
+            yield* writeCredential("account-c");
+            yield* instance.snapshot.refreshUsage!;
+            expect(requests).toBe(3);
+            expect((yield* instance.snapshot.getSnapshot).auth.usageRefreshKey).not.toBe(
+              fresh.auth.usageRefreshKey,
+            );
+          }
         }),
       ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner)),
   );

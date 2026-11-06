@@ -21,6 +21,7 @@ import {
   refreshUsageLimits,
   usageLimitsRefreshDelay,
   usageRefreshDeadline,
+  usageRefreshAccountKey,
 } from "./usage.ts";
 
 const input = {
@@ -293,6 +294,24 @@ describe("limits refresh cooldown", () => {
     ).toBe("claude due");
     expect(usageLimitsRefreshDelay(id, ["claude"])).toBe(5 * 60_000);
     expect(usageLimitsRefreshDelay(id, ["claude", "codex"])).toBe(4 * 60_000);
+    const rebuilt = EnvironmentId.make("limits-rebuilt-instance");
+    const provider = {
+      instanceId: ProviderInstanceId.make("opencode"),
+      driver: ProviderDriverKind.make("opencode"),
+      auth: { status: "authenticated" as const },
+      instanceRevision: 1,
+    };
+    now.mockReturnValue(0);
+    const oldKey = usageRefreshAccountKey([provider]);
+    await refreshUsageLimits(rebuilt, async () => "old quota", true, false, oldKey);
+    now.mockReturnValue(60_000);
+    const currentKey = usageRefreshAccountKey([{ ...provider, instanceRevision: 2 }]);
+    const readRebuilt = vi.fn(async () => "rebuilt quota");
+    expect(await refreshUsageLimits(rebuilt, readRebuilt, true, false, currentKey)).toBe(
+      "rebuilt quota",
+    );
+    expect(await refreshUsageLimits(rebuilt, readRebuilt, true, false, currentKey)).toBeUndefined();
+    expect(readRebuilt).toHaveBeenCalledTimes(1);
   });
 });
 

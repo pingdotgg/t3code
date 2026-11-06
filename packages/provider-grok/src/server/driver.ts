@@ -173,6 +173,14 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
     );
     const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
 
+    const getUsageRefreshKey = readGrokAccount(processEnv, false).pipe(
+      Effect.map((account) => account.usageRefreshKey),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(Digest.Digest, digest),
+    );
+
     const checkProvider = Effect.flatMap(UsagePolling, (includeUsage) =>
       checkGrokProviderStatus(effectiveConfig, processEnv, cwd).pipe(
         Effect.filterOrElse(
@@ -184,9 +192,9 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
             ),
           (snapshot) =>
             readGrokAccount(processEnv, includeUsage).pipe(
-              Effect.map(({ email, usageLimits, supportsUsageLimits }) => ({
+              Effect.map(({ email, usageLimits, supportsUsageLimits, usageRefreshKey }) => ({
                 ...snapshot,
-                auth: email ? { ...snapshot.auth, email } : snapshot.auth,
+                auth: { ...snapshot.auth, ...(email ? { email } : {}), usageRefreshKey },
                 ...(includeUsage ? { usageLimits } : {}),
                 supportsUsageLimits,
               })),
@@ -211,6 +219,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
       initialSnapshot: (settings) =>
         buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
+      getUsageRefreshKey,
       enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>
