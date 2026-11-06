@@ -1,6 +1,10 @@
 import { assert, it } from "@effect/vitest";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  appendCustomCodexModels,
+  applyPreferredCodexDefaultModel,
+  mapCodexModelCapabilities,
+} from "./CodexProvider.ts";
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
@@ -12,6 +16,7 @@ it("maps current Codex model capability fields", () => {
     id: "gpt-test",
     isDefault: true,
     model: "gpt-test",
+    availableAccessPrograms: { cyber: ["standard", "daybreakBlue", "daybreakRed"] },
     defaultServiceTier: "flex",
     serviceTiers: [
       {
@@ -61,6 +66,30 @@ it("maps current Codex model capability fields", () => {
       ],
       currentValue: "flex",
     },
+    {
+      id: "cyberAccessProgram",
+      label: "Cyber Access",
+      type: "select",
+      options: [
+        {
+          id: "default",
+          label: "Automatic",
+          description: "Codex's default treatment",
+          isDefault: true,
+        },
+        {
+          id: "daybreakBlue",
+          label: "Daybreak Blue",
+          description: "Request Daybreak Blue on each turn",
+        },
+        {
+          id: "daybreakRed",
+          label: "Daybreak Red",
+          description: "Request Daybreak Red on each turn",
+        },
+      ],
+      currentValue: "default",
+    },
   ]);
 });
 
@@ -75,6 +104,7 @@ it("uses standard routing when the catalog has no default service tier", () => {
     id: "gpt-test",
     isDefault: true,
     model: "gpt-test",
+    availableAccessPrograms: { cyber: ["standard"] },
     serviceTiers: [
       {
         id: "priority",
@@ -152,4 +182,28 @@ it("ignores custom models that shadow a preferred slug", () => {
   ]);
 
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
+});
+
+it("does not lend cyber access to custom models", () => {
+  const capabilities = mapCodexModelCapabilities({
+    additionalSpeedTiers: [],
+    availableAccessPrograms: { cyber: ["standard", "daybreakBlue"] },
+    defaultReasoningEffort: "medium",
+    description: "Test model",
+    displayName: "GPT Test",
+    hidden: false,
+    id: "gpt-test",
+    isDefault: true,
+    model: "gpt-test",
+    supportedReasoningEfforts: [{ description: "Medium", reasoningEffort: "medium" }],
+  });
+  const [, custom] = appendCustomCodexModels(
+    [{ slug: "gpt-test", name: "GPT Test", isCustom: false, capabilities }],
+    ["gpt-custom"],
+  );
+
+  assert.deepStrictEqual(
+    custom?.capabilities?.optionDescriptors?.map((descriptor) => descriptor.id),
+    ["reasoningEffort"],
+  );
 });

@@ -10,6 +10,7 @@ import {
 import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
+import { resolveCyberAccessProgram } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
@@ -218,6 +219,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           threads,
           projection: { thread },
         } = yield* readThread(input.threadId);
+        yield* resolveCyberAccessProgram(thread.modelSelection, modelSelection);
         const type = modelSelectionCommandType(thread.providerInstanceId, modelSelection);
         const result = yield* threads
           .dispatch({ type, threadId: thread.id, commandId: yield* newCommandId(), modelSelection })

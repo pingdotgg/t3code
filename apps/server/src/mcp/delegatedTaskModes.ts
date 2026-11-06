@@ -5,8 +5,10 @@ import {
   type OrchestratorMcpInteractionMode,
   type OrchestratorMcpRuntimeMode,
   type ProviderInteractionMode,
+  type ProviderOptionSelection,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 
 /** How much a runtime mode allows, narrowest first. */
@@ -85,6 +87,41 @@ export function resolveInteractionMode(
         }),
       )
     : Effect.succeed(resolved);
+}
+
+/**
+ * A child may keep its parent's cyber access program on the same instance and model, but not
+ * choose another; only the user can. Codex grants programs per account and model.
+ */
+export function resolveCyberAccessProgram(
+  parentSelection: ModelSelection | undefined,
+  requested: Pick<ModelSelection, "instanceId" | "model"> & {
+    readonly options?: ReadonlyArray<ProviderOptionSelection> | undefined;
+  },
+): Effect.Effect<void, OrchestratorMcpFailure> {
+  const sameModel =
+    parentSelection?.instanceId === requested.instanceId &&
+    parentSelection.model === requested.model;
+  const parentValue =
+    (sameModel
+      ? getModelSelectionStringOptionValue(parentSelection, "cyberAccessProgram")
+      : undefined) ?? "default";
+  // Check every entry: a later duplicate would win wherever options are merged.
+  const chosen = (requested.options ?? []).find(
+    (selection) =>
+      selection.id === "cyberAccessProgram" &&
+      selection.value !== "default" &&
+      selection.value !== parentValue,
+  );
+  return chosen === undefined
+    ? Effect.void
+    : Effect.fail(
+        new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message:
+            "The requested cyber access program is not valid for this thread. Omit it; the user chooses one in the composer's model options.",
+        }),
+      );
 }
 
 /** The task as its child receives it, with the role the caller asked for. */
