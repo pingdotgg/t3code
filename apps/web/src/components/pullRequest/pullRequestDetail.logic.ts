@@ -995,7 +995,7 @@ export function buildFixFindingsHandoff(input: {
   };
 }
 
-function isFailingCheck(check: PullRequestCheck): boolean {
+export function isFailingCheck(check: PullRequestCheck): boolean {
   return check.status === "failure" || check.status === "cancelled";
 }
 

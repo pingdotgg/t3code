@@ -28,7 +28,6 @@ import {
   CircleDotIcon,
   FileDiffIcon,
   GitCommitHorizontalIcon,
-  HammerIcon,
   MessageSquareIcon,
   PanelRightIcon,
 } from "lucide-react";
@@ -148,7 +147,7 @@ import {
   shouldRefreshPullRequestActivity,
 } from "./pullRequestDetail.logic";
 import { resolvePickableEnvironments } from "./pullRequestProjectAssignment.logic";
-import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
+import { PullRequestChecksPopover, PullRequestFixButton } from "./PullRequestChecksPopover";
 import {
   PullRequestActorLabel,
   PullRequestMetaLine,
@@ -1630,6 +1629,15 @@ export function PullRequestDetailPanel({
                           stale={checksStale}
                           checksState={checksState}
                           threadRef={threadRef}
+                          fix={
+                            canFixFindings
+                              ? {
+                                  onFixCheck: (check) => startFixFinding({ kind: "check", check }),
+                                  onFixAll: startFixChecks,
+                                  pending: handoff,
+                                }
+                              : undefined
+                          }
                         />
                       ) : (
                         <CircleDotIcon aria-hidden className="size-3.5" />
@@ -1641,17 +1649,12 @@ export function PullRequestDetailPanel({
                 {canFixFindings &&
                 !checksStale &&
                 classifyPullRequestChecks(detail.checks) === "failing" ? (
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    className="shrink-0"
+                  <PullRequestFixButton
                     aria-label="Fix all failing checks"
+                    pending={handoff === PULL_REQUEST_FIX_CHECKS_KEY}
                     disabled={handoff !== null}
                     onClick={startFixChecks}
-                  >
-                    <HammerIcon className="size-3" />
-                    {handoff === PULL_REQUEST_FIX_CHECKS_KEY ? "Preparing..." : "Fix"}
-                  </Button>
+                  />
                 ) : null}
               </>
             ) : tab === "timeline" ? (
