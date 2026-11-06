@@ -1597,8 +1597,11 @@ describe("PullRequestSyncReactor", () => {
           yield* reactor.drain;
           assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, backedOffReads + 1);
 
-          yield* sweepAgain(fixture, reactor);
+          // The refresh failed at minute 4 with the backoff doubled to 8 minutes.
+          yield* sweepFor(fixture, reactor, 7);
           assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, backedOffReads + 1);
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, backedOffReads + 2);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
