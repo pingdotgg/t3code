@@ -574,6 +574,20 @@ describe("MuseAdapterV2", () => {
     ),
   );
 
+  it.effect("starts Muse with its thread id for the processes it runs", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      let hostEnvironment: NodeJS.ProcessEnv | undefined;
+      yield* makeHarness(fake, INSTANCE_ID, undefined, undefined, undefined, runtimePolicy, {
+        createHost: async (options) => {
+          hostEnvironment = options.environment;
+          return fake.host;
+        },
+      });
+      assert.strictEqual(hostEnvironment?.T3CODE_THREAD_ID, THREAD_ID);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("pins sessions and turns to native canonical case", () =>
     Effect.gen(function* () {
       using _realpath = vi.spyOn(NodeFSP, "realpath").mockResolvedValue("/workspace/eevee");
