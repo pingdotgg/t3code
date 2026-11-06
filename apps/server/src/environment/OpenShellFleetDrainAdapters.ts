@@ -65,8 +65,8 @@ export const fileDrainSink = (input: {
 }): DrainSink => {
   const { fs, path, stateDir } = input;
   return {
-    write: (input) =>
-      Effect.fn("DrainSink.write")(function* (input: {
+    write: Effect.fn("DrainSink.write")(
+      function* (input: {
         readonly environmentId: EnvironmentId;
         readonly drainId: string;
         readonly threadId: string;
@@ -94,13 +94,13 @@ export const fileDrainSink = (input: {
         yield* fs.writeFileString(`${target}.partial`, envelope);
         yield* fs.rename(`${target}.partial`, target);
         return { bytes: new TextEncoder().encode(envelope).byteLength };
-      })(input).pipe(
-        Effect.mapError(
-          (cause) => new FleetDrainStepError({ step: "write", message: String(cause) }),
-        ),
+      },
+      Effect.mapError(
+        (cause) => new FleetDrainStepError({ step: "write", message: String(cause) }),
       ),
-    read: (input) =>
-      Effect.fn("DrainSink.read")(function* (input: {
+    ),
+    read: Effect.fn("DrainSink.read")(
+      function* (input: {
         readonly environmentId: EnvironmentId;
         readonly drainId: string;
         readonly threadId: string;
@@ -123,11 +123,9 @@ export const fileDrainSink = (input: {
         );
         const raw = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => null));
         return raw === null ? null : decodeEnvelope(raw);
-      })(input).pipe(
-        Effect.mapError(
-          (cause) => new FleetDrainStepError({ step: "read", message: String(cause) }),
-        ),
-      ),
+      },
+      Effect.mapError((cause) => new FleetDrainStepError({ step: "read", message: String(cause) })),
+    ),
   };
 };
 
