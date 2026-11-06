@@ -17,8 +17,9 @@ name: Fork release
 # the bullets in order above the "Full changelog" block, so keep each one short.
 #
 # Upstream workflow changes are not taken: the sync restores .github/workflows to the
-# fork's version, which also keeps the default token allowed to push. A merge conflict
-# fails the run; resolve it on a branch, merge that into main, and the next run releases.
+# fork's version, which also keeps the default token allowed to push. The generated agent
+# context budget is measured again after merging. Other conflicts fail the run; resolve
+# them on a branch, merge that into main, and the next run releases.
 # To push merges that need more than the default token, add a SYNC_TOKEN secret (a PAT).
 
 on:
@@ -58,7 +59,11 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.SYNC_TOKEN || github.token }}
 
+      - name: Check sync merge behavior
+        run: node --test .github/scripts/sync-upstream.test.cjs
+
       - name: Merge upstream
+        id: sync
         if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.sync)
         run: |
           git config user.name "github-actions[bot]"
@@ -66,23 +71,35 @@ jobs:
           git remote add upstream https://github.com/pingdotgg/t3code.git
           git fetch --no-tags upstream main
 
-          if git merge-base --is-ancestor upstream/main HEAD; then
-            echo "main already has upstream/main."
-            exit 0
+          bash .github/scripts/sync-upstream.sh
+          if git rev-parse --verify MERGE_HEAD >/dev/null 2>&1; then
+            echo "merged=true" >> "$GITHUB_OUTPUT"
           fi
 
-          before="$(git rev-parse HEAD)"
-          if ! git merge --no-ff --no-edit upstream/main; then
-            git merge --abort
-            echo "::error::upstream/main conflicts with main. Merge it on a branch, resolve, and merge that into main."
-            exit 1
-          fi
+      - name: Setup Vite+ for sync
+        if: steps.sync.outputs.merged == 'true'
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
 
-          git rm -rq .github/workflows
-          git checkout "$before" -- .github/workflows
-          if ! git diff --cached --quiet; then
-            git commit --amend --no-edit
-          fi
+      - name: Refresh merged context budget
+        if: steps.sync.outputs.merged == 'true'
+        env:
+          UPDATE_AGENT_CONTEXT_BUDGET: "1"
+        run: |
+          vp install --frozen-lockfile
+          vp test run apps/server/src/provider/AgentContextBudget.test.ts
+
+      - name: Push upstream merge
+        if: steps.sync.outputs.merged == 'true'
+        env:
+          # Vite+ install enables local hooks, which would reformat the upstream merge.
+          VP_GIT_HOOKS: "0"
+        run: |
+          git add apps/server/src/provider/agentContextBudget.json
+          git commit --no-edit
           git push origin HEAD:main
 
       - name: Plan release

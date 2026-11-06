@@ -3,8 +3,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { McpProviderSessions } from "@t3tools/provider-core/server/McpProviderSessions";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { McpServer } from "effect/ai";
 
 import { AssetSigner } from "../assets/AssetSigner.ts";
@@ -144,9 +147,21 @@ it.effect("agent context matches the committed budget", () =>
       ),
     };
 
-    expect(
-      measured,
-      "Set agentContextBudget.json to the measured values. Before you cut text to fit, run the evals that cover it (evals/README.md).",
-    ).toEqual(budget);
-  }).pipe(Effect.provide(layerAdvertisedTools)),
+    const updateBudget = yield* Config.String("UPDATE_AGENT_CONTEXT_BUDGET").pipe(
+      Config.withDefault(""),
+    );
+    if (updateBudget === "1") {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(
+        yield* path.fromFileUrl(new URL("./agentContextBudget.json", import.meta.url)),
+        `${JSON.stringify(measured, null, 2)}\n`,
+      );
+    } else {
+      expect(
+        measured,
+        "Set agentContextBudget.json to the measured values. Before you cut text to fit, run the evals that cover it (evals/README.md).",
+      ).toEqual(budget);
+    }
+  }).pipe(Effect.provide(Layer.mergeAll(layerAdvertisedTools, NodeServices.layer))),
 );
