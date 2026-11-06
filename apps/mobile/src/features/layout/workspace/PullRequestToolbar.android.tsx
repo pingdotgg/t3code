@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { BackHandler, Keyboard } from "react-native";
 import { AppBar } from "../../../components/ui/AppBar";
 import { appBarMenuItemsFromActions } from "../../../components/ui/menuActionItems";
+import { useHomeRouteVisible } from "../../home/home-route-visibility";
 import { useHardwareKeyboardCommand } from "../../keyboard/hardwareKeyboardCommands";
 import { WorkspaceBrandTitle } from "./WorkspaceBrandTitle";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
@@ -20,6 +21,7 @@ export function PullRequestToolbar(props: {
   const { dispatch, getScrollOffset, recordScrollOffset, isTabActive } = workspace;
   const { onRequestVisibility } = props;
   const tab = workspace.state.tabs.pullRequests;
+  const homeVisible = useHomeRouteVisible();
   const searching = tab.searchMode !== "resting";
   const openSearch = () => {
     onRequestVisibility?.();
@@ -37,6 +39,13 @@ export function PullRequestToolbar(props: {
     recordScrollOffset("pullRequests", tab.searchEntryOffset);
     dispatch({ type: "cancel", tab: "pullRequests" });
   };
+  // Home stays mounted under a thread; an empty active search would still show on return.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels empty Android PR search when a detail covers Home
+  useEffect(() => {
+    if (homeVisible || tab.query !== "" || tab.searchMode === "resting") return;
+    recordScrollOffset("pullRequests", tab.searchEntryOffset);
+    dispatch({ type: "cancel", tab: "pullRequests" });
+  }, [homeVisible, tab.query, tab.searchMode, tab.searchEntryOffset, recordScrollOffset, dispatch]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to BackHandler while searching to close the PR search on Android back
   useEffect(() => {
     if (!searching) return;

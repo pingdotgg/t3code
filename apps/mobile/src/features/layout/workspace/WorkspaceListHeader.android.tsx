@@ -4,6 +4,7 @@ import { BackHandler, Keyboard } from "react-native";
 
 import { AppBar } from "../../../components/ui/AppBar";
 import { useWorkspaceConnectionState } from "../../../state/workspace";
+import { useHomeRouteVisible } from "../../home/home-route-visibility";
 import { useHardwareKeyboardCommand } from "../../keyboard/hardwareKeyboardCommands";
 import { WorkspaceBrandTitle } from "./WorkspaceBrandTitle";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
@@ -17,12 +18,15 @@ export function WorkspaceListHeader(props: WorkspaceListHeaderProps) {
   const workspace = useWorkspaceTabs();
   const isTabActive = workspace?.isTabActive;
   const homeFocused = useNavigationState((state) => state.routes[state.index]?.name === "Home");
+  const homeVisible = useHomeRouteVisible();
   const listFocused =
     homeFocused && (workspace === null || workspace.state.selectedTab === "threads");
   const connectionState = useWorkspaceConnectionState();
   const { search, sidebar } = props;
   const onSearchQueryChange = search.onChangeText;
   const [searchOpen, setSearchOpen] = useState(false);
+  // Home stays mounted under a thread; drop an empty open search before it can return still open.
+  if (!homeVisible && searchOpen && search.value.length === 0) setSearchOpen(false);
   const searching = searchOpen || search.value.length > 0;
   const openSearch = () => {
     sidebar?.onRequestVisibility();
