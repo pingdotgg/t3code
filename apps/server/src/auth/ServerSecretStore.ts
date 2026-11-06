@@ -263,6 +263,11 @@ export const make = Effect.gen(function* () {
 
   const getOrCreateRandom: ServerSecretStore["Service"]["getOrCreateRandom"] = (name, bytes) =>
     get(name).pipe(
+      // Older builds could persist a 0-byte secret, which is never a usable key.
+      Effect.filterOrElse(
+        (secret) => Option.isNone(secret) || secret.value.byteLength > 0,
+        () => remove(name).pipe(Effect.as(Option.none<Uint8Array>())),
+      ),
       Effect.flatMap(
         Option.match({
           onSome: Effect.succeed,
