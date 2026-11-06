@@ -23,6 +23,7 @@ import type {
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveSpeechVocabulary } from "@t3tools/shared/speech";
+import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { useEffect, useRef, useState } from "react";
 
@@ -88,6 +89,11 @@ type HookInput = {
   readonly ownerKey: string;
   readonly draftText: string;
   readonly disabled?: boolean | undefined;
+  /**
+   * Until a destination is chosen, voice input is offered and its first gesture opens Voice
+   * settings. False hides it instead, for editors whose draft would not survive the navigation.
+   */
+  readonly offerSetup?: boolean | undefined;
   /** False keeps the transcript off the cleanup provider even when cleanup is on; the model test uses it. */
   readonly cleanup?: boolean | undefined;
   readonly readDraft: () => DraftInput;
@@ -119,6 +125,7 @@ export function useVoiceTranscriptionDestination() {
 }
 
 export function useEnvironmentSpeechInput(input: HookInput) {
+  const navigate = useNavigate();
   const destination = useVoiceTranscriptionDestination();
   const prepared = destination.prepared;
   const grantId = destination.grantId;
@@ -423,11 +430,17 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     if (controller.currentState.phase === "recording") void controller.stop();
   });
 
-  const start = useStableCallback(async () => {
+  const start = useStableCallback(async (options?: { readonly setupOnly?: boolean }) => {
+    if (latestRef.current.input.disabled) return;
+    if (!grantId) {
+      if (latestRef.current.input.offerSetup !== false)
+        await navigate({ to: "/settings/voice", hash: "voice-transcription-destination" });
+      return;
+    }
     const request = ++startRequestRef.current;
     const controller = controllerRef.current;
     const owner = latestRef.current.input.ownerKey;
-    if (latestRef.current.input.disabled || !controller || !prepared) return;
+    if (!controller || !prepared) return;
     const stillCurrent = () =>
       request === startRequestRef.current &&
       controllerRef.current === controller &&
@@ -458,8 +471,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       });
       return;
     }
-    if (latestStatus.state === "missing-model") {
-      setSetup({ ...INITIAL_SETUP, open: true });
+    if (latestStatus.state === "missing-model" || options?.setupOnly) {
+      setSetup({
+        ...INITIAL_SETUP,
+        open: true,
+        step: latestStatus.state === "missing-model" ? 0 : 1,
+      });
       return;
     }
     setLevel(0);
@@ -511,11 +528,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     }
   });
 
+  const destinationReady =
+    grantId === null
+      ? input.offerSetup !== false
+      : prepared !== null && status?.prepared === prepared && status.value?.supported !== false;
   return {
     available:
-      prepared !== null &&
-      status?.prepared === prepared &&
-      status.value?.supported !== false &&
+      destinationReady &&
       typeof navigator !== "undefined" &&
       Boolean(navigator.mediaDevices?.getUserMedia) &&
       typeof AudioWorkletNode !== "undefined",
