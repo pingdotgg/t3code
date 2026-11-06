@@ -24,6 +24,19 @@ const model = values.model;
 const outputDirectory = values.out;
 const decodeSettings = Schema.decodeUnknownSync(CodexSettings);
 const encodeReport = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeResults = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        sample: Schema.Number,
+        title: Schema.String,
+        body: Schema.String,
+        passed: Schema.Boolean,
+      }),
+    ),
+  ),
+);
 const fixtures = [
   {
     id: "babysit-followup",
@@ -62,6 +75,9 @@ await Effect.runPromise(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const baseline = values.baseline
+      ? yield* fs.readFileString(values.baseline).pipe(Effect.tap(decodeResults))
+      : undefined;
     const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pr-eval-" });
     yield* fs.writeFileString(
       path.join(cwd, "AGENTS.md"),
@@ -99,8 +115,7 @@ await Effect.runPromise(
       path.join(outputDirectory, "results.json"),
       yield* encodeReport(results),
     );
-    if (values.baseline) {
-      const baseline = yield* fs.readFileString(values.baseline);
+    if (baseline !== undefined) {
       yield* fs.writeFileString(path.join(outputDirectory, "baseline.json"), baseline);
     }
     yield* Effect.log(

@@ -18,6 +18,12 @@ it.each([
     passed: false,
   },
   { title: "Watch CI", body: "All checks passed.", passed: false },
+  { title: "Retire legacy model", body: "All checks passed.", passed: false },
+  {
+    title: "Retire legacy model",
+    body: "## Summary\n- Add a retirement date and successor.\n## Testing\n- All checks passed.",
+    passed: true,
+  },
 ])("grades $title", ({ title, body, passed }) => {
   expect(gradePrContent({ title, body })).toBe(passed);
 });
