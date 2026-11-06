@@ -140,7 +140,9 @@ it("counts T3 Learn features without their text", () => {
     feature: "lesson.create",
     variant: "in_project",
   });
-  expect(featureUsage(WS_METHODS.knowledgeList, {})).toEqual({ feature: "knowledge_map.open" });
+  expect(featureUsage(WS_METHODS.knowledgeRemove, { id: "entry-private" })).toEqual({
+    feature: "knowledge_map.remove",
+  });
   expect(featureUsage(WS_METHODS.coursesRemove, { id: "course-private" })).toEqual({
     feature: "course.remove",
   });

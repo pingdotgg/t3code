@@ -78,8 +78,6 @@ const METHOD_FEATURES: Readonly<Record<string, (payload: Payload) => FeatureUsag
   [WS_METHODS.guestShareCreate]: () => ({ feature: "guest_share.create" }),
   [WS_METHODS.lessonCreate]: (payload) =>
     use("lesson.create", payload.projectId === undefined ? "new_project" : "in_project"),
-  // Settings fetches the map each time it opens, and again after a remove.
-  [WS_METHODS.knowledgeList]: () => ({ feature: "knowledge_map.open" }),
   [WS_METHODS.knowledgeRemove]: () => ({ feature: "knowledge_map.remove" }),
   [WS_METHODS.coursesRemove]: () => ({ feature: "course.remove" }),
 };

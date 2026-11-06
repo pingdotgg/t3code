@@ -16,7 +16,8 @@ Claude accounts when you are signed in, and a random identifier for each device 
 permission mode, turn and request results, duration, release channel, and token counts when
 available. Child-agent token counts are reported separately from the main agent's. Model names
 are sent only when they appear in a provider's public model list. Lesson features are counted
-too: new lessons, side chats opened and finished, the knowledge map, quiz cards, and courses.
+too: new lessons, side chats opened and finished, quiz cards, and changes to the knowledge map
+and courses.
 
 Events do not include prompts, responses, lesson text, quiz answers, file contents, authentication tokens, conversation IDs,
 raw provider events, or child-agent output.
@@ -31,10 +32,11 @@ environment before starting it. Relay tracing also stops when `T3CODE_OTEL_SDK_D
 An administrator can turn product events and relay tracing off for every user on a machine with
 a [managed policy](./managed-policy.md#other-capabilities).
 
-The desktop app reads `T3CODE_TELEMETRY_ENABLED` from your shell profile (for example `~/.zshrc`) on macOS and
-Linux, so export it there and restart the app. On Windows, set it as a user environment variable.
-On macOS and Linux it does not read the key and host from your shell profile, so a desktop app
-opened from the Dock or launcher sends nothing; start it from a terminal that has all three set.
+The desktop app reads only `T3CODE_TELEMETRY_ENABLED` from your shell profile (for example
+`~/.zshrc`) on macOS and Linux, not the key and host, so a desktop app opened from the Dock or a
+launcher sends nothing. Start it from a terminal that has all three set. On Windows, set all three
+as user environment variables; a WSL backend receives only `T3CODE_TELEMETRY_ENABLED`, so it sends
+nothing.
 
 ## Mobile app crash reports
 
