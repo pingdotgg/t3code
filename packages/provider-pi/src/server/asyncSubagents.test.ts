@@ -2,13 +2,16 @@ import { expect, it } from "@effect/vitest";
 
 import { parsePiAsyncSubagentSnapshot } from "./asyncSubagents.ts";
 
-const snapshotLine = (runs: ReadonlyArray<unknown>) =>
+const snapshotLine = (
+  runs: ReadonlyArray<unknown>,
+  omitted: unknown = { runs: 0, children: 0, byteLimitExceeded: false },
+) =>
   `PI_SUBAGENT_ASYNC_JSON:${JSON.stringify({
     kind: "pi-subagents.async-status-snapshot",
     version: 1,
     generatedAt: 1_000,
     caps: {},
-    omitted: { runs: 0, children: 0, byteLimitExceeded: false },
+    omitted,
     runs,
   })}`;
 
@@ -49,64 +52,76 @@ it("reads workflow lanes as subagents and ends unstarted lanes with a stopped ru
         { id: "run-3", kind: "subagent", label: "unknown", state: "exploded" },
       ]),
     ]),
-  ).toEqual([
-    {
-      id: "run-1",
-      status: "running",
-      steps: [
-        {
-          id: "task-1",
-          title: "reviewer",
-          label: "task-1",
-          status: "running",
-          model: "anthropic/claude-opus-5-5",
-          currentTool: "bash",
-          startedAt: 10,
-          endedAt: undefined,
-        },
-        {
-          id: "task-2",
-          title: "task-2",
-          label: "task-2",
-          status: "pending",
-          model: null,
-          currentTool: undefined,
-          startedAt: undefined,
-          endedAt: undefined,
-        },
-      ],
-    },
-    {
-      id: "run-2",
-      status: "interrupted",
-      steps: [
-        {
-          id: "step:0",
-          title: "scout",
-          label: "scout",
-          status: "completed",
-          model: null,
-          currentTool: undefined,
-          startedAt: undefined,
-          endedAt: 20,
-        },
-        {
-          id: "step:1",
-          title: "writer",
-          label: "writer",
-          status: "interrupted",
-          model: null,
-          currentTool: undefined,
-          startedAt: undefined,
-          endedAt: undefined,
-        },
-      ],
-    },
-  ]);
+  ).toEqual({
+    complete: true,
+    runs: [
+      {
+        id: "run-1",
+        status: "running",
+        steps: [
+          {
+            id: "task-1",
+            title: "reviewer",
+            label: "task-1",
+            status: "running",
+            model: "anthropic/claude-opus-5-5",
+            currentTool: "bash",
+            startedAt: 10,
+            endedAt: undefined,
+          },
+          {
+            id: "task-2",
+            title: "task-2",
+            label: "task-2",
+            status: "pending",
+            model: null,
+            currentTool: undefined,
+            startedAt: undefined,
+            endedAt: undefined,
+          },
+        ],
+      },
+      {
+        id: "run-2",
+        status: "interrupted",
+        steps: [
+          {
+            id: "step:0",
+            title: "scout",
+            label: "scout",
+            status: "completed",
+            model: null,
+            currentTool: undefined,
+            startedAt: undefined,
+            endedAt: 20,
+          },
+          {
+            id: "step:1",
+            title: "writer",
+            label: "writer",
+            status: "interrupted",
+            model: null,
+            currentTool: undefined,
+            startedAt: undefined,
+            endedAt: undefined,
+          },
+        ],
+      },
+    ],
+  });
 });
 
-it("treats a cleared widget as no runs and leaves other widget content alone", () => {
-  expect(parsePiAsyncSubagentSnapshot(undefined)).toEqual([]);
+it("reports a truncated snapshot as incomplete", () => {
+  expect(
+    parsePiAsyncSubagentSnapshot([snapshotLine([], { runs: 3, byteLimitExceeded: false })]),
+  ).toEqual({ complete: false, runs: [] });
+  expect(
+    parsePiAsyncSubagentSnapshot([snapshotLine([], { runs: 0, byteLimitExceeded: true })]),
+  ).toEqual({ complete: false, runs: [] });
+});
+
+it("ignores a cleared widget and other widget content", () => {
+  expect(parsePiAsyncSubagentSnapshot(undefined)).toBeUndefined();
   expect(parsePiAsyncSubagentSnapshot(["--- Subagents ---", "scout: running"])).toBeUndefined();
   expect(parsePiAsyncSubagentSnapshot(["PI_SUBAGENT_ASYNC_JSON:{not json"])).toBeUndefined();
   expect(

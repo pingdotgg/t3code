@@ -77,6 +77,7 @@ import {
   parsePiAsyncSubagentSnapshot,
   PI_SUBAGENT_ASYNC_WIDGET_KEY,
   type PiAsyncSubagentRun,
+  type PiAsyncSubagentSnapshot,
   type PiAsyncSubagentStep,
 } from "./asyncSubagents.ts";
 
@@ -363,8 +364,9 @@ interface ActivePiTurn {
   readonly streamItems: Map<string, PiStreamItemState>;
   readonly toolArgs: Map<string, unknown>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
-  /** Background runs pi-subagents starts attach to the subagent call that was open last. */
+  /** Pi runs tool calls in parallel; a run reported before its result attaches to the last subagent call. */
   lastSubagentToolCallId: string | null;
+  readonly asyncRunToolCalls: Map<string, string>;
   asyncSubagentWorkPending: boolean;
   interrupted: boolean;
   nativeAborted: boolean;
@@ -429,7 +431,7 @@ interface PiThreadState {
 /** A pi-subagents background run outlives its turn; the launching turn keeps its identity. */
 interface PiAsyncSubagentRunContext {
   readonly turn: ActivePiTurn;
-  readonly parentToolCallId: string | null;
+  parentToolCallId: string | null;
   readonly steps: Map<string, { step: PiAsyncSubagentStep; prompt: string; signature: string }>;
 }
 
@@ -564,6 +566,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let runtimeRetired = false;
       let pendingWake: PiWake | null = null;
       const asyncSubagentRuns = new Map<string, PiAsyncSubagentRunContext>();
+      // Stop ended these records; pi-subagents keeps reporting the runs until they finish.
+      const endedAsyncSubagentRuns = new Set<string>();
+      const dropAsyncSubagentRuns = () => {
+        asyncSubagentRuns.clear();
+        endedAsyncSubagentRuns.clear();
+      };
       let extensionStatusReset: {
         previous: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>;
         readonly touched: Set<string>;
@@ -579,6 +587,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           closed = true;
           sessionEntity = { ...sessionEntity, extensionStatuses: [] };
           pendingWake = null;
+          dropAsyncSubagentRuns();
           if (extensionStatusReset !== null)
             yield* Deferred.fail(
               extensionStatusReset.ready,
@@ -1272,6 +1281,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         });
         if (toolName === "subagent") {
           yield* emitSubagentTasks(turn, toolCallId, resultRecord, completed);
+          if (completed) yield* bindAsyncSubagentRun(turn, toolCallId, resultRecord);
         }
       });
 
@@ -1379,6 +1389,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         });
       });
 
+      const asyncSubagentTime = (epochMillis: number | undefined, fallback: DateTime.Utc) =>
+        epochMillis === undefined
+          ? fallback
+          : Option.getOrElse(DateTime.make(epochMillis), () => fallback);
+
       const emitAsyncSubagentStep = Effect.fnUntraced(function* (
         context: PiAsyncSubagentRunContext,
         nativeTaskId: string,
@@ -1387,21 +1402,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       ) {
         const settled = isSettledPiAsyncSubagentStatus(step.status);
         const progress = settled ? undefined : step.currentTool;
-        const signature = `${step.status}\u0000${progress ?? ""}\u0000${step.model ?? ""}`;
+        const signature = `${context.parentToolCallId ?? ""}\u0000${step.status}\u0000${progress ?? ""}\u0000${step.model ?? ""}`;
         const tracked = context.steps.get(nativeTaskId);
         if (tracked?.signature === signature) return;
         context.steps.set(nativeTaskId, { step, prompt, signature });
         const { turn } = context;
         const emittedAt = yield* DateTime.now;
         const startedAt =
-          turn.toolStartedAt.get(nativeTaskId) ??
-          (step.startedAt === undefined ? emittedAt : DateTime.makeUnsafe(step.startedAt));
+          turn.toolStartedAt.get(nativeTaskId) ?? asyncSubagentTime(step.startedAt, emittedAt);
         turn.toolStartedAt.set(nativeTaskId, startedAt);
-        const completedAt = !settled
-          ? null
-          : step.endedAt === undefined
-            ? emittedAt
-            : DateTime.makeUnsafe(step.endedAt);
+        const endedAt = settled ? asyncSubagentTime(step.endedAt, emittedAt) : null;
+        const completedAt =
+          endedAt !== null && DateTime.toEpochMillis(endedAt) < DateTime.toEpochMillis(startedAt)
+            ? startedAt
+            : endedAt;
         const subagentId = idAllocator.derive.nodeFromProviderItem({
           driver: PI_PROVIDER,
           nativeItemId: nativeTaskId,
@@ -1477,6 +1491,23 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
       });
 
+      // The launch result names its run; a snapshot that arrived first may have guessed the call.
+      const bindAsyncSubagentRun = Effect.fnUntraced(function* (
+        turn: ActivePiTurn,
+        toolCallId: string,
+        resultRecord: unknown,
+      ) {
+        const asyncId = recordString(recordField(resultRecord, "details"), "asyncId");
+        if (asyncId === undefined) return;
+        turn.asyncRunToolCalls.set(asyncId, toolCallId);
+        const context = asyncSubagentRuns.get(asyncId);
+        if (context === undefined || context.parentToolCallId === toolCallId) return;
+        context.parentToolCallId = toolCallId;
+        for (const [nativeTaskId, tracked] of context.steps) {
+          yield* emitAsyncSubagentStep(context, nativeTaskId, tracked.step, tracked.prompt);
+        }
+      });
+
       // A run that leaves the widget without a final state ended out of this host's sight.
       const forgetAsyncSubagentRun = Effect.fnUntraced(function* (
         runId: string,
@@ -1500,26 +1531,37 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       // A run first reported outside a turn has no call to hang from; it is reported again on change.
       const applyAsyncSubagentSnapshot = Effect.fnUntraced(function* (
-        runs: ReadonlyArray<PiAsyncSubagentRun>,
+        snapshot: PiAsyncSubagentSnapshot,
       ) {
         const turn = threadState?.activeTurn ?? null;
         const reported = new Set<string>();
-        for (const run of runs) {
+        for (const run of snapshot.runs) {
           reported.add(run.id);
+          const settled = isSettledPiAsyncSubagentStatus(run.status);
+          if (endedAsyncSubagentRuns.has(run.id)) {
+            if (settled) endedAsyncSubagentRuns.delete(run.id);
+            continue;
+          }
           let context = asyncSubagentRuns.get(run.id);
           if (context === undefined) {
-            if (turn === null || isSettledPiAsyncSubagentStatus(run.status)) continue;
-            context = { turn, parentToolCallId: turn.lastSubagentToolCallId, steps: new Map() };
+            if (turn === null || settled) continue;
+            context = {
+              turn,
+              parentToolCallId: turn.asyncRunToolCalls.get(run.id) ?? turn.lastSubagentToolCallId,
+              steps: new Map(),
+            };
             asyncSubagentRuns.set(run.id, context);
             yield* emitAsyncSubagentWorkPending(turn, true);
           }
           yield* applyAsyncSubagentRun(context, run);
-          if (isSettledPiAsyncSubagentStatus(run.status)) {
-            yield* forgetAsyncSubagentRun(run.id, context);
-          }
+          if (settled) yield* forgetAsyncSubagentRun(run.id, context);
         }
+        if (!snapshot.complete) return;
         for (const [runId, context] of asyncSubagentRuns) {
           if (!reported.has(runId)) yield* forgetAsyncSubagentRun(runId, context);
+        }
+        for (const runId of endedAsyncSubagentRuns) {
+          if (!reported.has(runId)) endedAsyncSubagentRuns.delete(runId);
         }
       });
 
@@ -1644,8 +1686,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
         if (method === "setWidget") {
           if (recordString(event, "widgetKey") !== PI_SUBAGENT_ASYNC_WIDGET_KEY) return;
-          const runs = parsePiAsyncSubagentSnapshot(event["widgetLines"]);
-          if (runs !== undefined) yield* applyAsyncSubagentSnapshot(runs);
+          const snapshot = parsePiAsyncSubagentSnapshot(event["widgetLines"]);
+          if (snapshot !== undefined) yield* applyAsyncSubagentSnapshot(snapshot);
           return;
         }
         if (
@@ -2546,6 +2588,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           sessionEventPermit.withPermits(1)(
             Effect.gen(function* () {
               runtimeRetired = true;
+              dropAsyncSubagentRuns();
               const state = threadState;
               if (extensionStatusReset !== null)
                 yield* Deferred.fail(
@@ -2629,6 +2672,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           lastNativeThreadId = resumeId ?? lastNativeThreadId;
           // Failed lifecycle operations can still change native sessions; invalidate bindings and defaults.
           threadState = null;
+          dropAsyncSubagentRuns();
           appliedModel = null;
           appliedThinking = null;
           appliedSessionName = null;
@@ -2942,6 +2986,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               toolArgs: new Map(),
               toolStartedAt: new Map(),
               lastSubagentToolCallId: null,
+              asyncRunToolCalls: new Map(),
               asyncSubagentWorkPending: false,
               interrupted: false,
               nativeAborted: false,
@@ -3115,6 +3160,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             const turn = threadState?.activeTurn ?? null;
             if (turn === null && interruptInput.requestRuntimeRestart === true) {
               // Stop on a waiting thread ends the host's records; pi-subagents keeps the runs.
+              for (const runId of asyncSubagentRuns.keys()) endedAsyncSubagentRuns.add(runId);
               asyncSubagentRuns.clear();
               if (pendingWake !== null)
                 yield* sessionEventPermit.withPermits(1)(stopPendingWake(pendingWake));

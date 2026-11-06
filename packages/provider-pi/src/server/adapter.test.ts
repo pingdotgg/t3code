@@ -2907,19 +2907,28 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  const asyncSubagentSnapshot = (fake: FakePi, runs: ReadonlyArray<unknown>) =>
+  const asyncSubagentSnapshot = (
+    fake: FakePi,
+    runs: ReadonlyArray<unknown> | undefined,
+    omitted: unknown = { runs: 0, children: 0, byteLimitExceeded: false },
+  ) =>
     fake.emit({
       type: "extension_ui_request",
       id: "widget-1",
       method: "setWidget",
       widgetKey: "subagent-async",
-      widgetLines: [
-        `PI_SUBAGENT_ASYNC_JSON:${JSON.stringify({
-          kind: "pi-subagents.async-status-snapshot",
-          version: 1,
-          runs,
-        })}`,
-      ],
+      ...(runs === undefined
+        ? {}
+        : {
+            widgetLines: [
+              `PI_SUBAGENT_ASYNC_JSON:${JSON.stringify({
+                kind: "pi-subagents.async-status-snapshot",
+                version: 1,
+                omitted,
+                runs,
+              })}`,
+            ],
+          }),
     });
 
   const asyncReviewerRun = (state: "running" | "complete") => ({
@@ -3002,6 +3011,12 @@ describe("PiAdapterV2", () => {
         NodeId.make("node:provider:pi:native-item:call_async"),
       );
 
+      // pi-subagents clears the widget while it compacts and drops runs past its caps.
+      yield* asyncSubagentSnapshot(fake, undefined);
+      yield* asyncSubagentSnapshot(fake, [], { runs: 1, byteLimitExceeded: false });
+      yield* asyncSubagentSnapshot(fake, [asyncReviewerRun("running")]);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+
       yield* asyncSubagentSnapshot(fake, [asyncReviewerRun("complete")]);
       const done = yield* takeEvent(
         (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
@@ -3028,7 +3043,8 @@ describe("PiAdapterV2", () => {
   it.effect("stops reporting background subagents when Stop reaches a settled turn", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
-      const { runtime, providerThread, providerTurnId } = yield* launchAsyncReviewer(fake);
+      const { runtime, takeEvent, providerThread, providerTurnId } =
+        yield* launchAsyncReviewer(fake);
       assert.isNotNull(providerTurnId);
       yield* runtime.interruptTurn({
         providerThread,
@@ -3036,6 +3052,62 @@ describe("PiAdapterV2", () => {
         requestRuntimeRestart: true,
       });
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+
+      // The stopped run keeps reporting until it ends; the next turn must not adopt it.
+      yield* startTurn(runtime, providerThread, "default", [], "Hello again", undefined, 2);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* asyncSubagentSnapshot(fake, [asyncReviewerRun("running")]);
+      yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("moves a background run to the parallel subagent call that launched it", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      // Pi announces every call of a message before executing them together.
+      for (const toolCallId of ["call_a", "call_b"]) {
+        yield* fake.emit({
+          type: "tool_execution_start",
+          toolCallId,
+          toolName: "subagent",
+          args: { agent: "scout", task: `task ${toolCallId}`, async: true },
+        });
+      }
+      yield* asyncSubagentSnapshot(fake, [asyncReviewerRun("running")]);
+      const guessed = yield* takeEvent((event) => event.type === "subagent.updated");
+      assert.isTrue(
+        guessed.type === "subagent.updated" &&
+          guessed.subagent.parentNodeId === NodeId.make("node:provider:pi:native-item:call_b"),
+      );
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_a",
+        toolName: "subagent",
+        isError: false,
+        result: {
+          content: [{ type: "text", text: "Started async-1 in the background" }],
+          details: { mode: "single", runId: "async-1", asyncId: "async-1", results: [] },
+        },
+      });
+      const bound = yield* takeEvent((event) => event.type === "subagent.updated");
+      assert.isTrue(
+        bound.type === "subagent.updated" &&
+          bound.subagent.id === (guessed.type === "subagent.updated" ? guessed.subagent.id : "") &&
+          bound.subagent.parentNodeId === NodeId.make("node:provider:pi:native-item:call_a"),
+      );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

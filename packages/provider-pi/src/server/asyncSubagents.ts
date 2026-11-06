@@ -29,6 +29,12 @@ export interface PiAsyncSubagentRun {
   readonly steps: ReadonlyArray<PiAsyncSubagentStep>;
 }
 
+export interface PiAsyncSubagentSnapshot {
+  readonly runs: ReadonlyArray<PiAsyncSubagentRun>;
+  /** False when the producer dropped runs to stay within its caps, so absence proves nothing. */
+  readonly complete: boolean;
+}
+
 export function isSettledPiAsyncSubagentStatus(status: PiAsyncSubagentStatus): boolean {
   return status !== "pending" && status !== "running" && status !== "waiting";
 }
@@ -95,13 +101,13 @@ function snapshotRun(node: unknown): PiAsyncSubagentRun | undefined {
 }
 
 /**
- * Reads the runs pi-subagents reports on its async widget. A cleared widget means no runs are
- * tracked; lines that are not a status snapshot return undefined so the host leaves its state alone.
+ * Reads the runs pi-subagents reports on its async widget. Returns undefined when the lines carry
+ * no snapshot, including a cleared widget: pi-subagents clears it while it compacts or switches
+ * sessions and reports the runs again afterwards, so a clear is not evidence that work ended.
  */
 export function parsePiAsyncSubagentSnapshot(
   widgetLines: unknown,
-): ReadonlyArray<PiAsyncSubagentRun> | undefined {
-  if (widgetLines === undefined || widgetLines === null) return [];
+): PiAsyncSubagentSnapshot | undefined {
   if (!Array.isArray(widgetLines)) return undefined;
   const line = widgetLines.find(
     (candidate): candidate is string =>
@@ -117,8 +123,14 @@ export function parsePiAsyncSubagentSnapshot(
   if (recordString(snapshot, "kind") !== SNAPSHOT_KIND) return undefined;
   const runs = recordField(snapshot, "runs");
   if (!Array.isArray(runs)) return undefined;
-  return runs.flatMap((node) => {
-    const run = snapshotRun(node);
-    return run === undefined ? [] : [run];
-  });
+  const omitted = recordField(snapshot, "omitted");
+  return {
+    runs: runs.flatMap((node) => {
+      const run = snapshotRun(node);
+      return run === undefined ? [] : [run];
+    }),
+    complete:
+      (recordNumber(omitted, "runs") ?? 0) === 0 &&
+      recordField(omitted, "byteLimitExceeded") !== true,
+  };
 }
