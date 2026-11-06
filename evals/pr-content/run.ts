@@ -64,7 +64,9 @@ const fixtures = [
       "user: Retire legacy models.\nassistant: Added retirement dates and successors. Tests passed.",
   },
 ];
-const selectedFixtures = fixtures.filter((fixture) => !values.case || fixture.id === values.case);
+const selectedFixtures = fixtures.filter(
+  (fixture) => values.case === undefined || fixture.id === values.case,
+);
 if (selectedFixtures.length === 0) {
   throw new Error(
     `Unknown --case ${values.case}. Available cases: ${fixtures.map((fixture) => fixture.id).join(", ")}`,
