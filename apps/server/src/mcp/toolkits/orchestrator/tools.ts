@@ -100,7 +100,7 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Start one child agent with only `task`. No parent history. Separate checkout or PR per child: `isolation:'worktree'`. `isolation:'openshell-auto'` provisions an ephemeral fleet worker environment and runs the child there; it retires itself after the configured idle deadline. Keep `taskId` for `task_status` and `task_cancel`. No secrets in `task`.",
+    "Start one child agent with only `task`. No parent history. Separate checkout or PR per child: `isolation:'worktree'`. `isolation:'openshell-auto'` runs the child on a self-retiring ephemeral fleet worker. Keep `taskId` for `task_status` and `task_cancel`. No secrets in `task`.",
   parameters: OrchestratorMcpDelegateTaskInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
@@ -366,7 +366,7 @@ const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
 
 const EnvironmentSpawnTool = Tool.make("t3_environment_spawn", {
   description:
-    "Provision one OpenShell worker environment for this managing instance and pair it. Ephemeral workers retire themselves; persistent ones are named lanes. Pass `clientRequestId` so a retry converges on the same sandbox.",
+    "Provision and pair a fleet worker. Ephemeral workers self-retire; persistent ones are named lanes. Same `clientRequestId` converges retries.",
   parameters: OrchestratorMcpEnvironmentSpawnInput,
   success: OrchestratorMcpEnvironmentSpawnResult,
   failure: OrchestratorMcpFailure,
@@ -381,7 +381,7 @@ const EnvironmentSpawnTool = Tool.make("t3_environment_spawn", {
 
 const EnvironmentRemoveTool = Tool.make("t3_environment_remove", {
   description:
-    "Drain a fleet worker's threads and worktrees to this instance, then delete its sandbox. Refusable: `drain_pending` or `refused` KEEPS the sandbox, and the same call resumes.",
+    "Drain a fleet worker to this instance, then delete its sandbox. Refused while the drain is incomplete; the sandbox is kept.",
   parameters: OrchestratorMcpEnvironmentRemoveInput,
   success: OrchestratorMcpEnvironmentRemoveResult,
   failure: OrchestratorMcpFailure,
@@ -395,8 +395,7 @@ const EnvironmentRemoveTool = Tool.make("t3_environment_remove", {
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFleetOff);
 
 const EnvironmentListTool = Tool.make("t3_environment_list", {
-  description:
-    "List this instance's fleet workers: class, state, drain progress, retirement deadline.",
+  description: "Report this instance's fleet worker state.",
   parameters: OrchestratorMcpEnvironmentListInput,
   success: OrchestratorMcpEnvironmentListResult,
   failure: OrchestratorMcpFailure,

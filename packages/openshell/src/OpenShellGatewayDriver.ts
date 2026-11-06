@@ -19,6 +19,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
   type OpenShellGatewayClient,
@@ -186,26 +187,19 @@ const sandboxNameHash = (seed: string, key: string): string => {
   return `${a.toString(16).padStart(8, "0")}${b.toString(16).padStart(8, "0")}`.slice(0, 12);
 };
 
-/** Loser of the race keeps running; the journal makes it resumable. */
-/**
- * Races a drain against its deadline and clears the timer either way. The
- * timeout itself is fenced by the caller: a run that keeps writing after it
- * timed out writes under the old drain id, which no retry reads.
- */
-const withDeadline = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        // @effect-diagnostics-next-line globalTimers:off - The driver is Promise-based, outside an Effect runtime.
-        timer = setTimeout(() => reject(new DrainDeadlineError({ timeoutMs })), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-};
+/** Loser of the race keeps running; the journal makes it resumable. The
+ * `Effect` timeout leaves no timer to clear, and the loser fiber is
+ * interrupted either way. */
+const withDeadline = <T>(promise: Promise<T>, timeoutMs: number): Promise<T> =>
+  Effect.runPromise(
+    Effect.timeoutOrElse(
+      Effect.promise(() => promise),
+      {
+        duration: Duration.millis(timeoutMs),
+        orElse: () => Effect.fail(new DrainDeadlineError({ timeoutMs })),
+      },
+    ),
+  );
 
 export interface GatewayDriverSpawnOptionsWithCeiling extends GatewayDriverSpawnOptions {
   /**
