@@ -6,6 +6,7 @@ import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
+import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
   CheckpointId,
   NodeId,
@@ -711,6 +712,10 @@ describe("OpenCodeAdapterV2", () => {
         }),
       );
       const events = yield* Fiber.join(received);
+      assert.deepEqual(
+        events.map((event) => event.type),
+        ["turn_item.updated", "runtime_request.updated"],
+      );
       const item = events.find((event) => event.type === "turn_item.updated");
       const request = events.find((event) => event.type === "runtime_request.updated");
       assert.equal(item?.type, "turn_item.updated");
@@ -783,21 +788,65 @@ describe("OpenCodeAdapterV2", () => {
             error: "Command failed",
             time: { start: 3, end: 4 },
           },
+          {
+            status: "error",
+            input: { command: "sleep 60" },
+            error: "Interrupted",
+            metadata: { interrupted: true },
+            time: { start: 5, end: 6 },
+          },
+          // OpenCode 1.3 reports a stopped tool only through this message.
+          {
+            status: "error",
+            input: { command: "sleep 90" },
+            error: "Tool execution aborted",
+            time: { start: 6, end: 7 },
+          },
         ] satisfies ReadonlyArray<ToolPart["state"]>;
         for (const state of states) {
+          const callID =
+            state.status === "error" ? `call-ended-${state.time.start}` : "call-working";
           yield* Effect.promise(() =>
             nativeEvents.push({
               type: "message.part.updated",
               properties: {
                 sessionID: nativeSessionId,
                 part: {
-                  id: state.status === "error" ? "part-failed" : "part-working",
+                  id: `part-${callID}`,
                   sessionID: nativeSessionId,
                   messageID: "late-assistant",
                   type: "tool",
-                  callID: state.status === "error" ? "call-failed" : "call-working",
+                  callID,
                   tool: "bash",
                   state,
+                },
+              },
+            }),
+          );
+        }
+        for (const error of ["Task cancelled", "Task failed"]) {
+          yield* Effect.promise(() =>
+            nativeEvents.push({
+              type: "message.part.updated",
+              properties: {
+                sessionID: nativeSessionId,
+                part: {
+                  id: `part-${error}`,
+                  sessionID: nativeSessionId,
+                  messageID: "late-assistant",
+                  type: "tool",
+                  callID: `call-${error}`,
+                  tool: "task",
+                  state: {
+                    status: "error",
+                    input: {
+                      description: "Sleep task",
+                      prompt: "sleep 120",
+                      subagent_type: "general",
+                    },
+                    error,
+                    time: { start: 7, end: 8 },
+                  },
                 },
               },
             }),
@@ -901,20 +950,30 @@ describe("OpenCodeAdapterV2", () => {
         const commands = items.filter((item) => item.type === "command_execution");
         assert.deepEqual(
           commands.map((item) => item.status),
-          ["pending", "running", "completed", "failed", "failed"],
+          ["pending", "running", "completed", "failed", "interrupted", "interrupted", "failed"],
         );
         assert.deepEqual(
           commands.map((item) => item.input),
-          ["pwd", "pwd", "pwd", "pwd", "vp test"],
+          ["pwd", "pwd", "pwd", "pwd", "sleep 60", "sleep 90", "vp test"],
         );
         assert.equal(commands[2]?.output, "/repo\n");
         assert.equal(commands[3]?.output, "Command failed");
-        assert.equal(commands[4]?.exitCode, 1);
+        assert.equal(commands[6]?.exitCode, 1);
         assert.equal(
           events
             .flatMap((event) => (event.type === "node.updated" ? [event.node] : []))
-            .findLast((node) => node.id === commands[4]?.nodeId)?.status,
+            .findLast((node) => node.id === commands[6]?.nodeId)?.status,
           "failed",
+        );
+        assert.deepEqual(
+          items.filter((item) => item.type === "subagent").map((item) => item.status),
+          ["interrupted", "failed"],
+        );
+        assert.deepEqual(
+          events.flatMap((event) =>
+            event.type === "subagent.updated" ? [event.subagent.status] : [],
+          ),
+          ["interrupted", "failed"],
         );
         assert.isTrue(
           events.some(
@@ -1273,6 +1332,13 @@ describe("OpenCodeAdapterV2", () => {
                   title: "Edit remote document",
                   metadata: {},
                   output,
+                  attachments: [
+                    {
+                      type: "file",
+                      mime: "image/png",
+                      url: "data:image/png;base64,iVBORw0KGgo=",
+                    },
+                  ],
                   error: "failed",
                   time: { start: 1, end: 2 },
                 },
@@ -1365,7 +1431,9 @@ describe("OpenCodeAdapterV2", () => {
         });
         assert.deepEqual(item.input, { document: "remote-doc" });
       }
-      assert.equal(items[1]?.output, output);
+      assert.deepEqual(toolOutputImages(items[1]?.output), [
+        { mimeType: "image/png", data: "iVBORw0KGgo=" },
+      ]);
       assert.equal(items[3]?.toolName, "ambiguous_server_edit_document");
       assert.isUndefined(items[3]?.toolSource);
       assert.equal(statusReads, 1);
