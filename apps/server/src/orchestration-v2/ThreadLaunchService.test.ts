@@ -1366,6 +1366,80 @@ it.effect("keeps a `:/` commit-search base instead of re-basing", () =>
   ),
 );
 
+it.effect("skips a stale tracking ref when the remote reports the base branch is gone", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-gone-base-" });
+    const cwd = `${directory}/repo`;
+    const worktreePath = `${directory}/worktree`;
+    yield* fs.makeDirectory(cwd);
+    const command = (at: string, args: string[]) =>
+      git.execute({ operation: "launch-test", cwd: at, args });
+    yield* command(cwd, ["init", "-b", "beta"]);
+    yield* command(cwd, ["config", "user.name", "Test"]);
+    yield* command(cwd, ["config", "user.email", "test@example.test"]);
+    yield* command(cwd, ["commit", "--allow-empty", "-m", "stale point"]);
+    const staleHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+    yield* command(cwd, ["commit", "--allow-empty", "-m", "current work"]);
+    const betaHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+    // The deleted remote branch leaves its tracking ref (and origin/HEAD) behind.
+    yield* command(cwd, ["update-ref", "refs/remotes/origin/gone", staleHead]);
+    yield* command(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone"]);
+
+    const harness = makeHarness({
+      hasCommit: ({ refName }) =>
+        command(cwd, ["rev-parse", "--verify", `${refName}^{commit}`]).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        ),
+      git: {
+        resolveWorktreeBaseRemote: (input) => git.resolveWorktreeBaseRemote({ ...input, cwd }),
+        resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+        resolveDefaultBranchName: (_cwd, remoteName) =>
+          git.resolveDefaultBranchName(cwd, remoteName),
+        currentBranch: () =>
+          command(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]).pipe(
+            Effect.map((result) => result.stdout.trim() || null),
+            Effect.orElseSucceed(() => null),
+          ),
+        hasRefNamed: () => Effect.succeed(false),
+      },
+      // A completed fetch that found no branch, as when the branch was deleted.
+      fetchWorktreeBaseCommit: () => Effect.succeed(null),
+      createWorktree: (input, options) =>
+        git.createWorktree({ ...input, cwd, path: worktreePath }, options),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:gone-base",
+          thread: "thread:launch:gone-base",
+          message: "Build the feature",
+          workspace: {
+            type: "worktree",
+            baseRef: "main",
+            branch: "feature",
+            startFromOrigin: true,
+          },
+        }),
+      );
+      const projection = yield* preparationSettled(launched.threadId);
+      assert.equal(projection.runs[0]?.status, "starting");
+      assert.equal(projection.thread.worktreePath, worktreePath);
+      assert.equal((yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(), betaHead);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-gone-git-" })),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
+);
+
 it.effect("fetches the origin base from the remote it already resolved", () => {
   let fetchInput: Deferred.Deferred<unknown> | null = null;
   const harness = makeHarness({
