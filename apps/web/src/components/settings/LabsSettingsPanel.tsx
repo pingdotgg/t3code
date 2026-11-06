@@ -28,6 +28,7 @@ export function LabsSettingsPanel() {
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
+        <SendGitActionFailuresRow />
         <SimlockHostsRow />
       </SettingsSection>
       <LegacyFeaturesSection />
@@ -202,6 +203,29 @@ function LinkedEnvironmentsRow() {
             updateSettings({ linkedEnvironmentsEnabled: Boolean(checked) })
           }
           aria-label="Linked environments"
+        />
+      }
+    />
+  );
+}
+
+function SendGitActionFailuresRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("send-git-action-failures")}
+      settingKeys={["sendGitActionFailuresToAgent"]}
+      description="When Commit, Push, or Create PR fails from a thread, send the error to that thread's agent so it can fix and retry."
+      control={
+        <ScopedSwitch
+          settingKeys={["sendGitActionFailuresToAgent"]}
+          checked={settings.sendGitActionFailuresToAgent}
+          onCheckedChange={(checked) =>
+            updateSettings({ sendGitActionFailuresToAgent: Boolean(checked) })
+          }
+          aria-label="Send git action failures to agent"
         />
       }
     />
