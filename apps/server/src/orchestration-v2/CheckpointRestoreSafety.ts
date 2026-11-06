@@ -1,4 +1,8 @@
-import type { OrchestrationV2AppThread, OrchestrationV2CheckpointScope } from "@t3tools/contracts";
+import {
+  isLiveSubagentShell,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2CheckpointScope,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -45,9 +49,35 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
       shared = cwd !== worktreeCwd;
       if (!shared) {
         const shell = yield* projections.getShellSnapshot();
+        const shellThreads = [...shell.threads, ...shell.archivedThreads];
+        const shellThreadsById = new Map(
+          shellThreads.map((candidate) => [candidate.id, candidate]),
+        );
+        const isSubagentDescendant = (candidate: (typeof shellThreads)[number]) => {
+          const visited = new Set([candidate.id]);
+          let current: (typeof shellThreads)[number] | undefined = candidate;
+          while (current?.lineage.relationshipToParent === "subagent") {
+            const parentId = current.lineage.parentThreadId;
+            if (parentId === thread.id) return true;
+            if (parentId === null || visited.has(parentId)) return false;
+            visited.add(parentId);
+            current = shellThreadsById.get(parentId);
+          }
+          return false;
+        };
         const checkedPaths = new Set<string>();
-        for (const otherThread of [...shell.threads, ...shell.archivedThreads]) {
+        for (const otherThread of shellThreads) {
           if (otherThread.id === thread.id || otherThread.deletedAt !== null) continue;
+          // A finished subagent of this thread worked on its behalf, not as another owner.
+          if (
+            otherThread.status === "completed" &&
+            otherThread.activeRunId === null &&
+            !isLiveSubagentShell(otherThread) &&
+            otherThread.worktreePath === worktreePath &&
+            isSubagentDescendant(otherThread)
+          ) {
+            continue;
+          }
           // An idle side chat that only answered questions never touched the shared worktree.
           if (
             otherThread.lineage.sideChat === true &&
