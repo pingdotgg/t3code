@@ -829,6 +829,8 @@ const layerMakeRoutes = Layer.mergeAll(
     OpenShellFleetService.layer.pipe(
       Layer.provide(PeerEnvironmentRegistry.layer),
       Layer.provide(OpenShellFleetStore.layer),
+      Layer.provide(PeerLinks.layer),
+      Layer.provide(NodeServices.layer),
     ),
   ),
   Layer.provide(

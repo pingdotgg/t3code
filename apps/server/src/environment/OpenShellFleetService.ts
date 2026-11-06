@@ -10,6 +10,10 @@ import {
   type RuntimeMode,
   type ServerSettings as ServerSettingsValue,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
+import * as FileSystem from "effect/FileSystem";
+import * as HttpClient from "effect/http/HttpClient";
+import * as Path from "effect/Path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -32,6 +36,10 @@ import {
 } from "@t3tools/openshell/OpenShellGatewayDriver";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as OpenShellFleetDrain from "../environment/OpenShellFleetDrain.ts";
+import * as OpenShellFleetDrainAdapters from "../environment/OpenShellFleetDrainAdapters.ts";
+import * as ServerConfig from "../config.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as OpenShellFleetStore from "../environment/OpenShellFleetStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -122,6 +130,11 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const registry = yield* PeerEnvironmentRegistry.PeerEnvironmentRegistry;
   const store = yield* OpenShellFleetStore.OpenShellFleetStore;
+  const config = yield* ServerConfig.ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const http = yield* HttpClient.HttpClient;
+  const links = yield* PeerLinks.PeerLinks;
 
   // One client per process: a gateway-url change applies after a restart.
   const parts = yield* Ref.make<Option.Option<OpenShellGatewayDriver>>(Option.none());
@@ -196,67 +209,102 @@ const make = Effect.gen(function* () {
     return client;
   });
 
-  const buildDriver: Effect.Effect<OpenShellGatewayDriver, OpenShellFleetError> = Effect.gen(
-    function* () {
-      const { gatewayUrl, openshell } = yield* gatewaySettings;
-      const credential = yield* gatewayCredential;
-      const client = yield* openClient(gatewayUrl, credential);
-      const context = yield* Effect.context<never>();
-      // The driver's collaborators are Promise-shaped because the OpenShell SDK
-      // is; they run these Effects on the surrounding services rather than a
-      // fresh runtime, so the sqlite store and registry stay the same instances.
-      const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
-        Effect.runPromiseWith(context)(effect);
-      const registrar: WorkerPairingRegistrar = {
-        register: (input) => run(registry.register(input)),
-        exchangeBootstrap: (input) => run(registry.exchangeBootstrap(input)),
-      };
-      const index: FleetWorkerIndex = {
-        upsert: (input) => run(store.upsert(input)).then(toIndexRow),
-        setState: (environmentId, state, lastError) =>
-          run(store.setState(environmentId, state, lastError)).then((row) =>
-            Option.isSome(row) ? toIndexRow(row.value) : null,
+  /** Nothing is deleted before its data is here (spec section 7). */
+  const drainFor = Effect.fn("OpenShellFleetService.drainFor")(function* (
+    client: OpenShellGatewayClient,
+  ) {
+    const context = yield* Effect.context<never>();
+    const executor = OpenShellFleetDrain.makeDrainExecutor({
+      source: OpenShellFleetDrainAdapters.linkDrainSource({
+        resolve: (environmentId) =>
+          links.resolve(environmentId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OpenShellFleetDrain.FleetDrainStepError({
+                  step: "shell",
+                  message: cause instanceof Error ? cause.message : "The worker link is unusable.",
+                }),
+            ),
           ),
-        setDrain: (environmentId, drain) =>
-          run(store.setDrain(environmentId, drain)).then((row) =>
-            Option.isSome(row) ? toIndexRow(row.value) : null,
-          ),
-        get: (environmentId) =>
-          run(store.get(environmentId)).then((row) =>
-            Option.isSome(row) ? toIndexRow(row.value) : null,
-          ),
-        list: () => run(store.list).then((rows) => rows.map(toIndexRow)),
-        remove: (environmentId) => run(store.remove(environmentId)),
-      };
-      const selfId = yield* environment.getEnvironmentId.pipe(Effect.option);
-      const driverSettings: OpenShellDriverSettings = {
-        ...(openshell.defaultSandboxTemplate === undefined
-          ? {}
-          : { defaultSandboxTemplate: openshell.defaultSandboxTemplate }),
-        ...(openshell.workerDefaults === undefined
-          ? {}
-          : { workerDefaults: openshell.workerDefaults }),
-        ...(openshell.sharedCache === undefined ? {} : { sharedCache: openshell.sharedCache }),
-      };
-      return new OpenShellGatewayDriver({
-        client,
-        settings: driverSettings,
-        ...(Option.isSome(selfId) ? { managingEnvironmentId: selfId.value } : {}),
-        registrar,
-        index,
-      });
-    },
-  );
+        http,
+      }),
+      sink: OpenShellFleetDrainAdapters.fileDrainSink({ stateDir: config.stateDir, fs, path }),
+      git: OpenShellFleetDrainAdapters.execDrainGitPush({
+        exec: (sandboxName, command) =>
+          Effect.tryPromise({
+            try: () => client.exec(sandboxName, command),
+            catch: (cause) =>
+              new OpenShellFleetDrain.FleetDrainStepError({
+                step: "push",
+                message: cause instanceof Error ? cause.message : "The checkout was not pushed.",
+              }),
+          }),
+      }),
+      now: Clock.currentTimeMillis,
+    });
+    return OpenShellFleetDrain.asDriverPort(executor, (effect) =>
+      Effect.runPromiseWith(context)(effect),
+    );
+  });
 
-  const driverFor: Effect.Effect<OpenShellGatewayDriver, OpenShellFleetError> = Effect.gen(
-    function* () {
-      const cached = yield* Ref.get(parts);
-      if (Option.isSome(cached)) return cached.value;
-      const driver = yield* buildDriver;
-      yield* Ref.set(parts, Option.some(driver));
-      return driver;
-    },
-  );
+  const buildDriver = Effect.gen(function* () {
+    const { gatewayUrl, openshell } = yield* gatewaySettings;
+    const credential = yield* gatewayCredential;
+    const client = yield* openClient(gatewayUrl, credential);
+    const context = yield* Effect.context<never>();
+    // The driver's collaborators are Promise-shaped because the OpenShell SDK
+    // is; they run these Effects on the surrounding services rather than a
+    // fresh runtime, so the sqlite store and registry stay the same instances.
+    const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
+      Effect.runPromiseWith(context)(effect);
+    const registrar: WorkerPairingRegistrar = {
+      register: (input) => run(registry.register(input)),
+      exchangeBootstrap: (input) => run(registry.exchangeBootstrap(input)),
+    };
+    const index: FleetWorkerIndex = {
+      upsert: (input) => run(store.upsert(input)).then(toIndexRow),
+      setState: (environmentId, state, lastError) =>
+        run(store.setState(environmentId, state, lastError)).then((row) =>
+          Option.isSome(row) ? toIndexRow(row.value) : null,
+        ),
+      setDrain: (environmentId, drain) =>
+        run(store.setDrain(environmentId, drain)).then((row) =>
+          Option.isSome(row) ? toIndexRow(row.value) : null,
+        ),
+      get: (environmentId) =>
+        run(store.get(environmentId)).then((row) =>
+          Option.isSome(row) ? toIndexRow(row.value) : null,
+        ),
+      list: () => run(store.list).then((rows) => rows.map(toIndexRow)),
+      remove: (environmentId) => run(store.remove(environmentId)),
+    };
+    const selfId = yield* environment.getEnvironmentId.pipe(Effect.option);
+    const driverSettings: OpenShellDriverSettings = {
+      ...(openshell.defaultSandboxTemplate === undefined
+        ? {}
+        : { defaultSandboxTemplate: openshell.defaultSandboxTemplate }),
+      ...(openshell.workerDefaults === undefined
+        ? {}
+        : { workerDefaults: openshell.workerDefaults }),
+      ...(openshell.sharedCache === undefined ? {} : { sharedCache: openshell.sharedCache }),
+    };
+    return new OpenShellGatewayDriver({
+      client,
+      settings: driverSettings,
+      ...(Option.isSome(selfId) ? { managingEnvironmentId: selfId.value } : {}),
+      registrar,
+      index,
+      drainExecutor: yield* drainFor(client),
+    });
+  });
+
+  const driverFor = Effect.gen(function* () {
+    const cached = yield* Ref.get(parts);
+    if (Option.isSome(cached)) return cached.value;
+    const driver = yield* buildDriver;
+    yield* Ref.set(parts, Option.some(driver));
+    return driver;
+  });
 
   const spawnWorker: OpenShellFleetService["Service"]["spawnWorker"] = Effect.fn(
     "OpenShellFleetService.spawnWorker",
