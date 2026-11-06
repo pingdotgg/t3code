@@ -357,7 +357,7 @@ describe("ZeroClaw adapter prompt lifetime", () => {
         runOrdinal: 7,
         status: "completed",
       });
-      const dropped = new ZeroClawRpcError({ operation: "read", detail: "Connection closed" });
+      const dropped = new ZeroClawRpcError({ operation: "read", reason: "closed" });
       yield* Deferred.fail(firstPrompt.reply, dropped);
       expect(Exit.isSuccess(yield* Fiber.await(firstPrompt.fiber))).toBe(true);
 

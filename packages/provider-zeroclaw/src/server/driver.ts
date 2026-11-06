@@ -124,7 +124,7 @@ export const probeZeroClaw = Effect.fn("probeZeroClaw")(function* (input: {
   if (cached !== undefined && DateTime.toEpochMillis(now) - cached.at < CATALOG_TTL_MS) {
     return readySnapshot({
       instanceId: input.instanceId,
-      checkedAt,
+      checkedAt: DateTime.formatIso(DateTime.makeUnsafe(cached.at)),
       models: cached.models,
       version: cached.version,
     });
@@ -256,14 +256,12 @@ export const ZeroClawDriver: ProviderDriver<ZeroClawSettings, ZeroClawDriverEnv>
     });
     const check = input.enabled
       ? probeZeroClaw({ socketPath, instanceId: input.instanceId, cache })
-      : Effect.succeed({
-          ...warningSnapshot(
-            input.instanceId,
-            "ZeroClaw is disabled.",
-            DateTime.formatIso(yield* DateTime.now),
-          ),
-          status: "disabled" as const,
-        });
+      : DateTime.now.pipe(
+          Effect.map((now) => ({
+            ...warningSnapshot(input.instanceId, "ZeroClaw is disabled.", DateTime.formatIso(now)),
+            status: "disabled" as const,
+          })),
+        );
     const snapshot = yield* SubscriptionRef.make(stampSnapshot(yield* check));
     const refresh = Effect.gen(function* () {
       cache.current = undefined;

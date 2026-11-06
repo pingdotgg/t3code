@@ -336,8 +336,9 @@ function subagentEvents(
   if (call === null) return [];
   const appThread = state.identity.appThread;
   const modelSelection = state.identity.modelSelection;
-  const subagentId = NodeId.make(`zc-subagent-${toolCallId}`);
-  const childThreadId = ThreadId.make(`zc-child-${toolCallId}`);
+  const scope = state.identity.providerTurnId;
+  const subagentId = NodeId.make(`zc-subagent-${scope}-${toolCallId}`);
+  const childThreadId = ThreadId.make(`zc-child-${scope}-${toolCallId}`);
   const subagent = {
     id: subagentId,
     threadId: state.identity.threadId,
@@ -386,8 +387,8 @@ function subagentEvents(
   });
   const promptArtifacts = makeSubagentConversationArtifacts({
     senderThreadId: state.identity.threadId,
-    messageId: MessageId.make(`zc-submsg-${toolCallId}`),
-    turnItemId: TurnItemId.make(`zc-subprompt-${toolCallId}`),
+    messageId: MessageId.make(`zc-submsg-${scope}-${toolCallId}`),
+    turnItemId: TurnItemId.make(`zc-subprompt-${scope}-${toolCallId}`),
     threadId: childThreadId,
     rootNodeId: state.identity.nodeId,
     providerThreadId: null,

@@ -22,11 +22,32 @@ const RestoringSocket = Context.Reference<NodeNet.Socket | undefined>(
 
 export class ZeroClawRpcError extends Schema.TaggedError<ZeroClawRpcError>()("ZeroClawRpcError", {
   operation: Schema.String,
-  detail: Schema.optional(Schema.String),
+  reason: Schema.Literals([
+    "closed",
+    "frameTooLarge",
+    "connectFailed",
+    "readFailed",
+    "writeFailed",
+    "restorationFailed",
+    "daemonError",
+    "stopped",
+  ]),
+  code: Schema.optional(Schema.Int),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
-    return `ZeroClaw RPC ${this.operation} failed${this.detail === undefined ? "" : `: ${this.detail}`}.`;
+    const reasons = {
+      closed: "connection closed",
+      frameTooLarge: `frame exceeded ${MAX_FRAME_BYTES} bytes`,
+      connectFailed: "could not connect to the daemon",
+      readFailed: "socket read failed",
+      writeFailed: "socket write failed",
+      restorationFailed: "session restoration failed",
+      daemonError: "daemon error",
+      stopped: "connection was stopped",
+    };
+    const code = this.code === undefined ? "" : ` (code ${this.code})`;
+    return `ZeroClaw RPC ${this.operation} failed: ${reasons[this.reason]}${code}.`;
   }
 }
 
@@ -105,12 +126,11 @@ const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 const decodeJsonLine = Schema.decodeSync(UnknownFromJsonString);
 const encodeJsonLine = Schema.encodeSync(UnknownFromJsonString);
 
-const ERROR_DETAIL_MAX_CHARS = 200;
-
-function summarizeError(error: unknown): string {
-  const text = typeof error === "string" ? error : JSON.stringify(error);
-  if (text === undefined) return "unknown error";
-  return text.length > ERROR_DETAIL_MAX_CHARS ? `${text.slice(0, ERROR_DETAIL_MAX_CHARS)}…` : text;
+function daemonErrorCode(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  return typeof error.code === "number" && Number.isSafeInteger(error.code)
+    ? error.code
+    : undefined;
 }
 
 function rpcId(value: unknown): string | undefined {
@@ -192,7 +212,7 @@ function connectSocket(
           Effect.fail(
             new ZeroClawRpcError({
               operation: "connect",
-              detail: cause.message,
+              reason: "connectFailed",
               cause,
             }),
           ),
@@ -225,7 +245,7 @@ function writeLine(
     };
     socket.write(`${encodeJsonLine(record)}\n`, (cause) => {
       if (cause) {
-        settle(Effect.fail(new ZeroClawRpcError({ operation, detail: cause.message, cause })));
+        settle(Effect.fail(new ZeroClawRpcError({ operation, reason: "writeFailed", cause })));
         return;
       }
       settle(Effect.void);
@@ -267,7 +287,7 @@ export const makeZeroClawRpcConnection = Effect.fn("makeZeroClawRpcConnection")(
             Effect.fail(
               new ZeroClawRpcError({
                 operation: "read",
-                detail: `Frame exceeded ${MAX_FRAME_BYTES} bytes`,
+                reason: "frameTooLarge",
               }),
             ),
           );
@@ -338,7 +358,8 @@ export const makeZeroClawRpcConnection = Effect.fn("makeZeroClawRpcConnection")(
           ? Effect.fail(
               new ZeroClawRpcError({
                 operation: "request",
-                detail: summarizeError(frame.error),
+                reason: "daemonError",
+                code: daemonErrorCode(frame.error),
                 cause: frame.error,
               }),
             )
@@ -375,17 +396,14 @@ export const makeZeroClawRpcConnection = Effect.fn("makeZeroClawRpcConnection")(
   };
   const watchSocket = (watched: NodeNet.Socket) => {
     watched.once("close", () => {
-      reportSocketLost(
-        watched,
-        new ZeroClawRpcError({ operation: "read", detail: "Connection closed" }),
-      );
+      reportSocketLost(watched, new ZeroClawRpcError({ operation: "read", reason: "closed" }));
     });
     watched.on("error", (cause: Error) => {
       const code = (cause as NodeJS.ErrnoException).code;
       if (code === "ECONNRESET" || code === "EPIPE") return;
       reportSocketLost(
         watched,
-        new ZeroClawRpcError({ operation: "read", detail: cause.message, cause }),
+        new ZeroClawRpcError({ operation: "read", reason: "readFailed", cause }),
       );
     });
   };
@@ -429,7 +447,11 @@ export const makeZeroClawRpcConnection = Effect.fn("makeZeroClawRpcConnection")(
       );
       if (restored._tag === "Failure") {
         yield* failTransport(
-          new ZeroClawRpcError({ operation: "reconnect", cause: restored.cause }),
+          new ZeroClawRpcError({
+            operation: "reconnect",
+            reason: "restorationFailed",
+            cause: restored.cause,
+          }),
         );
         return;
       }
@@ -452,7 +474,7 @@ export const makeZeroClawRpcConnection = Effect.fn("makeZeroClawRpcConnection")(
     Stream.runForEach(({ socket: target, record, requestId }) => {
       const write =
         target !== current.socket || stopped
-          ? Effect.fail(new ZeroClawRpcError({ operation: "write", detail: "Connection closed" }))
+          ? Effect.fail(new ZeroClawRpcError({ operation: "write", reason: "closed" }))
           : writeLine(target, record, "write");
       return write.pipe(
         Effect.catch((error) =>
@@ -470,7 +492,7 @@ export const makeZeroClawRpcConnection = Effect.fn("makeZeroClawRpcConnection")(
       );
     }),
     Effect.catchCause((cause) =>
-      failTransport(new ZeroClawRpcError({ operation: "write", cause })),
+      failTransport(new ZeroClawRpcError({ operation: "write", reason: "writeFailed", cause })),
     ),
     Effect.forkIn(scope),
   );
@@ -482,20 +504,20 @@ export const makeZeroClawRpcConnection = Effect.fn("makeZeroClawRpcConnection")(
   ) {
     const target = current.socket;
     if (stopped || target === undefined || target.destroyed) {
-      return yield* new ZeroClawRpcError({ operation, detail: "Connection closed" });
+      return yield* new ZeroClawRpcError({ operation, reason: "closed" });
     }
     const ready = restoration;
     if (ready !== undefined && (yield* RestoringSocket) !== target) {
       yield* Effect.raceFirst(Deferred.await(ready), Deferred.await(transportDown));
       if (stopped || current.socket !== target || target.destroyed) {
-        return yield* new ZeroClawRpcError({ operation, detail: "Connection closed" });
+        return yield* new ZeroClawRpcError({ operation, reason: "closed" });
       }
     }
     const accepted = yield* Queue.offer(outgoing, { socket: target, record, requestId });
     if (!accepted) {
       return yield* new ZeroClawRpcError({
         operation,
-        detail: "Connection closed",
+        reason: "closed",
       });
     }
   });
@@ -557,9 +579,7 @@ export const makeZeroClawRpcConnection = Effect.fn("makeZeroClawRpcConnection")(
       stopped = true;
     }).pipe(
       Effect.andThen(
-        failTransport(
-          new ZeroClawRpcError({ operation: "terminate", detail: "connection was stopped" }),
-        ),
+        failTransport(new ZeroClawRpcError({ operation: "terminate", reason: "stopped" })),
       ),
       Effect.andThen(
         Effect.sync(() => {

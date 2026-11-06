@@ -5,7 +5,9 @@ The daemon owns the agents, model credentials, and tool permissions.
 
 ## Set up ZeroClaw
 
-1. Install and configure ZeroClaw 0.8.7 or newer on the machine running the T3 Code server.
+1. [Install ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw/blob/v0.8.7/README.md#install)
+   0.8.7 or newer on the machine running the T3 Code server, then run `zeroclaw quickstart`
+   to configure an agent and model provider.
 2. Start the daemon with `zeroclaw daemon`.
 3. Open **Settings → Providers** in T3 Code and enable **ZeroClaw** for that environment.
 4. If the daemon uses a custom socket, set **Daemon socket** to its path.

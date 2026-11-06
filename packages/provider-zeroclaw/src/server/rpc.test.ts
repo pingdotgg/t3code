@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 
 import {
   MAX_FRAME_BYTES,
@@ -28,6 +29,8 @@ interface FakeDaemon {
   readonly send: (message: unknown) => Effect.Effect<void>;
   readonly disconnect: Effect.Effect<void>;
 }
+
+const isZeroClawRpcError = Schema.is(ZeroClawRpcError);
 
 const decodeLine = (line: string): unknown => JSON.parse(line);
 
@@ -158,6 +161,22 @@ describe("ZeroClawRpcConnection", () => {
           result: { protocolVersion: 1, server: "fake" },
         });
         expect(yield* Fiber.join(pending)).toEqual({ protocolVersion: 1, server: "fake" });
+
+        const rejected = yield* connection
+          .request("status", {})
+          .pipe(Effect.exit, Effect.forkChild);
+        const errorRequest = yield* Queue.take(daemon.received);
+        const daemonError = { code: -32000, message: "private daemon details" };
+        yield* daemon.send({ id: (errorRequest as { id: string }).id, error: daemonError });
+        const exit = yield* Fiber.join(rejected);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) return;
+        const error = Cause.squash(exit.cause);
+        expect(error).toBeInstanceOf(ZeroClawRpcError);
+        if (!isZeroClawRpcError(error)) return;
+        expect(error).toMatchObject({ reason: "daemonError", code: -32000, cause: daemonError });
+        expect(error.message).toBe("ZeroClaw RPC request failed: daemon error (code -32000).");
+        expect(error.message).not.toContain(daemonError.message);
 
         yield* daemon.send({
           jsonrpc: "2.0",

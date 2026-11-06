@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -106,6 +107,28 @@ const withDaemon = <A, E, R>(
   }).pipe(Effect.scoped);
 
 describe("probeZeroClaw", () => {
+  it.effect("preserves cached probe time and timestamps each disabled refresh", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(2_000);
+      const cached = yield* probeZeroClaw({
+        socketPath: "unused",
+        instanceId: ProviderInstanceId.make("zc"),
+        cache: { current: { at: 1_000, models: [], agents: [], version: "0.8.7" } },
+      });
+      expect(cached.checkedAt).toBe("1970-01-01T00:00:01.000Z");
+      const instance = yield* ZeroClawDriver.create({
+        instanceId: ProviderInstanceId.make("zc"),
+        enabled: false,
+        config: ZeroClawDriver.defaultConfig(),
+        environment: [],
+        displayName: undefined,
+      });
+      expect((yield* instance.snapshot.getSnapshot).checkedAt).toBe("1970-01-01T00:00:02.000Z");
+      yield* TestClock.setTime(3_000);
+      yield* instance.snapshot.refresh;
+      expect((yield* instance.snapshot.getSnapshot).checkedAt).toBe("1970-01-01T00:00:03.000Z");
+    }).pipe(Effect.provide(Path.layer)),
+  );
   it.live("returns a ready snapshot with models and does not open a session", () =>
     withDaemon((socketPath) =>
       Effect.gen(function* () {

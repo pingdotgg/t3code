@@ -342,6 +342,34 @@ describe("sessionUpdateToEvents", () => {
       "turn_item.updated",
       "subagent.updated",
     ]);
+    const nextTurn = project(
+      {
+        type: "tool_call",
+        tool_call_id: "c1",
+        name: "spawn_subagent",
+        raw_input: { prompt: "next review", agent: "reviewer" },
+      },
+      {
+        ...state(),
+        identity: { ...current.identity, providerTurnId: ProviderTurnId.make("turn-2") },
+      },
+    );
+    const ids = (events: typeof opened.events) =>
+      events.flatMap<string>((event) => {
+        switch (event.type) {
+          case "app_thread.created":
+            return [event.appThread.id];
+          case "message.updated":
+            return [event.message.id];
+          case "turn_item.updated":
+            return [event.turnItem.id];
+          case "subagent.updated":
+            return [event.subagent.id];
+          default:
+            return [];
+        }
+      });
+    expect(ids(nextTurn.events).filter((id) => ids(opened.events).includes(id))).toEqual([]);
     const opening = opened.events.find((event) => event.type === "subagent.updated")!;
     current.now = DateTime.makeUnsafe(1_000);
     const settled = project(
