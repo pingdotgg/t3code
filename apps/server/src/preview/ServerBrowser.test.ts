@@ -2039,7 +2039,7 @@ it.live("agents read a human's tab with no arguments and act on it only while no
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("browser automation stays available without an open tab", () =>
+it.effect("browser automation stays available without an open tab", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { broker, tabId } = yield* ready;
