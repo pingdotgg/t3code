@@ -3602,6 +3602,17 @@ const rpivOptionLine = (option: unknown, index: number) =>
   // oxlint-disable-next-line t3code/no-em-dash-copy -- Matches the extension's option line format.
   `${index + 1}. ${rpivField(option, "label")} — ${rpivField(option, "description")}`;
 
+/** The extension folds option previews into the select title, the only place clients show them. */
+const rpivPreviewBlock = (options: ReadonlyArray<unknown>) => {
+  const blocks = options.flatMap((option, index) => {
+    const preview = rpivField(option, "preview");
+    return preview
+      ? [`--- ${index + 1}. ${rpivField(option, "label")} preview ---\n${preview.slice(0, 600)}`]
+      : [];
+  });
+  return blocks.length > 0 ? `\n\n${blocks.join("\n\n")}` : "";
+};
+
 /**
  * @juicesharp/rpiv-ask-user-question asks a single-select question over RPC as a select of
  * "N. label — description" lines plus a trailing "Type something." entry. Rebuild the question
@@ -3625,22 +3636,22 @@ function piAskUserSingleSelectQuestion(
       const options = recordField(question, "options");
       if (recordField(question, "multiSelect") === true || !text?.trim()) continue;
       if (!Array.isArray(options) || options.length !== lines.length - 1) continue;
-      if (!title.startsWith(`${header ? `[${header}] ` : ""}${text}`)) continue;
+      const prefix = header ? `[${header}] ` : "";
+      const body = `${text}${rpivPreviewBlock(options)}`;
+      if (title !== `${prefix}${body}`) continue;
       if (!options.every((option, index) => lines[index] === rpivOptionLine(option, index))) {
         continue;
       }
       return {
         id: questionId,
         header: header?.trim() || "Question",
-        question: text.trim(),
+        question: body.trim(),
         options: options.map((option, index) => {
           const label = rpivField(option, "label")?.trim() || `Option ${index + 1}`;
-          const preview = rpivField(option, "preview");
           return {
             label,
             description: rpivField(option, "description")?.trim() || label,
             value: rpivOptionLine(option, index),
-            ...(preview ? { preview } : {}),
           };
         }),
       };

@@ -3866,26 +3866,15 @@ describe("PiAdapterV2", () => {
         {
           header: question?.header,
           question: question?.question,
-          options: question?.options.map(({ label, description, preview }) => ({
-            label,
-            description,
-            preview,
-          })),
+          options: question?.options.map(({ label, description }) => ({ label, description })),
         },
         {
           header: "Area",
-          question: "Which area should we work on?",
+          question:
+            "Which area should we work on?\n\n--- 1. Docker/Compose preview ---\nservices:\n  web: {}",
           options: [
-            {
-              label: "Docker/Compose",
-              description: "Review or edit Compose projects",
-              preview: "services:\n  web: {}",
-            },
-            {
-              label: "Home Assistant",
-              description: "Automations, dashboards or YAML",
-              preview: undefined,
-            },
+            { label: "Docker/Compose", description: "Review or edit Compose projects" },
+            { label: "Home Assistant", description: "Automations, dashboards or YAML" },
           ],
         },
       );
@@ -3896,6 +3885,51 @@ describe("PiAdapterV2", () => {
       const response = yield* fake.takeRequest("extension_ui_response");
       assert.equal(response["id"], "ui-ask");
       assert.equal(response["value"], dockerLine);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("matches an ask_user_question select to the question with the same full title", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      const options = [
+        { label: "Yes", description: "Go ahead" },
+        { label: "No", description: "Stop here" },
+      ];
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "ask-call",
+        toolName: "ask_user_question",
+        args: {
+          questions: [
+            { header: "Deploy", question: "Proceed?", options },
+            { header: "Deploy", question: "Proceed? Only for staging?", options },
+          ],
+        },
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-ask",
+        method: "select",
+        title: "[Deploy] Proceed? Only for staging?",
+        options: ["1. Yes — Go ahead", "2. No — Stop here", "3. Type something."],
+      });
+      const event = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+      );
+      if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
+        return assert.fail("expected a user input request");
+      }
+      const question = decodeUserInputQuestions(event.turnItem.questions)[0];
+      assert.equal(question?.question, "Proceed? Only for staging?");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
