@@ -91,6 +91,28 @@ describe("persistent project favicon cache", () => {
     },
   );
 
+  it.each([
+    { nextUrl: url.replace("vabc-", "vdef-"), expected: replacement },
+    { nextUrl: "https://remote.test/api/assets/project-favicon-missing", expected: null },
+  ])("does not restore an old icon after resolving $nextUrl", async ({ nextUrl, expected }) => {
+    const { cache, load, records } = fixture();
+    const oldDownload = deferred<string>();
+    const started = deferred<void>();
+    load.mockImplementationOnce(() => {
+      started.resolve();
+      return oldDownload.promise;
+    });
+    const pending = cache.resolve(target, url, signal());
+    await started.promise;
+    load.mockResolvedValueOnce(replacement);
+    expect(await cache.resolve(target, nextUrl, signal())).toBe(expected);
+    oldDownload.resolve(image);
+    expect(await pending).toBe(expected);
+    await cache.flush();
+    expect(cache.peek(target)).toBe(expected);
+    expect([...records.values()].map((entry) => entry.dataUrl)).toEqual(expected ? [expected] : []);
+  });
+
   it("bounds individual images, total bytes, and entry count in storage", async () => {
     const { cache, load, records } = fixture();
     load.mockResolvedValueOnce(

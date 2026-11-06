@@ -122,6 +122,7 @@ export function createProjectFaviconCache(input: {
   readonly load: (url: string, signal: AbortSignal) => Promise<string>;
 }) {
   const entries = new Map<string, ProjectFaviconEntry>();
+  const downloads = new Map<string, symbol>();
   const environmentRevisions = new Map<EnvironmentId, number>();
   let generation = 0;
   let hydration: Promise<void> | undefined;
@@ -180,6 +181,7 @@ export function createProjectFaviconCache(input: {
     await hydrate();
     if (signal.aborted || url === null) return peek(target);
     const key = keyFor(target);
+    downloads.delete(key);
     if (isProjectFaviconFallbackUrl(url)) {
       remove(key);
       return null;
@@ -191,10 +193,13 @@ export function createProjectFaviconCache(input: {
       entries.set(key, cached);
       if (cached.revision === revision) return cached.dataUrl;
     }
+    const download = Symbol();
+    downloads.set(key, download);
     try {
       const dataUrl = await input.load(url, signal);
       if (
         signal.aborted ||
+        downloads.get(key) !== download ||
         startGeneration !== generation ||
         startRevision !== (environmentRevisions.get(target.environmentId) ?? 0)
       ) {
@@ -213,7 +218,10 @@ export function createProjectFaviconCache(input: {
         trim();
         return dataUrl;
       }
-    } catch {}
+    } catch {
+    } finally {
+      if (downloads.get(key) === download) downloads.delete(key);
+    }
     return peek(target) ?? url;
   };
 
