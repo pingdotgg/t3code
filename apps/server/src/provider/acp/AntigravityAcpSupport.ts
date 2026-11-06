@@ -84,13 +84,8 @@ export function isQualifiedAntigravityRelease(version: string | null | undefined
   return version?.trim() === "1.4.5";
 }
 
-// Must match the first agy-acp-server release with the agent changes made for T3 Code.
-const T3_CODE_CHANGES_RELEASE = [1, 4, 6] as const;
-
-function antigravityHasT3CodeChanges(version: string | null | undefined): boolean {
-  const parsed = parseAntigravityVersion(version);
-  return parsed !== undefined && compareVersions(parsed, T3_CODE_CHANGES_RELEASE) >= 0;
-}
+// `agy acp` 1.5.1 offers every model to every ACP client; older runtimes allowlist editors.
+const OPEN_MODEL_ACCESS_RELEASE = [1, 5, 1] as const;
 
 /**
  * 1.4.5 appends `systemPrompt.append` to its system instructions on new, load and resume, and
@@ -117,7 +112,8 @@ export function antigravitySessionMeta(
 
 /** Older releases offer non-Gemini models only to allowlisted clients such as Zed. */
 export function antigravityClientInfo(version: string | null | undefined) {
-  return antigravityHasT3CodeChanges(version)
+  const parsed = parseAntigravityVersion(version);
+  return parsed !== undefined && compareVersions(parsed, OPEN_MODEL_ACCESS_RELEASE) >= 0
     ? { name: "t3-code", title: "T3 Code", version: packageJson.version }
     : { name: "zed", version: "0.0.0" };
 }
