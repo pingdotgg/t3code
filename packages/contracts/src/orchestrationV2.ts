@@ -1340,7 +1340,7 @@ export function orchestrationV2SteerRejectionReason(
       ? "Context compaction must run as a separate turn."
       : "Signing out must run as a separate turn.";
   }
-  if (message.attachments.length === 0 && /^\/goal(?:\s|$)/u.test(message.text.trim())) {
+  if (parseGoalCommand(message) !== null) {
     return "Goal commands must run as a separate turn.";
   }
   return null;
