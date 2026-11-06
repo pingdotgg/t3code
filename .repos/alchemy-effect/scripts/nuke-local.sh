@@ -31,7 +31,7 @@
 # floci's own internals are spared for the same convergence reason:
 #   floci-*                    the emulator's internal buckets (Athena results, ...)
 #   awslambda-us-east-1-tasks  the emulator's Lambda task store
-bun alchemy unsafe nuke ./stacks/nuke.ts \
+pnpm -C ./stacks alchemy unsafe nuke --config ./src/nuke.ts \
   --local \
   --include 'AWS.*' \
   --exclude 'AWS.ApiGateway.Account' \

@@ -20,8 +20,8 @@ import {
 import * as Option from "effect/Option";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
-import { useProject, useQuietThreadShell } from "../state/entities";
-import { threadFamilies, useEnvironmentThread } from "../state/threads";
+import { useProject, useQuietThreadShell } from "./entities";
+import { threadFamilies, useEnvironmentThread } from "./threads";
 import { appAtomRegistry } from "./atom-registry";
 import {
   resolvePendingThreadCreation,

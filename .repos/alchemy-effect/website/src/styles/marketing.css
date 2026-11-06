@@ -40,8 +40,36 @@ body.alc-root,
 }
 
 /* ============================================================
+   Code surfaces on marketing pages: muted and status colors lifted to
+   ≥7:1 (WCAG AAA) on the walnut code background.
+   ============================================================ */
+[data-theme="dark"] .alc-root :is(.alc-code-block, .alc-term, .prf-win, .v2-steps__code) {
+  --alc-code-comment: #ddd0ac;
+  --alc-code-literal: #ffbea0;
+  --alc-code-type: #86e3ff;
+  --alc-accent-bright: #b9d68d;
+  --alc-success: #b9d68d;
+  --alc-danger: #ffa48f;
+  --alc-warn: #f5c97a;
+  --alc-tui-muted: #d6cfc3;
+  --alc-tui-brand: #fac2a3;
+}
+
+/* ============================================================
    Code block — terminal-themed wrapper used by static <CodeBlock>
    ============================================================ */
+
+/* Highlighted lines (CodeBlock's `highlight` prop). */
+.alc-code-block__line {
+  display: block;
+  margin: 0 -16px;
+  padding: 0 16px;
+  border-left: 2px solid transparent;
+}
+.alc-code-block__line.is-lit {
+  border-left-color: #7ee787;
+  background: rgba(126, 231, 135, 0.07);
+}
 
 .alc-code-block {
   background: var(--alc-bg-code);
@@ -59,8 +87,8 @@ body.alc-root,
   align-items: center;
   gap: 6px;
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(232, 220, 192, 0.08);
-  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(var(--alc-code-edge), 0.08);
+  background: rgba(var(--alc-code-lift), 0.02);
   flex: 0 0 auto;
 }
 .alc-code-block__filename {
@@ -313,8 +341,8 @@ body.alc-root,
   align-items: center;
   gap: 6px;
   padding: 8px 12px;
-  border-bottom: 1px solid rgba(232, 220, 192, 0.08);
-  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(var(--alc-code-edge), 0.08);
+  background: rgba(var(--alc-code-lift), 0.02);
 }
 .eff-showcase__tabs {
   display: flex;
@@ -349,8 +377,8 @@ body.alc-root,
 }
 .eff-showcase__tab[data-active="true"] {
   color: var(--alc-fg-invert);
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(232, 220, 192, 0.12);
+  background: rgba(var(--alc-code-lift), 0.05);
+  border-color: rgba(var(--alc-code-edge), 0.12);
 }
 .eff-showcase__body {
   position: relative;
@@ -376,7 +404,7 @@ body.alc-root,
   display: flex;
   flex-direction: column;
   min-width: 0;
-  border-right: 1px solid rgba(232, 220, 192, 0.08);
+  border-right: 1px solid rgba(var(--alc-code-edge), 0.08);
 }
 .eff-showcase__pre {
   margin: 0;
@@ -900,8 +928,8 @@ body.alc-root,
   align-items: center;
   gap: 6px;
   padding: 8px 12px;
-  border-bottom: 1px solid rgba(232, 220, 192, 0.08);
-  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(var(--alc-code-edge), 0.08);
+  background: rgba(var(--alc-code-lift), 0.02);
 }
 .async-tabs__tabs {
   display: flex;
@@ -936,8 +964,8 @@ body.alc-root,
 }
 .async-tabs__tab[data-active="true"] {
   color: var(--alc-fg-invert);
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(232, 220, 192, 0.12);
+  background: rgba(var(--alc-code-lift), 0.05);
+  border-color: rgba(var(--alc-code-edge), 0.12);
 }
 .async-tabs__body {
   position: relative;
@@ -1941,16 +1969,8 @@ body.alc-root,
   mix-blend-mode: multiply;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='280' height='280'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='1.3' numOctaves='2' seed='6' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.30  0 0 0 0 0.22  0 0 0 0 0.13  0 0 0 0.5 0'/></filter><rect width='100%' height='100%' filter='url(%23g)'/></svg>");
   background-size: 280px 280px;
-  -webkit-mask-image: radial-gradient(
-    ellipse 100% 95% at 50% 45%,
-    #000 55%,
-    transparent 100%
-  );
-  mask-image: radial-gradient(
-    ellipse 100% 95% at 50% 45%,
-    #000 55%,
-    transparent 100%
-  );
+  -webkit-mask-image: radial-gradient(ellipse 100% 95% at 50% 45%, #000 55%, transparent 100%);
+  mask-image: radial-gradient(ellipse 100% 95% at 50% 45%, #000 55%, transparent 100%);
 }
 /* In dark mode the brown noise multiplied onto the dark page just turns
    to mud. Flip to `screen` so the same noise pattern adds a faint warm
@@ -2408,12 +2428,7 @@ body.alc-root,
   left: 0;
   height: 2px;
   width: 40%;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    var(--alc-accent-bright),
-    transparent
-  );
+  background: linear-gradient(90deg, transparent, var(--alc-accent-bright), transparent);
   animation: bhr-progress 900ms ease-in-out infinite;
 }
 @keyframes bhr-progress {
@@ -2513,19 +2528,14 @@ body.alc-root,
   aspect-ratio: 1 / 1;
   border-radius: 8px;
   background:
-    linear-gradient(135deg, var(--alc-accent-soft), var(--alc-bg-sunk)),
-    var(--alc-bg-elev-1);
+    linear-gradient(135deg, var(--alc-accent-soft), var(--alc-bg-sunk)), var(--alc-bg-elev-1);
   border: 1px solid var(--alc-hairline);
 }
 .bhr-tile:nth-child(2) .bhr-tile__img {
   background: linear-gradient(135deg, #d4b888, var(--alc-bg-sunk));
 }
 .bhr-tile:nth-child(3) .bhr-tile__img {
-  background: linear-gradient(
-    135deg,
-    var(--alc-accent-warm),
-    var(--alc-accent-soft)
-  );
+  background: linear-gradient(135deg, var(--alc-accent-warm), var(--alc-accent-soft));
 }
 .bhr-tile:nth-child(4) .bhr-tile__img {
   background: linear-gradient(135deg, #c89a6a, var(--alc-accent-soft));
@@ -2569,12 +2579,7 @@ body.alc-root,
   height: 22px;
   width: 40%;
   border-radius: 6px;
-  background: linear-gradient(
-    90deg,
-    var(--alc-bg-sunk),
-    var(--alc-bg-elev-1),
-    var(--alc-bg-sunk)
-  );
+  background: linear-gradient(90deg, var(--alc-bg-sunk), var(--alc-bg-elev-1), var(--alc-bg-sunk));
   background-size: 200% 100%;
   animation: bhr-shimmer 1400ms linear infinite;
 }
