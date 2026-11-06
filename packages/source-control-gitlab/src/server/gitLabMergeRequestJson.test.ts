@@ -5,6 +5,7 @@ import {
   decodeAwardEmojiJson,
   decodeRepositoryBlobsJson,
   decodeCommitsJson,
+  decodeMergeMessagesJson,
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
   decodeMergeRequestListJson,
@@ -372,6 +373,7 @@ describe("decodeMergeRequestDiffsJson", () => {
     expect(result.patch).toBe(
       [
         String.raw`diff --git "a/ old\\name.ts " "b/ new\\name.ts "`,
+        "similarity index 100%",
         String.raw`rename from " old\\name.ts "`,
         String.raw`rename to " new\\name.ts "`,
         String.raw`--- "a/ old\\name.ts "`,
@@ -494,7 +496,7 @@ describe("merge request viewer fields", () => {
 });
 
 describe("decodeAwardEmojiJson", () => {
-  it("reads MR-level awards, keys per-note awards by the REST id inside their gid, and ignores an award outside the eight", () => {
+  it("reads MR-level awards, keys per-note awards by the REST id inside their gid, ignores an award outside the eight, and collects bot note authors", () => {
     const result = expectSuccess(
       decodeAwardEmojiJson(
         JSON.stringify({
@@ -513,10 +515,12 @@ describe("decodeAwardEmojiJson", () => {
                   nodes: [
                     {
                       id: "gid://gitlab/DiffNote/42",
+                      author: { username: "julius", bot: false },
                       awardEmoji: { nodes: [{ name: "heart", user: { username: "julius" } }] },
                     },
                     {
                       id: "gid://gitlab/Note/7",
+                      author: { username: "project_278964_bot_89f97e2c", bot: true },
                       awardEmoji: {
                         nodes: [{ name: "partyparrot", user: { username: "bilal" } }],
                       },
@@ -536,6 +540,7 @@ describe("decodeAwardEmojiJson", () => {
     expect([...result.reactionsByNoteId]).toEqual([
       ["42", [{ content: "heart", count: 1, actors: ["julius"], viewerHasReacted: false }]],
     ]);
+    expect([...result.botLogins]).toEqual(["project_278964_bot_89f97e2c"]);
     expect(result.nextCursor).toBeNull();
   });
 
@@ -830,5 +835,20 @@ describe("decodeMergeRequestStatsJson", () => {
       truncated: false,
     });
     expect(read(2).truncated).toBe(true);
+  });
+});
+
+describe("decodeMergeMessagesJson", () => {
+  it("fails a partial response instead of reading errored fields as absent templates", () => {
+    const decoded = decodeMergeMessagesJson(
+      JSON.stringify({
+        errors: [{ message: "Internal server error", path: ["project", "mergeRequest"] }],
+        data: {
+          project: { mergeRequest: { title: "Add thing", defaultMergeCommitMessage: null } },
+        },
+      }),
+    );
+
+    expect(Result.isFailure(decoded)).toBe(true);
   });
 });

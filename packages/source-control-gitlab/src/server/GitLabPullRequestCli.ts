@@ -1,3 +1,4 @@
+import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { isCommitSha } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -35,6 +36,7 @@ import {
   decodeCommitsJson,
   decodeDiffRefsJson,
   decodeDiscussionsJson,
+  decodeMergeMessagesJson,
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
   decodeMergeRequestChangesJson,
@@ -51,6 +53,7 @@ import {
   decodeTriggerJobChecksJson,
   decodeViewerJson,
   gitLabAwardName,
+  MERGE_MESSAGES_GRAPHQL_QUERY,
   MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
   MERGE_REQUEST_STATS_GRAPHQL_QUERY,
   REPOSITORY_BLOBS_GRAPHQL_QUERY,
@@ -61,6 +64,7 @@ import {
   type GitLabProjectUsers,
 } from "./gitLabMergeRequestJson.ts";
 import type {
+  ProviderChangeRequestSummary,
   ProviderFileStats,
   ProviderListCursor,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -386,7 +390,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly number: number;
       readonly action: PullRequestAction;
       readonly mergeMethod?: PullRequestMergeMethod;
-    }) => Effect.Effect<void, GitLabPullRequestCliError>;
+      readonly removeAgentCreditsOnMerge?: boolean;
+    }) => Effect.Effect<ProviderChangeRequestSummary | void, GitLabPullRequestCliError>;
 
     readonly updateMergeRequest: (input: {
       readonly cwd: string;
@@ -462,6 +467,7 @@ export class GitLabPullRequestCli extends Context.Service<
         readonly reactions: ReadonlyArray<PullRequestReaction>;
         readonly reactionsByNoteId: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
         readonly editedAtByNoteId: ReadonlyMap<string, string>;
+        readonly botLogins: ReadonlySet<string>;
       },
       GitLabPullRequestCliError
     >;
@@ -1088,12 +1094,14 @@ export const make = Effect.gen(function* () {
       readonly reactions: ReadonlyArray<PullRequestReaction>;
       readonly reactionsByNoteId: Map<string, ReadonlyArray<PullRequestReaction>>;
       readonly editedAtByNoteId: Map<string, string>;
+      readonly botLogins: Set<string>;
     } | null;
   }): Effect.Effect<
     {
       readonly reactions: ReadonlyArray<PullRequestReaction>;
       readonly reactionsByNoteId: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
       readonly editedAtByNoteId: ReadonlyMap<string, string>;
+      readonly botLogins: ReadonlySet<string>;
     },
     GitLabPullRequestCliError
   > =>
@@ -1127,11 +1135,13 @@ export const make = Effect.gen(function* () {
           reactions: decoded.success.reactions,
           reactionsByNoteId: new Map<string, ReadonlyArray<PullRequestReaction>>(),
           editedAtByNoteId: new Map<string, string>(),
+          botLogins: new Set<string>(),
         };
         for (const [id, reactions] of decoded.success.reactionsByNoteId)
           collected.reactionsByNoteId.set(id, reactions);
         for (const [id, editedAt] of decoded.success.editedAtByNoteId)
           collected.editedAtByNoteId.set(id, editedAt);
+        for (const login of decoded.success.botLogins) collected.botLogins.add(login);
         return decoded.success.nextCursor === null || input.page >= CONVERSATION_PAGES
           ? Effect.succeed(collected)
           : awardsPage({
@@ -1657,12 +1667,23 @@ export const make = Effect.gen(function* () {
         // no flag for is asked of GitLab directly through the same `api` passthrough the rest of
         // this module writes with.
         if (input.action === "disable-auto-merge") {
-          return yield* api({
+          const result = yield* api({
             cwd: input.cwd,
             host: input.host,
             path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/cancel_merge_when_pipeline_succeeds`,
             method: "POST",
-          }).pipe(Effect.asVoid);
+          });
+          // The other actions run `glab mr`, which prints prose rather than the merge request.
+          const decoded = decodeMergeRequestDetailJson(result.stdout.trim());
+          if (Result.isFailure(decoded)) return;
+          // The decoder fills absent counts with zeros, which would be guesses here.
+          const {
+            additions: _additions,
+            deletions: _deletions,
+            changedFiles: _changedFiles,
+            ...summary
+          } = decoded.success;
+          return summary;
         }
         const executeMr = (subcommand: string, ...flags: ReadonlyArray<string>) =>
           gitlab.execute({
@@ -1678,6 +1699,32 @@ export const make = Effect.gen(function* () {
           }
           const refs = yield* getDiffRefs(input);
           flags.push("--sha", refs.headSha);
+          if (input.removeAgentCreditsOnMerge === true) {
+            // Read after the SHA guard, so a push since then fails the merge instead of
+            // merging commits whose credits these messages don't cover.
+            const messages = yield* graphqlRead({
+              cwd: input.cwd,
+              host: input.host,
+              operation: "getMergeMessages",
+              query: MERGE_MESSAGES_GRAPHQL_QUERY,
+              variables: { fullPath: input.repository, iid: String(input.number) },
+              decode: decodeMergeMessagesJson,
+            });
+            // glab drops an empty message, which would bring the credits back.
+            const clean = (message: string) => {
+              const cleaned = removeAgentCredits(message);
+              return cleaned.trim() === "" ? (messages.title ?? message) : cleaned;
+            };
+            const merge = messages.merge === null ? null : clean(messages.merge);
+            if (merge !== null && merge !== messages.merge) flags.push("--message", merge);
+            const squashes = input.mergeMethod === "squash" || messages.squashOnMerge;
+            const squash = messages.squash === null || !squashes ? null : clean(messages.squash);
+            if (squash !== null && squash !== messages.squash) {
+              // glab takes a squash message only alongside --squash, which changes nothing here.
+              if (!flags.includes("--squash")) flags.push("--squash");
+              flags.push("--squash-message", squash);
+            }
+          }
         }
         yield* executeMr(subcommand!, ...flags);
       },
@@ -1768,7 +1815,7 @@ export const make = Effect.gen(function* () {
           host: input.host,
           path: `${mergeRequest}/notes`,
           method: "POST",
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          // @effect-diagnostics-next-line globalJsonInEffect:off
           stdin: JSON.stringify({ body: input.body }),
         });
       }

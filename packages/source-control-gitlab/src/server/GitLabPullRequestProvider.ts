@@ -1,9 +1,11 @@
+import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import type {
+  PullRequestActor,
   PullRequestCapabilities,
   PullRequestReaction,
   PullRequestReviewDecision,
@@ -221,6 +223,7 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("gitlab"),
     capabilities: CAPABILITIES,
+    mergeMessageRewrite: removeAgentCredits,
     unavailableRequirement: UNAVAILABLE_REQUIREMENT,
 
     getViewer: (input) => cli.getViewerUsername(input).pipe(Effect.mapError(fail("getViewer"))),
@@ -329,6 +332,7 @@ export const make = Effect.gen(function* () {
             reactions: [] as ReadonlyArray<PullRequestReaction>,
             reactionsByNoteId: new Map<string, ReadonlyArray<PullRequestReaction>>(),
             editedAtByNoteId: new Map<string, string>(),
+            botLogins: new Set<string>(),
           }),
         ],
         { concurrency: 4 },
@@ -339,11 +343,17 @@ export const make = Effect.gen(function* () {
             const editedAt = awards.editedAtByNoteId.get(id);
             return editedAt === undefined ? {} : { editedAt };
           };
+          const botLogins = new Set([...awards.botLogins].map((login) => login.toLowerCase()));
+          const withBotFlag = (author: PullRequestActor | null) =>
+            author !== null && botLogins.has(author.login.toLowerCase())
+              ? { ...author, isBot: true }
+              : author;
           return {
             reactions: awards.reactions,
             comments: notes.comments.map((comment) => ({
               ...comment,
               ...edited(comment.id),
+              author: withBotFlag(comment.author),
               reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
             })),
             commentCount: notes.comments.length,
@@ -353,6 +363,7 @@ export const make = Effect.gen(function* () {
               comments: thread.comments.map((comment) => ({
                 ...comment,
                 ...edited(comment.id),
+                author: withBotFlag(comment.author),
                 reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
               })),
             })),
@@ -450,6 +461,7 @@ export const make = Effect.gen(function* () {
           number: input.number,
           action: input.action,
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
+          ...(input.removeAgentCreditsOnMerge === true ? { removeAgentCreditsOnMerge: true } : {}),
         })
         .pipe(Effect.mapError(fail("runAction"))),
     ),
