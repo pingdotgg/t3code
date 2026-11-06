@@ -729,11 +729,11 @@ describe("fix findings handoff", () => {
       url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
       reviewThreads: [],
     });
-    const [chip] = handoff.reviewComments;
-    expect(chip?.text).toContain("Fix the actionable review feedback on this merge request");
-    expect(chip?.text).toContain("The merge request is #42");
-    expect(chip?.text).toContain("inspect the merge request before changing code");
-    expect(chip?.text).not.toMatch(/\bPR\b|pull request/u);
+    const text = handoff.reviewComments.map((comment) => comment.text).join("\n");
+    expect(text).toContain("Fix the actionable review feedback on this merge request");
+    expect(text).toContain("The merge request is #42");
+    expect(text).toContain("inspect the merge request before changing code");
+    expect(text).not.toMatch(/\bPR\b|pull request/u);
   });
 });
 
@@ -1381,9 +1381,13 @@ describe("a second handoff into the same composer", () => {
         checks: [{ name: "lint", status: "failure", description: null, url: null }],
         commentsTruncated: false,
       });
-    const first = appendHandoff({ prompt: "", reviewComments: [] }, fixFindings(42)).prompt;
-    const both = appendHandoff({ prompt: first, reviewComments: [] }, fixFindings(43)).prompt;
-    expect(both.slice(first.length)).toContain("Failing checks:\n> lint");
+    const first = appendHandoff({ prompt: "", reviewComments: [] }, fixFindings(42));
+    const both = appendHandoff(first, fixFindings(43));
+    const checkChips = both.reviewComments.filter((comment) => comment.id.startsWith("pr-checks:"));
+    expect(checkChips.map((comment) => comment.text)).toEqual([
+      expect.stringContaining("- lint"),
+      expect.stringContaining("- lint"),
+    ]);
   });
 
   it("keeps what the reader typed, trailing line breaks aside", () => {
