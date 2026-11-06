@@ -14,12 +14,14 @@ import {
   useVoiceTranscriptionDestination,
 } from "../../speech/useEnvironmentSpeechInput";
 import { chooseAudioDestination, chooseTranscriptCleanup } from "../../speech/voiceConsent";
+import { useEnvironmentScope } from "../../state/session";
 import { toastManager } from "../ui/toast";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
 import { SpeechLanguageSelect } from "./SpeechLanguageSelect";
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 
 vi.mock(import("../../speech/useEnvironmentSpeechInput"), { spy: true });
+vi.mock(import("../../state/session"), { spy: true });
 
 it("preserves the model test transcript when its model is filtered out", async () => {
   const target = new PrimaryConnectionTarget({
@@ -209,6 +211,8 @@ it("opens the selected model's setup wizard before it is downloaded or listed", 
     return fetch(input, init);
   });
   using mocks = new DisposableStack();
+  mocks.defer(() => vi.mocked(useEnvironmentScope).mockReset());
+  vi.mocked(useEnvironmentScope).mockReturnValue(true);
   mocks.defer(() => vi.mocked(useVoiceTranscriptionDestination).mockReset());
   mocks.defer(() => vi.mocked(useEnvironmentSpeechInput).mockReset());
   vi.mocked(useVoiceTranscriptionDestination).mockImplementation(() => ({
@@ -218,8 +222,9 @@ it("opens the selected model's setup wizard before it is downloaded or listed", 
     prepared,
   }));
   // Mirrors the hook: starting with a missing model opens the wizard instead of recording.
-  vi.mocked(useEnvironmentSpeechInput).mockImplementation(() => {
+  vi.mocked(useEnvironmentSpeechInput).mockImplementation((input) => {
     const [open, setOpen] = useState(false);
+    const [ready, setReady] = useState(false);
     return {
       available: true,
       status,
@@ -227,14 +232,17 @@ it("opens the selected model's setup wizard before it is downloaded or listed", 
       transcriptionEnvironmentLabel: target.label,
       setup: {
         open,
-        step: 0,
+        step: ready ? 1 : 0,
         model,
         downloading: false,
         error: null,
         setOpen,
-        download: async () => {},
+        download: async () => setReady(true),
         cancelDownload: async () => {},
-        startRecording: async () => {},
+        startRecording: async () => {
+          input.commitDraft("microphone test", { start: 15, end: 15 });
+          setOpen(false);
+        },
       },
       state: { phase: "idle", error: null, errorAction: null },
       preview: null,
@@ -257,6 +265,11 @@ it("opens the selected model's setup wizard before it is downloaded or listed", 
   await expect.element(screen.getByText("Bilingual", { exact: true })).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: /set up voice input/i }));
   await expect.element(screen.getByRole("dialog", { name: "Set up voice input" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Download model" }));
+  await userEvent.click(screen.getByRole("button", { name: "Start dictating" }));
+  await expect
+    .element(screen.getByRole("status", { name: "Test transcript" }))
+    .toHaveTextContent("microphone test");
 });
 
 it("recovers from a failed download progress poll without notifying, but reports a failed initial load", async () => {

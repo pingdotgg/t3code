@@ -864,6 +864,10 @@ function SpeechModelBrowser(props: {
                       key={model.id}
                       card={card}
                       hidden={!sortedModels.includes(model)}
+                      revealModel={() => {
+                        setSearch("");
+                        setSelection([]);
+                      }}
                       environmentId={props.testEnvironmentId}
                       projectId={props.projectId}
                       projectName={props.projectName}
@@ -884,6 +888,7 @@ function SpeechModelBrowser(props: {
 function TranscriptionTest(props: {
   readonly card: ModelCardProps;
   readonly hidden: boolean;
+  readonly revealModel: () => void;
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId | null;
   readonly projectName: string | null;
@@ -1006,7 +1011,11 @@ function TranscriptionTest(props: {
         onOpenChange={speech.setup.setOpen}
         onDownload={() => void speech.setup.download()}
         onCancelDownload={() => void speech.setup.cancelDownload()}
-        onStartRecording={() => void speech.setup.startRecording()}
+        onStartRecording={() => {
+          if (props.hidden) props.revealModel();
+          setShowTranscript(true);
+          void speech.setup.startRecording();
+        }}
       />
     </>
   );

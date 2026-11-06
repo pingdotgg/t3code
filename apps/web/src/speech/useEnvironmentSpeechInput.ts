@@ -38,7 +38,7 @@ import { runtime } from "../lib/runtime";
 import { useEnvironment } from "../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../state/session";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
-import { bindAudioGrant, readCleanupGrant, useAudioGrant } from "./voiceConsent";
+import { bindAudioGrant, readCleanupGrant, useAudioChoice } from "./voiceConsent";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 const WAITING_STATE: VoiceInputState = { phase: "preparing", error: null, errorAction: null };
@@ -110,13 +110,15 @@ type HookInput = {
  */
 export function useVoiceTranscriptionDestination() {
   const hydrated = useClientSettingsHydrated();
-  const grant = useAudioGrant();
+  const choice = useAudioChoice();
+  const grant = choice === "off" ? null : choice;
   const environmentId = hydrated && grant ? grant.destination.environmentId : null;
   const environment = useEnvironment(environmentId);
   const connection = Option.getOrNull(usePreparedConnection(environmentId));
   const canDictate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const supported = environment?.serverConfig?.environment.capabilities.voiceTranscription === true;
   return {
+    ...(hydrated && choice === null ? { offerFirstRunSetup: true } : {}),
     environmentId,
     grantId: grant?.id ?? null,
     label: environment?.label ?? null,
@@ -433,7 +435,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const start = useStableCallback(async (options?: { readonly setupOnly?: boolean }) => {
     if (latestRef.current.input.disabled) return;
     if (!grantId) {
-      if (latestRef.current.input.offerSetup !== false)
+      if (destination.offerFirstRunSetup && latestRef.current.input.offerSetup !== false)
         await navigate({ to: "/settings/voice", hash: "voice-transcription-destination" });
       return;
     }
@@ -530,7 +532,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   const destinationReady =
     grantId === null
-      ? input.offerSetup !== false
+      ? Boolean(destination.offerFirstRunSetup) && input.offerSetup !== false
       : prepared !== null && status?.prepared === prepared && status.value?.supported !== false;
   return {
     available:

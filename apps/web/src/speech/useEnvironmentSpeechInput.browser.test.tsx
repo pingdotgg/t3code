@@ -167,6 +167,7 @@ const THREAD_ENV = "thread-env";
 function setup(options: { readonly destination?: string | null } = {}) {
   mocks.settings = {};
   setDestination(options.destination ?? null);
+  if (!options.destination) localStorage.removeItem("t3code:voice-audio-grant:v1");
   chooseTranscriptCleanup(false);
   mocks.primaryEnvironmentId = "primary-env";
   mocks.connected = new Set(["primary-env", THREAD_ENV, "env-a", "env-b"]);
@@ -297,6 +298,7 @@ it.each([
   expect(mocks.voice.state.phase).toBe("recording");
   setDestination(next);
   await screen.rerender(<Probe />);
+  if (next === null) expect(mocks.voice.available).toBe(false);
   expect(mocks.voice.state.phase).toBe("idle");
   await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual([]);

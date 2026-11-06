@@ -14,18 +14,19 @@ const AudioGrant = Schema.NullOr(
   Schema.Struct({ id: Schema.String, destination: VoiceTranscriptionDestination }),
 );
 const CleanupGrant = Schema.NullOr(Schema.String);
+const AudioChoice = Schema.Union([AudioGrant, Schema.Literal("off")]);
 const decodeAudioGrant = Schema.decodeSync(Schema.fromJsonString(AudioGrant));
 
-export function useAudioGrant() {
-  return useLocalStorage(AUDIO_KEY, null, AudioGrant)[0];
+export function useAudioChoice() {
+  return useLocalStorage(AUDIO_KEY, null, AudioChoice)[0];
 }
 
 export function chooseAudioDestination(destination: VoiceTranscriptionDestination | null) {
   writeLocalStorageValue(
     AUDIO_KEY,
-    destination && { id: randomUUID(), destination },
+    destination ? { id: randomUUID(), destination } : "off",
     null,
-    AudioGrant,
+    AudioChoice,
   );
 }
 
