@@ -789,15 +789,17 @@ export function LayoutSurfaceHost({
     if (scroller.clientWidth !== viewportWidth) return;
     const left = focusedLeft;
     const right = left + focusedWidth;
-    const viewLeft = scroller.scrollLeft;
-    const viewRight = viewLeft + scroller.clientWidth;
-    let target: number | null = null;
-    if (left < viewLeft - 1) target = left;
-    else if (right > viewRight + 1) target = Math.min(left, right - scroller.clientWidth);
-    if (target === null) return;
-    // The scroll lands at once and the stage springs there on the compositor,
-    // so the composer's caret scroll, right after, finds the pane in place.
-    moveStripCamera(scroller, element, target);
+    return afterPressRelease(() => {
+      const viewLeft = scroller.scrollLeft;
+      const viewRight = viewLeft + scroller.clientWidth;
+      let target: number | null = null;
+      if (left < viewLeft - 1) target = left;
+      else if (right > viewRight + 1) target = Math.min(left, right - scroller.clientWidth);
+      if (target === null) return;
+      // The scroll lands at once and the stage springs there on the compositor,
+      // so the composer's caret scroll, right after, finds the pane in place.
+      moveStripCamera(scroller, element, target);
+    });
   }, [dragging, focusedLeft, focusedPaneId, focusedWidth, stacked, staged, viewportWidth]);
 
   useStripResizeScroll(
@@ -1488,10 +1490,7 @@ function LayoutChatSurface({
   // events are left alone so a pane's own autofocus cannot steal focus.
   const claimFocus = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
-    if (pressesTabClose(event)) return;
-    const store = useLayoutStore.getState();
-    if (selectFocusedTab(store.layout)?.id === tab.id) return;
-    store.focusTab(tab.id);
+    claimPaneFocus(tab.id);
   };
 
   return (
@@ -1711,11 +1710,6 @@ function LayoutSurfaceTabSurface({
   // Focus that lands on the pane (cmd+J, alt+cmd+B, a launcher's letter, a
   // click on its tab) moves the keyboard in.
   usePaneKeyboard(slotRef, focused && !staged, surfaceKeyboardTarget);
-  const claimFocus = (event: React.PointerEvent) => {
-    if (pressesTabClose(event)) return;
-    const store = useLayoutStore.getState();
-    if (selectFocusedTab(store.layout)?.id !== tabId) store.focusTab(tabId);
-  };
   return (
     <div
       ref={slotRef}
@@ -1730,7 +1724,7 @@ function LayoutSurfaceTabSurface({
       )}
       style={placed.style}
       inert={staged}
-      onPointerDownCapture={claimFocus}
+      onPointerDownCapture={() => claimPaneFocus(tabId)}
     >
       <LayoutPaneContext value={paneState}>
         {near ? (
@@ -1788,8 +1782,37 @@ function usePaneKeyboard(
   }, [focused, handBack, paneRef, target]);
 }
 
-function pressesTabClose(event: React.PointerEvent): boolean {
-  return event.target instanceof Element && event.target.closest("[data-tab-close]") !== null;
+let pressRelease: Set<() => void> | null = null;
+
+function claimPaneFocus(tabId: string): void {
+  const store = useLayoutStore.getState();
+  if (selectFocusedTab(store.layout)?.id === tabId) return;
+  holdCameraUntilRelease();
+  store.focusTab(tabId);
+}
+
+function holdCameraUntilRelease(): void {
+  if (pressRelease) return;
+  const waiting = new Set<() => void>();
+  pressRelease = waiting;
+  const release = () => {
+    window.removeEventListener("pointerup", release, true);
+    window.removeEventListener("pointercancel", release, true);
+    pressRelease = null;
+    for (const run of waiting) run();
+  };
+  window.addEventListener("pointerup", release, true);
+  window.addEventListener("pointercancel", release, true);
+}
+
+function afterPressRelease(run: () => void): (() => void) | undefined {
+  const waiting = pressRelease;
+  if (!waiting) {
+    run();
+    return;
+  }
+  waiting.add(run);
+  return () => waiting.delete(run);
 }
 
 /** Preserve focus held outside the strip unless explicitly handed back. An unready pane releases the
@@ -1954,11 +1977,6 @@ function LayoutLauncherSurface({
     related: false,
     visible: true,
   } satisfies LayoutPaneState;
-  const claimFocus = (event: React.PointerEvent) => {
-    if (pressesTabClose(event)) return;
-    const store = useLayoutStore.getState();
-    if (selectFocusedTab(store.layout)?.id !== tabId) store.focusTab(tabId);
-  };
   // Focus that lands on an open launcher (alt+cmd arrows, the overview) moves
   // the keyboard in; a new one takes it as it mounts (useLauncherElement).
   const launcherSlotRef = useRef<HTMLDivElement | null>(null);
@@ -1978,7 +1996,7 @@ function LayoutLauncherSurface({
       )}
       style={placed.style}
       inert={staged || closing}
-      onPointerDownCapture={claimFocus}
+      onPointerDownCapture={() => claimPaneFocus(tabId)}
     >
       <LayoutPaneContext value={paneState}>
         {near ? <LayoutLauncherPane tabId={tabId} context={context} /> : null}
@@ -2028,11 +2046,6 @@ function LayoutPageSurface({
   } satisfies LayoutPaneState;
   const settingsRef = useRef<HTMLDivElement | null>(null);
   usePaneKeyboard(settingsRef, focused && !staged, settingsKeyboardTarget);
-  const claimFocus = (event: React.PointerEvent) => {
-    if (pressesTabClose(event)) return;
-    const store = useLayoutStore.getState();
-    if (selectFocusedTab(store.layout)?.id !== tabId) store.focusTab(tabId);
-  };
   return (
     <div
       ref={settingsRef}
@@ -2050,7 +2063,7 @@ function LayoutPageSurface({
       )}
       style={placed?.style}
       inert={!visible || staged}
-      onPointerDownCapture={claimFocus}
+      onPointerDownCapture={() => claimPaneFocus(tabId)}
     >
       <LayoutPaneContext value={paneState}>{children}</LayoutPaneContext>
       {split && !staged ? <PaneCuts /> : null}
