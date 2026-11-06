@@ -55,7 +55,11 @@ const CourseReadTool = Tool.make("course_read", {
     ThreadManagementService.ThreadManagementService,
     ProcessRunner.ProcessRunner,
   ],
-}).annotate(Tool.Title, "Read course");
+})
+  .annotate(Tool.Title, "Read course")
+  // Codex in approval-required asks before any T3 tool without these hints, which stalls prep threads.
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
 const CourseUpdateTool = Tool.make("course_update", {
   description: "Update course position, a unit's plan, quiz, or pasted transcript.",
   parameters: Schema.Struct({
@@ -75,7 +79,11 @@ const CourseUpdateTool = Tool.make("course_update", {
     CourseService.CourseService,
     ThreadManagementService.ThreadManagementService,
   ],
-}).annotate(Tool.Title, "Update course");
+})
+  .annotate(Tool.Title, "Update course")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, false);
 const CoursePrepareTool = Tool.make("course_prepare", {
   description:
     "Prepare selected course units in a background prep thread. It never posts into the lesson thread.",

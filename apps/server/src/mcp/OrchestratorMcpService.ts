@@ -692,7 +692,7 @@ function stableCommandId(input: {
   );
 }
 
-function stableThreadId(input: {
+export function stableThreadId(input: {
   readonly scope: McpInvocationScope;
   readonly requestKey: string;
   readonly index: number;

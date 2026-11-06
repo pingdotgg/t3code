@@ -1245,9 +1245,11 @@ it.effect("animation_render caches a concept clip and replays it without renderi
 
 it.effect("course_prepare starts a standalone prep thread and sends nothing to the lesson", () => {
   const requests: unknown[] = [];
-  const prepThreadId = ThreadId.make("course-prep-thread");
+  const recordedAtCreate: ThreadId[][] = [];
+  let courses: CourseService.CourseService["Service"] | undefined;
   return Effect.gen(function* () {
     const service = yield* CourseService.CourseService;
+    courses = service;
     const course = yield* service.add({
       lessonThreadId: threadId,
       title: "Signals",
@@ -1258,6 +1260,7 @@ it.effect("course_prepare starts a standalone prep thread and sends nothing to t
     // A plain create_threads request: no subagent relationship, so the lesson is never woken.
     expect(requests).toEqual([
       {
+        clientRequestId: expect.stringContaining(course.id),
         threads: [
           {
             title: "Prep: Signals L1–2",
@@ -1267,7 +1270,9 @@ it.effect("course_prepare starts a standalone prep thread and sends nothing to t
         ],
       },
     ]);
-    expect((yield* service.get({ id: course.id })).prepThreadIds).toEqual([prepThreadId]);
+    // The prep turn may call course_read at once, so its id is recorded before it starts.
+    expect(recordedAtCreate).toEqual([(yield* service.get({ id: course.id })).prepThreadIds]);
+    expect(recordedAtCreate[0]).toHaveLength(1);
     const foreign = yield* service.add({
       lessonThreadId: ThreadId.make("other-course-lesson"),
       title: "Other Signals",
@@ -1301,9 +1306,16 @@ it.effect("course_prepare starts a standalone prep thread and sends nothing to t
         // Every other orchestrator method dies, so a message into the lesson would fail the test.
         Layer.provide(
           Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({
-            createThreads: (_scope, input) =>
-              Effect.sync(() => {
+            createThreads: (scope, input) =>
+              Effect.gen(function* () {
                 requests.push(input);
+                const prepThreadId = OrchestratorMcpService.stableThreadId({
+                  scope,
+                  requestKey: input.clientRequestId ?? "",
+                  index: 0,
+                });
+                const course = yield* courses!.get({ lessonThreadId: threadId }).pipe(Effect.orDie);
+                recordedAtCreate.push([...course.prepThreadIds]);
                 return {
                   threads: [
                     {
