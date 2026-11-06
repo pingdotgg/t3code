@@ -69,6 +69,7 @@ import {
   workEntryRowLabel,
 } from "../../lib/threadActivity";
 import {
+  isJsonToolText,
   toolCallLines,
   turnItemOutputImages,
   turnItemOutputText,
@@ -800,14 +801,16 @@ function WorkspacePreparationRetryButton(props: {
   );
 }
 
-function ReplCodeText({
+function ToolCodeText({
   code,
+  language,
   theme,
 }: {
   readonly code: string;
+  readonly language: "typescript" | "html" | "json";
   readonly theme: "light" | "dark";
 }) {
-  const lines = useMarkdownCodeHighlight({ code, language: "typescript", theme, enabled: true });
+  const lines = useMarkdownCodeHighlight({ code, language, theme, enabled: true });
   let offset = 0;
   const highlighted = lines?.flatMap((line, lineIndex) => {
     const separator = lineIndex > 0 ? "\n" : "";
@@ -1185,20 +1188,32 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
             ) : call ? (
               [
                 call.command,
-                ...(call.args ?? []).map(([key, value]) =>
-                  key === "code" &&
-                  shownItem.type === "dynamic_tool" &&
-                  isJavaScriptReplTool(shownItem.toolName) ? (
+                ...(call.args ?? []).map(([key, value]) => {
+                  const language =
+                    key === "html"
+                      ? "html"
+                      : key === "code" &&
+                          shownItem.type === "dynamic_tool" &&
+                          isJavaScriptReplTool(shownItem.toolName)
+                        ? "typescript"
+                        : isJsonToolText(value)
+                          ? "json"
+                          : null;
+                  return language ? (
                     <View key={key}>
                       <Text className="font-mono text-2xs leading-normal text-foreground-muted">
                         {key}
                       </Text>
-                      <ReplCodeText code={value} theme={props.themeAppearance} />
+                      <ToolCodeText
+                        code={value}
+                        language={language}
+                        theme={props.themeAppearance}
+                      />
                     </View>
                   ) : (
                     `${key} ${value}`
-                  ),
-                ),
+                  );
+                }),
                 call.argsText,
               ]
                 .filter((line) => Boolean(line))
@@ -1211,7 +1226,11 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
                         selectable
                         className="font-mono text-2xs leading-normal text-foreground"
                       >
-                        {line}
+                        {isJsonToolText(line) ? (
+                          <ToolCodeText code={line} language="json" theme={props.themeAppearance} />
+                        ) : (
+                          line
+                        )}
                       </Text>
                     ) : (
                       line
@@ -1219,7 +1238,11 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
                 )
             ) : fullDetail ? (
               <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
-                {fullDetail}
+                {isJsonToolText(fullDetail) ? (
+                  <ToolCodeText code={fullDetail} language="json" theme={props.themeAppearance} />
+                ) : (
+                  fullDetail
+                )}
               </Text>
             ) : null}
             {fetchedOutput ? (
@@ -1230,7 +1253,15 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
                   (!call || call.command || call.args || call.argsText) && "mt-1.5",
                 )}
               >
-                {fetchedOutput}
+                {isJsonToolText(fetchedOutput) ? (
+                  <ToolCodeText
+                    code={fetchedOutput}
+                    language="json"
+                    theme={props.themeAppearance}
+                  />
+                ) : (
+                  fetchedOutput
+                )}
               </Text>
             ) : null}
             {streamsOutput ? null : exitLine}
@@ -1356,11 +1387,13 @@ export function ThreadWorkGroupToggle(props: {
 export function ThreadThinkingRow(props: {
   readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   readonly iconSubtleColor: ColorValue;
+  readonly label?: string;
 }) {
+  const label = props.label ?? "Thinking";
   return (
     <View
       accessible
-      accessibilityLabel="Thinking"
+      accessibilityLabel={label}
       className="-mx-1 min-h-8 flex-row items-center px-1.5 py-0"
       style={{ minHeight: props.rowSizing.estimatedRowHeight }}
     >
@@ -1368,7 +1401,7 @@ export function ThreadThinkingRow(props: {
         key={props.rowSizing.textSizeKey}
         icon="brain"
         iconSubtleColor={props.iconSubtleColor}
-        label="Thinking"
+        label={label}
         showIcon
       />
     </View>
