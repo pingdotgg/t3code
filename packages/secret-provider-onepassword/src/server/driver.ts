@@ -140,10 +140,11 @@ export const listAccounts = Effect.fn("OnePasswordDriver.listAccounts")(function
   const addresses = accounts.value.map(({ url }) =>
     url.startsWith("https://") ? url.slice("https://".length) : url,
   );
+  const users = new Map<string, number>();
+  for (const address of addresses) users.set(address, (users.get(address) ?? 0) + 1);
   return accounts.value.flatMap(({ email, user_uuid }, index): OnePasswordAccountSummary[] => {
     const address = addresses[index] ?? "";
-    const shared = addresses.indexOf(address) !== addresses.lastIndexOf(address);
-    const account = !shared && isAccount(address) ? address : user_uuid;
+    const account = users.get(address) === 1 && isAccount(address) ? address : user_uuid;
     return isAccount(account) ? [{ account, address, email }] : [];
   });
 });
