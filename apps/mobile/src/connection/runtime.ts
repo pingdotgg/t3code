@@ -42,6 +42,7 @@ const layerProvidedClientConnection = layerSnapshotLoader.pipe(
       usageLimitSources: true,
       usageLimitsCommand: true,
       initialFocusAllowlist: FocusFilter.initialAllowlist,
+      providerCatalogsOnDemand: true,
     }),
   ),
   Layer.provideMerge(
