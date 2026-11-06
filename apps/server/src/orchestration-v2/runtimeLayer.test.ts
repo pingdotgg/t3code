@@ -3508,7 +3508,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     (status) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const maintenance = yield* ProjectionReplay.ProjectionReplay;
         const threadId = ThreadId.make(`watch-rebase-${status}`);
         const projectId = ProjectId.make(`watch-rebase-${status}`);
         yield* seedProject({
