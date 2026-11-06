@@ -351,6 +351,21 @@ async function focusAt(editor: Editor, position: number | "end") {
   vi.runOnlyPendingTimers();
 }
 
+it("reopens a long draft scrolled to its caret without taking focus", async () => {
+  // App CSS is not loaded here; give the editor its own scroll box.
+  const style = document.head.appendChild(document.createElement("style"));
+  style.textContent = ".composer-tiptap { max-height: 120px; overflow-y: auto; }";
+  using _style = { [Symbol.dispose]: () => style.remove() };
+  const value = Array.from({ length: 40 }, (_, line) => `line ${line + 1}`).join("\n");
+  await using screen = await mountEditor(value);
+  const { editor } = screen;
+  const scroller = editor.view.dom;
+  expect(document.activeElement).not.toBe(scroller);
+  expect(scroller.scrollTop).toBeGreaterThan(0);
+  const caret = editor.view.coordsAtPos(editor.state.selection.head);
+  expect(caret.bottom).toBeLessThanOrEqual(scroller.getBoundingClientRect().bottom + 1);
+});
+
 describe("Markdown markers around styled text", () => {
   it.each([
     { keys: "{Backspace}", expected: "**** after" },

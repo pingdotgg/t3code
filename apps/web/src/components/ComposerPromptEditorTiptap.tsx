@@ -1527,6 +1527,7 @@ function ComposerPromptEditorTiptapInner(
     selectMarkdownOffset(editor, normalizedExpandedCursor);
     const map = serializeEditorDoc(editor.state.doc);
     if (isFocused) scrollTiptapCaretIntoView(editor);
+    else if (initialSelection) revealCaretInEditor(editor);
     if (pendingCitation) {
       citationRequestRef.current = null;
       const target = map.runs.find(
@@ -1826,6 +1827,15 @@ function selectMarkdownOffset(editor: TiptapEditor, offset: number): void {
 /** Native scrolling follows only real input; explicitly reveal programmatically placed carets. */
 function scrollTiptapCaretIntoView(editor: TiptapEditor): void {
   editor.view.dispatch(editor.state.tr.scrollIntoView());
+}
+
+/** Scrolls only the editor's own box: a mounting composer must not move the timeline or page. */
+function revealCaretInEditor(editor: TiptapEditor): void {
+  const scroller = editor.view.dom;
+  const caret = editor.view.coordsAtPos(editor.state.selection.head);
+  const box = scroller.getBoundingClientRect();
+  if (caret.bottom > box.bottom) scroller.scrollTop += caret.bottom - box.bottom;
+  else if (caret.top < box.top) scroller.scrollTop -= box.top - caret.top;
 }
 
 function caretLineRect(range: Range, edge: "start" | "end"): DOMRect | null {
