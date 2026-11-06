@@ -1,27 +1,23 @@
-import type {
-  BindingHooks,
-  Module,
-  RuntimeWorker,
-} from "@alchemy.run/cloudflare-runtime/core";
+import * as NodeNet from "node:net";
+import * as NodePath from "node:path";
+import type { BindingHooks, Module, RuntimeWorker } from "@alchemy.run/cloudflare-runtime/core";
+import * as Assets from "@alchemy.run/cloudflare-runtime/core/bindings/assets/Assets";
+import * as DurableObjectNamespace from "@alchemy.run/cloudflare-runtime/core/bindings/DurableObjectNamespace";
+import * as Service from "@alchemy.run/cloudflare-runtime/core/bindings/Service";
 import { DEFAULT_COMPATIBILITY_DATE } from "@alchemy.run/cloudflare-runtime/core/internal/constants";
 import * as Runtime from "@alchemy.run/cloudflare-runtime/core/Runtime";
 import * as RuntimeServices from "@alchemy.run/cloudflare-runtime/core/RuntimeServices";
-import * as DurableObjectNamespace from "@alchemy.run/cloudflare-runtime/core/bindings/DurableObjectNamespace";
-import * as Service from "@alchemy.run/cloudflare-runtime/core/bindings/Service";
-import * as Assets from "@alchemy.run/cloudflare-runtime/core/bindings/assets/Assets";
 import * as Credentials from "@distilled.cloud/cloudflare/Credentials";
-import * as FrameworkCore from "../core/index.ts";
 import * as NodeChildProcessSpawner from "@effect/platform-node/NodeChildProcessSpawner";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import * as NodeNet from "node:net";
-import * as NodePath from "node:path";
+import * as FrameworkCore from "../core/index.ts";
 import * as Bundle from "./Bundle.ts";
 import * as DevServer from "./DevServer.ts";
 import * as Runner from "./Runner.ts";
@@ -36,10 +32,7 @@ export interface NextjsWorkerConfig {
   readonly compatibilityDate?: string | undefined;
   readonly compatibilityFlags?: Array<string> | undefined;
   readonly worker?:
-    | Omit<
-        RuntimeWorker<BindingHooks>,
-        "compatibilityDate" | "compatibilityFlags" | "modules"
-      >
+    | Omit<RuntimeWorker<BindingHooks>, "compatibilityDate" | "compatibilityFlags" | "modules">
     | undefined;
 }
 
@@ -117,8 +110,7 @@ export interface NextjsFrameworkOptions {
  */
 export const listEdgeFunctions = (manifest: unknown): Array<string> => {
   if (typeof manifest !== "object" || manifest === null) return [];
-  const functions = (manifest as { functions?: Record<string, unknown> })
-    .functions;
+  const functions = (manifest as { functions?: Record<string, unknown> }).functions;
   return functions === undefined ? [] : Object.keys(functions);
 };
 
@@ -142,8 +134,7 @@ export const makeRunnerConfig = (
   appDir: root,
   configPath: options?.nextjs?.configPath,
   cache: options?.nextjs?.cache ?? "static-assets",
-  compatibilityDate:
-    options?.vite?.compatibilityDate ?? DEFAULT_COMPATIBILITY_DATE,
+  compatibilityDate: options?.vite?.compatibilityDate ?? DEFAULT_COMPATIBILITY_DATE,
   skipNextBuild: options?.nextjs?.skipNextBuild ?? false,
   minify: options?.nextjs?.minify ?? false,
   debug: options?.nextjs?.debug ?? false,
@@ -160,13 +151,9 @@ export const toRuntimeModules = (
 ): Array<Module> =>
   serverModules.flatMap((file): Module | Array<Module> => {
     const asText = () =>
-      typeof file.content === "string"
-        ? file.content
-        : Buffer.from(file.content).toString("utf8");
+      typeof file.content === "string" ? file.content : Buffer.from(file.content).toString("utf8");
     const asBytes = () =>
-      typeof file.content === "string"
-        ? new TextEncoder().encode(file.content)
-        : file.content;
+      typeof file.content === "string" ? new TextEncoder().encode(file.content) : file.content;
     switch (NodePath.extname(file.name)) {
       case ".js":
       case ".mjs":
@@ -193,14 +180,10 @@ export const toRuntimeModules = (
  * SQLite-backed namespace + binding so `doQueue`-configured apps work and
  * `memoryQueue` apps keep parity with the deployed worker shape.
  */
-export const hasDoQueueClass = (
-  entry: FrameworkCore.OutputFile | undefined,
-): boolean => {
+export const hasDoQueueClass = (entry: FrameworkCore.OutputFile | undefined): boolean => {
   if (entry === undefined) return false;
   const content =
-    typeof entry.content === "string"
-      ? entry.content
-      : Buffer.from(entry.content).toString("utf8");
+    typeof entry.content === "string" ? entry.content : Buffer.from(entry.content).toString("utf8");
   return content.includes(DO_QUEUE_CLASS);
 };
 
@@ -282,11 +265,7 @@ const proxyToPort = (
  */
 export const make = (
   options?: NextjsFrameworkOptions,
-): Layer.Layer<
-  FrameworkCore.Framework,
-  never,
-  FileSystem.FileSystem | Path.Path
-> =>
+): Layer.Layer<FrameworkCore.Framework, never, FileSystem.FileSystem | Path.Path> =>
   Layer.effect(
     FrameworkCore.Framework,
     Effect.gen(function* () {
@@ -302,17 +281,12 @@ export const make = (
 
       const spawnerLayer = NodeChildProcessSpawner.layer.pipe(
         Layer.provide(
-          Layer.merge(
-            Layer.succeed(FileSystem.FileSystem)(fs),
-            Layer.succeed(Path.Path)(path),
-          ),
+          Layer.merge(Layer.succeed(FileSystem.FileSystem)(fs), Layer.succeed(Path.Path)(path)),
         ),
       );
 
       const resolveRoot = (override: string | undefined) =>
-        Effect.sync(() =>
-          path.resolve(override ?? options?.root ?? process.cwd()),
-        );
+        Effect.sync(() => path.resolve(override ?? options?.root ?? process.cwd()));
 
       const paths = (root: string, openNextDirectory: string) => ({
         openNextDirectory,
@@ -322,14 +296,10 @@ export const make = (
         workerDirectory: path.resolve(root, "dist", "worker"),
       });
 
-      const build = Effect.fn(function* (
-        buildOptions?: FrameworkCore.FrameworkBuildOptions,
-      ) {
+      const build = Effect.fn(function* (buildOptions?: FrameworkCore.FrameworkBuildOptions) {
         const root = yield* resolveRoot(buildOptions?.root);
         // 1. The OpenNext build pipeline (spawns `next build` internally).
-        const buildPaths = yield* Runner.runOpenNextBuild(
-          makeRunnerConfig(root, options),
-        ).pipe(
+        const buildPaths = yield* Runner.runOpenNextBuild(makeRunnerConfig(root, options)).pipe(
           Effect.mapError((error) => fail(error.message)(error.cause)),
           Effect.provide(spawnerLayer),
           Effect.provideService(FileSystem.FileSystem, fs),
@@ -357,19 +327,15 @@ export const make = (
             catch: fail(`Failed to parse ${manifestPath}`),
           });
           if (edgeRoutes.length > 0) {
-            return yield* Effect.fail(
-              fail(
-                `Edge-runtime routes/pages are not supported by @opennextjs/cloudflare: ${edgeRoutes.join(", ")}. ` +
-                  `Remove \`export const runtime = "edge"\` from these modules — the node runtime runs on Workers.`,
-              )(undefined),
-            );
+            return yield* fail(
+              `Edge-runtime routes/pages are not supported by @opennextjs/cloudflare: ${edgeRoutes.join(", ")}. ` +
+                `Remove \`export const runtime = "edge"\` from these modules — the node runtime runs on Workers.`,
+            )(undefined);
           }
         }
 
         // 2. The final bundle pass (what wrangler does implicitly on deploy).
-        yield* fs
-          .remove(p.workerDirectory, { recursive: true })
-          .pipe(Effect.ignore);
+        yield* fs.remove(p.workerDirectory, { recursive: true }).pipe(Effect.ignore);
         yield* Bundle.bundleWorker({
           openNextDirectory: p.openNextDirectory,
           outDirectory: p.workerDirectory,
@@ -378,23 +344,13 @@ export const make = (
 
         // 3. populateCache, static-assets flavor: prerendered ISR/fetch cache
         //    entries are served read-only through the ASSETS binding.
-        const hasCache = yield* fs
-          .exists(p.cacheDirectory)
-          .pipe(Effect.orElseSucceed(() => false));
+        const hasCache = yield* fs.exists(p.cacheDirectory).pipe(Effect.orElseSucceed(() => false));
         if (hasCache) {
           yield* fs
-            .copy(
-              p.cacheDirectory,
-              path.join(p.clientDirectory, "cdn-cgi", "_next_cache"),
-              {
-                overwrite: true,
-              },
-            )
-            .pipe(
-              Effect.mapError(
-                fail("Failed to populate the static-assets incremental cache"),
-              ),
-            );
+            .copy(p.cacheDirectory, path.join(p.clientDirectory, "cdn-cgi", "_next_cache"), {
+              overwrite: true,
+            })
+            .pipe(Effect.mapError(fail("Failed to populate the static-assets incremental cache")));
         }
 
         // 4. Collect the BuildOutput contract from disk (entry first).
@@ -408,10 +364,7 @@ export const make = (
         const output: FrameworkCore.BuildOutput = {
           distDirectory: p.distDirectory,
           clientDirectory: p.clientDirectory,
-          serverModules: FrameworkCore.sortServerModules(
-            files,
-            WORKER_ENTRY_MODULE,
-          ),
+          serverModules: FrameworkCore.sortServerModules(files, WORKER_ENTRY_MODULE),
           externalWorkspaces: new Set(),
         };
         return output;
@@ -427,15 +380,11 @@ export const make = (
         }
         const scope = yield* Effect.scope;
         return yield* Layer.buildWithScope(makeRuntimeLayer(), scope).pipe(
-          Effect.mapError(
-            fail("Failed to start the cloudflare-runtime services"),
-          ),
+          Effect.mapError(fail("Failed to start the cloudflare-runtime services")),
         );
       });
 
-      const dev = Effect.fn(function* (
-        devOptions?: FrameworkCore.FrameworkDevOptions,
-      ) {
+      const dev = Effect.fn(function* (devOptions?: FrameworkCore.FrameworkDevOptions) {
         const root = yield* resolveRoot(devOptions?.root);
 
         // Dev v2 ("hmr"): real `next dev` (Turbopack HMR) in Node, bindings
@@ -448,20 +397,13 @@ export const make = (
             root,
             port: devOptions?.port,
             bindings: worker?.bindings ?? [],
-            compatibilityDate:
-              options?.vite?.compatibilityDate ?? DEFAULT_COMPATIBILITY_DATE,
+            compatibilityDate: options?.vite?.compatibilityDate ?? DEFAULT_COMPATIBILITY_DATE,
             compatibilityFlags: [
-              ...new Set([
-                "nodejs_compat",
-                ...(options?.vite?.compatibilityFlags ?? []),
-              ]),
+              ...new Set(["nodejs_compat", ...(options?.vite?.compatibilityFlags ?? [])]),
             ],
-            ...(worker?.name !== undefined
-              ? { proxyName: `${worker.name}-dev-proxy` }
-              : {}),
-            logging: options?.nextjs?.debug
-              ? { verbose: true }
-              : worker?.logging,
+            ...(worker?.name !== undefined ? { proxyName: `${worker.name}-dev-proxy` } : {}),
+            ...(worker?.workerd !== undefined ? { workerd: worker.workerd } : {}),
+            logging: options?.nextjs?.debug ? { verbose: true } : worker?.logging,
           }).pipe(Effect.provideContext(context));
           return { url: server.url.href };
         }
@@ -469,13 +411,8 @@ export const make = (
         // Preview parity: always build on dev start (OpenNext memoizes where
         // it can). Watch + rebuild is a later phase.
         const output = yield* build({ root });
-        if (
-          output.serverModules === undefined ||
-          output.serverModules.length === 0
-        ) {
-          return yield* Effect.fail(
-            fail("The build produced no server modules")(undefined),
-          );
+        if (output.serverModules === undefined || output.serverModules.length === 0) {
+          return yield* fail("The build produced no server modules")(undefined);
         }
         const modules = toRuntimeModules(output.serverModules);
         const worker = options?.vite?.worker;
@@ -483,21 +420,16 @@ export const make = (
         const declaresDoQueue = (worker?.durableObjectNamespaces ?? []).some(
           (namespace) => namespace.className === DO_QUEUE_CLASS,
         );
-        const withDoQueue =
-          !declaresDoQueue && hasDoQueueClass(output.serverModules[0]);
+        const withDoQueue = !declaresDoQueue && hasDoQueueClass(output.serverModules[0]);
 
         const context = yield* resolveRuntimeContext();
 
         const url = yield* Runtime.Runtime.use((runtime) =>
           runtime.start({
             name: worker?.name ?? "distilled-nextjs-dev",
-            compatibilityDate:
-              options?.vite?.compatibilityDate ?? DEFAULT_COMPATIBILITY_DATE,
+            compatibilityDate: options?.vite?.compatibilityDate ?? DEFAULT_COMPATIBILITY_DATE,
             compatibilityFlags: [
-              ...new Set([
-                "nodejs_compat",
-                ...(options?.vite?.compatibilityFlags ?? []),
-              ]),
+              ...new Set(["nodejs_compat", ...(options?.vite?.compatibilityFlags ?? [])]),
             ],
             modules,
             bindings: [
@@ -519,33 +451,23 @@ export const make = (
               runWorkerFirst: worker?.assets?.runWorkerFirst ?? true,
             },
             durableObjectNamespaces: [
-              ...(withDoQueue
-                ? [{ className: DO_QUEUE_CLASS, sql: true }]
-                : []),
+              ...(withDoQueue ? [{ className: DO_QUEUE_CLASS, sql: true }] : []),
               ...(worker?.durableObjectNamespaces ?? []),
             ],
-            ...(worker?.hyperdrives !== undefined
-              ? { hyperdrives: worker.hyperdrives }
-              : {}),
+            ...(worker?.hyperdrives !== undefined ? { hyperdrives: worker.hyperdrives } : {}),
             ...(worker?.queueConsumers !== undefined
               ? { queueConsumers: worker.queueConsumers }
               : {}),
             ...(worker?.unsafe !== undefined ? { unsafe: worker.unsafe } : {}),
-            logging: options?.nextjs?.debug
-              ? { verbose: true }
-              : worker?.logging,
+            ...(worker?.workerd !== undefined ? { workerd: worker.workerd } : {}),
+            logging: options?.nextjs?.debug ? { verbose: true } : worker?.logging,
           }),
         ).pipe(
           Effect.provideContext(context),
-          Effect.mapError(
-            fail("Failed to start the dev worker in cloudflare-runtime"),
-          ),
+          Effect.mapError(fail("Failed to start the dev worker in cloudflare-runtime")),
         );
 
-        if (
-          devOptions?.port !== undefined &&
-          String(devOptions.port) !== url.port
-        ) {
+        if (devOptions?.port !== undefined && String(devOptions.port) !== url.port) {
           const proxied = yield* proxyToPort(devOptions.port, url);
           return { url: proxied.href };
         }

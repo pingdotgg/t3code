@@ -119,6 +119,7 @@ it.effect("serves a writer's multipart upload to readers with its digest", () =>
     expect(download.status).toBe(200);
     expect(download.headers.get("x-t3-digest")).toBe(digest);
     expect(download.headers.get("x-t3-build-ms")).toBe("540000");
+    expect(download.headers.get("content-disposition")).toMatch(/filename="[a-f0-9]+\.tgz"$/);
     expect(yield* Effect.promise(() => download.text())).toBe("native client");
 
     const again = yield* request("/uploads", {

@@ -32,8 +32,7 @@ export const BINDING_STREAM_BLOBS = "STREAM_BLOBS";
 /** Loopback fetcher binding used to resolve the runtime's public URL. */
 export const BINDING_STREAM_LOOPBACK = "STREAM_LOOPBACK";
 /** Set when control endpoints (fake timers, storage inspection) are enabled. */
-export const BINDING_STREAM_ENABLE_CONTROL_ENDPOINTS =
-  "STREAM_ENABLE_CONTROL_ENDPOINTS";
+export const BINDING_STREAM_ENABLE_CONTROL_ENDPOINTS = "STREAM_ENABLE_CONTROL_ENDPOINTS";
 
 /** Reserved header carrying `{ name, args }` control operations in tests. */
 export const HEADER_STREAM_CONTROL_OP = "cf-stream-control-op";
@@ -50,6 +49,10 @@ export const PATH_STREAM_PUBLIC_URL = "/stream/public-url";
 /**
  * Path prefix videos are served under, mirroring Miniflare's
  * `CorePaths.STREAM_VIDEO` (`workers/core/constants.ts`): the preview URL of
- * every video is `{publicUrl}/cdn-cgi/mf/stream/<id>/watch`.
+ * every video is `{publicUrl}/__cf_local/stream/<id>/watch`. It sits outside
+ * `/cdn-cgi/` so it stays reachable over tunnels.
  */
-export const PATH_STREAM_VIDEO = "/cdn-cgi/mf/stream";
+export const PATH_STREAM_VIDEO = "/__cf_local/stream";
+
+/** Miniflare's former stream prefix, still served for older preview URLs. */
+export const PATH_STREAM_VIDEO_LEGACY = "/cdn-cgi/mf/stream";

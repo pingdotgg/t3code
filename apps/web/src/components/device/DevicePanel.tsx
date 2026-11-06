@@ -6,7 +6,8 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { ArrowUpRight, CircleAlert, Play, Smartphone, X } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { useAtomMount } from "@effect/atom-react";
+import { type ReactNode, useState } from "react";
 
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import {
@@ -21,7 +22,12 @@ import { WizardPopup } from "~/components/ui/wizard";
 import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
 import { focusPanelTerminalAfterClose } from "~/lib/terminalFocus";
-import { deviceEnvironment, useDeviceState } from "~/state/device";
+import {
+  deviceEnvironment,
+  deviceHostProbeAtom,
+  NO_DEVICE_PROBE_ATOM,
+  useDeviceState,
+} from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLoadingView } from "./DeviceLoadingView";
@@ -43,7 +49,7 @@ export function DevicePanel(props: {
   readonly onDismissSetup: () => void;
 }) {
   const { environmentId, threadId } = props.threadRef;
-  const { state, loaded } = useDeviceState(environmentId);
+  const { state, loaded, error: stateError, refresh: refreshState } = useDeviceState(environmentId);
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const open = useAtomCommand(deviceEnvironment.open);
   const close = useAtomCommand(deviceEnvironment.close);
@@ -61,11 +67,11 @@ export function DevicePanel(props: {
 
   const hostDisabled = state.hostStatus === "disabled";
 
-  // Opening setup never grants permission to install or start helpers.
-  useEffect(() => {
-    if (!props.visible || !loaded || hostDisabled) return;
-    void list({ environmentId, input: {} });
-  }, [environmentId, list, loaded, props.visible, hostDisabled]);
+  useAtomMount(
+    props.visible && loaded && !hostDisabled
+      ? deviceHostProbeAtom(environmentId)
+      : NO_DEVICE_PROBE_ATOM,
+  );
 
   const sessions = state.sessions.filter((session) => session.threadId === threadId);
   const activeSession = props.surface.target
@@ -79,6 +85,9 @@ export function DevicePanel(props: {
     ? state.devices.find(
         (device) => device.hostId === activeSession.hostId && device.id === activeSession.deviceId,
       )
+    : undefined;
+  const activeHost = activeDevice
+    ? state.hosts.find((host) => host.id === activeDevice.hostId)
     : undefined;
 
   const grouped = groupDevices(state);
@@ -163,6 +172,8 @@ export function DevicePanel(props: {
     state.bootingDevices?.filter((device) => device.threadId === threadId) ?? [];
   const { ready: hostReady, busy: hostBusy } = deviceHubReadiness(state);
   const loading = !activeDevice && (pendingDevice !== null || hostBusy || !loaded);
+  // Without a first snapshot a failed subscription never settles on its own.
+  const loadError = loaded ? null : stateError;
   const diagnostics = state.hosts.flatMap((host) => {
     const status = state.hostStatuses[host.id];
     const detail = status?.detail ?? (host.kind === "local" ? state.hostStatusDetail : undefined);
@@ -228,9 +239,8 @@ export function DevicePanel(props: {
               key={`${environmentId}\u0000${deviceKey(activeDevice)}`}
               environmentId={environmentId}
               device={activeDevice}
-              hostLabel={
-                state.hosts.find((host) => host.id === activeDevice.hostId)?.label ?? "Device host"
-              }
+              hostLabel={activeHost?.label ?? "Device host"}
+              hostKind={activeHost?.kind}
               hostDiagnostics={
                 diagnostics.find(({ hostId }) => hostId === activeDevice.hostId)?.detail
               }
@@ -249,15 +259,23 @@ export function DevicePanel(props: {
               }
               stage="opening"
               message={
-                pendingDevice
+                loadError ??
+                (pendingDevice
                   ? pendingDevice.booted
                     ? "Opening device…"
                     : "Starting device…"
                   : state.hostStatus === "installing"
                     ? (state.hostStatusDetail ?? "Installing device support…")
-                    : "Finding devices…"
+                    : "Finding devices…")
               }
-            />
+              error={loadError !== null}
+            >
+              {loadError !== null ? (
+                <Button size="sm" variant="outline" onClick={refreshState}>
+                  Retry
+                </Button>
+              ) : null}
+            </DeviceLoadingView>
           ) : (
             <div className="scrollbar-gutter-both flex size-full flex-col overflow-y-auto px-5 py-8 text-sm text-muted-foreground">
               <div
