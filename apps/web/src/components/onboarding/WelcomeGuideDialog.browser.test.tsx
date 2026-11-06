@@ -251,6 +251,13 @@ it.each([
       New lesson
     </button>,
   ],
+  [
+    "behind another modal's backdrop",
+    <div key="n">
+      <button aria-label="New lesson">New lesson</button>
+      <div style={{ position: "fixed", inset: 0 }} />
+    </div>,
+  ],
 ])("falls back to the centred dialog when a target is %s", async (_case, targets) => {
   using _storage = setup();
   await using _screen = await mount({ targets });

@@ -89,7 +89,7 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
   );
   const [targetElement, setTargetElement] = useState<HTMLElement | null>(null);
   // Remounting after a route change opens the fallback dialog above the page it moved to (Settings).
-  const [routedLookups, setRoutedLookups] = useState(0);
+  const [routeChanges, setRouteChanges] = useState(0);
   const activeTarget = steps[step]?.target;
   const targetSelector = activeTarget?.selector;
   const targetRoute = activeTarget?.route;
@@ -101,30 +101,23 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
     if (!targetSelector) return;
     let cancelled = false;
     const resolveTarget = async () => {
+      const from = window.location.href;
       if (targetRoute) await navigate({ to: targetRoute });
+      if (window.location.href !== from) setRouteChanges((count) => count + 1);
       if (cancelled) return;
       const element = document.querySelector<HTMLElement>(targetSelector);
       element?.scrollIntoView({ block: "center" });
-      // Covered (Settings over the sidebar) or off screen (collapsed sidebar): stay centred.
-      // The tour's own windows and full-screen modal layers (backdrops) don't count as covering it.
+      // Covered (Settings or its backdrop over the sidebar) or off screen (collapsed sidebar): stay
+      // centred. The tour's own layers (card, dialog, backdrop) share a Base UI portal with the card.
       const rect = element?.getBoundingClientRect();
       const top =
         rect &&
         document
           .elementsFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
-          .find((hit) => {
-            if (hit.contains(element)) return true;
-            // The card's positioner wraps it, so look both up and down for the marker.
-            if (hit.closest("[data-tour-card]") || hit.querySelector("[data-tour-card]")) {
-              return false;
-            }
-            const box = hit.getBoundingClientRect();
-            return box.width < window.innerWidth || box.height < window.innerHeight;
-          });
+          .find((hit) => !hit.closest("[data-base-ui-portal]")?.querySelector("[data-tour-card]"));
       const visible = element && top && element.contains(top) ? element : null;
       visible?.setAttribute("data-tour-target", "true");
       setTargetElement(visible);
-      if (targetRoute) setRoutedLookups((count) => count + 1);
     };
     void resolveTarget();
     return () => {
@@ -201,7 +194,7 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
     <>
       {targetCard}
       {showDialog ? (
-        <Dialog key={routedLookups} open onOpenChange={(open) => !open && onClose()}>
+        <Dialog key={routeChanges} open onOpenChange={(open) => !open && onClose()}>
           <WizardPopup size="wide" initialFocus={nextRef} data-tour-card>
             <WizardHeader
               title="Welcome guide"
