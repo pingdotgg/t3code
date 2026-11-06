@@ -97,3 +97,53 @@ it("counts the owner's guest share actions, and only guest message sends", () =>
     feature: "guest_share.create",
   });
 });
+
+it("counts T3 Learn features without their text", () => {
+  expect(
+    commandFeatureUsage(
+      command({
+        ...ids,
+        type: "thread.side_chat.open",
+        anchorThreadId: "lesson-private",
+        anchor: {
+          threadId: "lesson-private",
+          messageId: "message-private",
+          start: 0,
+          end: 6,
+          prefix: "",
+          suffix: "",
+        },
+        excerpt: "secret",
+        createdBy: "user",
+        creationSource: "web",
+      }),
+    ),
+  ).toEqual({ feature: "side_chat.open" });
+  const finish = (discard?: boolean) =>
+    commandFeatureUsage(
+      command({
+        ...ids,
+        type: "thread.side_chat.done",
+        createdBy: "user",
+        creationSource: "web",
+        ...(discard === undefined ? {} : { discard }),
+      }),
+    );
+  expect(finish()).toEqual({ feature: "side_chat.finish", variant: "done" });
+  expect(finish(true)).toEqual({ feature: "side_chat.finish", variant: "discard" });
+  const lesson = { topic: "Secret topic", depth: "overview", purpose: "outcome" };
+  expect(featureUsage(WS_METHODS.lessonCreate, { lesson })).toEqual({
+    feature: "lesson.create",
+    variant: "new_project",
+  });
+  expect(featureUsage(WS_METHODS.lessonCreate, { lesson, projectId: "project-private" })).toEqual({
+    feature: "lesson.create",
+    variant: "in_project",
+  });
+  expect(featureUsage(WS_METHODS.knowledgeRemove, { id: "entry-private" })).toEqual({
+    feature: "knowledge_map.remove",
+  });
+  expect(featureUsage(WS_METHODS.coursesRemove, { id: "course-private" })).toEqual({
+    feature: "course.remove",
+  });
+});

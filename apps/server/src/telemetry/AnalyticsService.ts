@@ -1,4 +1,4 @@
-// T3 ingest retains events and forwards to PostHog; UUIDs deduplicate retries there.
+// Batches go to the PostHog host the install configures; UUIDs deduplicate retries there.
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { ClientOs } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -65,12 +65,9 @@ function retryDelayMs(failures: number, random: number): number {
 }
 
 const TelemetryEnvConfig = Config.all({
-  posthogKey: Config.String("T3CODE_POSTHOG_KEY").pipe(
-    Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),
-  ),
-  posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(
-    Config.withDefault("https://ingest.t3.codes"),
-  ),
+  // T3 Learn: no default key or host, so an opt-in can never reach T3 Code's ingest.
+  posthogKey: Config.String("T3CODE_POSTHOG_KEY").pipe(Config.withDefault("")),
+  posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(Config.withDefault("")),
   // T3 Learn: usage data is off unless T3CODE_TELEMETRY_ENABLED=true (D16).
   enabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.withDefault(false)),
   flushBatchSize: Config.Number("T3CODE_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
@@ -126,9 +123,11 @@ export const make = Effect.gen(function* () {
   // A managed policy can switch analytics off over the environment, never on.
   const policyAllows =
     ManagedPolicy.deniedBy(yield* ManagedPolicy.ManagedPolicy, "telemetry") === undefined;
+  const hasEndpoint =
+    telemetryConfig.posthogKey.trim() !== "" && telemetryConfig.posthogHost.trim() !== "";
   // A cached PATH does not establish consent from the current login shell.
   const telemetryEnabled = Effect.suspend(() => {
-    if (!policyAllows) return Effect.succeed(false);
+    if (!policyAllows || !hasEndpoint) return Effect.succeed(false);
     // T3 Learn: a desktop launch learns a shell-profile opt-in only from the late read below.
     if (!awaitingShellConsent) return Effect.succeed(telemetryConfig.enabled);
     if (hostEnvironment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING === "1")
