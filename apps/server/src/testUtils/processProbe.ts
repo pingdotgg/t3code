@@ -2,7 +2,6 @@
 import * as NodeNet from "node:net";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as TestClock from "effect/testing/TestClock";
 
 export const makeProcessProbe = Effect.gen(function* () {
   const started = yield* Deferred.make<number, Error>();
@@ -49,8 +48,6 @@ export const makeProcessProbe = Effect.gen(function* () {
   return {
     port: address.port,
     started: Deferred.await(started).pipe(
-      Effect.timeout("4 seconds"),
-      TestClock.withLive,
       Effect.tap((pid) =>
         Effect.addFinalizer(() =>
           Effect.gen(function* () {
@@ -67,7 +64,7 @@ export const makeProcessProbe = Effect.gen(function* () {
         ),
       ),
     ),
-    exited: Deferred.await(exited).pipe(Effect.timeout("4 seconds"), TestClock.withLive),
+    exited: Deferred.await(exited),
   };
 });
 
