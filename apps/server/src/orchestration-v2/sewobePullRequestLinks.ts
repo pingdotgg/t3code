@@ -14,7 +14,7 @@ export function rewriteSewobePullRequestLinks(command: OrchestrationV2ServerComm
       host: command.host.replace(/^git\.staging\.sewobe\.de(?::8443)?$/iu, "git.sewobe.local"),
     };
   }
-  if ("url" in command) command = { ...command, url: localUrl(command.url) };
+  if ("url" in command && command.url !== undefined) command = { ...command, url: localUrl(command.url) };
   if ("link" in command && command.link) {
     command = { ...command, link: { ...command.link, url: localUrl(command.link.url) } };
   }

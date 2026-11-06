@@ -1,3 +1,8 @@
+import { driver as gitLabDriver } from "@t3tools/source-control-gitlab/server/driver";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as HttpClient from "effect/http/HttpClient";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
@@ -5081,7 +5086,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(generated?.diffPatch).not.toContain("+uncommitted");
         expect(generated?.changeRequestTemplate).toBe("## Summary\n\n## Testing");
         expect(generated?.policy?.changeRequestInstructions).toContain("Explain the user impact.");
-        expect(providerCalls.some((call) => call.startsWith("pr create"))).toBe(false);
+        expect(created(providerCalls).length > 0).toBe(false);
       }),
   );
 
@@ -5094,7 +5099,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         if (scenario === "detached HEAD") yield* runGit(cwd, ["checkout", "--detach"]);
         let generated = false;
         const { manager } = yield* makeManager({
-          providerScenario: { prListSequence: ["[]"] },
+          providerScenario: { prListSequence: [[]] },
           textGeneration: {
             generatePrContent: () => {
               generated = true;
@@ -5145,7 +5150,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         let generatedBase = "";
         let generatedSummary = "";
         const { manager, providerCalls } = yield* makeManager({
-          providerScenario: { defaultBranch: "trunk", prListSequence: ["[]", "[]"] },
+          providerScenario: { defaultBranch: "trunk", prListSequence: [[], []] },
           textGeneration: {
             generatePrContent: (input) => {
               generatedBase = input.baseBranch;
@@ -5161,8 +5166,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(generatedBase).toBe("trunk");
         expect(generatedSummary).toContain("Feature commit");
         expect(
-          providerCalls.some((call) =>
-            call.includes("pr create --base trunk --head feature/legacy-base"),
+          created(providerCalls).some(
+            (call) => call.baseRefName === "trunk" && call.headSelector === "feature/legacy-base",
           ),
         ).toBe(true);
       }),
@@ -5180,7 +5185,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       base: "main",
       explicit: true,
     },
-  ])("selects the stacked MR target and description base for $name", (scenario) =>
+  ] as const)("selects the stacked MR target and description base for $name", (scenario) =>
     Effect.gen(function* () {
       const cwd = yield* createStackedBranches();
       if (scenario.explicit) {
@@ -5190,7 +5195,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       for (const [head, state] of [
         ["stack/first", scenario.first],
         ["stack/second", scenario.second],
-      ]) {
+      ] as const) {
         if (!head || !state) continue;
         prListByHeadSelector[head] = [
           {
@@ -5242,55 +5247,56 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const git = yield* GitVcsDriver.GitVcsDriver;
       const calls: SourceControlHost.SourceControlProcessInput[] = [];
       let created = false;
-      const provider = yield* GitLabSourceControlProvider.make.pipe(
+      const provider = yield* gitLabDriver.make.pipe(
+        Effect.map((instance) => instance.sourceControl),
         Effect.provide(
-          GitLabCli.layer.pipe(
-            Layer.provideMerge(
-              TestSourceControlHost.layer({
-                git: { execute: git.execute },
-                process: {
-                  run: (input) =>
-                    Effect.sync(() => {
-                      calls.push(input);
-                      if (input.args.includes("POST")) {
-                        created = true;
-                        return TestSourceControlHost.processOutput("{}");
-                      }
-                      if (input.args.includes("projects/:fullpath/merge_requests")) {
-                        const parent = input.args.includes("source_branch=stack/second");
-                        const feature = input.args.includes("source_branch=stack/feature");
-                        return TestSourceControlHost.processOutput(
-                          JSON.stringify(
-                            parent || (feature && created)
-                              ? [
-                                  {
-                                    iid: parent ? 2 : 3,
-                                    title: parent ? "Second layer" : "Feature",
-                                    web_url: `https://gitlab.example/group/repo/-/merge_requests/${parent ? 2 : 3}`,
-                                    source_branch: parent ? "stack/second" : "stack/feature",
-                                    target_branch: parent ? "main" : "stack/second",
-                                    state: "opened",
-                                    source_project_id: 1,
-                                    target_project_id: 1,
-                                  },
-                                ]
-                              : [],
-                          ),
-                        );
-                      }
-                      if (input.args.includes("projects/:fullpath")) {
-                        return TestSourceControlHost.processOutput(
-                          JSON.stringify({
-                            default_branch: "main",
-                            remove_source_branch_after_merge: false,
-                          }),
-                        );
-                      }
-                      throw new Error(`Unexpected GitLab call: ${input.args.join(" ")}`);
-                    }),
-                },
-              }),
-            ),
+          Layer.mergeAll(
+            TestSourceControlHost.layer({
+              git: { execute: git.execute },
+              process: {
+                run: (input) =>
+                  Effect.sync(() => {
+                    calls.push(input);
+                    if (input.args.includes("POST")) {
+                      created = true;
+                      return TestSourceControlHost.processOutput("{}");
+                    }
+                    if (input.args.includes("projects/:fullpath/merge_requests")) {
+                      const parent = input.args.includes("source_branch=stack/second");
+                      const feature = input.args.includes("source_branch=stack/feature");
+                      return TestSourceControlHost.processOutput(
+                        JSON.stringify(
+                          parent || (feature && created)
+                            ? [
+                                {
+                                  iid: parent ? 2 : 3,
+                                  title: parent ? "Second layer" : "Feature",
+                                  web_url: `https://gitlab.example/group/repo/-/merge_requests/${parent ? 2 : 3}`,
+                                  source_branch: parent ? "stack/second" : "stack/feature",
+                                  target_branch: parent ? "main" : "stack/second",
+                                  state: "opened",
+                                  source_project_id: 1,
+                                  target_project_id: 1,
+                                },
+                              ]
+                            : [],
+                        ),
+                      );
+                    }
+                    if (input.args.includes("projects/:fullpath")) {
+                      return TestSourceControlHost.processOutput(
+                        JSON.stringify({
+                          default_branch: "main",
+                          remove_source_branch_after_merge: false,
+                        }),
+                      );
+                    }
+                    throw new Error(`Unexpected GitLab call: ${input.args.join(" ")}`);
+                  }),
+              },
+            }),
+            Layer.mock(SourceControlRateLimit.SourceControlRateLimit)({}),
+            Layer.succeed(HttpClient.HttpClient, HttpClient.make(() => Effect.die("Unexpected HTTP request"))),
           ),
         ),
       );
@@ -6054,6 +6060,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const events: string[] = [];
         const workflows = yield* Effect.forEach([0, 1], () =>
           GitWorkflowService.make.pipe(
+            Effect.provide(Layer.mock(PullRequestService.PullRequestService)({})),
             // Cache the real filesystem result so startImmediately reaches lease acquisition.
             Effect.provideService(FileSystem.FileSystem, {
               ...fileSystem,

@@ -389,7 +389,9 @@ describe("threadWokeAt", () => {
 
 describe("resolveSnoozePresets", () => {
   it("defaults the evening preset to 5 PM", () => {
-    const evening = resolveSnoozePresets(localDate(2026, 4, 8, 10)).find((preset) => preset.id === "at:today:17:00");
+    const evening = resolveSnoozePresets(localDate(2026, 4, 8, 10)).find(
+      (preset) => preset.id === "at:today:17:00",
+    );
     expect(evening?.snoozedUntil).toBe(localDate(2026, 4, 8, 17).toISOString());
   });
   const formatTime = (date: Date) =>
@@ -449,7 +451,7 @@ describe("resolveSnoozePresets", () => {
     expect(menu(localDate(2026, 8, 30, 7, 1))).toEqual([
       "In 1 hour 8:01",
       "In 3 hours 10:01",
-      "This evening 18:00",
+      "This evening 17:00",
       "Tomorrow 9:00",
     ]);
   });

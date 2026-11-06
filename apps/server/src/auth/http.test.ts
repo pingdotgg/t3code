@@ -1,3 +1,4 @@
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as Cause from "effect/Cause";
 import * as Logger from "effect/Logger";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";

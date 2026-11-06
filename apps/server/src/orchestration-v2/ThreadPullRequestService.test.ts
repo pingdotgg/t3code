@@ -106,11 +106,13 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               workspaceRoot: "/repo",
               defaultModelSelection: null,
               scripts: [],
+              pinnedAt: null,
+              archivedAt: null,
               createdAt: "2026-09-20T00:00:00.000Z",
               updatedAt: "2026-09-20T00:00:00.000Z",
               repositoryIdentity: {
                 canonicalKey: "github.com/owner/repo",
-                provider: "github" as const,
+                provider: SourceControlProviderKind.make("github"),
                 locator: {
                   source: "git-remote" as const,
                   remoteName: "origin",
@@ -123,7 +125,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             const dependencies = Layer.mergeAll(
               Layer.mock(Orchestrator.OrchestratorV2)({
                 streamDomainEvents: Stream.never,
-                getShellSnapshot: () =>
+                getPullRequestSnapshot: () =>
                   Effect.succeed({
                     schemaVersion: 2,
                     snapshotSequence: 1,
@@ -164,12 +166,14 @@ describe("ThreadPullRequestServiceV2 reads", () => {
                 resolve: () => Effect.succeed(project.repositoryIdentity),
               }),
               Layer.succeed(ServerActivation.ServerActivation, Effect.void),
+              Path.layer,
+              Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+                shouldRunScopeWork: () => Effect.succeed(true),
+                shouldRunOpportunisticWork: Effect.succeed(true),
+              }),
               Layer.succeed(
-                Crypto.Crypto,
-                Crypto.make({
-                  randomBytes: (size) => new Uint8Array(size).fill(1),
-                  digest: (_algorithm, data) => Effect.succeed(data),
-                }),
+                SecureRandom.SecureRandom,
+                SecureRandom.make((size) => new Uint8Array(size).fill(1)),
               ),
               FileSystem.layerNoop({}),
             );

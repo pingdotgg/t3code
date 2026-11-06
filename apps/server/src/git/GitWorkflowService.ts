@@ -1,5 +1,5 @@
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -423,7 +423,9 @@ export const make = Effect.gen(function* () {
     )(function* (input) {
       yield* ensureGit("regeneratePullRequestDescription", input.cwd);
       const generated = yield* gitManager.generatePullRequestDescription(input);
-      const reference = parseChangeRequestUrl(generated.pullRequest.url);
+      const reference = sourceControlDefinitions.parseChangeRequestUrl(
+        generated.pullRequest.url,
+      )?.link;
       if (!reference) {
         return yield* new GitManagerError({
           operation: "regeneratePullRequestDescription",

@@ -153,10 +153,9 @@ describe("when: HEAD is detached and there are local changes", () => {
     );
 
     assert.deepEqual(quick, {
-      label: "Commit",
+      label: "Create feature branch",
       disabled: false,
-      kind: "run_action",
-      action: "commit",
+      kind: "create_branch",
     });
   });
 });
@@ -434,6 +433,14 @@ describe("when: HEAD is detached and there are no local changes", () => {
       {
         id: "commit",
         label: "Commit",
+        disabled: true,
+        icon: "commit",
+        kind: "run_action",
+        action: "commit",
+      },
+      {
+        id: "commit_dialog",
+        label: "Commit dialog",
         disabled: true,
         icon: "commit",
         kind: "open_dialog",

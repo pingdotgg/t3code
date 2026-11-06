@@ -1,3 +1,4 @@
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { SourceControlProviderError, SourceControlProviderKind } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -48,6 +49,7 @@ export const layerRealGit = GitWorkflow.layer.pipe(
             }),
           ),
       }),
+      Layer.mock(PullRequestService.PullRequestService)({}),
       Layer.mock(TextGeneration.TextGeneration)({}),
       Layer.mock(ProviderRegistry.ProviderRegistry)({}),
       Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
