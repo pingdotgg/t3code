@@ -3419,24 +3419,26 @@ describe("OrchestratorMcpService thread lookup", () => {
     }),
   );
 
-  it.effect("keeps the plain message for an id that matches nothing", () =>
+  it.effect("points an unknown thread id at linked environment lookup", () =>
     Effect.gen(function* () {
-      const { read, send, wait } = yield* failuresFor([]);
-      assert.equal(read.code, "thread_not_found");
-      assert.equal(read.message, `Thread ${bareId} is no longer available.`);
-      assert.equal(send.code, "thread_not_found");
-      assert.equal(send.message, `Thread ${bareId} was not found.`);
-      assert.equal(wait.code, "thread_not_found");
-      assert.equal(wait.message, send.message);
+      const { read, send, wait, sends } = yield* failuresFor([]);
+      for (const error of [read, send, wait]) {
+        assert.equal(error.code, "thread_not_found");
+        assert.include(error.message, "only checked this environment");
+        assert.include(error.message, "t3_environment_links");
+        assert.include(error.message, "environmentId");
+        assert.notInclude(error.message, "Did you mean");
+      }
+      assert.equal(sends, 0);
     }),
   );
 
   it.effect("does not name an mcp: thread that was deleted", () =>
     Effect.gen(function* () {
       const { read, send, wait } = yield* failuresFor([deletedLaunched]);
-      assert.equal(read.message, `Thread ${bareId} is no longer available.`);
-      assert.equal(send.message, `Thread ${bareId} was not found.`);
-      assert.equal(wait.message, send.message);
+      for (const error of [read, send, wait]) {
+        assert.notInclude(error.message, `mcp:${bareId}`);
+      }
     }),
   );
 

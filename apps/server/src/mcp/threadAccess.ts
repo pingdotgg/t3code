@@ -33,7 +33,7 @@ export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")
     code: "thread_not_found",
     message:
       shell === null || shell.deletedAt !== null
-        ? message
+        ? `${message} This lookup only checked this environment. If the thread is on another machine, call \`t3_environment_links\`, then retry with its \`environmentId\`.`
         : `${message} Did you mean \`${prefixed}\`?`,
   });
 });
