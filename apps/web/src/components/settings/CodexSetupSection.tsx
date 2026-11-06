@@ -1,4 +1,4 @@
-import { AuthProvidersManageScope } from "@t3tools/contracts";
+import { AuthProvidersManageScope, ProviderDriverKind } from "@t3tools/contracts";
 import { readPreparedConnection, useEnvironmentScope } from "../../state/session";
 import {
   isAtomCommandInterrupted,
@@ -27,6 +27,8 @@ import {
 } from "react";
 
 import { ensureLocalApi } from "../../localApi";
+import { managedInstanceLocks, useManagedPolicy } from "../../state/managedPolicy";
+import { ManagedControl } from "../ManagedPolicy";
 import { useEnvironmentHttpBaseUrl } from "../../state/environments";
 import { environmentPresentations } from "../../state/presentation";
 import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
@@ -102,6 +104,12 @@ interface CodexSetupSectionProps {
 
 export function CodexSetupSection(props: CodexSetupSectionProps) {
   const [requested, setRequested] = useState(false);
+  // A policy that owns Codex's launch settings also rules out ChatGPT's own runtime.
+  const codexLocks = managedInstanceLocks(
+    useManagedPolicy(props.environmentId),
+    ProviderDriverKind.make("codex"),
+  );
+  const chatGptDenial = codexLocks?.configKeys.has("setupMode") ? codexLocks.reason : undefined;
   const existingState = getOnboardingProviderState(props.provider);
   const existingReady = props.enabled && existingState === "ready";
   const existingAuthenticated = props.provider?.auth.status === "authenticated";
@@ -147,16 +155,18 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
           ) : existingAuthenticated ? (
             <span className="text-xs text-muted-foreground">{existingSummary.headline}</span>
           ) : (
-            <ChatGptConnectionButton
-              size="sm"
-              disabled={props.readOnly}
-              onClick={() => {
-                setRequested(true);
-                props.onModeChange("managed");
-              }}
-            >
-              Continue with ChatGPT
-            </ChatGptConnectionButton>
+            <ManagedControl reason={chatGptDenial}>
+              <ChatGptConnectionButton
+                size="sm"
+                disabled={props.readOnly}
+                onClick={() => {
+                  setRequested(true);
+                  props.onModeChange("managed");
+                }}
+              >
+                Continue with ChatGPT
+              </ChatGptConnectionButton>
+            </ManagedControl>
           )
         }
         secondaryControl={
@@ -914,7 +924,7 @@ function ManagedCodexSetup({
         title="ChatGPT account"
         description={accountDescription}
         control={
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex max-w-88 flex-wrap items-center justify-end gap-2">
             {authActive ? (
               <>
                 {waitingControl}
@@ -999,6 +1009,16 @@ function ManagedCodexSetup({
                     onClick={() => void setup("chatgpt-change-account")}
                   >
                     Use a different account
+                  </Button>
+                ) : null}
+                {allowExistingCli ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={readOnly || busy}
+                    onClick={() => onModeChange("existing")}
+                  >
+                    Use existing CLI
                   </Button>
                 ) : null}
               </>

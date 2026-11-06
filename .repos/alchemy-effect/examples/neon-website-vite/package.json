@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/neon": "workspace:*",
     "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
     "effect": "catalog:",
@@ -27,13 +28,14 @@
     "react-dom": "catalog:"
   },
   "devDependencies": {
+    "@alchemy.run/test": "workspace:*",
     "@tailwindcss/vite": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "@vercel/nft": "catalog:",
     "@vitejs/plugin-react": "catalog:",
     "tailwindcss": "catalog:",
     "typescript": "catalog:",
-    "vite": "catalog:",
-    "@vercel/nft": "catalog:"
+    "vite": "catalog:"
   }
 }

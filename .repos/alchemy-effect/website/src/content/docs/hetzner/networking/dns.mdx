@@ -17,7 +17,7 @@ A [`Zone`](/providers/hetzner/zone) is an apex domain you own —
 trailing dot):
 
 ```typescript
-import * as Hetzner from "alchemy/Hetzner";
+import * as Hetzner from "@alchemy.run/hetzner";
 
 export const Dns = Hetzner.Zone("dns", {
   name: "example.com",
@@ -68,7 +68,7 @@ directly, and calls never pass a zone id:
 
 ```typescript
 import * as Alchemy from "alchemy";
-import * as Hetzner from "alchemy/Hetzner";
+import * as Hetzner from "@alchemy.run/hetzner";
 import * as Effect from "effect/Effect";
 import { Dns } from "./dns.ts";
 
@@ -119,6 +119,27 @@ yield* Hetzner.RecordSet("apex", {
 The managed [Certificate](/hetzner/networking#tls-termination) is
 issued via this same DNS, so the Zone must exist (and be delegated)
 first — Alchemy orders that for you through the references.
+
+## Publish other platforms' records in Hetzner DNS
+
+`Hetzner.DNS.Adapter()` lets a site or service on another platform publish
+its custom-domain records in a Hetzner zone — an AWS website's certificate
+validation and alias records, a Fly site's ACME challenge, and so on:
+
+```typescript
+yield* AWS.Website.StaticSite("Site", {
+  path: "./dist",
+  domain: {
+    name: "www.example.com",
+    dns: Hetzner.DNS.Adapter({ zone: "example.com" }),
+  },
+});
+```
+
+The adapter declares `Hetzner.DNS.RecordList` resources, which add their
+values to each RRSet and leave other values alone. Hetzner can't flatten a
+`CNAME` at the zone apex, so point apex hostnames at addresses. See
+[DNS Adapters](/infrastructure-as-code/dns-adapters).
 
 ## Where next
 
