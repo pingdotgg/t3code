@@ -23,6 +23,7 @@ import * as RunFinalization from "./RunFinalizationService.ts";
 import * as RuntimeRequests from "./RuntimeRequestService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitles from "./ThreadTitleRegenerationService.ts";
+import * as WorktreeBranches from "./WorktreeBranches.ts";
 
 it.effect.each([
   ["starts the next turn after a post-capture Git status failure", false],
@@ -73,6 +74,7 @@ it.effect.each([
       Layer.mergeAll(
         projections,
         observer,
+        Layer.mock(WorktreeBranches.WorktreeBranches)({}),
         Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({
           execute: () =>
             Effect.gen(function* () {

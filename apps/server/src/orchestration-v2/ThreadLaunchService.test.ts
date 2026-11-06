@@ -41,6 +41,7 @@ import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -64,6 +65,7 @@ import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
+import * as WorktreeBranches from "./WorktreeBranches.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -158,8 +160,55 @@ function makeHarness(options: HarnessOptions = {}) {
           worktree: { path: "/repo-worktrees/feature", refName: input.newRefName, headSha: "abc" },
         } as never)),
   );
-  const renameBranch = vi.fn(
-    options.renameBranch ?? ((input) => Effect.succeed({ branch: input.newBranch })),
+  let checkedOutBranch = "";
+  const renameBranch = vi.fn<GitWorkflow.GitWorkflowService["Service"]["renameBranch"]>((input) =>
+    (options.renameBranch ?? ((request) => Effect.succeed({ branch: request.newBranch })))(
+      input,
+    ).pipe(
+      Effect.tap((renamed) =>
+        Effect.sync(() => {
+          checkedOutBranch = renamed.branch;
+        }),
+      ),
+    ),
+  );
+  const branchSynced = Deferred.makeUnsafe<void>();
+  const layerWorktreeBranches = Layer.effect(
+    WorktreeBranches.WorktreeBranches,
+    Effect.map(WorktreeBranches.WorktreeBranches, (branches) => ({
+      ...branches,
+      sync: (input: Parameters<typeof branches.sync>[0]) =>
+        branches.sync(input).pipe(Effect.ensuring(Deferred.succeed(branchSynced, undefined))),
+    })),
+  ).pipe(
+    // Fresh: memoization would otherwise reuse the replay harness's copy, which runs real Git.
+    Layer.provide(Layer.fresh(WorktreeBranches.layer)),
+    Layer.provide(layerOrchestrator),
+    Layer.provide(
+      Layer.mock(ProjectStore.ProjectStoreV2)({
+        getShell: () => Effect.succeedSome({ workspaceRoot: "/repo" }) as never,
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(GitVcsDriver.GitVcsDriver)({
+        execute: (input) =>
+          Effect.succeed({
+            exitCode: ChildProcessSpawner.ExitCode(0),
+            stdout:
+              input.args[0] === "symbolic-ref"
+                ? `refs/heads/${checkedOutBranch}\n`
+                : input.args.includes("--git-common-dir")
+                  ? "/repo/.git\n"
+                  : "index\n",
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          }),
+        resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+        resolveDefaultBranchName: () => Effect.succeed("main"),
+      }),
+    ),
+    Layer.provide(NodeServices.layer),
   );
   const removeWorktree = vi.fn(
     (_input: Parameters<GitWorkflow.GitWorkflowService["Service"]["removeWorktree"]>[0]) =>
@@ -238,6 +287,7 @@ function makeHarness(options: HarnessOptions = {}) {
         layerExternalServices,
         layerThreadManagement,
         layerReceipts,
+        layerWorktreeBranches,
         IdAllocator.layer,
       ),
     ),
@@ -289,6 +339,7 @@ function makeHarness(options: HarnessOptions = {}) {
     removeWorktree,
     deleteLocalBranch,
     renameBranch,
+    branchSynced,
     generateBranchName,
     generateThreadTitle,
     runSetup,
@@ -2270,6 +2321,61 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     }
   }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerFiles)));
 });
+
+it.effect("rebinds every thread sharing the worktree after the generated branch rename", () =>
+  Effect.gen(function* () {
+    const naming = yield* Deferred.make<void>();
+    const allowNaming = yield* Deferred.make<void>();
+    const childRecorded = yield* Deferred.make<void>();
+    const childThread = ThreadId.make("thread:rename-child");
+    const harness = makeHarness({
+      runSetup: (input) =>
+        (input.threadId === childThread
+          ? Deferred.succeed(childRecorded, undefined)
+          : Effect.void
+        ).pipe(Effect.as({ status: "no-script" as const })),
+      generateBranchName: () =>
+        Deferred.succeed(naming, undefined).pipe(
+          Effect.andThen(Deferred.await(allowNaming)),
+          Effect.as({ branch: "generated-branch" }),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const parent = yield* launches.launch(
+        launchInput({
+          command: "launch:rename-parent",
+          thread: "thread:rename-parent",
+          message: "Start",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      yield* Deferred.await(naming);
+      const { branch: temporaryBranch, worktreePath } = (yield* threads.getThreadProjection(
+        parent.threadId,
+      )).thread;
+      assert.isNotNull(temporaryBranch);
+      assert.isNotNull(worktreePath);
+      const child = yield* launches.launch(
+        launchInput({
+          command: "launch:rename-child",
+          thread: childThread,
+          workspace: { type: "existing_worktree", worktreePath, branch: temporaryBranch },
+        }),
+      );
+      yield* Deferred.await(childRecorded);
+      yield* Deferred.succeed(allowNaming, undefined);
+      yield* Deferred.await(harness.branchSynced);
+      for (const threadId of [parent.threadId, child.threadId]) {
+        assert.equal(
+          (yield* threads.getThreadProjection(threadId)).thread.branch,
+          "generated-branch",
+        );
+      }
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
 
 it.effect("cancels tracked setup before provider work is released", () =>
   Effect.gen(function* () {

@@ -301,6 +301,15 @@ export interface GitRemoteStatusOptions {
   readonly refreshUpstream?: boolean;
 }
 
+export const isDefaultBranchName = (branch: string | null, defaultBranch: string | null) =>
+  branch !== null &&
+  (branch === defaultBranch ||
+    (defaultBranch === null && (branch === "main" || branch === "master")));
+
+/** The default branch in the output of `git ls-remote --symref <remote> HEAD`. */
+export const parseRemoteHeadBranch = (stdout: string) =>
+  /^ref: refs\/heads\/(.+)\tHEAD\r?$/m.exec(stdout)?.[1] ?? null;
+
 export class GitVcsDriver extends Context.Service<
   GitVcsDriver,
   {
