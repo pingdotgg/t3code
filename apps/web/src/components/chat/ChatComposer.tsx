@@ -223,9 +223,10 @@ import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
 import {
-  changedSpan,
   cursorAfterRangeReplacement,
   findPullRequestLinks,
+  isPullRequestPage,
+  mapCursor,
   mapUntouchedRange,
   type PastedLink,
   pullRequestContextFromSummary,
@@ -2561,7 +2562,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const current = findPullRequestLinks(prompt);
       const chip = pullRequestChip(pullRequest);
       let remaining = tracked.filter((link) => link.url !== url);
-      let cursor = readComposerSnapshot().expandedCursor;
+      // The editor catches up with an earlier swap only after React commits it.
+      const shown = readComposerSnapshot();
+      let cursor = mapCursor(shown.expandedCursor, shown.value, prompt);
       let applied = false;
       for (const link of tracked.filter((candidate) => candidate.url === url).toReversed()) {
         if (!current.some((found) => found.start === link.start && found.end === link.end)) {
@@ -2596,18 +2599,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const convertPullRequestLinksOnceLoaded = (
     targets: ReadonlyMap<string, NonNullable<ReturnType<typeof resolvePastedPullRequest>>>,
+    selection: { start: number; end: number },
   ) => {
     const before = promptRef.current;
     const targetKey = composerDraftTargetKey;
     // The editor inserts the paste synchronously, so by now the prompt holds it.
     queueMicrotask(() => {
       const after = promptRef.current;
-      const span = changedSpan(before, after);
+      const insertedEnd = after.length - (before.length - selection.end);
       const paste: PastedPullRequests = {
         targetKey,
         snapshot: after,
         links: findPullRequestLinks(after).filter(
-          (link) => targets.has(link.url) && link.start >= span.start && link.end <= span.afterEnd,
+          (link) =>
+            targets.has(link.url) && link.start >= selection.start && link.end <= insertedEnd,
         ),
       };
       const queue = [...new Set(paste.links.map((link) => link.url))];
@@ -2626,7 +2631,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * Pasted pull request links become the chip the `#` menu inserts, as thread links do. One this
    * client has not seen stays text until it loads, then converts if it is still where it landed.
    */
-  const importPastedPullRequestLinks = (text: string, pasteAsText: boolean): string => {
+  const importPastedPullRequestLinks = (
+    text: string,
+    pasteAsText: boolean,
+    selection: { start: number; end: number },
+  ): string => {
     if (pasteAsText || isLiteralPendingAnswer) return text;
     const links = findPullRequestLinks(text);
     if (links.length === 0) return text;
@@ -2635,7 +2644,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     let copiedUpTo = 0;
     for (const link of links) {
       const target = resolvePastedPullRequest(link.url);
-      if (target === null) continue;
+      if (target === null || !isPullRequestPage(link.url, target.input.number)) continue;
       const known = readSharedPullRequestSummary(
         appAtomRegistry,
         target.environmentId,
@@ -2650,12 +2659,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       imported += text.slice(copiedUpTo, link.start) + chip.text;
       copiedUpTo = link.end;
     }
-    if (unknown.size > 0) convertPullRequestLinksOnceLoaded(unknown);
+    if (unknown.size > 0) convertPullRequestLinksOnceLoaded(unknown, selection);
     return imported + text.slice(copiedUpTo);
   };
-  const importFocusedPastePullRequestLinks = useStableCallback((text: string) =>
-    importPastedPullRequestLinks(text, pastingAsTextRef.current),
-  );
+  const importFocusedPastePullRequestLinks = useStableCallback((text: string) => {
+    const end = promptRef.current.length;
+    return importPastedPullRequestLinks(
+      text,
+      pastingAsTextRef.current,
+      composerEditorRef.current?.readSelectionRange() ?? { start: end, end },
+    );
+  });
 
   const insertComposerText = (
     text: string,
@@ -2676,14 +2690,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ) {
       return false;
     }
+    const prompt = promptRef.current;
+    const cursor = position === "cursor" ? readComposerSnapshot().expandedCursor : prompt.length;
     if (options?.clipboardData) {
       text = importPastedPullRequestLinks(
         importPastedComposerText(options.clipboardData, importContextFragment),
         options.pasteAsText === true || consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef),
+        { start: cursor, end: cursor },
       );
     }
-    const prompt = promptRef.current;
-    const cursor = position === "cursor" ? readComposerSnapshot().expandedCursor : prompt.length;
     const needsLeadingSpace =
       (options?.ensureLeadingBoundary ?? false) &&
       cursor > 0 &&

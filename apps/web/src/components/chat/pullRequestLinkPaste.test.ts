@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   cursorAfterRangeReplacement,
   findPullRequestLinks,
+  isPullRequestPage,
+  mapCursor,
   mapUntouchedRange,
 } from "./pullRequestLinkPaste";
 
@@ -31,6 +33,18 @@ describe("findPullRequestLinks", () => {
   });
 });
 
+describe("isPullRequestPage", () => {
+  it.each([
+    [link, true],
+    [`${link}/`, true],
+    [`${link}/commits/1234567`, false],
+    [`${link}?w=1`, false],
+    ["https://github.com/owner/repo/pull/112", false],
+  ])("reads %s as pull request 12's page: %s", (url, expected) => {
+    expect(isPullRequestPage(url, 12)).toBe(expected);
+  });
+});
+
 describe("mapUntouchedRange", () => {
   const before = `see ${link} now`;
   const range = { start: 4, end: 4 + link.length };
@@ -43,6 +57,16 @@ describe("mapUntouchedRange", () => {
     ["after it was deleted", "see  now", null],
   ])("maps a range %s", (_name, after, expected) => {
     expect(mapUntouchedRange(range, before, after)).toEqual(expected);
+  });
+});
+
+describe("mapCursor", () => {
+  it.each([
+    ["before an edit", 2, "abcdef", "abXXcdef", 2],
+    ["after an edit", 5, "abcdef", "abXXcdef", 7],
+    ["inside a replaced span", 3, "abcdef", "abXYZef", 5],
+  ])("maps a caret %s", (_name, cursor, before, after, expected) => {
+    expect(mapCursor(cursor, before, after)).toBe(expected);
   });
 });
 

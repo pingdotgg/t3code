@@ -4,8 +4,7 @@ import type { PullRequestContextMetadata, PullRequestSummary } from "@t3tools/co
 const LINK_OUTSIDE_CODE =
   /(?<fence>(`{3,}|~{3,})[\s\S]*?(?:\2|$))|(?<span>(`+)[^\n]*?\4)|\[[^\]\n]*\]\((?<href>https?:\/\/[^\s)]+)\)|<(?<autolink>https?:\/\/[^\s<>]+)>|(?<bare>https?:\/\/[^\s<>()[\]`]+)/giu;
 const SENTENCE_PUNCTUATION = /[.,:;!?'"*_~]+$/u;
-// A link to one comment, file or commit keeps its anchor, so only the pull request's own page converts.
-const PULL_REQUEST_PAGE = /^[^?#]*\/\d+\/?$/u;
+const ENDS_IN_NUMBER = /^[^?#]*\/\d+\/?$/u;
 
 export interface PastedLink {
   readonly start: number;
@@ -13,7 +12,7 @@ export interface PastedLink {
   readonly url: string;
 }
 
-/** Each bare, `<autolink>` or `[label](url)` pull request page link outside code, in order. */
+/** Each bare, `<autolink>` or `[label](url)` link outside code whose path ends in a number. */
 export function findPullRequestLinks(markdown: string): PastedLink[] {
   if (!/https?:\/\//iu.test(markdown)) return [];
   const links: PastedLink[] = [];
@@ -21,11 +20,16 @@ export function findPullRequestLinks(markdown: string): PastedLink[] {
     const groups = match.groups ?? {};
     const bare = groups.bare?.replace(SENTENCE_PUNCTUATION, "");
     const url = groups.href ?? groups.autolink ?? bare;
-    if (url === undefined || !PULL_REQUEST_PAGE.test(url)) continue;
+    if (url === undefined || !ENDS_IN_NUMBER.test(url)) continue;
     const start = match.index;
     links.push({ start, end: start + (bare ?? match[0]).length, url });
   }
   return links;
+}
+
+/** A link to one comment, file or commit keeps its anchor, so only the pull request's own page converts. */
+export function isPullRequestPage(url: string, number: number): boolean {
+  return new RegExp(`^[^?#]*/${number}/?$`, "u").test(url);
 }
 
 export function pullRequestContextFromSummary(
@@ -46,7 +50,7 @@ export function pullRequestContextFromSummary(
 }
 
 /** The one span `before` and `after` differ in, as `[start, beforeEnd)` and `[start, afterEnd)`. */
-export function changedSpan(
+function changedSpan(
   before: string,
   after: string,
 ): { readonly start: number; readonly beforeEnd: number; readonly afterEnd: number } {
@@ -77,6 +81,14 @@ export function mapUntouchedRange<Range extends { readonly start: number; readon
   if (range.start < span.beforeEnd) return null;
   const shift = span.afterEnd - span.beforeEnd;
   return { ...range, start: range.start + shift, end: range.end + shift };
+}
+
+/** Where a caret in `before` sits in `after`, at the end of the edit when it was inside it. */
+export function mapCursor(cursor: number, before: string, after: string): number {
+  const span = changedSpan(before, after);
+  if (cursor <= span.start) return cursor;
+  if (cursor >= span.beforeEnd) return cursor + span.afterEnd - span.beforeEnd;
+  return span.afterEnd;
 }
 
 /** Keeps a caret on the same text while the range before or around it is replaced. */
