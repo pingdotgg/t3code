@@ -34,11 +34,7 @@ export class Runtime extends Context.Service<
 >()("cloudflare-runtime/Runtime") {}
 
 type BindingRequirements<B extends BindingHooks> =
-  B extends Array<never>
-    ? never
-    : B extends Array<BindingHook<infer R>>
-      ? R
-      : never;
+  B extends Array<never> ? never : B extends Array<BindingHook<infer R>> ? R : never;
 
 export const RuntimeLive = Layer.effect(
   Runtime,
@@ -46,14 +42,10 @@ export const RuntimeLive = Layer.effect(
     const workerd = yield* Workerd.Workerd;
     const storage = yield* Storage.Storage;
     const docker = yield* Docker.Docker;
-    const plugins =
-      yield* PluginContext.pickPluginsFromContext<Globals.Globals>();
+    const plugins = yield* PluginContext.pickPluginsFromContext<Globals.Globals>();
 
     const preparePlugins = Effect.fnUntraced(function* (worker: RuntimeWorker) {
-      const context = yield* PluginContext.make(
-        worker as RuntimeWorker,
-        plugins,
-      );
+      const context = yield* PluginContext.make(worker as RuntimeWorker, plugins);
       const [bindings, { tails, streamingTails }] = yield* Effect.all(
         [
           Effect.all(worker.bindings as ReadonlyArray<BindingHook<never>>, {
@@ -63,13 +55,7 @@ export const RuntimeLive = Layer.effect(
         ],
         { concurrency: "unbounded" },
       );
-      return {
-        config: yield* context.config,
-        context,
-        bindings,
-        tails,
-        streamingTails,
-      };
+      return { config: yield* context.config, context, bindings, tails, streamingTails };
     });
 
     /**
@@ -96,7 +82,7 @@ export const RuntimeLive = Layer.effect(
           ? Effect.forEach([...new Set(names)], (scriptName) =>
               proxy.api.subscribe({ kind: "worker", scriptName }),
             )
-          : Effect.succeed(undefined);
+          : Effect.undefined;
       const [tails, streamingTails] = yield* Effect.all(
         [subscribeAll(worker.tails), subscribeAll(worker.streamingTails)],
         { concurrency: "unbounded" },
@@ -104,99 +90,107 @@ export const RuntimeLive = Layer.effect(
       return { tails, streamingTails };
     });
 
-    const prepareContainers = Effect.fnUntraced(function* (
-      worker: RuntimeWorker,
-    ) {
-      const containers = (worker.durableObjectNamespaces ?? []).flatMap(
-        (namespace) => {
-          if (!namespace.container) return [];
-          return {
-            className: namespace.className,
-            container: namespace.container,
-          };
-        },
-      );
+    const prepareContainers = Effect.fnUntraced(function* (worker: RuntimeWorker) {
+      const containers = (worker.durableObjectNamespaces ?? []).flatMap((namespace) => {
+        if (!namespace.container) return [];
+        return { className: namespace.className, container: namespace.container };
+      });
       if (!containers.length) {
-        return { imageNames: new Map() };
+        return { containerOptions: new Map() };
       }
       // Local development with containers relies on pulling/building `linux/amd64`
       // images, which the Docker daemon on Windows cannot do (it runs Windows
       // containers). Upstream workers-sdk bails out on Windows for the same
       // reason, directing users to WSL.
       if (process.platform === "win32") {
-        return yield* new SystemError({
+        return yield* SystemError.make({
           subtag: "ContainersUnsupportedOnWindows",
-          message:
-            "Local development with containers is not supported on Windows.",
+          message: "Local development with containers is not supported on Windows.",
           hint: "Use WSL to develop the container part of your application, or remove the container configuration if you do not need it.",
         });
       }
-      const imageNames = new Map<string, string>();
+      // workerd container options per Durable Object class name.
+      const containerOptions = new Map<
+        string,
+        WorkerdConfig.Worker_DurableObjectNamespace_ContainerOptions
+      >();
 
-      const registerImage = (
+      /**
+       * Make an image available to Docker and return the name workerd should
+       * use for it. Images with env get a unique alias, which the Docker proxy
+       * maps back to the real tag while injecting the env.
+       */
+      const prepareImage = Effect.fnUntraced(function* (
         className: string,
-        tag: string,
-        env?: Record<string, string>,
-      ) => {
-        if (env) {
-          // To prevent collisions between images with the same tag but different env,
-          // `registerImageEnv` returns a unique alias for the image, which our Docker
-          // proxy server then maps to the actual tag and injects the env variables.
-          return docker
-            .registerImageEnv(className, tag, env)
-            .pipe(
-              Effect.andThen((alias) =>
-                Effect.sync(() => imageNames.set(className, alias)),
-              ),
-            );
+        image: Docker.ContainerImage,
+      ) {
+        let tag: string;
+        if ("tag" in image) {
+          tag = image.tag;
+        } else {
+          tag = docker.generateImageTag(className);
+          if ("imageUri" in image) {
+            yield* docker.pull(tag, image);
+          } else {
+            yield* docker.build(tag, image);
+          }
+          // Each start cleans up ONLY its own image tag when its scope
+          // closes. Do NOT prune other same-name tags as "stale" here: a
+          // dev session starts the worker more than once (precreate stub
+          // → reconcile), and a cleanup that guesses which sibling tags
+          // are dead can untag the tag a live workerd is about to
+          // `docker create` from — every container start then fails and
+          // the session serves 500s until redeploy.
+          yield* Effect.addFinalizer(() =>
+            docker
+              .removeContainer(tag)
+              .pipe(Effect.andThen(docker.removeImageTag(tag)), Effect.ignore),
+          );
         }
-        return Effect.sync(() => imageNames.set(className, tag));
-      };
+        yield* docker.validate(tag);
+        if (image.env) {
+          return yield* docker.registerImageEnv(className, tag, image.env);
+        }
+        return tag;
+      });
 
+      /** A Durable Object-managed container exposes every image by name. */
+      const prepareNamedImages = (
+        className: string,
+        images: Record<string, Docker.ContainerImage>,
+      ) =>
+        Effect.forEach(
+          Object.entries(images),
+          Effect.fnUntraced(function* ([name, image]) {
+            return { name, image: yield* prepareImage(className, image) };
+          }),
+          { concurrency: "unbounded" },
+        );
+
+      // FUSE privileges are decided once per runtime and
+      // resolve alongside the first image build or pull.
       const [, containerEngine] = yield* Effect.forEach(
         containers,
-        ({ className, container }) => {
-          if ("tag" in container) {
-            return docker
-              .validate(container.tag)
-              .pipe(
-                Effect.andThen(
-                  registerImage(className, container.tag, container.env),
-                ),
-              );
+        Effect.fnUntraced(function* ({ className, container }) {
+          if ("images" in container) {
+            const [images, privileges] = yield* Effect.zip(
+              prepareNamedImages(className, container.images),
+              docker.getContainerPrivileges,
+              { concurrent: true },
+            );
+            containerOptions.set(className, { images, privileges });
+          } else {
+            const [imageName, privileges] = yield* Effect.zip(
+              prepareImage(className, container),
+              docker.getContainerPrivileges,
+              { concurrent: true },
+            );
+            containerOptions.set(className, { imageName, privileges });
           }
-          const tag = docker.generateImageTag(className);
-          const prepare =
-            "imageUri" in container
-              ? docker.pull(tag, container)
-              : docker.build(tag, container);
-          return prepare.pipe(
-            Effect.andThen(docker.validate(tag)),
-            Effect.tap(() => {
-              // Each start cleans up ONLY its own image tag when its scope
-              // closes. Do NOT prune other same-name tags as "stale" here: a
-              // dev session starts the worker more than once (precreate stub
-              // → reconcile), and a cleanup that guesses which sibling tags
-              // are dead can untag the tag a live workerd is about to
-              // `docker create` from — every container start then fails and
-              // the session serves 500s until redeploy.
-              return Effect.addFinalizer(() =>
-                docker
-                  .removeContainer(tag)
-                  .pipe(
-                    Effect.andThen(docker.removeImageTag(tag)),
-                    Effect.ignore,
-                  ),
-              );
-            }),
-            Effect.tap(() => registerImage(className, tag, container.env)),
-          );
-        },
+        }),
         { concurrency: "unbounded", discard: true },
-      ).pipe(
-        Effect.zip(docker.getWorkerdDockerConfiguration, { concurrent: true }),
-      );
-      return { imageNames, containerEngine };
+      ).pipe(Effect.zip(docker.getWorkerdDockerConfiguration, { concurrent: true }));
+      return { containerOptions, containerEngine };
     });
 
     return Runtime.of({
@@ -209,13 +203,13 @@ export const RuntimeLive = Layer.effect(
         };
         const [
           { config, context, bindings, tails, streamingTails },
-          { containerEngine, imageNames },
-        ] = yield* Effect.all(
-          [preparePlugins(worker), prepareContainers(worker)],
-          {
-            concurrency: "unbounded",
-          },
-        );
+          { containerEngine, containerOptions },
+        ] = yield* Effect.all([preparePlugins(worker), prepareContainers(worker)], {
+          concurrency: "unbounded",
+        });
+        // Everything slow (image builds/pulls) is done; let the caller retire
+        // whatever must be gone before this workerd boots.
+        if (worker.beforeServe) yield* worker.beforeServe;
         const sockets: Array<WorkerdConfig.Socket> = [
           {
             name: SOCKET_USER_ENTRY,
@@ -242,25 +236,19 @@ export const RuntimeLive = Layer.effect(
                     compatibilityFlags: worker.compatibilityFlags,
                     bindings,
                     modules: worker.modules.map(moduleToWorkerd),
-                    durableObjectNamespaces:
-                      worker.durableObjectNamespaces?.map((namespace) => {
-                        const imageName = imageNames.get(namespace.className);
-                        return {
-                          className: namespace.className,
-                          enableSql: namespace.sql,
-                          uniqueKey:
-                            namespace.uniqueKey ??
-                            defaultDurableObjectUniqueKey(
-                              worker.name,
-                              namespace.className,
-                            ),
-                          ephemeralLocal: namespace.ephemeralLocal,
-                          container: imageName ? { imageName } : undefined,
-                        };
-                      }),
-                    durableObjectStorage: {
-                      localDisk: storage.name,
-                    },
+                    durableObjectNamespaces: worker.durableObjectNamespaces?.map((namespace) => {
+                      const container = containerOptions.get(namespace.className);
+                      return {
+                        className: namespace.className,
+                        enableSql: namespace.sql,
+                        uniqueKey:
+                          namespace.uniqueKey ??
+                          defaultDurableObjectUniqueKey(worker.name, namespace.className),
+                        ephemeralLocal: namespace.ephemeralLocal,
+                        container,
+                      };
+                    }),
+                    durableObjectStorage: { localDisk: storage.name },
                     containerEngine,
                     tails,
                     streamingTails,
@@ -271,12 +259,15 @@ export const RuntimeLive = Layer.effect(
                 ...config.services,
               ],
               extensions: config.extensions,
+              v8Flags: worker.workerd?.v8Flags,
             },
             {
               "debug-port": `127.0.0.1:${pinned?.[SOCKET_DEBUG_PORT] ?? 0}`,
               ...(worker.logging?.verbose ? { verbose: true } : undefined),
             },
             {
+              bin: worker.workerd?.path,
+              env: worker.workerd?.env,
               onOutput: worker.logging?.onOutput,
               onExit: (exit) => {
                 Queue.offerUnsafe(exits, exit);
@@ -290,9 +281,7 @@ export const RuntimeLive = Layer.effect(
             Effect.tap((ports) => context.start(ports)),
             Scope.provide(processScope),
             Effect.onExit((exit) =>
-              Exit.isFailure(exit)
-                ? Scope.close(processScope, exit)
-                : Effect.void,
+              Exit.isFailure(exit) ? Scope.close(processScope, exit) : Effect.void,
             ),
           );
         const ports = yield* startProcess();
@@ -343,7 +332,5 @@ const pinSocket =
   (ports: Workerd.WorkerdPorts) =>
   (socket: WorkerdConfig.Socket): WorkerdConfig.Socket => {
     const port = socket.name === undefined ? undefined : ports[socket.name];
-    return port === undefined
-      ? socket
-      : { ...socket, address: `127.0.0.1:${port}` };
+    return port === undefined ? socket : { ...socket, address: `127.0.0.1:${port}` };
   };
