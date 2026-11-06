@@ -10,6 +10,7 @@ import {
   type OrchestrationV2CheckpointScope,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
@@ -3147,32 +3148,33 @@ it.effect.each(["completed", "failed"] as const)(
         shouldFinalizeRun: () => Effect.succeed(true),
         hasPendingBackgroundWorkForThread: () => Ref.get(pending),
         events: (ids) => {
-          const roster = (hasTask: boolean) =>
-            ({
+          const runningBuild: OrchestrationV2PendingBackgroundTask = {
+            taskId: "running-build",
+            kind: "command",
+          };
+          const roster = (hasTask: boolean): ProviderAdapter.ProviderAdapterV2Event => {
+            const pendingBackgroundTasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask> =
+              hasTask ? [runningBuild] : [];
+            return {
               type: "provider_thread.updated",
               driver,
               providerThread: {
                 id: ids.providerThreadId,
                 driver,
                 appThreadId: ids.threadId,
-                providerSessionId: ProviderSessionId.make(`session:roster-clear-${status}`),
-                pendingBackgroundTasks: hasTask
-                  ? [{ taskId: "running-build", kind: "command", awaited: true }]
-                  : [],
-              },
-            }) as ProviderAdapter.ProviderAdapterV2Event;
+                pendingBackgroundTasks,
+              } as OrchestrationV2ProviderThread,
+            };
+          };
           return Stream.fromIterable([
             roster(true),
             rootTerminalEvent(ids, status),
             roster(false),
           ]).pipe(
-            Stream.mapEffect((event) =>
+            Stream.tap((event) =>
               event.type === "provider_thread.updated"
-                ? Ref.set(
-                    pending,
-                    (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
-                  ).pipe(Effect.as(event))
-                : Effect.succeed(event),
+                ? Ref.set(pending, (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0)
+                : Effect.void,
             ),
           );
         },
