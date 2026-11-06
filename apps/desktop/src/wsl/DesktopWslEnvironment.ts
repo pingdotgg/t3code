@@ -12,7 +12,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { buildRemoteNodeEnvScript } from "@t3tools/ssh/tunnel";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
-import { T3_LEARN_HOME_DIRECTORY } from "@t3tools/shared/t3LearnIdentity";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
@@ -266,7 +265,9 @@ export const buildWslRuntimeInstallScript = (
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
     "set -eu",
-    `runtime_parent="$HOME/${T3_LEARN_HOME_DIRECTORY}/wsl-runtime"`,
+    'home_parent="$HOME/.ominax"',
+    '[ -d "$home_parent" ] || [ ! -d "$HOME/.t3-learn" ] || home_parent="$HOME/.t3-learn"',
+    'runtime_parent="$home_parent/wsl-runtime"',
     `runtime_root="$runtime_parent/${safeRuntimeId}"`,
     `ready_marker="$runtime_root/${WSL_RUNTIME_READY_MARKER}"`,
     "runtime_entry_runs() {",
@@ -355,7 +356,9 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
     "set -eu",
-    `runtime_parent="$HOME/${T3_LEARN_HOME_DIRECTORY}/wsl-runtime"`,
+    'home_parent="$HOME/.ominax"',
+    '[ -d "$home_parent" ] || [ ! -d "$HOME/.t3-learn" ] || home_parent="$HOME/.t3-learn"',
+    'runtime_parent="$home_parent/wsl-runtime"',
     `current_runtime="$runtime_parent/${safeRuntimeId}"`,
     '[ -d "$runtime_parent" ] || exit 0',
     // Serialize pruning so backends cannot select and delete different previous caches.
@@ -406,7 +409,9 @@ export const buildWslRuntimeInvalidateScript = (runtimeId: string): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
     "set -eu",
-    `rm -f "$HOME/${T3_LEARN_HOME_DIRECTORY}/wsl-runtime/${safeRuntimeId}/${WSL_RUNTIME_READY_MARKER}"`,
+    'home_parent="$HOME/.ominax"',
+    '[ -d "$home_parent" ] || [ ! -d "$HOME/.t3-learn" ] || home_parent="$HOME/.t3-learn"',
+    `rm -f "$home_parent/wsl-runtime/${safeRuntimeId}/${WSL_RUNTIME_READY_MARKER}"`,
   ].join("\n");
 };
 

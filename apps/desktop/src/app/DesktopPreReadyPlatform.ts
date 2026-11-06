@@ -93,6 +93,26 @@ export const make = Effect.gen(function* () {
           "applications",
         );
         NodeFS.mkdirSync(applicationsDir, { recursive: true });
+        const legacyDesktopEntryPath = NodePath.posix.join(
+          applicationsDir,
+          DesktopEarlyElectronStartup.legacyLinuxDesktopEntryName,
+        );
+        try {
+          const legacyContent = NodeFS.readFileSync(legacyDesktopEntryPath, "utf8");
+          const executableTargets = [
+            process.execPath,
+            Option.getOrUndefined(linuxDesktopEntryConfig.launcherPath),
+            Option.getOrUndefined(linuxDesktopEntryConfig.appImagePath),
+          ].filter((target): target is string => target !== undefined);
+          if (
+            DesktopEarlyElectronStartup.isOwnedLegacyLinuxDesktopEntry({
+              content: legacyContent,
+              executableTargets,
+            })
+          ) {
+            NodeFS.rmSync(legacyDesktopEntryPath, { force: true });
+          }
+        } catch {}
         const iconPath = Electron.app.isPackaged
           ? NodePath.posix.join(
               applicationsDir,

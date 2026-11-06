@@ -3,6 +3,7 @@ import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  isOwnedLegacyLinuxDesktopEntry,
   restoreEarlyLinuxDeviceScaleFactor,
   resolveEarlyLinuxPasswordStorePreference,
   resolveLinuxDisableFeaturesSwitch,
@@ -10,6 +11,22 @@ import {
 
 describe("DesktopEarlyElectronStartup", () => {
   const joinPath = NodePath.posix.join;
+
+  it("recognizes only a self-written legacy Linux desktop entry", () => {
+    const entry = '[Desktop Entry]\nExec="/opt/ominax/OminaX" %U\n';
+    assert.isTrue(
+      isOwnedLegacyLinuxDesktopEntry({
+        content: entry,
+        executableTargets: ["/opt/ominax/OminaX"],
+      }),
+    );
+    assert.isFalse(
+      isOwnedLegacyLinuxDesktopEntry({
+        content: entry,
+        executableTargets: ["/usr/bin/other-app"],
+      }),
+    );
+  });
 
   it.each([
     {
@@ -20,7 +37,7 @@ describe("DesktopEarlyElectronStartup", () => {
     {
       label: "the default home in production when only T3CODE_HOME is set",
       env: { T3CODE_HOME: "/home/user/.t3" },
-      settingsPath: "/home/user/.t3-learn/userdata/desktop-settings.json",
+      settingsPath: "/home/user/.ominax/userdata/desktop-settings.json",
     },
     {
       label: "T3CODE_HOME in development",

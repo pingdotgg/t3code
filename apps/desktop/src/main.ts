@@ -12,7 +12,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Version output must flush before Electron exits, without acquiring the runtime.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The migration runs synchronously before Effect services are assembled.
+import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
@@ -49,6 +52,9 @@ import * as DesktopBackendPool from "./backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "./backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopNetworkInterfaces from "./backend/DesktopNetworkInterfaces.ts";
 import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
+import { resolveT3LearnHomeFromEnv } from "./app/DesktopConfig.ts";
+import { migrateDesktopRename } from "./app/DesktopRenameMigration.ts";
+import { T3_LEARN_HOME_DIRECTORY } from "@t3tools/shared/t3LearnIdentity";
 import * as DesktopManagedPolicy from "./app/DesktopManagedPolicy.ts";
 import * as DesktopLifecycle from "./app/DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./app/DesktopLinuxUrlHandler.ts";
@@ -88,6 +94,37 @@ if (process.argv.includes("--version")) {
     if (!(error instanceof Error) || !("code" in error) || error.code !== "EPIPE") throw error;
   }
   Electron.app.exit(0);
+}
+
+const earlyIsDevelopment = (process.env.VITE_DEV_SERVER_URL?.trim().length ?? 0) > 0;
+const earlyAppDataDirectory =
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Migration must run before Effect services are assembled.
+  NodeOS.platform() === "win32"
+    ? process.env.APPDATA?.trim() || NodePath.join(NodeOS.homedir(), "AppData", "Roaming")
+    : // oxlint-disable-next-line t3code/no-global-process-runtime -- Migration must run before Effect services are assembled.
+      NodeOS.platform() === "darwin"
+      ? NodePath.join(NodeOS.homedir(), "Library", "Application Support")
+      : process.env.XDG_CONFIG_HOME?.trim() || NodePath.join(NodeOS.homedir(), ".config");
+const earlyExplicitHomeRaw = earlyIsDevelopment
+  ? process.env.T3CODE_HOME
+  : resolveT3LearnHomeFromEnv(process.env);
+const earlyExplicitHome = earlyExplicitHomeRaw?.trim() || undefined;
+const earlyMigration = earlyIsDevelopment
+  ? undefined
+  : Effect.runSync(
+      migrateDesktopRename({
+        homeDirectory: NodeOS.homedir(),
+        appDataDirectory: earlyAppDataDirectory,
+        explicitHome: Option.fromUndefinedOr(earlyExplicitHome),
+      }).pipe(Effect.provideService(FileSystem.FileSystem, DesktopPreReadyFileSystem.make)),
+    );
+// Only when the old home couldn't move: pin it so this launch doesn't start empty in ~/.ominax.
+if (
+  earlyMigration !== undefined &&
+  earlyExplicitHome === undefined &&
+  earlyMigration.homePath !== NodePath.join(NodeOS.homedir(), T3_LEARN_HOME_DIRECTORY)
+) {
+  process.env.OMINAX_HOME = earlyMigration.homePath;
 }
 
 const layerDesktopEnvironment = Layer.unwrap(
