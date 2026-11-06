@@ -13,6 +13,7 @@ import {
 import type { PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -27,6 +28,7 @@ import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLegacySecretKey from "./DesktopLegacySecretKey.ts";
+import { backupOnce } from "./DesktopBackup.ts";
 
 const EncryptedConnectionCatalogDocument = Schema.Struct({
   version: Schema.Literal(1),
@@ -430,35 +432,16 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const backupCatalog = Effect.fn("desktop.connectionCatalogStore.backupCatalog")(function* () {
-    const backupPath = `${catalogPath}.pre-ominax`;
-    const existing = yield* fileSystem.readFile(backupPath).pipe(Effect.option);
-    if (Option.isSome(existing)) return;
-    const bytes = yield* fileSystem.readFile(catalogPath).pipe(
-      Effect.mapError(
-        (cause) =>
-          new DesktopConnectionCatalogStoreProtectionError({
-            operation: "backup-catalog",
-            catalogPath,
-            cause,
-          }),
-      ),
-    );
-    yield* fileSystem.writeFile(backupPath, bytes, { flag: "wx" }).pipe(
-      Effect.catchIf(
-        (cause) => cause.reason._tag === "AlreadyExists",
-        () => Effect.void,
-      ),
-      Effect.mapError(
-        (cause) =>
-          new DesktopConnectionCatalogStoreProtectionError({
-            operation: "backup-catalog",
-            catalogPath,
-            cause,
-          }),
-      ),
-    );
-  });
+  const backupCatalog = backupOnce(fileSystem, catalogPath, `${catalogPath}.pre-ominax`).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DesktopConnectionCatalogStoreProtectionError({
+          operation: "backup-catalog",
+          catalogPath,
+          cause,
+        }),
+    ),
+  );
 
   const migrateLegacyCatalog = Effect.gen(function* () {
     if (!(yield* encryptionAvailable)) {
@@ -537,7 +520,7 @@ export const make = Effect.gen(function* () {
         if (Option.isSome(legacyResult)) {
           const validLegacy = yield* validateJson(legacyResult.value).pipe(Effect.option);
           if (Option.isSome(validLegacy)) {
-            yield* backupCatalog();
+            yield* backupCatalog;
             yield* writeCatalog(validLegacy.value).pipe(
               Effect.mapError(
                 (cause) =>
@@ -551,6 +534,27 @@ export const make = Effect.gen(function* () {
             return Option.some(validLegacy.value);
           }
         }
+      }
+
+      if (!environment.isDevelopment) {
+        const preferred = `${catalogPath}.pre-ominax`;
+        const backupPath = Option.isSome(yield* fileSystem.readFile(preferred).pipe(Effect.option))
+          ? `${catalogPath}.undecryptable-${yield* Clock.currentTimeMillis}`
+          : preferred;
+        yield* fileSystem.rename(catalogPath, backupPath).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("could not quarantine an undecryptable connection catalog", {
+              catalogPath,
+              backupPath,
+              cause,
+            }),
+          ),
+        );
+        yield* Effect.logWarning("connection catalog could not be decrypted; starting empty", {
+          catalogPath,
+          backupPath,
+        });
+        return Option.none<string>();
       }
 
       return yield* Effect.failCause(currentResult.cause);

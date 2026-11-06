@@ -4,13 +4,47 @@ import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeURL from "node:url";
 
-import { assert, describe, it } from "vite-plus/test";
+import { assert, describe, expect, it } from "vite-plus/test";
 
 import { decrypt, encrypt, TOKEN } from "./plant-saved-connection.mjs";
 
 const scriptPath = NodeURL.fileURLToPath(new URL("./plant-saved-connection.mjs", import.meta.url));
 
 describe("plant-saved-connection", () => {
+  it("uses platform defaults and requires the migration backup", () => {
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ominax-plant-default-"));
+    try {
+      const env = { ...process.env, HOME: home };
+      NodeChildProcess.execFileSync(
+        process.execPath,
+        [scriptPath, "plant", "--platform", "linux", "--password", "peanuts"],
+        { env },
+      );
+      const oldFile = NodePath.join(home, ".t3-learn", "userdata", "connection-catalog.json");
+      const currentDir = NodePath.join(home, ".ominax", "userdata");
+      NodeFS.mkdirSync(currentDir, { recursive: true });
+      NodeFS.copyFileSync(oldFile, NodePath.join(currentDir, "connection-catalog.json"));
+      expect(() =>
+        NodeChildProcess.execFileSync(
+          process.execPath,
+          [scriptPath, "check", "--platform", "linux", "--password", "peanuts"],
+          { env },
+        ),
+      ).toThrow();
+      NodeFS.copyFileSync(
+        NodePath.join(currentDir, "connection-catalog.json"),
+        NodePath.join(currentDir, "connection-catalog.json.pre-ominax"),
+      );
+      NodeChildProcess.execFileSync(
+        process.execPath,
+        [scriptPath, "check", "--platform", "linux", "--password", "peanuts"],
+        { env },
+      );
+    } finally {
+      NodeFS.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("plants an old catalog and verifies it after re-encryption", () => {
     const stateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ominax-plant-"));
     const oldPassword = "old-safe-storage-password";

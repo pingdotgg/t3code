@@ -45,6 +45,13 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
       return yield* migrateElectronUserData(input).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
+        Effect.mapError((cause) =>
+          DesktopUserDataInitializationError.fromFileSystem(
+            cause,
+            "inspect",
+            input.appDataDirectory,
+          ),
+        ),
       );
     }
     const legacyPath = path.join(input.appDataDirectory, "T3 Code (Dev)");

@@ -214,11 +214,12 @@ describe("DesktopLinuxUrlHandler", () => {
           },
           {
             command: "xdg-mime",
-            args: ["default", "io.github.aabdel0181.OminaX.desktop", "x-scheme-handler/ominax"],
-          },
-          {
-            command: "xdg-mime",
-            args: ["default", "io.github.aabdel0181.OminaX.desktop", "x-scheme-handler/t3learn"],
+            args: [
+              "default",
+              "io.github.aabdel0181.OminaX.desktop",
+              "x-scheme-handler/ominax",
+              "x-scheme-handler/t3learn",
+            ],
           },
         ]);
       });
@@ -277,11 +278,12 @@ describe("DesktopLinuxUrlHandler", () => {
         },
         {
           command: "xdg-mime",
-          args: ["default", "io.github.aabdel0181.OminaX.desktop", "x-scheme-handler/ominax"],
-        },
-        {
-          command: "xdg-mime",
-          args: ["default", "io.github.aabdel0181.OminaX.desktop", "x-scheme-handler/t3learn"],
+          args: [
+            "default",
+            "io.github.aabdel0181.OminaX.desktop",
+            "x-scheme-handler/ominax",
+            "x-scheme-handler/t3learn",
+          ],
         },
       ]);
     });
@@ -323,7 +325,7 @@ describe("DesktopLinuxUrlHandler", () => {
       assert.equal(recorded.files.length, 1);
       assert.deepEqual(
         recorded.commands.map(({ command }) => command),
-        ["update-desktop-database", "xdg-mime", "xdg-mime"],
+        ["update-desktop-database", "xdg-mime"],
       );
     });
   });
@@ -371,7 +373,7 @@ describe("DesktopLinuxUrlHandler", () => {
 
       assert.deepEqual(
         desktopDatabaseFailed.commands.map(({ command }) => command),
-        ["update-desktop-database", "xdg-mime", "xdg-mime"],
+        ["update-desktop-database", "xdg-mime"],
       );
       assert.equal(xdgMimeFailed.files.length, 1);
       assert.deepEqual(writeFailed.commands, []);
@@ -438,7 +440,7 @@ describe("DesktopLinuxUrlHandler", () => {
           assert.deepEqual(
             recorded.commands.map(({ command }) => command),
             stalledHelper === "update-desktop-database"
-              ? ["update-desktop-database", "xdg-mime", "xdg-mime"]
+              ? ["update-desktop-database", "xdg-mime"]
               : ["update-desktop-database", "xdg-mime"],
           );
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -666,7 +668,6 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
       assert.deepEqual(failing.commands.map(({ command }) => command).slice(1), [
         "update-desktop-database",
         "xdg-mime",
-        "xdg-mime",
       ]);
 
       const recovering: ThemeIconRun = {
@@ -687,7 +688,7 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
       yield* registerWithRealFileSystem(missingSource);
       assert.deepEqual(
         missingSource.commands.map(({ command }) => command),
-        ["update-desktop-database", "xdg-mime", "xdg-mime"],
+        ["update-desktop-database", "xdg-mime"],
       );
 
       yield* fixture.seedCache;
@@ -699,7 +700,7 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
       yield* registerWithRealFileSystem(missingTool);
       assert.deepEqual(
         missingTool.commands.map(({ command }) => command),
-        ["gtk-update-icon-cache", "update-desktop-database", "xdg-mime", "xdg-mime"],
+        ["gtk-update-icon-cache", "update-desktop-database", "xdg-mime"],
       );
     }).pipe(Effect.scoped),
   );

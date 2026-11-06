@@ -52,7 +52,16 @@ export const DesktopConfig = Config.all({
   t3LearnHome: Config.all({
     current: trimmedString(T3_LEARN_HOME_ENV),
     legacy: trimmedString(T3_LEARN_LEGACY.homeEnv),
-  }).pipe(Config.map(({ current, legacy }) => Option.orElse(current, () => legacy))),
+  }).pipe(
+    Config.map(({ current, legacy }) =>
+      Option.fromUndefinedOr(
+        resolveT3LearnHomeFromEnv({
+          [T3_LEARN_HOME_ENV]: Option.getOrUndefined(current),
+          [T3_LEARN_LEGACY.homeEnv]: Option.getOrUndefined(legacy),
+        }),
+      ),
+    ),
+  ),
   devServerUrl: Config.URL("VITE_DEV_SERVER_URL").pipe(Config.option),
   appUserModelIdOverride: trimmedString("T3CODE_DESKTOP_APP_USER_MODEL_ID"),
   devRemoteT3ServerEntryPath: trimmedString("T3CODE_DEV_REMOTE_T3_SERVER_ENTRY_PATH"),

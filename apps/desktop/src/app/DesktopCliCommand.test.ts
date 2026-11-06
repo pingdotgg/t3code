@@ -188,6 +188,10 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const current = yield* commandIn({ home, baseDir: path.join(home, ".ominax") });
       yield* current.install;
       expect(yield* fs.readLink(legacy)).toBe(path.join(home, ".ominax", "bin", "ominax"));
+      expect(yield* fs.readLink(path.join(home, ".local", "bin", "ominax"))).toBe(
+        path.join(home, ".ominax", "bin", "ominax"),
+      );
+      expect((yield* current.state).installedPath).toBe(path.join(home, ".local", "bin", "ominax"));
     }).pipe(Effect.scoped),
   );
 

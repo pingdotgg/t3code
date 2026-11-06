@@ -63,6 +63,7 @@ function layerSafeStorageFor(input: {
   readonly available: boolean;
   readonly availabilityError?: unknown;
   readonly decryptError?: unknown;
+  readonly decryptValue?: string;
 }) {
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
     isEncryptionAvailable:
@@ -82,6 +83,8 @@ function layerSafeStorageFor(input: {
           }),
         );
       }
+
+      if (input.decryptValue !== undefined) return Effect.succeed(input.decryptValue);
 
       const decoded = textDecoder.decode(value);
       if (!decoded.startsWith("enc:")) {
@@ -103,6 +106,7 @@ function layer(
     readonly availableSecretStorage?: boolean;
     readonly availabilityError?: unknown;
     readonly decryptError?: unknown;
+    readonly decryptValue?: string;
     readonly legacyDecrypt?: (encrypted: Uint8Array) => Effect.Effect<Option.Option<string>>;
   },
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
@@ -127,6 +131,7 @@ function layer(
     available: options?.availableSecretStorage ?? true,
     availabilityError: options?.availabilityError,
     decryptError: options?.decryptError,
+    ...(options?.decryptValue === undefined ? {} : { decryptValue: options.decryptValue }),
   });
   const layerDependencies = Layer.mergeAll(
     layerEnvironment,
@@ -147,6 +152,7 @@ const withSavedEnvironments = <A, E, R>(
     readonly availableSecretStorage?: boolean;
     readonly availabilityError?: unknown;
     readonly decryptError?: unknown;
+    readonly decryptValue?: string;
     readonly legacyDecrypt?: (encrypted: Uint8Array) => Effect.Effect<Option.Option<string>>;
   },
 ) =>
@@ -245,6 +251,23 @@ describe("DesktopSavedEnvironments", () => {
       }),
       {
         decryptError: new Error("new key unavailable"),
+        legacyDecrypt: () => Effect.succeedSome("legacy-token"),
+      },
+    ),
+  );
+
+  it.effect("tries the legacy key when the current key returns garbage UTF-8", () =>
+    withSavedEnvironments(
+      Effect.gen(function* () {
+        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+        yield* seedSavedEnvironmentRegistry(Base64.encode(textEncoder.encode("garbage")));
+        assert.deepEqual(
+          yield* savedEnvironments.getSecret(savedRegistryRecord.environmentId),
+          Option.some("legacy-token"),
+        );
+      }),
+      {
+        decryptValue: "\ufffd",
         legacyDecrypt: () => Effect.succeedSome("legacy-token"),
       },
     ),

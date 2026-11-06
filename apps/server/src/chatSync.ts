@@ -14,7 +14,6 @@ const LEGACY_CHAT_SYNC_UNIT = "t3-learn-chat-sync.service";
 
 export const selectChatSyncUnit = (input: {
   readonly ominaxLoaded: boolean;
-  readonly legacyLoaded: boolean;
   readonly ominaxOverride?: string;
   readonly legacyOverride?: string;
 }) =>
@@ -99,17 +98,13 @@ export const layer = Layer.effect(
       run({ command: "systemctl", args: ["--user", "show", name, "-p", "LoadState"] }).pipe(
         Effect.orElseSucceed(() => ({ stdout: "", stderr: "", code: null }) as const),
       );
-    const [ominaxState, legacyState] = yield* Effect.all([
-      loadUnit(CHAT_SYNC_UNIT),
-      loadUnit(LEGACY_CHAT_SYNC_UNIT),
-    ]);
+    const ominaxState = yield* loadUnit(CHAT_SYNC_UNIT);
     const unit = selectChatSyncUnit({
       ominaxLoaded: ominaxState.code === 0 && ominaxState.stdout.trim() === "LoadState=loaded",
-      legacyLoaded: legacyState.code === 0 && legacyState.stdout.trim() === "LoadState=loaded",
       ...(env.OMINAX_CHAT_SYNC_UNIT ? { ominaxOverride: env.OMINAX_CHAT_SYNC_UNIT } : {}),
       ...(env.T3_LEARN_CHAT_SYNC_UNIT ? { legacyOverride: env.T3_LEARN_CHAT_SYNC_UNIT } : {}),
     });
-    const loadState = yield* loadUnit(unit);
+    const loadState = unit === CHAT_SYNC_UNIT ? ominaxState : yield* loadUnit(unit);
     const available =
       loadState.code === 0 &&
       loadState.stdout.trim() === "LoadState=loaded" &&

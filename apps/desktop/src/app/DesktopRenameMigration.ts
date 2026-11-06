@@ -9,39 +9,23 @@ import {
   T3_LEARN_LEGACY,
 } from "@t3tools/shared/t3LearnIdentity";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 
 export interface DesktopRenameMigrationInput {
   readonly homeDirectory: string;
-  readonly appDataDirectory: string;
+  readonly platform?: NodeJS.Platform;
   readonly explicitHome: Option.Option<string>;
   readonly isHomeOwned?: (legacyHome: string) => Effect.Effect<boolean>;
 }
 
 export interface DesktopRenameMigrationResult {
   readonly homePath: string;
-  readonly userDataPath: string;
 }
-
-const isProcessAlive = (pid: number): boolean => {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "EPERM";
-  }
-};
 
 const nativeHomeIsOwned = (legacyHome: string): boolean => {
   const stateDir = NodePath.join(legacyHome, "userdata");
-  const runtimePath = NodePath.join(stateDir, "server-runtime.json");
-  try {
-    const runtime = JSON.parse(NodeFS.readFileSync(runtimePath, "utf8")) as { pid?: unknown };
-    if (typeof runtime.pid === "number" && isProcessAlive(runtime.pid)) return true;
-  } catch {}
-
   const lockPath = NodePath.join(stateDir, "server-owner.sqlite");
   if (!NodeFS.existsSync(lockPath)) return false;
   try {
@@ -64,10 +48,19 @@ const migrateDirectory = Effect.fn("desktop.renameMigration.migrateDirectory")(f
   readonly fs: FileSystem.FileSystem;
   readonly legacyPath: string;
   readonly currentPath: string;
+  readonly platform: NodeJS.Platform;
   readonly isOwned?: () => Effect.Effect<boolean>;
 }) {
   const current = yield* lstat(input.fs, input.currentPath);
-  if (Option.isSome(current)) return input.currentPath;
+  if (Option.isSome(current)) {
+    if (
+      current.value.type === "Directory" &&
+      Option.isNone(yield* lstat(input.fs, input.legacyPath))
+    ) {
+      yield* createLegacyLink(input).pipe(Effect.ignore);
+    }
+    return input.currentPath;
+  }
 
   const legacy = yield* lstat(input.fs, input.legacyPath);
   if (Option.isNone(legacy)) return input.currentPath;
@@ -80,35 +73,65 @@ const migrateDirectory = Effect.fn("desktop.renameMigration.migrateDirectory")(f
     return input.legacyPath;
   }
 
-  const move = input.fs
-    .rename(input.legacyPath, input.currentPath)
-    .pipe(Effect.andThen(input.fs.symlink(input.currentPath, input.legacyPath)));
-  return yield* move.pipe(
+  const renamed = yield* Effect.exit(input.fs.rename(input.legacyPath, input.currentPath));
+  if (Exit.isFailure(renamed)) {
+    yield* Effect.logWarning("could not migrate the legacy desktop home", {
+      legacyPath: input.legacyPath,
+      currentPath: input.currentPath,
+      cause: renamed.cause,
+    });
+    return input.legacyPath;
+  }
+  return yield* createLegacyLink(input).pipe(
     Effect.as(input.currentPath),
     Effect.catch((cause) =>
       input.fs.rename(input.currentPath, input.legacyPath).pipe(
-        Effect.ignore,
-        Effect.andThen(
-          Effect.logWarning("could not migrate the legacy desktop home", {
-            legacyPath: input.legacyPath,
-            currentPath: input.currentPath,
-            cause,
-          }),
-        ),
-        Effect.as(input.legacyPath),
+        Effect.matchEffect({
+          onSuccess: () =>
+            Effect.logWarning("could not migrate the legacy desktop home; move rolled back", {
+              legacyPath: input.legacyPath,
+              currentPath: input.currentPath,
+              cause,
+            }).pipe(Effect.as(input.legacyPath)),
+          onFailure: (rollbackCause) =>
+            Effect.logWarning("could not migrate the legacy desktop home or roll back", {
+              legacyPath: input.legacyPath,
+              currentPath: input.currentPath,
+              cause,
+              rollbackCause,
+            }).pipe(Effect.as(input.currentPath)),
+        }),
       ),
     ),
   );
 });
 
+const createLegacyLink = (input: {
+  readonly fs: FileSystem.FileSystem;
+  readonly legacyPath: string;
+  readonly currentPath: string;
+  readonly platform: NodeJS.Platform;
+}) =>
+  input.fs.symlink(input.currentPath, input.legacyPath).pipe(
+    Effect.catch((cause) =>
+      input.platform === "win32"
+        ? Effect.try({
+            try: () => NodeFS.symlinkSync(input.currentPath, input.legacyPath, "junction"),
+            catch: () => cause,
+          })
+        : Effect.fail(cause),
+    ),
+  );
+
 export const migrateDesktopRename = Effect.fn("desktop.renameMigration.migrate")(function* (
   input: DesktopRenameMigrationInput,
 ) {
   const fs = yield* FileSystem.FileSystem;
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Migration runs before Effect services are assembled.
+  const platform = input.platform ?? process.platform;
   if (Option.isSome(input.explicitHome)) {
     return {
       homePath: input.explicitHome.value,
-      userDataPath: NodePath.join(input.appDataDirectory, T3_LEARN_ELECTRON_USER_DATA),
     } satisfies DesktopRenameMigrationResult;
   }
 
@@ -118,13 +141,13 @@ export const migrateDesktopRename = Effect.fn("desktop.renameMigration.migrate")
     fs,
     legacyPath: legacyHome,
     currentPath: currentHome,
+    platform,
     isOwned: () =>
       input.isHomeOwned?.(legacyHome) ?? Effect.sync(() => nativeHomeIsOwned(legacyHome)),
   });
 
   return {
     homePath,
-    userDataPath: NodePath.join(input.appDataDirectory, T3_LEARN_ELECTRON_USER_DATA),
   } satisfies DesktopRenameMigrationResult;
 });
 
@@ -133,39 +156,11 @@ export const migrateElectronUserData = Effect.fn("desktop.renameMigration.migrat
     const fs = yield* FileSystem.FileSystem;
     const legacyPath = NodePath.join(input.appDataDirectory, T3_LEARN_LEGACY.electronUserData);
     const currentPath = NodePath.join(input.appDataDirectory, T3_LEARN_ELECTRON_USER_DATA);
-    const current = yield* lstat(fs, currentPath);
-    if (Option.isSome(current)) return currentPath;
-    const legacy = yield* lstat(fs, legacyPath);
-    if (Option.isNone(legacy)) return currentPath;
-    if (legacy.value.type === "SymbolicLink") return legacyPath;
-    if (legacy.value.type !== "Directory") return currentPath;
-
-    const link = fs.symlink(currentPath, legacyPath).pipe(
-      Effect.catch((cause) =>
-        input.platform === "win32"
-          ? Effect.try({
-              try: () => NodeFS.symlinkSync(currentPath, legacyPath, "junction"),
-              catch: () => cause,
-            })
-          : Effect.fail(cause),
-      ),
-    );
-    return yield* fs.rename(legacyPath, currentPath).pipe(
-      Effect.andThen(link),
-      Effect.as(currentPath),
-      Effect.catch((cause) =>
-        fs.rename(currentPath, legacyPath).pipe(
-          Effect.ignore,
-          Effect.andThen(
-            Effect.logWarning("could not migrate the legacy Electron user data", {
-              legacyPath,
-              currentPath,
-              cause,
-            }),
-          ),
-          Effect.as(legacyPath),
-        ),
-      ),
-    );
+    return yield* migrateDirectory({
+      fs,
+      legacyPath,
+      currentPath,
+      platform: input.platform,
+    });
   },
 );

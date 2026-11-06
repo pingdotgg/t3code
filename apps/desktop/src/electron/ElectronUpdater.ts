@@ -25,10 +25,16 @@ staging=$(mktemp -d "$(dirname "$app")/.ominax-update.XXXXXX") || { open "$app";
 if ditto -x -k "$zip" "$staging/new"; then
   new=$(ls -d "$staging"/new/*.app 2>/dev/null | head -n 1)
   dest="$(dirname "$app")/$(basename "$new")"
-  [ -n "$new" ] && [ "$dest" != "$app" ] && [ -e "$dest" ] && mv "$dest" "$staging/stale.app"
+  stale=
+  [ -n "$new" ] && [ "$dest" != "$app" ] && [ -e "$dest" ] && mv "$dest" "$staging/stale.app" && stale=1
   if [ -n "$new" ] && mv "$app" "$staging/previous.app"; then
     xattr -dr com.apple.quarantine "$new" 2>/dev/null
-    if mv "$new" "$dest"; then app=$dest; else mv "$staging/previous.app" "$app"; fi
+    if mv "$new" "$dest"; then
+      app=$dest
+    else
+      mv "$staging/previous.app" "$app"
+      [ -n "$stale" ] && mv "$staging/stale.app" "$dest"
+    fi
   fi
 fi
 [ -d "$app" ] && rm -rf "$staging"

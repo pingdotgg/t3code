@@ -34,6 +34,18 @@ const syncFs = <A>(method: string, path: string, run: () => A) =>
 
 /** @public */
 export const make = FileSystem.makeNoop({
+  lstat: (path) =>
+    syncFs("lstat", path, () => {
+      const stats = NodeFS.lstatSync(path);
+      const type = stats.isSymbolicLink()
+        ? "SymbolicLink"
+        : stats.isDirectory()
+          ? "Directory"
+          : stats.isFile()
+            ? "File"
+            : "Unknown";
+      return { ...stats, type } as unknown as FileSystem.File.Info;
+    }),
   exists: (path) =>
     syncFs("exists", path, () => {
       NodeFS.accessSync(path);
@@ -53,6 +65,11 @@ export const make = FileSystem.makeNoop({
     syncFs("writeFileString", path, () =>
       NodeFS.writeFileSync(path, data, { flag: options?.flag ?? "w" }),
     ),
+  readLink: (path) => syncFs("readLink", path, () => NodeFS.readlinkSync(path)),
+  rename: (oldPath, newPath) =>
+    syncFs("rename", oldPath, () => NodeFS.renameSync(oldPath, newPath)),
+  symlink: (fromPath, toPath) =>
+    syncFs("symlink", toPath, () => NodeFS.symlinkSync(fromPath, toPath)),
 });
 
 export const layer = Layer.succeed(FileSystem.FileSystem, make);

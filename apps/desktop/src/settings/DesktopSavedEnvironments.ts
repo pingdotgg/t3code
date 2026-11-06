@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopLegacySecretKey from "../app/DesktopLegacySecretKey.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
+import { backupOnce } from "../app/DesktopBackup.ts";
 
 type PersistedSavedEnvironmentDesktopSsh = NonNullable<
   PersistedSavedEnvironmentRecord["desktopSsh"]
@@ -309,7 +310,9 @@ export const make = Effect.gen(function* () {
           ),
         ),
       );
-      if (Exit.isSuccess(currentResult)) return Option.some(currentResult.value);
+      if (Exit.isSuccess(currentResult) && !currentResult.value.includes("\ufffd")) {
+        return Option.some(currentResult.value);
+      }
 
       if (
         !environment.isDevelopment &&
@@ -317,38 +320,21 @@ export const make = Effect.gen(function* () {
       ) {
         const legacyResult = yield* legacySecretKey.decrypt(secretBytes);
         if (Option.isSome(legacyResult)) {
-          const backupPath = `${environment.savedEnvironmentRegistryPath}.pre-ominax`;
-          const backupExists = yield* fileSystem.readFile(backupPath).pipe(Effect.option);
-          if (Option.isNone(backupExists)) {
-            const original = yield* fileSystem
-              .readFile(environment.savedEnvironmentRegistryPath)
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new DesktopSavedEnvironmentSecretProtectionError({
-                      operation: "backup-secret",
-                      environmentId,
-                      registryPath: environment.savedEnvironmentRegistryPath,
-                      cause,
-                    }),
-                ),
-              );
-            yield* fileSystem.writeFile(backupPath, original, { flag: "wx" }).pipe(
-              Effect.catchIf(
-                (cause) => cause.reason._tag === "AlreadyExists",
-                () => Effect.void,
-              ),
-              Effect.mapError(
-                (cause) =>
-                  new DesktopSavedEnvironmentSecretProtectionError({
-                    operation: "backup-secret",
-                    environmentId,
-                    registryPath: environment.savedEnvironmentRegistryPath,
-                    cause,
-                  }),
-              ),
-            );
-          }
+          yield* backupOnce(
+            fileSystem,
+            environment.savedEnvironmentRegistryPath,
+            `${environment.savedEnvironmentRegistryPath}.pre-ominax`,
+          ).pipe(
+            Effect.mapError(
+              (cause) =>
+                new DesktopSavedEnvironmentSecretProtectionError({
+                  operation: "backup-secret",
+                  environmentId,
+                  registryPath: environment.savedEnvironmentRegistryPath,
+                  cause,
+                }),
+            ),
+          );
 
           const encrypted = yield* safeStorage.encryptString(legacyResult.value).pipe(
             Effect.mapError(
@@ -388,7 +374,16 @@ export const make = Effect.gen(function* () {
         }
       }
 
-      return yield* Effect.failCause(currentResult.cause);
+      return yield* Exit.isFailure(currentResult)
+        ? Effect.failCause(currentResult.cause)
+        : Effect.fail(
+            new DesktopSavedEnvironmentSecretProtectionError({
+              operation: "decrypt-secret",
+              environmentId,
+              registryPath: environment.savedEnvironmentRegistryPath,
+              cause: new Error("current-key secret is not valid UTF-8"),
+            }),
+          );
     }),
   });
 });

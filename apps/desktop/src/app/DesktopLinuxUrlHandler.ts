@@ -256,26 +256,28 @@ export const make = Effect.gen(function* () {
 
   const setDefaultHandler = Effect.scoped(
     Effect.gen(function* () {
-      for (const scheme of schemes) {
-        const command = ChildProcess.make(
-          "xdg-mime",
-          ["default", environment.linuxDesktopEntryName, `x-scheme-handler/${scheme}`],
-          {
-            stdin: "ignore",
-            stdout: "ignore",
-            stderr: "ignore",
-            forceKillAfter: "1 second",
-          },
-        );
-        const handle = yield* spawner.spawn(command);
-        const exitCode = yield* handle.exitCode.pipe(Effect.timeout("5 seconds"));
-        if (exitCode !== 0) {
-          return yield* new DesktopLinuxUrlHandlerRegistrationError({
-            step: "set-default-handler",
-            scheme,
-            exitCode,
-          });
-        }
+      const command = ChildProcess.make(
+        "xdg-mime",
+        [
+          "default",
+          environment.linuxDesktopEntryName,
+          ...schemes.map((scheme) => `x-scheme-handler/${scheme}`),
+        ],
+        {
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "ignore",
+          forceKillAfter: "1 second",
+        },
+      );
+      const handle = yield* spawner.spawn(command);
+      const exitCode = yield* handle.exitCode.pipe(Effect.timeout("5 seconds"));
+      if (exitCode !== 0) {
+        return yield* new DesktopLinuxUrlHandlerRegistrationError({
+          step: "set-default-handler",
+          scheme: schemes[0] ?? "",
+          exitCode,
+        });
       }
     }),
   ).pipe(
@@ -284,7 +286,7 @@ export const make = Effect.gen(function* () {
         ? error
         : new DesktopLinuxUrlHandlerRegistrationError({
             step: "set-default-handler",
-            scheme,
+            scheme: schemes[0] ?? "",
             cause: error,
           }),
     ),

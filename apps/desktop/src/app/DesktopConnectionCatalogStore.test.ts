@@ -277,7 +277,7 @@ describe("DesktopConnectionCatalogStore", () => {
     ),
   );
 
-  it.effect("surfaces a catalog that can no longer be decrypted without deleting it", () =>
+  it.effect("quarantines a catalog that neither key can decrypt", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -292,24 +292,19 @@ describe("DesktopConnectionCatalogStore", () => {
 
       assert.isTrue(yield* store.set(validCatalog));
       yield* Ref.set(failDecrypt, true);
-      const error = yield* store.get.pipe(Effect.flip);
-      assert.instanceOf(
-        error,
-        DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreProtectionError,
-      );
-      assert.equal(error.operation, "decrypt-catalog");
-      assert.equal(error.catalogPath, path.join(baseDir, "userdata", "connection-catalog.json"));
-      assert.instanceOf(error.cause, ElectronSafeStorage.ElectronSafeStorageDecryptError);
-      const decryptError = error.cause as ElectronSafeStorage.ElectronSafeStorageDecryptError;
-      assert.instanceOf(decryptError.cause, Error);
-      assert.equal(decryptError.cause.message, "invalid encrypted catalog");
+      assert.deepStrictEqual(yield* store.get, Option.none());
       assert.equal(
-        error.message,
-        `Desktop connection catalog protection failed during decrypt-catalog at ${path.join(baseDir, "userdata", "connection-catalog.json")}.`,
+        yield* fileSystem.exists(path.join(baseDir, "userdata", "connection-catalog.json")),
+        false,
       );
-      assert.notEqual(error.message, decryptError.message);
+      assert.equal(
+        yield* fileSystem.exists(
+          path.join(baseDir, "userdata", "connection-catalog.json.pre-ominax"),
+        ),
+        true,
+      );
       yield* Ref.set(failDecrypt, false);
-      assert.deepStrictEqual(yield* store.get, Option.some(validCatalog));
+      assert.deepStrictEqual(yield* store.get, Option.none());
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
@@ -336,6 +331,27 @@ describe("DesktopConnectionCatalogStore", () => {
           ),
           original,
         );
+      }),
+      true,
+      () => Effect.succeedSome(validCatalog),
+    ),
+  );
+
+  it.effect("does not accept current-key plaintext that fails catalog validation", () =>
+    withStore(
+      Effect.gen(function* () {
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          `${environment.stateDir}/connection-catalog.json`,
+          JSON.stringify({
+            version: 1,
+            encryptedCatalog: Base64.encode(textEncoder.encode("encrypted:{}")),
+          }),
+        );
+        assert.deepStrictEqual(yield* store.get, Option.some(validCatalog));
       }),
       true,
       () => Effect.succeedSome(validCatalog),

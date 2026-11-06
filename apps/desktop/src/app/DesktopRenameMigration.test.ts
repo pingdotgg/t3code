@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeSqlite from "node:sqlite";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -25,7 +26,6 @@ it.effect("moves the legacy home and links the old path back", () =>
 
     const result = yield* runMigration({
       homeDirectory: root,
-      appDataDirectory: root,
       explicitHome: Option.none(),
       isHomeOwned: () => Effect.succeed(false),
     });
@@ -47,7 +47,6 @@ it.effect("keeps a symlinked legacy home and an owned home in place", () =>
     yield* fs.symlink(target, legacy);
     const linked = yield* runMigration({
       homeDirectory: root,
-      appDataDirectory: root,
       explicitHome: Option.none(),
     });
     assert.equal(linked.homePath, legacy);
@@ -57,11 +56,33 @@ it.effect("keeps a symlinked legacy home and an owned home in place", () =>
     yield* fs.makeDirectory(ownedLegacy);
     const owned = yield* runMigration({
       homeDirectory: ownedRoot,
-      appDataDirectory: ownedRoot,
       explicitHome: Option.none(),
       isHomeOwned: () => Effect.succeed(true),
     });
     assert.equal(owned.homePath, ownedLegacy);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("skips the move while the legacy server owner database is locked", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "ominax-owned-lock-" });
+    const legacy = path.join(root, ".t3-learn");
+    const lockPath = path.join(legacy, "userdata", "server-owner.sqlite");
+    yield* fs.makeDirectory(path.dirname(lockPath), { recursive: true });
+    const owner = new NodeSqlite.DatabaseSync(lockPath);
+    owner.exec("BEGIN EXCLUSIVE");
+    try {
+      const result = yield* runMigration({
+        homeDirectory: root,
+        explicitHome: Option.none(),
+      });
+      assert.equal(result.homePath, legacy);
+    } finally {
+      owner.exec("ROLLBACK");
+      owner.close();
+    }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -74,14 +95,12 @@ it.effect("keeps an existing OminaX home and honors an explicit override", () =>
     yield* fs.makeDirectory(current);
     const existing = yield* runMigration({
       homeDirectory: root,
-      appDataDirectory: root,
       explicitHome: Option.none(),
     });
     assert.equal(existing.homePath, current);
 
     const configured = yield* runMigration({
       homeDirectory: root,
-      appDataDirectory: root,
       explicitHome: Option.some(path.join(root, "configured")),
     });
     assert.equal(configured.homePath, path.join(root, "configured"));

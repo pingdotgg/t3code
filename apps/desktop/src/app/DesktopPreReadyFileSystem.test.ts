@@ -7,6 +7,8 @@ import * as FileSystem from "effect/FileSystem";
 
 import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
+import { migrateDesktopRename } from "./DesktopRenameMigration.ts";
+import * as Option from "effect/Option";
 
 // Only development inspects the filesystem: it reuses a "T3 Code (Dev)" profile when one exists.
 const resolveDevelopmentUserData = (appDataDirectory: string) =>
@@ -17,6 +19,28 @@ const resolveDevelopmentUserData = (appDataDirectory: string) =>
   }).pipe(Effect.provide(DesktopPreReadyFileSystem.layer));
 
 it.layer(NodeServices.layer)("DesktopPreReadyFileSystem", (it) => {
+  it.effect("runs both rename migrations with the pre-ready filesystem", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pre-ready-migration-" });
+      yield* fs.makeDirectory(`${root}/.t3-learn/userdata`, { recursive: true });
+      yield* fs.makeDirectory(`${root}/t3learn`, { recursive: true });
+      const migration = yield* migrateDesktopRename({
+        homeDirectory: root,
+        explicitHome: Option.none(),
+      }).pipe(Effect.provideService(FileSystem.FileSystem, DesktopPreReadyFileSystem.make));
+      const userData = yield* DesktopUserData.resolveUserDataPath({
+        appDataDirectory: root,
+        isDevelopment: false,
+        platform: "linux",
+      }).pipe(Effect.provideService(FileSystem.FileSystem, DesktopPreReadyFileSystem.make));
+      assert.equal(migration.homePath, `${root}/.ominax`);
+      assert.equal(userData, `${root}/ominax`);
+      assert.equal(yield* fs.readLink(`${root}/.t3-learn`), `${root}/.ominax`);
+      assert.equal(yield* fs.readLink(`${root}/t3learn`), `${root}/ominax`);
+    }),
+  );
+
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0)(
     "fails instead of treating an unreadable profile as missing",
     () =>

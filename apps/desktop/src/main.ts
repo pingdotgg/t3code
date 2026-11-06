@@ -97,14 +97,6 @@ if (process.argv.includes("--version")) {
 }
 
 const earlyIsDevelopment = (process.env.VITE_DEV_SERVER_URL?.trim().length ?? 0) > 0;
-const earlyAppDataDirectory =
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- Migration must run before Effect services are assembled.
-  NodeOS.platform() === "win32"
-    ? process.env.APPDATA?.trim() || NodePath.join(NodeOS.homedir(), "AppData", "Roaming")
-    : // oxlint-disable-next-line t3code/no-global-process-runtime -- Migration must run before Effect services are assembled.
-      NodeOS.platform() === "darwin"
-      ? NodePath.join(NodeOS.homedir(), "Library", "Application Support")
-      : process.env.XDG_CONFIG_HOME?.trim() || NodePath.join(NodeOS.homedir(), ".config");
 const earlyExplicitHomeRaw = earlyIsDevelopment
   ? process.env.T3CODE_HOME
   : resolveT3LearnHomeFromEnv(process.env);
@@ -114,7 +106,6 @@ const earlyMigration = earlyIsDevelopment
   : Effect.runSync(
       migrateDesktopRename({
         homeDirectory: NodeOS.homedir(),
-        appDataDirectory: earlyAppDataDirectory,
         explicitHome: Option.fromUndefinedOr(earlyExplicitHome),
       }).pipe(Effect.provideService(FileSystem.FileSystem, DesktopPreReadyFileSystem.make)),
     );
