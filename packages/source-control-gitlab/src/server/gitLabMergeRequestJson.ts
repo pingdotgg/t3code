@@ -16,6 +16,7 @@ import type {
   PullRequestMergeMethod,
   PullRequestReaction,
   PullRequestReactionContent,
+  PullRequestReferenceCandidate,
   PullRequestReviewDecision,
   PullRequestReviewThread,
   PullRequestReviewerCandidate,
@@ -653,6 +654,40 @@ export function decodeProjectUsersJson(
     });
   }
   return Result.succeed({ candidates, rawCount: decoded.success.length });
+}
+
+const RawReferenceSchema = Schema.Struct({
+  iid: Schema.Number,
+  title: Schema.String,
+  state: Schema.String,
+});
+const decodeReferenceEntry = Schema.decodeUnknownExit(RawReferenceSchema);
+
+/** A list of issues (`#`) or merge requests (`!`), as composers reference them. */
+export function decodeReferenceCandidatesJson(
+  raw: string,
+  kind: PullRequestReferenceCandidate["kind"],
+): Result.Result<
+  { readonly items: ReadonlyArray<PullRequestReferenceCandidate>; readonly rawCount: number },
+  DecodeFailure
+> {
+  const decoded = decodeUnknownList(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const items: PullRequestReferenceCandidate[] = [];
+  for (const entry of decoded.success) {
+    const reference = decodeReferenceEntry(entry);
+    if (Exit.isFailure(reference) || !Number.isInteger(reference.value.iid)) continue;
+    if (reference.value.iid < 1) continue;
+    const { iid, title, state } = reference.value;
+    items.push({
+      reference: `${kind === "issue" ? "#" : "!"}${iid}`,
+      kind,
+      number: iid,
+      title,
+      state: state === "merged" ? "merged" : state === "opened" ? "open" : "closed",
+    });
+  }
+  return Result.succeed({ items, rawCount: decoded.success.length });
 }
 
 const RawLabelSchema = Schema.Struct({

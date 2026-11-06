@@ -42,6 +42,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   search: true,
   reactions: true,
   mentions: true,
+  referenceSigils: ["#"],
   viewedFiles: "host",
   review: {
     inlineComment: true,
@@ -656,6 +657,11 @@ export const make = Effect.gen(function* () {
 
     searchRepositoryAuthors: (input) =>
       cli.searchRepositoryAuthors(input).pipe(Effect.mapError(fail("searchRepositoryAuthors"))),
+
+    searchRepositoryReferences: (input) =>
+      cli
+        .searchRepositoryReferences(input)
+        .pipe(Effect.mapError(fail("searchRepositoryReferences"))),
 
     setLabels: (input) =>
       cli
