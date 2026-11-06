@@ -496,7 +496,7 @@ describe("merge request viewer fields", () => {
 });
 
 describe("decodeAwardEmojiJson", () => {
-  it("reads MR-level awards, keys per-note awards by the REST id inside their gid, and ignores an award outside the eight", () => {
+  it("reads MR-level awards, keys per-note awards by the REST id inside their gid, ignores an award outside the eight, and collects bot note authors", () => {
     const result = expectSuccess(
       decodeAwardEmojiJson(
         JSON.stringify({
@@ -515,10 +515,12 @@ describe("decodeAwardEmojiJson", () => {
                   nodes: [
                     {
                       id: "gid://gitlab/DiffNote/42",
+                      author: { username: "julius", bot: false },
                       awardEmoji: { nodes: [{ name: "heart", user: { username: "julius" } }] },
                     },
                     {
                       id: "gid://gitlab/Note/7",
+                      author: { username: "project_278964_bot_89f97e2c", bot: true },
                       awardEmoji: {
                         nodes: [{ name: "partyparrot", user: { username: "bilal" } }],
                       },
@@ -538,6 +540,7 @@ describe("decodeAwardEmojiJson", () => {
     expect([...result.reactionsByNoteId]).toEqual([
       ["42", [{ content: "heart", count: 1, actors: ["julius"], viewerHasReacted: false }]],
     ]);
+    expect([...result.botLogins]).toEqual(["project_278964_bot_89f97e2c"]);
     expect(result.nextCursor).toBeNull();
   });
 

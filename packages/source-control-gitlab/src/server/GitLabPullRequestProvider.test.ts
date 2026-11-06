@@ -484,7 +484,8 @@ describe("optional activity reads", () => {
     listNotes: () => Effect.succeed({ comments: [comment], truncated: false }),
     listCommits: () => Effect.succeed([commit]),
     listDiscussions: () => Effect.succeed({ threads: [], truncated: false }),
-    listReactions: () => Effect.succeed({ reactions: [], reactionsByNoteId: new Map() }),
+    listReactions: () =>
+      Effect.succeed({ reactions: [], reactionsByNoteId: new Map(), botLogins: new Set<string>() }),
   };
   const context = {
     operation: "execute" as const,
@@ -559,6 +560,55 @@ describe("optional activity reads", () => {
         reactions: [],
         commits: [commit],
       });
+    }),
+  );
+
+  it.effect("flags comments by bot authors as bots, in the conversation and in threads", () =>
+    Effect.gen(function* () {
+      const bot = { login: "project_1_bot_abc", name: "Review bot", avatarUrl: null };
+      const human = { login: "julius", name: null, avatarUrl: null };
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...reads,
+            listNotes: () =>
+              Effect.succeed({
+                comments: [
+                  { ...comment, author: bot },
+                  { ...comment, id: "43", author: human },
+                ],
+                truncated: false,
+              }),
+            listDiscussions: () =>
+              Effect.succeed({
+                threads: [
+                  {
+                    id: "d1",
+                    path: "a.ts",
+                    line: 1,
+                    side: "right" as const,
+                    isResolved: false,
+                    isOutdated: false,
+                    comments: [
+                      { id: "44", author: bot, body: "x", createdAt: comment.createdAt, url: null },
+                    ],
+                  },
+                ],
+                truncated: false,
+              }),
+            listReactions: () =>
+              Effect.succeed({
+                reactions: [],
+                reactionsByNoteId: new Map(),
+                botLogins: new Set([bot.login.toUpperCase()]),
+              }),
+          }),
+        ),
+      );
+
+      const activity = yield* provider.getChangeRequestActivity(reference);
+      expect(activity.comments.map((entry) => entry.author?.isBot)).toEqual([true, undefined]);
+      expect(activity.reviewThreads[0]?.comments[0]?.author?.isBot).toBe(true);
     }),
   );
 });
