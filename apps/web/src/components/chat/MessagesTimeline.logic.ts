@@ -1610,8 +1610,14 @@ function settleSupersededReasoning(entries: ReadonlyArray<TimelineEntry>) {
   });
 }
 
+function withoutRetriedPrompts(entries: ReadonlyArray<TimelineEntry>) {
+  return entries.filter(
+    (entry) => entry.kind !== "message" || entry.message.retryOfRunId === undefined,
+  );
+}
+
 function timelineRowEntries(entries: ReadonlyArray<TimelineEntry>) {
-  return withoutSubagentDelegationRows(settleSupersededReasoning(entries));
+  return withoutSubagentDelegationRows(settleSupersededReasoning(withoutRetriedPrompts(entries)));
 }
 
 function deriveTimelineTurnFolds(
