@@ -317,6 +317,8 @@ export const ShellEnvironmentPatch = Schema.Struct({
   SSL_CERT_DIR: Schema.optionalKey(Schema.NullOr(Schema.String)),
   NODE_EXTRA_CA_CERTS: Schema.optionalKey(Schema.NullOr(Schema.String)),
   T3CODE_TELEMETRY_ENABLED: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  T3CODE_POSTHOG_KEY: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  T3CODE_POSTHOG_HOST: Schema.optionalKey(Schema.NullOr(Schema.String)),
   T3CODE_GITHUB_APP_CLIENT_ID: Schema.optionalKey(Schema.NullOr(Schema.String)),
   __MISE_DIFF: Schema.optionalKey(Schema.NullOr(Schema.String)),
   JAVA_HOME: Schema.optionalKey(Schema.NullOr(Schema.String)),

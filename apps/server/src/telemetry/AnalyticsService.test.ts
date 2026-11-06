@@ -116,7 +116,7 @@ const recordTwentyEvents = Effect.gen(function* () {
 const analyticsLayerWith = (
   client: HttpClient.HttpClient,
   policy?: ManagedPolicyDocument,
-  enabledAtStartup = true,
+  optedInAtStartup = true,
 ) =>
   AnalyticsService.layer.pipe(
     Layer.provideMerge(
@@ -124,11 +124,15 @@ const analyticsLayerWith = (
     ),
     Layer.provide(
       ConfigProvider.layer(
-        ConfigProvider.fromUnknown({
-          ...(enabledAtStartup ? { T3CODE_TELEMETRY_ENABLED: true } : {}),
-          T3CODE_POSTHOG_KEY: "phc_test_key",
-          T3CODE_POSTHOG_HOST: "http://localhost",
-        }),
+        ConfigProvider.fromUnknown(
+          optedInAtStartup
+            ? {
+                T3CODE_TELEMETRY_ENABLED: true,
+                T3CODE_POSTHOG_KEY: "phc_test_key",
+                T3CODE_POSTHOG_HOST: "http://localhost",
+              }
+            : {},
+        ),
       ),
     ),
     Layer.provide(
@@ -155,7 +159,7 @@ const sendFor = (
     AnalyticsService.AnalyticsService | Effect.Services<typeof getTelemetryIdentity>
   > = recordTwentyEvents,
   policy?: ManagedPolicyDocument,
-  enabledAtStartup = true,
+  optedInAtStartup = true,
 ) =>
   Effect.gen(function* () {
     const batches: Array<ReadonlyArray<SentEvent>> = [];
@@ -170,7 +174,7 @@ const sendFor = (
         return yield* respond(request);
       }),
     );
-    const runtimeLayer = analyticsLayerWith(client, policy, enabledAtStartup);
+    const runtimeLayer = analyticsLayerWith(client, policy, optedInAtStartup);
 
     yield* Effect.gen(function* () {
       yield* record;
@@ -182,32 +186,36 @@ const sendFor = (
   });
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService test", (it) => {
-  it.effect("waits for desktop shell consent and honors a late telemetry opt-out", () =>
-    Effect.gen(function* () {
-      const env: NodeJS.ProcessEnv = { T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1" };
-      const batches = yield* sendFor(
-        0,
-        respondWithStatus(204),
-        Effect.gen(function* () {
-          const analytics = yield* AnalyticsService.AnalyticsService;
-          yield* analytics.record("test.before-discovery");
-          yield* analytics.flush;
-          env.T3CODE_TELEMETRY_ENABLED = "false";
-          delete env.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING;
-          yield* analytics.record("test.opted-out");
-          yield* analytics.flush;
-          env.T3CODE_TELEMETRY_ENABLED = "true";
-          yield* analytics.record("test.allowed");
-          yield* analytics.flush;
-        }),
-        undefined,
-        false,
-      ).pipe(Effect.provideService(HostProcess.Environment, env));
-      assert.deepEqual(
-        batches.flat().map((event) => event.event),
-        ["test.allowed"],
-      );
-    }),
+  it.effect(
+    "waits for desktop shell consent, takes key and host from it, and honors an opt-out",
+    () =>
+      Effect.gen(function* () {
+        const env: NodeJS.ProcessEnv = { T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1" };
+        const batches = yield* sendFor(
+          0,
+          respondWithStatus(204),
+          Effect.gen(function* () {
+            const analytics = yield* AnalyticsService.AnalyticsService;
+            yield* analytics.record("test.before-discovery");
+            yield* analytics.flush;
+            env.T3CODE_TELEMETRY_ENABLED = "false";
+            env.T3CODE_POSTHOG_KEY = "phc_test_key";
+            env.T3CODE_POSTHOG_HOST = "http://localhost";
+            delete env.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING;
+            yield* analytics.record("test.opted-out");
+            yield* analytics.flush;
+            env.T3CODE_TELEMETRY_ENABLED = "true";
+            yield* analytics.record("test.allowed");
+            yield* analytics.flush;
+          }),
+          undefined,
+          false,
+        ).pipe(Effect.provideService(HostProcess.Environment, env));
+        assert.deepEqual(
+          batches.flat().map((event) => event.event),
+          ["test.allowed"],
+        );
+      }),
   );
 
   it.effect("client owner reports cannot use up the server's owner cap", () =>
