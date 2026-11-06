@@ -67,6 +67,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Text } from "../ui/text";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { MicrophoneTest } from "./MicrophoneTest";
@@ -76,6 +77,7 @@ import { AdvancedSettings } from "./AdvancedSettings";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
+  SettingsNote,
   SettingsPageContainer,
   SettingsRow,
   SettingsSearchTarget,
@@ -133,7 +135,7 @@ type ModelCardProps = {
 function ModelBadge(props: { icon: ReactNode; label: string; tooltip: string }) {
   return (
     <Tooltip>
-      <TooltipTrigger render={<Badge variant="outline" />}>
+      <TooltipTrigger render={<Badge variant="secondary" />}>
         {props.icon}
         {props.label}
       </TooltipTrigger>
@@ -147,33 +149,33 @@ function ModelCard(props: ModelCardProps) {
   const downloading = model.state === "downloading" || model.state === "verifying";
   const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
   return (
-    <div className="flex flex-wrap items-start gap-3 px-3 py-2.5 sm:px-4">
+    <div className="flex flex-wrap items-start gap-2 px-3 py-2.5 sm:px-4">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-sm font-medium leading-5">{model.name}</span>
+          <Text variant="label">{model.name}</Text>
           {model.recommended ? (
             <ModelBadge
-              icon={<StarIcon className="mr-1 size-3" />}
+              icon={<StarIcon />}
               label="Recommended"
               tooltip="A good default pick for the languages it covers."
             />
           ) : null}
           {model.supportsStreaming ? (
             <ModelBadge
-              icon={<AudioLinesIcon className="mr-1 size-3" />}
+              icon={<AudioLinesIcon />}
               label="Live preview"
               tooltip="Shows words in your draft as you speak, before the recording finishes."
             />
           ) : null}
           {model.supportsTranslation ? (
             <ModelBadge
-              icon={<LanguagesIcon className="mr-1 size-3" />}
+              icon={<LanguagesIcon />}
               label="Translate"
               tooltip="Can write English text from speech in another language. Turn on Translate to English to use it."
             />
           ) : null}
         </div>
-        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{model.description}</p>
+        <p className="mt-0.5 text-meta text-muted-foreground">{model.description}</p>
         <ModelBenchmarks
           model={model}
           languages={props.comparisonLanguages}
@@ -201,7 +203,7 @@ function ModelCard(props: ModelCardProps) {
                 style={{ width: `${progress}%` }}
               />
             </div>
-            <p className="mt-1 text-2xs text-muted-foreground">
+            <p className="mt-1 text-caption text-muted-foreground">
               {model.state === "verifying"
                 ? "Verifying download…"
                 : `${Math.round(progress)}% downloaded`}
@@ -219,16 +221,16 @@ function ModelCard(props: ModelCardProps) {
             disabled={!props.canCancel}
             onClick={props.onCancel}
           >
-            <XIcon className="size-3.5" />
+            <XIcon />
           </Button>
         ) : model.state === "downloadable" ? (
           <Button size="sm" variant="secondary" disabled={props.busy} onClick={props.onDownload}>
-            <DownloadIcon className="mr-1.5 size-3.5" />
+            <DownloadIcon />
             Download
           </Button>
         ) : model.active ? (
           <Button size="sm" variant="secondary" disabled>
-            <CheckIcon className="mr-1.5 size-3.5" />
+            <CheckIcon />
             Selected
           </Button>
         ) : (
@@ -244,7 +246,7 @@ function ModelCard(props: ModelCardProps) {
             aria-label={`Delete ${model.name}`}
             onClick={props.onDelete}
           >
-            <Trash2Icon className="size-3.5" />
+            <Trash2Icon />
           </Button>
         ) : null}
       </div>
@@ -322,9 +324,11 @@ function DictionaryEditor(props: {
           {words.map(({ term, aliases }) => (
             <li
               key={term}
-              className="flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 py-0.5 pl-2 pr-0.5 text-xs"
+              className="flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 py-0.5 pl-2 pr-0.5 text-meta"
             >
-              <span className="font-medium">{term}</span>
+              <Text variant="meta" tone="strong">
+                {term}
+              </Text>
               {aliases.length > 0 ? (
                 <span className="text-muted-foreground">← {aliases.join(", ")}</span>
               ) : null}
@@ -394,9 +398,9 @@ function ProjectDictionaryRow() {
           : "Saved on the environment and used in every project there, along with each person’s own dictionary. Pick a project above to limit these words to one project."
       }
       control={
-        <span className="text-xs text-muted-foreground">
+        <Text variant="meta" tone="muted" numeric>
           {words.length} {words.length === 1 ? "entry" : "entries"}
-        </span>
+        </Text>
       }
     >
       <div className="mt-2 pb-3.5">
@@ -474,9 +478,9 @@ function CleanupModelRow() {
       }
       control={
         connectedEnvironments.length === 0 ? (
-          <span className="text-sm text-muted-foreground">Connect an environment first.</span>
+          <Text tone="muted">Connect an environment first.</Text>
         ) : !hasProvider || !instanceEntry ? (
-          <span className="text-sm text-muted-foreground">No providers available.</span>
+          <Text tone="muted">No providers available.</Text>
         ) : (
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
             <ProviderModelPicker
@@ -749,21 +753,23 @@ function SpeechModelBrowser(props: {
       className="@container/voice-models"
     >
       {status && !status.supported ? (
-        <p className="px-4 py-2 text-sm text-muted-foreground">
-          This environment can’t transcribe audio: {status.reason}.
-        </p>
+        <SettingsNote>This environment can’t transcribe audio: {status.reason}.</SettingsNote>
       ) : null}
       {status?.supported ? (
         <>
-          <p className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
-            Pick languages to see models that support all of them. Accuracy is word or character
-            error rate: lower is better. Speed is the time to transcribe 30 seconds of audio on
-            Handy’s benchmark GPU.
-          </p>
+          <div className="border-b border-border/60">
+            <SettingsNote>
+              Pick languages to see models that support all of them. Accuracy is word or character
+              error rate: lower is better. Speed is the time to transcribe 30 seconds of audio on
+              Handy’s benchmark GPU.
+            </SettingsNote>
+          </div>
           <div className="@min-[32rem]/voice-models:grid @min-[32rem]/voice-models:grid-cols-[11rem_minmax(0,1fr)]">
             <div className="flex min-h-0 flex-col border-b border-border/60 bg-muted/10 @min-[32rem]/voice-models:border-r @min-[32rem]/voice-models:border-b-0">
               <div className="space-y-2 p-3">
-                <p className="text-sm font-medium">Languages</p>
+                <Text variant="label" render={<p />}>
+                  Languages
+                </Text>
                 <Input
                   size="compact"
                   aria-label="Search languages"
@@ -797,17 +803,17 @@ function SpeechModelBrowser(props: {
                   />
                 ))}
                 {visibleLanguages.length === 0 && (
-                  <p className="px-2 py-1 text-xs text-muted-foreground">No languages match.</p>
+                  <p className="px-2 py-1 text-meta text-muted-foreground">No languages match.</p>
                 )}
               </div>
             </div>
             <div className="flex min-w-0 flex-col">
               <div className="space-y-2 p-3">
-                <p className="text-sm font-medium">
+                <Text variant="label" render={<p />}>
                   {selectedLanguages.length
                     ? "Models for " + selectedLanguages.map(languageLabel).join(", ")
                     : "All models"}
-                </p>
+                </Text>
                 <Input
                   size="compact"
                   aria-label="Search transcription models"
@@ -822,9 +828,7 @@ function SpeechModelBrowser(props: {
                 aria-label="Transcription models"
                 tabIndex={0}
               >
-                {sortedModels.length === 0 && (
-                  <p className="px-4 py-2 text-sm text-muted-foreground">No models match.</p>
-                )}
+                {sortedModels.length === 0 && <SettingsNote>No models match.</SettingsNote>}
                 {renderedModels.map((model) => {
                   const card: ModelCardProps = {
                     model:
@@ -936,11 +940,11 @@ function TranscriptionTest(props: {
                 </Button>
               ) : null
             ) : (
-              <span className="text-xs text-muted-foreground">
+              <Text variant="meta" tone="muted">
                 {speech.status?.supported === false
                   ? speech.status.reason
                   : "Waiting for the environment to connect"}
-              </span>
+              </Text>
             )}
           </div>
         }
@@ -948,7 +952,7 @@ function TranscriptionTest(props: {
         {showTranscript ? (
           <div className="w-full">
             <div className="flex items-start gap-2">
-              <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
+              <p className="min-w-0 flex-1 text-meta text-muted-foreground">
                 Say a sentence in the language above. Cleanup is skipped, so you see exactly what
                 the model heard. The transcript stays on this page.
               </p>
@@ -968,7 +972,7 @@ function TranscriptionTest(props: {
               <p
                 role="status"
                 aria-label="Test transcript"
-                className="mt-2 select-text whitespace-pre-wrap break-words text-sm leading-relaxed"
+                className="mt-2 select-text whitespace-pre-wrap break-words text-body leading-relaxed"
               >
                 {speech.preview ? (
                   <>
@@ -1104,7 +1108,7 @@ export function VoiceSettingsPanel() {
                   aria-label="Refresh microphones"
                   onClick={() => void refreshMicrophones()}
                 >
-                  <RefreshCwIcon className="size-3.5" />
+                  <RefreshCwIcon />
                 </Button>
               </div>
             </div>
@@ -1183,7 +1187,7 @@ export function VoiceSettingsPanel() {
           }
         >
           {destination.environmentId && chosenUnsupported ? (
-            <p className="mt-2 text-xs text-destructive">
+            <p className="mt-2 text-meta text-destructive-foreground">
               {chosenEnvironment.label} can’t transcribe audio. Pick an environment that can to use
               voice input.
             </p>
@@ -1263,10 +1267,10 @@ export function VoiceSettingsPanel() {
           title="Dictionary"
           description="Names and terms transcription should spell your way, saved on this device. Add an alias when it keeps hearing a term wrong. The name of the project you dictate in is also sent as a hint."
           control={
-            <span className="text-xs text-muted-foreground">
+            <Text variant="meta" tone="muted" numeric>
               {settings.speechCustomWords.length}{" "}
               {settings.speechCustomWords.length === 1 ? "entry" : "entries"}
-            </span>
+            </Text>
           }
         >
           <div className="mt-2 pb-3.5">
