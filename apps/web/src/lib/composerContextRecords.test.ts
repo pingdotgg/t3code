@@ -25,6 +25,7 @@ import {
   isPullRequestSummaryContext,
   pullRequestContextKindLabel,
   resolveUserMessageContext,
+  reviewCommentContextLabel,
   selectedMessageContextFragment,
   reviewCommentContextRecord,
   terminalContextRecord,
@@ -217,6 +218,14 @@ describe("composerContextRecords", () => {
     const image = context.records.find((record) => record.kind === "image");
     expect(preview).toMatchObject({ screenshotContextId: image!.contextId });
     expect(image).toMatchObject({ attachmentId: "uploaded-image" });
+  });
+
+  it("shortens a long annotation comment label without splitting an emoji", () => {
+    const record = previewAnnotationContextRecord({
+      ...annotation,
+      comment: `${"a".repeat(46)}😀 and make the button bigger`,
+    });
+    expect(record.label).toBe(`${"a".repeat(46)}…`);
   });
 
   it("restores multiple edits on one target without parsing display strings", () => {
@@ -467,6 +476,25 @@ describe("isPullRequestSummaryContext", () => {
     });
     expect(resolved.records[0]?.kind).toBe("pull-request");
     expect(resolved.text).toBe("see [PR #7](t3-context://v1/pull-request/review-comment_rc-pr)");
+  });
+});
+
+describe("reviewCommentContextLabel", () => {
+  const selection = (sectionId: string) => ({
+    id: "selection",
+    sectionId,
+    sectionTitle: "Review",
+    filePath: "apps/web/src/page.tsx",
+    startIndex: 0,
+    endIndex: 0,
+    rangeLabel: "+12 to +18",
+    text: "",
+    diff: "",
+  });
+
+  it("names the pull request a selection came from", () => {
+    expect(reviewCommentContextLabel(selection("pull-request:42"))).toBe("#42 page.tsx L12 to L18");
+    expect(reviewCommentContextLabel(selection("turn-diff"))).toBe("page.tsx L12 to L18");
   });
 });
 
