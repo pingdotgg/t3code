@@ -1,6 +1,7 @@
 import type { SourceControlMediaRequest } from "@t3tools/source-control-core/server/driver";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import {
@@ -17,6 +18,7 @@ import {
 } from "../shared/gitHubMedia.ts";
 
 import * as GitHubCredentials from "./GitHubCredentials.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 
 /** A private release's bytes download only through the API, by asset id. */
@@ -170,39 +172,54 @@ export const make = Effect.gen(function* () {
   const fetchReleaseAsset = Effect.fnUntraced(function* (
     release: GitHubReleaseAsset,
     headers: Readonly<Record<string, string>>,
-    token: Redacted.Redacted<string>,
+    held: GitHubRequestPolicy.GitHubHeldCredential,
   ) {
     const path = `repos/${encodeURIComponent(release.owner)}/${encodeURIComponent(release.repo)}/releases`;
-    const metadata = yield* rest.rest({
-      host: "github.com",
-      operation: "getReleaseByTag",
-      path: `${path}/tags/${encodeURIComponent(release.tag)}`,
-    });
+    // The asset id is only good for the credential that could see the release.
+    const metadata = yield* rest
+      .rest({
+        host: "github.com",
+        operation: "getReleaseByTag",
+        path: `${path}/tags/${encodeURIComponent(release.tag)}`,
+      })
+      .pipe(
+        Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+          host: "github.com",
+          token: held.token,
+          credentialFingerprint: held.fingerprint,
+          ...(held.source === undefined ? {} : { source: held.source }),
+        }),
+      );
     const decoded = yield* decodeRelease(metadata);
     const match = decoded.body.assets.find((candidate) => candidate.name === release.name);
     if (match === undefined) return null;
     return yield* fetchFollowingRedirects(
       `https://${API_HOST}/${path}/assets/${match.id}`,
       { ...headers, accept: "application/octet-stream" },
-      token,
+      held.token,
     );
   });
 
   return Effect.fn("GitHubMediaFetch.fetchMedia")(function* (request: SourceControlMediaRequest) {
-    const signedIn = yield* credential;
     const target = URL.parse(request.url);
     const release = target === null ? null : gitHubReleaseAsset(target);
     if (release !== null) {
-      const viaApi =
-        signedIn === null
-          ? null
-          : yield* fetchReleaseAsset(release, request.headers, signedIn.token).pipe(
-              Effect.orElseSucceed(() => null),
-            );
-      if (viaApi !== null && viaApi.status < 400) return viaApi;
+      let held = yield* Effect.option(rest.credential("github.com"));
+      while (Option.isSome(held)) {
+        const viaApi = yield* fetchReleaseAsset(release, request.headers, held.value).pipe(
+          Effect.orElseSucceed(() => null),
+        );
+        if (viaApi !== null && viaApi.status < 400) return viaApi;
+        // The app reaches only repositories it is installed on; the user's own token may see more.
+        held =
+          held.value.source === "app"
+            ? yield* Effect.option(rest.credential("github.com", { personal: true }))
+            : Option.none();
+      }
       // A public release loads without the token, which a release download never needs.
       return yield* fetchFollowingRedirects(request.url, request.headers, null);
     }
+    const signedIn = yield* credential;
     const repository = signedIn === null ? undefined : uploadRepository(request);
     const cacheKey =
       signedIn === null || repository === undefined

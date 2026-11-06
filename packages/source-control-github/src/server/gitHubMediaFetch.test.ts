@@ -244,9 +244,8 @@ describe("GitHubMediaFetch", () => {
   describe("release downloads", () => {
     const url = "https://github.com/owner/private/releases/download/v1%2Btest/shot%20%231%25.png";
     const credential = {
-      host: "github.com",
       token: Redacted.make("release-test-token"),
-      source: "gh" as const,
+      source: "app" as const,
       fingerprint: "release-test",
     };
     const objectUrl = "https://release-assets.githubusercontent.com/shot.png?signature=test";
@@ -256,7 +255,7 @@ describe("GitHubMediaFetch", () => {
       () => {
         const tag = "release%2Fv1";
         const requests: Array<{ url: string; authorization: string | undefined }> = [];
-        const lookups: Array<GitHubRest.GitHubRestInput> = [];
+        const lookups: Array<GitHubRest.GitHubRestInput & { pinned: string | undefined }> = [];
         const downloadUrl = "https://api.github.com/repos/owner/private/releases/assets/42";
         return Effect.gen(function* () {
           const fetchMedia = yield* GitHubMediaFetch.make;
@@ -268,6 +267,7 @@ describe("GitHubMediaFetch", () => {
               host: "github.com",
               operation: "getReleaseByTag",
               path: `repos/owner/private/releases/tags/${tag}`,
+              pinned: "release-test-token",
             },
           ]);
           expect(requests).toEqual([
@@ -277,13 +277,19 @@ describe("GitHubMediaFetch", () => {
         }).pipe(
           Effect.provide(
             Layer.mergeAll(
+              // Signed in only through the app, which `GitHubCredentials` does not hold.
               Layer.mock(GitHubCredentials.GitHubCredentials)({
-                get: () => Effect.succeed(credential),
+                get: (host) => Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
               }),
               Layer.mock(GitHubRest.GitHubRest)({
+                credential: () => Effect.succeed(credential),
                 rest: (input) =>
-                  Effect.sync(() => {
-                    lookups.push(input);
+                  Effect.gen(function* () {
+                    const pinned = yield* GitHubRequestPolicy.PinnedGitHubCredential;
+                    lookups.push({
+                      ...input,
+                      pinned: pinned ? Redacted.value(pinned.token) : undefined,
+                    });
                     return {
                       status: 200,
                       headers: {},
@@ -336,7 +342,7 @@ describe("GitHubMediaFetch", () => {
       "loads public release bytes anonymously when %s",
       (mode) => {
         const requests: Array<{ url: string; authorization: string | undefined }> = [];
-        let lookups = 0;
+        const lookups: Array<string | undefined> = [];
         return Effect.gen(function* () {
           const fetchMedia = yield* GitHubMediaFetch.make;
           expect((yield* fetchMedia({ url, headers: {} }))?.status).toBe(200);
@@ -344,26 +350,27 @@ describe("GitHubMediaFetch", () => {
             { url, authorization: undefined },
             { url: objectUrl, authorization: undefined },
           ]);
-          expect(lookups).toBe(mode === "no credential" ? 0 : 1);
+          // An app credential that cannot see the release hands on to the user's own.
+          expect(lookups).toEqual(mode === "no credential" ? [] : ["app", "gh"]);
         }).pipe(
           Effect.provide(
             Layer.mergeAll(
-              Layer.mock(GitHubCredentials.GitHubCredentials)({
-                get: (host) =>
+              Layer.mock(GitHubCredentials.GitHubCredentials)({}),
+              Layer.mock(GitHubRest.GitHubRest)({
+                credential: (host, options) =>
                   mode === "no credential"
                     ? Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }))
-                    : Effect.succeed(credential),
-              }),
-              Layer.mock(GitHubRest.GitHubRest)({
-                rest: () =>
-                  Effect.suspend(() => {
-                    lookups += 1;
-                    return Effect.fail(
-                      new GitHubRequestPolicy.GitHubApiAuthenticationError({
-                        host: "github.com",
-                        operation: "getReleaseByTag",
+                    : Effect.succeed({
+                        ...credential,
+                        source: options?.personal ? ("gh" as const) : ("app" as const),
                       }),
-                    );
+                rest: () =>
+                  Effect.gen(function* () {
+                    lookups.push((yield* GitHubRequestPolicy.PinnedGitHubCredential)?.source);
+                    return yield* new GitHubRequestPolicy.GitHubApiAuthenticationError({
+                      host: "github.com",
+                      operation: "getReleaseByTag",
+                    });
                   }),
               }),
             ),
