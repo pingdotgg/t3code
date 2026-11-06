@@ -282,6 +282,7 @@ export const make = Effect.gen(function* () {
       serverBrowser: true,
       lessonSideChats: true,
       knowledgeMap: true,
+      lessonProjects: true,
       courses: true,
       peerLinks: true,
       mcpModeLimitHeader: true,

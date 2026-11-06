@@ -819,7 +819,7 @@ const WsServerStartChatSyncRpc = Rpc.make(WS_METHODS.serverStartChatSync, {
 const WsLessonCreateRpc = Rpc.make(WS_METHODS.lessonCreate, {
   payload: Schema.Struct({
     commandId: CommandId,
-    projectId: ProjectId,
+    projectId: Schema.optionalKey(ProjectId),
     lesson: OrchestrationV2Lesson,
     modelSelection: ModelSelection,
     runtimeMode: RuntimeMode,

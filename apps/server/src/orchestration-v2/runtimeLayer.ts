@@ -283,7 +283,14 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
   ),
 );
 const layerLessonServiceProvided = LessonService.layer.pipe(
-  Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerThreadLaunchProvided)),
+  Layer.provide(
+    Layer.mergeAll(
+      ProjectionStore.layer,
+      layerThreadLaunchProvided,
+      layerManagedProjectFoldersProvided,
+      layerProjectService,
+    ),
+  ),
 );
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
