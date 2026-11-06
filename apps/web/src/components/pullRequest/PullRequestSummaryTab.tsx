@@ -15,11 +15,11 @@ import type {
 } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
-  ChevronDownIcon,
   ChevronRightIcon,
   CornerDownRightIcon,
   HammerIcon,
   ListFilterIcon,
+  MessageSquarePlusIcon,
   RefreshCwIcon,
   TagIcon,
 } from "lucide-react";
@@ -58,12 +58,14 @@ import {
   isPullRequestCommentFinished,
   orderPullRequestComments,
   pagePullRequestConversationItems,
+  pullRequestBodyPreview,
   pullRequestConversationItemComments,
   pullRequestConversationItems,
   pullRequestConversationSummary,
   pullRequestFindingKey,
   pullRequestReviewOutcome,
   visibleBody,
+  type PullRequestChatSubject,
   type PullRequestConversationItem,
   type PullRequestFinding,
 } from "./pullRequestDetail.logic";
@@ -81,7 +83,16 @@ import { pullRequestAttachments } from "./pullRequestMarkdown.logic";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
+import {
+  PullRequestCommentTime,
+  PullRequestResolvedThreadRow,
+  PullRequestReviewEntry,
+} from "./PullRequestQuietEntries";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
+import {
+  type PullRequestCompletionScope,
+  pullRequestCompletionScope,
+} from "./PullRequestMarkdownTextarea";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
@@ -100,32 +111,7 @@ function CommentIdentity({
   return (
     <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-meta">
       <PullRequestActorLabel actor={actor} profileUrl={profileUrl} className="max-w-full" />
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            comment.url ? (
-              <a
-                href={comment.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-muted-foreground hover:text-foreground hover:underline"
-              />
-            ) : (
-              <span className="text-muted-foreground" />
-            )
-          }
-        >
-          <time dateTime={comment.createdAt}>
-            <RelativeTime timestamp={comment.createdAt} />
-          </time>
-        </TooltipTrigger>
-        <TooltipPopup>
-          <span className="flex flex-col gap-0.5">
-            <span>{new Date(comment.createdAt).toLocaleString()}</span>
-            {comment.url ? <span>Open comment on host</span> : null}
-          </span>
-        </TooltipPopup>
-      </Tooltip>
+      <PullRequestCommentTime createdAt={comment.createdAt} url={comment.url} />
     </div>
   );
 }
@@ -159,6 +145,7 @@ function reviewStateLabel(state: string): string {
 interface CommentEditing {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
+  readonly completionScope: PullRequestCompletionScope | null;
   readonly threadRef: ScopedThreadRef | null;
   readonly canEdit: (comment: PullRequestComment) => boolean;
   readonly editingId: string | null;
@@ -183,6 +170,7 @@ function CommentBody({
         value={comment.body}
         cwd={editing.cwd}
         environmentId={editing.environmentId}
+        completionScope={editing.completionScope}
         threadRef={editing.threadRef}
         label="Edit comment"
         saving={editing.saving}
@@ -208,81 +196,46 @@ function CommentBody({
   );
 }
 
-function CollapsedComment({
-  comment,
-  editing,
-  label,
-  body,
-  reactionBar,
-  detail,
-  thread,
-  replyCount = 0,
-  replies = null,
-  moreReplies = null,
-}: {
-  comment: PullRequestComment;
-  editing: CommentEditing;
-  label: string;
-  body: string | null;
-  reactionBar: ReactNode;
-  detail: PullRequestDetailView;
-  thread: PullRequestReviewThread | undefined;
-  replyCount?: number;
-  replies?: ReactNode;
-  moreReplies?: ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  const statusTriggerRef = useRef<HTMLButtonElement>(null);
+/**
+ * What Add to chat hands over for a remark: a remark on a line goes as its whole conversation,
+ * the way fixing one does. Null when there are no words in it to talk about.
+ */
+function chatSubject(
+  comment: PullRequestComment,
+  thread: PullRequestReviewThread | undefined,
+): PullRequestChatSubject | null {
+  if (thread !== undefined) {
+    return thread.comments.some((entry) => visibleBody(entry.body) !== null)
+      ? { kind: "thread", thread }
+      : null;
+  }
+  return visibleBody(comment.body) === null ? null : { kind: "comment", comment };
+}
+
+function AddToChatButton({ onClick }: { onClick: () => void }) {
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <article className="group rounded-xl surface-panel [contain-intrinsic-block-size:44px] [content-visibility:auto]">
-        <div className="p-3">
-          <div className="flex flex-wrap items-baseline gap-2">
-            <CommentIdentity comment={comment} detail={detail} />
-            {replyCount > 0 ? (
-              <span className="shrink-0 py-1 text-meta text-muted-foreground">
-                {replyCount} {replyCount === 1 ? "reply" : "replies"}
-              </span>
-            ) : null}
-            <CollapsibleTrigger ref={statusTriggerRef} variant="muted">
-              {label}
-              <ChevronDownIcon
-                aria-hidden
-                className={cn("size-3.5 transition-transform", open && "rotate-180")}
-              />
-            </CollapsibleTrigger>
-            {reactionBar}
-          </div>
-          <CommentLocation comment={comment} thread={thread} />
-          {!open && body ? (
-            <CollapsibleTrigger
-              className="mt-2 block w-full truncate text-left text-meta text-muted-foreground hover:text-foreground"
-              onClick={() => statusTriggerRef.current?.focus({ preventScroll: true })}
-            >
-              {body
-                .replace(/<!--[\s\S]*?-->/gu, "")
-                .replace(/^\s*>?\s*\[!\w+\]\s*$/gmu, "")
-                .replace(/!?(\[([^\]]+)\])\([^)]*\)/gu, "$2")
-                .replace(/^[\s>#*-]+/gmu, "")
-                .replace(/[*`]/gu, "")
-                .replace(/\s+/g, " ")
-                .trim()}
-            </CollapsibleTrigger>
-          ) : null}
-        </div>
-        <CollapsiblePanel>
-          {open ? (
-            <div className="px-3 pb-3">
-              {body === null && !editing.canEdit(comment) ? null : (
-                <CommentBody className="mt-2" comment={comment} editing={editing} />
-              )}
-              {replies ? <div className="mt-3">{replies}</div> : null}
-            </div>
-          ) : null}
-        </CollapsiblePanel>
-        {moreReplies ? <div className="px-3 pb-3">{moreReplies}</div> : null}
-      </article>
-    </Collapsible>
+    <Button size="xs" variant="ghost" className="shrink-0" onClick={onClick}>
+      {/* Wrapped like Fix's label so both sit on the header's baseline. */}
+      <span className="inline-flex items-baseline gap-1">
+        <MessageSquarePlusIcon className="size-3 self-center" />
+        <span>Add to chat</span>
+      </span>
+    </Button>
+  );
+}
+
+function AddToChatIconButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button size="icon-xs" variant="ghost-muted" aria-label="Add to chat" onClick={onClick} />
+        }
+      >
+        <MessageSquarePlusIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup>Add to chat</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -381,6 +334,7 @@ export function PullRequestSummaryTab({
   pendingFinding,
   fixFindingLabel = "Fix in a thread",
   onFixFinding,
+  onAddToChat,
   onRefresh,
 }: {
   scrollerRef?: (node: HTMLDivElement | null) => void;
@@ -395,6 +349,8 @@ export function PullRequestSummaryTab({
   pendingFinding?: string | null;
   fixFindingLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
+  /** Absent where there is no composer beside the panel to add a remark to. */
+  onAddToChat?: (subject: PullRequestChatSubject) => void;
   onRefresh: () => void;
 }) {
   const terminology = sourceControlClients.get(detail.provider).changeRequest;
@@ -533,9 +489,11 @@ export function PullRequestSummaryTab({
     if (body !== description) void saveDescription(body);
   };
 
+  const completionScope = pullRequestCompletionScope(detail, environmentId, reference);
   const commentEditing: CommentEditing = {
     cwd: detail.workspaceRoot,
     environmentId,
+    completionScope,
     threadRef,
     canEdit: (comment) => canEditPullRequestComment(detail, comment),
     editingId: editingCommentId,
@@ -588,6 +546,8 @@ export function PullRequestSummaryTab({
             ? null
             : { kind: "comment", comment }
           : { kind: "thread", thread };
+    // A reply goes with its conversation, from the card that heads it.
+    const chat = reply ? null : chatSubject(comment, thread);
     return (
       <article
         key={`${detail.url}:${comment.id}`}
@@ -620,6 +580,9 @@ export function PullRequestSummaryTab({
               </span>
             </Button>
           ) : null}
+          {onAddToChat && chat !== null ? (
+            <AddToChatButton onClick={() => onAddToChat(chat)} />
+          ) : null}
         </div>
         {reply ? null : (
           <div className="px-3">
@@ -635,8 +598,74 @@ export function PullRequestSummaryTab({
     );
   };
 
-  const renderComment = (comment: PullRequestComment, footer?: ReactNode) =>
-    renderCommentCard(comment, undefined, { footer });
+  const renderReview = (comment: PullRequestComment, footer?: ReactNode) => {
+    const body = visibleBody(comment.body);
+    const outcome = pullRequestReviewOutcome(comment.reviewState);
+    const finding: PullRequestFinding | null =
+      outcome === "approved" || body === null ? null : { kind: "comment", comment };
+    const chat = chatSubject(comment, undefined);
+    const reactions = comment.reactions ?? [];
+    const hasDetail = body !== null || commentEditing.canEdit(comment) || reactions.length > 0;
+    const actor = comment.author;
+    return (
+      <div key={`${detail.url}:${comment.id}`}>
+        <PullRequestReviewEntry
+          actor={actor}
+          profileUrl={
+            actor
+              ? sourceControlClients.get(detail.provider).authorProfileUrl(actor.login, detail.url)
+              : null
+          }
+          createdAt={comment.createdAt}
+          url={comment.url}
+          outcome={outcome}
+          stateLabel={
+            comment.reviewState ? reviewStateLabel(comment.reviewState).toLowerCase() : "reviewed"
+          }
+          preview={body === null ? null : pullRequestBodyPreview(body)}
+          action={
+            <>
+              {onAddToChat && chat !== null ? (
+                <AddToChatIconButton onClick={() => onAddToChat(chat)} />
+              ) : null}
+              {onFixFinding && finding ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        size="icon-xs"
+                        variant="ghost-muted"
+                        aria-label={fixFindingLabel}
+                        disabled={pendingFinding !== null && pendingFinding !== undefined}
+                        onClick={() => onFixFinding(finding)}
+                      />
+                    }
+                  >
+                    <HammerIcon className="size-3" />
+                  </TooltipTrigger>
+                  <TooltipPopup>
+                    {pendingFinding === pullRequestFindingKey(finding)
+                      ? "Preparing..."
+                      : fixFindingLabel}
+                  </TooltipPopup>
+                </Tooltip>
+              ) : null}
+            </>
+          }
+        >
+          {hasDetail ? (
+            <>
+              {body === null && !commentEditing.canEdit(comment) ? null : (
+                <CommentBody comment={comment} editing={commentEditing} />
+              )}
+              <div className="mt-2 flex">{reactionBarFor(comment)}</div>
+            </>
+          ) : null}
+        </PullRequestReviewEntry>
+        {footer}
+      </div>
+    );
+  };
 
   const renderThreadCard = (thread: PullRequestReviewThread) => (
     <ReviewThreadCard
@@ -645,6 +674,7 @@ export function PullRequestSummaryTab({
       standalone
       thread={thread}
       workspaceRoot={detail.workspaceRoot}
+      completionScope={completionScope}
       canReply={canReplyToThreads}
       canResolve={canResolveThreads && canResolvePullRequestThread(detail, thread)}
       canReact={detail.capabilities.reactions === true}
@@ -726,24 +756,31 @@ export function PullRequestSummaryTab({
       ) : null;
     const moreReplies =
       item.kind === "thread" && item.hasMoreReplies ? <PullRequestMoreReplies {...item} /> : null;
-    if (isPullRequestCommentFinished(comment, thread)) {
+    if (item.kind === "thread" && isPullRequestCommentFinished(comment, thread)) {
+      const chat = chatSubject(comment, item.thread);
       return (
-        <CollapsedComment
-          key={`${detail.url}:${item.kind}:${item.id}`}
-          comment={comment}
-          editing={commentEditing}
-          detail={detail}
-          thread={thread}
-          label={thread?.isResolved ? "Resolved" : "Review dismissed"}
-          body={visibleBody(comment.body)}
-          replyCount={item.kind === "thread" ? item.replies.length + item.moreReplies : 0}
-          replies={replies}
-          moreReplies={moreReplies}
-          reactionBar={reactionBarFor(comment)}
-        />
+        <PullRequestResolvedThreadRow
+          key={`${detail.url}:thread:${item.id}`}
+          path={item.thread.path}
+          line={item.thread.line}
+          outdated={item.thread.isOutdated}
+          dismissed={!item.thread.isResolved}
+          commentCount={item.thread.commentCount ?? item.replies.length + 1 + item.moreReplies}
+          action={
+            onAddToChat && chat !== null ? (
+              <AddToChatIconButton onClick={() => onAddToChat(chat)} />
+            ) : null
+          }
+        >
+          {renderThreadCard(item.thread)}
+        </PullRequestResolvedThreadRow>
       );
     }
-    if (item.kind === "comment") return renderCommentCard(comment, undefined);
+    if (item.kind === "comment") {
+      return comment.kind === "review"
+        ? renderReview(comment)
+        : renderCommentCard(comment, undefined);
+    }
     return (
       <div key={`${detail.url}:thread:${item.id}`} className="space-y-2">
         {renderCommentCard(comment, thread)}
@@ -767,6 +804,7 @@ export function PullRequestSummaryTab({
               value={bodyScope.body}
               cwd={detail.workspaceRoot}
               environmentId={environmentId}
+              completionScope={completionScope}
               threadRef={threadRef}
               label={`${capitalizeTerm(terminology.singular)} description`}
               placeholder={`Describe this ${terminology.singular}`}
@@ -929,10 +967,10 @@ export function PullRequestSummaryTab({
               <div className="space-y-3">
                 {conversation.changeRequests.map((entry) => (
                   <div key={`pinned:${entry.comment.id}`}>
-                    {renderComment(
+                    {renderReview(
                       entry.comment,
                       entry.openThreadCount > 0 || entry.reRequestedAt ? (
-                        <div className="flex items-center gap-2 px-3 pb-3 text-meta text-muted-foreground">
+                        <div className="flex items-center gap-2 px-3 pt-0.5 text-meta text-muted-foreground">
                           {entry.openThreadCount > 0 ? (
                             <span className="inline-flex items-center gap-1.5">
                               <CornerDownRightIcon aria-hidden className="size-3.5" />
