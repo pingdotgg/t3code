@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import { RunId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 
 import {
   canForkProjectedAssistantItem,
   deriveThreadQueueWorkflowState,
+  queuedRunMoveTarget,
   resolveLatestMergeBackRun,
   threadSupportsProviderHandoff,
 } from "./threadWorkflows.ts";
@@ -30,6 +31,19 @@ const capabilities = (input?: {
   }) as never;
 
 describe("thread workflows", () => {
+  it.each([
+    ["first", "up", null],
+    ["first", "down", { runId: "first", beforeRunId: "last" }],
+    ["middle", "up", { runId: "middle", beforeRunId: "first" }],
+    ["middle", "down", { runId: "middle", beforeRunId: null }],
+    ["last", "up", { runId: "last", beforeRunId: "middle" }],
+    ["last", "down", null],
+    ["missing", "up", null],
+  ] as const)("moves %s %s within the displayed queue", (runId, direction, expected) => {
+    const queued = ["first", "middle", "last"].map((id) => ({ run: { id: RunId.make(id) } }));
+    expect(queuedRunMoveTarget(queued, RunId.make(runId), direction)).toEqual(expected);
+  });
+
   it("allows a completed thread to switch providers after its session detaches", () => {
     const projection = {
       thread: {

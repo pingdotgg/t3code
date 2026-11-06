@@ -1,5 +1,8 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  deriveThreadQueueWorkflowState,
+  queuedRunMoveTarget,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import {
   isAttachmentOnlyBootstrapPrompt,
@@ -18,6 +21,7 @@ import {
   ArrowUpIcon,
   CalendarClockIcon,
   ChevronDownIcon,
+  ChevronUpIcon,
   Clock3Icon,
   MessagesSquareIcon,
   PencilIcon,
@@ -99,10 +103,12 @@ export function QueuedRunsControl({
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
+  const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
   const [showAll, setShowAll] = useState(false);
   const queueListId = useId();
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
-  const steerInFlightRef = useRef(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
+  const actionInFlightRef = useRef(false);
   // Run-only acknowledgements can resurrect pending rows after cancellation or startup.
   const acknowledgedMessageIds = new Set((projection?.messages ?? []).map((message) => message.id));
   const queuedImageAttachmentResources = queuedImageResources(projection);
@@ -173,8 +179,8 @@ export function QueuedRunsControl({
     const freshContext = queued.some(
       ({ run }) => run.id === queuedRunId && run.freshContext === true,
     );
-    if (!canSendRun(freshContext) || steerInFlightRef.current) return;
-    steerInFlightRef.current = true;
+    if (!canSendRun(freshContext) || actionInFlightRef.current) return;
+    actionInFlightRef.current = true;
     setBusyRunId(queuedRunId);
     if (workflow?.canSendNow) {
       await resume({
@@ -187,7 +193,7 @@ export function QueuedRunsControl({
         input: { threadId: props.threadId, queuedRunId, targetRunId: activeRun.id },
       });
     }
-    steerInFlightRef.current = false;
+    actionInFlightRef.current = false;
     setBusyRunId(null);
   };
 
@@ -226,11 +232,30 @@ export function QueuedRunsControl({
   if (items.length === 0) return null;
 
   const remove = async (runId: RunId) => {
+    if (actionInFlightRef.current) return;
+    actionInFlightRef.current = true;
     setBusyRunId(runId);
     await cancel({
       environmentId: props.environmentId,
       input: { threadId: props.threadId, runId },
     });
+    actionInFlightRef.current = false;
+    setBusyRunId(null);
+  };
+
+  const move = async (runId: RunId, direction: "up" | "down") => {
+    const target = queuedRunMoveTarget(queued, runId, direction);
+    if (target === null || actionInFlightRef.current) return;
+    actionInFlightRef.current = true;
+    setBusyRunId(runId);
+    setShowAll(true);
+    setMoveError(null);
+    const result = await reorder({
+      environmentId: props.environmentId,
+      input: { threadId: props.threadId, ...target },
+    });
+    if (result._tag === "Failure") setMoveError("Could not reorder queued messages. Try again.");
+    actionInFlightRef.current = false;
     setBusyRunId(null);
   };
 
@@ -275,6 +300,29 @@ export function QueuedRunsControl({
                 timestampFormat={props.timestampFormat}
                 onOpenThread={props.onOpenThread}
               >
+                {item.runId !== null && queued.length > 1 && !isEditing
+                  ? (["up", "down"] as const).map((direction) => (
+                      <Tooltip key={direction}>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              size="icon-xs"
+                              variant="ghost-muted"
+                              aria-label={`Move queued message ${direction}`}
+                              disabled={
+                                busyRunId !== null ||
+                                queuedRunMoveTarget(queued, item.runId!, direction) === null
+                              }
+                              onClick={() => void move(item.runId!, direction)}
+                            />
+                          }
+                        >
+                          {direction === "up" ? <ChevronUpIcon /> : <ChevronDownIcon />}
+                        </TooltipTrigger>
+                        <TooltipPopup>{`Move ${direction} in queue`}</TooltipPopup>
+                      </Tooltip>
+                    ))
+                  : null}
                 {canSendRun(item.freshContext) && !isEditing ? (
                   <>
                     <Tooltip>
@@ -376,6 +424,11 @@ export function QueuedRunsControl({
           );
         })}
       </ol>
+      {moveError ? (
+        <p role="alert" className="self-end text-xs text-destructive">
+          {moveError}
+        </p>
+      ) : null}
       {collapsible ? (
         <div className="self-end pe-1 text-xs pointer-coarse:[&_[data-slot=inline-button]]:relative pointer-coarse:[&_[data-slot=inline-button]]:after:absolute pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-x-1.5 pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-y-3.5">
           <InlineButton

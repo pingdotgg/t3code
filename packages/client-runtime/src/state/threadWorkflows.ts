@@ -3,6 +3,7 @@ import {
   isCompactionCommandMessage,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ProviderCapabilities,
+  type RunId,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
 
@@ -39,6 +40,21 @@ export interface ThreadQueueWorkflowState {
   /** The active run is a compaction, so promoting a queued message stops it instead of steering. */
   readonly promoteSkipsCompaction: boolean;
   readonly canSendNow: boolean;
+}
+
+export function queuedRunMoveTarget(
+  queuedRuns: ReadonlyArray<{ readonly run: Pick<Run, "id"> }>,
+  runId: RunId,
+  direction: "up" | "down",
+) {
+  const index = queuedRuns.findIndex(({ run }) => run.id === runId);
+  if (index < 0 || (direction === "up" ? index === 0 : index === queuedRuns.length - 1)) {
+    return null;
+  }
+  return {
+    runId,
+    beforeRunId: queuedRuns[index + (direction === "up" ? -1 : 2)]?.run.id ?? null,
+  };
 }
 
 export function resolveActiveThreadRun(projection: Pick<Projection, "runs">): Run | null {

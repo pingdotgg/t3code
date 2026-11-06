@@ -5,6 +5,7 @@ import {
   queuedRunEditBlockedReason,
 } from "@t3tools/client-runtime/queued-run-edit";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { queuedRunMoveTarget } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -47,7 +48,7 @@ const EMPTY_QUEUED_COUNT_ATOM = Atom.make(0).pipe(
 );
 
 type QueueTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
-type QueueAction = "steer" | "edit" | "remove";
+type QueueAction = "steer" | "edit" | "remove" | "up" | "down";
 
 function useThreadQueueWorkflow(target: QueueTarget) {
   return useAtomValue(environmentThreadDetails.queueWorkflowAtom(target));
@@ -130,8 +131,10 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
+  const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun, "reorder queued message");
   const [resuming, setResuming] = useState(false);
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
+  const [moveError, setMoveError] = useState<string | null>(null);
   const busyRef = useRef(false);
   const queuedRuns = workflow?.queuedRuns ?? [];
 
@@ -149,6 +152,19 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     if (busyRef.current) return;
     const index = queuedRuns.findIndex(({ run }) => run.id === runId);
     if (index < 0) return;
+    if (action === "up" || action === "down") {
+      const move = queuedRunMoveTarget(queuedRuns, runId, action);
+      if (move === null || editing?.runId === runId) return;
+      busyRef.current = true;
+      setBusyRunId(runId);
+      setMoveError(null);
+      void Haptics.selectionAsync();
+      const result = await reorder({ ...target, input: { threadId: target.threadId, ...move } });
+      if (result._tag === "Failure") setMoveError("Could not reorder queued messages. Try again.");
+      busyRef.current = false;
+      setBusyRunId(null);
+      return;
+    }
     if (action === "edit") {
       if (editBlockedReason !== null) return;
       const entry = queuedRuns[index]!;
@@ -205,6 +221,11 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       contentContainerClassName="px-5 pb-6"
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
     >
+      {moveError ? (
+        <Text accessibilityRole="alert" className="py-3 text-sm text-destructive">
+          {moveError}
+        </Text>
+      ) : null}
       {workflow?.isHeld && queuedRuns.length > 0 ? (
         <View className="gap-2 py-3">
           <Text className="text-sm text-foreground-muted">Queue paused</Text>
@@ -258,6 +279,22 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                   shouldOpenOnLongPress
                   style={{ flex: 1 }}
                   actions={[
+                    ...(queuedRuns.length > 1
+                      ? (["up", "down"] as const).map((direction) => ({
+                          id: direction,
+                          title: `Move ${direction}`,
+                          attributes: {
+                            disabled:
+                              busyRunId !== null ||
+                              controls.isEditing ||
+                              queuedRunMoveTarget(queuedRuns, run.id, direction) === null,
+                          },
+                          image:
+                            Platform.OS === "ios"
+                              ? `chevron.${direction}`
+                              : `keyboard_arrow_${direction}`,
+                        }))
+                      : []),
                     ...(workflow?.canPromoteToSteer || workflow?.canSendNow
                       ? [
                           {
@@ -292,8 +329,10 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                         ? "Opens this message in the composer for editing"
                         : (editBlockedReason ?? undefined)
                     }
-                    disabled={!controls.canEdit}
-                    onPress={() => void act(run.id, "edit")}
+                    disabled={busyRunId !== null || controls.isEditing}
+                    onPress={() => {
+                      if (controls.canEdit) void act(run.id, "edit");
+                    }}
                     className="min-h-14 flex-row items-center gap-2.5 py-2.5 active:opacity-70"
                   >
                     <QueueAttachmentThumbnails

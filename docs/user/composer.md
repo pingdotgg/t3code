@@ -65,7 +65,9 @@ See [images and videos](#images-and-videos-in-messages) for previewing and savin
 On web and desktop, choose **Settings → Chat → Follow-up behavior** to queue
 new messages for a later turn or steer the running turn immediately. The setting
 applies to this client; already queued messages keep their place. Queued messages
-are saved on the server and can be edited or removed before they send.
+are saved on the server and can be edited, reordered, or removed before they send.
+Use **Move up** or **Move down** to change their order without sending them. On
+mobile, these actions are in each queued message's menu.
 When Enter sends, `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux uses
 the opposite action: it steers when your default is Queue and queues when your
 default is Steer.
