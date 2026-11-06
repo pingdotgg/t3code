@@ -473,10 +473,11 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     if (kind === "file" || imageOnly) {
       // Adding a constraint changes fff's lone-path parse; offset pages can skip tied matches.
       let postFilterImages = imageOnly && isLoneFuzzyPath(query);
+      const nativePageSize = postFilterImages ? WORKSPACE_INDEX_PAGE_SIZE : pageSize;
       const nativeQuery =
         imageOnly && !postFilterImages ? `${query} ${IMAGE_SEARCH_CONSTRAINT}` : query;
-      let result = yield* runSearch(query, pageSize, "fileSearch", () =>
-        finder.fileSearch(nativeQuery, { pageSize }),
+      let result = yield* runSearch(query, nativePageSize, "fileSearch", () =>
+        finder.fileSearch(nativeQuery, { pageSize: nativePageSize }),
       );
       if (
         imageOnly &&
@@ -493,10 +494,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           result = unfiltered;
         }
       }
-      if (postFilterImages && result.totalMatched > result.items.length) {
-        const allMatches = result.totalMatched;
-        result = yield* runSearch(query, allMatches, "fileSearch", () =>
-          finder.fileSearch(query, { pageSize: allMatches }),
+      if (
+        postFilterImages &&
+        Math.min(result.totalMatched, WORKSPACE_INDEX_PAGE_SIZE) > result.items.length
+      ) {
+        result = yield* runSearch(query, WORKSPACE_INDEX_PAGE_SIZE, "fileSearch", () =>
+          finder.fileSearch(query, { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
         );
       }
       const mapped = mapFileSearchResult(result, limit, postFilterImages);

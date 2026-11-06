@@ -154,6 +154,28 @@ it.live("bounds native image results without losing matches, ranking, or query c
       );
     }
     expect((yield* searchIndex.search("", 1, "directory")).entries[0]?.kind).toBe("directory");
+    let materialized = 0;
+    fileSearch.mockImplementation((_query, options) => {
+      const count = Math.min(options?.pageSize ?? 100, 30_000);
+      materialized += count;
+      return {
+        ok: true,
+        value: {
+          ...nativeResult.value,
+          totalFiles: 30_000,
+          totalMatched: 30_000,
+          items: Array.from({ length: count }, (_, index) => ({
+            ...nativeResult.value.items[0],
+            relativePath: index === 29_999 ? "assets/late.png" : `assets/source-${index}.ts`,
+          })),
+        },
+      };
+    });
+    expect(yield* searchIndex.search("assets/", 200, "file", true)).toEqual({
+      entries: [],
+      truncated: true,
+    });
+    expect(materialized).toBeLessThanOrEqual(25_002);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
