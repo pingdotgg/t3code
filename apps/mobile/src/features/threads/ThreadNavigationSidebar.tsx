@@ -596,6 +596,10 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 keyExtractor={(item) => item.key}
                 renderItem={renderListItem}
                 {...WORKSPACE_LIST_SCROLL_INSETS}
+                // A stacked native search bar can overlap the list on iOS 18 even with a solid header.
+                //
+                // iOS 18 的原生搜索栏即使搭配实色标题栏也会覆盖列表，交由系统计算实际避让。
+                contentInsetAdjustmentBehavior="automatic"
                 contentContainerStyle={[
                   styles.threadListContent,
                   {
