@@ -547,7 +547,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       >();
       const pendingPrompts = new Map<string, PendingPiPrompt>();
       // Custom answers waiting for their ask_user_question follow-up input, keyed by title prefix.
-      const customAnswerFollowUps = new Map<string, string>();
+      // FIFO per prefix: the extension asks each follow-up right after its own select is answered.
+      const customAnswerFollowUps = new Map<string, string[]>();
       const sessionApprovals = new Set<string>();
       // Pi can settle immediately after dialog response; serialize so terminal cannot overtake request resolution.
       const sessionEventPermit = yield* Semaphore.make(1);
@@ -1497,8 +1498,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             undefined,
           );
         if (followUpPrefix !== undefined) {
-          const value = customAnswerFollowUps.get(followUpPrefix) ?? "";
-          customAnswerFollowUps.delete(followUpPrefix);
+          const queued = customAnswerFollowUps.get(followUpPrefix) ?? [];
+          const value = queued.shift() ?? "";
+          if (queued.length === 0) customAnswerFollowUps.delete(followUpPrefix);
           yield* connection.send({ type: "extension_ui_response", id: nativeRequestId, value });
           return;
         }
@@ -3032,7 +3034,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               response["value"].trim().length > 0 &&
               !route.lines.includes(response["value"])
             ) {
-              customAnswerFollowUps.set(route.followUpTitlePrefix, response["value"]);
+              customAnswerFollowUps.set(route.followUpTitlePrefix, [
+                ...(customAnswerFollowUps.get(route.followUpTitlePrefix) ?? []),
+                response["value"],
+              ]);
               response = { value: route.sentinel };
             }
             yield* connection.send({

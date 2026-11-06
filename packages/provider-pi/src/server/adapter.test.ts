@@ -3931,10 +3931,42 @@ describe("PiAdapterV2", () => {
       }
       const question = decodeUserInputQuestions(event.turnItem.questions)[0];
       assert.equal(question?.question, "Proceed? Only for staging?");
+      // Option lines that differ from the recorded call keep the raw select.
+      const unmatchedLines = ["1. Yes — Go", "2. No — Stop here", "3. Type something."];
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-unmatched",
+        method: "select",
+        title: "[Deploy] Proceed?",
+        options: unmatchedLines,
+      });
+      const unmatched = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+      );
+      if (
+        unmatched.type !== "turn_item.updated" ||
+        unmatched.turnItem.type !== "user_input_request"
+      ) {
+        return assert.fail("expected a user input request");
+      }
+      const unmatchedQuestion = decodeUserInputQuestions(unmatched.turnItem.questions)[0];
+      assert.deepEqual(
+        {
+          header: unmatchedQuestion?.header,
+          question: unmatchedQuestion?.question,
+          options: unmatchedQuestion?.options.map(({ label, value }) => [label, value]),
+        },
+        {
+          header: "Question",
+          question: "[Deploy] Proceed?",
+          options: unmatchedLines.map((line) => [line, line]),
+        },
+      );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("answers an ask_user_question with custom text through the extension's input", () =>
+  it.effect("answers each ask_user_question custom text through its follow-up input", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -3945,44 +3977,63 @@ describe("PiAdapterV2", () => {
       });
       yield* startTurn(runtime, providerThread);
       yield* fake.takeRequest("prompt");
+      const args = {
+        questions: [
+          {
+            question: "How many replicas?",
+            options: [
+              { label: "One", description: "Single instance" },
+              { label: "Three", description: "High availability" },
+            ],
+          },
+        ],
+      };
+      // Parallel questionnaires can ask the same question.
       yield* fake.emit({
         type: "tool_execution_start",
         toolCallId: "ask-call",
         toolName: "ask_user_question",
-        args: {
-          questions: [
-            {
-              question: "How many replicas?",
-              options: [
-                { label: "One", description: "Single instance" },
-                { label: "Three", description: "High availability" },
-              ],
-            },
-          ],
-        },
+        args,
+      });
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "ask-call-parallel",
+        toolName: "ask_user_question",
+        args,
       });
       const lines = ["1. One — Single instance", "2. Three — High availability"];
-      yield* fake.emit({
-        type: "extension_ui_request",
-        id: "ui-ask",
-        method: "select",
-        title: "How many replicas?",
-        options: [...lines, "3. Type something."],
+      const followUpTitle = `How many replicas?\n\n${lines.join("\n")}\n\nType your answer:`;
+      const takeWaitingRequest = Effect.fnUntraced(function* () {
+        const event = yield* takeEvent(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "user_input_request" &&
+            event.turnItem.status === "waiting",
+        );
+        if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
+          return assert.fail("expected a user input request");
+        }
+        return event.turnItem;
       });
-      const event = yield* takeEvent(
-        (event) =>
-          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
-      );
-      if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
-        return assert.fail("expected a user input request");
-      }
+      const answerWithCustomText = Effect.fnUntraced(function* (id: string, text: string) {
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id,
+          method: "select",
+          title: "How many replicas?",
+          options: [...lines, "3. Type something."],
+        });
+        const request = yield* takeWaitingRequest();
+        yield* runtime.respondToRuntimeRequest({
+          requestId: request.requestId,
+          answers: { [request.questions[0]!.id]: text },
+        });
+        const selectResponse = yield* fake.takeRequest("extension_ui_response");
+        assert.equal(selectResponse["value"], "3. Type something.");
+      });
       // The extension reads a bare number sent as the select's value as that option.
-      yield* runtime.respondToRuntimeRequest({
-        requestId: event.turnItem.requestId,
-        answers: { [event.turnItem.questions[0]!.id]: "2" },
-      });
-      const selectResponse = yield* fake.takeRequest("extension_ui_response");
-      assert.equal(selectResponse["value"], "3. Type something.");
+      yield* answerWithCustomText("ui-ask", "2");
+      yield* answerWithCustomText("ui-ask-parallel", "5");
       // A parallel tool's dialog can arrive before the extension's follow-up input.
       yield* fake.emit({
         type: "extension_ui_request",
@@ -3990,28 +4041,40 @@ describe("PiAdapterV2", () => {
         method: "input",
         title: "Anything else?",
       });
-      const other = yield* takeEvent(
-        (event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.type === "user_input_request" &&
-          event.turnItem.status === "waiting",
-      );
-      assert.equal(
-        other.type === "turn_item.updated" ? other.turnItem.title : undefined,
-        "Anything else?",
-      );
+      assert.equal((yield* takeWaitingRequest()).title, "Anything else?");
+      for (const [id, value] of [
+        ["ui-custom", "2"],
+        ["ui-custom-parallel", "5"],
+      ]) {
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id,
+          method: "input",
+          title: followUpTitle,
+          placeholder: "",
+        });
+        const inputResponse = yield* fake.takeRequest("extension_ui_response");
+        assert.deepEqual({ id: inputResponse["id"], value: inputResponse["value"] }, { id, value });
+      }
+      // An answer staged when the turn ends is dropped, so a later matching input is asked.
+      yield* answerWithCustomText("ui-ask-late", "7");
+      yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
       yield* fake.emit({
         type: "extension_ui_request",
-        id: "ui-custom",
+        id: "ui-custom-late",
         method: "input",
-        title: `How many replicas?\n\n${lines.join("\n")}\n\nType your answer:`,
+        title: followUpTitle,
         placeholder: "",
       });
-      const inputResponse = yield* fake.takeRequest("extension_ui_response");
-      assert.deepEqual(
-        { id: inputResponse["id"], value: inputResponse["value"] },
-        { id: "ui-custom", value: "2" },
-      );
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-after",
+        method: "input",
+        title: "Anything else?",
+      });
+      assert.equal((yield* takeWaitingRequest()).title, followUpTitle);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
