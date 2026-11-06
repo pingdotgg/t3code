@@ -4716,6 +4716,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   (cwd === sourceCwd ? "HEAD" : (sourceProjection.thread.branch ?? "HEAD")),
               })
               .pipe(mapDispatchError(command));
+            const available = yield* git
+              .execute({
+                operation: "Orchestrator.forkWorkspace.hasCommit",
+                cwd: project.workspaceRoot,
+                args: ["cat-file", "-e", `${commitSha}^{commit}`],
+                allowNonZeroExit: true,
+              })
+              .pipe(mapDispatchError(command));
+            if (available.exitCode !== 0) {
+              yield* git
+                .execute({
+                  operation: "Orchestrator.forkWorkspace.fetchCommit",
+                  cwd: project.workspaceRoot,
+                  args: [
+                    "fetch",
+                    "--quiet",
+                    "--no-tags",
+                    "--no-write-fetch-head",
+                    "--no-recurse-submodules",
+                    "--",
+                    cwd,
+                    commitSha,
+                  ],
+                })
+                .pipe(mapDispatchError(command));
+            }
             forkThread = {
               ...targetThread,
               branch: null,
@@ -5872,11 +5898,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = applyToProjection(projection, event);
     }
     const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
-    let dispatchMode = resolveMessageDispatchIntent(
+    const requestedDispatchMode = resolveMessageDispatchIntent(
       projection,
       command.dispatchMode,
       command.deliveryIntent,
     );
+    let dispatchMode = requestedDispatchMode;
     if (projection.thread.forkWorkspacePreparation !== undefined) {
       dispatchMode = {
         type: "defer_start",
@@ -5963,10 +5990,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.notification !== undefined &&
       (command.createdBy !== "agent" ||
         (command.creationSource !== "server" && command.creationSource !== "provider") ||
-        (dispatchMode.type !== "queue_after_active" &&
+        (requestedDispatchMode.type !== "queue_after_active" &&
           !(
             command.restartContinuationOfRunId !== undefined &&
-            dispatchMode.type === "start_immediately"
+            requestedDispatchMode.type === "start_immediately"
           )))
     ) {
       return yield* new OrchestratorDispatchError({
@@ -5981,7 +6008,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         command.createdBy !== "agent" ||
         command.creationSource !== "server" ||
-        dispatchMode.type !== "queue_after_active"
+        requestedDispatchMode.type !== "queue_after_active"
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
