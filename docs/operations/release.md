@@ -616,9 +616,11 @@ Notes:
 - The workflow writes it to a temporary `AuthKey_<id>.p8` file at runtime.
 - The workflow decodes `MACOS_PROVISIONING_PROFILE`, validates it with `security cms`, and passes it
   to the desktop packager.
-- In-app browser passkeys depend on the same profile. The packager adds each entitlement only when
-  the profile grants it, because macOS will not launch an app that claims more than its profile
-  allows. The build log reports which ones it enabled.
+- The packager adds each passkey entitlement only when the profile grants it, because macOS will not
+  launch an app that claims more than its profile allows. The build log reports which ones it enabled.
+  - `com.apple.developer.associated-domains` (`webcredentials:` the Clerk RP domains) enables
+    T3 Connect passkey sign-in. A profile that grants it requires a Clerk domain; builds without
+    T3 Connect can use a profile without it.
   - `keychain-access-groups` (`<TEAM_ID>.com.t3tools.t3code.webauthn`) enables Touch ID passkeys.
     Profiles that grant the team's keychain groups (`<TEAM_ID>.*`) cover it.
   - `com.apple.developer.web-browser.public-key-credential` lets the system passkey sheet (iCloud
