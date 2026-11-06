@@ -1496,8 +1496,12 @@ export const layer: Layer.Layer<
         });
         // A failed idle write keeps its text held and retries with backoff while provider events
         // keep ingesting. The provider's next update still writes, and fails ingestion, the normal way.
-        let idleFlushFailures = 0;
-        let nextIdleFlushWarningAt = Number.NEGATIVE_INFINITY;
+        // Keyed by held snapshot: another message's success keeps this backoff and warning limit,
+        // while a newer snapshot or a delivery leaves the old entry unreachable.
+        const idleFlushFailures = new WeakMap<
+          ProviderAdapter.ProviderAdapterV2Event,
+          { readonly count: number; readonly nextWarningAt: number }
+        >();
         const flushIdleAssistantText = Effect.gen(function* () {
           const now = DateTime.toEpochMillis(yield* DateTime.now);
           // A wake due by now has fired; a later deadline needs a new one.
@@ -1513,22 +1517,23 @@ export const layer: Layer.Layer<
             const written = yield* Effect.exit(ingestDelivered(flush.event, flush.event));
             if (Exit.isFailure(written)) {
               if (Cause.hasInterruptsOnly(written.cause)) return yield* written;
-              idleFlushFailures += 1;
+              const previous = idleFlushFailures.get(flush.event);
+              const failures = (previous?.count ?? 0) + 1;
               const failedAt = DateTime.toEpochMillis(yield* DateTime.now);
-              if (failedAt >= nextIdleFlushWarningAt) {
+              let nextWarningAt = previous?.nextWarningAt ?? Number.NEGATIVE_INFINITY;
+              if (failedAt >= nextWarningAt) {
                 yield* Effect.logWarning("orchestration V2 idle assistant text flush failed", {
                   runId: input.run.id,
-                  failures: idleFlushFailures,
+                  failures,
                   cause: written.cause,
                 });
-                nextIdleFlushWarningAt = failedAt + 10 * 60_000;
+                nextWarningAt = failedAt + 10 * 60_000;
               }
-              const retryAt = failedAt + Math.min(1_000 * 2 ** (idleFlushFailures - 1), 30_000);
+              idleFlushFailures.set(flush.event, { count: failures, nextWarningAt });
+              const retryAt = failedAt + Math.min(1_000 * 2 ** (failures - 1), 30_000);
               for (const pending of due.slice(index)) pending.retryAt(retryAt);
               break;
             }
-            idleFlushFailures = 0;
-            nextIdleFlushWarningAt = Number.NEGATIVE_INFINITY;
             flush.delivered(now);
             yield* trackChildLifecycle(flush.event, true);
           }
