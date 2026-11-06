@@ -1,4 +1,11 @@
 import type { ModelSelection, ServerProvider } from "@t3tools/contracts";
+import {
+  buildExplicitProviderOptionSelectionsFromDescriptors,
+  buildProviderOptionSelectionsFromDescriptors,
+  createModelSelection,
+  draftModelPickMatchesThread,
+  getProviderOptionDescriptors,
+} from "@t3tools/shared/model";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -23,13 +30,12 @@ const MIN_PROMPT_WORDS = 4;
 const MAX_TRACKED_THREADS = 1_000;
 const ceilings = new Map<string, { baseline: ModelSelection; chosen: ModelSelection }>();
 
-const sameModel = (left: ModelSelection, right: ModelSelection) =>
-  left.instanceId === right.instanceId && left.model === right.model;
-
-/** The user's pick: the incoming selection, unless it is the model Nadir chose last turn. */
+/** The user's pick: the incoming selection, unless it is what Nadir chose last turn. */
 export function baselineFor(threadId: string, incoming: ModelSelection): ModelSelection {
   const prior = ceilings.get(threadId);
-  return prior !== undefined && sameModel(prior.chosen, incoming) ? prior.baseline : incoming;
+  return prior !== undefined && draftModelPickMatchesThread(incoming, prior.chosen)
+    ? prior.baseline
+    : incoming;
 }
 
 export function rememberChoice(
@@ -54,6 +60,33 @@ export function modelMenu(provider: ServerProvider | undefined): ReadonlyArray<s
   return (
     provider?.models.filter((model) => model.isLegacy !== true).map((model) => model.slug) ?? []
   );
+}
+
+/**
+ * The routed model keeps the options the user's pick ran with, defaults included, so the effort
+ * the picker showed still applies. An option the routed model lacks takes its own default.
+ */
+export function routedSelection(
+  baseline: ModelSelection,
+  model: string,
+  provider: ServerProvider | undefined,
+): ModelSelection {
+  const capabilitiesOf = (slug: string) =>
+    provider?.models.find((candidate) => candidate.slug === slug)?.capabilities ?? undefined;
+  const from = capabilitiesOf(baseline.model);
+  const to = capabilitiesOf(model);
+  if (to === undefined) return createModelSelection(baseline.instanceId, model);
+  const picked =
+    from === undefined
+      ? baseline.options
+      : buildProviderOptionSelectionsFromDescriptors(
+          getProviderOptionDescriptors({ caps: from, selections: baseline.options }),
+        );
+  const options = buildExplicitProviderOptionSelectionsFromDescriptors(
+    getProviderOptionDescriptors({ caps: to, selections: picked }),
+    picked,
+  );
+  return createModelSelection(baseline.instanceId, model, options);
 }
 
 export interface NadirCacheState {
@@ -206,9 +239,7 @@ export const chooseModelSelection = Effect.fn("NadirRouting.chooseModelSelection
       Effect.orElseSucceed(() => null),
     );
     const model = pickModel(answer, { baseline: baseline.model, current, menu });
-    // Options such as effort belong to the user's model; the routed model uses its own defaults.
-    const chosen: ModelSelection =
-      model === baseline.model ? baseline : { instanceId: baseline.instanceId, model };
+    const chosen = model === baseline.model ? baseline : routedSelection(baseline, model, provider);
     rememberChoice(input.threadId, baseline, chosen);
     if (model !== baseline.model) {
       yield* Effect.logInfo("Nadir routed turn", { from: baseline.model, to: model });

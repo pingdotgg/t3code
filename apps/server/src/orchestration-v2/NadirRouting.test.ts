@@ -1,5 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ModelSelection,
+  type ServerProvider,
+  type ServerProviderModel,
+} from "@t3tools/contracts";
 
 import {
   baselineFor,
@@ -7,6 +13,7 @@ import {
   nadirRequestBody,
   pickModel,
   rememberChoice,
+  routedSelection,
 } from "./NadirRouting.ts";
 
 const menu = ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"];
@@ -80,6 +87,78 @@ describe("baselineFor", () => {
     const sonnet: ModelSelection = { instanceId, model: "claude-sonnet-4-6" };
     expect(baselineFor("thread-1", sonnet)).toBe(sonnet);
     expect(baselineFor("thread-2", haiku)).toBe(haiku);
+    // Changing only the effort of the model Nadir chose is a pick too.
+    const haikuHigh: ModelSelection = { ...haiku, options: [{ id: "effort", value: "high" }] };
+    expect(baselineFor("thread-1", haikuHigh)).toBe(haikuHigh);
+  });
+});
+
+describe("routedSelection", () => {
+  const instanceId = ProviderInstanceId.make("claudeAgent");
+  const model = (slug: string, efforts: string[], defaultEffort: string, fast = false) =>
+    ({
+      slug,
+      name: slug,
+      isCustom: false,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Effort",
+            type: "select",
+            options: efforts.map((id) => ({ id, label: id, isDefault: id === defaultEffort })),
+          },
+          ...(fast ? [{ id: "fastMode", label: "Fast", type: "boolean" as const }] : []),
+        ],
+      },
+    }) satisfies ServerProviderModel;
+  const provider: ServerProvider = {
+    instanceId,
+    driver: ProviderDriverKind.make("claudeAgent"),
+    enabled: true,
+    installed: true,
+    version: "0.0.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-11-06T00:00:00.000Z",
+    models: [
+      model("opus", ["low", "medium", "high", "max"], "medium", true),
+      model("sonnet", ["medium", "high", "max"], "high"),
+      model("haiku", ["low", "medium", "high"], "medium"),
+    ],
+    slashCommands: [],
+    skills: [],
+  };
+
+  it.each([
+    [
+      "the effort the picker showed, not the routed model's default",
+      undefined,
+      "sonnet",
+      [{ id: "effort", value: "medium" }],
+    ],
+    [
+      "a stated effort, dropping options the routed model lacks",
+      [
+        { id: "effort", value: "max" },
+        { id: "fastMode", value: true },
+      ],
+      "sonnet",
+      [{ id: "effort", value: "max" }],
+    ],
+    [
+      "the routed model's default when it lacks the level",
+      [{ id: "effort", value: "max" }],
+      "haiku",
+      [{ id: "effort", value: "medium" }],
+    ],
+  ])("keeps %s", (_label, options, target, expected) => {
+    const baseline: ModelSelection = { instanceId, model: "opus", ...(options ? { options } : {}) };
+    expect(routedSelection(baseline, target, provider)).toEqual({
+      instanceId,
+      model: target,
+      options: expected,
+    });
   });
 });
 
