@@ -8,7 +8,6 @@ const MAX_OSC52_PAYLOAD_LENGTH = 1024 * 1024;
 
 const PREFIX = "52;";
 // BEL ends the OSC, ESC may start ST, CAN and SUB abort it.
-// oxlint-disable-next-line no-control-regex -- matching VT control bytes is the point.
 const OSC_CONTROL = /[\x07\x18\x1a\x1b]/g;
 // The browser has one clipboard, so the system and both X11 selections map to it.
 const SELECTION = /^[cps0-7]*$/;
