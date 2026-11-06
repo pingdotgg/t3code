@@ -613,18 +613,32 @@ it.effect.each([
                   thread: { id: threadId, projectId, deletedAt: null },
                   runs: raced ? [...runs, nextRun] : runs,
                   messages: [
+                    { id: MessageId.make("original"), runId, role: "user" as const },
                     {
                       id: nextRun.userMessageId,
-                      role: "user",
+                      runId: followUpId,
+                      role: "user" as const,
                       ...(followUp.endsWith("notification") ? { notification: {} } : {}),
                       ...(followUp === "delegated" ? { delegatedCompletion: {} } : {}),
                     },
+                    { id: MessageId.make("reply"), runId: followUpId, role: "assistant" as const },
                     ...(followUp === "steered-notification"
-                      ? [{ id: MessageId.make("user-steer"), role: "user" }]
+                      ? [
+                          {
+                            id: MessageId.make("user-steer"),
+                            runId: followUpId,
+                            role: "user" as const,
+                          },
+                        ]
                       : []),
                   ].filter(
                     (message) =>
-                      filter?.messageIds === undefined || filter.messageIds.includes(message.id),
+                      (filter?.messageIds === undefined ||
+                        filter.messageIds.includes(message.id)) &&
+                      (filter?.messageRunIds === undefined ||
+                        filter.messageRunIds.includes(message.runId)) &&
+                      (filter?.messageRoles === undefined ||
+                        filter.messageRoles.includes(message.role)),
                   ),
                 }) as unknown as OrchestrationV2ThreadProjection,
             ),
