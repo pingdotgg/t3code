@@ -61,7 +61,7 @@ async function openEditor(options?: { value?: string; allowEmpty?: boolean }) {
       value={options?.value ?? "Original description"}
       cwd="/repo"
       environmentId={secondary}
-      mentionProjectId={ProjectId.make("project")}
+      mentionScope={{ environmentId: secondary, projectId: ProjectId.make("project") }}
       label="Pull request description"
       saving={false}
       allowEmpty={options?.allowEmpty ?? false}

@@ -18,7 +18,10 @@ import {
   usePendingReviewComments,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
-import { PullRequestMarkdownTextarea } from "./PullRequestMarkdownTextarea";
+import {
+  PullRequestMarkdownTextarea,
+  type PullRequestMentionScope,
+} from "./PullRequestMarkdownTextarea";
 
 const VERDICTS: ReadonlyArray<{
   readonly value: PullRequestReviewVerdict;
@@ -50,6 +53,7 @@ export function PullRequestReviewForm({
   environmentId,
   active,
   reference,
+  mentionScope,
   term,
   verdicts,
   requestChangesSummaryRequired,
@@ -62,6 +66,7 @@ export function PullRequestReviewForm({
   /** False while the form stays mounted but hidden; dictation is cancelled then. */
   active: boolean;
   reference: PullRequestRef;
+  mentionScope: PullRequestMentionScope | null;
   /** The host's word for a change request, as in "pull request". */
   term: string;
   verdicts: ReadonlyArray<PullRequestReviewVerdict>;
@@ -152,7 +157,7 @@ export function PullRequestReviewForm({
     <>
       <PullRequestMarkdownTextarea
         ref={textareaRef}
-        mentionScope={{ environmentId, projectId: reference.projectId }}
+        mentionScope={mentionScope}
         rows={3}
         readOnly={speech.freezesEditor}
         value={body}

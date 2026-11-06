@@ -1,9 +1,14 @@
-import type { EnvironmentId, ProjectId, PullRequestActor } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProjectId,
+  PullRequestActor,
+  PullRequestDetailView,
+  PullRequestRef,
+} from "@t3tools/contracts";
 import {
   detectPullRequestMention,
   insertPullRequestMention,
   narrowPullRequestMentions,
-  pullRequestMentionSearch,
 } from "@t3tools/shared/pullRequestComposerTrigger";
 import { useId, useState, type Ref } from "react";
 import { flushSync } from "react-dom";
@@ -22,6 +27,17 @@ export interface PullRequestMentionScope {
   readonly projectId: ProjectId;
 }
 
+/** Null on hosts that cannot search their users, so `@` never opens a list that cannot fill. */
+export function pullRequestMentionScope(
+  detail: Pick<PullRequestDetailView, "capabilities">,
+  environmentId: EnvironmentId,
+  reference: PullRequestRef,
+): PullRequestMentionScope | null {
+  return detail.capabilities.mentions === true
+    ? { environmentId, projectId: reference.projectId }
+    : null;
+}
+
 const MENTION_SEARCH_DEBOUNCE_MS = 200;
 const MENTION_SUGGESTION_LIMIT = 8;
 // About a full list of suggestions. The popup fits itself to the space it opens into, so it never
@@ -36,7 +52,7 @@ function suggestionSide(target: HTMLTextAreaElement): "top" | "bottom" {
 
 function useMentionCandidates(scope: PullRequestMentionScope | null, query: string | null) {
   const typed = query ?? "";
-  const search = pullRequestMentionSearch(typed);
+  const search = typed === "" ? undefined : typed.slice(0, 100);
   const sent = useDebouncedValue(search, MENTION_SEARCH_DEBOUNCE_MS);
   const hosted = usePullRequestFilterOptions(
     scope === null || query === null

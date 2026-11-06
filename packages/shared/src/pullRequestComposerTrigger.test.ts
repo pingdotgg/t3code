@@ -4,7 +4,6 @@ import {
   detectPullRequestMention,
   insertPullRequestMention,
   narrowPullRequestMentions,
-  pullRequestMentionSearch,
 } from "./pullRequestComposerTrigger.ts";
 
 describe("detectPullRequestMention", () => {
@@ -52,16 +51,6 @@ describe("insertPullRequestMention", () => {
     const inserted = insertPullRequestMention(text, trigger, "julius");
     expect(inserted).toEqual({ text: "@julius please look", cursor: "@julius ".length });
     expect(detectPullRequestMention(inserted.text, inserted.cursor)).toBeNull();
-  });
-});
-
-describe("pullRequestMentionSearch", () => {
-  it.each([
-    ["", undefined],
-    ["To", undefined],
-    ["Ton", "Ton"],
-  ])("sends %j to the host as %j", (typed, query) => {
-    expect(pullRequestMentionSearch(typed)).toBe(query);
   });
 });
 

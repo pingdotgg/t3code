@@ -37,16 +37,6 @@ export function insertPullRequestMention(
   return { ...inserted, cursor: inserted.cursor + 1 };
 }
 
-// GitLab's project users search answers nothing below three characters, so shorter queries
-// narrow the unsearched list locally instead.
-const MIN_HOST_MENTION_SEARCH = 3;
-
-/** The search to send the host for what is typed after `@`, if any. */
-export function pullRequestMentionSearch(typed: string): string | undefined {
-  const query = typed.slice(0, 100);
-  return query.length >= MIN_HOST_MENTION_SEARCH ? query : undefined;
-}
-
 export function narrowPullRequestMentions<A extends { login: string; name: string | null }>(
   users: ReadonlyArray<A>,
   typed: string,

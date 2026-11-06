@@ -6,7 +6,6 @@ import {
 import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
-  ProjectId,
   PullRequestComment,
   PullRequestDetailView,
   PullRequestRef,
@@ -85,6 +84,10 @@ import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
+import {
+  type PullRequestMentionScope,
+  pullRequestMentionScope,
+} from "./PullRequestMarkdownTextarea";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
@@ -164,7 +167,7 @@ function reviewStateLabel(state: string): string {
 interface CommentEditing {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
+  readonly mentionScope: PullRequestMentionScope | null;
   readonly threadRef: ScopedThreadRef | null;
   readonly canEdit: (comment: PullRequestComment) => boolean;
   readonly editingId: string | null;
@@ -189,7 +192,7 @@ function CommentBody({
         value={comment.body}
         cwd={editing.cwd}
         environmentId={editing.environmentId}
-        mentionProjectId={editing.projectId}
+        mentionScope={editing.mentionScope}
         threadRef={editing.threadRef}
         label="Edit comment"
         saving={editing.saving}
@@ -545,10 +548,11 @@ export function PullRequestSummaryTab({
     if (body !== description) void saveDescription(body);
   };
 
+  const mentionScope = pullRequestMentionScope(detail, environmentId, reference);
   const commentEditing: CommentEditing = {
     cwd: detail.workspaceRoot,
     environmentId,
-    projectId: reference.projectId,
+    mentionScope,
     threadRef,
     canEdit: (comment) => canEditPullRequestComment(detail, comment),
     editingId: editingCommentId,
@@ -798,7 +802,7 @@ export function PullRequestSummaryTab({
               value={bodyScope.body}
               cwd={detail.workspaceRoot}
               environmentId={environmentId}
-              mentionProjectId={reference.projectId}
+              mentionScope={mentionScope}
               threadRef={threadRef}
               label={`${capitalizeTerm(terminology.singular)} description`}
               placeholder={`Describe this ${terminology.singular}`}

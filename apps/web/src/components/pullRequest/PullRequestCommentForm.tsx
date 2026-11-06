@@ -10,7 +10,10 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { PullRequestGlyph } from "./pullRequestIcons";
-import { PullRequestMarkdownTextarea } from "./PullRequestMarkdownTextarea";
+import {
+  PullRequestMarkdownTextarea,
+  pullRequestMentionScope,
+} from "./PullRequestMarkdownTextarea";
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
 
@@ -110,7 +113,7 @@ export function PullRequestCommentForm({
     <div className="space-y-2">
       <PullRequestMarkdownTextarea
         ref={textareaRef}
-        mentionScope={{ environmentId, projectId: reference.projectId }}
+        mentionScope={pullRequestMentionScope(detail, environmentId, reference)}
         // Lock while posting because success clears the draft.
         disabled={locked}
         readOnly={speech.freezesEditor}

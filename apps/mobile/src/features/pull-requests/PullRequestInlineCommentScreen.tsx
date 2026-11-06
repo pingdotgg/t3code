@@ -33,14 +33,15 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
   const saved = store.draft.comments.find((draft) => draft.id === params.draftId);
   const [editedBody, setBody] = useState<string | null>(null);
   const body = editedBody ?? saved?.body ?? "";
+  const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(params)));
+  const { refresh: refreshDetail } = detail;
   const mentions = usePullRequestMentions({
     environmentId: params.environmentId,
     projectId: params.projectId,
     value: body,
     onChangeValue: setBody,
+    enabled: detail.data?.capabilities.mentions === true,
   });
-  const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(params)));
-  const { refresh: refreshDetail } = detail;
   useFocusEffect(refreshDetail);
   const permissions = usePullRequestPermissions(params, detail.data);
   const stale = detail.data && detail.data.headSha !== params.headSha;
