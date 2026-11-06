@@ -441,13 +441,19 @@ it.each(["fresh", "primary-blocked", "fallback-blocked"] as const)(
         },
       })),
     });
-    const first = Promise.withResolvers<typeof fresh>();
-    const blocked = Promise.withResolvers<typeof fresh>();
+    let completeFirst: (value: typeof fresh) => void = () => undefined;
+    let completeBlocked: (value: typeof fresh) => void = () => undefined;
+    const first = new Promise<typeof fresh>((resolve) => {
+      completeFirst = resolve;
+    });
+    const blocked = new Promise<typeof fresh>((resolve) => {
+      completeBlocked = resolve;
+    });
     let calls = 0;
     testState.refreshProviders.mockImplementation(async () => {
       calls++;
-      if (mode === "primary-blocked") return blocked.promise;
-      if (mode === "fallback-blocked") return calls === 1 ? first.promise : blocked.promise;
+      if (mode === "primary-blocked") return blocked;
+      if (mode === "fallback-blocked") return calls === 1 ? first : blocked;
       return fresh;
     });
     let finished = false;
@@ -462,7 +468,7 @@ it.each(["fresh", "primary-blocked", "fallback-blocked"] as const)(
     try {
       if (mode === "fallback-blocked") {
         await vi.advanceTimersByTimeAsync(3_000);
-        first.resolve(fresh);
+        completeFirst(fresh);
         await vi.advanceTimersByTimeAsync(0);
         expect(testState.refreshProviders).toHaveBeenCalledTimes(2);
         await vi.advanceTimersByTimeAsync(1_999);
@@ -479,12 +485,12 @@ it.each(["fresh", "primary-blocked", "fallback-blocked"] as const)(
         { replaceOptions: true },
       );
       expect(vi.getTimerCount()).toBe(0);
-      blocked.resolve(fresh);
+      completeBlocked(fresh);
       await vi.advanceTimersByTimeAsync(0);
       expect(testState.refreshProviders).toHaveBeenCalledTimes(mode === "primary-blocked" ? 1 : 2);
     } finally {
-      first.resolve(fresh);
-      blocked.resolve(fresh);
+      completeFirst(fresh);
+      completeBlocked(fresh);
       await pending;
       vi.useRealTimers();
     }
