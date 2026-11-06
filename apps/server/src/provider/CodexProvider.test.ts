@@ -5,6 +5,7 @@ import {
   appendCustomCodexModels,
   applyPreferredCodexDefaultModel,
   applyConfiguredCodexCyberAccess,
+  codexApiKeyCyberAccessProgramsDisabled,
   codexCyberAccessProgram,
   mapCodexModelCapabilities,
 } from "./CodexProvider.ts";
@@ -265,6 +266,16 @@ it("follows Codex's daybreak setting for the default program", () => {
   });
   assert.strictEqual(cyberProgram(disabled, "both"), undefined);
   assert.strictEqual(cyberProgram(disabled, "both", "daybreakBlue"), undefined);
+});
+
+it("treats an unread config as disabling API-key cyber access programs", () => {
+  const apiKey = { type: "apiKey" } as const;
+  const chatgpt = { type: "chatgpt", email: "a@example.com", planType: "pro" } as const;
+  const off = { features: { api_key_cyber_access_programs: false } };
+  assert.isTrue(codexApiKeyCyberAccessProgramsDisabled(apiKey, undefined));
+  assert.isTrue(codexApiKeyCyberAccessProgramsDisabled(apiKey, off));
+  assert.isFalse(codexApiKeyCyberAccessProgramsDisabled(apiKey, {}));
+  assert.isFalse(codexApiKeyCyberAccessProgramsDisabled(chatgpt, undefined));
 });
 
 it("keeps Daybreak access off custom models that borrow built-in options", () => {

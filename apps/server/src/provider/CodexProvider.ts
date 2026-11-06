@@ -368,6 +368,19 @@ export function codexCyberAccessProgram(
     : descriptor.currentValue;
 }
 
+/** An unread config may have them disabled, and Codex rejects a program it does not allow. */
+export function codexApiKeyCyberAccessProgramsDisabled(
+  account: CodexSchema.V2GetAccountResponse["account"],
+  config: Readonly<Record<string, unknown>> | undefined,
+): boolean {
+  return (
+    account?.type === "apiKey" &&
+    (config === undefined ||
+      (config["features"] as { readonly api_key_cyber_access_programs?: unknown } | undefined)
+        ?.api_key_cyber_access_programs === false)
+  );
+}
+
 function applyConfiguredCodexServiceTier(
   models: ReadonlyArray<ServerProviderModel>,
   serviceTier: string | undefined,
@@ -701,12 +714,10 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     models,
     serviceTier: config?.service_tier ?? undefined,
     daybreakEnabled: config?.["daybreak"] === true,
-    // An unread config may have them disabled, and Codex rejects a program it does not allow.
-    apiKeyCyberAccessProgramsDisabled:
-      accountResponse.account?.type === "apiKey" &&
-      (config === undefined ||
-        (config["features"] as { readonly api_key_cyber_access_programs?: unknown } | undefined)
-          ?.api_key_cyber_access_programs === false),
+    apiKeyCyberAccessProgramsDisabled: codexApiKeyCyberAccessProgramsDisabled(
+      accountResponse.account,
+      config,
+    ),
     skills: skillsResponse ? parseCodexSkillsListResponse(skillsResponse, input.cwd) : [],
   } satisfies CodexAppServerProviderSnapshot;
 });
