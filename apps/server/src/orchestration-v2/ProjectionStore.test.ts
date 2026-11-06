@@ -6814,6 +6814,23 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           turnItemRunId: RunId.make(`run:${suffix}`),
         })
         .pipe(Effect.withTracer(tracer));
+      yield* projectionStore
+        .getThreadRecords(threadId, ["turnItems"], {
+          turnItemTypes: ["run_interrupt_request"],
+          turnItemRunIds: [RunId.make(`run:${suffix}`)],
+        })
+        .pipe(Effect.withTracer(tracer));
+      yield* projectionStore
+        .getThreadRecords(threadId, ["turnItems"], {
+          turnItemTypes: ["subagent"],
+          turnItemNodeIds: [NodeId.make(`node:${suffix}`)],
+        })
+        .pipe(Effect.withTracer(tracer));
+      yield* projectionStore
+        .getThreadRecords(threadId, ["subagents"], {
+          subagentChildThreadId: ThreadId.make(`thread:${suffix}:child`),
+        })
+        .pipe(Effect.withTracer(tracer));
       yield* projectionStore.getThreadShell(threadId).pipe(Effect.withTracer(tracer));
       const planOf = Effect.fnUntraced(function* (marker: string) {
         const statement = statements.find((query) => query.includes(marker));
@@ -6830,9 +6847,24 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           avoids: "turn_items_thread_ordinal_idx",
         },
         {
-          marker: "AND type IN (SELECT value FROM json_each",
-          uses: "SEARCH orchestration_v2_projection_turn_items USING INDEX",
-          avoids: "turn_items_thread_type_idx",
+          marker: "AND run_id = ?",
+          uses: "turn_items_thread_run_idx (thread_id=? AND run_id=?)",
+          avoids: "turn_items_thread_ordinal_idx",
+        },
+        {
+          marker: "AND run_id IN (SELECT value FROM json_each",
+          uses: "turn_items_thread_run_idx (thread_id=? AND run_id=?)",
+          avoids: "turn_items_thread_ordinal_idx",
+        },
+        {
+          marker: "AND node_id IN (SELECT value FROM json_each",
+          uses: "turn_items_node_ordinal_idx (node_id=?)",
+          avoids: "turn_items_thread_ordinal_idx",
+        },
+        {
+          marker: "AND child_thread_id = ?",
+          uses: "subagents_child_thread_idx (child_thread_id=?)",
+          avoids: "subagents_thread_idx",
         },
         {
           marker: "MIN(ordinal) AS ordinal",
