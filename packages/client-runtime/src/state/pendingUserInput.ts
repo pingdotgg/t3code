@@ -73,17 +73,14 @@ export function resolvePendingUserInputAnswer(
   }
 
   const selectedOptionValues = normalizeSelectedOptionValues(question, draft?.selectedOptionValues);
-  if (question.multiSelect) {
-    return selectedOptionValues.length > 0
-      ? selectedOptionValues
-      : (customAnswer ??
-          (question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0 ? "" : null));
-  }
-  return (
-    selectedOptionValues[0] ??
+  const fallback =
     customAnswer ??
-    (question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0 ? "" : null)
-  );
+    (question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0 ? "" : null);
+  if (question.multiSelect) {
+    // Checking nothing is a valid multi-select answer: "none of these".
+    return selectedOptionValues.length > 0 ? selectedOptionValues : (fallback ?? []);
+  }
+  return selectedOptionValues[0] ?? fallback;
 }
 
 export function setPendingUserInputCustomAnswer(
