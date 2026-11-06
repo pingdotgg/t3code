@@ -92,6 +92,7 @@ const fixture = Effect.fn("fixture")(function* (
     readonly routesStreams?: boolean;
     readonly onClose?: Effect.Effect<"ok" | "missing" | "reject" | "http_error" | "malformed">;
     readonly onPlatformAvailability?: Effect.Effect<void>;
+    readonly onSummary?: Effect.Effect<void>;
   } = {},
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
@@ -104,6 +105,7 @@ const fixture = Effect.fn("fixture")(function* (
   const discoveryErrors = yield* Ref.make<Array<{ message: string; error?: string }>>([]);
   const androidAvailable = yield* Ref.make(true);
   const encoderResult = yield* Ref.make({ code: 0, stdout: " V....D libx264", stderr: "" });
+  let running = false;
   let booted = false;
   let shutDown = false;
   const connection = { online: true, kind: "local" as "local" | "ssh", failShutdown: false };
@@ -232,12 +234,12 @@ const fixture = Effect.fn("fixture")(function* (
       kind: connection.kind,
       label: "Test server",
       platforms: [
-        { platform: "android", available: true },
-        { platform: "ios", available: true },
+        { platform: "android" as const, available: true },
+        { platform: "ios" as const, available: true },
       ],
       hubInstalled: true,
       agentDeviceInstalled: false,
-    })),
+    })).pipe(Effect.tap(() => options.onSummary ?? Effect.void)),
     platformAvailability: (platform) =>
       (options.onPlatformAvailability ?? Effect.void).pipe(
         Effect.as({ platform, available: true }),
@@ -246,6 +248,7 @@ const fixture = Effect.fn("fixture")(function* (
       Effect.gen(function* () {
         if (runtimeFailure && runtimeFailure._tag !== "AgentDeviceStartError")
           return yield* runtimeFailure;
+        running = true;
         starts.push("start");
         yield* onPhase("installing", "Updating device hub from 0.9.0 to 0.10.1…");
         return ready;
@@ -261,7 +264,7 @@ const fixture = Effect.fn("fixture")(function* (
         };
       }),
     current: Effect.sync(() =>
-      connection.online
+      connection.online && running
         ? {
             ...ready,
             ...(agentStarts.length > agentStops.length
@@ -279,6 +282,7 @@ const fixture = Effect.fn("fixture")(function* (
       agentStops.push("stop");
     }),
     stop: Effect.sync(() => {
+      running = false;
       starts.push("stop");
     }),
   };
@@ -449,6 +453,29 @@ describe("device setup consent", () => {
         expect((yield* Ref.get(settings)).enableDeviceSupport).toBe(false);
         expect(yield* service.readinessIfSupported()).toBeNull();
         expect(starts).toEqual(["start", "stop"]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "turning local simulators off stops the hub, hides its devices, and refuses opens",
+    () =>
+      Effect.gen(function* () {
+        const { service, starts, settings } = yield* fixture();
+        expect((yield* service.configure({ enabled: true })).devices).toHaveLength(1);
+        yield* Ref.update(settings, (current) => ({ ...current, localDevicesEnabled: false }));
+        const off = yield* service.list;
+        expect(off.devices).toEqual([]);
+        expect(off.hostStatuses[LOCAL_DEVICE_HOST_ID]).toBeUndefined();
+        expect(starts).toEqual(["start", "stop"]);
+        yield* service.list;
+        expect(starts).toEqual(["start", "stop"]);
+        expect(yield* service.readinessIfSupported()).toBeNull();
+        const open = yield* service.readiness().pipe(Effect.flip);
+        expect(open).toMatchObject({ reason: expect.stringContaining("Settings → Devices") });
+
+        yield* Ref.update(settings, (current) => ({ ...current, localDevicesEnabled: true }));
+        expect((yield* service.list).devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
+        expect(starts).toEqual(["start", "stop", "start"]);
       }).pipe(Effect.scoped),
   );
 
@@ -674,30 +701,74 @@ it.effect.each([1, 9009])(
     ),
 );
 
-it.effect("publishes boot progress and does not restore sessions after support is disabled", () =>
+it.effect("does not publish a late local listing failure after the source is disabled", () =>
   Effect.gen(function* () {
-    const started = yield* Deferred.make<void>();
+    const entered = yield* Deferred.make<void>();
     const finish = yield* Deferred.make<void>();
-    const { service } = yield* fixture(
-      Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(finish))),
+    let pause = false;
+    const { service, settings } = yield* fixture(
+      Effect.void,
+      undefined,
+      false,
+      undefined,
+      false,
+      undefined,
+      {
+        onSummary: Effect.suspend(() =>
+          pause
+            ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(finish)))
+            : Effect.void,
+        ),
+      },
     );
     yield* service.configure({ enabled: true });
-    const opening = yield* service
-      .open({ threadId: ThreadId.make("thread-1"), deviceId: "Pixel_API_35", platform: "android" })
-      .pipe(Effect.result, Effect.forkChild);
-    yield* Deferred.await(started);
-    expect((yield* service.state).bootingDevices?.map((device) => device.name)).toEqual([
-      "Pixel_API_35",
-    ]);
-    yield* service.configure({ enabled: false });
+    pause = true;
+    const listing = yield* service.list.pipe(Effect.forkChild);
+    yield* Deferred.await(entered);
+    yield* Ref.update(settings, (current) => ({ ...current, localDevicesEnabled: false }));
+    yield* service.list;
     yield* Deferred.succeed(finish, undefined);
-    expect((yield* Fiber.join(opening))._tag).toBe("Failure");
-    const state = yield* service.state;
-    expect(state.hostStatus).toBe("disabled");
-    expect(state.devices).toEqual([]);
-    expect(state.sessions).toEqual([]);
-    expect(state.bootingDevices).toEqual([]);
+    const after = yield* Fiber.join(listing);
+    expect(after.hostStatus).toBe("idle");
+    expect(after.hostStatuses[LOCAL_DEVICE_HOST_ID]).toBeUndefined();
+    expect(after.devices).toEqual([]);
   }).pipe(Effect.scoped),
+);
+
+it.effect.each(["all", "local"] as const)(
+  "does not restore sessions after %s support is disabled",
+  (disabled) =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      const { service, settings } = yield* fixture(
+        Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(finish))),
+      );
+      yield* service.configure({ enabled: true });
+      const opening = yield* service
+        .open({
+          threadId: ThreadId.make("thread-1"),
+          deviceId: "Pixel_API_35",
+          platform: "android",
+        })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Deferred.await(started);
+      expect((yield* service.state).bootingDevices?.map((device) => device.name)).toEqual([
+        "Pixel_API_35",
+      ]);
+      if (disabled === "all") yield* service.configure({ enabled: false });
+      else {
+        yield* Ref.update(settings, (current) => ({ ...current, localDevicesEnabled: false }));
+        yield* service.list;
+      }
+      yield* Deferred.succeed(finish, undefined);
+      expect((yield* Fiber.join(opening))._tag).toBe("Failure");
+      const state = yield* service.state;
+      expect(state.hostStatus).toBe(disabled === "all" ? "disabled" : "idle");
+      expect(state.devices).toEqual([]);
+      expect(state.sessions).toEqual([]);
+      expect(state.bootingDevices).toEqual([]);
+    }).pipe(Effect.scoped),
 );
 
 it.effect.each([

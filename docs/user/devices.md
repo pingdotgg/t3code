@@ -24,7 +24,8 @@ window by its handle, resize it from any edge, and use **Open in right panel**
 to bring it back.
 Turn off **Use devices** in **Settings → Devices** to stop the
 helper processes; simulators and emulators keep running until you power them
-off.
+off. To use only SSH, EAS, or Simlock sources, turn off **Local simulators**
+under **Device sources**; the panel and agents then skip this machine's devices.
 
 Simulators run on the machine that hosts the environment server. iOS needs
 macOS with Xcode. Android needs the SDK Platform-Tools, Android Emulator,
