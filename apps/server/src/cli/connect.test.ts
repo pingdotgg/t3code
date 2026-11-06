@@ -162,3 +162,78 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     );
   },
 );
+
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))(
+  "t3 connect link",
+  (it) => {
+    const runManagedLink = (options?: { readonly storedPublishSetting?: string }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-connect-link-test-" });
+        const secretsDir = `${baseDir}/userdata/secrets`;
+        yield* fs.makeDirectory(secretsDir, { recursive: true });
+        yield* fs.writeFileString(
+          `${secretsDir}/cloud-cli-oauth-token.bin`,
+          JSON.stringify({
+            accessToken: "access-token",
+            refreshToken: "refresh-token",
+            expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+            identity: "user@example.com",
+          }),
+        );
+        if (options?.storedPublishSetting !== undefined) {
+          yield* fs.writeFileString(
+            `${secretsDir}/cloud-publish-agent-activity.bin`,
+            options.storedPublishSetting,
+          );
+        }
+        const cloudflaredPath = `${baseDir}/cloudflared`;
+        yield* fs.writeFileString(
+          cloudflaredPath,
+          `#!/bin/sh\necho "cloudflared version ${RelayClient.CLOUDFLARED_VERSION}"\n`,
+        );
+        yield* fs.chmod(cloudflaredPath, 0o755);
+
+        yield* Command.runWith(makeCli({ cloudEnabled: true }), { version: "0.0.0" })([
+          "connect",
+          "link",
+          "--headless",
+          "--base-dir",
+          baseDir,
+        ]).pipe(
+          Effect.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: { T3CODE_CLOUDFLARED_PATH: cloudflaredPath },
+              }),
+            ),
+          ),
+        );
+
+        const published = yield* fs
+          .readFileString(`${secretsDir}/cloud-publish-agent-activity.bin`)
+          .pipe(Effect.option);
+        return {
+          printed: (yield* TestConsole.logLines).join("\n"),
+          published: Option.getOrNull(published),
+        };
+      }).pipe(Effect.scoped, Effect.provide(Layer.fresh(TestConsole.layer)));
+
+    it.effect("turns on agent activity publishing for a managed link", () =>
+      Effect.gen(function* () {
+        const { printed, published } = yield* runManagedLink();
+
+        assert.include(printed, "✓ Authorized as user@example.com");
+        assert.equal(published, "true", "a managed link left agent activity publishing off");
+      }),
+    );
+
+    it.effect("keeps a user's opt-out from agent activity publishing", () =>
+      Effect.gen(function* () {
+        const { published } = yield* runManagedLink({ storedPublishSetting: "false" });
+
+        assert.equal(published, "false");
+      }),
+    );
+  },
+);
