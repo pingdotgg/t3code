@@ -760,7 +760,6 @@ function diffCursorPage(cursor: string): number | null {
   return /^[1-9][0-9]{0,6}$/.test(cursor) ? Number(cursor) : null;
 }
 
-/** Quote user text so GitHub cannot interpret it as qualifiers that widen the listing. */
 const REVIEW_QUALIFIERS = {
   approved: "approved",
   "changes-requested": "changes_requested",

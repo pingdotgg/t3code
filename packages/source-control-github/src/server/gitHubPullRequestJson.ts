@@ -1586,6 +1586,7 @@ export function referenceSearchQuery(repository: string, query: string | undefin
   return [`repo:${repository}`, ...titled, "sort:updated-desc"].join(" ");
 }
 
+/** Quote user text so GitHub cannot interpret it as qualifiers that widen the listing. */
 export function searchPhrase(query: string): string {
   return `"${query.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
