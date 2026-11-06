@@ -50,25 +50,18 @@ function RowLead(props: {
   mark: ((className: string) => ReactNode) | null;
 }): ReactNode {
   return (
-    <span aria-hidden data-row-lead className="relative size-3 shrink-0">
+    <span aria-hidden className="relative size-3 shrink-0">
       {props.repo !== null ? (
         <>
-          <span data-row-repo className="absolute -top-px -left-px flex size-3.5">
-            {props.repo}
-          </span>
+          <span className="absolute -top-px -left-px flex size-3.5">{props.repo}</span>
           {props.mark ? (
-            <span
-              data-row-disc
-              className="sidebar-row-disc absolute top-[0.40625rem] left-[0.40625rem] flex size-[0.6875rem] items-center justify-center rounded-full"
-            >
+            <span className="sidebar-row-disc absolute top-[0.40625rem] left-[0.40625rem] flex size-[0.6875rem] items-center justify-center rounded-full">
               {props.mark("size-2")}
             </span>
           ) : null}
         </>
       ) : props.mark ? (
-        <span data-row-alone className="absolute -top-px -left-px flex size-3.5">
-          {props.mark("size-3.5")}
-        </span>
+        <span className="absolute -top-px -left-px flex size-3.5">{props.mark("size-3.5")}</span>
       ) : null}
     </span>
   );
@@ -171,11 +164,10 @@ export function resolveVariantRow(input: {
         onOpenThread={input.onOpenThread}
       />
     ) : (
-      <span data-row-pill className={cn(ROW_PILL_CLASS_NAME, statusWord.className)}>
+      <span className={cn(ROW_PILL_CLASS_NAME, statusWord.className)}>
         {working ? (
           <span
             aria-hidden
-            data-row-pill-dot
             ref={observeVisibleAnimation}
             className="sidebar-status-dot block size-1.5 shrink-0 rounded-full"
           />
@@ -188,7 +180,7 @@ export function resolveVariantRow(input: {
     <span className="inline-flex shrink-0 [&_svg]:size-[0.6875rem]">{input.pin}</span>
   ) : null;
   const lead = nested ? (
-    <span aria-hidden data-row-worker-mark className="flex size-3 shrink-0">
+    <span aria-hidden className="flex size-3 shrink-0">
       {input.mark?.("size-3")}
     </span>
   ) : (
@@ -214,7 +206,6 @@ export function resolveVariantRow(input: {
             <span
               role="img"
               aria-label={input.workerSummary ?? undefined}
-              data-worker-count
               className="inline-flex shrink-0 items-center gap-0.5 text-2xs font-medium text-muted-foreground tabular-nums"
             >
               <BotIcon aria-hidden className="size-3 shrink-0" />

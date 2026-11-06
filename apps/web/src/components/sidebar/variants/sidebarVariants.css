@@ -67,18 +67,6 @@
   && [class*="dark:text-indigo-300"] {
     color: var(--variant-input);
   }
-  & .bg-warning-foreground {
-    background-color: var(--variant-warning);
-  }
-  & .bg-success-foreground {
-    background-color: var(--variant-success);
-  }
-  & .bg-info-foreground {
-    background-color: var(--variant-info);
-  }
-  & .bg-error-foreground {
-    background-color: var(--variant-error);
-  }
 }
 
 /* The sheet paints the root sidebar token, while the docked sidebar rescopes it locally. */
