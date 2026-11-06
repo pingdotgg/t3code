@@ -97,6 +97,10 @@ const COMPOSER_PILL_CLASS_NAME =
 
 // One 32px button slot inside the pill (send, stop, and later the mic), concentric
 // with the pill inside its 1px rim.
+// An icon button inside the pill, shared by send and the pane thumbnail's mock composer.
+export const COMPOSER_PILL_BUTTON_CLASS_NAME =
+  "relative isolate flex h-full items-center justify-center gap-1 overflow-hidden rounded-md text-foreground transition-colors duration-150 enabled:cursor-pointer enabled:hover:bg-foreground/8 disabled:pointer-events-none disabled:opacity-64 [&_svg]:pointer-events-none";
+
 const COMPOSER_PILL_SLOT_CLASS_NAME =
   "relative isolate flex h-full shrink-0 cursor-pointer items-center justify-center rounded-item outline-none transition-colors duration-150 hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&_svg]:pointer-events-none";
 
@@ -299,7 +303,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     <button
       type={showResume ? "button" : "submit"}
       className={cn(
-        "relative isolate flex h-full items-center justify-center gap-1 overflow-hidden rounded-md text-foreground transition-colors duration-150 enabled:cursor-pointer enabled:hover:bg-foreground/8 disabled:pointer-events-none disabled:opacity-64 [&_svg]:pointer-events-none",
+        COMPOSER_PILL_BUTTON_CLASS_NAME,
         showQueueLabel ? "ps-1.5 pe-2.5 text-label" : "w-8",
       )}
       {...pointerFocusProps}
@@ -392,7 +396,13 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
  * The mic + send pill. Send and stop render inside it, and dictation's mic
  * joins as a sibling slot before them, so the pill keeps one shape in every state.
  */
-function ComposerSendPill({ className, children }: { className?: string; children: ReactNode }) {
+export function ComposerSendPill({
+  className,
+  children,
+}: {
+  className?: string;
+  children: ReactNode;
+}) {
   return (
     <span data-composer-send-pill="true" className={cn(COMPOSER_PILL_CLASS_NAME, className)}>
       {children}
