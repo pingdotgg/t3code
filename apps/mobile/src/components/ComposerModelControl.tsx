@@ -1,4 +1,6 @@
 import type { ModelSelection, ProviderDriverKind } from "@t3tools/contracts";
+import { useState } from "react";
+import { View } from "react-native";
 import {
   buildTraitsTriggerDisplay,
   getPromptControlledTraits,
@@ -19,6 +21,10 @@ export function ComposerModelControl(props: {
   readonly disabled?: boolean;
   readonly size?: "regular" | "large";
   readonly iconOnly?: boolean;
+  /** Effort abbreviation instead of the full traits, for a row shared with the editor. */
+  readonly compact?: boolean;
+  /** Width the control may fill; falls back to the effort abbreviation plus speed when the full traits overflow it. */
+  readonly fitWidth?: number;
   readonly onPress: () => void;
 }) {
   const descriptors = resolveProviderOptionDescriptors({
@@ -26,7 +32,7 @@ export function ComposerModelControl(props: {
     selections: props.selection?.options,
   });
   const promptTraits = getPromptControlledTraits(descriptors, props.prompt);
-  const summary = props.provider
+  const traits = props.provider
     ? buildTraitsTriggerDisplay({
         provider: props.provider,
         descriptors,
@@ -34,11 +40,20 @@ export function ComposerModelControl(props: {
         ultrathinkPromptControlled: promptTraits.ultrathinkPromptControlled,
         modelSelection: props.selection,
         reportedModelSelection: props.reportedSelection,
-      }).label
-    : "";
+      })
+    : null;
+  const summary = traits?.label ?? "";
+  const [fullWidth, setFullWidth] = useState(0);
+  const overflows = props.fitWidth !== undefined && fullWidth > 0 && fullWidth > props.fitWidth + 1;
+  const compact = props.compact === true || overflows;
   const badge = props.modelOption?.providerBadge;
   const label = props.modelOption?.label ?? props.selection?.model ?? "Choose model";
-  return (
+  const visibleSummary = props.compact
+    ? (traits?.compactEffortLabel ?? "")
+    : overflows
+      ? [traits?.compactEffortLabel, traits?.speedLabel].filter(Boolean).join(" ")
+      : summary;
+  const renderControl = (full: boolean) => (
     <ComposerInlineControl
       accessibilityLabel={[
         "Model and reasoning settings",
@@ -72,8 +87,10 @@ export function ComposerModelControl(props: {
       }
       label={props.modelOption?.shortName ?? label}
       iconOnly={props.iconOnly}
+      // Only short abbreviations keep their width; an unrecognized effort name truncates.
+      suffixFixed={!full && compact && (traits?.compactEffortLabel?.length ?? 0) <= 4}
       suffix={
-        summary ? (
+        (full ? summary : visibleSummary) ? (
           <Text
             className={
               props.size === "large"
@@ -82,12 +99,32 @@ export function ComposerModelControl(props: {
             }
             numberOfLines={1}
           >
-            {summary}
+            {full ? summary : visibleSummary}
           </Text>
         ) : undefined
       }
-      maxWidth="100%"
+      maxWidth={full ? 10_000 : "100%"}
       onPress={props.onPress}
     />
+  );
+  if (props.fitWidth === undefined) return renderControl(false);
+  return (
+    <>
+      {/* Unconstrained copy measures whether the full labels fit. */}
+      <View
+        pointerEvents="none"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        style={{ position: "absolute", left: 0, top: 0, width: 10_000, opacity: 0 }}
+      >
+        <View
+          className="self-start"
+          onLayout={(event) => setFullWidth(event.nativeEvent.layout.width)}
+        >
+          {renderControl(true)}
+        </View>
+      </View>
+      {renderControl(false)}
+    </>
   );
 }
