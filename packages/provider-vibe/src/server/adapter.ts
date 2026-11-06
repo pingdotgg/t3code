@@ -48,13 +48,13 @@ import {
   buildVibeSpawnInput,
   resolveVibeModelId,
   vibeAgentForRuntimeMode,
-  vibeWorktreeInputForCwd,
 } from "./appServerSupport.ts";
 import { vibeEffectSettled, vibeHistoryTurnItem } from "./historyItems.ts";
 
 const VibeProviderCapabilitiesV2 = {
   sessions: {
-    supportsMultipleProviderThreadsPerSession: true,
+    // A vibe-app-server connection streams events for only its last attached session.
+    supportsMultipleProviderThreadsPerSession: false,
     supportsModelSwitchInSession: true,
     supportsProviderSwitchingViaHandoff: false,
     supportsRuntimeModeSwitchInSession: true,
@@ -64,7 +64,7 @@ const VibeProviderCapabilitiesV2 = {
     canCreateEmptyThread: true,
     canReadThreadSnapshot: true,
     canRollbackThread: true,
-    canForkThread: true,
+    canForkThread: false,
     canForkFromTurn: false,
     canForkFromSubagentThread: false,
     exposesNativeThreadId: true,
@@ -386,9 +386,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
     });
 
     const now = yield* DateTime.now;
-    const providerSessionId = idAllocator.derive.providerSession({
-      providerInstanceId: options.instanceId,
-    });
+    const providerSessionId = input.providerSessionId;
     const state: AdapterState = {
       session: {
         id: providerSessionId,
@@ -726,16 +724,13 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       const threadCwd = ensureInput.runtimePolicy.cwd ?? cwd;
       const nativeId = ensureInput.existingProviderThread?.nativeThreadRef?.nativeId ?? undefined;
       const mcpSession = yield* mcpSessions.read(ensureInput.threadId);
-      const worktree = yield* vibeWorktreeInputForCwd(threadCwd).pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
-      );
+      // No `worktree`: T3 already owns the checkout, so Vibe runs in place at `cwd`. Vibe
+      // rejects `worktree` on resume, and `existing` fails outside linked worktrees.
       const agentConfig = {
         mcpServers: vibeMcpServers(mcpSession),
         cwd: threadCwd,
         headless: true,
         trustWorkspace: options.settings.trustWorkspace,
-        worktree,
         agent: agent.agent,
         autoApprove: agent.autoApprove,
       };
@@ -1103,57 +1098,14 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         return yield* readThreadSnapshot({ providerThread: rollbackInput.providerThread });
       });
 
-    const forkThread: ProviderAdapter.ProviderAdapterV2SessionRuntime["forkThread"] = Effect.fn(
-      "VibeAdapterV2.forkThread",
-    )(function* (forkInput) {
-      const sourceId = forkInput.sourceProviderThread.nativeThreadRef?.nativeId;
-      if (!sourceId) {
-        return yield* new ProviderAdapter.ProviderAdapterForkThreadError({
+    const forkThread: ProviderAdapter.ProviderAdapterV2SessionRuntime["forkThread"] = (forkInput) =>
+      Effect.fail(
+        new ProviderAdapter.ProviderAdapterForkThreadError({
           driver: VIBE_PROVIDER,
           providerThreadId: forkInput.sourceProviderThread.id,
-        });
-      }
-      const forked = yield* Effect.mapError(
-        client.request("session/fork", {
-          sourceSessionId: sourceId,
-          ...(forkInput.providerTurnId !== undefined
-            ? { afterTurnId: forkInput.providerTurnId }
-            : {}),
+          cause: "Vibe forks go through T3's context handoff.",
         }),
-        protocolError,
       );
-      const nativeThreadId = str(
-        asRecord(asRecord(asRecord(forked)?.["state"])?.["session"])?.["id"],
-      );
-      if (!nativeThreadId) {
-        return yield* new ProviderAdapter.ProviderAdapterForkThreadError({
-          driver: VIBE_PROVIDER,
-          providerThreadId: forkInput.sourceProviderThread.id,
-        });
-      }
-      const createdAt = yield* DateTime.now;
-      return {
-        id: idAllocator.derive.providerThread({
-          driver: VIBE_PROVIDER,
-          providerInstanceId: options.instanceId,
-          nativeThreadId,
-        }),
-        driver: VIBE_PROVIDER,
-        providerInstanceId: options.instanceId,
-        providerSessionId,
-        appThreadId: forkInput.targetThreadId,
-        ownerNodeId: forkInput.ownerNodeId ?? null,
-        nativeThreadRef: nativeRef(nativeThreadId),
-        nativeConversationHeadRef: null,
-        status: "idle" as const,
-        firstRunOrdinal: null,
-        lastRunOrdinal: null,
-        handoffIds: [],
-        forkedFrom: { providerThreadId: forkInput.sourceProviderThread.id },
-        createdAt,
-        updatedAt: createdAt,
-      } satisfies OrchestrationV2ProviderThread;
-    });
 
     return {
       instanceId: options.instanceId,
