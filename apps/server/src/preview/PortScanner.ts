@@ -73,6 +73,8 @@ export const AGENT_THREAD_ENV = "T3CODE_THREAD_ID";
 const PORT_DISCOVERY_ENV = "T3CODE_PORT_DISCOVERY";
 
 const POLL_INTERVAL = Duration.seconds(3);
+/** Test runners and build workers hold ports for moments, so a new listener waits one poll. */
+const LISTENER_SETTLE_MS = Duration.toMillis(POLL_INTERVAL);
 const LSOF_TIMEOUT_MS = 5_000;
 const PROC_FD_WALK_LIMIT = 50_000;
 const SOCKET_OWNER_ATTEMPTS = 3;
@@ -119,6 +121,10 @@ const UNOWNED: ServerOwner = { terminal: null, agent: null };
 
 const isOwned = (server: DiscoveredLocalServer): boolean =>
   server.terminal !== null || (server.agent ?? null) !== null;
+
+/** Keyed by thread, not pid, so a server that restarts on its port stays settled. */
+const settleKey = (server: DiscoveredLocalServer): string =>
+  `${server.terminal?.threadId ?? server.agent?.threadId}:${server.port}`;
 
 interface ProcessTableRow {
   readonly pid: number;
@@ -463,6 +469,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     retainCount: 0,
   });
   const webProbeCacheRef = yield* Ref.make<ReadonlyMap<string, WebProbeCacheEntry>>(new Map());
+  // When each thread's port was first read, or null before the first read since idle: a client
+  // that just opened can't tell those listeners from long-running ones.
+  const listenerFirstSeenRef = yield* Ref.make<ReadonlyMap<string, number> | null>(null);
   const scanSemaphore = yield* Semaphore.make(1);
   const lsofMissingRef = yield* Ref.make(false);
   const windowsProcessNamesRef = yield* Ref.make<
@@ -686,12 +695,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   // binary ones such as Unity's test runner or Steam's IPC.
   // Idle polls omit this span; requested scans and uncached probes retain their own spans.
   const probeWebServers = Effect.fnUntraced(function* (
-    servers: ReadonlyArray<DiscoveredLocalServer>,
+    servers: ReadonlyArray<DiscoveredLocalServer> | null,
     configuredUrls: ReadonlyArray<string>,
   ) {
     const nowMillis = yield* Clock.currentTimeMillis;
     const cached = yield* Ref.get(webProbeCacheRef);
-    const groups = makeWebProbeGroups(servers, configuredUrls);
+    const groups = makeWebProbeGroups(servers ?? [], configuredUrls);
     const probed = yield* Effect.forEach(
       groups,
       (group) => {
@@ -722,7 +731,21 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       if (probe.isWeb) configured.set(group.configuredKey, { ...group.server, url: group.url });
     }
     yield* Ref.set(webProbeCacheRef, nextCache);
-    return { discovered: servers.filter(isOwned), configured } satisfies WebProbeSnapshot;
+    // A failed listener read says nothing about which listeners are new.
+    if (servers === null) return { discovered: [], configured } satisfies WebProbeSnapshot;
+    const owned = servers.filter(isOwned);
+    const known = yield* Ref.get(listenerFirstSeenRef);
+    const firstSeen = new Map(
+      owned.map((server) => {
+        const key = settleKey(server);
+        return [key, known === null ? Number.NEGATIVE_INFINITY : (known.get(key) ?? nowMillis)];
+      }),
+    );
+    yield* Ref.set(listenerFirstSeenRef, firstSeen);
+    const discovered = owned.filter(
+      (server) => nowMillis - (firstSeen.get(settleKey(server)) ?? nowMillis) >= LISTENER_SETTLE_MS,
+    );
+    return { discovered, configured } satisfies WebProbeSnapshot;
   });
 
   // tasklist costs 200-300ms per PID; query visible servers with bounded concurrency and cache names.
@@ -821,14 +844,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           ProcessTimeoutError: recoverWindowsProbeFailure,
         }),
       );
-      return yield* withWindowsProcessNames(
-        yield* probeWebServers(listeners ?? [], configuredUrls),
-      );
+      return yield* withWindowsProcessNames(yield* probeWebServers(listeners, configuredUrls));
     }
     const recoverLsofProbeFailure = recoverProcessProbeFailure("lsof");
     if (yield* Ref.get(lsofMissingRef)) {
       const fromProc = yield* scanProcListeners(resolveOwners);
-      return yield* probeWebServers(fromProc ?? [], configuredUrls);
+      return yield* probeWebServers(fromProc, configuredUrls);
     }
     const lsofResult = yield* processRunner
       .run({
@@ -857,7 +878,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       );
     if (lsofResult !== null) return yield* probeWebServers(lsofResult, configuredUrls);
     const fromProc = yield* scanProcListeners(resolveOwners);
-    return yield* probeWebServers(fromProc ?? [], configuredUrls);
+    return yield* probeWebServers(fromProc, configuredUrls);
   });
 
   const scanSnapshot = (configuredUrls: ReadonlyArray<string>) =>
@@ -912,6 +933,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       { ...state, retainCount: state.retainCount + 1 },
     ]);
     if (wasIdle) {
+      yield* scanSemaphore.withPermits(1)(Ref.set(listenerFirstSeenRef, null));
       yield* pollTick();
     }
   });
