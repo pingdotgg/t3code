@@ -118,8 +118,8 @@ type StableTimelineRowsInput = Parameters<typeof applyBackgroundActivityGroups>[
   >;
   readonly isWorking: boolean;
   readonly runlessWorkActive: boolean;
-  readonly toolCallVisibility: MessagesTimelineRowsInput["toolCallVisibility"];
-  readonly revealedMessageId: MessagesTimelineRowsInput["revealedMessageId"];
+  readonly toolCallVisibility: Exclude<MessagesTimelineRowsInput["toolCallVisibility"], undefined>;
+  readonly revealedMessageId: Exclude<MessagesTimelineRowsInput["revealedMessageId"], undefined>;
   readonly workingHistoryKey: string | null;
   readonly windowlessCitation: boolean;
   readonly activeFindEntryId: string | null;
