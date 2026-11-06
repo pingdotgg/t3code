@@ -115,11 +115,14 @@ export const driver = defineSecretProviderDriver({
 
 const decodeAccountList = Schema.decodeUnknownOption(
   Schema.fromJsonString(
-    Schema.Array(Schema.Struct({ url: OnePasswordAccount, email: Schema.String })),
+    Schema.Array(
+      Schema.Struct({ url: Schema.String, email: Schema.String, user_uuid: Schema.String }),
+    ),
   ),
 );
+const isAccount = Schema.is(OnePasswordAccount);
 
-/** Signed-in accounts by the address `op --account` accepts; empty when `op` cannot answer. */
+/** Accounts `op` is configured with, by a value `op --account` accepts; empty when it cannot answer. */
 export const listAccounts = Effect.fn("OnePasswordDriver.listAccounts")(function* () {
   const result = yield* runOnePassword(["account", "list", "--format", "json"]).pipe(
     Effect.timeoutOption(READ_TIMEOUT),
@@ -132,8 +135,15 @@ export const listAccounts = Effect.fn("OnePasswordDriver.listAccounts")(function
     yield* Effect.logWarning("Could not list 1Password accounts");
     return [];
   }
-  return accounts.value.map(({ url, email }): OnePasswordAccountSummary => ({
-    account: url,
-    email,
-  }));
+  // `op` may report the address with its scheme, and users can share one address (every personal
+  // account signs in at my.1password.com); a shared address is ambiguous, so those go by user ID.
+  const addresses = accounts.value.map(({ url }) =>
+    url.startsWith("https://") ? url.slice("https://".length) : url,
+  );
+  return accounts.value.flatMap(({ email, user_uuid }, index): OnePasswordAccountSummary[] => {
+    const address = addresses[index] ?? "";
+    const shared = addresses.indexOf(address) !== addresses.lastIndexOf(address);
+    const account = !shared && isAccount(address) ? address : user_uuid;
+    return isAccount(account) ? [{ account, address, email }] : [];
+  });
 });

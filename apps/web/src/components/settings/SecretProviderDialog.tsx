@@ -148,7 +148,7 @@ export function SecretProviderDialog({
                       {listedAccounts.map((item) => (
                         <AutocompleteItem key={item.account} value={item}>
                           <span className="min-w-0 truncate text-sm font-medium">
-                            {item.account}
+                            {item.address}
                           </span>
                           <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                             {item.email}
@@ -169,8 +169,8 @@ export function SecretProviderDialog({
                 </p>
               ) : null}
               <p className="text-xs text-muted-foreground">
-                Accounts the op CLI is signed into are suggested. Type any other shorthand, sign-in
-                address without https://, or ID.
+                Accounts the op CLI on that server knows are suggested. Type any other shorthand,
+                sign-in address without https://, or ID.
               </p>
             </div>
           </form>

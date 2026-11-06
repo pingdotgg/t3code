@@ -169,17 +169,19 @@ describe("1Password driver", () => {
 });
 
 describe("1Password listAccounts", () => {
-  it.effect("lists each signed-in account by the address `op --account` accepts", () => {
+  it.effect("lists each account by a value `op --account` accepts unambiguously", () => {
     const op = fakeOp(() => ({
       stdout: JSON.stringify([
-        { url: "my.1password.com", email: "me@example.com", user_uuid: "U1" },
-        { url: "acme.1password.com", email: "me@acme.example", user_uuid: "U2" },
+        { url: "https://acme.1password.com", email: "me@acme.example", user_uuid: "U1" },
+        { url: "my.1password.com", email: "me@example.com", user_uuid: "U2" },
+        { url: "my.1password.com", email: "family@example.com", user_uuid: "U3" },
       ]),
     }));
     return Effect.gen(function* () {
       assert.deepStrictEqual(yield* listAccounts(), [
-        { account: "my.1password.com", email: "me@example.com" },
-        { account: "acme.1password.com", email: "me@acme.example" },
+        { account: "acme.1password.com", address: "acme.1password.com", email: "me@acme.example" },
+        { account: "U2", address: "my.1password.com", email: "me@example.com" },
+        { account: "U3", address: "my.1password.com", email: "family@example.com" },
       ]);
       assert.deepStrictEqual(op.invocations, [
         ["--cache=false", "account", "list", "--format", "json"],
