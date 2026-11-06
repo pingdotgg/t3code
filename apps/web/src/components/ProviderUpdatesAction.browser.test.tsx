@@ -7,6 +7,7 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect } from "react";
 import { expect, it, vi } from "vite-plus/test";
@@ -22,6 +23,7 @@ const state = vi.hoisted(() => ({
   providers: new Map<EnvironmentId, ReadonlyArray<ServerProvider>>(),
   requests: [] as EnvironmentId[],
   checks: [] as { environmentId: EnvironmentId; input: unknown }[],
+  checkResult: null as AsyncResult.AsyncResult<unknown, unknown> | null,
   sessions: new Map<EnvironmentId, Atom.Writable<AsyncResult.AsyncResult<AuthSessionState>>>(),
 }));
 
@@ -47,13 +49,17 @@ vi.mock(import("~/state/server"), () => ({
 vi.mock(import("~/state/use-atom-command"), () => ({
   useAtomCommand: ((command: string) =>
     async ({ environmentId, input }: { environmentId: EnvironmentId; input: unknown }) => {
-      if (command === "refresh") state.checks.push({ environmentId, input });
-      else state.requests.push(environmentId);
-      return AsyncResult.success(undefined);
+      if (command !== "refresh") {
+        state.requests.push(environmentId);
+        return AsyncResult.success(undefined);
+      }
+      state.checks.push({ environmentId, input });
+      return state.checkResult ?? AsyncResult.success(undefined);
     }) as never,
 }));
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { toastManager } from "./ui/toast";
 import { useCheckProviderUpdates, useProviderUpdates } from "./ProviderUpdatesAction";
 
 const provider: ServerProvider = {
@@ -105,6 +111,7 @@ function setup() {
   );
   state.requests = [];
   state.checks = [];
+  state.checkResult = null;
   const sessions = new Map<EnvironmentId, Atom.Writable<AsyncResult.AsyncResult<AuthSessionState>>>(
     [
       [state.environments[0]!.environmentId, Atom.make(session(["orchestration:read"]))],
@@ -151,6 +158,20 @@ it("provider updates and checks exclude connections without a confirmed manageme
   });
   // Only a model refresh drops the server's cached latest provider versions.
   expect(state.checks).toEqual([{ environmentId: writableId, input: { refreshModels: true } }]);
+
+  using toast = vi.spyOn(toastManager, "add");
+  state.checkResult = AsyncResult.failure(Cause.interrupt());
+  await act(async () => {
+    await check();
+  });
+  expect(toast).not.toHaveBeenCalled();
+  state.checkResult = AsyncResult.failure(Cause.fail(new Error("offline")));
+  await act(async () => {
+    await check();
+  });
+  expect(toast).toHaveBeenCalledWith(
+    expect.objectContaining({ title: "Could not check provider updates" }),
+  );
 
   await act(() => {
     appAtomRegistry.set(fixture.sessions.get(writableId)!, session(["orchestration:read"]));

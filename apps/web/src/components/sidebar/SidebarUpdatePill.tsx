@@ -201,6 +201,7 @@ function SidebarUpdateControl() {
   // The desktop updates this machine, whose policy the primary environment reports.
   const updatesDenial = managedUpdatesDenial(usePrimaryManagedPolicy());
   const [isActionPending, setIsActionPending] = useState(false);
+  const [isCheckingProviders, setIsCheckingProviders] = useState(false);
   const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
@@ -237,7 +238,7 @@ function SidebarUpdateControl() {
   const isRunningEverything = run !== null;
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
     isAnimationLatched: isCheckAnimationLatched,
-    isChecking: state?.status === "checking",
+    isChecking: state?.status === "checking" || isCheckingProviders,
     prefersReducedMotion,
   });
   const { iconStatus, showUpdateDetails, showUpdateIconState } = resolveSidebarUpdatePresentation({
@@ -351,9 +352,9 @@ function SidebarUpdateControl() {
           }),
         );
       });
-    void Promise.allSettled([appCheck, checkProviderUpdates()]).then(() =>
-      setIsActionPending(false),
-    );
+    setIsCheckingProviders(true);
+    const providerCheck = checkProviderUpdates().finally(() => setIsCheckingProviders(false));
+    void Promise.allSettled([appCheck, providerCheck]).then(() => setIsActionPending(false));
   };
 
   const runEverything = async () => {
@@ -389,7 +390,7 @@ function SidebarUpdateControl() {
   const handleCheckAnimationIteration = () => {
     setIsCheckAnimationLatched(
       shouldContinueDesktopUpdateCheckAnimation({
-        isChecking: state?.status === "checking",
+        isChecking: state?.status === "checking" || isCheckingProviders,
         prefersReducedMotion,
       }),
     );
