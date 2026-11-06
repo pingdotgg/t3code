@@ -1957,7 +1957,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       const work = { provider: SecretProviderId.make("work"), reference: "op://Work/token" };
       const instanceId = ProviderInstanceId.make("antigravity_refs");
       const hub = UsageLimitSourceId.make("hub");
-      yield* decodeServerSettingsPatch({
+      yield* decodeSettingsPatch({
         secretProviders: {
           personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
           work: { kind: "one_password", label: "Work", config: { account: "work" } },
@@ -3056,7 +3056,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           reference: "op://Private/Anthropic/key",
         };
         yield* withPolicy(undefined, (service) =>
-          decodeServerSettingsPatch({
+          decodeSettingsPatch({
             secretProviders: {
               personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
             },
