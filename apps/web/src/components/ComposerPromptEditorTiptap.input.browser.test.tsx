@@ -151,6 +151,26 @@ it.each([
   expect(textWithMark(editor, "code")).toEqual(code);
 });
 
+it.each(["+ ", "* ", "1. "])(
+  "restores the typed %j when Backspace follows its Markdown shortcut",
+  async (typed) => {
+    await using screen = await mountEditor("");
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.focus("end");
+      for (const character of typed) {
+        const { from, to } = editor.state.selection;
+        typeText(editor, from, to, character);
+      }
+    });
+    expect(editor.state.doc.firstChild?.type.name).not.toBe("paragraph");
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+    await userEvent.keyboard("{Backspace}");
+    expect(editor.state.doc.firstChild?.type.name).toBe("paragraph");
+    expect(editor.state.doc.textContent).toBe(typed);
+  },
+);
+
 it.each([
   { word: "ship", prefix: "", source: ["**ship**"] },
   { word: "path\\", prefix: "", source: [] },
