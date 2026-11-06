@@ -563,6 +563,7 @@ it.effect.each([
   { status: "failed" as const, followUp: "none", settles: false },
   { status: "interrupted" as const, followUp: "none", settles: false },
   { status: "completed" as const, followUp: "notification", settles: true },
+  { status: "completed" as const, followUp: "replayed-notification", settles: true },
   { status: "completed" as const, followUp: "delegated", settles: true },
   { status: "completed" as const, followUp: "failed-notification", settles: false },
   { status: "completed" as const, followUp: "held-notification", settles: true },
@@ -576,6 +577,10 @@ it.effect.each([
     const followUpId = RunId.make(`${runId}:follow-up`);
     const subscribed = yield* Deferred.make<void>();
     const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+    const replayRejected = yield* Deferred.make<void>();
+    let sequence = 0;
+    let sequenceReads = 0;
+    let rejectedCommandId: CommandId | undefined;
     const runs = [{ id: runId, ordinal: 1, status, userMessageId: MessageId.make("original") }];
     const nextRun = {
       id: followUpId,
@@ -590,7 +595,11 @@ it.effect.each([
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
-          getThreadEventSequence: () => Effect.succeed(0),
+          getThreadEventSequence: () =>
+            Effect.sync(() => {
+              if (followUp === "replayed-notification" && sequenceReads++ === 2) sequence = 1;
+              return sequence;
+            }),
           restartContinuationPending: () => Effect.succeed(false),
           streamStoredEventsFrom: () =>
             Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
@@ -620,21 +629,26 @@ it.effect.each([
                 }) as unknown as OrchestrationV2ThreadProjection,
             ),
           dispatch: (command) =>
-            Effect.suspend(() => {
+            Effect.gen(function* () {
               if (followUp !== "none" && !raced) {
                 raced = true;
-                return Effect.fail(
-                  new Orchestrator.OrchestratorDispatchError({
-                    commandId: command.commandId,
-                    commandType: command.type,
-                    cause: "Thread is still running",
-                  }),
-                );
+                rejectedCommandId = command.commandId;
+                return yield* new Orchestrator.OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: "Thread is still running",
+                });
               }
-              return Effect.sync(() => {
-                dispatched.push(command.type);
-                return { sequence: 1, storedEvents: [] } as never;
-              });
+              if (followUp === "replayed-notification" && command.commandId === rejectedCommandId) {
+                yield* Deferred.succeed(replayRejected, undefined);
+                return yield* new Orchestrator.OrchestratorCommandPreviouslyRejectedError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  detail: "Thread is still running",
+                });
+              }
+              dispatched.push(command.type);
+              return { sequence: 1, storedEvents: [] } as never;
             }),
         }),
       ),
@@ -658,6 +672,15 @@ it.effect.each([
             : "completed";
       yield* Queue.offer(events, {
         sequence: 1,
+        event: { type: "run.updated", threadId, payload: nextRun },
+      } as unknown as OrchestrationV2StoredEvent);
+    }
+    if (followUp === "replayed-notification") {
+      yield* Deferred.await(replayRejected);
+      expect(dispatched).toEqual([]);
+      sequence = 2;
+      yield* Queue.offer(events, {
+        sequence,
         event: { type: "run.updated", threadId, payload: nextRun },
       } as unknown as OrchestrationV2StoredEvent);
     }

@@ -1092,7 +1092,10 @@ const make = Effect.gen(function* () {
       }).pipe(
         Effect.as(true),
         // A notification can start between the projection read and the guarded dispatch.
-        Effect.catchTags({ OrchestratorDispatchError: () => Effect.succeed(false) }),
+        Effect.catchTags({
+          OrchestratorDispatchError: () => Effect.succeed(false),
+          OrchestratorCommandPreviouslyRejectedError: () => Effect.succeed(false),
+        }),
       );
     });
     yield* Stream.fromEffect(trySettle).pipe(
