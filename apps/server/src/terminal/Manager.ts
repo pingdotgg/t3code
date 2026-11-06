@@ -3383,7 +3383,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         // Scrollback clearing must preserve lifecycle events and the active drain owner.
         session.pendingProcessEvents = session.pendingProcessEvents
           .slice(session.pendingProcessEventIndex)
-          .filter((event) => event.type === "exit");
+          .filter((event) => event?.type === "exit");
         session.pendingProcessEventIndex = 0;
         const eventStamp = advanceEventSequence(session);
         yield* persistHistory(input.threadId, terminalId, session.history);
