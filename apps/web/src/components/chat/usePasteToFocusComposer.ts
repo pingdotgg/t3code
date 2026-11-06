@@ -40,7 +40,10 @@ export function usePasteToFocusComposer(
       if (
         ((readPastedComposerContext(clipboardData)?.records.length ?? 0) === 0 &&
           composerRef.current?.pasteTextAtEnd(text, { bypassAutoAttachment })) ||
-        composerRef.current?.insertTextAtEnd(text, { clipboardData })
+        composerRef.current?.insertTextAtEnd(text, {
+          clipboardData,
+          pasteAsText: bypassAutoAttachment,
+        })
       ) {
         event.preventDefault();
         event.stopPropagation();

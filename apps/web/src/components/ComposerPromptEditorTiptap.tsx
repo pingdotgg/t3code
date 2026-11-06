@@ -158,6 +158,7 @@ export interface ComposerPromptEditorProps {
   importContextFragment?:
     | ((fragment: ComposerContextClipboardFragment) => ReadonlyMap<string, string>)
     | undefined;
+  importPullRequestLinks?: ((text: string) => string) | undefined;
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
@@ -866,6 +867,7 @@ function ComposerPromptEditorTiptapInner(
     contextRecords,
     buildContextClipboardFragment,
     importContextFragment,
+    importPullRequestLinks,
     skills,
     disabled,
     placeholder,
@@ -907,6 +909,7 @@ function ComposerPromptEditorTiptapInner(
     onCommandKeyDown,
     isPathQueryActive,
     importContextFragment,
+    importPullRequestLinks,
   }));
 
   // Stable so a skills refresh does not rerun the controlled-value effect.
@@ -1333,6 +1336,7 @@ function ComposerPromptEditorTiptapInner(
             !literalText && importFragment
               ? importPastedComposerText(clipboardData, importFragment)
               : pastedText;
+          if (!literalText) text = readCallbacks().importPullRequestLinks?.(text) ?? text;
           const tokens = literalText ? [] : collectComposerPromptInlineTokens(`${text}\n`);
           const isChip = (token: (typeof tokens)[number] | undefined) =>
             token?.type === "mention" ||

@@ -493,6 +493,20 @@ export function observedPullRequestTitle(
   );
 }
 
+/** {@link useSharedPullRequestSummary} read once, for handlers. */
+export function readSharedPullRequestSummary(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  reference: PullRequestRef,
+): PullRequestSummary | null {
+  return newestPullRequestSummary(
+    observedPullRequestSummary(
+      registry.get(pullRequestObservationsAtom(pullRequestSummaryKey(environmentId, reference))),
+    ),
+    registry.get(savedPullRequestSummaryAtom(savedPullRequestKey(environmentId, reference))),
+  );
+}
+
 /** The newest of every list, detail, checks and linked-summary answer and the thread's saved link. */
 export function useSharedPullRequestSummary(
   environmentId: EnvironmentId | null,
