@@ -12,7 +12,7 @@ import { environmentServerConfigsAtom } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
 import { useThreadListActions } from "../home/useThreadListActions";
-import { useWorkspaceListNavigation } from "../workspace/useAndroidWorkspaceNavigation";
+import { useWorkspaceListNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import {
   buildThreadTitleMenu,

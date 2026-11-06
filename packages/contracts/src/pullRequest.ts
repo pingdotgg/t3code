@@ -251,11 +251,20 @@ export type PullRequestEditCapabilities = typeof PullRequestEditCapabilities.Typ
 export const PullRequestReviewerCapabilities = Schema.Struct({
   request: Schema.Boolean,
   listCandidates: Schema.Boolean,
+  /**
+   * Reviewer candidates take a `query` the host matches past the first page. Absent, as from a
+   * server that predates it, means the client narrows the loaded page itself.
+   */
+  searchCandidates: Schema.optional(Schema.Boolean),
 });
 export type PullRequestReviewerCapabilities = typeof PullRequestReviewerCapabilities.Type;
 
 export const PullRequestViewedFilesStore = Schema.Literals(["host", "environment"]);
 export type PullRequestViewedFilesStore = typeof PullRequestViewedFilesStore.Type;
+
+/** `#` references issues (and GitHub pull requests); `!` references GitLab merge requests. */
+export const PullRequestReferenceSigil = Schema.Literals(["#", "!"]);
+export type PullRequestReferenceSigil = typeof PullRequestReferenceSigil.Type;
 
 export const PullRequestCapabilities = Schema.Struct({
   diff: Schema.Boolean,
@@ -277,6 +286,10 @@ export const PullRequestCapabilities = Schema.Struct({
   stacks: Schema.optional(Schema.Boolean),
   stackActions: Schema.optional(Schema.Boolean),
   labels: Schema.optional(Schema.Boolean),
+  /** The host searches the repository's users, so composers can complete `@login`. */
+  mentions: Schema.optional(Schema.Boolean),
+  /** The sigils whose issue and change request references composers can complete. */
+  referenceSigils: Schema.optional(ForwardCompatibleArray(PullRequestReferenceSigil)),
   /**
    * Every head gets at least one check, so a head that has gone a while without any means none
    * reported rather than that the repository runs none. Absent means an empty list says nothing.
@@ -403,6 +416,13 @@ export const PullRequestRef = Schema.Struct({
 });
 export type PullRequestRef = typeof PullRequestRef.Type;
 
+/** `query` asks the host for matches past the first page of candidates. */
+export const PullRequestReviewerCandidatesInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+});
+export type PullRequestReviewerCandidatesInput = typeof PullRequestReviewerCandidatesInput.Type;
+
 export const PullRequestRoutingIdentityInput = Schema.Struct({
   host: TrimmedNonEmptyString,
 });
@@ -448,6 +468,8 @@ export const PullRequestPreview = Schema.Struct({
   state: PullRequestState,
   isDraft: Schema.Boolean,
   createdAt: IsoDateTime,
+  updatedAt: Schema.optional(IsoDateTime),
+  observedAt: Schema.optional(Schema.Finite),
 });
 export type PullRequestPreview = typeof PullRequestPreview.Type;
 
@@ -475,6 +497,10 @@ export const PullRequestSummary = Schema.Struct({
   mergeability: Schema.optional(PullRequestMergeability),
   /** Null when the host says the pull request is in no stack; absent when the read did not ask. */
   stack: Schema.optional(Schema.NullOr(PullRequestStackMembership)),
+  headSha: Schema.optional(TrimmedNonEmptyString),
+  /** Absent means the read did not report auto-merge state, not that it is off. */
+  autoMergeEnabled: Schema.optional(Schema.Boolean),
+  autoMergeMethod: Schema.optional(PullRequestMergeMethod),
 });
 export type PullRequestSummary = typeof PullRequestSummary.Type;
 
@@ -515,7 +541,7 @@ export const PullRequestListStatsResult = Schema.Struct({
 });
 export type PullRequestListStatsResult = typeof PullRequestListStatsResult.Type;
 
-export const PullRequestFilterOptionKind = Schema.Literals(["labels", "authors"]);
+export const PullRequestFilterOptionKind = Schema.Literals(["labels", "authors", "references"]);
 export type PullRequestFilterOptionKind = typeof PullRequestFilterOptionKind.Type;
 
 /** Scoped like `PullRequestListInput`, so the options come from the repositories it lists. */
@@ -525,12 +551,28 @@ export const PullRequestFilterOptionsInput = Schema.Struct({
   projectIds: Schema.optional(Schema.Array(ProjectId).check(Schema.isMaxLength(100))),
   host: Schema.optional(TrimmedNonEmptyString),
   query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+  /** For `references`, the sigil typed, so a host can search only what it links. */
+  sigil: Schema.optional(PullRequestReferenceSigil),
 });
 export type PullRequestFilterOptionsInput = typeof PullRequestFilterOptionsInput.Type;
+
+/** An issue or change request a composer can reference, with the text the host links. */
+export const PullRequestReferenceCandidate = Schema.Struct({
+  reference: TrimmedNonEmptyString,
+  kind: Schema.Literals(["issue", "change-request"]),
+  number: PositiveInt,
+  title: Schema.String,
+  state: Schema.Literals(["open", "closed", "merged"]),
+});
+export type PullRequestReferenceCandidate = typeof PullRequestReferenceCandidate.Type;
 
 export const PullRequestFilterOptions = Schema.Struct({
   labels: Schema.Array(PullRequestLabel),
   authors: Schema.Array(PullRequestActor),
+  // Servers from before reference completion send no key.
+  references: Schema.Array(PullRequestReferenceCandidate).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   truncated: Schema.Boolean,
 });
 export type PullRequestFilterOptions = typeof PullRequestFilterOptions.Type;
@@ -733,6 +775,8 @@ export const PullRequestActionInput = Schema.Struct({
   action: PullRequestAction,
   mergeMethod: Schema.optional(PullRequestMergeMethod),
   updateMethod: Schema.optional(PullRequestUpdateMethod),
+  /** Opt-in, because older clients decode the action's success as void and reject a summary. */
+  replyWithSummary: Schema.optional(Schema.Literal(true)),
 });
 export type PullRequestActionInput = typeof PullRequestActionInput.Type;
 
