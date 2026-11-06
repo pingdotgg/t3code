@@ -78,7 +78,7 @@ it.each([
       lessonMessage(
         "a1",
         "assistant",
-        "## Part 1: x\n## 1. Anchor trial\n## Terms\n## KiCad, part 1\n**Q2: right facts.** Then why\n**S3T: find the bug** (10 runs)\n**Note:** bold",
+        "## Part 1: x\n## 1. Anchor trial\n## Terms\n## KiCad, part 1\n**Q2: right facts.** Then why\n**S3T: find the bug** (10 runs)\n**v2: draft notes**",
       ),
     ],
     anchor: { messageId: MessageId.make("message:a1"), start: 200 },

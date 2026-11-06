@@ -35,7 +35,7 @@ export function deriveSideChatLabel(excerpt: string): string {
 const LESSON_SECTION_HEADING = /^#{1,3}\s+Lesson\s+\d+\b/i;
 const CODE_SECTION_HEADING = /^#{1,3}\s+[A-Z]{1,3}\d+[A-Za-z]?:/;
 // Only a line that is all one bold span: quiz feedback and D items carry text after the bold.
-const BOLD_SECTION_TITLE = /^\*\*(?:Lesson\s+\d+\b|[A-Z]{1,3}\d+[A-Za-z]?:)[^*]*\*\*\s*$/i;
+const BOLD_SECTION_TITLE = /^\*\*(?:[Ll]esson\s+\d+\b|[A-Z]{1,3}\d+[A-Za-z]?:)[^*]*\*\*\s*$/;
 
 /**
  * The last section heading at or above the highlight, or undefined when the anchor message is
