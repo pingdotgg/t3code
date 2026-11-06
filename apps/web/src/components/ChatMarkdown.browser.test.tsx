@@ -4,7 +4,7 @@ import { type ReactElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
-import { act, render } from "../../test/render";
+import { act, fakeTimers, render } from "../../test/render";
 import "../index.css";
 
 import { filesystemEnvironment } from "../state/filesystem";
@@ -441,8 +441,9 @@ describe("ChatMarkdown remote thread file links", () => {
     };
     filesystemMetadata.mockImplementation(
       (request: { environmentId: EnvironmentId; input: { paths: string[] } }) =>
-        // A reconnecting local backend never answers; the host's copy still opens.
-        request.environmentId === desktop && request.input.paths[0] === "/srv/shared.md"
+        // A reconnecting local backend never answers.
+        request.environmentId === desktop &&
+        ["/srv/shared.md", "/srv/pending.md"].includes(request.input.paths[0]!)
           ? new Promise(() => {})
           : Promise.resolve(
               AsyncResult.success({
@@ -453,13 +454,13 @@ describe("ChatMarkdown remote thread file links", () => {
             ),
     );
     await using screen = await renderText(
-      "[Notes](/home/me/Desktop/notes.txt:3), [Shared](/srv/shared.md), [Gone](/srv/gone.md) and [Home](~/notes.txt)",
+      "[Notes](/home/me/Desktop/notes.txt:3), [Shared](/srv/shared.md), [Gone](/srv/gone.md), [Home](~/notes.txt) and [Pending](/srv/pending.md)",
       { cwd: "/srv/project", threadRef },
     );
     using openFile = vi
       .spyOn(useRightPanelStore.getState(), "openFile")
       .mockImplementation(() => {});
-    const [notes, shared, gone, home] = screen.container.querySelectorAll("a");
+    const [notes, shared, gone, home, pending] = screen.container.querySelectorAll("a");
 
     await act(async () => notes!.click());
     await vi.waitFor(() =>
@@ -482,6 +483,13 @@ describe("ChatMarkdown remote thread file links", () => {
     desktopFiles.add("~/notes.txt");
     await act(async () => home!.click());
     expect(openFile).toHaveBeenLastCalledWith(threadRef, "~/notes.txt", undefined);
+    expect(machines.openInEditor).toHaveBeenCalledOnce();
+
+    using _timers = fakeTimers();
+    await act(async () => pending!.click());
+    expect(openFile).toHaveBeenLastCalledWith(threadRef, "~/notes.txt", undefined);
+    await act(() => vi.advanceTimersByTime(2_000));
+    expect(openFile).toHaveBeenLastCalledWith(threadRef, "/srv/pending.md", undefined);
     expect(machines.openInEditor).toHaveBeenCalledOnce();
   });
 });

@@ -323,6 +323,7 @@ function CodexArtifactTemplateCard(props: {
   );
 }
 
+const LOCAL_FILE_LOOKUP_TIMEOUT_MS = 2_000;
 const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 
 function orderedListGutterStyle(
@@ -810,8 +811,12 @@ function useChatMarkdownState({
     const input = { paths: [path] };
     const host = await getFilesystemMetadata({ environmentId, input });
     if (host._tag !== "Success" || host.value.entries[0] !== null) return false;
-    const local = await getFilesystemMetadata({ environmentId: localEnvironmentId, input });
-    return local._tag === "Success" && (local.value.entries[0] ?? null) !== null;
+    // A reconnecting local backend never answers; open the host's copy instead.
+    const local = await Promise.race([
+      getFilesystemMetadata({ environmentId: localEnvironmentId, input }),
+      new Promise<null>((resolve) => setTimeout(resolve, LOCAL_FILE_LOOKUP_TIMEOUT_MS, null)),
+    ]);
+    return local?._tag === "Success" && (local.value.entries[0] ?? null) !== null;
   };
   const openOnLocalMachine = async (targetPath: string) => {
     const result = await openInLocalEditor(targetPath);
