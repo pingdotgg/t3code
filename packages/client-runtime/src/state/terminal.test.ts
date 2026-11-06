@@ -1,4 +1,5 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it } from "vite-plus/test";
 
@@ -78,12 +79,16 @@ function setup(options: { readonly initialInput?: string } = {}) {
     AsyncResult.initial(true),
   );
   const access = { canOperate: true };
+  const resizeFailures = { remaining: 0 };
   const calls: Array<{ readonly command: string; readonly input: unknown }> = [];
   const command = (name: string) => ({
     label: name,
     run: async (_registry: AtomRegistry.AtomRegistry, value: { readonly input: unknown }) => {
       calls.push({ command: name, input: value.input });
-      return AsyncResult.success(undefined);
+      if (name !== "resize" || resizeFailures.remaining === 0)
+        return AsyncResult.success(undefined);
+      resizeFailures.remaining -= 1;
+      return AsyncResult.failure(Cause.fail("offline"));
     },
   });
   const exits: Array<true> = [];
@@ -126,7 +131,21 @@ function setup(options: { readonly initialInput?: string } = {}) {
     registry.set(observation, snapshot(state));
   const mount = (mode: TerminalSessionMode) => registry.mount(session.driver(mode));
   const of = (name: string) => calls.filter((call) => call.command === name).map((c) => c.input);
-  return { session, attached, access, flush, detach, emit, observe, mount, calls, of, exits, live };
+  return {
+    session,
+    attached,
+    access,
+    resizeFailures,
+    flush,
+    detach,
+    emit,
+    observe,
+    mount,
+    calls,
+    of,
+    exits,
+    live,
+  };
 }
 
 it("replays the measured grid on every new attachment generation", () => {
@@ -149,6 +168,23 @@ it("replays the measured grid on every new attachment generation", () => {
   expect(of("resize")).toEqual([
     { threadId, terminalId: "term-1", cols: 120, rows: 40 },
     { threadId, terminalId: "term-1", cols: 100, rows: 30 },
+    { threadId, terminalId: "term-1", cols: 100, rows: 30 },
+    { threadId, terminalId: "term-1", cols: 100, rows: 30 },
+  ]);
+});
+
+it("sends a failed resize again, once per failure streak", async () => {
+  const { session, attached, resizeFailures, emit, mount, of } = setup();
+  resizeFailures.remaining = 4;
+  mount(attached);
+  emit({ status: "running", version: 1 });
+  await expect.poll(() => of("resize")).toHaveLength(2);
+
+  session.reportGridSize({ cols: 100, rows: 30 });
+  await expect.poll(() => of("resize")).toHaveLength(4);
+  expect(of("resize")).toEqual([
+    { threadId, terminalId: "term-1", cols: 120, rows: 40 },
+    { threadId, terminalId: "term-1", cols: 120, rows: 40 },
     { threadId, terminalId: "term-1", cols: 100, rows: 30 },
     { threadId, terminalId: "term-1", cols: 100, rows: 30 },
   ]);
