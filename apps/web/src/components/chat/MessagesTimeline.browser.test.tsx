@@ -769,6 +769,8 @@ describe("MessagesTimeline chapters", () => {
     await vi.waitFor(() =>
       expect(scrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ index: 30 })),
     );
+    // Handled requests are dropped so a remounted timeline does not scroll again.
+    await vi.waitFor(() => expect(useChatChapterStore.getState().revealRequest).toBeNull());
   });
 
   it("expands a collapsed superseded attempt to reveal a chapter folded inside it", async () => {

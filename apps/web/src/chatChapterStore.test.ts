@@ -52,6 +52,19 @@ describe("chat chapters", () => {
     expect(useChatChapterStore.getState().chaptersByThreadKey).toEqual({});
   });
 
+  it("clears a reveal request only when its nonce still matches", () => {
+    const { requestReveal, clearReveal } = useChatChapterStore.getState();
+    requestReveal(threadRef, MessageId.make("m1"));
+    const stale = useChatChapterStore.getState().revealRequest;
+    requestReveal(threadRef, MessageId.make("m2"));
+
+    clearReveal(stale?.nonce ?? -1);
+    expect(useChatChapterStore.getState().revealRequest?.messageId).toBe(MessageId.make("m2"));
+
+    clearReveal(useChatChapterStore.getState().revealRequest?.nonce ?? -1);
+    expect(useChatChapterStore.getState().revealRequest).toBeNull();
+  });
+
   it("asks the timeline for a fresh reveal each time the same chapter is chosen", () => {
     const { requestReveal } = useChatChapterStore.getState();
     requestReveal(threadRef, MessageId.make("m1"));
