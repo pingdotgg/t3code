@@ -18,14 +18,14 @@ describe("reply font appearance", () => {
   it("applies all theme fonts, preserves explicit choices, and clears theme defaults when leaving", () => {
     const root = document.createElement("div");
     const defaults = { ...preferences, sans: "", code: "", reply: "" };
-    applyAppearanceFontVariables(root, { ...defaults, typography: "absolutely" });
+    applyAppearanceFontVariables(root, { ...defaults, typography: "absolutely", separate: false });
     expect(root.style.getPropertyValue("--font-sans")).toContain('"DM Sans"');
     expect(root.style.getPropertyValue("--font-mono")).toContain('"JetBrains Mono"');
     expect(root.style.getPropertyValue("--font-reply")).toContain('"Source Serif 4"');
     expect(root.style.getPropertyValue("--font-composer")).toBe("");
     expect(root.style.getPropertyValue("--font-size-reply")).toBe("0.9375rem");
     expect(root.style.getPropertyValue("--font-size-prompt")).toBe("15px");
-    expect(root.style.getPropertyValue("--font-size-code")).toBe("14px");
+    expect(root.style.getPropertyValue("--font-size-code")).toBe("13px");
     expect(root.dataset.typography).toBe("absolutely");
 
     applyAppearanceFontVariables(root, {
@@ -42,10 +42,10 @@ describe("reply font appearance", () => {
     applyAppearanceFontVariables(root, {
       ...defaults,
       typography: "absolutely",
-      sizePrompt: 18,
+      sizePrompt: 14,
       sizeCode: 16,
     });
-    expect(root.style.getPropertyValue("--font-size-prompt")).toBe("18px");
+    expect(root.style.getPropertyValue("--font-size-prompt")).toBe("14px");
     expect(root.style.getPropertyValue("--font-size-code")).toBe("16px");
 
     applyAppearanceFontVariables(root, defaults);
