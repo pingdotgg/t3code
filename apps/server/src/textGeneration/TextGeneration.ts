@@ -1,7 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import type { ModelSelection, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import {
   isProviderAvailable,
   isProviderTextGenerationCapable,
@@ -97,14 +97,6 @@ export const make = Effect.gen(function* () {
       selection.model,
     );
     if (limited) {
-      yield* Effect.forEach(
-        instances.filter(
-          (instance) => instance.enabled && instance.instanceId !== selection.instanceId,
-        ),
-        (instance) => (instance.snapshot.refreshUsage ?? Effect.void).pipe(Effect.ignore),
-        { concurrency: "unbounded", discard: true },
-      );
-      snapshots = yield* readSnapshots;
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(
           (cause) =>
@@ -115,20 +107,35 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
+      const canServe = (provider: ServerProvider) =>
+        provider.instanceId !== selection.instanceId &&
+        provider.enabled &&
+        resolveProjectProviderInstanceEnabled(settings, null, provider.instanceId) &&
+        provider.installed &&
+        provider.auth.status !== "unauthenticated" &&
+        isProviderAvailable(provider) &&
+        isProviderTextGenerationCapable(provider) &&
+        (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(provider.driver));
+      yield* Effect.forEach(
+        instances.filter(
+          (instance) =>
+            instance.enabled &&
+            snapshots.some(
+              (provider) => provider.instanceId === instance.instanceId && canServe(provider),
+            ),
+        ),
+        (instance) => (instance.snapshot.refreshUsage ?? Effect.void).pipe(Effect.ignore),
+        { concurrency: "unbounded", discard: true },
+      );
+      snapshots = yield* readSnapshots;
       selection =
         fallbackTextGenerationModelSelection(
           settings.providerInstances,
           (instanceId, driver) => {
             const provider = snapshots.find((candidate) => candidate.instanceId === instanceId);
             return (
-              instanceId !== selection.instanceId &&
-              provider?.enabled === true &&
-              resolveProjectProviderInstanceEnabled(settings, null, instanceId) &&
-              provider.installed &&
-              provider.auth.status !== "unauthenticated" &&
-              isProviderAvailable(provider) &&
-              isProviderTextGenerationCapable(provider) &&
-              (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(driver)) &&
+              provider !== undefined &&
+              canServe(provider) &&
               !exhaustedUsageWindow(provider, now, defaultTextGenerationModel(driver))
             );
           },
