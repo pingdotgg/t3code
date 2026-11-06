@@ -72,6 +72,8 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
 export interface ProviderChangeRequestWatchFingerprint {
   readonly status: string;
   readonly remarks: string;
+  /** The base branch tip, apart from status so only watches that wake on base moves reread. */
+  readonly base?: string;
 }
 
 export interface PullRequestProviderFailure {

@@ -270,6 +270,21 @@ export declare namespace PullRequestStackMembership {
   export type Result = typeof PullRequestStackMembership.result.Type
 }
 
+/** Represents a Git object. */
+export const GitObject = Schema.Struct({
+  __typename: GraphQL.otherTypename<Shared.Typename.GitObject>()([]),
+  /** The Git object ID */
+  oid: Shared.GitObjectID
+})
+export interface GitObject extends Schema.Struct.Type<typeof GitObject.fields> {}
+
+/** Represents a Git reference. */
+export const Ref = Schema.Struct({
+  /** The object the ref points to. Returns null when object does not exist. */
+  target: Schema.NullOr(GitObject)
+})
+export interface Ref extends Schema.Struct.Type<typeof Ref.fields> {}
+
 /** Represents a comment on an Issue. */
 export const IssueComment = Schema.Struct({
   /** The moment the editor made the last edit */
@@ -372,6 +387,8 @@ export const PullRequestWatchFingerprintRepositoryPullRequestPullRequest = Schem
   mergeable: GraphQL.enumLiterals(Shared.MergeableState.literals),
   /** Identifies the oid of the head ref associated with the pull request, even if the ref has been deleted. */
   headRefOid: Shared.GitObjectID,
+  /** Identifies the base Ref associated with the pull request. */
+  baseRef: Schema.NullOr(Ref),
   /** A list of comments associated with the pull request. */
   comments: IssueCommentConnection,
   /** A list of reviews associated with the pull request. */
@@ -399,7 +416,7 @@ export const PullRequestWatchFingerprint = GraphQL.query("PullRequestWatchFinger
       { name: "number", body: "Int!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){state mergeable headRefOid comments(first:100 orderBy:{field:UPDATED_AT direction:DESC}){totalCount nodes{lastEditedAt}}reviews(last:100){totalCount nodes{lastEditedAt}}reviewThreads{totalCount}commits(last:1){nodes{commit{statusCheckRollup{contexts{checkRunCountsByState{state count}statusContextCountsByState{state count}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){state mergeable headRefOid baseRef{target{__typename oid}}comments(first:100 orderBy:{field:UPDATED_AT direction:DESC}){totalCount nodes{lastEditedAt}}reviews(last:100){totalCount nodes{lastEditedAt}}reviewThreads{totalCount}commits(last:1){nodes{commit{statusCheckRollup{contexts{checkRunCountsByState{state count}statusContextCountsByState{state count}}}}}}}}"] }
     ],
     fragments: []
   },

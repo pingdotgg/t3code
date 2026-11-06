@@ -89,6 +89,7 @@ interface LastRead {
   readonly watches: ReadonlySet<string>;
   readonly status: string | null;
   readonly remarks: string | null;
+  readonly base: string | null;
 }
 
 interface ReadPlan {
@@ -96,7 +97,9 @@ interface ReadPlan {
   readonly activity: boolean;
 }
 
-const watchKey = ({ thread, watch }: WatchTarget) => `${thread.id} ${watch.startedAt}`;
+// Opting in to base moves rereads at once, so a branch already behind is told.
+const watchKey = ({ thread, watch }: WatchTarget) =>
+  `${thread.id} ${watch.startedAt} ${watch.wakeOnBaseMove === true}`;
 
 type WatchEndReason =
   | "merged"
@@ -164,8 +167,12 @@ function planRead(
     last.remarks !== fingerprint.remarks ||
     !last.remarksComplete ||
     now - last.at >= FINGERPRINT_REREAD_MS;
+  const baseMoved =
+    last.base !== (fingerprint.base ?? null) &&
+    group.targets.some(({ watch }) => watch.wakeOnBaseMove === true);
   return {
-    detail: activity || checksDue || last.status !== fingerprint.status || last.inFlight,
+    detail:
+      activity || checksDue || baseMoved || last.status !== fingerprint.status || last.inFlight,
     activity,
   };
 }
@@ -562,6 +569,7 @@ export const make = Effect.gen(function* () {
       watches: new Set(group.targets.map(watchKey)),
       status: fingerprint?.status ?? null,
       remarks: fingerprint?.remarks ?? null,
+      base: fingerprint?.base ?? null,
     });
     yield* eachTarget(group, (target) => {
       const report = evaluatePullRequestWatch(target.watch, detail, remarks, now);

@@ -1773,16 +1773,18 @@ describe("pull request lookups", () => {
 });
 
 describe("pull request watch fingerprints", () => {
-  it("moves status with checks and remarks with comments, each without the other", () => {
+  it("moves status with checks, remarks with comments, and base with the base tip, apart", () => {
     const pullRequest = (input: {
       readonly running: number;
       readonly failed: number;
       readonly commentEditedAt: string | null;
       readonly reviews: number;
+      readonly base?: string;
     }) => ({
       state: "OPEN",
       mergeable: "MERGEABLE",
       headRefOid: "abc123",
+      baseRef: { target: { __typename: "Commit", oid: input.base ?? "def456" } },
       comments: { totalCount: 1, nodes: [{ lastEditedAt: input.commentEditedAt }] },
       reviews: { totalCount: input.reviews, nodes: [] },
       reviewThreads: { totalCount: 0 },
@@ -1812,11 +1814,17 @@ describe("pull request watch fingerprints", () => {
     const checkFinished = fingerprint({ ...base, running: 1, failed: 1 });
     const summaryEdited = fingerprint({ ...base, commentEditedAt: "2026-10-05T23:47:43Z" });
     const replied = fingerprint({ ...base, reviews: 2 });
+    const baseMoved = fingerprint({ ...base, base: "fed789" });
 
     expect(checkFinished.status).not.toBe(before.status);
     expect(checkFinished.remarks).toBe(before.remarks);
     expect(summaryEdited.remarks).not.toBe(before.remarks);
     expect(summaryEdited.status).toBe(before.status);
     expect(replied.remarks).not.toBe(before.remarks);
+    expect(before.base).toBe("def456");
+    expect(baseMoved).toEqual({ ...before, base: "fed789" });
+    expect(
+      toPullRequestWatchFingerprint(decodeWatched({ ...pullRequest(base), baseRef: null })),
+    ).not.toHaveProperty("base");
   });
 });

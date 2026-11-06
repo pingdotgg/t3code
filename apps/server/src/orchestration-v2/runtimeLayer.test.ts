@@ -3672,6 +3672,127 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("rereads a quiet pull request when its base moves only for a watch that asked", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-base");
+      const projectId = ProjectId.make("pr-watch-base-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch base moves",
+        workspaceRoot: "/workspace/watch-base",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-base-create"),
+        threadId,
+        projectId,
+        title: "Watch base moves",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 15 };
+      const watch = (id: string, wakeOnBaseMove?: boolean) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(id),
+          threadId,
+          ...key,
+          watching: true,
+          ...(wakeOnBaseMove === undefined ? {} : { wakeOnBaseMove }),
+          link: { url: "https://github.com/pingdotgg/t3code/pull/15", source: "agent" },
+        });
+      yield* watch("pr-watch-base-start");
+
+      let base = "base-1";
+      let behindBy = 0;
+      let reads = 0;
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          // Only the base moves, which GitHub's status fingerprint does not show.
+          watchFingerprint: () => Effect.sync(() => ({ status: "quiet", remarks: "none", base })),
+          invalidate: () => Effect.void,
+          detail: () =>
+            Effect.sync(() => {
+              reads++;
+              return {
+                ...watchedPullRequestDetail({
+                  projectId,
+                  number: 15,
+                  at: "2026-10-02T12:00:00.000Z",
+                }),
+                checks: [{ name: "test", status: "success", description: null, url: null }],
+                baseComparison: behindBy > 0 ? "behind" : "up-to-date",
+                behindBy,
+              } satisfies PullRequestDetail;
+            }),
+          activity: () =>
+            Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            }),
+        }),
+      );
+      const wakes = Effect.map(
+        orchestrator.getThreadRecords(threadId, ["messages"]),
+        ({ messages }) => messages.filter((message) => message.text.includes("behind main")),
+      );
+      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const sweep = reactor.sweep.pipe(Effect.andThen(worker.drain()));
+      const moveBase = () => {
+        base = `base-${++behindBy + 1}`;
+      };
+
+      yield* sweep;
+      assert.equal(reads, 1);
+      moveBase();
+      yield* TestClock.adjust("2 minutes");
+      yield* sweep;
+      assert.equal(reads, 1);
+
+      // Opting in reads the pull request again, so a branch already behind is told at once.
+      yield* watch("pr-watch-base-opt-in", true);
+      yield* TestClock.adjust("2 minutes");
+      yield* sweep;
+      assert.equal(reads, 2);
+      assert.lengthOf(yield* wakes, 1);
+
+      yield* TestClock.adjust("2 minutes");
+      yield* sweep;
+      assert.equal(reads, 2);
+
+      moveBase();
+      yield* TestClock.adjust("2 minutes");
+      yield* sweep;
+      assert.equal(reads, 3);
+      const told = yield* wakes;
+      assert.lengthOf(told, 2);
+      assert.include(told[1]!.text, "The branch is 2 commits behind main.");
+
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-base-end"),
+        threadId,
+        ...key,
+        watching: false,
+      });
+      yield* worker.drain();
+    }),
+  );
+
   // regression: #21155 watching a pull request again repeated news the thread already got
   it.effect("a watch that ends on the comment limit keeps what its last pass saw", () =>
     Effect.gen(function* () {
