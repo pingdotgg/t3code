@@ -12,10 +12,6 @@ export default Effect.gen(function* () {
     ON orchestration_v2_projection_turn_items((thread_id || ''), (type || ''), ordinal, turn_item_id)
   `;
   yield* sql`
-    CREATE INDEX orchestration_v2_projection_nodes_thread_node_idx
-    ON orchestration_v2_projection_nodes((thread_id || ''), (node_id || ''))
-  `;
-  yield* sql`
     CREATE INDEX orchestration_v2_projection_runs_id_status_idx
     ON orchestration_v2_projection_runs((run_id || ''), status)
   `;
