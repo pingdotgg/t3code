@@ -62,6 +62,7 @@ import {
   BACKGROUND_WORK_STOP_RETRY_AFTER_MS,
   type BackgroundWorkStopRequest,
   isBackgroundWorkStopPending,
+  limitRecoveryOwnsSnooze,
   presentPendingBackgroundWork,
   presentProviderGoal,
 } from "@t3tools/client-runtime/state/thread-execution";
@@ -642,6 +643,19 @@ function ThreadDetailBody(
     return () => clearTimeout(timer);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-arm if timer clamping fires before the wake time.
   }, [snoozed, snoozedUntil, lifecycleNow]);
+  // The usage-limit recovery card shows this snooze and its Wake now.
+  const lifecycleSnoozed =
+    snoozed &&
+    !limitRecoveryOwnsSnooze({
+      runId:
+        props.selectedThread.runtime?.status === "failed" &&
+        props.selectedThread.runtime.lastErrorClass === "usage_limit"
+          ? props.selectedThread.latestRun?.runId
+          : null,
+      resetAt: props.selectedThread.runtime?.usageLimitResetAt,
+      recovery: props.selectedThread.limitRecovery,
+      snoozedUntil,
+    });
   const settled = configLoaded && props.selectedThread.settledOverride === "settled";
   const wokeAt = configLoaded ? threadWokeAt(props.selectedThread, { now: lifecycleNow }) : null;
   const woke = isThreadWokeUnseen({
@@ -809,22 +823,22 @@ function ThreadDetailBody(
         },
       };
     }
-    if (contentPresentationKind === "ready" && (snoozed || settled || woke)) {
-      const state = snoozed ? "snoozed" : settled ? "settled" : "woke";
+    if (contentPresentationKind === "ready" && (lifecycleSnoozed || settled || woke)) {
+      const state = lifecycleSnoozed ? "snoozed" : settled ? "settled" : "woke";
       const label =
-        snoozed && snoozedUntil !== null
+        lifecycleSnoozed && snoozedUntil !== null
           ? `Snoozed, wakes in ${snoozeWakeLabel(snoozedUntil, { now: lifecycleNow })}`
           : settled
             ? "Settled"
             : "Woke from snooze";
-      const actionLabel = snoozed ? "Wake now" : settled ? "Un-settle" : "Dismiss";
+      const actionLabel = lifecycleSnoozed ? "Wake now" : settled ? "Un-settle" : "Dismiss";
       return {
         kind: "lifecycle",
         state,
         label,
         action: {
           label: statusPending
-            ? snoozed
+            ? lifecycleSnoozed
               ? "Waking..."
               : settled
                 ? "Un-settling..."
@@ -832,7 +846,8 @@ function ThreadDetailBody(
             : actionLabel,
           accessibilityLabel: actionLabel,
           disabled: !props.canOperateThread || statusPending,
-          onPress: () => void runStatusAction(snoozed ? "wake" : settled ? "unsettle" : "dismiss"),
+          onPress: () =>
+            void runStatusAction(lifecycleSnoozed ? "wake" : settled ? "unsettle" : "dismiss"),
         },
       };
     }
