@@ -32,10 +32,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-it.each([
-  { cpu: null, accelerated: 2.1 },
-  { cpu: 5, accelerated: null },
-])(
+it.each([{ cpu: null, accelerated: 2.1 }, { cpu: 5, accelerated: null }, { accelerated: 2.1 }])(
   "uses the destination environment's benchmark tier across switches with measurements %j",
   async (secondsPer30s) => {
     const target = new PrimaryConnectionTarget({
@@ -97,7 +94,7 @@ it.each([
         secondsPer30s,
       },
     };
-    const cpuBenchmark = `Speed: ${secondsPer30s.cpu === null ? "not benchmarked" : `${secondsPer30s.cpu} s / 30 s`}`;
+    const cpuBenchmark = `Speed: ${secondsPer30s.cpu === undefined ? "update server" : secondsPer30s.cpu === null ? "not benchmarked" : `${secondsPer30s.cpu} s / 30 s`}`;
     const gpuBenchmark = `Speed: ${secondsPer30s.accelerated === null ? "not benchmarked" : `${secondsPer30s.accelerated} s / 30 s`}`;
     const fetch = globalThis.fetch;
     using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {

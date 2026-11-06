@@ -111,7 +111,9 @@ export function ModelBenchmarks({
       })}
       <span>
         Speed:{" "}
-        {seconds == null ? (
+        {tier === "cpu" && data && data.secondsPer30s.cpu === undefined ? (
+          "update server"
+        ) : seconds == null ? (
           "not benchmarked"
         ) : (
           <>
