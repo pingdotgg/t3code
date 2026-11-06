@@ -2497,7 +2497,15 @@ export const layerWsRpc = (
                   ? providerRegistry.refreshInstance(input.instanceId)
                   : providerRegistry.refresh();
             if (input.refreshModels) {
-              providers = yield* providerRegistry.refreshModels(input.instanceId);
+              // Native causes can contain OAuth URLs; keep them inside the provider service.
+              providers = yield* providerRegistry
+                .refreshModels(input.instanceId)
+                .pipe(
+                  Effect.mapError(
+                    ({ instanceId, operation, detail }) =>
+                      new ProviderSetupError({ instanceId, operation, detail }),
+                  ),
+                );
             }
             if (input.workspaceSnapshotsOnDemand !== true) return { providers };
             const commandProviders =

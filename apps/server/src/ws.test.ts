@@ -35,10 +35,11 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Headers } from "effect/http";
-import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
+import { Rpc, RpcGroup, RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 import { vi } from "vite-plus/test";
@@ -148,6 +149,10 @@ import {
   WS_RPC_SERVER_OPTIONS,
   withLateConfigDiscovery,
 } from "./ws.ts";
+
+const decodeModelRefreshExit = Schema.decodeUnknownEffect(
+  Schema.toCodecJson(Rpc.exitSchema(WsServerRefreshProvidersRpc)),
+);
 
 const snapshotConfig = (fields: Partial<ServerConfig>) =>
   ({ availableEditors: [], settings: {}, ...fields }) as unknown as ServerConfig;
@@ -1359,6 +1364,13 @@ it.effect.each(["all", "single"] as const)(
       const firstId = ProviderInstanceId.make("antigravity_first");
       const secondId = ProviderInstanceId.make("antigravity_second");
       const thirdId = ProviderInstanceId.make("antigravity_third");
+      const privateCode = "private-model-refresh-oauth-code";
+      const driverError = new ProviderDriverError({
+        driver,
+        instanceId: firstId,
+        detail: "Model refresh failed.",
+        cause: new Error(`https://oauth.invalid/callback?code=${privateCode}`),
+      });
       const thirdStarted = yield* Deferred.make<void>();
       const activeRefreshes = yield* Ref.make(0);
       const maxRefreshes = yield* Ref.make(0);
@@ -1401,11 +1413,7 @@ it.effect.each(["all", "single"] as const)(
           refreshModels: () =>
             Effect.gen(function* () {
               if (instanceId === firstId) {
-                return yield* new ProviderDriverError({
-                  driver,
-                  instanceId,
-                  detail: "Model refresh failed.",
-                });
+                return yield* driverError;
               }
               const active = yield* Ref.updateAndGet(activeRefreshes, (count) => count + 1);
               yield* Ref.update(maxRefreshes, (count) => Math.max(count, active));
@@ -1446,10 +1454,35 @@ it.effect.each(["all", "single"] as const)(
           ),
         ),
       );
-      const responses =
-        yield* Queue.unbounded<
-          Exit.Exit<{ readonly providers: ReadonlyArray<ServerProvider> }, unknown>
-        >();
+      if (target === "single") {
+        const failure = yield* ProviderRegistry.ProviderRegistry.pipe(
+          Effect.flatMap((registry) => registry.refreshModels(firstId)),
+          Effect.flip,
+          Effect.provide(registryLayer),
+        );
+        assert.strictEqual(failure.cause, driverError);
+      }
+      const responses = yield* Queue.unbounded<RpcMessage.ResponseExitEncoded>();
+      const receive = yield* Deferred.make<Parameters<RpcServer.Protocol["Service"]["run"]>[0]>();
+      const protocol = yield* RpcServer.Protocol.make((write) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(receive, write);
+          const serialization = yield* RpcSerialization.RpcSerialization;
+          return {
+            disconnects: yield* Queue.unbounded<number>(),
+            send: (_clientId, response) =>
+              response._tag === "Exit" ? Queue.offer(responses, response) : Effect.void,
+            end: () => Effect.void,
+            clientIds: Effect.succeed(new Set([0])),
+            initialMessage: Effect.succeedNone,
+            supportsAck: true,
+            supportsTransferables: false,
+            supportsSpanPropagation: false,
+            supportsNotifications: true,
+            codecFor: serialization.codecFor,
+          };
+        }),
+      );
       const services = Layer.mergeAll(
         layerUnusedConfigRpcServices,
         instanceLayer,
@@ -1463,14 +1496,7 @@ it.effect.each(["all", "single"] as const)(
         Layer.mock(ServerEnvironment.ServerEnvironment)({}),
         Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
       );
-      const server = yield* RpcServer.makeNoSerialization(
-        RpcGroup.make(WsServerRefreshProvidersRpc),
-        {
-          ...WS_RPC_SERVER_OPTIONS,
-          onFromServer: (response) =>
-            response._tag === "Exit" ? Queue.offer(responses, response.exit) : Effect.void,
-        },
-      ).pipe(
+      yield* RpcServer.make(RpcGroup.make(WsServerRefreshProvidersRpc), WS_RPC_SERVER_OPTIONS).pipe(
         Effect.provide(
           layerWsRpc(
             {
@@ -1485,20 +1511,25 @@ it.effect.each(["all", "single"] as const)(
             { secretReferences: true },
           ).pipe(Layer.provide(services)),
         ),
+        Effect.provideService(RpcServer.Protocol, protocol),
+        Effect.forkScoped,
       );
-      yield* server.write(0, {
+      const write = yield* Deferred.await(receive);
+      yield* write(0, {
         _tag: "Request",
-        id: RpcMessage.RequestId("refresh-models"),
+        id: "refresh-models",
         tag: WS_METHODS.serverRefreshProviders,
         payload: { refreshModels: true, ...(target === "single" ? { instanceId: firstId } : {}) },
-        headers: Headers.empty,
+        headers: [],
       });
-      const response = yield* Queue.take(responses);
+      const encoded = yield* Queue.take(responses);
+      assert.notInclude(JSON.stringify(encoded), privateCode);
+      const response = yield* decodeModelRefreshExit(encoded.exit);
       if (target === "single") {
         assert.equal(response._tag, "Failure");
         if (response._tag === "Failure") {
           assert.match(Cause.pretty(response.cause), /Model refresh failed/);
-          assert.match(Cause.pretty(response.cause), /ProviderDriverError/);
+          assert.notMatch(Cause.pretty(response.cause), /ProviderDriverError/);
         }
         assert.equal(yield* Ref.get(maxRefreshes), 0);
         return;
@@ -1523,6 +1554,7 @@ it.effect.each(["all", "single"] as const)(
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
+          RpcSerialization.layerJson,
           Layer.fresh(layerConfigSources),
           Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
           Layer.mock(ServerBrowser.ServerBrowser)({}),
