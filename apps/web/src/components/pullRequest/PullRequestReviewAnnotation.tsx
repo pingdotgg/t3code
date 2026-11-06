@@ -12,10 +12,9 @@ import { Circle, CircleCheck } from "lucide";
 import { useRef, useState } from "react";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
-import { SpeechTextField, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
-
 import { RelativeTime } from "~/components/RelativeTime";
 import { cn } from "~/lib/utils";
+import { SpeechTextField, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
 
 import { Button, InlineButton } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -42,6 +41,7 @@ const CARD_CLASS = `mx-2.5 mt-1.5 mb-2 p-2.5 text-sm ${COMMENT_CARD_CLASS}`;
 function submitKeys(input: {
   readonly value: string;
   readonly pending: boolean;
+  readonly allowEmpty?: boolean;
   readonly onSubmit: () => void;
   readonly onCancel?: (() => void) | undefined;
 }) {
@@ -50,7 +50,7 @@ function submitKeys(input: {
       event.preventDefault();
       input.onCancel();
     }
-    if (isCommentSubmitShortcut(event, input.value, input.pending)) {
+    if (isCommentSubmitShortcut(event, input.value, input.pending, input.allowEmpty)) {
       event.preventDefault();
       input.onSubmit();
     }
@@ -238,8 +238,8 @@ export function ReviewThreadCard({
     }
   };
 
-  const send = async () => {
-    const trimmed = reply.trim();
+  const send = async (text: string) => {
+    const trimmed = text.trim();
     if (trimmed.length === 0 || pending || sendingRef.current) return;
     sendingRef.current = true;
     const result = await settlePromise(() => onReply(trimmed));
@@ -362,7 +362,7 @@ export function ReviewThreadCard({
                   submitKeys({
                     value: reply,
                     pending,
-                    onSubmit: () => void send(),
+                    onSubmit: () => void send(reply),
                     onCancel: () => setReply(""),
                   })(event)
                 }
@@ -371,7 +371,7 @@ export function ReviewThreadCard({
               <span className="flex-1" />
             )}
             {canReply && reply.trim().length > 0 ? (
-              <Button size="sm" disabled={pending} onClick={() => void send()}>
+              <Button size="sm" disabled={pending} onClick={() => void send(reply)}>
                 Reply
               </Button>
             ) : null}
@@ -507,6 +507,7 @@ export function ReviewThreadCard({
             replying ? (
               <SpeechTextField
                 environmentId={environmentId}
+                projectId={reference.projectId}
                 ownerKey={JSON.stringify(["pr-reply", environmentId, reference, thread.id])}
                 text={reply}
                 textareaRef={replyRef}
@@ -524,14 +525,14 @@ export function ReviewThreadCard({
                       placeholder="Reply…"
                       aria-label="Reply to this conversation"
                       onChange={(event) => setReply(event.target.value)}
-                      onKeyDown={(event) =>
-                        submitKeys({
-                          value: reply,
-                          pending: pending || speech.blocksSubmission,
-                          onSubmit: () => void send(),
-                          onCancel: () => setReplying(false),
-                        })(event)
-                      }
+                      onKeyDown={submitKeys({
+                        value: reply,
+                        pending,
+                        allowEmpty: speech.blocksSubmission,
+                        onSubmit: () => speech.submitAfterDictation((text) => void send(text)),
+                        onCancel: () =>
+                          speech.state.phase === "idle" ? setReplying(false) : speech.cancel(),
+                      })}
                     />
                     <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
                       <TextFieldSpeechControls speech={speech} disabled={pending} />
@@ -540,8 +541,12 @@ export function ReviewThreadCard({
                       </Button>
                       <Button
                         size="xs"
-                        disabled={pending || speech.blocksSubmission || reply.trim().length === 0}
-                        onClick={() => void send()}
+                        disabled={
+                          speech.preparing ||
+                          pending ||
+                          (!speech.blocksSubmission && reply.trim().length === 0)
+                        }
+                        onClick={() => speech.submitAfterDictation((text) => void send(text))}
                       >
                         Reply
                       </Button>

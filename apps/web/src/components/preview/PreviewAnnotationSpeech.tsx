@@ -1,110 +1,149 @@
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type {
   DesktopPreviewAnnotationVoiceConfig,
   DesktopPreviewAnnotationVoiceEvent,
-  EnvironmentId,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { useEnvironmentSpeechInput } from "~/speech/useEnvironmentSpeechInput";
-import { useDictationShortcut, type DictationKeyHandlers } from "~/speech/useDictationShortcut";
+import { resolveSpeechPresentation } from "~/components/chat/ComposerSpeechButton";
 import { VoiceInputSetup } from "~/components/chat/VoiceInputSetup";
-import { previewBridge } from "./previewBridge";
 import { toastManager } from "~/components/ui/toast";
+import { useComposerDraftStore } from "~/composerDraftStore";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { useDictationShortcut, type DictationKeyHandlers } from "~/speech/useDictationShortcut";
+import { useEnvironmentSpeechInput } from "~/speech/useEnvironmentSpeechInput";
+import { useProject, useThreadShell } from "~/state/entities";
+import { previewBridge } from "./previewBridge";
 
-/** The inspected page owns its draft; recording stays in the application renderer. */
+/**
+ * The annotation editor lives inside the preview guest, which only forwards trusted gestures
+ * and mirrors state. Recording, consent, and transcription stay in this renderer.
+ */
 export function PreviewAnnotationSpeech({
-  environmentId,
+  threadRef,
   tabId,
   config,
+  keybindings,
 }: {
-  environmentId: EnvironmentId;
+  threadRef: ScopedThreadRef;
   tabId: string;
   config: DesktopPreviewAnnotationVoiceConfig;
+  keybindings: Parameters<typeof useDictationShortcut>[0]["keybindings"];
 }) {
   const navigate = useNavigate();
-  const draft = useRef({ text: "", cursor: 0 });
+  const thread = useThreadShell(threadRef);
+  const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
+  const projectId = thread?.projectId ?? draftThread?.projectId ?? null;
+  const project = useProject(
+    projectId ? scopeProjectRef(threadRef.environmentId, projectId) : null,
+  );
+  const draft = useRef({ text: "", cursor: 0, selectionEnd: 0 });
   const [text, setText] = useState("");
-  const [, setAcknowledgement] = useState(0);
   const keys = useRef<DictationKeyHandlers | null>(null);
+  const guestFocused = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- notices focus returning from the preview guest to this window
+  useEffect(() => {
+    const onFocus = () => {
+      guestFocused.current = false;
+    };
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("focusin", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("focusin", onFocus);
+    };
+  }, []);
   const speech = useEnvironmentSpeechInput({
-    environmentId,
-    ownerKey: JSON.stringify([environmentId, tabId, config.sessionId]),
+    environmentId: threadRef.environmentId,
+    projectId,
+    projectName: project?.title,
+    ownerKey: JSON.stringify(["preview-annotation", threadRef, tabId, config.sessionId]),
     draftText: text,
     readDraft: () => ({
       text: draft.current.text,
-      selection: { start: draft.current.cursor, end: draft.current.cursor },
+      selection: { start: draft.current.cursor, end: draft.current.selectionEnd },
     }),
     commitDraft: (next, selection) => {
-      draft.current = { text: next, cursor: selection.start };
+      draft.current = { text: next, cursor: selection.start, selectionEnd: selection.end };
       setText(next);
-      void publish({ text: next, cursor: selection.start });
+      void publish(current.current.voiceState, { text: next, cursor: selection.start });
     },
   });
-  const current = useRef(speech);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Publish committed speech actions before desktop annotation events read them.
-  useEffect(() => {
-    current.current = speech;
-  });
-  const subscribeKeys = (handlers: DictationKeyHandlers) => {
+  const subscribeKeys = useStableCallback((handlers: DictationKeyHandlers) => {
     keys.current = handlers;
     return () => {
       keys.current = null;
     };
-  };
+  });
   const shortcutLabel = useDictationShortcut({
-    keybindings: config.keybindings,
+    keybindings,
     speech,
     disabled: false,
     terminalOpen: false,
     modelPickerOpen: false,
     previewFocus: true,
-    ownsFocus: () => true,
+    ownsFocus: () => guestFocused.current,
     subscribeKeys,
   });
-  const { available, state, freezesEditor, blocksSubmission, cancel } = speech;
-  const level = useSyncExternalStore(speech.level.subscribe, speech.level.getSnapshot);
-  const publish = async (nextDraft: { text: string; cursor: number } | null = null) => {
-    try {
-      await previewBridge?.annotationVoice.update({
-        tabId,
-        sessionId: config.sessionId,
-        available: available,
-        phase: state.phase,
-        errorAction: state.errorAction,
-        status: null,
-        preview: null,
-        level,
-        shortcutLabel,
-        freezesEditor: freezesEditor,
-        blocksSubmission: blocksSubmission,
-        draft: nextDraft,
-      });
-    } catch (error) {
-      cancel();
-      toastManager.add({
-        type: "error",
-        title: "Could not update annotation voice input",
-        description: error instanceof Error ? error.message : String(error),
-      });
-    }
+  const { available, state, preview, freezesEditor, blocksSubmission, level } = speech;
+  const voiceState = {
+    tabId,
+    sessionId: config.sessionId,
+    available,
+    phase: state.phase,
+    errorAction: state.errorAction,
+    status: resolveSpeechPresentation(state, null).status,
+    preview: preview ? preview.committed + preview.tentative : null,
+    level,
+    shortcutLabel,
+    freezesEditor,
+    blocksSubmission,
   };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Synchronize committed speech status with the external desktop annotation webview.
+  const current = useRef({ speech, voiceState });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed speech actions and state to the desktop IPC listener
   useEffect(() => {
-    void publish();
-  }, [publish]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to the desktop annotation session and release its event listener on unmount.
+    current.current = { speech, voiceState };
+  });
+  const publish = useStableCallback(
+    async (voice: typeof voiceState, nextDraft: { text: string; cursor: number } | null) => {
+      try {
+        await previewBridge?.annotationVoice.update({ ...voice, draft: nextDraft });
+      } catch (error) {
+        current.current.speech.cancel();
+        toastManager.add({
+          type: "error",
+          title: "Could not update annotation voice input",
+          description: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors every committed voice state change into the preview guest
+  useEffect(() => {
+    void publish(voiceState, null);
+  }, [publish, voiceState]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to gestures the preview guest relays for this session
   useEffect(
     () =>
       previewBridge?.annotationVoice.onEvent(
         (eventTabId, event: DesktopPreviewAnnotationVoiceEvent) => {
           if (eventTabId !== tabId || event.sessionId !== config.sessionId) return;
-          draft.current = { text: event.text, cursor: event.cursor };
+          draft.current = {
+            text: event.text,
+            cursor: Math.min(event.cursor, event.text.length),
+            selectionEnd: Math.min(event.selectionEnd ?? event.cursor, event.text.length),
+          };
           setText(event.text);
-          const value = current.current;
+          if (event.action === "focus" || event.action === "key" || event.action === "start")
+            guestFocused.current = true;
+          if (event.action === "blur") guestFocused.current = false;
+          const value = current.current.speech;
           switch (event.action) {
+            case "focus":
             case "sync":
-              void publish();
+              void publish(current.current.voiceState, null);
               break;
             case "start":
               void value.start();
@@ -127,12 +166,12 @@ export function PreviewAnnotationSpeech({
               break;
             case "key": {
               if (!event.keyboard) break;
-              const keyboard = new KeyboardEvent(event.keyboard.type, event.keyboard);
-              keys.current?.[event.keyboard.type](keyboard);
+              keys.current?.[event.keyboard.type](
+                new KeyboardEvent(event.keyboard.type, event.keyboard),
+              );
               break;
             }
           }
-          if (event.action !== "sync") setAcknowledgement((count) => count + 1);
         },
       ),
     [tabId, config.sessionId, publish, navigate],
@@ -145,7 +184,6 @@ export function PreviewAnnotationSpeech({
       status={speech.status}
       model={speech.setup.model}
       downloading={speech.setup.downloading}
-      cancelled={speech.setup.cancelled}
       error={speech.setup.error}
       onOpenChange={speech.setup.setOpen}
       onDownload={() => void speech.setup.download()}
