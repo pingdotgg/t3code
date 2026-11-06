@@ -332,7 +332,7 @@
       --color-sheet: rgba(243, 240, 255, 0.98);
       --color-sheet-solid: #f3f0ff;
       --color-card: #ffffff;
-      --color-grouped-card: #f4f1e7;
+      --color-grouped-card: #ffffff;
       --color-card-alt: #fbfaf5;
       --color-card-translucent: rgba(255, 255, 255, 0.8);
       --color-thread-canvas: #fbfaf5;
@@ -342,8 +342,8 @@
       --color-thread-hover: #eae5ff;
       --color-row-hover: #ede9ff;
       --color-composer-panel: rgba(251, 250, 245, 0.88);
-      --color-composer-surface: rgba(244, 241, 231, 0.94);
-      --color-composer-border: rgba(229, 225, 212, 0.8);
+      --color-composer-surface: rgba(255, 255, 255, 0.94);
+      --color-composer-border: rgba(229, 225, 212, 0.54);
       --color-foreground: #151918;
       --color-foreground-secondary: #5f665f;
       --color-foreground-muted: #5b605b;
@@ -389,7 +389,7 @@
       --color-header-foreground: #1a1442;
       --color-header-border: #e6e0ff;
       --color-glass-surface: rgba(255, 255, 255, 0.74);
-      --color-glass-fallback: rgba(244, 241, 231, 0.94);
+      --color-glass-fallback: rgba(255, 255, 255, 0.94);
       --color-glass-tint: rgba(255, 255, 255, 0.22);
       --color-status-bar: #fbfaf5;
       --color-md-body: #151918;
