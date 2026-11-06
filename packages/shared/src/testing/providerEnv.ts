@@ -5,13 +5,13 @@
 const PROVIDER_ENV_PREFIXES = ["ANTHROPIC_", "CLAUDE_", "CODEX_", "OPENAI_", "T3CODE_", "T3_"];
 
 const KEPT_ENV = new Set([
+  // Selects the mobile test platform; the Vite config and platform-branched tests must agree on it.
+  "T3_MOBILE_TEST_PLATFORM",
   // CI sets these so the transfer budget integration test writes its report for the job summary.
   "T3CODE_TRANSFER_BUDGET_REPORT_PATH",
   "T3CODE_TRANSFER_BUDGET_RESULT_PATH",
   // Opt-in: points the HtmlRender tests at a headless browser, which they skip without.
   "T3CODE_TEST_HEADLESS_SHELL",
-  // The mobile test script sets this; tests must see the platform their code was compiled for.
-  "T3_MOBILE_TEST_PLATFORM",
 ]);
 
 if (process.env.T3CODE_TEST_KEEP_PROVIDER_ENV !== "1") {

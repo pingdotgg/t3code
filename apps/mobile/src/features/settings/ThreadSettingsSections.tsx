@@ -244,40 +244,81 @@ function BetaSettingsSection() {
       environment.connection.phase === "connected" &&
       environment.serverConfig?.environment.capabilities.peerLinks === true,
   );
-  const writable = useEnvironmentsWithScope(supported, AuthSettingsWriteScope);
+  const indexing = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" &&
+      environment.serverConfig?.environment.capabilities.projectCode === true,
+  );
+  const writable = useEnvironmentsWithScope(environments, AuthSettingsWriteScope);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "linked environments beta update",
     reportFailure: true,
   });
-  if (supported.length === 0) return null;
+  if (supported.length === 0 && indexing.length === 0) return null;
   return (
-    <View className="gap-3">
-      <SettingsSection title="Beta: Linked environments">
-        {supported.map((environment) => {
-          const policy = environment.serverConfig?.managedPolicy;
-          const managed = isManagedSettingPath(policy, "linkedEnvironmentsEnabled");
-          return (
-            <SettingsSwitchRow
-              key={environment.environmentId}
-              icon="link"
-              label={environment.label}
-              {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
-              value={environment.serverConfig?.settings.linkedEnvironmentsEnabled === true}
-              disabled={managed || !writable.has(environment.environmentId)}
-              onValueChange={(value) =>
-                void updateSettings({
-                  environmentId: environment.environmentId,
-                  input: { patch: { linkedEnvironmentsEnabled: value } },
-                })
-              }
-            />
-          );
-        })}
-      </SettingsSection>
-      <Text className="px-2 text-sm text-foreground-muted">
-        Let agents on a machine work on your other machines, and theirs on it. Turn it on for each
-        machine. While it is off, nothing new starts over a link; tasks already running finish.
-      </Text>
+    <View className="gap-6">
+      {supported.length === 0 ? null : (
+        <View className="gap-3">
+          <SettingsSection title="Beta: Linked environments">
+            {supported.map((environment) => {
+              const policy = environment.serverConfig?.managedPolicy;
+              const managed = isManagedSettingPath(policy, "linkedEnvironmentsEnabled");
+              return (
+                <SettingsSwitchRow
+                  key={environment.environmentId}
+                  icon="link"
+                  label={environment.label}
+                  {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
+                  value={environment.serverConfig?.settings.linkedEnvironmentsEnabled === true}
+                  disabled={managed || !writable.has(environment.environmentId)}
+                  onValueChange={(value) =>
+                    void updateSettings({
+                      environmentId: environment.environmentId,
+                      input: { patch: { linkedEnvironmentsEnabled: value } },
+                    })
+                  }
+                />
+              );
+            })}
+          </SettingsSection>
+          <Text className="px-2 text-sm text-foreground-muted">
+            Let agents on a machine work on your other machines, and theirs on it. Turn it on for
+            each machine. While it is off, nothing new starts over a link; tasks already running
+            finish.
+          </Text>
+        </View>
+      )}
+      {indexing.length === 0 ? null : (
+        <View className="gap-3">
+          <SettingsSection title="Beta: Automatic code indexing">
+            {indexing.map((environment) => {
+              const policy = environment.serverConfig?.managedPolicy;
+              const managed = isManagedSettingPath(policy, "autoCodeIndexEnabled");
+              return (
+                <SettingsSwitchRow
+                  key={environment.environmentId}
+                  icon="magnifyingglass"
+                  label={environment.label}
+                  {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
+                  value={environment.serverConfig?.settings.autoCodeIndexEnabled !== false}
+                  disabled={managed || !writable.has(environment.environmentId)}
+                  onValueChange={(value) =>
+                    void updateSettings({
+                      environmentId: environment.environmentId,
+                      input: { patch: { autoCodeIndexEnabled: value } },
+                    })
+                  }
+                />
+              );
+            })}
+          </SettingsSection>
+          <Text className="px-2 text-sm text-foreground-muted">
+            Index a project when you add it, and a worktree while an agent works in it. A worktree's
+            index is removed when its thread settles. While this is off, a checkout only indexes
+            when something asks it a code question.
+          </Text>
+        </View>
+      )}
     </View>
   );
 }

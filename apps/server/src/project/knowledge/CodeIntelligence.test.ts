@@ -10,20 +10,24 @@ import * as NodeURL from "node:url";
 import * as NodeWorkerThreads from "node:worker_threads";
 
 import * as NodeCryptoEffect from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   EnvironmentId,
   OrchestrationV2AppThread,
   ProjectId,
   ThreadId,
+  VcsProcessExitError,
   type ProjectCodeIndexEvent,
+  type VcsListWorkspaceFilesResult,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import type { PlatformError } from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -32,14 +36,28 @@ import { McpSchema, McpServer } from "effect/ai";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
+import * as ServerConfig from "../../config.ts";
 import * as McpHttpServer from "../../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "../../mcp/McpToolAccess.testkit.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import * as VcsDriver from "../../vcs/VcsDriver.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import { withWorkspaceLease } from "../../workspace/workspaceLease.ts";
 import * as CodeIntelligence from "./CodeIntelligence.ts";
+import { indexRootFor, linkCheckoutSources } from "./codeIndexLayout.ts";
+import { pinPublishedGeneration } from "./codeIndexLocks.ts";
+import { rankListing } from "./codeIntelligenceWorker.ts";
 import * as FileHistory from "./FileHistory.ts";
+
+const notARepository = new VcsProcessExitError({
+  operation: "test",
+  command: "git ls-files",
+  cwd: "/",
+  exitCode: 128,
+  detail: "not a git repository",
+});
 
 const projectId = ProjectId.make("project:code-intelligence");
 const threadId = ThreadId.make("thread:code-intelligence");
@@ -110,17 +128,51 @@ function withFixture<A, E, R>(
 type Query = Parameters<CodeIntelligence.CodeIntelligence["Service"]["query"]>[0]["query"];
 
 /** The published generation's directory name, read the way a fresh reader would. */
-async function publishedDirectory(root: string) {
+async function publishedDirectory(indexRoot: string) {
   const generation = (
-    await NodeFSP.readFile(NodePath.join(root, ".codegraph-t3/published"), "utf8")
+    await NodeFSP.readFile(NodePath.join(indexRoot, ".codegraph-t3/published"), "utf8")
   ).trim();
   return `.codegraph-t3-g${generation}`;
 }
 
-async function generationDirectories(root: string) {
-  return (await NodeFSP.readdir(root))
+async function generationDirectories(indexRoot: string) {
+  return (await NodeFSP.readdir(indexRoot).catch(() => [] as string[]))
     .filter((name) => /^\.codegraph-t3-g\d+$/.test(name))
     .toSorted();
+}
+
+// Windows has no SIGABRT; SIGKILL ends the process just as abruptly there.
+const abortProcess = (pid: number) =>
+  Effect.map(HostProcess.isWindows, (windows) =>
+    process.kill(pid, windows ? "SIGKILL" : "SIGABRT"),
+  );
+
+function assertClearedIndex(indexRoot: string): void {
+  assert.isFalse(NodeFS.existsSync(indexRoot));
+}
+
+/**
+ * A server config whose data directory is outside the fixture, and the index root it implies for
+ * a checkout.
+ */
+interface CheckoutConfig {
+  readonly layer: Layer.Layer<ServerConfig.ServerConfig>;
+  readonly codeIndexDir: string;
+  readonly indexRoot: (checkoutPath: string) => string;
+}
+
+function checkoutConfig(): Effect.Effect<CheckoutConfig, PlatformError, Scope.Scope> {
+  return Effect.gen(function* () {
+    const context = yield* Layer.build(
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3-code-index-" }),
+    );
+    const config = yield* ServerConfig.ServerConfig.pipe(Effect.provide(context));
+    return {
+      layer: Layer.succeed(ServerConfig.ServerConfig, config),
+      codeIndexDir: config.codeIndexDir,
+      indexRoot: (checkoutPath: string) => indexRootFor(config.codeIndexDir, checkoutPath),
+    };
+  }).pipe(Effect.provide(NodeServices.layer));
 }
 
 it.effect(
@@ -152,6 +204,8 @@ it.effect(
             worktreePath: worktree,
           } as unknown as OrchestrationV2AppThread;
           let includeGeneratedInventoryFiles = false;
+          const { layer: configLayer, indexRoot } = yield* checkoutConfig();
+          const indexRootPath = indexRoot(root);
           const dependencies = Layer.mergeAll(
             Layer.mock(ProjectStore.ProjectStoreV2)({
               get: () => Effect.succeedSome(project),
@@ -178,13 +232,13 @@ it.effect(
                   if (
                     cwd === root &&
                     includeGeneratedInventoryFiles &&
-                    (await NodeFSP.stat(NodePath.join(root, ".codegraph-t3/.gitignore"))
+                    (await NodeFSP.stat(NodePath.join(indexRootPath, ".codegraph-t3/published"))
                       .then(() => true)
                       .catch(() => false))
                   ) {
                     entries.push(
                       ".codegraph-t3/.gitignore",
-                      `${await publishedDirectory(root)}/.gitignore`,
+                      `${await publishedDirectory(indexRootPath)}/.gitignore`,
                       ".codegraph-t3-copy/user.txt",
                     );
                   }
@@ -194,6 +248,12 @@ it.effect(
                   };
                 }),
             }),
+            Layer.mock(VcsDriver.VcsDriver)({
+              checkpoints: {} as VcsDriver.VcsDriver["Service"]["checkpoints"],
+              listWorkspaceFiles: () => Effect.fail(notARepository),
+            }),
+            ServerSettings.layerTest(),
+            configLayer,
           );
           const provided = Layer.provide(CodeIntelligence.layer, dependencies);
           const intelligence = yield* CodeIntelligence.CodeIntelligence.pipe(
@@ -220,7 +280,7 @@ it.effect(
                })().catch((error) => parentPort.postMessage({ error: String(error) }));`,
               {
                 eval: true,
-                workerData: { requirePath: codeGraphRequirePath, root },
+                workerData: { requirePath: codeGraphRequirePath, root: indexRootPath },
                 env: { ...process.env, CODEGRAPH_DIR: ".codegraph-t3-g1" },
               },
             );
@@ -237,8 +297,8 @@ it.effect(
                 if (code !== 0) reject(new Error(`Seed index worker exited with code ${code}.`));
               });
             });
-            await NodeFSP.mkdir(NodePath.join(root, ".codegraph-t3"));
-            await NodeFSP.writeFile(NodePath.join(root, ".codegraph-t3/published"), "1");
+            await NodeFSP.mkdir(NodePath.join(indexRootPath, ".codegraph-t3"));
+            await NodeFSP.writeFile(NodePath.join(indexRootPath, ".codegraph-t3/published"), "1");
           });
 
           const staleLinkedSymbols = yield* runQuery({
@@ -249,7 +309,7 @@ it.effect(
           assert.equal(staleLinkedSymbols.index?.generation, 0);
           // The successor is rebuilt rather than copied, so the links the seed indexed are gone.
           yield* refresh();
-          const persistedDirectory = yield* Effect.promise(() => publishedDirectory(root));
+          const persistedDirectory = yield* Effect.promise(() => publishedDirectory(indexRootPath));
           assert.notEqual(persistedDirectory, ".codegraph-t3-g1");
           const persistedLinkedSymbols = yield* Effect.promise(
             () =>
@@ -265,7 +325,7 @@ it.effect(
                    })().catch((error) => parentPort.postMessage({ error: String(error) }));`,
                   {
                     eval: true,
-                    workerData: { requirePath: codeGraphRequirePath, root },
+                    workerData: { requirePath: codeGraphRequirePath, root: indexRootPath },
                     env: { ...process.env, CODEGRAPH_DIR: persistedDirectory },
                   },
                 );
@@ -281,8 +341,11 @@ it.effect(
           );
           assert.equal(persistedLinkedSymbols, 0);
           yield* Effect.promise(async () => {
-            for (const name of [".codegraph-t3", ...(await generationDirectories(root))]) {
-              await NodeFSP.rm(NodePath.join(root, name), { recursive: true, force: true });
+            for (const name of [".codegraph-t3", ...(await generationDirectories(indexRootPath))]) {
+              await NodeFSP.rm(NodePath.join(indexRootPath, name), {
+                recursive: true,
+                force: true,
+              });
             }
           });
 
@@ -296,7 +359,7 @@ it.effect(
             ["unindexed", "unindexed"],
           );
           assert.deepEqual(yield* refresh(), { _tag: "Unchanged" });
-          assert.deepEqual(yield* Effect.promise(() => generationDirectories(root)), [
+          assert.deepEqual(yield* Effect.promise(() => generationDirectories(indexRootPath)), [
             ".codegraph-t3-g1",
           ]);
           const [concurrentStatus, concurrentSearch] = yield* Effect.all(
@@ -534,7 +597,13 @@ it.effect(
           assert.equal(repeatedStatus.coverage.filesListed, 5);
           assert.equal(repeatedStatus.coverage.filesUnsupported, 1);
           const graphDirectoryExists = yield* Effect.promise(() =>
-            NodeFSP.stat(NodePath.join(root, ".codegraph-t3")).then(() => true),
+            NodeFSP.stat(NodePath.join(indexRootPath, ".codegraph-t3")).then(() => true),
+          );
+          const checkoutControlExists = yield* Effect.promise(() =>
+            NodeFSP.stat(NodePath.join(root, ".codegraph-t3")).then(
+              () => true,
+              () => false,
+            ),
           );
           const standardIndexExists = yield* Effect.promise(() =>
             NodeFSP.stat(NodePath.join(root, ".codegraph")).then(
@@ -549,6 +618,7 @@ it.effect(
             ),
           );
           assert.equal(graphDirectoryExists, true);
+          assert.equal(checkoutControlExists, false);
           assert.equal(standardIndexExists, false);
           assert.equal(rootGitignoreExists, false);
 
@@ -614,31 +684,8 @@ it.effect(
             false,
           );
           assert.equal(invalidUtf8.coverage.state, "stale");
-          // Settles the build that query started before the index directory is replaced.
+          // Settles the build that query started.
           yield* refresh();
-
-          yield* Effect.promise(async () => {
-            await NodeFSP.rm(NodePath.join(root, ".codegraph-t3"), {
-              recursive: true,
-              force: true,
-            });
-            await NodeFSP.rm(NodePath.join(worktree, ".codegraph-t3"), {
-              recursive: true,
-              force: true,
-            });
-            await NodeFSP.symlink(worktree, NodePath.join(root, ".codegraph-t3"));
-          });
-          const indexPathError = yield* Effect.flip(runQuery({ operation: "status" }));
-          assert.equal(indexPathError._tag, "CodeIntelligencePathOutsideCheckout");
-          assert.equal(
-            yield* Effect.promise(() =>
-              NodeFSP.stat(NodePath.join(worktree, ".codegraph-t3")).then(
-                () => true,
-                () => false,
-              ),
-            ),
-            false,
-          );
         }),
     ),
 );
@@ -690,7 +737,7 @@ it.effect("reports index freshness against the checkout and walks usages to reac
         return git("rev-parse", "HEAD");
       });
       const gate = buildGate();
-      const { run, refresh } = yield* checkoutService(
+      const { run, refresh, indexRoot } = yield* checkoutService(
         fixture.root,
         () => ["src/defs.ts", "src/use.ts", "src/defs.test.ts"],
         gate,
@@ -698,7 +745,7 @@ it.effect("reports index freshness against the checkout and walks usages to reac
 
       // Freshness never indexes: an unindexed checkout stays unindexed.
       assert.equal((yield* run({ operation: "freshness" })).index?.state, "unindexed");
-      assert.isFalse(NodeFS.existsSync(NodePath.join(fixture.root, ".codegraph-t3")));
+      assert.isFalse(NodeFS.existsSync(indexRoot(fixture.root)));
 
       assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
       const indexed = yield* run({ operation: "status" });
@@ -779,12 +826,25 @@ it.effect("reports index freshness against the checkout and walks usages to reac
 
 function checkoutService(
   root: string,
-  listed: () => ReadonlyArray<string>,
+  listed: (cwd?: string) => ReadonlyArray<string>,
   {
     beforeListing = () => Effect.void,
+    repository = false,
+    truncated = false,
+    autoCodeIndexEnabled = true,
+    worktree,
+    config,
     ...serviceOptions
   }: CodeIntelligence.CodeIntelligenceOptions & {
     readonly beforeListing?: () => Effect.Effect<void>;
+    /** Lists through git, as a real repository does, instead of the file finder. */
+    readonly repository?: boolean;
+    readonly truncated?: boolean;
+    readonly autoCodeIndexEnabled?: boolean;
+    /** A thread whose checkout is `path`, as a worktree thread resolves. */
+    readonly worktree?: { readonly threadId: ThreadId; readonly path: string };
+    /** Shares one data directory across services, as one server would. */
+    readonly config?: CheckoutConfig;
   } = {},
 ) {
   const project = {
@@ -792,45 +852,110 @@ function checkoutService(
     workspaceRoot: root,
     deletedAt: null,
   } as unknown as ProjectStore.ProjectRow;
-  const provided = Layer.provide(
-    CodeIntelligence.layerWith(serviceOptions),
-    Layer.mergeAll(
-      Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeedSome(project) }),
-      Layer.mock(ProjectionStore.ProjectionStoreV2)({ getThread: () => Effect.die("unused") }),
-      Layer.mock(WorkspacePaths.WorkspacePaths)({
-        normalizeWorkspaceRoot: () => Effect.succeed(root),
-        resolveRelativePathWithinRoot: ({ relativePath }) =>
-          Effect.succeed({ absolutePath: relativePath, relativePath }),
-      }),
-      Layer.mock(WorkspaceEntries.WorkspaceEntries)({
-        refresh: () => Effect.void,
-        list: () =>
-          Effect.suspend(beforeListing).pipe(
-            Effect.andThen(
-              Effect.sync(() => ({
-                entries: listed().map((path) => ({ path, kind: "file" as const })),
-                truncated: false,
-              })),
-            ),
-          ),
-      }),
-    ),
-  );
+  const worktreeThread = {
+    id: worktree?.threadId ?? worktreeThreadId,
+    projectId,
+    worktreePath: worktree?.path ?? root,
+  } as unknown as OrchestrationV2AppThread;
   return Effect.gen(function* () {
+    const shared = config ?? (yield* checkoutConfig());
+    const { layer: configLayer, indexRoot, codeIndexDir } = shared;
+    const provided = Layer.provide(
+      CodeIntelligence.layerWith(serviceOptions),
+      Layer.mergeAll(
+        Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeedSome(project) }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThread: (requestedThreadId) =>
+            worktree !== undefined && requestedThreadId === worktree.threadId
+              ? Effect.succeed(worktreeThread)
+              : Effect.die("unused"),
+        }),
+        Layer.mock(WorkspacePaths.WorkspacePaths)({
+          normalizeWorkspaceRoot: (workspaceRoot) =>
+            NodeFS.existsSync(workspaceRoot)
+              ? Effect.succeed(workspaceRoot)
+              : Effect.fail(
+                  new WorkspacePaths.WorkspaceRootNotExistsError({
+                    workspaceRoot,
+                    normalizedWorkspaceRoot: workspaceRoot,
+                  }),
+                ),
+          resolveRelativePathWithinRoot: ({ relativePath }) =>
+            Effect.succeed({ absolutePath: relativePath, relativePath }),
+        }),
+        Layer.mock(WorkspaceEntries.WorkspaceEntries)({
+          refresh: () => Effect.void,
+          list: ({ cwd }) =>
+            Effect.suspend(beforeListing).pipe(
+              Effect.andThen(
+                Effect.sync(() => ({
+                  entries: listed(cwd).map((path) => ({ path, kind: "file" as const })),
+                  truncated,
+                })),
+              ),
+            ),
+        }),
+        Layer.mock(VcsDriver.VcsDriver)({
+          checkpoints: {} as VcsDriver.VcsDriver["Service"]["checkpoints"],
+          isInsideWorkTree: () => Effect.succeed(repository),
+          listWorkspaceFiles: (cwd) =>
+            repository
+              ? Effect.sync(
+                  () =>
+                    ({
+                      paths: listed(cwd),
+                      truncated,
+                    }) as unknown as VcsListWorkspaceFilesResult,
+                )
+              : Effect.fail(notARepository),
+        }),
+        ServerSettings.layerTest({ autoCodeIndexEnabled }),
+        configLayer,
+      ),
+    );
     const intelligence = yield* CodeIntelligence.CodeIntelligence.pipe(
       Effect.provide(yield* Layer.build(provided)),
     );
     return {
-      run: (query: Query) => intelligence.query({ projectId, query }),
-      refresh: () => intelligence.refresh({ projectId }),
-      subscribe: () => intelligence.subscribeIndex({ projectId }),
+      indexRoot,
+      codeIndexDir,
+      hasCheckoutIndex: (checkoutPath: string) => intelligence.hasCheckoutIndex(checkoutPath),
+      removeOrphanedIndexes: (isKnown: (checkoutPath: string) => boolean) =>
+        intelligence.removeOrphanedIndexes(isKnown),
+      run: (query: Query, selectedThreadId?: ThreadId) =>
+        intelligence.query({
+          projectId,
+          ...(selectedThreadId ? { threadId: selectedThreadId } : {}),
+          query,
+        }),
+      refresh: (selectedThreadId?: ThreadId) =>
+        intelligence.refresh({
+          projectId,
+          ...(selectedThreadId ? { threadId: selectedThreadId } : {}),
+        }),
+      subscribe: (selectedThreadId?: ThreadId) =>
+        intelligence.subscribeIndex({
+          projectId,
+          ...(selectedThreadId ? { threadId: selectedThreadId } : {}),
+        }),
+      ensureProjectIndexed: () => intelligence.ensureProjectIndexed(projectId),
+      refreshForActiveAgent: (selectedThreadId?: ThreadId) =>
+        intelligence.refreshForActiveAgent({
+          projectId,
+          ...(selectedThreadId ? { threadId: selectedThreadId } : {}),
+        }),
+      refreshIfIndexed: (cwd: string) => intelligence.refreshIfIndexed(cwd),
+      removeCheckoutIndex: (checkoutPath: string) => intelligence.removeCheckoutIndex(checkoutPath),
+      removeLegacyIndexes: (checkoutPaths: ReadonlyArray<string>) =>
+        intelligence.removeLegacyIndexes(checkoutPaths),
+      stopBuilds: intelligence.stopBuilds,
     };
   });
 }
 
-function indexedSymbolCount(root: string, name: string) {
+function indexedSymbolCount(indexRoot: string, name: string) {
   return Effect.promise(async () => {
-    const indexDirectory = await publishedDirectory(root);
+    const indexDirectory = await publishedDirectory(indexRoot);
     return await new Promise<number>((resolve, reject) => {
       const inspect = new NodeWorkerThreads.Worker(
         `const { parentPort, workerData } = require("node:worker_threads");
@@ -843,7 +968,7 @@ function indexedSymbolCount(root: string, name: string) {
          })().catch((error) => parentPort.postMessage({ error: String(error) }));`,
         {
           eval: true,
-          workerData: { requirePath: codeGraphRequirePath, root, name },
+          workerData: { requirePath: codeGraphRequirePath, root: indexRoot, name },
           env: { ...process.env, CODEGRAPH_DIR: indexDirectory },
         },
       );
@@ -856,77 +981,6 @@ function indexedSymbolCount(root: string, name: string) {
   });
 }
 
-it.effect(
-  "refuses a linked index directory or child instead of reading or writing through it",
-  () =>
-    withFixture((fixture) =>
-      Effect.gen(function* () {
-        const victim = NodePath.join(fixture.worktree, "victim");
-        const control = NodePath.join(fixture.root, ".codegraph-t3");
-        const generation = NodePath.join(fixture.root, ".codegraph-t3-g1");
-        const { run, refresh } = yield* checkoutService(fixture.root, () => [
-          "src/defs.ts",
-          "src/use.ts",
-        ]);
-        const expectRefused = (label: string) =>
-          Effect.gen(function* () {
-            const result = yield* Effect.result(run({ operation: "status" }));
-            assert.equal(result._tag, "Failure", label);
-            if (result._tag === "Failure") {
-              assert.equal(result.failure._tag, "CodeIntelligencePathOutsideCheckout", label);
-            }
-            assert.deepEqual(
-              yield* refresh(),
-              { _tag: "Failed", reason: "index-outside-checkout" },
-              label,
-            );
-            assert.equal(
-              yield* Effect.promise(() => NodeFSP.readFile(victim, "utf8")),
-              "untouched",
-              label,
-            );
-          });
-        yield* Effect.promise(async () => {
-          await NodeFSP.writeFile(victim, "untouched");
-          await NodeFSP.mkdir(control);
-        });
-        for (const child of ["published", ".gitignore"]) {
-          const link = NodePath.join(control, child);
-          yield* Effect.promise(() => NodeFSP.symlink(victim, link));
-          yield* expectRefused(`control ${child}`);
-          yield* Effect.promise(() => NodeFSP.rm(link));
-        }
-        yield* Effect.promise(async () => {
-          await NodeFSP.rm(control, { recursive: true });
-          await NodeFSP.symlink(fixture.worktree, control);
-        });
-        yield* expectRefused("control directory");
-        yield* Effect.promise(() => NodeFSP.rm(control));
-
-        assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
-        for (const child of ["t3-index.json", "codegraph.db-wal"]) {
-          const link = NodePath.join(generation, child);
-          const kept = NodePath.join(fixture.worktree, `${child}.kept`);
-          yield* Effect.promise(async () => {
-            await NodeFSP.rename(link, kept).catch(() => undefined);
-            await NodeFSP.symlink(victim, link);
-          });
-          yield* expectRefused(`generation ${child}`);
-          yield* Effect.promise(async () => {
-            await NodeFSP.rm(link);
-            await NodeFSP.rename(kept, link).catch(() => undefined);
-          });
-        }
-        const keptGeneration = NodePath.join(fixture.worktree, "generation.kept");
-        yield* Effect.promise(async () => {
-          await NodeFSP.rename(generation, keptGeneration);
-          await NodeFSP.symlink(keptGeneration, generation);
-        });
-        yield* expectRefused("generation directory");
-      }),
-    ),
-);
-
 it.effect("never widens an empty canonical allowlist into a full checkout scan", () =>
   withFixture((fixture) =>
     Effect.gen(function* () {
@@ -936,12 +990,14 @@ it.effect("never widens an empty canonical allowlist into a full checkout scan",
           NodePath.join(fixture.root, "src/linked-work.ts"),
         ),
       );
-      const { run, refresh } = yield* checkoutService(fixture.root, () => ["src/linked-work.ts"]);
+      const { run, refresh, indexRoot } = yield* checkoutService(fixture.root, () => [
+        "src/linked-work.ts",
+      ]);
       assert.deepInclude(yield* refresh(), { _tag: "Published" });
       const status = yield* run({ operation: "status" });
       assert.equal(status.coverage.filesIndexed, 0);
-      assert.equal(yield* indexedSymbolCount(fixture.root, "workOnly"), 0);
-      assert.equal(yield* indexedSymbolCount(fixture.root, "greet"), 0);
+      assert.equal(yield* indexedSymbolCount(indexRoot(fixture.root), "workOnly"), 0);
+      assert.equal(yield* indexedSymbolCount(indexRoot(fixture.root), "greet"), 0);
     }),
   ),
 );
@@ -1022,13 +1078,19 @@ it.effect("keeps skipped build output partial while detecting newly added source
 it.effect("reports freshness coverage with the same classification as a query", () =>
   withFixture((fixture) =>
     Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        NodeFSP.writeFile(NodePath.join(fixture.root, "README.md"), "# Fixture\n"),
-      );
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(NodePath.join(fixture.root, "README.md"), "# Fixture\n");
+        await NodeFSP.writeFile(NodePath.join(fixture.root, "ci.yaml"), "steps: []\n");
+        await NodeFSP.writeFile(NodePath.join(fixture.worktree, "README.md"), "# Fixture\n");
+      });
       const { run, refresh } = yield* checkoutService(fixture.root, () => [
         "src/defs.ts",
         "src/use.ts",
         "README.md",
+        "ci.yaml",
+        // Git lists a tracked file deleted from the working tree, and a submodule as a path.
+        "src/deleted.ts",
+        "src",
       ]);
       yield* refresh();
       const status = yield* run({ operation: "status" });
@@ -1039,14 +1101,417 @@ it.effect("reports freshness coverage with the same classification as a query", 
         filesSkipped: result.coverage.filesSkipped,
         filesFailed: result.coverage.filesFailed,
       });
+      // Docs and assets fill any repository, so they are counted but leave no gap. A file the SDK
+      // indexed anyway, such as YAML, is not also unsupported.
       assert.deepEqual(counts(status), {
-        state: "partial",
+        state: "complete",
         filesUnsupported: 1,
         filesSkipped: 0,
         filesFailed: 0,
       });
       assert.deepEqual(counts(freshness), counts(status));
-      assert.equal(freshness.index?.state, "partial");
+      assert.equal(freshness.index?.state, "ready");
+
+      // With nothing else to index, the same files do leave the index empty and incomplete.
+      const docsOnly = yield* checkoutService(fixture.worktree, () => ["README.md"]);
+      yield* docsOnly.refresh();
+      const docsOnlyFreshness = yield* docsOnly.run({ operation: "freshness" });
+      assert.equal(docsOnlyFreshness.coverage.state, "partial");
+      assert.equal(docsOnlyFreshness.index?.state, "partial");
+
+      // Source in a language the SDK cannot read is a gap, however much else is indexed.
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(NodePath.join(fixture.root, "worker.ex"), "defmodule Worker do\nend\n"),
+      );
+      const mixed = yield* checkoutService(fixture.root, () => ["src/defs.ts", "worker.ex"]);
+      yield* mixed.refresh();
+      const mixedFreshness = yield* mixed.run({ operation: "freshness" });
+      assert.equal(mixedFreshness.coverage.state, "partial");
+      assert.equal(mixedFreshness.index?.state, "partial");
+
+      // One stray script among many sources is not.
+      const sources = yield* Effect.promise(() => writeGeneratedSources(fixture.root, 20));
+      const stray = yield* checkoutService(fixture.root, () => [...sources, "worker.ex"]);
+      yield* stray.refresh();
+      assert.equal((yield* stray.run({ operation: "freshness" })).index?.state, "ready");
+    }),
+  ),
+);
+
+it("spends an over-cap listing on first-party sources before anything else", () => {
+  assert.deepEqual(
+    rankListing(
+      [
+        ".repos/lib/notes.md",
+        ".repos/lib/vendored.ts",
+        "README.md",
+        "apps/.local/generated.ts",
+        "apps/server.ts",
+        "packages/shared.ts",
+      ],
+      (path) => path.endsWith(".ts"),
+    ),
+    [
+      "apps/server.ts",
+      "packages/shared.ts",
+      ".repos/lib/vendored.ts",
+      "apps/.local/generated.ts",
+      "README.md",
+      ".repos/lib/notes.md",
+    ],
+  );
+});
+
+it.effect("starts over from an index that spent a truncated listing on what sorted first", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(fixture.root, "src/vendored.ts"),
+          "export function vendoredOnly() {}\n",
+        ),
+      );
+      let listed = ["src/vendored.ts", "src/defs.ts"];
+      const { refresh, indexRoot } = yield* checkoutService(fixture.root, () => listed, {
+        truncated: true,
+      });
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
+      assert.equal(yield* indexedSymbolCount(indexRoot(fixture.root), "vendoredOnly"), 1);
+
+      yield* Effect.promise(async () => {
+        const root = indexRoot(fixture.root);
+        const metaPath = NodePath.join(await publishedDirectory(root), "t3-index.json");
+        const absolute = NodePath.join(root, metaPath);
+        const { ranked: _ranked, ...legacy } = JSON.parse(await NodeFSP.readFile(absolute, "utf8"));
+        await NodeFSP.writeFile(absolute, JSON.stringify(legacy));
+      });
+      listed = ["src/defs.ts"];
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 2 });
+      assert.equal(yield* indexedSymbolCount(indexRoot(fixture.root), "vendoredOnly"), 0);
+      assert.equal(yield* indexedSymbolCount(indexRoot(fixture.root), "greet"), 1);
+    }),
+  ),
+);
+
+it.effect("starts a project's first index when a client watches it, and only its first", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const gate = buildGate();
+      const { run, subscribe } = yield* checkoutService(fixture.root, () => ["src/defs.ts"], {
+        ...gate,
+        repository: true,
+      });
+      const next = <E, R>(events: Stream.Stream<ProjectCodeIndexEvent, E, R>) =>
+        events.pipe(Stream.take(1), Stream.runCollect);
+
+      // A watcher does not retry a failed first build, or a persistent failure would repeat for
+      // every client that looks.
+      const held = yield* gate.holdNext;
+      const events = yield* subscribe();
+      assert.deepInclude((yield* run({ operation: "freshness" })).index, {
+        state: "unindexed",
+        refresh: "building",
+      });
+      const buildPid = yield* Deferred.await(held.entered);
+      // Nobody asked for this build, so it yields to work someone is waiting on.
+      assert.equal(NodeOS.getPriority(buildPid), NodeOS.constants.priority.PRIORITY_BELOW_NORMAL);
+      // The first build announces itself before it starts, so a watching client reads the badge
+      // again and shows Indexing while there is no generation to answer from.
+      assert.deepEqual(yield* next(events), [{ outcome: "published", generation: null }]);
+      process.kill(buildPid, "SIGKILL");
+      assert.deepEqual(yield* next(events), [{ outcome: "failed", generation: null }]);
+      const firstBuildFailed = { state: "unindexed", refresh: "failed" } as const;
+      // The event precedes the build's bookkeeping; this answer proves that bookkeeping finished.
+      assert.deepInclude((yield* run({ operation: "freshness" })).index, firstBuildFailed);
+      yield* subscribe().pipe(Effect.asVoid);
+      assert.deepInclude((yield* run({ operation: "freshness" })).index, firstBuildFailed);
+
+      // A code query still asks for one, and the retry publishes without announcing again.
+      yield* run({ operation: "symbols", name: "greet" });
+      assert.deepEqual(yield* next(events), [{ outcome: "published", generation: 1 }]);
+      assert.equal((yield* run({ operation: "freshness" })).index?.state, "ready");
+
+      // Once indexed, watching observes; refreshes stay with queries and finished turns.
+      yield* editDefinition(fixture.root, "edited");
+      yield* subscribe().pipe(Effect.asVoid);
+      const stale = (yield* run({ operation: "freshness" })).index;
+      assert.equal(stale?.state, "stale");
+      assert.notProperty(stale, "refresh");
+
+      // A folder outside a repository is not indexed unasked.
+      const plainFolder = yield* checkoutService(fixture.worktree, () => ["src/work.ts"]);
+      yield* plainFolder.subscribe().pipe(Effect.asVoid);
+      const unindexed = (yield* plainFolder.run({ operation: "freshness" })).index;
+      assert.equal(unindexed?.state, "unindexed");
+      assert.notProperty(unindexed, "refresh");
+      // Nor for an agent: a build its request started would leave this one nothing to publish.
+      yield* plainFolder.refreshForActiveAgent();
+      assert.deepEqual(yield* plainFolder.refresh(), { _tag: "Published", generation: 1 });
+    }),
+  ),
+);
+
+it.effect("indexes a worktree for its active agent and never merely because it is viewed", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const worktree = { threadId: worktreeThreadId, path: fixture.worktree };
+      const { run, refresh, subscribe, refreshForActiveAgent, indexRoot } = yield* checkoutService(
+        fixture.root,
+        (cwd) => (cwd === fixture.worktree ? ["src/work.ts"] : ["src/defs.ts"]),
+        { worktree, repository: true },
+      );
+      const worktreeFreshness = () =>
+        run({ operation: "freshness" }, worktreeThreadId).pipe(
+          Effect.map((result) => result.index),
+        );
+
+      // Viewing a worktree thread subscribes to its events but builds nothing.
+      yield* subscribe(worktreeThreadId).pipe(Effect.asVoid);
+      assert.equal((yield* worktreeFreshness())?.state, "unindexed");
+      assert.isFalse(NodeFS.existsSync(indexRoot(fixture.worktree)));
+
+      // An agent starting in it indexes it.
+      yield* refreshForActiveAgent(worktreeThreadId);
+      // The request returns at once. Its build publishes, leaving this one nothing to do.
+      assert.deepEqual(yield* refresh(worktreeThreadId), { _tag: "Unchanged" });
+      const indexed = yield* worktreeFreshness();
+      assert.equal(indexed?.state, "ready");
+      assert.equal(indexed?.generation, 1);
+      const symbols = yield* run({ operation: "symbols", name: "workOnly" }, worktreeThreadId);
+      assert.ok(symbols.nodes.some((node) => node.path === "src/work.ts"));
+    }),
+  ),
+);
+
+it.effect("leaves a worktree index stale until its agent acts again", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const worktree = { threadId: worktreeThreadId, path: fixture.worktree };
+      const { run, refresh, refreshForActiveAgent } = yield* checkoutService(
+        fixture.root,
+        (cwd) => (cwd === fixture.worktree ? ["src/work.ts"] : ["src/defs.ts"]),
+        { worktree },
+      );
+      const freshness = () =>
+        run({ operation: "freshness" }, worktreeThreadId).pipe(
+          Effect.map((result) => result.index),
+        );
+
+      yield* refreshForActiveAgent(worktreeThreadId);
+      yield* refresh(worktreeThreadId);
+      assert.equal((yield* freshness())?.generation, 1);
+
+      // Nothing refreshes an idle worktree.
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(fixture.worktree, "src/work.ts"),
+          "export function workOnly() { return 3; }\n",
+        ),
+      );
+      const idle = yield* freshness();
+      assert.equal(idle?.state, "stale");
+      assert.notProperty(idle, "refresh");
+
+      // The next turn's request publishes the successor.
+      yield* refreshForActiveAgent(worktreeThreadId);
+      yield* refresh(worktreeThreadId);
+      const refreshed = yield* freshness();
+      assert.equal(refreshed?.state, "ready");
+      assert.equal(refreshed?.generation, 2);
+    }),
+  ),
+);
+
+it.effect("indexes only when something asks while automatic indexing is off", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const worktree = { threadId: worktreeThreadId, path: fixture.worktree };
+      const {
+        run,
+        refresh,
+        subscribe,
+        ensureProjectIndexed,
+        refreshForActiveAgent,
+        refreshIfIndexed,
+        indexRoot,
+      } = yield* checkoutService(
+        fixture.root,
+        (cwd) => (cwd === fixture.worktree ? ["src/work.ts"] : ["src/defs.ts"]),
+        { worktree, repository: true, autoCodeIndexEnabled: false },
+      );
+      const freshness = (threadId?: ThreadId) =>
+        run({ operation: "freshness" }, threadId).pipe(Effect.map((result) => result.index));
+      const noIndex = () =>
+        Effect.sync(
+          () =>
+            !NodeFS.existsSync(indexRoot(fixture.root)) &&
+            !NodeFS.existsSync(indexRoot(fixture.worktree)),
+        );
+
+      yield* ensureProjectIndexed();
+      yield* refreshForActiveAgent();
+      yield* refreshForActiveAgent(worktreeThreadId);
+      yield* subscribe().pipe(Effect.asVoid);
+      yield* refreshIfIndexed(fixture.root);
+      assert.isTrue(yield* noIndex());
+      assert.equal((yield* freshness())?.state, "unindexed");
+      assert.equal((yield* freshness(worktreeThreadId))?.state, "unindexed");
+
+      // A build any of those started would run first, leaving these nothing to publish.
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
+      assert.deepEqual(yield* refresh(worktreeThreadId), { _tag: "Published", generation: 1 });
+
+      // Nor does an existing index refresh on its own.
+      yield* editDefinition(fixture.root, "edited");
+      yield* refreshForActiveAgent();
+      yield* refreshIfIndexed(fixture.root);
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 2 });
+
+      // A code question always works.
+      const answer = yield* run({ operation: "symbols", name: "greet" });
+      assert.ok(answer.nodes.some((node) => node.path === "src/defs.ts"));
+    }),
+  ),
+);
+
+it.effect("rejects Windows network checkouts before creating partial source links", (context) =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      if (!(yield* HostProcess.isWindows)) return context.skip();
+      for (const checkout of [
+        "\\\\server\\share\\repo",
+        "//server/share/repo",
+        "\\\\?\\UNC\\server\\share\\repo",
+      ]) {
+        assert.throws(
+          () => linkCheckoutSources(fixture.worktree, checkout, ["src/defs.ts"]),
+          /network checkout/,
+        );
+      }
+      assert.deepEqual(NodeFS.readdirSync(fixture.worktree), ["src"]);
+    }),
+  ),
+);
+
+it.effect("shares one index between Windows project and thread path case variants", (context) =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      if (!(yield* HostProcess.isWindows)) return context.skip();
+      const { refresh, indexRoot, codeIndexDir } = yield* checkoutService(
+        fixture.root.toLowerCase(),
+        () => ["src/defs.ts"],
+        {
+          worktree: {
+            threadId: worktreeThreadId,
+            path: fixture.root.toUpperCase().replaceAll("\\", "/"),
+          },
+        },
+      );
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
+      assert.deepEqual(yield* refresh(worktreeThreadId), { _tag: "Unchanged" });
+      assert.equal(indexRoot(fixture.root.toLowerCase()), indexRoot(fixture.root.toUpperCase()));
+      assert.lengthOf(NodeFS.readdirSync(codeIndexDir), 1);
+    }),
+  ),
+);
+
+it.effect("stops a Windows build removed through a different path case", (context) =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      if (!(yield* HostProcess.isWindows)) return context.skip();
+      const gate = buildGate();
+      const { refresh, removeCheckoutIndex, indexRoot } = yield* checkoutService(
+        fixture.root.toLowerCase(),
+        () => ["src/defs.ts"],
+        gate,
+      );
+      const held = yield* gate.holdNext;
+      const building = yield* refresh().pipe(Effect.forkScoped);
+      const pid = yield* Deferred.await(held.entered);
+      yield* removeCheckoutIndex(fixture.root.toUpperCase());
+      assert.isFalse(isProcessAlive(pid));
+      yield* Fiber.await(building);
+      assertClearedIndex(indexRoot(fixture.root.toLowerCase()));
+      assert.isTrue(NodeFS.existsSync(NodePath.join(fixture.root, "src/defs.ts")));
+    }),
+  ),
+);
+
+it.effect("removes a checkout's index while a build is in flight", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const gate = buildGate();
+      const { removeCheckoutIndex, refresh, indexRoot } = yield* checkoutService(
+        fixture.root,
+        () => ["src/defs.ts"],
+        gate,
+      );
+      const held = yield* gate.holdNext;
+      const building = yield* refresh().pipe(Effect.forkScoped);
+      const pid = yield* Deferred.await(held.entered);
+      yield* removeCheckoutIndex(fixture.root);
+      assert.isFalse(isProcessAlive(pid), "the build process is gone once removal returns");
+      yield* Fiber.await(building);
+      assertClearedIndex(indexRoot(fixture.root));
+      assert.deepEqual(
+        yield* Effect.promise(() => generationDirectories(indexRoot(fixture.root))),
+        [],
+      );
+    }),
+  ),
+);
+
+it.effect("keeps a generation a reader pins while removing the rest of the index", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const { run, refresh, removeCheckoutIndex, indexRoot } = yield* checkoutService(
+        fixture.root,
+        () => ["src/defs.ts"],
+      );
+      const root = indexRoot(fixture.root);
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
+      const pin = yield* Effect.sync(() => pinPublishedGeneration(root));
+      assert.equal(pin.generation, 1);
+
+      yield* removeCheckoutIndex(fixture.root);
+      // The pointer goes first, so queries read unindexed even though the generation survives.
+      assert.isFalse(NodeFS.existsSync(NodePath.join(root, ".codegraph-t3", "published")));
+      assert.deepEqual(yield* Effect.promise(() => generationDirectories(root)), [
+        ".codegraph-t3-g1",
+      ]);
+      assert.equal((yield* run({ operation: "freshness" })).index?.state, "unindexed");
+
+      // The next removal, with nobody reading, clears it.
+      yield* Effect.sync(pin.release);
+      yield* removeCheckoutIndex(fixture.root);
+      assert.deepEqual(yield* Effect.promise(() => generationDirectories(root)), []);
+      assertClearedIndex(root);
+    }),
+  ),
+);
+
+it.effect("leaves a checkout another server process is building alone", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const { refresh, removeCheckoutIndex, indexRoot } = yield* checkoutService(
+        fixture.root,
+        () => ["src/defs.ts"],
+      );
+      const root = indexRoot(fixture.root);
+      const other = yield* otherServerProcess(root);
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
+      assert.equal(yield* other.send("lock"), "locked");
+
+      yield* removeCheckoutIndex(fixture.root);
+      assert.deepEqual(yield* Effect.promise(() => generationDirectories(root)), [
+        ".codegraph-t3-g1",
+      ]);
+      assert.equal(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(root, ".codegraph-t3/published"), "utf8"),
+        ),
+        "1",
+      );
     }),
   ),
 );
@@ -1159,8 +1624,9 @@ it.effect("stops a build when the service shuts down and never publishes the cut
       const afterShutdown = yield* restarted.run({ operation: "freshness" });
       assert.equal(afterShutdown.index?.state, "unindexed");
       assert.deepInclude(yield* restarted.refresh(), { _tag: "Published" });
-      assert.deepEqual(yield* Effect.promise(() => generationDirectories(fixture.root)), [
-        yield* Effect.promise(() => publishedDirectory(fixture.root)),
+      const root = restarted.indexRoot(fixture.root);
+      assert.deepEqual(yield* Effect.promise(() => generationDirectories(root)), [
+        yield* Effect.promise(() => publishedDirectory(root)),
       ]);
       const recovered = yield* restarted.run({ operation: "status" });
       assert.equal(recovered.coverage.filesIndexed, listed.length);
@@ -1175,13 +1641,16 @@ it.effect("fails the build, not the server, when the analysis process aborts", (
       const files = yield* Effect.promise(() => writeGeneratedSources(fixture.root, 4));
       const gate = buildGate();
       const held = yield* gate.holdNext;
-      const { refresh } = yield* checkoutService(fixture.root, () => files, gate);
+      const { refresh, indexRoot } = yield* checkoutService(fixture.root, () => files, gate);
       const building = yield* refresh().pipe(Effect.forkScoped);
       const pid = yield* Deferred.await(held.entered);
       assert.notEqual(pid, process.pid, "analysis runs outside the server process");
-      process.kill(pid, "SIGABRT");
+      yield* abortProcess(pid);
       assert.deepEqual(yield* Fiber.join(building), { _tag: "Failed", reason: "worker-failed" });
-      assert.deepEqual(yield* Effect.promise(() => generationDirectories(fixture.root)), []);
+      assert.deepEqual(
+        yield* Effect.promise(() => generationDirectories(indexRoot(fixture.root))),
+        [],
+      );
     }),
   ),
 );
@@ -1213,11 +1682,34 @@ it.effect("keeps the index out of the checkout's git status", () =>
   withFixture((fixture) =>
     Effect.gen(function* () {
       const git = (...args: ReadonlyArray<string>) =>
-        NodeChildProcess.execFileSync("git", args, { cwd: fixture.root, encoding: "utf8" });
+        NodeChildProcess.execFileSync(
+          "git",
+          ["-c", "user.email=t3@example.com", "-c", "user.name=T3", ...args],
+          { cwd: fixture.root, encoding: "utf8" },
+        );
       git("init", "--quiet");
+      git("add", "--all");
+      git("commit", "--quiet", "-m", "fixture");
       const gate = listingGate();
-      const { run, refresh } = yield* checkoutService(fixture.root, () => ["src/defs.ts"], gate);
+      const { run, refresh, indexRoot } = yield* checkoutService(
+        fixture.root,
+        () => ["src/defs.ts"],
+        gate,
+      );
+      const root = indexRoot(fixture.root);
+      const before = (yield* Effect.promise(() => NodeFSP.readdir(fixture.root))).toSorted();
       assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
+      assert.ok((yield* run({ operation: "symbols", name: "greet" })).nodes.length > 0);
+      // Drain the query's background refresh before holding a reader and editing its source.
+      yield* refresh();
+
+      // Nothing the index owns is in the checkout: no new entries, and git sees nothing.
+      assert.deepEqual(
+        (yield* Effect.promise(() => NodeFSP.readdir(fixture.root))).toSorted(),
+        before,
+      );
+      assert.equal(git("status", "--ignored", "--short"), "");
+
       // A reader keeps generation 1 while generation 2 is published, so both are on disk.
       const held = yield* gate.holdNext;
       const reader = yield* run({ operation: "freshness" }).pipe(Effect.forkScoped);
@@ -1229,16 +1721,14 @@ it.effect("keeps the index out of the checkout's git status", () =>
         ),
       );
       assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 2 });
-      assert.deepEqual(yield* Effect.promise(() => generationDirectories(fixture.root)), [
+      assert.deepEqual(yield* Effect.promise(() => generationDirectories(root)), [
         ".codegraph-t3-g1",
         ".codegraph-t3-g2",
       ]);
-      const untracked = git("status", "--porcelain", "--untracked-files=all")
-        .split("\n")
-        .filter((line) => /\.codegraph-t3(-g\d+)?\//.test(line));
-      assert.deepEqual(untracked, []);
       yield* Deferred.succeed(held.release, undefined);
       yield* Fiber.join(reader);
+      // Even with two generations on disk, only the edited source shows.
+      assert.equal(git("status", "--ignored", "--short"), " M src/defs.ts\n");
     }),
   ),
 );
@@ -1276,25 +1766,386 @@ it.effect("returns index not ready for a cold checkout without synchronizing sou
   ),
 );
 
-it.effect("removes the index an older version kept in the control directory", () =>
+it.effect("removes the index folders an older version left in the checkout", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const control = NodePath.join(fixture.root, ".codegraph-t3");
+      const legacyGeneration = NodePath.join(fixture.root, ".codegraph-t3-g3");
+      const userGeneration = NodePath.join(fixture.root, ".codegraph-t3-g4");
+      const before = yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(NodePath.join(fixture.root, "top.ts"), "export const top = 1;\n");
+        await NodeFSP.symlink("src", NodePath.join(fixture.root, "alias"));
+        // A folder that merely shares the name is the user's.
+        await NodeFSP.mkdir(userGeneration);
+        await NodeFSP.writeFile(NodePath.join(userGeneration, "notes.txt"), "mine");
+        const entries = (await NodeFSP.readdir(fixture.root)).toSorted();
+        await NodeFSP.mkdir(control);
+        await NodeFSP.writeFile(NodePath.join(control, "codegraph.db"), "legacy index");
+        await NodeFSP.writeFile(NodePath.join(control, "t3-index.json"), "{}");
+        await NodeFSP.mkdir(legacyGeneration);
+        await NodeFSP.writeFile(NodePath.join(legacyGeneration, "codegraph.db"), "legacy");
+        return entries;
+      });
+      const { refresh } = yield* checkoutService(fixture.root, () => ["src/defs.ts"]);
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
+      // Every source entry is still there, and nothing of T3's is.
+      assert.deepEqual(
+        (yield* Effect.promise(() => NodeFSP.readdir(fixture.root))).toSorted(),
+        before,
+      );
+      assert.isTrue(NodeFS.lstatSync(NodePath.join(fixture.root, "alias")).isSymbolicLink());
+      assert.equal(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(userGeneration, "notes.txt"), "utf8"),
+        ),
+        "mine",
+      );
+    }),
+  ),
+);
+
+it.effect("finds and removes an older version's folders in a checkout with no index yet", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const control = NodePath.join(fixture.root, ".codegraph-t3");
+      const { hasCheckoutIndex, removeCheckoutIndex, indexRoot } = yield* checkoutService(
+        fixture.root,
+        () => ["src/defs.ts"],
+      );
+      assert.isFalse(yield* hasCheckoutIndex(fixture.root));
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(control);
+        await NodeFSP.writeFile(NodePath.join(control, "published"), "1");
+      });
+      assert.isFalse(NodeFS.existsSync(indexRoot(fixture.root)));
+      assert.isTrue(yield* hasCheckoutIndex(fixture.root));
+
+      // Settling a thread takes this path, so a worktree nothing rebuilds is still cleaned up.
+      yield* removeCheckoutIndex(fixture.root);
+      assert.isFalse(NodeFS.existsSync(control));
+      assert.isFalse(yield* hasCheckoutIndex(fixture.root));
+      assert.isTrue(NodeFS.existsSync(NodePath.join(fixture.root, "src/defs.ts")));
+    }),
+  ),
+);
+
+it.effect("clears an older version's folders from checkouts and leaves their indexes", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const control = NodePath.join(fixture.root, ".codegraph-t3");
+      const broken = NodePath.join(fixture.root, "broken");
+      const { refresh, removeLegacyIndexes, hasCheckoutIndex } = yield* checkoutService(
+        fixture.root,
+        () => ["src/defs.ts"],
+      );
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(control);
+        await NodeFSP.writeFile(NodePath.join(control, "published"), "1");
+        // Removing this one fails, which must not stop the sweep reaching the next checkout.
+        await NodeFSP.mkdir(NodePath.join(broken, ".codegraph-t3/codegraph.db"), {
+          recursive: true,
+        });
+      });
+
+      yield* removeLegacyIndexes([broken, fixture.root]);
+
+      assert.isFalse(NodeFS.existsSync(control));
+      assert.isTrue(yield* hasCheckoutIndex(fixture.root));
+    }),
+  ),
+);
+
+it.effect("leaves a checkout's own .codegraph-t3 directory alone", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const control = NodePath.join(fixture.root, ".codegraph-t3");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(control);
+        await NodeFSP.writeFile(NodePath.join(control, "notes.txt"), "mine");
+      });
+      const { refresh } = yield* checkoutService(fixture.root, () => ["src/defs.ts"]);
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
+      assert.equal(
+        yield* Effect.promise(() => NodeFSP.readFile(NodePath.join(control, "notes.txt"), "utf8")),
+        "mine",
+      );
+    }),
+  ),
+);
+
+it.effect("leaves a linked .codegraph-t3 and its target alone", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      // Named like T3's own marker, so only the link check can protect it.
+      const victim = NodePath.join(fixture.worktree, "published");
+      const control = NodePath.join(fixture.root, ".codegraph-t3");
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(victim, "untouched");
+        await NodeFSP.symlink(fixture.worktree, control);
+      });
+      const { refresh } = yield* checkoutService(fixture.root, () => ["src/defs.ts"]);
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
+      assert.isTrue(NodeFS.lstatSync(control).isSymbolicLink());
+      assert.equal(yield* Effect.promise(() => NodeFSP.readFile(victim, "utf8")), "untouched");
+      assert.isTrue(NodeFS.existsSync(NodePath.join(fixture.worktree, "src/work.ts")));
+    }),
+  ),
+);
+
+it.effect("leaves legacy folders for later while another server builds", () =>
   withFixture((fixture) =>
     Effect.gen(function* () {
       const control = NodePath.join(fixture.root, ".codegraph-t3");
       yield* Effect.promise(async () => {
         await NodeFSP.mkdir(control);
         await NodeFSP.writeFile(NodePath.join(control, "codegraph.db"), "legacy index");
-        await NodeFSP.writeFile(NodePath.join(control, "t3-index.json"), "{}");
       });
+      // An older server still building in the checkout holds the lock this removal would need.
+      const other = yield* otherServerProcess(fixture.root);
+      assert.equal(yield* other.send("lock"), "locked");
       const { refresh } = yield* checkoutService(fixture.root, () => ["src/defs.ts"]);
       assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
-      assert.deepEqual((yield* Effect.promise(() => NodeFSP.readdir(control))).toSorted(), [
-        ".gitignore",
-        "build.lock",
-        "building.lock",
-        "published",
-      ]);
+      assert.isTrue(NodeFS.existsSync(control));
+
+      // Once that server is gone, the next build removes them.
+      assert.equal(yield* other.send("release"), "released");
+      yield* editDefinition(fixture.root, "second");
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 2 });
+      assert.isFalse(NodeFS.existsSync(control));
     }),
   ),
+);
+
+it.effect("removes an index without touching the checkout's sources", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(NodePath.join(fixture.root, "top.ts"), "export const top = 1;\n"),
+      );
+      const { refresh, removeCheckoutIndex, indexRoot } = yield* checkoutService(
+        fixture.root,
+        () => ["src/defs.ts", "src/use.ts", "top.ts"],
+      );
+      const root = indexRoot(fixture.root);
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
+      assert.isTrue(NodeFS.lstatSync(NodePath.join(root, "top.ts")).isSymbolicLink());
+
+      yield* removeCheckoutIndex(fixture.root);
+      assertClearedIndex(root);
+      // Every source is still there, byte for byte.
+      assert.equal(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(fixture.root, "src/defs.ts"), "utf8"),
+        ),
+        'const prefix = "🧪é"; export function greet() { return prefix; }\n',
+      );
+      assert.isTrue(NodeFS.existsSync(NodePath.join(fixture.root, "src/use.ts")));
+      assert.isTrue(NodeFS.existsSync(NodePath.join(fixture.root, "src/main.go")));
+      assert.equal(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(fixture.root, "top.ts"), "utf8"),
+        ),
+        "export const top = 1;\n",
+      );
+    }),
+  ),
+);
+
+it.effect("removes an orphaned index without touching a source checkout", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const { refresh, removeOrphanedIndexes, indexRoot } = yield* checkoutService(
+        fixture.root,
+        () => ["src/defs.ts"],
+      );
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
+      yield* removeOrphanedIndexes(() => false);
+      assertClearedIndex(indexRoot(fixture.root));
+      assert.equal(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(fixture.root, "src/defs.ts"), "utf8"),
+        ),
+        'const prefix = "🧪é"; export function greet() { return prefix; }\n',
+      );
+    }),
+  ),
+);
+
+it.effect("sweeps indexes for checkouts that are gone or no longer known", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const shared = yield* checkoutConfig();
+      const known = yield* checkoutService(fixture.root, () => ["src/defs.ts"], { config: shared });
+      const gone = yield* checkoutService(fixture.worktree, () => ["src/work.ts"], {
+        config: shared,
+      });
+      assert.deepInclude(yield* known.refresh(), { _tag: "Published" });
+      assert.deepInclude(yield* gone.refresh(), { _tag: "Published" });
+      const knownRoot = known.indexRoot(fixture.root);
+      const goneRoot = gone.indexRoot(fixture.worktree);
+      assert.isTrue(NodeFS.existsSync(knownRoot));
+      assert.isTrue(NodeFS.existsSync(goneRoot));
+
+      // A root with no owner record is a leftover, whatever the predicate says.
+      const orphanRoot = NodePath.join(known.codeIndexDir, "0".repeat(32));
+      yield* Effect.promise(() => NodeFSP.mkdir(orphanRoot, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(NodePath.join(orphanRoot, "stray.txt"), "leftover"),
+      );
+
+      yield* known.removeOrphanedIndexes((checkoutPath) => checkoutPath === fixture.root);
+      // The known checkout is kept, and so are its sources.
+      assert.isTrue(NodeFS.existsSync(knownRoot));
+      assert.isTrue(NodeFS.existsSync(NodePath.join(fixture.root, "src/defs.ts")));
+      // A checkout `isKnown` rejects is removed, leaving its files intact.
+      assertClearedIndex(goneRoot);
+      assert.equal(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(fixture.worktree, "src/work.ts"), "utf8"),
+        ),
+        "export function workOnly() { return 2; }\n",
+      );
+      assertClearedIndex(orphanRoot);
+    }),
+  ),
+);
+
+it.effect("removes the index of a checkout that was deleted", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const { refresh, removeOrphanedIndexes, indexRoot } = yield* checkoutService(
+        fixture.worktree,
+        () => ["src/work.ts"],
+      );
+      assert.deepInclude(yield* refresh(), { _tag: "Published" });
+      const root = indexRoot(fixture.worktree);
+      assert.isTrue(NodeFS.existsSync(root));
+      yield* Effect.promise(() => NodeFSP.rm(fixture.worktree, { recursive: true, force: true }));
+      // The checkout is still known by path, but it no longer exists.
+      yield* removeOrphanedIndexes(() => true);
+      assertClearedIndex(root);
+    }),
+  ),
+);
+
+it.effect("follows a new top-level entry on the next build and drops a removed one", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const listed = ["src/defs.ts"];
+      const { run, refresh, indexRoot } = yield* checkoutService(fixture.root, () => listed);
+      const root = indexRoot(fixture.root);
+      yield* refresh();
+      assert.equal((yield* run({ operation: "symbols", name: "tool" })).nodes.length, 0);
+
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(NodePath.join(fixture.root, "tools.ts"), "export function tool() {}\n"),
+      );
+      listed.push("tools.ts");
+      yield* refresh();
+      assert.ok((yield* run({ operation: "symbols", name: "tool" })).nodes.length > 0);
+      // The link the build added points at the checkout.
+      assert.isTrue(NodeFS.existsSync(NodePath.join(root, "tools.ts")));
+
+      // Removing the top-level entry leaves no dangling link in the root.
+      yield* Effect.promise(() => NodeFSP.rm(NodePath.join(fixture.root, "tools.ts")));
+      listed.splice(listed.indexOf("tools.ts"), 1);
+      yield* refresh();
+      assert.notInclude(yield* Effect.promise(() => NodeFSP.readdir(root)), "tools.ts");
+      assert.equal((yield* run({ operation: "symbols", name: "tool" })).nodes.length, 0);
+      // The sources it shared the root with are still there.
+      assert.isTrue(NodeFS.existsSync(NodePath.join(root, "src/defs.ts")));
+      assert.equal(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(fixture.root, "src/defs.ts"), "utf8"),
+        ),
+        'const prefix = "🧪é"; export function greet() { return prefix; }\n',
+      );
+    }),
+  ),
+);
+
+it.effect("keeps files the graph holds under a top-level entry a truncated listing dropped", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      let listed = ["src/defs.ts", "src/use.ts"];
+      const { run, refresh, indexRoot } = yield* checkoutService(fixture.root, () => listed, {
+        truncated: true,
+      });
+      const root = indexRoot(fixture.root);
+      yield* refresh();
+      assert.ok((yield* run({ operation: "symbols", name: "greet" })).nodes.length > 0);
+
+      // The cap drops `src` from the listing entirely; the files the graph already holds must
+      // still be reachable, so the build links that entry back from the graph's own paths.
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(NodePath.join(fixture.root, "tools.ts"), "export function tool() {}\n"),
+      );
+      listed = ["tools.ts"];
+      assert.deepInclude(yield* refresh(), { _tag: "Published", generation: 2 });
+      assert.isTrue(NodeFS.existsSync(NodePath.join(root, "src")));
+      // The index still answers for the files it held under the dropped entry.
+      assert.equal(yield* indexedSymbolCount(root, "greet"), 1);
+      assert.equal(yield* indexedSymbolCount(root, "tool"), 1);
+      assert.equal((yield* run({ operation: "freshness" })).index?.changedFiles, 0);
+    }),
+  ),
+);
+
+it.effect.each(["codegraph.json", ".gitignore"] as const)(
+  "honours changed exclude patterns in an unlisted %s",
+  (configName) =>
+    withFixture((fixture) =>
+      Effect.gen(function* () {
+        const configPath = NodePath.join(fixture.root, configName);
+        const excluded =
+          configName === "codegraph.json"
+            ? JSON.stringify({ exclude: ["src/use.ts"] })
+            : "src/use.ts\n";
+        yield* Effect.promise(() => NodeFSP.writeFile(configPath, excluded));
+        // The listing never mentions the config file; only the link T3 plants reaches it.
+        const { run, refresh } = yield* checkoutService(fixture.root, () => [
+          "src/defs.ts",
+          "src/use.ts",
+        ]);
+        yield* refresh();
+        const status = yield* run({ operation: "status" });
+        assert.equal(status.stats?.files, 1);
+        assert.equal((yield* run({ operation: "symbols", name: "caller" })).nodes.length, 0);
+        yield* refresh();
+
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(configPath, configName === "codegraph.json" ? "{}" : ""),
+        );
+        assert.equal((yield* run({ operation: "freshness" })).index?.state, "stale");
+        assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 2 });
+        assert.equal((yield* run({ operation: "status" })).stats?.files, 2);
+        assert.equal((yield* run({ operation: "symbols", name: "caller" })).nodes.length, 1);
+        yield* refresh();
+
+        yield* Effect.promise(() => NodeFSP.writeFile(configPath, excluded));
+        assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 3 });
+        assert.equal((yield* run({ operation: "status" })).stats?.files, 1);
+        assert.equal((yield* run({ operation: "symbols", name: "caller" })).nodes.length, 0);
+        yield* refresh();
+        yield* Effect.promise(() => NodeFSP.unlink(configPath));
+        assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 4 });
+        assert.equal((yield* run({ operation: "symbols", name: "caller" })).nodes.length, 1);
+      }),
+    ),
+);
+
+it.effect.each(["codegraph.json", ".gitignore"] as const)(
+  "keeps indexing when %s cannot be read as a file",
+  (configName) =>
+    withFixture((fixture) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(fixture.root, configName)));
+        const { run, refresh } = yield* checkoutService(fixture.root, () => ["src/defs.ts"]);
+        assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
+        assert.equal((yield* run({ operation: "freshness" })).index?.state, "ready");
+      }),
+    ),
 );
 
 it.effect("answers from the published generation while its successor builds", () =>
@@ -1356,7 +2207,7 @@ it.effect("keeps the previous generation serving when a build fails, and says so
       yield* Effect.promise(() => rewriteGeneratedSources(fixture.root, files));
       const held = yield* gate.holdNext;
       const building = yield* refresh().pipe(Effect.forkScoped);
-      process.kill(yield* Deferred.await(held.entered), "SIGABRT");
+      yield* abortProcess(yield* Deferred.await(held.entered));
       assert.deepEqual(yield* Fiber.join(building), { _tag: "Failed", reason: "worker-failed" });
 
       const freshness = yield* run({ operation: "freshness" });
@@ -1433,7 +2284,7 @@ it.effect("coalesces refresh requests made while a build is in flight into one f
       // Every query and every build lists the checkout once.
       let listings = 0;
       const gate = buildGate();
-      const { run, refresh } = yield* checkoutService(
+      const { run, refresh, indexRoot } = yield* checkoutService(
         fixture.root,
         () => {
           listings += 1;
@@ -1457,9 +2308,10 @@ it.effect("coalesces refresh requests made while a build is in flight into one f
         assert.deepEqual(yield* Fiber.join(fiber), { _tag: "Unchanged" });
       }
       assert.equal(listings, 3 + 2, "three queries and two builds listed the checkout");
-      assert.deepEqual(yield* Effect.promise(() => generationDirectories(fixture.root)), [
-        ".codegraph-t3-g1",
-      ]);
+      assert.deepEqual(
+        yield* Effect.promise(() => generationDirectories(indexRoot(fixture.root))),
+        [".codegraph-t3-g1"],
+      );
     }),
   ),
 );
@@ -1487,12 +2339,13 @@ it.effect("deletes a retired generation only after its last reader finishes", ()
   withFixture((fixture) =>
     Effect.gen(function* () {
       const gate = listingGate();
-      const { run, refresh } = yield* checkoutService(
+      const { run, refresh, indexRoot } = yield* checkoutService(
         fixture.root,
         () => ["src/defs.ts", "src/use.ts"],
         gate,
       );
-      const generations = () => Effect.promise(() => generationDirectories(fixture.root));
+      const generations = () =>
+        Effect.promise(() => generationDirectories(indexRoot(fixture.root)));
       const edit = (body: string) =>
         Effect.promise(() =>
           NodeFSP.writeFile(
@@ -1525,10 +2378,10 @@ it.effect("deletes a retired generation only after its last reader finishes", ()
 const indexLocksModule = new URL("./codeIndexLocks.ts", import.meta.url).href;
 
 /**
- * Another server process on the same checkout. It takes the index locks the way a server does,
+ * Another server process on the same index root. It takes the index locks the way a server does,
  * one stdin command at a time: `lock` the build, `pin` the published generation, or `release`.
  */
-function otherServerProcess(root: string) {
+function otherServerProcess(indexRoot: string) {
   return Effect.acquireRelease(
     Effect.promise(async () => {
       const child = NodeChildProcess.spawn(
@@ -1539,17 +2392,17 @@ function otherServerProcess(root: string) {
           "--input-type=module",
           "-e",
           `const locks = await import(process.argv[1]);
-           const checkout = process.argv[2];
+           const indexRoot = process.argv[2];
            const held = [];
            const commands = {
              lock: () => {
-               const release = locks.tryLockBuild(checkout);
+               const release = locks.tryLockBuild(indexRoot);
                if (release === null) return "busy";
                held.push(release);
                return "locked";
              },
              pin: () => {
-               const pin = locks.pinPublishedGeneration(checkout);
+               const pin = locks.pinPublishedGeneration(indexRoot);
                held.push(pin.release);
                return "pinned " + pin.generation;
              },
@@ -1562,7 +2415,7 @@ function otherServerProcess(root: string) {
            lines.on("line", (command) => process.stdout.write(commands[command]() + "\\n"));
            process.stdout.write("ready\\n");`,
           indexLocksModule,
-          root,
+          indexRoot,
         ],
         { stdio: ["pipe", "pipe", "pipe"] },
       );
@@ -1620,8 +2473,11 @@ function editDefinition(root: string, body: string) {
 it.effect("refuses to build while another server process builds the checkout", () =>
   withFixture((fixture) =>
     Effect.gen(function* () {
-      const other = yield* otherServerProcess(fixture.root);
-      const { run, refresh } = yield* checkoutService(fixture.root, () => ["src/defs.ts"]);
+      const { run, refresh, indexRoot } = yield* checkoutService(fixture.root, () => [
+        "src/defs.ts",
+      ]);
+      const root = indexRoot(fixture.root);
+      const other = yield* otherServerProcess(root);
       assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
       yield* editDefinition(fixture.root, "second");
 
@@ -1633,7 +2489,7 @@ it.effect("refuses to build while another server process builds the checkout", (
         generation: 1,
         refresh: "building",
       });
-      assert.deepEqual(yield* Effect.promise(() => generationDirectories(fixture.root)), [
+      assert.deepEqual(yield* Effect.promise(() => generationDirectories(root)), [
         ".codegraph-t3-g1",
       ]);
 
@@ -1647,9 +2503,10 @@ it.effect("refuses to build while another server process builds the checkout", (
 it.effect("keeps a generation another server process reads until that reader releases it", () =>
   withFixture((fixture) =>
     Effect.gen(function* () {
-      const other = yield* otherServerProcess(fixture.root);
-      const { refresh } = yield* checkoutService(fixture.root, () => ["src/defs.ts"]);
-      const generations = () => Effect.promise(() => generationDirectories(fixture.root));
+      const { refresh, indexRoot } = yield* checkoutService(fixture.root, () => ["src/defs.ts"]);
+      const root = indexRoot(fixture.root);
+      const other = yield* otherServerProcess(root);
+      const generations = () => Effect.promise(() => generationDirectories(root));
       assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
       assert.equal(yield* other.send("pin"), "pinned 1");
 
@@ -1670,8 +2527,9 @@ it.effect("keeps a generation another server process reads until that reader rel
 it.effect("recovers the build lock and reader of a server process that crashed", () =>
   withFixture((fixture) =>
     Effect.gen(function* () {
-      const other = yield* otherServerProcess(fixture.root);
-      const { refresh } = yield* checkoutService(fixture.root, () => ["src/defs.ts"]);
+      const { refresh, indexRoot } = yield* checkoutService(fixture.root, () => ["src/defs.ts"]);
+      const root = indexRoot(fixture.root);
+      const other = yield* otherServerProcess(root);
       assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
       assert.equal(yield* other.send("pin"), "pinned 1");
       assert.equal(yield* other.send("lock"), "locked");
@@ -1680,9 +2538,128 @@ it.effect("recovers the build lock and reader of a server process that crashed",
 
       yield* other.crash;
       assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 2 });
-      assert.deepEqual(yield* Effect.promise(() => generationDirectories(fixture.root)), [
+      assert.deepEqual(yield* Effect.promise(() => generationDirectories(root)), [
         ".codegraph-t3-g2",
       ]);
+    }),
+  ),
+);
+
+it.effect("announces a checkout's first build once, however many builds follow it", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const { run, refresh, subscribe, indexRoot } = yield* checkoutService(fixture.root, () => [
+        "src/defs.ts",
+      ]);
+      const other = yield* otherServerProcess(indexRoot(fixture.root));
+      const events = yield* subscribe();
+      assert.equal(yield* other.send("lock"), "locked");
+      // Each of these queries requests a build that ends at once, another server holding the
+      // lock. Signalling every time would restart it forever.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        yield* run({ operation: "symbols", name: "greet" });
+      }
+      assert.deepEqual(yield* refresh(), { _tag: "BuildingElsewhere" });
+
+      assert.equal(yield* other.send("release"), "released");
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
+      assert.deepEqual(
+        yield* events.pipe(
+          Stream.takeUntil((event) => event.outcome === "published" && event.generation === 1),
+          Stream.runCollect,
+        ),
+        [
+          { outcome: "published", generation: null },
+          { outcome: "published", generation: 1 },
+        ],
+      );
+    }),
+  ),
+);
+
+it.effect("removes a checkout's index and asks a mounted reader to read again", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const { run, refresh, subscribe, removeCheckoutIndex, indexRoot } = yield* checkoutService(
+        fixture.root,
+        () => ["src/defs.ts"],
+      );
+      const root = indexRoot(fixture.root);
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
+      const events = yield* subscribe();
+      yield* removeCheckoutIndex(fixture.root);
+      assert.deepEqual(yield* events.pipe(Stream.take(1), Stream.runCollect), [
+        { outcome: "published", generation: null },
+      ]);
+      assertClearedIndex(root);
+      assert.deepEqual(yield* Effect.promise(() => generationDirectories(root)), []);
+      const freshness = (yield* run({ operation: "freshness" })).index;
+      assert.equal(freshness?.state, "unindexed");
+      assert.notProperty(freshness, "refresh");
+
+      // The checkout starts over: its rebuild announces itself and restarts the numbering.
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
+      assert.deepEqual(yield* events.pipe(Stream.take(2), Stream.runCollect), [
+        { outcome: "published", generation: null },
+        { outcome: "published", generation: 1 },
+      ]);
+    }),
+  ),
+);
+
+it.effect("stops a running build and asks a mounted reader to read again", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const gate = buildGate();
+      const { run, refresh, subscribe, stopBuilds } = yield* checkoutService(
+        fixture.root,
+        () => ["src/defs.ts"],
+        gate,
+      );
+      const events = yield* subscribe();
+      const held = yield* gate.holdNext;
+      const building = yield* refresh().pipe(Effect.forkScoped);
+      const pid = yield* Deferred.await(held.entered);
+      yield* stopBuilds;
+      assert.isFalse(isProcessAlive(pid), "the build process is gone once stopping returns");
+      yield* Fiber.await(building);
+      // The first announces the build, the second its end.
+      assert.deepEqual(yield* events.pipe(Stream.take(2), Stream.runCollect), [
+        { outcome: "published", generation: null },
+        { outcome: "published", generation: null },
+      ]);
+      const freshness = (yield* run({ operation: "freshness" })).index;
+      assert.equal(freshness?.state, "unindexed");
+      assert.notProperty(freshness, "refresh");
+
+      // The next first build announces itself again.
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
+      // A waiter resumes ahead of the build's bookkeeping; this answer proves that finished.
+      yield* run({ operation: "freshness" });
+      // A stop with nothing running has nothing to say, so the next event is the publication.
+      yield* stopBuilds;
+      yield* editDefinition(fixture.root, "edited");
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 2 });
+      assert.deepEqual(yield* events.pipe(Stream.take(3), Stream.runCollect), [
+        { outcome: "published", generation: null },
+        { outcome: "published", generation: 1 },
+        { outcome: "published", generation: 2 },
+      ]);
+    }),
+  ),
+);
+
+it.effect("can build again after a build is stopped before its first step", () =>
+  withFixture((fixture) =>
+    Effect.gen(function* () {
+      const { ensureProjectIndexed, refresh, stopBuilds } = yield* checkoutService(
+        fixture.root,
+        () => ["src/defs.ts"],
+        { repository: true },
+      );
+      yield* ensureProjectIndexed();
+      yield* stopBuilds;
+      assert.deepEqual(yield* refresh(), { _tag: "Published", generation: 1 });
     }),
   ),
 );

@@ -1,10 +1,24 @@
 # Code navigation
 
 Open a file from a thread's file browser and expand **Code relationships** below the preview to
-see how it connects to the rest of the project. Nothing is analyzed until you expand it. The
-first expansion on a checkout starts indexing it in the background, and until that finishes the
-section says the checkout is not indexed yet. Results come from the thread's own checkout, its
+see how it connects to the rest of the project. Results come from the thread's own checkout, its
 worktree when it has one.
+
+A project in a git repository starts indexing in the background when you add it, or the first time
+you open or run a thread in it. A worktree has its own index, built and kept current while an agent
+works in it, or the first time something asks it a code question, such as expanding this section or
+an agent using the code graph. An idle worktree is not refreshed until an agent is active in it
+again. A worktree's index is removed when its thread settles, unless other unsettled threads share
+the worktree. It is also removed when Maintenance removes the worktree, and after 7 days with no
+activity on the worktree's threads, unless one of them is pinned or marked active. The next agent
+run rebuilds it. Until an index is ready, the section says the checkout is not indexed yet. Folders
+outside a git repository index only on a code question.
+
+Indexes are stored in T3 Code's data directory, not in your repository. Folders an earlier version
+left in a project or worktree are removed automatically when T3 Code starts.
+
+Turn automatic indexing off in **Settings → Labs → Automatic code indexing**. Then a checkout only
+indexes when something asks it a code question.
 
 - **Symbols** lists the file's declarations. Select one to see its callers, callees, references,
   impact (files that depend on it), and **Tests**: test files that reach it within a few calls.
@@ -22,12 +36,16 @@ values or dynamic dispatch and can mistake one same-named symbol for another. Ea
 that nothing calls the code or that it is untested.
 
 The badge next to **Code relationships**, and **Code index** in a thread's details, shows whether
-the index matches the checkout: **Ready**, **Partial** (some files are not indexed), **Stale**
-(files changed since indexing; **Stale @abc1234** when the checkout has moved past the commit it
-was indexed at), **Indexing** (building the first index), or **Unavailable** (not indexed yet).
-Checking the badge never starts indexing. Code queries and finished turns refresh a stale index
-in the background, and results keep coming from the previous index until the new one is ready.
-If a refresh fails, the badge says so and the previous index keeps answering.
+the index matches the checkout: **Ready**, **Partial** (source files are missing from the index),
+**Stale** (files changed since indexing; **Stale @abc1234** when the checkout has moved past the
+commit it was indexed at), **Indexing** (building the first index), **Not indexed**, or **Index
+failed**. Files with no code to analyze, such as docs and images, don't count against **Ready**.
+Code queries refresh a stale index in the background, and so do agent turns while automatic
+indexing is on. Results keep coming from the previous index until the new one is ready. If a
+refresh fails, the badge says so and the previous index keeps answering.
+
+An index covers at most 10,000 files. A larger repository shows **Partial**, with your own source
+indexed ahead of files in hidden folders.
 
 On mobile, the file screen has a compact **Code relationships** section with symbols, callers,
 and impact.

@@ -10,8 +10,8 @@ import { serverEnvironment } from "~/state/server";
 const VARIANT = { ok: "success", warn: "warning", muted: "secondary" } as const;
 
 /**
- * Plain-text freshness of a checkout's code index. It reads the index without building one,
- * and shows nothing until the server answers rather than guessing a state.
+ * Plain-text freshness of a checkout's code index. It shows nothing until the server answers
+ * rather than guessing a state.
  */
 export function CodeIndexBadge(props: {
   readonly environmentId: EnvironmentId;

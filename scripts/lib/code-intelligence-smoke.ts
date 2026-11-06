@@ -68,17 +68,21 @@ export const smokeCodeIntelligenceProcess = Effect.fn("smokeCodeIntelligenceProc
   const callers = yield* Effect.acquireUseRelease(
     Effect.promise(async () => {
       const checkout = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-code-smoke-"));
+      const indexRoot = await NodeFSP.mkdtemp(
+        NodePath.join(NodeOS.tmpdir(), "t3-code-smoke-index-"),
+      );
       await NodeFSP.mkdir(NodePath.join(checkout, "src"));
       await NodeFSP.writeFile(
         NodePath.join(checkout, "src/a.ts"),
         "export function greet() { return 1; }\nexport function caller() { return greet(); }\n",
       );
-      return checkout;
+      return { checkout, indexRoot };
     }),
-    (checkout) =>
+    ({ checkout, indexRoot }) =>
       Effect.gen(function* () {
         const listing = {
           checkoutPath: checkout,
+          indexRoot,
           files: ["src/a.ts"],
           filesListed: 1,
           listingTruncated: false,
@@ -99,7 +103,11 @@ export const smokeCodeIntelligenceProcess = Effect.fn("smokeCodeIntelligenceProc
         if (!("result" in answer)) return yield* fail("the query returned no result");
         return answer.result.nodes.map((node) => node.name);
       }),
-    (checkout) => Effect.promise(() => NodeFSP.rm(checkout, { recursive: true, force: true })),
+    ({ checkout, indexRoot }) =>
+      Effect.promise(async () => {
+        await NodeFSP.rm(checkout, { recursive: true, force: true });
+        await NodeFSP.rm(indexRoot, { recursive: true, force: true });
+      }),
   );
   if (!callers.includes("caller")) {
     return yield* fail(`expected 'caller' among [${callers.join(", ")}]`);

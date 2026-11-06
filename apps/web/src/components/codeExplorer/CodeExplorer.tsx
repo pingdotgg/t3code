@@ -510,7 +510,7 @@ export default function CodeExplorer(
         <p role="status" className="px-2 text-xs text-warning-foreground">
           {coverage.state === "stale"
             ? "The index is stale for some of these files. Verify calls in source before relying on them."
-            : "The code index is unavailable for this checkout, so no calls can be shown."}
+            : "The code index is not ready for this checkout, so no calls can be shown yet."}
         </p>
       ) : null}
       {farPending || farError !== null ? (

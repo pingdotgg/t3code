@@ -15,6 +15,7 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
+  VcsProcessExitError,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -29,9 +30,12 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as CodeIntelligence from "../project/knowledge/CodeIntelligence.ts";
+import { indexRootFor } from "../project/knowledge/codeIndexLayout.ts";
 import * as ModelEvaluations from "../modelEvaluations/ModelEvaluations.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsDriver from "../vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -425,6 +429,13 @@ it.effect("finalizes a run without waiting for the code index refresh its checkp
           const threadId = ThreadId.make("thread_index_refresh");
           const runId = RunId.make("run_index_refresh");
           const scopeId = CheckpointScopeId.make("scope_index_refresh");
+          const configContext = yield* Layer.build(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-finalize-index-config-" }).pipe(
+              Layer.provide(NodeServices.layer),
+            ),
+          );
+          const config = yield* ServerConfig.ServerConfig.pipe(Effect.provide(configContext));
+          const indexRoot = indexRootFor(config.codeIndexDir, root);
           const layer = RunFinalization.layer.pipe(
             Layer.provideMerge(RunFinalization.layerObserver),
             Layer.provideMerge(CodeIntelligence.layer),
@@ -465,6 +476,19 @@ it.effect("finalizes a run without waiting for the code index refresh its checkp
                       truncated: false,
                     }),
                 }),
+                Layer.mock(VcsDriver.VcsDriver)({
+                  checkpoints: {} as VcsDriver.VcsDriver["Service"]["checkpoints"],
+                  listWorkspaceFiles: () =>
+                    Effect.fail(
+                      new VcsProcessExitError({
+                        operation: "test",
+                        command: "git ls-files",
+                        cwd: root,
+                        exitCode: 128,
+                        detail: "not a git repository",
+                      }),
+                    ),
+                }),
                 Layer.mock(PullRequestService.PullRequestService)({
                   refreshAfterTurn: () => Effect.void,
                 }),
@@ -479,6 +503,8 @@ it.effect("finalizes a run without waiting for the code index refresh its checkp
                       workingTree: { files: [], insertions: 0, deletions: 0 },
                     }),
                 }),
+                ServerSettings.layerTest(),
+                Layer.succeed(ServerConfig.ServerConfig, config),
               ),
             ),
           );
@@ -492,12 +518,12 @@ it.effect("finalizes a run without waiting for the code index refresh its checkp
           const finalize = finalization.finalize({ threadId, runId, scopeId });
           const published = () =>
             Effect.promise(() =>
-              NodeFSP.readFile(NodePath.join(root, ".codegraph-t3/published"), "utf8"),
+              NodeFSP.readFile(NodePath.join(indexRoot, ".codegraph-t3/published"), "utf8"),
             );
 
           // A checkout nobody has queried is not indexed behind the user's back.
           yield* finalize;
-          assert.isFalse(NodeFS.existsSync(NodePath.join(root, ".codegraph-t3")));
+          assert.isFalse(NodeFS.existsSync(indexRoot));
 
           assert.deepEqual(yield* intelligence.refresh({ projectId }), {
             _tag: "Published",
@@ -510,7 +536,7 @@ it.effect("finalizes a run without waiting for the code index refresh its checkp
           const buildHeld = yield* Deferred.make<void>();
           const releaseBuild = yield* Deferred.make<void>();
           const lease = yield* withWorkspaceLease(
-            NodePath.join(root, ".codegraph-t3"),
+            indexRoot,
             Deferred.succeed(buildHeld, undefined).pipe(
               Effect.andThen(Deferred.await(releaseBuild)),
             ),

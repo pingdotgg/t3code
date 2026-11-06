@@ -1,7 +1,7 @@
 import { rankComposerModelMentions } from "@t3tools/client-runtime/composerModelMentions";
 import type { ProviderInstanceId } from "@t3tools/contracts";
 
-import { isProviderInstancePickerReady, type ProviderInstanceEntry } from "../../providerInstances";
+import type { ProviderInstanceEntry } from "../../providerInstances";
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
 import { getDisplayModelName, getProviderRowLabel, type ModelEsque } from "./providerIconUtils";
 
@@ -26,7 +26,16 @@ export function matchComposerModelItems(input: {
 }): ComposerModelItem[] {
   const candidates: Array<{ entry: ComposerModelMentionProvider; option: ModelEsque }> = [];
   for (const entry of input.instanceEntries) {
-    if (!isProviderInstancePickerReady(entry)) continue;
+    // Mentions only name a model for the agent; a warning probe (which the server
+    // still delegates through) must not hide the provider the way an error does.
+    if (
+      !entry.enabled ||
+      !entry.isAvailable ||
+      entry.status === "error" ||
+      entry.status === "disabled"
+    ) {
+      continue;
+    }
     for (const option of input.modelOptionsByInstance.get(entry.instanceId) ?? []) {
       // The picker hides legacy models by default; skip them so they don't fill the result cap.
       if (option.isLegacy || option.isUnavailable) continue;

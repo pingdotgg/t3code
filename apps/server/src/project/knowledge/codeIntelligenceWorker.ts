@@ -34,12 +34,14 @@ import type {
 } from "@t3tools/contracts";
 
 import {
-  ignoreIndexDirectory,
-  readFileNoFollow,
-  validateIndexDirectory,
+  CHECKOUT_CONFIG_ENTRIES,
+  clearCheckoutSources,
+  linkCheckoutSources,
 } from "./codeIndexLayout.ts";
 
 const CATALOG_REVISION = "@colbymchenry/codegraph@1.6.2";
+// Programming languages outside the SDK's catalog, which it reports as unknown like any asset.
+const UNREADABLE_SOURCE = /\.(?:clj|cljs|cr|elm|ex|exs|fs|fsx|gd|hs|jl|ml|mli|nim|pl|pm|rkt|zig)$/i;
 const MAX_RESULTS = 200;
 const MAX_FILES_FOR_UNRESOLVED = 50;
 const MAX_LISTED_FILES = 10_000;
@@ -66,6 +68,8 @@ interface CodeGraphModule {
 
 interface CheckoutListing {
   readonly checkoutPath: string;
+  // The SDK's project root: it holds the index and links back to the checkout's sources.
+  readonly indexRoot: string;
   readonly files: ReadonlyArray<string>;
   readonly filesListed: number;
   readonly listingTruncated: boolean;
@@ -219,16 +223,25 @@ interface IndexMeta {
   // Listed sources the build deliberately left out, such as build output: coverage gaps, not
   // newly added files a refresh would pick up.
   readonly skippedPaths: ReadonlyArray<string>;
+  // Whether the build ranked an over-cap listing; older builds kept whatever sorted first.
+  readonly ranked: boolean;
+  readonly configurationDigest: string | null;
 }
 
-function readIndexMeta(checkoutPath: string, indexDirectory: string): IndexMeta {
+function readIndexMeta(indexRoot: string, indexDirectory: string): IndexMeta {
   try {
     const raw: unknown = JSON.parse(
-      readFileNoFollow(NodePath.join(checkoutPath, indexDirectory, INDEX_META_FILE)),
+      NodeFS.readFileSync(NodePath.join(indexRoot, indexDirectory, INDEX_META_FILE), "utf8"),
     );
     if (typeof raw !== "object" || raw === null) throw new Error("invalid");
-    const { commit, generation, indexedAt, skippedPaths } = raw as Record<string, unknown>;
+    const { commit, generation, indexedAt, skippedPaths, ranked, configurationDigest } =
+      raw as Record<string, unknown>;
     return {
+      ranked: ranked === true,
+      configurationDigest:
+        typeof configurationDigest === "string" && /^[0-9a-f]{64}$/.test(configurationDigest)
+          ? configurationDigest
+          : null,
       commit: typeof commit === "string" && /^[0-9a-f]{7,64}$/.test(commit) ? commit : null,
       generation:
         typeof generation === "number" && Number.isSafeInteger(generation) && generation >= 0
@@ -243,12 +256,37 @@ function readIndexMeta(checkoutPath: string, indexDirectory: string): IndexMeta 
           : [],
     };
   } catch {
-    return { commit: null, generation: 0, indexedAt: null, skippedPaths: [] };
+    return {
+      commit: null,
+      generation: 0,
+      indexedAt: null,
+      skippedPaths: [],
+      ranked: false,
+      configurationDigest: null,
+    };
   }
 }
 
-function writeIndexMeta(checkoutPath: string, indexDirectory: string, meta: IndexMeta): void {
-  const target = NodePath.join(checkoutPath, indexDirectory, INDEX_META_FILE);
+function checkoutConfigurationDigest(checkoutPath: string): string {
+  const digest = NodeCrypto.createHash("sha256");
+  for (const name of CHECKOUT_CONFIG_ENTRIES) {
+    digest.update(name).update("\0");
+    try {
+      const contents = NodeFS.readFileSync(NodePath.join(checkoutPath, name));
+      digest.update("present\0").update(contents);
+    } catch (cause) {
+      // Anything unreadable, such as a folder of that name, configures nothing.
+      digest.update(
+        (cause as NodeJS.ErrnoException).code === "ENOENT" ? "missing\0" : "unreadable\0",
+      );
+    }
+    digest.update("\0");
+  }
+  return digest.digest("hex");
+}
+
+function writeIndexMeta(indexRoot: string, indexDirectory: string, meta: IndexMeta): void {
+  const target = NodePath.join(indexRoot, indexDirectory, INDEX_META_FILE);
   const temporary = `${target}.${process.pid}.tmp`;
   try {
     // An exclusive create never follows a planted link, and the rename replaces the entry
@@ -565,11 +603,60 @@ function preferDeclarations(tests: ReadonlyArray<CodeGraphNode>): CodeGraphNode[
   );
 }
 
-function authorizedListing(listing: CheckoutListing): string[] {
-  return listing.files.slice(0, MAX_LISTED_FILES).flatMap((path) => {
+type IsSupported = (path: string) => boolean;
+
+function supportedPaths(sdk: Omit<CodeGraphModule, "CodeGraph">): IsSupported {
+  const supported = new Set(sdk.getSupportedLanguages());
+  return (path) => {
+    const language = sdk.detectLanguage(path);
+    return language !== "unknown" && supported.has(language);
+  };
+}
+
+/**
+ * Orders a listing for the file cap: what the analyzer can parse before what it cannot, and
+ * first-party paths before dot-directories such as vendored references. Otherwise whatever sorts
+ * first decides what is indexed, and a large `.repos` leaves a project's own code out entirely.
+ */
+export function rankListing(files: ReadonlyArray<string>, isSupported: IsSupported): string[] {
+  const ranks: [string[], string[], string[], string[]] = [[], [], [], []];
+  for (const path of files) {
+    const hidden = path.startsWith(".") || path.includes("/.");
+    ranks[(isSupported(path) ? 0 : 2) + (hidden ? 1 : 0)]!.push(path);
+  }
+  return ranks.flat();
+}
+
+function isListingTruncated(listing: CheckoutListing): boolean {
+  return listing.listingTruncated || listing.files.length > MAX_LISTED_FILES;
+}
+
+interface AuthorizedListing {
+  readonly paths: ReadonlyArray<string>;
+  // Listed paths that resolve outside the checkout.
+  readonly rejected: number;
+}
+
+function authorizedListing(listing: CheckoutListing, isSupported: IsSupported): AuthorizedListing {
+  const candidates =
+    listing.files.length > MAX_LISTED_FILES
+      ? rankListing(listing.files, isSupported)
+      : listing.files;
+  const paths: string[] = [];
+  let rejected = 0;
+  for (const path of candidates) {
+    if (paths.length >= MAX_LISTED_FILES) break;
+    const absolute = NodePath.resolve(listing.checkoutPath, path);
     const authorized = authorizedSourcePath(listing.checkoutPath, path);
-    return authorized === null ? [] : [authorized];
-  });
+    if (authorized === null) {
+      // A tracked file deleted from the working tree is no coverage gap; an escaping link is.
+      if (NodeFS.existsSync(absolute)) rejected += 1;
+      // Git lists a submodule as a path; handing the SDK a directory would walk past the allowlist.
+    } else if (NodeFS.statSync(absolute, { throwIfNoEntry: false })?.isDirectory() !== true) {
+      paths.push(authorized);
+    }
+  }
+  return { paths, rejected };
 }
 
 /** Indexed sources that still exist but now resolve outside the checkout, such as a new link. */
@@ -593,22 +680,27 @@ export async function buildIndexInWorker(
   onProgress: (progress: Pick<IndexProgress, "phase" | "current" | "total">) => void,
 ): Promise<{ readonly changed: boolean }> {
   const { CodeGraph, detectLanguage, getSupportedLanguages } = sdk();
-  const listedPaths = authorizedListing(input);
+  const isSupported = supportedPaths({ detectLanguage, getSupportedLanguages });
+  const { paths: listedPaths } = authorizedListing(input, isSupported);
   const commit = headCommit(input.checkoutPath);
+  const configurationDigest = checkoutConfigurationDigest(input.checkoutPath);
   let from = input.from;
   if (from !== null) {
-    validateIndexDirectory(input.checkoutPath, from);
     useIndexDirectory(from);
-    if (!CodeGraph.isInitialized(input.checkoutPath)) from = null;
+    const meta = readIndexMeta(input.indexRoot, from);
+    if (
+      !CodeGraph.isInitialized(input.indexRoot) ||
+      // Filtering changes must remove old entries as well as reconsider previously skipped files.
+      meta.configurationDigest !== configurationDigest ||
+      // Successors keep every file they inherit, so one that spent the cap unranked never recovers.
+      (isListingTruncated(input) && !meta.ranked)
+    )
+      from = null;
   }
   if (from !== null) {
-    const published = await CodeGraph.open(input.checkoutPath, { sync: false, readOnly: true });
+    const published = await CodeGraph.open(input.indexRoot, { sync: false, readOnly: true });
     try {
-      const meta = readIndexMeta(input.checkoutPath, from);
-      const { isSupported } = classifyIndexCoverage(input, listedPaths, published, {
-        languages: getSupportedLanguages(),
-        detectLanguage,
-      });
+      const meta = readIndexMeta(input.indexRoot, from);
       if (
         meta.commit === commit &&
         !hasUnauthorizedFiles(input.checkoutPath, published) &&
@@ -626,27 +718,31 @@ export async function buildIndexInWorker(
       published.close();
     }
   }
-  const target = NodePath.join(input.checkoutPath, input.to);
+  const target = NodePath.join(input.indexRoot, input.to);
   // Exclusive: a leftover entry, link or not, fails the build instead of being written through.
   NodeFS.mkdirSync(target);
   if (from !== null) {
     for (const name of INDEX_DATABASE_FILES) {
-      const source = NodePath.join(input.checkoutPath, from, name);
+      const source = NodePath.join(input.indexRoot, from, name);
       if (NodeFS.existsSync(source)) {
-        NodeFS.copyFileSync(source, NodePath.join(target, name), NodeFS.constants.COPYFILE_EXCL);
+        NodeFS.copyFileSync(
+          source,
+          NodePath.join(target, name),
+          // FICLONE falls back to a normal copy where reflinks are unavailable.
+          NodeFS.constants.COPYFILE_EXCL | NodeFS.constants.COPYFILE_FICLONE,
+        );
       }
     }
   }
   useIndexDirectory(input.to);
   let graph =
     from !== null
-      ? await CodeGraph.open(input.checkoutPath, { sync: false })
-      : await CodeGraph.init(input.checkoutPath, { index: false });
-  ignoreIndexDirectory(input.checkoutPath, input.to);
+      ? await CodeGraph.open(input.indexRoot, { sync: false })
+      : await CodeGraph.init(input.indexRoot, { index: false });
   try {
     if (hasUnauthorizedFiles(input.checkoutPath, graph)) {
       graph.close();
-      graph = await CodeGraph.recreate(input.checkoutPath);
+      graph = await CodeGraph.recreate(input.indexRoot);
     }
     const reconcilePaths = new Set(listedPaths);
     for (const file of graph.getFiles()) {
@@ -656,18 +752,24 @@ export async function buildIndexInWorker(
       else if (!NodeFS.existsSync(NodePath.resolve(input.checkoutPath, file.path)))
         reconcilePaths.add(file.path);
     }
+    // From the reconcile set, not the listing: the cap can drop a top-level entry the graph still
+    // holds files under, and the SDK would read those as deleted.
+    clearCheckoutSources(input.indexRoot);
+    linkCheckoutSources(input.indexRoot, input.checkoutPath, [...reconcilePaths]);
     // `sync` reads an empty `paths` as "reconcile the whole checkout", a walk that follows
     // links out of it. It and the no-index `init`/`open`/`recreate` are the SDK's only calls
     // here, so this allowlist bounds everything the index reads.
     if (reconcilePaths.size > 0) await graph.sync({ onProgress, paths: [...reconcilePaths] });
     const indexedPaths = new Set(graph.getFiles().map((file) => file.path));
-    writeIndexMeta(input.checkoutPath, input.to, {
+    writeIndexMeta(input.indexRoot, input.to, {
       commit,
       generation: input.generation,
       indexedAt: Date.now(),
       // A completed sync may deliberately skip build output. Those paths are coverage gaps,
       // not newly added files that the next refresh can fix.
       skippedPaths: listedPaths.filter((path) => !indexedPaths.has(path)).toSorted(),
+      ranked: true,
+      configurationDigest,
     });
   } finally {
     graph.close();
@@ -680,7 +782,9 @@ export async function inspectCodeInWorker(
   input: CodeIntelligenceWorkerInput,
 ): Promise<ProjectCodeQueryResult> {
   const { CodeGraph, detectLanguage, getSupportedLanguages } = sdk();
-  const listedPaths = authorizedListing(input);
+  const isSupported = supportedPaths({ detectLanguage, getSupportedLanguages });
+  const listing = authorizedListing(input, isSupported);
+  const listedPaths = listing.paths;
   const listedPathSet = new Set(listedPaths);
   const queryPath =
     input.query.operation === "dependencies" ||
@@ -709,26 +813,27 @@ export async function inspectCodeInWorker(
   }
   const commit = headCommit(input.checkoutPath);
   if (input.indexDirectory !== null) {
-    validateIndexDirectory(input.checkoutPath, input.indexDirectory);
     useIndexDirectory(input.indexDirectory);
   }
-  if (input.indexDirectory === null || !CodeGraph.isInitialized(input.checkoutPath)) {
+  if (input.indexDirectory === null || !CodeGraph.isInitialized(input.indexRoot)) {
     return unindexedResult(input, getSupportedLanguages(), commit);
   }
-  const graph = await CodeGraph.open(input.checkoutPath, { sync: false, readOnly: true });
+  const graph = await CodeGraph.open(input.indexRoot, { sync: false, readOnly: true });
   try {
-    const meta = readIndexMeta(input.checkoutPath, input.indexDirectory);
+    const meta = readIndexMeta(input.indexRoot, input.indexDirectory);
     if (input.query.operation === "freshness") {
-      return inspectFreshness(input, listedPaths, graph, meta, commit, {
-        detectLanguage,
-        getSupportedLanguages,
-      });
+      return inspectFreshness(
+        input,
+        listing,
+        graph,
+        meta,
+        commit,
+        getSupportedLanguages(),
+        isSupported,
+      );
     }
     const languageCatalog = getSupportedLanguages();
-    const indexCoverage = classifyIndexCoverage(input, listedPaths, graph, {
-      languages: languageCatalog,
-      detectLanguage,
-    });
+    const indexCoverage = classifyIndexCoverage(input, listing, graph, isSupported);
     const files = indexCoverage.files;
     const stats = graph.getStats();
     const limit = Math.min(
@@ -1095,7 +1200,7 @@ export async function inspectCodeInWorker(
       "Relations are static candidates. Import/name resolution can misresolve shadowed names, and SDK confidence is a heuristic score rather than certainty.",
     );
     limitations.push(...indexCoverage.limitations);
-    let coverageIncomplete = indexCoverage.limitations.length > 0;
+    let coverageIncomplete = indexCoverage.incomplete;
     if (sourceDigests.some((source) => !source.verified)) {
       coverageIncomplete = true;
       limitations.push(
@@ -1111,15 +1216,21 @@ export async function inspectCodeInWorker(
       input.checkoutPath,
       graph,
       listedPaths,
-      indexCoverage.isSupported,
+      isSupported,
       meta.skippedPaths,
     );
+    const configurationChanged =
+      meta.configurationDigest !== checkoutConfigurationDigest(input.checkoutPath);
     if (changed.length > 0) {
       limitations.push(
         `${changed.length} source ${changed.length === 1 ? "file has" : "files have"} changed since this index generation was built.`,
       );
     }
-    const stale = changed.length > 0 || sourceDigests.some((source) => !source.verified);
+    if (configurationChanged) limitations.push("The checkout's index configuration has changed.");
+    const stale =
+      configurationChanged ||
+      changed.length > 0 ||
+      sourceDigests.some((source) => !source.verified);
     const coverage: ProjectCodeCoverage = {
       state: stale ? "stale" : coverageIncomplete ? "partial" : "complete",
       catalogRevision: CATALOG_REVISION,
@@ -1178,40 +1289,29 @@ export async function inspectCodeInWorker(
 
 /**
  * How much of the listed checkout the index covers, counted the same way for a query and for
- * freshness. Any limitation it reports makes coverage partial.
+ * freshness. Every limitation but unsupported files makes coverage partial: docs, data and assets
+ * fill any repository, so they are a gap only when nothing else could be indexed. Source the SDK
+ * cannot read is a gap once it is a real share of the code, not for one stray script.
  */
 function classifyIndexCoverage(
   input: CheckoutListing,
-  listedPaths: ReadonlyArray<string>,
+  { paths: listedPaths, rejected }: AuthorizedListing,
   graph: CodeGraphInstance,
-  catalog: {
-    readonly languages: ReadonlyArray<Language>;
-    readonly detectLanguage: (path: string) => Language;
-  },
+  isSupported: IsSupported,
 ) {
-  const supported = new Set(catalog.languages);
-  const isSupported = (path: string) => {
-    const language = catalog.detectLanguage(path);
-    return language !== "unknown" && supported.has(language);
-  };
   const listed = new Set(listedPaths);
   const files = graph.getFiles().filter((file) => listed.has(file.path));
   const indexedPaths = new Set(files.map((file) => file.path));
-  const filesUnsupported = listedPaths.filter((path) => !isSupported(path)).length;
+  const filesUnsupported = listedPaths.filter(
+    (path) => !isSupported(path) && !indexedPaths.has(path),
+  ).length;
   const filesFailed = files.filter((file) => (file.errors?.length ?? 0) > 0).length;
   const filesSkipped =
-    input.files.slice(0, MAX_LISTED_FILES).length -
-    listedPaths.length +
-    listedPaths.filter((path) => isSupported(path) && !indexedPaths.has(path)).length;
+    rejected + listedPaths.filter((path) => isSupported(path) && !indexedPaths.has(path)).length;
   const pendingReferences = graph.getPendingReferenceCount();
   const buildState = graph.getIndexState();
   const limitations: string[] = [];
-  if (input.listingTruncated || input.files.length > MAX_LISTED_FILES)
-    limitations.push("Workspace file listing is truncated.");
-  if (filesUnsupported > 0)
-    limitations.push(
-      `${filesUnsupported} listed files use languages outside the SDK runtime catalog.`,
-    );
+  if (isListingTruncated(input)) limitations.push("Workspace file listing is truncated.");
   if (filesSkipped > 0)
     limitations.push(
       `${filesSkipped} listed source files were outside the checkout or were not indexed.`,
@@ -1223,6 +1323,17 @@ function classifyIndexCoverage(
     );
   if (buildState !== null && buildState !== "complete")
     limitations.push(`The last full index run reported '${buildState}'.`);
+  const unreadableSource = listedPaths.filter(
+    (path) => UNREADABLE_SOURCE.test(path) && !isSupported(path) && !indexedPaths.has(path),
+  ).length;
+  const incomplete =
+    limitations.length > 0 ||
+    (filesUnsupported > 0 && files.length === 0) ||
+    unreadableSource * 20 > files.length + unreadableSource;
+  if (filesUnsupported > 0)
+    limitations.push(
+      `${filesUnsupported} listed files use languages outside the SDK runtime catalog.`,
+    );
   return {
     files,
     filesSkipped,
@@ -1230,7 +1341,7 @@ function classifyIndexCoverage(
     filesFailed,
     pendingReferences,
     limitations,
-    isSupported,
+    incomplete,
   };
 }
 
@@ -1305,25 +1416,25 @@ function unindexedResult(
 
 function inspectFreshness(
   input: CodeIntelligenceWorkerInput,
-  listedPaths: ReadonlyArray<string>,
+  listing: AuthorizedListing,
   graph: CodeGraphInstance,
   meta: IndexMeta,
   commit: string | null,
-  { detectLanguage, getSupportedLanguages }: Omit<CodeGraphModule, "CodeGraph">,
+  languages: ReadonlyArray<Language>,
+  isSupported: IsSupported,
 ): ProjectCodeQueryResult {
-  const languages = getSupportedLanguages();
-  const indexCoverage = classifyIndexCoverage(input, listedPaths, graph, {
-    languages,
-    detectLanguage,
-  });
+  const indexCoverage = classifyIndexCoverage(input, listing, graph, isSupported);
   const changed = changedSinceIndex(
     input.checkoutPath,
     graph,
-    listedPaths,
-    indexCoverage.isSupported,
+    listing.paths,
+    isSupported,
     meta.skippedPaths,
   );
-  const incomplete = indexCoverage.limitations.length > 0;
+  const configurationChanged =
+    meta.configurationDigest !== checkoutConfigurationDigest(input.checkoutPath);
+  const stale = changed.length > 0 || configurationChanged;
+  const { incomplete } = indexCoverage;
   const limitations = [
     ...(changed.length > 0
       ? [
@@ -1331,12 +1442,13 @@ function inspectFreshness(
         ]
       : []),
     ...indexCoverage.limitations,
+    ...(configurationChanged ? ["The checkout's index configuration has changed."] : []),
   ];
   return emptyResult(
     input,
     {
       ...baseCoverage(input, languages),
-      state: changed.length > 0 ? "stale" : incomplete ? "partial" : "complete",
+      state: stale ? "stale" : incomplete ? "partial" : "complete",
       filesIndexed: indexCoverage.files.length,
       filesSkipped: indexCoverage.filesSkipped,
       filesUnsupported: indexCoverage.filesUnsupported,
@@ -1346,7 +1458,7 @@ function inspectFreshness(
       limitations,
     },
     {
-      state: changed.length > 0 ? "stale" : incomplete ? "partial" : "ready",
+      state: stale ? "stale" : incomplete ? "partial" : "ready",
       indexedCommit: meta.commit,
       headCommit: commit,
       generation: meta.generation,

@@ -68,4 +68,10 @@ describe("matchComposerModelItems", () => {
       match("gpt", { instanceEntries: [{ ...traex, status: "error" as const }, opencode] }),
     ).toEqual(["opencode:traex/gpt-6.1"]);
   });
+
+  it("keeps providers whose health probe only warns", () => {
+    expect(match("opus", { instanceEntries: [{ ...claude, status: "warning" as const }] })).toEqual(
+      ["claudeAgent:claude-opus-5-5"],
+    );
+  });
 });

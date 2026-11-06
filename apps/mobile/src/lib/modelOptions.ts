@@ -194,9 +194,12 @@ function modelOptionProviderContext(
       (provider) =>
         matchesLockedProvider(provider) &&
         isProviderEnabledForProject(config, provider, projectId) &&
-        provider.installed &&
-        provider.auth.status !== "unauthenticated" &&
-        !(provider.driver === "antigravity" && provider.availability === "unavailable"),
+        // Antigravity's catalog only exists once it is set up; other providers stay
+        // listed as unavailable so a pending or failed probe cannot erase them.
+        (provider.driver !== "antigravity" ||
+          (provider.installed &&
+            provider.auth.status !== "unauthenticated" &&
+            provider.availability !== "unavailable")),
     ),
   };
 }
@@ -390,6 +393,7 @@ export function buildModelOptions(
       continue;
     }
     const providerLabel = providerDisplayLabel(provider);
+    const providerUnavailable = !provider.installed || provider.auth.status === "unauthenticated";
     const providerBadge = providerBadgeFor(provider.instanceId);
     const updateRequired = provider.updateRequiredModels?.length
       ? { driver: provider.driver, updateRequiredModels: provider.updateRequiredModels }
@@ -420,6 +424,7 @@ export function buildModelOptions(
         ...(provider.iconUrl ? { providerIconUrl: provider.iconUrl } : {}),
         isHidden: !model.isCustom && hiddenModels.has(model.slug),
         canHide: !model.isCustom,
+        ...(providerUnavailable ? { isUnavailable: true } : {}),
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         ...(updateRequired ? { providerUpdateRequired: updateRequired } : {}),

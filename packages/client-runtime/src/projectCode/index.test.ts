@@ -261,10 +261,18 @@ describe("project code atoms", () => {
     expect(projectCodeIndexBadge({ ...index, headCommit: "1234567890abcdef" }).label).toBe(
       "Stale @abcdef0",
     );
-    expect(projectCodeIndexBadge({ ...index, state: "unindexed" }).label).toBe("Unavailable");
+    expect(projectCodeIndexBadge({ ...index, state: "unindexed" }).label).toBe("Not indexed");
     expect(projectCodeIndexBadge({ ...index, state: "unindexed", refresh: "building" }).label).toBe(
       "Indexing",
     );
+    // No earlier generation exists to answer, so a failed first build must not claim one does.
+    const firstIndexFailed = projectCodeIndexBadge({
+      ...index,
+      state: "unindexed",
+      refresh: "failed",
+    });
+    expect(firstIndexFailed).toMatchObject({ label: "Index failed", tone: "warn" });
+    expect(firstIndexFailed.detail).not.toContain("still answering");
     // A failed refresh leaves the older generation answering, and the badge says so.
     expect(projectCodeIndexBadge({ ...index, refresh: "failed" })).toMatchObject({
       label: "Stale",
@@ -273,4 +281,72 @@ describe("project code atoms", () => {
     // A server from before index tracking cannot claim the index is ready.
     expect(projectCodeIndexBadge(undefined).label).toBe("Unavailable");
   });
+
+  it.effect("re-reads a query only for a real publication or a failure", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { atoms, registry, requests, events, subscribed } = yield* setup();
+        registry.set(
+          sessions(target.environmentId),
+          AsyncResult.success(session([AuthFilesystemReadScope])),
+        );
+        const checkout = { projectId: input.projectId, threadId: ThreadId.make("mounted") };
+        const query = atoms.query({
+          environmentId: target.environmentId,
+          input: { ...input, ...checkout },
+        });
+        const freshness = atoms.freshness({
+          environmentId: target.environmentId,
+          input: { ...checkout, query: { operation: "freshness" } },
+        });
+        const queryRuns = () =>
+          requests.filter(
+            (request) =>
+              request.threadId === checkout.threadId && request.query.operation === "symbols",
+          ).length;
+        const freshnessRuns = () =>
+          requests.filter((request) => request.query.operation === "freshness").length;
+        let onQuery = () => {};
+        let onFreshness = () => {};
+        const stopQuery = registry.subscribe(query, () => onQuery());
+        const stopFreshness = registry.subscribe(freshness, () => onFreshness());
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            stopQuery();
+            stopFreshness();
+          }),
+        );
+        yield* AtomRegistry.getResult(registry, query, { suspendOnWaiting: true });
+        yield* AtomRegistry.getResult(registry, freshness, { suspendOnWaiting: true });
+        yield* Deferred.await(subscribed);
+        expect([queryRuns(), freshnessRuns()]).toEqual([1, 1]);
+
+        // One event at a time: a stream atom keeps only the last value of a chunk.
+        const publish = Effect.fn("TestProjectCode.publish")(function* (
+          event: ProjectCodeIndexEvent,
+          expected: readonly [query: number, freshness: number],
+        ) {
+          const reached = yield* Deferred.make<void>();
+          onQuery = onFreshness = () => {
+            if (queryRuns() >= expected[0] && freshnessRuns() >= expected[1]) {
+              Deferred.doneUnsafe(reached, Exit.void);
+            }
+          };
+          yield* PubSub.publish(events, { target: checkout, event });
+          yield* Deferred.await(reached);
+          expect([queryRuns(), freshnessRuns()]).toEqual(expected);
+        });
+        // Freshness re-reads on every event. The query only re-runs for a real publication,
+        // because a query starts the build a settle removal just stopped.
+        const reRead: ProjectCodeIndexEvent = { outcome: "published", generation: null };
+        yield* publish(reRead, [1, 2]);
+        yield* publish({ outcome: "published", generation: 1 }, [2, 3]);
+        // A settle removes the index, the next turn announces its rebuild with the same signal,
+        // and generation numbers restart once the files are gone.
+        yield* publish(reRead, [2, 4]);
+        yield* publish(reRead, [2, 5]);
+        yield* publish({ outcome: "published", generation: 1 }, [3, 6]);
+      }),
+    ),
+  );
 });
