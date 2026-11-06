@@ -19,12 +19,14 @@ const PERMISSION_SETTINGS = [
     searchId: "default-permissions",
     label: "New threads",
     description: "Default permissions for new threads. Projects can override them.",
+    projectDescription: "Permissions for new threads in this project.",
   },
   {
     key: "sideChatRuntimeMode",
     searchId: "side-chat-permissions",
     label: "Side chats",
     description: "Permissions for new /side chats. Side chats share the parent’s worktree.",
+    projectDescription: "Permissions for new /side chats. Side chats share the parent’s worktree.",
   },
 ] as const;
 
@@ -49,7 +51,8 @@ export function ThreadPermissionsSettings() {
 }
 
 function ThreadPermissionRow({ setting }: { setting: (typeof PERMISSION_SETTINGS)[number] }) {
-  const { connectedEnvironments } = useSettingsScope();
+  const { connectedEnvironments, scope } = useSettingsScope();
+  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed([setting.key]);
@@ -66,7 +69,7 @@ function ThreadPermissionRow({ setting }: { setting: (typeof PERMISSION_SETTINGS
       mixed={mixed}
       {...searchableSetting(setting.searchId)}
       title={setting.label}
-      description={setting.description}
+      description={isProjectScope ? setting.projectDescription : setting.description}
       resetAction={
         mode !== DEFAULT_SERVER_SETTINGS[setting.key] ? (
           <SettingResetButton
