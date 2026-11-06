@@ -1,0 +1,688 @@
+---
+import type { CollectionEntry } from "astro:content";
+import type { MarkdownHeading } from "astro";
+import Layout from "../../layouts/Layout.astro";
+import {
+  CLUSTERS,
+  type ClusterId,
+  clusterPath,
+  entriesIn,
+  entryKey,
+  entryPath,
+  getCluster,
+  relatedTo,
+} from "../../lib/library";
+import { absoluteUrl, breadcrumbJsonLd, type JsonLd } from "../../lib/seo";
+
+interface Props {
+  readonly cluster: ClusterId;
+  /** Omitted on a cluster pillar page. */
+  readonly slug?: string;
+  readonly data: CollectionEntry<"library">["data"];
+  readonly headings: ReadonlyArray<MarkdownHeading>;
+}
+
+const { cluster, slug, data, headings } = Astro.props;
+const clusterInfo = getCluster(cluster);
+const isPillar = slug === undefined;
+const key = isPillar ? cluster : `${cluster}/${slug}`;
+const path = isPillar ? clusterPath(cluster) : entryPath(key);
+const siblings = entriesIn(cluster);
+const index = siblings.findIndex((entry) => entry.slug === slug);
+const previous = index > 0 ? siblings[index - 1] : undefined;
+const next = isPillar ? siblings[0] : siblings[index + 1];
+const related = isPillar ? [] : relatedTo(key);
+const toc = headings.filter((heading) => heading.depth === 2);
+const updated = data.updated.toISOString().slice(0, 10);
+
+const crumbs = [
+  { name: "T3 Code", path: "/" },
+  { name: "Learn", path: "/learn" },
+  { name: clusterInfo.title, path: clusterPath(cluster) },
+  ...(isPillar ? [] : [{ name: data.title, path }]),
+];
+
+const article: JsonLd = {
+  "@type": "TechArticle",
+  "@id": `${absoluteUrl(path)}#article`,
+  headline: data.title,
+  description: data.description,
+  url: absoluteUrl(path),
+  dateModified: updated,
+  inLanguage: "en",
+  about: { "@id": "https://t3.codes/#software" },
+  isPartOf: { "@id": "https://t3.codes/#website" },
+  publisher: { "@id": "https://t3.codes/#organization" },
+  author: { "@id": "https://t3.codes/#organization" },
+};
+
+const nodes: JsonLd[] = [article, breadcrumbJsonLd(crumbs)];
+
+if (data.faq?.length) {
+  nodes.push({
+    "@type": "FAQPage",
+    mainEntity: data.faq.map((item) => ({
+      "@type": "Question",
+      name: item.question,
+      acceptedAnswer: { "@type": "Answer", text: item.answer },
+    })),
+  });
+}
+
+const toSeconds = (time: string): number =>
+  time.split(":").reduce((total, part) => total * 60 + Number(part), 0);
+
+if (data.video) {
+  const { id, title, durationSeconds, uploadDate } = data.video;
+  nodes.push({
+    "@type": "VideoObject",
+    name: title,
+    description: data.description,
+    thumbnailUrl: `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`,
+    ...(uploadDate ? { uploadDate } : {}),
+    duration: `PT${Math.floor(durationSeconds / 60)}M${durationSeconds % 60}S`,
+    embedUrl: `https://www.youtube.com/embed/${id}`,
+    url: `https://www.youtube.com/watch?v=${id}`,
+    author: { "@type": "Person", name: "Theo Browne", url: "https://www.youtube.com/@t3dotgg" },
+    hasPart: data.video.chapters.map((chapter) => ({
+      "@type": "Clip",
+      name: chapter.label,
+      startOffset: toSeconds(chapter.time),
+      url: `https://www.youtube.com/watch?v=${id}&t=${toSeconds(chapter.time)}s`,
+    })),
+  });
+}
+---
+
+<Layout
+  title={`${data.title} | T3 Code`}
+  description={data.description}
+  ogType="article"
+  pageClass="library-page"
+  jsonLd={nodes}
+>
+  <div class="lib">
+    <aside class="lib-side" aria-label="Library">
+      <a class="lib-side-home" href="/learn">Library</a>
+      <ol class="lib-clusters">
+        {CLUSTERS.map((item) => (
+          <li class:list={[{ "is-current": item.id === cluster }]}>
+            <a href={clusterPath(item.id)} aria-current={isPillar && item.id === cluster ? "page" : undefined}>
+              {item.title}
+            </a>
+            {item.id === cluster && (
+              <ol class="lib-pages">
+                {siblings.map((entry) => (
+                  <li>
+                    <a href={entryPath(entryKey(entry))} aria-current={entry.slug === slug ? "page" : undefined}>
+                      {entry.title}
+                    </a>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </li>
+        ))}
+      </ol>
+    </aside>
+
+    <article class="lib-main">
+      <nav class="lib-crumbs" aria-label="Breadcrumb">
+        <ol>
+          {crumbs.slice(1).map((crumb, i, all) => (
+            <li>{i === all.length - 1 ? <span aria-current="page">{crumb.name}</span> : <a href={crumb.path}>{crumb.name}</a>}</li>
+          ))}
+        </ol>
+      </nav>
+
+      <header class="lib-hero">
+        <p class="eyebrow">{clusterInfo.title}</p>
+        <h1>{data.title}</h1>
+        <p class="lib-lede">{data.description}</p>
+        <p class="lib-meta">Updated <time datetime={updated}>{updated}</time></p>
+      </header>
+
+      {data.video && (
+        <a class="lib-video tile" href={`https://www.youtube.com/watch?v=${data.video.id}`} target="_blank" rel="noopener noreferrer">
+          <img
+            src={`https://i.ytimg.com/vi/${data.video.id}/hqdefault.jpg`}
+            alt={`Thumbnail for the video "${data.video.title}"`}
+            width="480"
+            height="360"
+            loading="lazy"
+            decoding="async"
+          />
+          <span class="lib-video-label">Watch "{data.video.title}" on YouTube</span>
+        </a>
+      )}
+
+      <div class="lib-prose">
+        <slot />
+      </div>
+
+      {data.video && data.video.chapters.length > 0 && (
+        <section class="lib-block" aria-labelledby="chapters">
+          <h2 id="chapters">Chapters</h2>
+          <ol class="lib-chapters">
+            {data.video.chapters.map((chapter) => (
+              <li>
+                <a href={`https://www.youtube.com/watch?v=${data.video!.id}&t=${toSeconds(chapter.time)}s`} target="_blank" rel="noopener noreferrer">
+                  <span class="lib-time">{chapter.time}</span>
+                  {chapter.label}
+                </a>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+
+      {data.faq && data.faq.length > 0 && (
+        <section class="lib-block" aria-labelledby="faq">
+          <h2 id="faq">Questions</h2>
+          <dl class="lib-faq">
+            {data.faq.map((item) => (
+              <div>
+                <dt>{item.question}</dt>
+                <dd>{item.answer}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      )}
+
+      {isPillar && (
+        <section class="lib-block" aria-labelledby="in-this-section">
+          <h2 id="in-this-section">In this section</h2>
+          <ul class="lib-cards">
+            {siblings.map((entry) => (
+              <li>
+                <a class="tile" href={entryPath(entryKey(entry))}>{entry.title}</a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {related.length > 0 && (
+        <section class="lib-block" aria-labelledby="related">
+          <h2 id="related">Related</h2>
+          <ul class="lib-cards">
+            {related.map((entry) => (
+              <li>
+                <a class="tile" href={entryPath(entryKey(entry))}>
+                  <span class="lib-card-cluster">{getCluster(entry.cluster).title}</span>
+                  {entry.title}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section class="lib-block lib-sources" aria-labelledby="sources">
+        <h2 id="sources">Sources</h2>
+        <ul>
+          {data.sources.map((source) => (
+            <li><a href={source.url} target="_blank" rel="noopener noreferrer">{source.label}</a></li>
+          ))}
+        </ul>
+      </section>
+
+      <nav class="lib-pager" aria-label="Previous and next">
+        {previous ? <a href={entryPath(entryKey(previous))}><span>Previous</span>{previous.title}</a> : <a href={clusterPath(cluster)}><span>Section</span>{clusterInfo.title}</a>}
+        {next && <a class="is-next" href={entryPath(entryKey(next))}><span>Next</span>{next.title}</a>}
+      </nav>
+    </article>
+
+    {toc.length > 1 && (
+      <aside class="lib-toc" aria-label="On this page">
+        <p class="lib-toc-label">On this page</p>
+        <ol>
+          {toc.map((heading) => (
+            <li><a href={`#${heading.slug}`}>{heading.text}</a></li>
+          ))}
+        </ol>
+      </aside>
+    )}
+  </div>
+</Layout>
+
+<style>
+  .lib {
+    display: grid;
+    grid-template-columns: 248px minmax(0, 1fr) 200px;
+    gap: 48px;
+    width: 100%;
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 32px 32px 96px;
+  }
+
+  /* Sidebar follows the app's thread sidebar: quiet rows, one active surface. */
+  .lib-side {
+    position: sticky;
+    top: 76px;
+    align-self: start;
+    max-height: calc(100vh - 96px);
+    overflow-y: auto;
+    font-size: 13px;
+  }
+
+  .lib-side-home {
+    display: block;
+    margin-bottom: 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+  }
+
+  .lib-clusters,
+  .lib-pages {
+    list-style: none;
+    display: grid;
+    gap: 2px;
+  }
+
+  .lib-clusters a,
+  .lib-pages a {
+    display: block;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    color: var(--fg-muted);
+    line-height: 1.35;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  .lib-clusters a:hover,
+  .lib-pages a:hover {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--fg);
+  }
+
+  .lib-clusters .is-current > a {
+    color: var(--fg);
+    font-weight: 500;
+  }
+
+  .lib-pages {
+    margin: 2px 0 8px 10px;
+    padding-left: 8px;
+    border-left: 1px solid var(--border);
+  }
+
+  .lib-side a[aria-current="page"] {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--fg);
+  }
+
+  .lib-main {
+    min-width: 0;
+    max-width: 760px;
+  }
+
+  .lib-crumbs ol {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--fg-dim);
+  }
+
+  .lib-crumbs li + li::before {
+    content: "/";
+    margin-right: 6px;
+    color: var(--fg-faint);
+  }
+
+  .lib-crumbs a:hover {
+    color: var(--fg);
+  }
+
+  .lib-hero {
+    margin: 28px 0 36px;
+    padding-bottom: 32px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .lib-hero h1 {
+    margin: 12px 0 16px;
+    font-size: clamp(2rem, 4vw, 2.9rem);
+    font-weight: 600;
+    letter-spacing: -0.035em;
+    line-height: 1.08;
+  }
+
+  .lib-lede {
+    color: var(--fg-muted);
+    font-size: 1.08rem;
+    line-height: 1.65;
+  }
+
+  .lib-meta {
+    margin-top: 14px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+  }
+
+  .lib-video {
+    display: block;
+    margin-bottom: 36px;
+  }
+
+  .lib-video img {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+  }
+
+  .lib-video-label {
+    display: block;
+    padding: 12px 16px;
+    font-size: 13px;
+    color: var(--fg-muted);
+  }
+
+  .lib-prose :global(h2) {
+    margin: 48px 0 14px;
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    line-height: 1.2;
+    scroll-margin-top: 88px;
+  }
+
+  .lib-prose :global(h3) {
+    margin: 30px 0 10px;
+    font-size: 1.08rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    scroll-margin-top: 88px;
+  }
+
+  .lib-prose :global(p),
+  .lib-prose :global(li) {
+    color: var(--fg-muted);
+    font-size: 1rem;
+    line-height: 1.75;
+  }
+
+  .lib-prose :global(p + p) {
+    margin-top: 16px;
+  }
+
+  .lib-prose :global(ul),
+  .lib-prose :global(ol) {
+    display: grid;
+    gap: 8px;
+    margin: 16px 0 20px;
+    padding-left: 1.25rem;
+  }
+
+  .lib-prose :global(li::marker) {
+    color: var(--accent);
+  }
+
+  .lib-prose :global(strong) {
+    color: var(--fg);
+    font-weight: 600;
+  }
+
+  .lib-prose :global(a) {
+    color: var(--fg);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in oklch, var(--accent) 70%, transparent);
+    text-underline-offset: 3px;
+  }
+
+  .lib-prose :global(a:hover) {
+    text-decoration-color: var(--accent);
+  }
+
+  .lib-prose :global(code) {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    padding: 0.12em 0.36em;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg-elev);
+    color: var(--fg);
+  }
+
+  .lib-prose :global(pre) {
+    margin: 20px 0;
+    padding: 16px 18px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-elev) !important;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .lib-prose :global(pre code) {
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+
+  .lib-prose :global(blockquote) {
+    margin: 20px 0;
+    padding-left: 16px;
+    border-left: 2px solid var(--accent);
+  }
+
+  .lib-prose :global(table) {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    margin: 20px 0;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+
+  .lib-prose :global(th),
+  .lib-prose :global(td) {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    color: var(--fg-muted);
+  }
+
+  .lib-prose :global(th) {
+    color: var(--fg);
+    font-weight: 600;
+  }
+
+  .lib-block {
+    margin-top: 56px;
+    padding-top: 32px;
+    border-top: 1px solid var(--border);
+  }
+
+  .lib-block h2 {
+    margin-bottom: 18px;
+    font-size: 1.15rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+  }
+
+  .lib-chapters {
+    list-style: none;
+    display: grid;
+    gap: 4px;
+  }
+
+  .lib-chapters a {
+    display: flex;
+    gap: 14px;
+    padding: 6px 0;
+    color: var(--fg-muted);
+    font-size: 14px;
+  }
+
+  .lib-chapters a:hover {
+    color: var(--fg);
+  }
+
+  .lib-time {
+    flex: none;
+    width: 52px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent);
+  }
+
+  .lib-faq {
+    display: grid;
+    gap: 22px;
+  }
+
+  .lib-faq dt {
+    color: var(--fg);
+    font-weight: 600;
+    font-size: 15px;
+  }
+
+  .lib-faq dd {
+    margin-top: 6px;
+    color: var(--fg-muted);
+    font-size: 15px;
+    line-height: 1.7;
+  }
+
+  .lib-cards {
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 10px;
+  }
+
+  .lib-cards a {
+    display: grid;
+    gap: 6px;
+    height: 100%;
+    padding: 14px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--fg);
+    transition: border-color 0.18s ease;
+  }
+
+  .lib-cards a:hover {
+    border-color: var(--border-strong);
+  }
+
+  .lib-card-cluster {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 500;
+    color: var(--fg-dim);
+  }
+
+  .lib-sources ul {
+    display: grid;
+    gap: 6px;
+    padding-left: 1.1rem;
+    font-size: 13px;
+    color: var(--fg-dim);
+  }
+
+  .lib-sources a:hover {
+    color: var(--fg);
+  }
+
+  .lib-pager {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 48px;
+  }
+
+  .lib-pager a {
+    display: grid;
+    gap: 4px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 14px;
+    color: var(--fg);
+  }
+
+  .lib-pager a:hover {
+    border-color: var(--border-strong);
+  }
+
+  .lib-pager span {
+    font-size: 12px;
+    color: var(--fg-dim);
+  }
+
+  .lib-pager .is-next {
+    grid-column: 2;
+    text-align: right;
+  }
+
+  .lib-toc {
+    position: sticky;
+    top: 76px;
+    align-self: start;
+    font-size: 12.5px;
+  }
+
+  .lib-toc-label {
+    margin-bottom: 10px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+  }
+
+  .lib-toc ol {
+    list-style: none;
+    display: grid;
+    gap: 8px;
+  }
+
+  .lib-toc a {
+    color: var(--fg-muted);
+    line-height: 1.4;
+  }
+
+  .lib-toc a:hover {
+    color: var(--fg);
+  }
+
+  @media (max-width: 1100px) {
+    .lib {
+      grid-template-columns: 220px minmax(0, 1fr);
+    }
+
+    .lib-toc {
+      display: none;
+    }
+  }
+
+  @media (max-width: 820px) {
+    .lib {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 24px;
+      padding: 20px 20px 72px;
+    }
+
+    .lib-side {
+      position: static;
+      max-height: none;
+      order: 2;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+    }
+  }
+</style>
