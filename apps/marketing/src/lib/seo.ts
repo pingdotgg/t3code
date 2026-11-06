@@ -50,7 +50,6 @@ export const softwareJsonLd = (): JsonLd => ({
   license: "https://opensource.org/license/mit",
   isAccessibleForFree: true,
   offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
-  codeRepository: GITHUB_REPOSITORY_URL,
   publisher: { "@id": ORGANIZATION_ID },
   sameAs: [...OFFICIAL_PROFILES],
 });
