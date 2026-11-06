@@ -7,6 +7,7 @@ import { GraphQL } from "effect/graphql";
 import type {
   PullRequestStackMembership,
   PullRequestActor,
+  PullRequestReferenceCandidate,
   PullRequestPreview,
   PullRequestCheck,
   PullRequestCheckStatus,
@@ -37,6 +38,7 @@ import type {
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
+import type { ProviderChangeRequestSummary } from "@t3tools/source-control-core/server/PullRequestProvider";
 
 import type * as GitHubSchema from "../../schema/github.graphql.ts";
 import type {
@@ -49,6 +51,7 @@ import {
   PullRequestRow,
   PullRequestSearch,
 } from "./pullRequestListings.graphql.ts";
+import type { PullRequestActionSummary } from "./pullRequestMutations.graphql.ts";
 import type {
   CheckContext,
   LabelCandidates,
@@ -63,6 +66,8 @@ import type {
   PullRequestSubject,
   RepositoryAuthors,
   RepositoryLabels,
+  RepositoryReferences,
+  ReferenceCandidate,
   ReviewerCandidates,
   ViewerPermissions,
 } from "./pullRequestReads.graphql.ts";
@@ -477,6 +482,29 @@ function toMergeMethod(value: string | null | undefined): PullRequestMergeMethod
     default:
       return undefined;
   }
+}
+
+export function toPullRequestActionSummary(
+  raw: PullRequestActionSummary | null | undefined,
+): ProviderChangeRequestSummary | undefined {
+  if (raw == null) return undefined;
+  const autoMergeMethod = toMergeMethod(raw.autoMergeRequest?.mergeMethod);
+  return {
+    number: raw.number,
+    title: raw.title,
+    url: raw.url,
+    headBranch: raw.headRefName,
+    baseBranch: raw.baseRefName,
+    state: toState(raw),
+    isDraft: raw.isDraft,
+    updatedAt: raw.updatedAt,
+    mergedAt: trimmed(raw.mergedAt),
+    closedAt: trimmed(raw.closedAt),
+    author: toActor(raw.author),
+    headSha: raw.headRefOid,
+    autoMergeEnabled: raw.autoMergeRequest !== null,
+    ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
+  };
 }
 
 /** GitHub's reviewDecision ignores reviews outside branch rules, including app approvals. */
@@ -1434,6 +1462,7 @@ export interface GitHubBaseComparison {
 /** assignableUsers avoids push/read:org requirements. Keep requested outsiders/apps removable. */
 export function toReviewerCandidates(
   result: ReviewerCandidates.Result,
+  query?: string,
 ): PullRequestReviewerCandidateList | null {
   const repository = result.repository;
   if (repository == null) return null;
@@ -1457,8 +1486,10 @@ export function toReviewerCandidates(
       isRequested: true,
     });
   }
+  const hostMatches = new Set<string>();
   for (const node of nodesOf(repository.assignableUsers)) {
     const login = trimmed(node.login);
+    if (login !== null) hostMatches.add(login);
     if (login === null || login === author || candidates.has(`user ${login}`)) continue;
     candidates.set(`user ${login}`, {
       id: login,
@@ -1470,7 +1501,9 @@ export function toReviewerCandidates(
     });
   }
   return {
-    candidates: [...candidates.values()],
+    candidates: [...candidates.values()].filter(
+      (candidate) => !query?.trim() || (candidate.kind === "user" && hostMatches.has(candidate.id)),
+    ),
     truncated: repository.assignableUsers.pageInfo.hasNextPage,
   };
 }
@@ -1548,6 +1581,64 @@ export function toRepositoryAuthors(
         : [{ login, name: trimmed(node.name), avatarUrl: trimmed(node.avatarUrl) }];
     }),
     truncated: repository.mentionableUsers.pageInfo.hasNextPage,
+  };
+}
+
+/** The `search` string for {@link toRepositoryReferences}; a numeric query searches recent items. */
+export function referenceSearchQuery(repository: string, query: string | undefined): string {
+  const text = query?.trim() ?? "";
+  const titled = text.length === 0 || /^\d+$/.test(text) ? [] : [`in:title ${searchPhrase(text)}`];
+  return [`repo:${repository}`, ...titled, "sort:updated-desc"].join(" ");
+}
+
+/** Quote user text so GitHub cannot interpret it as qualifiers that widen the listing. */
+export function searchPhrase(query: string): string {
+  return `"${query.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+type ReferenceNode =
+  | ReferenceCandidate
+  | NonNullable<NonNullable<RepositoryReferences.Result["search"]["nodes"]>[number]>;
+
+function toReferenceCandidate(node: ReferenceNode): PullRequestReferenceCandidate | null {
+  if (node.__typename === "Issue") {
+    return {
+      reference: `#${node.number}`,
+      kind: "issue",
+      number: node.number,
+      title: node.title,
+      state: node.issueState === "OPEN" ? "open" : "closed",
+    };
+  }
+  if (node.__typename === "PullRequest") {
+    return {
+      reference: `#${node.number}`,
+      kind: "change-request",
+      number: node.number,
+      title: node.title,
+      state:
+        node.pullRequestState === "OPEN"
+          ? "open"
+          : node.pullRequestState === "MERGED"
+            ? "merged"
+            : "closed",
+    };
+  }
+  return null;
+}
+
+export function toRepositoryReferences(result: RepositoryReferences.Result): {
+  readonly items: ReadonlyArray<PullRequestReferenceCandidate>;
+  readonly truncated: boolean;
+} {
+  const exact = result.repository?.issueOrPullRequest;
+  const nodes = [...(exact == null ? [] : [exact]), ...nodesOf(result.search)];
+  return {
+    items: nodes.flatMap((node) => {
+      const candidate = toReferenceCandidate(node);
+      return candidate === null ? [] : [candidate];
+    }),
+    truncated: result.search.pageInfo.hasNextPage,
   };
 }
 
