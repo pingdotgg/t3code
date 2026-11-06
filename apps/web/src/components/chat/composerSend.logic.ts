@@ -91,3 +91,22 @@ export function approvalsForComposerRedirect(input: {
   if (!input.sameThread || input.dispatchMode === "queue") return [];
   return input.approvals.filter((approval) => input.shownApprovalIds.includes(approval.requestId));
 }
+
+export function composerDraftChangedSinceSend(input: {
+  readonly pendingAttachments: boolean;
+  readonly prompt: string;
+  readonly sentPrompts: ReadonlyArray<string>;
+  readonly attachmentIds: ReadonlyArray<string>;
+  readonly sentAttachmentIds: ReadonlyArray<string>;
+  readonly annotationImageId: string | undefined;
+}): boolean {
+  if (input.pendingAttachments) return true;
+  const sameIds = (ids: ReadonlyArray<string>) =>
+    ids.length === input.attachmentIds.length &&
+    ids.every((id, index) => id === input.attachmentIds[index]);
+  const attachmentsUnchanged =
+    sameIds(input.sentAttachmentIds) ||
+    (input.annotationImageId !== undefined &&
+      sameIds(input.sentAttachmentIds.filter((id) => id !== input.annotationImageId)));
+  return !input.sentPrompts.includes(input.prompt) || !attachmentsUnchanged;
+}
