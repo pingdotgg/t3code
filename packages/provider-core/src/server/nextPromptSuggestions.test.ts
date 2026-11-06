@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   buildNextPromptSuggestionsPrompt,
+  parseReplyOptions,
   sanitizeNextPromptSuggestions,
   type NextPromptCommand,
 } from "./nextPromptSuggestions.ts";
@@ -62,6 +63,51 @@ describe("sanitizeNextPromptSuggestions", () => {
       sanitizeNextPromptSuggestions([{ text: "code-review", kind: "skill" }], commands),
       [{ text: "code-review", kind: "command" }],
     );
+  });
+});
+
+describe("parseReplyOptions", () => {
+  it("reads the last options block, keeping each line as written", () => {
+    const reply = [
+      "Here is an example of the format:",
+      "```options",
+      "Old option",
+      "```",
+      "",
+      "Which install should I do?",
+      "",
+      "```options",
+      "- Install now",
+      "2. Wait for the other chat",
+      "",
+      "/code-review",
+      "$what-did-you-learn",
+      "/code-review high",
+      "```",
+    ].join("\n");
+    assert.deepEqual(parseReplyOptions(reply, commands), [
+      { text: "Install now", kind: "prompt" },
+      { text: "Wait for the other chat", kind: "prompt" },
+      { text: "code-review", kind: "command" },
+      { text: "what-did-you-learn", kind: "skill" },
+    ]);
+  });
+
+  it("sends an unknown command and a fifth option as plain text or not at all", () => {
+    const reply = "Pick one.\n~~~options\n/deploy-everything\nA\nB\nC\nD\n~~~";
+    assert.deepEqual(parseReplyOptions(reply, commands), [
+      { text: "/deploy-everything", kind: "prompt" },
+      { text: "A", kind: "prompt" },
+      { text: "B", kind: "prompt" },
+      { text: "C", kind: "prompt" },
+    ]);
+  });
+
+  it("returns null without a closed, non-empty options block", () => {
+    assert.isNull(parseReplyOptions("No options here.", commands));
+    assert.isNull(parseReplyOptions("```options\nStill streaming", commands));
+    assert.isNull(parseReplyOptions("```options\n\n```", commands));
+    assert.isNull(parseReplyOptions("```ts\nconst options = 1;\n```", commands));
   });
 });
 

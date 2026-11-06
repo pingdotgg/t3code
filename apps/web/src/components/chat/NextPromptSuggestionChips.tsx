@@ -97,7 +97,8 @@ export function useNextPromptChips(input: {
   const commands = frozen !== null && frozen.runId === completedRunId ? frozen.commands : null;
 
   const { data } = useEnvironmentQuery(
-    enabled && thread !== undefined && completedRunId !== null && commands !== null
+    // Asked even with the Labs switch off: a reply's own `options` block needs no model.
+    thread !== undefined && completedRunId !== null && commands !== null
       ? orchestrationEnvironment.v2.nextPromptSuggestions({
           environmentId,
           input: { threadId: thread.id, runId: completedRunId, commands },
@@ -111,8 +112,11 @@ export function useNextPromptChips(input: {
     dismissedKeys = new Set(dismissedKeys).add(dismissKey(environmentId, completedRunId));
     for (const listener of listeners) listener();
   };
+  const runData = data !== null && data.runId === completedRunId ? data : null;
+  // The reply's own options replace every guess; without them the buttons are a Labs feature.
+  const fromReply = runData?.fromReply === true;
   if (
-    !enabled ||
+    (!enabled && !fromReply) ||
     completedRunId === null ||
     dismissed.has(dismissKey(environmentId, completedRunId))
   ) {
@@ -131,9 +135,11 @@ export function useNextPromptChips(input: {
     seen.add(key);
     chips.push(chip);
   };
-  if (input.builtInSuggestion !== null) add(chipFor("prompt", input.builtInSuggestion));
-  if (data !== null && data.runId === completedRunId) {
-    for (const suggestion of data.suggestions) add(chipFor(suggestion.kind, suggestion.text));
+  if (!fromReply && input.builtInSuggestion !== null) {
+    add(chipFor("prompt", input.builtInSuggestion));
+  }
+  if (runData !== null) {
+    for (const suggestion of runData.suggestions) add(chipFor(suggestion.kind, suggestion.text));
   }
   return { chips, dismiss };
 }

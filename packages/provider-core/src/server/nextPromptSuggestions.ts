@@ -89,6 +89,49 @@ export function buildNextPromptSuggestionsPrompt(input: NextPromptSuggestionsInp
   return { prompt, outputSchema };
 }
 
+// A fenced block whose info string is `options`, one next message per line.
+const OPTIONS_BLOCK =
+  /(?:^|\n)[ \t]*(`{3,}|~{3,})options[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*\1[ \t]*(?=\r?\n|$)/g;
+
+/**
+ * The options a reply lists for the person's next message, one per line of its last `options`
+ * block, or null when it has none. A line naming an offered skill (`$name`) or slash command
+ * (`/name`) becomes that skill or command; anything else is sent as written.
+ */
+export function parseReplyOptions(
+  reply: string,
+  commands: ReadonlyArray<NextPromptCommand>,
+): ReadonlyArray<NextPromptSuggestion> | null {
+  let body: string | undefined;
+  for (const match of reply.matchAll(OPTIONS_BLOCK)) body = match[2];
+  if (body === undefined) return null;
+  const offered = new Map(commands.map((command) => [command.name.toLowerCase(), command]));
+  const options: Array<NextPromptSuggestion> = [];
+  const seen = new Set<string>();
+  for (const rawLine of body.split(/\r?\n/)) {
+    const line = rawLine
+      .trim()
+      .replace(/^(?:[-*+]|\d+[.)])\s+/, "")
+      .trim();
+    if (line.length === 0 || line.length > SUGGESTION_TEXT_LIMIT) continue;
+    const prefix = line[0];
+    const command =
+      prefix === "/" || prefix === "$"
+        ? offered.get(line.slice(1).split(/\s/, 1)[0]!.toLowerCase())
+        : undefined;
+    const option: NextPromptSuggestion =
+      command !== undefined && line.slice(1).trim().toLowerCase() === command.name.toLowerCase()
+        ? { text: command.name, kind: command.kind }
+        : { text: line, kind: "prompt" };
+    const key = `${option.kind}:${option.text.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    options.push(option);
+    if (options.length === MAX_NEXT_PROMPT_SUGGESTIONS) break;
+  }
+  return options.length > 0 ? options : null;
+}
+
 /** Trim, drop duplicates and names that are not offered, and cap the count. */
 export function sanitizeNextPromptSuggestions(
   suggestions: ReadonlyArray<NextPromptSuggestion>,

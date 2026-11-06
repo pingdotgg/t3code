@@ -1609,6 +1609,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
     ) {
       return <MarkdownMath tex={codeBlock.code} display focusable={!inline} />;
     }
+    // Custom build: a reply's `options` block shows as next-message buttons above the composer.
+    if (language === "options") return null;
     const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
     const highlightedCode = (
       <RenderErrorBoundary

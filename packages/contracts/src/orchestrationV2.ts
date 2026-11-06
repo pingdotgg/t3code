@@ -3706,6 +3706,8 @@ export const OrchestrationV2NextPromptSuggestions = Schema.Struct({
       kind: Schema.Literals(["prompt", "skill", "command"]),
     }),
   ),
+  /** True when the reply listed these options itself in an `options` block. */
+  fromReply: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationV2NextPromptSuggestions = typeof OrchestrationV2NextPromptSuggestions.Type;
 

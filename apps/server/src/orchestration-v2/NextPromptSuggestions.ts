@@ -9,6 +9,7 @@ import {
   type OrchestrationV2SuggestNextPromptsInput,
   type RunId,
 } from "@t3tools/contracts";
+import { parseReplyOptions } from "@t3tools/provider-core/server/nextPromptSuggestions";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -86,8 +87,9 @@ export const make = Effect.gen(function* () {
 export const layer = Layer.effect(NextPromptSuggestionsService, make);
 
 /**
- * Answer the RPC: read the run's own messages, then ask the thread title model. Any failure,
- * a delegated thread, or the Labs switch being off answers an empty list.
+ * Answer the RPC: read the run's own messages and use the reply's `options` block when it has
+ * one, otherwise ask the thread title model. Any failure, a delegated thread, or (without an
+ * options block) the Labs switch being off answers an empty list.
  */
 export const suggestForThread = (
   input: OrchestrationV2SuggestNextPromptsInput,
@@ -101,7 +103,6 @@ export const suggestForThread = (
   const empty: OrchestrationV2NextPromptSuggestions = { runId: input.runId, suggestions: [] };
   return Effect.gen(function* () {
     const settings = yield* services.serverSettings.getSettings;
-    if (!settings.promptSuggestionsEnabled) return empty;
     const records = yield* services.threads.getThreadRecords(input.threadId, ["messages"], {
       messageRunIds: [input.runId],
       messageRoles: ["user", "assistant"],
@@ -110,6 +111,13 @@ export const suggestForThread = (
     const settled = records.messages.filter((message) => !message.streaming);
     const userMessage = settled.find((message) => message.role === "user")?.text ?? "";
     const assistantReply = settled.findLast((message) => message.role === "assistant")?.text ?? "";
+    // Options the reply listed itself are exact and need no model, so they show even with the
+    // Labs switch off.
+    const replyOptions = parseReplyOptions(assistantReply, input.commands);
+    if (replyOptions !== null) {
+      return { runId: input.runId, suggestions: replyOptions, fromReply: true };
+    }
+    if (!settings.promptSuggestionsEnabled) return empty;
     const project = yield* services.projects.get(records.thread.projectId);
     const cwd =
       records.thread.worktreePath ??
