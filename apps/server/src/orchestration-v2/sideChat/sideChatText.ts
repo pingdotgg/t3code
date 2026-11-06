@@ -34,6 +34,8 @@ export function deriveSideChatLabel(excerpt: string): string {
 
 const LESSON_SECTION_HEADING = /^#{1,3}\s+Lesson\s+\d+\b/i;
 const CODE_SECTION_HEADING = /^#{1,3}\s+[A-Z]{1,3}\d+[A-Za-z]?:/;
+// Only a line that is all one bold span: quiz feedback and D items carry text after the bold.
+const BOLD_SECTION_TITLE = /^\*\*(?:Lesson\s+\d+\b|[A-Z]{1,3}\d+[A-Za-z]?:)[^*]*\*\*\s*$/i;
 
 /**
  * The last section heading at or above the highlight, or undefined when the anchor message is
@@ -58,9 +60,13 @@ export function lessonSectionAt(
           ? message.text.slice(0, lineEnd)
           : message.text;
       for (const line of text.split("\n")) {
-        if (LESSON_SECTION_HEADING.test(line) || CODE_SECTION_HEADING.test(line)) {
+        if (
+          LESSON_SECTION_HEADING.test(line) ||
+          CODE_SECTION_HEADING.test(line) ||
+          BOLD_SECTION_TITLE.test(line)
+        ) {
           section = truncateGraphemes(
-            line.replace(/^#{1,3}/, "").trim(),
+            line.replace(/^#{1,3}|\*\*/g, "").trim(),
             SIDE_CHAT_LABEL_MAX_CHARS,
           );
         }
