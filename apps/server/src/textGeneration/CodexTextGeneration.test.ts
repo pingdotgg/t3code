@@ -490,15 +490,11 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
           generatePrContent: () => Effect.die("unused"),
           generateBranchName: () => Effect.die("unused"),
           generateReviewGuide: () => Effect.die("unused"),
+          generateTranscriptionPostProcessing: () => Effect.die("unused"),
           generateThreadTitle: (input) =>
             Effect.sync(() => {
               calls.push(input.modelSelection);
               return { title: "Generated title" };
-            }),
-          generateTranscriptionPostProcessing: (input) =>
-            Effect.sync(() => {
-              calls.push(input.modelSelection);
-              return { transcription: input.prompt };
             }),
         }),
       };
@@ -530,20 +526,14 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
         modelSelection: selection,
       }),
     ).toEqual({ title: "Generated title" });
-    const expectedSelection = exhausted
-      ? {
-          instanceId: fallback,
-          model: DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")],
-        }
-      : selection;
-    expect(calls).toEqual([expectedSelection]);
-    expect(
-      yield* service.generateTranscriptionPostProcessing({
-        cwd: "/tmp",
-        prompt: "Clean this transcript.",
-        modelSelection: selection,
-      }),
-    ).toEqual({ transcription: "Clean this transcript." });
-    expect(calls).toEqual([expectedSelection, expectedSelection]);
+    expect(calls).toEqual([
+      exhausted
+        ? {
+            instanceId: fallback,
+            model:
+              DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")],
+          }
+        : selection,
+    ]);
   }),
 );

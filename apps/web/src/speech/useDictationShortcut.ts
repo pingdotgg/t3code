@@ -1,27 +1,22 @@
 import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { use, useEffect, useRef, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
-import { BackgroundThreadContext } from "../components/chat/backgroundThread";
 import { useClientSettings } from "../hooks/useSettings";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 
 const HOLD_THRESHOLD_MS = 300;
 
-export function shouldFinishDictationOnRelease(
-  mode: "auto" | "hold" | "toggle",
-  elapsedMs: number,
-) {
+function shouldFinishDictationOnRelease(mode: "auto" | "hold" | "toggle", elapsedMs: number) {
   return mode === "hold" || (mode === "auto" && elapsedMs >= HOLD_THRESHOLD_MS);
 }
 
 type SpeechActions = {
   available: boolean;
-  state: VoiceInputState<true>;
+  state: VoiceInputState;
   start(): Promise<void>;
-  startPending?(): boolean;
   stop(): Promise<void>;
   cancel(): void;
 };
@@ -38,22 +33,24 @@ type ShortcutInput = {
   disabled: boolean;
   terminalOpen: boolean;
   modelPickerOpen: boolean;
-  subscribeKeys?: (handlers: DictationKeyHandlers) => () => void;
+  /** Resolve the chord as if the preview had focus; the keys arrive relayed from its guest. */
   previewFocus?: boolean;
-  ownsFocus?: () => boolean;
+  /** When set, the chord targets this editor only while it has focus. */
   targetRef?: RefObject<HTMLElement | null>;
+  /** An editor outside this document reports whether it holds the keyboard. */
+  ownsFocus?: () => boolean;
+  /** Receives handlers that replay keys an outside editor relayed, as if typed here. */
+  subscribeKeys?: (handlers: DictationKeyHandlers) => () => void;
 };
 
-const shortcutTargets = new Map<symbol, () => ShortcutInput & { backgroundThread: boolean }>();
+// Several editors can bind the chord; the busy one, then the focused one, then the untargeted one wins.
+const shortcutTargets = new Map<symbol, () => ShortcutInput>();
 
 function ownsShortcut(id: symbol) {
-  const entries = [...shortcutTargets].filter(([, read]) => !read().backgroundThread);
+  const entries = [...shortcutTargets];
   const busy = entries.find(([, read]) => {
-    const { speech } = read();
-    return (
-      (speech.state.phase !== "idle" && speech.state.phase !== "error") ||
-      speech.startPending?.() === true
-    );
+    const phase = read().speech.state.phase;
+    return phase !== "idle" && phase !== "error";
   });
   if (busy) return busy[0] === id;
   // A focused text field wins over the pane it sits in (a comment editor in a chat).
@@ -65,14 +62,13 @@ function ownsShortcut(id: symbol) {
 }
 
 export function useDictationShortcut(input: ShortcutInput) {
-  const backgroundThread = use(BackgroundThreadContext);
   const id = useRef(Symbol("dictation-target"));
   const subscribeKeys = input.subscribeKeys;
   const mode = useClientSettings((settings) => settings.voiceShortcutMode);
-  const current = useRef({ ...input, backgroundThread });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Publish committed shortcut ownership and speech actions before window keyboard events read them.
+  const current = useRef(input);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed actions to the window keyboard listener and shortcut registry
   useEffect(() => {
-    current.current = { ...input, backgroundThread };
+    current.current = input;
   });
   const generation = useRef(0);
   const pressed = useRef<{
@@ -83,7 +79,7 @@ export function useDictationShortcut(input: ShortcutInput) {
     starting: Promise<void>;
   } | null>(null);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Register dictation keyboard listeners and release the recording owner on unmount.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the window keyboard listeners and dictation target registry entry
   useEffect(() => {
     if (typeof window === "undefined") return;
     let disposed = false;
@@ -104,11 +100,11 @@ export function useDictationShortcut(input: ShortcutInput) {
       if (!ownsShortcut(id.current)) return;
       if (event.isComposing || event.keyCode === 229) return;
       const { speech } = current.current;
+      if (event.defaultPrevented || isCommandPaletteOpen()) return;
       if (
         event.key === "Escape" &&
         (pressed.current !== null ||
-          speech.state.phase !== "idle" ||
-          speech.startPending?.() === true)
+          (speech.state.phase !== "idle" && speech.state.phase !== "error"))
       ) {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -117,29 +113,33 @@ export function useDictationShortcut(input: ShortcutInput) {
         speech.cancel();
         return;
       }
-      if (event.defaultPrevented || isCommandPaletteOpen()) return;
       const { keybindings, terminalOpen, modelPickerOpen, disabled } = current.current;
+      const previewFocus = current.current.previewFocus ?? false;
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: getTerminalFocusOwner() !== null,
           terminalOpen,
           modelPickerOpen,
-          previewFocus: current.current.previewFocus ?? false,
-          previewOpen: current.current.previewFocus ?? false,
+          previewFocus,
+          previewOpen: previewFocus,
+          ...(previewFocus ? { editableFocus: true } : {}),
         },
       });
       if (command !== "composer.dictation") return;
+      const canStart = speech.state.phase === "idle" || speech.state.phase === "error";
+      if (canStart && (!speech.available || disabled)) return;
       event.preventDefault();
       event.stopPropagation();
-      if (event.repeat || pressed.current) return;
+      if (event.repeat || (!canStart && speech.state.phase !== "recording")) return;
+      // macOS may omit the previous non-modifier keyup while Command is held.
+      pressed.current = null;
+      generation.current += 1;
       if (speech.state.phase === "recording") {
         void speech.stop();
         return;
       }
-      if (speech.state.phase !== "idle" && speech.state.phase !== "error") return;
-      if (!speech.available || disabled) return;
       pressed.current = {
-        generation: ++generation.current,
+        generation: generation.current,
         code: event.code || event.key,
         startedAt: performance.now(),
         mode,
@@ -147,13 +147,14 @@ export function useDictationShortcut(input: ShortcutInput) {
       };
     };
     const onBlur = () => finish(null);
-
-    const unsubscribe = subscribeKeys?.({ keydown: onKeyDown, keyup: finish, blur: onBlur });
-    if (!subscribeKeys) {
-      window.addEventListener("keydown", onKeyDown, true);
-      window.addEventListener("keyup", finish, true);
-      window.addEventListener("blur", onBlur);
-    }
+    const unsubscribe = subscribeKeys?.({
+      keydown: (event) => window.dispatchEvent(event),
+      keyup: (event) => window.dispatchEvent(event),
+      blur: onBlur,
+    });
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", finish, true);
+    window.addEventListener("blur", onBlur);
     return () => {
       disposed = true;
       pressed.current = null;

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off - drives agent-device and the Hermes inspector; the probe types its own JSON.
+// @effect-diagnostics nodeBuiltinImport:off globalJsonInEffect:off - drives agent-device and the Hermes inspector; the probe types its own JSON.
 /**
  * One simulator, driven two ways: T3's `agent-device` CLI for real touches and system actions,
  * and the dev-only behavior probe (`apps/mobile/src/features/development/behavior-probe.ts`)
