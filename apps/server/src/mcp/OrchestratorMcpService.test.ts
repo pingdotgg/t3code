@@ -1582,6 +1582,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             );
             assert.isTrue(entry!.canRunCrossProviderChildTask);
             assert.deepEqual(entry!.constraints, []);
+            assert.isUndefined(entry!.poolMemberInstanceIds);
           }
 
           assert.isUndefined(byId.get(disabledAntigravityInstanceId));
@@ -2419,6 +2420,9 @@ describe("OrchestratorMcpService provider resolution", () => {
             capabilities.providers.map((provider) => provider.providerInstanceId),
             [poolInstanceId],
           );
+          assert.deepInclude(capabilities.providers[0], {
+            poolMemberInstanceIds: [codexInstanceId, workInstanceId],
+          });
           const result = yield* service.delegateTask(scope, {
             task: "Summarize the diff.",
             target: { driverKind: codex },
@@ -2426,6 +2430,8 @@ describe("OrchestratorMcpService provider resolution", () => {
             clientRequestId: "delegate-pool-driver-1",
           });
           assert.equal(result.status, "running");
+          assert.equal(result.providerInstanceId, workInstanceId);
+          assert.equal(result.model, "gpt-5.4");
           const request = (yield* Ref.get(dispatched))[0] as {
             modelSelection: { instanceId: string; model: string };
           };
