@@ -1173,12 +1173,15 @@ export function rankSearchGroups<
       // A longer-query pick must not pass a whole-name match for the current query.
       const wordMatch = (match: M) => Math.min(matchClass(match.quality), 2);
       const exactPickAt = (match: M) => (match.pickedExactly ? (match.pickedAt ?? 0) : 0);
+      // Use reorders whole words or prefixes among themselves, never a prefix above a whole word.
+      const wholeWord = (match: M) => Number(match.quality >= WHOLE_WORD);
       const sorted = [...items].sort(
         (left, right) =>
           wordMatch(right.match) - wordMatch(left.match) ||
           exactPickAt(right.match) - exactPickAt(left.match) ||
           matchClass(right.match.quality) - matchClass(left.match.quality) ||
           (right.match.pickedAt ?? 0) - (left.match.pickedAt ?? 0) ||
+          wholeWord(right.match) - wholeWord(left.match) ||
           right.match.score - left.match.score,
       );
       const best = Math.max(

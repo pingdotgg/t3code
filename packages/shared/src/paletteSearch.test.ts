@@ -40,6 +40,16 @@ describe("scoreThreadSearch", () => {
         thread("Share auth across worktrees"),
       ]),
     ).toEqual(["Share auth across worktrees", "Authentication cleanup", "Fix oauth redirect"]);
+    // Use never lifts a prefix above a whole word, so a busy series cannot bury an old thread.
+    expect(
+      rankTitles("auth", [
+        thread("Authentication cleanup", {
+          activityAt: NOW,
+          opens: { openedAt: NOW, score: 12, picks: [] },
+        }),
+        thread("Share auth across worktrees", { activityAt: NOW - 90 * DAY }),
+      ]),
+    ).toEqual(["Share auth across worktrees", "Authentication cleanup"]);
   });
 
   it("treats camelCase, kebab, path, and digit boundaries as word starts", () => {
