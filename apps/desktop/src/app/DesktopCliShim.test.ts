@@ -76,6 +76,21 @@ describe("renderCliShim", () => {
     expect(isOurLauncher("foreign launcher")).toBe(false);
   });
 
+  it("writes launchers a pre-rename build still recognises after a rollback", () => {
+    const posix = renderCliShim({
+      target: { kind: "direct", executable: "/opt/OminaX/ominax", entry: "/opt/bin.mjs" },
+      shimPath: "/home/me/.ominax/bin/ominax",
+      t3Home: "/home/me/.ominax",
+    });
+    const windows = renderCliShim({
+      target: { kind: "windows", executable: "C:\\Apps\\OminaX.exe", entry: "C:\\bin.mjs" },
+      shimPath: "C:\\Users\\Me\\.ominax\\bin\\ominax.cmd",
+      t3Home: "C:\\Users\\Me\\.ominax",
+    });
+    expect(posix).toContain(`# ${LEGACY_MARKER}`);
+    expect(windows).toContain(`rem ${LEGACY_MARKER}`);
+  });
+
   it("extracts the AppImage where it cannot be mounted", () => {
     const { shim } = fakeAppImage(false);
     const result = run(shim, ["--version"], { APPIMAGE_EXTRACT_AND_RUN: "1" });

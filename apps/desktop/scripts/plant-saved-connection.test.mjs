@@ -47,6 +47,29 @@ describe("plant-saved-connection", () => {
     }
   });
 
+  it("fails the shared-key Linux check until the home has moved", () => {
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ominax-plant-shared-"));
+    const run = (command) =>
+      NodeChildProcess.execFileSync(
+        process.execPath,
+        [scriptPath, command, "--platform", "linux"],
+        {
+          env: { ...process.env, HOME: home },
+          stdio: "pipe",
+        },
+      );
+    try {
+      run("plant");
+      expect(() => run("check")).toThrow();
+      expect(NodeFS.existsSync(NodePath.join(home, ".ominax"))).toBe(false);
+      NodeFS.renameSync(NodePath.join(home, ".t3-learn"), NodePath.join(home, ".ominax"));
+      NodeFS.symlinkSync(NodePath.join(home, ".ominax"), NodePath.join(home, ".t3-learn"));
+      run("check");
+    } finally {
+      NodeFS.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("plants an old catalog and verifies it after re-encryption", () => {
     const stateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ominax-plant-"));
     const oldPassword = "old-safe-storage-password";

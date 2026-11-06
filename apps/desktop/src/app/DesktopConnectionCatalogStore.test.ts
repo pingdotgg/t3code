@@ -305,6 +305,14 @@ describe("DesktopConnectionCatalogStore", () => {
       );
       yield* Ref.set(failDecrypt, false);
       assert.deepStrictEqual(yield* store.get, Option.some(validCatalog));
+
+      // A later catalog quarantined beside the backup wins over the older backup.
+      const newer = validCatalog.replace('"targets":[]', '"targets":[ ]');
+      assert.isTrue(yield* store.set(newer));
+      yield* Ref.set(failDecrypt, true);
+      assert.deepStrictEqual(yield* store.get, Option.none());
+      yield* Ref.set(failDecrypt, false);
+      assert.deepStrictEqual(yield* store.get, Option.some(newer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

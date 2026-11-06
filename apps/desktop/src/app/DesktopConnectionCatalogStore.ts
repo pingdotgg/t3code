@@ -448,13 +448,14 @@ export const make = Effect.gen(function* () {
     const directory = path.dirname(catalogPath);
     const prefix = `${path.basename(catalogPath)}.undecryptable-`;
     const names = yield* fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
+    // Newest first: a quarantined catalog is newer than the pre-migration backup.
     const candidates = [
-      `${catalogPath}.pre-ominax`,
       ...names
         .filter((name) => name.startsWith(prefix))
         .toSorted()
         .reverse()
         .map((name) => path.join(directory, name)),
+      `${catalogPath}.pre-ominax`,
     ];
     for (const candidate of candidates) {
       const document = yield* readDocument(fileSystem, candidate).pipe(

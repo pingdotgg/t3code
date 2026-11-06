@@ -148,7 +148,8 @@ function parseArgs(argv) {
 }
 function main(input) {
   const file = NodePath.join(input.stateDir, "connection-catalog.json");
-  NodeFS.mkdirSync(input.stateDir, { recursive: true });
+  // check must never create folders: an early ~/.ominax would make the app skip its migration.
+  if (input.command === "plant") NodeFS.mkdirSync(input.stateDir, { recursive: true });
   let key;
   if (input.platform === "win32") {
     const plantedMarker = NodePath.join(
@@ -183,10 +184,6 @@ function main(input) {
     ).toString("base64");
     NodeFS.writeFileSync(file, `${JSON.stringify({ version: 1, encryptedCatalog })}\n`);
     console.log("planted Planted box");
-    return;
-  }
-  if (NodeFS.existsSync(NodePath.join(input.stateDir, MARKER))) {
-    console.log("skipped saved connection check: Windows Local State was absent during plant");
     return;
   }
   if (input.platform === "linux") {

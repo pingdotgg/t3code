@@ -34,6 +34,28 @@ it.effect("moves the legacy home and links the old path back", () =>
     assert.equal(result.homePath, current);
     assert.equal(yield* fs.readLink(legacy), current);
     assert.equal(yield* fs.stat(current).pipe(Effect.map((info) => info.type)), "Directory");
+    assert.isTrue(yield* fs.exists(path.join(current, ".moved-from-t3learn")));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps an unwritable legacy home in place instead of failing startup", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "ominax-rename-" });
+    const legacy = path.join(root, ".t3-learn");
+    yield* fs.makeDirectory(legacy);
+    yield* fs.chmod(legacy, 0o555);
+    yield* Effect.addFinalizer(() => fs.chmod(legacy, 0o755).pipe(Effect.ignore));
+
+    const result = yield* runMigration({
+      homeDirectory: root,
+      explicitHome: Option.none(),
+      isHomeOwned: () => Effect.succeed(false),
+    });
+
+    assert.equal(result.homePath, legacy);
+    assert.isFalse(yield* fs.exists(path.join(root, ".ominax")));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

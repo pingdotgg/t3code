@@ -77,7 +77,16 @@ const migrateDirectory = Effect.fn("desktop.renameMigration.migrateDirectory")(f
     return input.legacyPath;
   }
 
-  yield* input.fs.writeFileString(NodePath.join(input.legacyPath, MOVED_FROM_LEGACY_MARKER), "");
+  const marked = yield* Effect.exit(
+    input.fs.writeFileString(NodePath.join(input.legacyPath, MOVED_FROM_LEGACY_MARKER), ""),
+  );
+  if (Exit.isFailure(marked)) {
+    yield* Effect.logWarning("could not mark the legacy desktop home; leaving it in place", {
+      legacyPath: input.legacyPath,
+      cause: marked.cause,
+    });
+    return input.legacyPath;
+  }
 
   const renamed = yield* Effect.exit(input.fs.rename(input.legacyPath, input.currentPath));
   if (Exit.isFailure(renamed)) {

@@ -50,6 +50,8 @@ export const renderCliShim = (input: {
     return [
       "@echo off",
       `rem ${MARKER}`,
+      // Builds before the rename recognise their launcher by this line; keep it so a rollback can update it.
+      `rem ${LEGACY_MARKER}`,
       // Delayed expansion would rewrite `!name!` in paths and arguments.
       "setlocal EnableExtensions DisableDelayedExpansion",
       // Ctrl-C skips codepage restoration, so switch to UTF-8 only for non-ASCII install paths.
@@ -83,6 +85,7 @@ export const renderCliShim = (input: {
   const header = [
     "#!/bin/sh",
     `# ${MARKER}`,
+    `# ${LEGACY_MARKER}`,
     `export T3CODE_CLI_PATH=${shellWord(input.shimPath)}`,
     `home=${shellWord(input.t3Home)}`,
     `export T3CODE_HOME="\${${T3_LEARN_HOME_ENV}:-\${${T3_LEARN_LEGACY.homeEnv}:-$home}}"`,
