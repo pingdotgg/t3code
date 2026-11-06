@@ -382,7 +382,10 @@ describe("pull request detail decoding", () => {
                 {
                   commit: {
                     statusCheckRollup: {
-                      contexts: { nodes: rollup, pageInfo: { hasNextPage: false } },
+                      contexts: {
+                        nodes: rollup,
+                        pageInfo: { hasNextPage: false, endCursor: null },
+                      },
                     },
                   },
                 },
