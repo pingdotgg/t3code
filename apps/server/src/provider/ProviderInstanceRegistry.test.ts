@@ -12,6 +12,7 @@ import {
   EnvironmentId,
   type ClaudeSettings,
   type CodexSettings,
+  DEFAULT_FILE_LINK_INSTRUCTIONS,
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
   type ResolvedProviderInstanceEnvironment,
@@ -100,6 +101,7 @@ const makeCodexConfig = (overrides: Partial<CodexSettings>): CodexSettings => ({
   homePath: "",
   shadowHomePath: "",
   launchArgs: "",
+  fileLinkInstructions: DEFAULT_FILE_LINK_INSTRUCTIONS,
   customModels: [],
   ...overrides,
 });
@@ -110,6 +112,7 @@ const makeClaudeConfig = (overrides: Partial<ClaudeSettings>): ClaudeSettings =>
   homePath: "",
   customModels: [],
   launchArgs: "",
+  fileLinkInstructions: DEFAULT_FILE_LINK_INSTRUCTIONS,
   autoCompactWindow: "",
   idleCompaction: "default",
   ...overrides,

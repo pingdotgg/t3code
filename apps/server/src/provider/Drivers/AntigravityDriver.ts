@@ -459,6 +459,7 @@ export const AntigravityDriver: ProviderDriver<
     const orchestrationAdapter = yield* makeAntigravityAdapterV2({
       instanceId,
       selfInvocation,
+      fileLinkInstructions: settings.fileLinkInstructions,
       makeRuntime,
       withProcess: authFlow.withProcess,
       defaultModel,
