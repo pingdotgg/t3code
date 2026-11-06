@@ -223,6 +223,9 @@ export const writesThreads = <P, A, E, R>(
             ...(runtimeMode === caller.limits.runtimeMode
               ? {}
               : { ownChildRuntimeMode: runtimeMode }),
+            ...(options?.ownChildren === undefined || caller.caller === undefined
+              ? {}
+              : { callerThreadId: caller.caller.id }),
             refused,
           }),
           Effect.catch((error) =>

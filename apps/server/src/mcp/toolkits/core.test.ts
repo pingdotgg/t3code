@@ -976,8 +976,8 @@ describe("a thread's own delegated child above its modes", () => {
   /**
    * A parent with a live run on account A, its delegated child (Full-access/default unless `child`
    * says otherwise) stopped and snoozed there, and an unrelated Full-access/default thread. The user
-   * applies `narrow` to the parent once, after a tool's declaration read the parent and before the
-   * tool ran, and `childBeforeWrite` to the child once, as the write reaches thread management.
+   * applies `narrow` to the parent after the declaration read it, and `childBeforeWrite` to the
+   * child and `parentBeforeWrite` to the parent as the write reaches thread management, once each.
    */
   const withOwnChild = <A, E, R>(
     setup: {
@@ -985,6 +985,7 @@ describe("a thread's own delegated child above its modes", () => {
       readonly narrow?: Modes;
       readonly child?: Modes;
       readonly childBeforeWrite?: Modes;
+      readonly parentBeforeWrite?: Modes;
     },
     body: (childId: ThreadId) => Effect.Effect<A, E, R>,
   ) =>
@@ -1076,12 +1077,14 @@ describe("a thread's own delegated child above its modes", () => {
       yield* setModes(parentId, { runtimeMode: setup.parentRuntimeMode });
 
       let narrowPending = setup.narrow !== undefined;
-      let childPending = setup.childBeforeWrite !== undefined;
-      const updateChildModes = (threadId: ThreadId | undefined) =>
+      let writePending = true;
+      const updateModesBeforeWrite = (threadId: ThreadId | undefined) =>
         Effect.suspend(() => {
-          if (threadId !== childId || !childPending) return Effect.void;
-          childPending = false;
-          return setModes(childId, setup.childBeforeWrite);
+          if (threadId !== childId || !writePending) return Effect.void;
+          writePending = false;
+          return setModes(childId, setup.childBeforeWrite).pipe(
+            Effect.andThen(setModes(parentId, setup.parentBeforeWrite)),
+          );
         });
       const threads = ThreadManagement.ThreadManagementService.of({
         ...real,
@@ -1094,10 +1097,10 @@ describe("a thread's own delegated child above its modes", () => {
             }),
           ),
         sendToThread: (input) =>
-          updateChildModes(input.threadId).pipe(Effect.andThen(real.sendToThread(input))),
+          updateModesBeforeWrite(input.threadId).pipe(Effect.andThen(real.sendToThread(input))),
         dispatch: (command) =>
           (command.type === "provider.switch" || command.type === "thread.model-selection.set"
-            ? updateChildModes(command.threadId)
+            ? updateModesBeforeWrite(command.threadId)
             : Effect.void
           ).pipe(Effect.andThen(real.dispatch(command))),
       });
@@ -1184,6 +1187,12 @@ describe("a thread's own delegated child above its modes", () => {
       {
         name: "its own child once its caller drops to plan",
         setup: { parentRuntimeMode: "auto", narrow: { interactionMode: "plan" } },
+        target: "child",
+        code: "interaction_mode_escalation_denied",
+      },
+      {
+        name: "its own child once its caller drops to plan as the write is dispatched",
+        setup: { parentRuntimeMode: "auto", parentBeforeWrite: { interactionMode: "plan" } },
         target: "child",
         code: "interaction_mode_escalation_denied",
       },

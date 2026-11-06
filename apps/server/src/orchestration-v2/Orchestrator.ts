@@ -148,6 +148,7 @@ import {
   DispatchModeLimit,
   exceededDispatchModeLimit,
   narrowToCeiling,
+  narrowToInteractionMode,
   type RuntimeModeCeiling,
   runtimeModeCeilingRefusal,
   threadsStartingWork,
@@ -12471,15 +12472,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
    * Thread lineage and fork origin are immutable, so this
    * is safe to read without holding either thread's dispatch lock.
    */
+  const appOwnedParentOf = (
+    childThread: Pick<OrchestrationV2ThreadShell, "lineage" | "forkedFrom">,
+  ): ThreadId | undefined =>
+    childThread.lineage.relationshipToParent === "subagent" &&
+    childThread.lineage.parentThreadId !== null &&
+    childThread.forkedFrom?.type === "node"
+      ? childThread.lineage.parentThreadId
+      : undefined;
   const appOwnedSubagentParentThreadId = Effect.fn("Orchestrator.appOwnedSubagentParentThreadId")(
     function* (childThreadId: ThreadId) {
-      const childThread = yield* projectionStore.getThread(childThreadId);
-      const lineage = childThread.lineage;
-      return lineage.relationshipToParent === "subagent" &&
-        lineage.parentThreadId !== null &&
-        childThread.forkedFrom?.type === "node"
-        ? lineage.parentThreadId
-        : undefined;
+      return appOwnedParentOf(yield* projectionStore.getThread(childThreadId));
     },
   );
 
@@ -14065,20 +14068,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     // Answering a message-mode question can also start a follow-up.
-    if (
-      command.type !== "runtime-request.respond" &&
-      (command.type !== "message.dispatch" || !mayStartSubagentFollowup(command))
-    )
-      return yield* dispatch;
-    const parentThreadId = yield* appOwnedSubagentParentThreadId(command.threadId).pipe(
-      Effect.mapError(
-        (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+    const followup =
+      command.type === "runtime-request.respond" ||
+      (command.type === "message.dispatch" && mayStartSubagentFollowup(command));
+    const limit = yield* DispatchModeLimit;
+    if (!followup && limit?.callerThreadId === undefined) return yield* dispatch;
+    const threadId = commandThreadId(command);
+    const parentThreadId = yield* (
+      followup
+        ? appOwnedSubagentParentThreadId(threadId)
+        : projectionStore
+            .getThreadShell(threadId)
+            .pipe(Effect.map((shell) => (shell === null ? undefined : appOwnedParentOf(shell))))
+    ).pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+    if (parentThreadId === undefined) return yield* dispatch;
+    if (limit === undefined || parentThreadId !== limit.callerThreadId)
+      return yield* followup ? threadDispatch.withLock(parentThreadId, dispatch) : dispatch;
+    // Follow-up intake and Stop serialize on the parent before taking the child lock. The parent
+    // changes its interaction mode only under its lock, so read the one that bounds its child here.
+    return yield* threadDispatch.withLock(
+      parentThreadId,
+      threadDispatch.withLock(
+        threadId,
+        projectionStore.getThreadShell(parentThreadId).pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: parentThreadId, cause }),
+          ),
+          Effect.flatMap((parent) =>
+            dispatchWithReceiptEffect(command).pipe(
+              Effect.provideService(
+                DispatchModeLimit,
+                narrowToInteractionMode(limit, parent?.interactionMode ?? "plan"),
+              ),
+            ),
+          ),
+        ),
       ),
     );
-    // Follow-up intake and Stop serialize on the parent before taking the child lock.
-    return yield* parentThreadId === undefined
-      ? dispatch
-      : threadDispatch.withLock(parentThreadId, dispatch);
   });
 
   const handleRunUpdate = Effect.fn("Orchestrator.handleRunUpdate")(
