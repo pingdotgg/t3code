@@ -490,11 +490,9 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     if (isLocalDraftThread && prepareDraftSend) {
       sendInFlightRef.current = true;
-      try {
-        await prepareDraftSend();
-      } finally {
+      await prepareDraftSend().finally(() => {
         sendInFlightRef.current = false;
-      }
+      });
       if (currentRouteThreadKeyRef.current !== routeThreadKey || promptRef.current !== promptAtSend)
         return;
     }
