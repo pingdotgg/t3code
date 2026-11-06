@@ -7,9 +7,7 @@ useHead({ title: "Nuxt on Cloudflare" });
 const greeting = useState("greeting", () => {
   if (import.meta.server) {
     const event = useRequestEvent();
-    const env = event?.context.cloudflare?.env as
-      | Record<string, unknown>
-      | undefined;
+    const env = event?.context.cloudflare?.env as Record<string, unknown> | undefined;
     return typeof env?.GREETING === "string" ? env.GREETING : "Hello!";
   }
   return "Hello!";
@@ -23,8 +21,6 @@ const greeting = useState("greeting", () => {
       title="Styled with Tailwind CSS"
       body="This card is a Vue component styled with Tailwind utilities."
     />
-    <NuxtLink class="mt-4 inline-block underline" to="/about"
-      >about (prerendered)</NuxtLink
-    >
+    <NuxtLink class="mt-4 inline-block underline" to="/about">about (prerendered)</NuxtLink>
   </main>
 </template>

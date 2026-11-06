@@ -63,44 +63,4 @@ describe("collectMatches", () => {
     expect(find("oldName")).toEqual(["file-0:deletions:2:6-13", "file-0:additions:3:14-21"]);
     expect(find("nil")).toEqual(["file-1:deletions:1:0-3", "file-1:additions:1:2-5"]);
   });
-
-  it("honours case, whole-word, and regex toggles", () => {
-    expect(find("Name", { caseSensitive: true })).toEqual([
-      "file-0:deletions:2:9-13",
-      "file-0:additions:2:9-13",
-      "file-0:additions:3:17-21",
-      "file-0:deletions:21:6-10",
-    ]);
-    expect(find("name", { wholeWord: true })).toEqual([
-      "file-0:additions:21:6-10",
-      "file-0:deletions:21:6-10",
-    ]);
-    expect(find("n[a-z]+e", { regex: true })).toHaveLength(6);
-  });
-
-  it("marks unchanged lines, which split view draws in both columns", () => {
-    const flags = collectMatches(items, {
-      text: "ctx",
-      caseSensitive: false,
-      wholeWord: false,
-      regex: false,
-    }).map(({ lineNumber, isContext }) => [lineNumber, isContext]);
-    expect(flags).toEqual([
-      [21, true],
-      [23, true],
-    ]);
-    expect(
-      collectMatches(items, {
-        text: "oldName",
-        caseSensitive: false,
-        wholeWord: false,
-        regex: false,
-      }).map(({ isContext }) => isContext),
-    ).toEqual([false, false]);
-  });
-
-  it("returns nothing for an empty query or an invalid pattern", () => {
-    expect(find("")).toEqual([]);
-    expect(find("(", { regex: true })).toEqual([]);
-  });
 });

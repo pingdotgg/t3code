@@ -1,10 +1,13 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { ProviderDriverKind, type ProviderReplayEntry } from "@t3tools/contracts";
+import { EventId, ProviderDriverKind, type ProviderReplayEntry } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import {
   ClaudeOrchestratorReplayHarness,
@@ -12,6 +15,8 @@ import {
 } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as EffectWorker from "../EffectWorker.ts";
+import * as EventSink from "../EventSink.ts";
+import * as Orchestrator from "../Orchestrator.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT } from "./fixtures/claude_background_subagent_after_root/input.ts";
@@ -113,8 +118,7 @@ const readRestartTranscript = Effect.fn("readRestartTranscript")(function* (
     ...recorded,
     entries: [
       ...recorded.entries.slice(0, rootResult + 1),
-
-      { type: "runtime_exit", status: "success" },
+      // Keep the query alive until the crash snapshot is captured.
       {
         type: "expect_outbound",
         label: "query.open:resume",
@@ -155,8 +159,9 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
   const phase2Steps = materialized.steps.slice(firstIdle + 1);
   const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
   const layerDatabase = SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
+  const snapshotPath = path.join(tempDir, "restart-state.sqlite");
   const scenario = (name: string, steps: typeof materialized.steps) => ({
     name: `${SCENARIO}:${name}`,
     transcript,
@@ -166,10 +171,54 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
     runtimePolicyOverride: { cwd: workspace },
   });
 
+  const beforeScenario = scenario("before-restart", phase1Steps);
   const before = yield* Effect.scoped(
-    runOrchestratorV2ProviderReplayScenario(scenario("before-restart", phase1Steps), harness, {
-      databaseLayer: layerDatabase,
-    }),
+    Effect.gen(function* () {
+      const result = yield* runOrchestratorV2Scenario(beforeScenario);
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      yield* worker.drain();
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = materialized.projectionThreadIds[0];
+      if (threadId === undefined) {
+        return yield* Effect.die("restart scenario has no projection thread");
+      }
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const session = projection.providerSessions[0];
+      if (session === undefined) {
+        return yield* Effect.die("restart scenario has no provider session");
+      }
+      // Snapshot the legacy running task before exit cleanup settles it, then
+      // seed the stopped session that older runtimes could leave after a crash.
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:restart-background-note:stopped-provider-session"),
+            type: "provider-session.updated",
+            threadId,
+            providerInstanceId: session.providerInstanceId,
+            occurredAt: now,
+            payload: { ...session, status: "stopped", updatedAt: now, lastError: null },
+          },
+        ],
+      });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`VACUUM INTO ${snapshotPath}`;
+      return result;
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          ProviderReplayHarness.layerProviderReplay(beforeScenario, harness, {
+            databaseLayer: layerDatabase,
+          }),
+          layerDatabase,
+        ),
+      ),
+    ),
+  );
+  const snapshotDatabase = SqlitePersistence.layerFromPath(snapshotPath).pipe(
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
   const settled = projectionFor(before, SCENARIO);
   assert.equal(settled.runs[0]?.status, "completed");
@@ -184,7 +233,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
     }).pipe(
       Effect.provide(
         ProviderReplayHarness.layerProviderReplay(restartScenario, harness, {
-          databaseLayer: layerDatabase,
+          databaseLayer: snapshotDatabase,
           recoverOnStartup: true,
           continueThreadsAfterServerUpdate: input.continueThreadsAfterServerUpdate,
         }),
@@ -201,7 +250,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
 
   const after = yield* Effect.scoped(
     runOrchestratorV2ProviderReplayScenario(scenario("after-restart", phase2Steps), harness, {
-      databaseLayer: layerDatabase,
+      databaseLayer: snapshotDatabase,
       continueThreadsAfterServerUpdate: input.continueThreadsAfterServerUpdate,
     }),
   );
@@ -244,7 +293,9 @@ describe("restart-cancelled background work", () => {
           ]);
         }).pipe(
           provideDeterministicTestRuntime,
-          Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+          Effect.provide(
+            Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
         ),
       ),
   );

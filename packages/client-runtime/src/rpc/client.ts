@@ -31,6 +31,7 @@ export class EnvironmentRpcUnavailableError extends Schema.TaggedError<Environme
 
 export interface EnvironmentRpcRequestObservation {
   readonly environmentId: string;
+  readonly environmentLabel: string;
   readonly method: string;
 }
 
@@ -48,7 +49,6 @@ export type EnvironmentRpcTag = keyof WsRpcProtocolClient & string;
 type RpcMethod<TTag extends EnvironmentRpcTag> = WsRpcProtocolClient[TTag];
 
 export type EnvironmentSubscriptionRpcTag =
-  | typeof WS_METHODS.codexAuthCallbackSubscribe
   | typeof WS_METHODS.providerAuthSubscribe
   | typeof WS_METHODS.providerInstallSubscribe
   | typeof ORCHESTRATION_V2_WS_METHODS.subscribeShell
@@ -61,7 +61,6 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.scheduledTasksSubscribe
   | typeof WS_METHODS.serverGetStorageCleanupReport
   | typeof WS_METHODS.serverGetDatabaseStorage
-  | typeof WS_METHODS.subscribeTerminalEvents
   | typeof WS_METHODS.subscribeTerminalMetadata
   | typeof WS_METHODS.subscribePreviewEvents
   | typeof WS_METHODS.subscribeDiscoveredLocalServers
@@ -203,6 +202,7 @@ export const requestGuarded = Effect.fn("EnvironmentRpc.request")(function* <
   ) => Effect.Effect<EnvironmentRpcSuccess<TTag>, EnvironmentRpcFailure<TTag>>;
   const completeObservation = yield* observer.observe({
     environmentId: supervisor.target.environmentId,
+    environmentLabel: supervisor.target.label,
     method: tag,
   });
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
@@ -236,6 +236,7 @@ export function runStreamGuarded<TTag extends EnvironmentStreamCommandRpcTag>(
 }
 
 interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
+  /** Reports defects; the subscription then waits for the next session or resubscribe. */
   readonly onDefect?: (
     cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
   ) => Effect.Effect<void, never, never>;
@@ -370,6 +371,11 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                           ),
                           Stream.concat(subscribeToSession()),
                         );
+                      }
+                      // A reported defect parks until the next session or resubscribe. Failing would
+                      // end the whole subscription, so a mounted screen never syncs again.
+                      if (options?.onDefect !== undefined && Cause.hasDies(cause)) {
+                        return Stream.empty;
                       }
                       return Stream.failCause(cause);
                     }),

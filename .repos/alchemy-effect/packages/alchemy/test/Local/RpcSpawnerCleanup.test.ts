@@ -1,19 +1,16 @@
-import { PlatformServices } from "@/Util/PlatformServices.ts";
-import { assert, describe, expect, it } from "alchemy-test";
+import { fileURLToPath } from "node:url";
+import { assert, describe, expect, it } from "@alchemy.run/test";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as Schedule from "effect/Schedule";
-import * as Clock from "effect/Clock";
-import {
-  assertDead,
-  lifecycleFixture,
-} from "../Command/fixture/lifecycle-support.ts";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/process/ChildProcess";
-import { fileURLToPath } from "node:url";
+import { PlatformServices } from "@/Util/PlatformServices.ts";
+import { assertDead, lifecycleFixture } from "../Command/fixture/lifecycle-support.ts";
 import {
   assertPidExited,
   isAlive,
@@ -23,25 +20,14 @@ import {
 } from "./fixtures/process-effect.ts";
 import { runtimes } from "./fixtures/runtimes.ts";
 
-const PARENT_TS = fileURLToPath(
-  new URL("./fixtures/rpc-spawner-parent.ts", import.meta.url),
-);
-const CHILD_TS_URL = new URL(
-  "./fixtures/rpc-server-entry.ts",
-  import.meta.url,
-).toString();
+const PARENT_TS = fileURLToPath(new URL("./fixtures/rpc-spawner-parent.ts", import.meta.url));
+const CHILD_TS_URL = new URL("./fixtures/rpc-server-entry.ts", import.meta.url).toString();
 const DEVSERVER_PARENT_TS = fileURLToPath(
   new URL("./fixtures/rpc-spawner-devserver-parent.ts", import.meta.url),
 );
 // The dev sidecar entry plus the provider group it serves `Command.Dev` from.
-const SIDECAR_TS_URL = new URL(
-  "../../src/Local/Sidecar.ts",
-  import.meta.url,
-).toString();
-const COMMAND_PROVIDERS_TS_URL = new URL(
-  "../../src/Command/Local.ts",
-  import.meta.url,
-).toString();
+const SIDECAR_TS_URL = new URL("../../src/Local/Sidecar.ts", import.meta.url).toString();
+const COMMAND_PROVIDERS_TS_URL = new URL("../../src/Command/Local.ts", import.meta.url).toString();
 const LONG_RUNNING_CJS = fileURLToPath(
   new URL("../Command/fixture/long-running.cjs", import.meta.url),
 );
@@ -68,8 +54,7 @@ for (const runtime of runtimes()) {
           Stream.run(
             Sink.fold(
               () => "",
-              (acc) =>
-                !acc.includes("CHILD_URL=") || !acc.includes("PARENT_PID="),
+              (acc) => !acc.includes("CHILD_URL=") || !acc.includes("PARENT_PID="),
               (acc, chunk) => Effect.succeed(acc + chunk),
             ),
           ),
@@ -80,26 +65,16 @@ for (const runtime of runtimes()) {
         );
 
         const childUrl = output.match(/CHILD_URL=(\S+)/)?.[1];
-        const parentPid = Number.parseInt(
-          output.match(/PARENT_PID=(\d+)/)?.[1]!,
-          10,
-        );
+        const parentPid = Number.parseInt(output.match(/PARENT_PID=(\d+)/)?.[1]!, 10);
 
         assert(childUrl, `child url not found in output: ${output}`);
-        assert(
-          !Number.isNaN(parentPid),
-          `parent pid not found in output: ${output}`,
-        );
+        assert(!Number.isNaN(parentPid), `parent pid not found in output: ${output}`);
 
         const childPid = yield* pidListeningOn(childUrl);
 
         yield* Effect.addFinalizer(() => killPid(childPid, "SIGKILL"));
 
-        return {
-          child,
-          parentPid,
-          childPid,
-        };
+        return { child, parentPid, childPid };
       });
 
       it.live(
@@ -137,9 +112,7 @@ for (const runtime of runtimes()) {
             const [bin, ...args] = runtime.argv(DEVSERVER_PARENT_TS);
             const fs = yield* FileSystem.FileSystem;
             // `/tmp` doesn't exist on Windows — use a real temp directory.
-            const tmpDir = yield* fs.makeTempDirectoryScoped({
-              prefix: "alchemy-devserver-",
-            });
+            const tmpDir = yield* fs.makeTempDirectoryScoped({ prefix: "alchemy-devserver-" });
             const pidFile = `${tmpDir}/${process.pid}-${runtime.name}.json`;
             const child = yield* ChildProcess.make(
               bin,
@@ -150,19 +123,14 @@ for (const runtime of runtimes()) {
                 `node ${LONG_RUNNING_CJS}`,
                 pidFile,
               ],
-              {
-                stdout: "pipe",
-                forceKillAfter: "1 second",
-              },
+              { stdout: "pipe", forceKillAfter: "1 second" },
             );
             const output = yield* child.stdout.pipe(
               Stream.decodeText,
               Stream.run(
                 Sink.fold(
                   () => "",
-                  (acc) =>
-                    !acc.includes("PARENT_PID=") ||
-                    !acc.includes("DEVSERVER_PID="),
+                  (acc) => !acc.includes("PARENT_PID=") || !acc.includes("DEVSERVER_PID="),
                   (acc, chunk) => Effect.succeed(acc + chunk),
                 ),
               ),
@@ -171,23 +139,11 @@ for (const runtime of runtimes()) {
               Effect.timeout("30 seconds"),
             );
 
-            const parentPid = Number.parseInt(
-              output.match(/PARENT_PID=(\d+)/)?.[1]!,
-              10,
-            );
-            const devServerPid = Number.parseInt(
-              output.match(/DEVSERVER_PID=(\d+)/)?.[1]!,
-              10,
-            );
+            const parentPid = Number.parseInt(output.match(/PARENT_PID=(\d+)/)?.[1]!, 10);
+            const devServerPid = Number.parseInt(output.match(/DEVSERVER_PID=(\d+)/)?.[1]!, 10);
 
-            assert(
-              !Number.isNaN(parentPid),
-              `parent pid not found in output: ${output}`,
-            );
-            assert(
-              !Number.isNaN(devServerPid),
-              `dev server pid not found in output: ${output}`,
-            );
+            assert(!Number.isNaN(parentPid), `parent pid not found in output: ${output}`);
+            assert(!Number.isNaN(devServerPid), `dev server pid not found in output: ${output}`);
 
             yield* Effect.addFinalizer(() => killPid(devServerPid, "SIGKILL"));
 
@@ -235,24 +191,18 @@ it.live.skipIf(process.platform === "win32")(
         forceKillAfter: "6 seconds",
       });
       expect(
-        yield* fs.exists(ready).pipe(
-          Effect.repeat({
-            schedule: Schedule.spaced("50 millis"),
-            until: Boolean,
-            times: 400,
-          }),
-        ),
+        yield* fs
+          .exists(ready)
+          .pipe(
+            Effect.repeat({ schedule: Schedule.spaced("50 millis"), until: Boolean, times: 400 }),
+          ),
       ).toBe(true);
       const pids = yield* Effect.forEach(fixtures, (fixture) => fixture.ready);
       const start = yield* Clock.currentTimeMillis;
-      yield* parent.kill({
-        killSignal: "SIGTERM",
-        forceKillAfter: "6 seconds",
-      });
+      yield* parent.kill({ killSignal: "SIGTERM", forceKillAfter: "6 seconds" });
       expect((yield* Clock.currentTimeMillis) - start).toBeLessThan(5000);
       expect(yield* fixtures[3]!.has("wrapper.clean")).toBe(true);
-      for (const fixture of fixtures)
-        expect(yield* fixture.has("wrapper.term")).toBe(true);
+      for (const fixture of fixtures) expect(yield* fixture.has("wrapper.term")).toBe(true);
       for (const pair of pids) {
         yield* assertDead(pair.wrapper);
         yield* assertDead(pair.leaf);

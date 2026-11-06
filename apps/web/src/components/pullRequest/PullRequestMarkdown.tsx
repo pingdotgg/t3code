@@ -1,9 +1,14 @@
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
-import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
-import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  SOURCE_CONTROL_MEDIA_ASSET,
+  type AssetResource,
+  type EnvironmentId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { createContext, useContext } from "react";
-import type { Options as ReactMarkdownOptions } from "react-markdown";
+import type { PluggableList } from "unified";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { cn } from "~/lib/utils";
@@ -11,25 +16,36 @@ import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 
 import ChatMarkdown from "../ChatMarkdown";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
-import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
+import { splitPullRequestBody } from "./pullRequestMarkdown.logic";
 
 export const PullRequestMarkdownContext = createContext<{
-  repositoryUrl: string | null;
+  /** Stable per repository, so comments share one renderer and its parse cache. */
+  remarkPlugins: PluggableList;
+  lineBreaks: boolean;
   threadRef: ScopedThreadRef | null;
+  /** The change request's `owner/name`, which can differ from the checkout the body renders in. */
+  repository: string | null;
 } | null>(null);
 
-function PullRequestGitHubVideo({
+function PullRequestHostVideo({
   environmentId,
   cwd,
   url,
   fetchUrl,
+  repository,
 }: {
   environmentId: EnvironmentId;
   cwd: string;
   url: string;
   fetchUrl: string;
+  repository: string | undefined;
 }) {
-  const resource: AssetResource = { _tag: "github-media", cwd, url: fetchUrl };
+  const resource: AssetResource = {
+    _tag: SOURCE_CONTROL_MEDIA_ASSET,
+    cwd,
+    url: fetchUrl,
+    ...(repository ? { repository } : {}),
+  };
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
   const src =
@@ -51,21 +67,23 @@ export function PullRequestMarkdown({
   cwd,
   environmentId,
   threadRef,
+  lineBreaks,
   className,
+  onTaskListChange,
 }: {
   text: string;
   cwd: string;
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | null;
+  lineBreaks?: boolean;
   className?: string;
+  /** `markerOffset` is into `text`. Checkboxes stay read-only without it. */
+  onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
 }) {
   const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
-  const repositoryUrl = context?.repositoryUrl;
+  const repository = context?.repository ?? undefined;
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
-  const extraRemarkPlugins: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = repositoryUrl
-    ? [[remarkPullRequestAutolinks, { repositoryUrl }]]
-    : [];
   return (
     <div
       className={cn(
@@ -84,20 +102,32 @@ export function PullRequestMarkdown({
               threadRef={resolvedThreadRef}
               pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
               environmentId={environmentId}
-              extraRemarkPlugins={extraRemarkPlugins}
-              githubMedia
+              {...(context ? { extraRemarkPlugins: context.remarkPlugins } : {})}
+              lineBreaks={lineBreaks ?? context?.lineBreaks ?? false}
+              sourceControlMedia
+              sourceControlMediaRepository={repository}
+              onTaskListChange={
+                onTaskListChange && segment.kind === "markdown"
+                  ? ({ markerOffset, checked }) =>
+                      onTaskListChange({
+                        markerOffset: segment.sourceOffset + markerOffset,
+                        checked,
+                      })
+                  : undefined
+              }
             />
           );
         }
-        const githubMediaUrl = segment.media === "video" ? githubMediaFetchUrl(segment.url) : null;
-        if (githubMediaUrl !== null) {
+        const hostMedia = sourceControlClients.mediaUrl(segment.url);
+        if (segment.media === "video" && hostMedia !== null) {
           return (
-            <PullRequestGitHubVideo
+            <PullRequestHostVideo
               key={`${segment.id}:${segment.url}`}
               environmentId={environmentId}
               cwd={cwd}
               url={segment.url}
-              fetchUrl={githubMediaUrl}
+              fetchUrl={hostMedia.fetchUrl}
+              repository={repository}
             />
           );
         }
@@ -114,9 +144,7 @@ export function PullRequestMarkdown({
           );
         }
         return (
-          // A plain anchor rather than the page's openExternal button: the desktop window
-          // turns a blocked _blank into openExternal itself, and in a browser tab — where
-          // there is no shell to call — this is the only one of the two that goes anywhere.
+          // Desktop converts blocked _blank navigation to openExternal.
           <a
             key={segment.id}
             href={segment.url}
@@ -125,7 +153,9 @@ export function PullRequestMarkdown({
             className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm hover:bg-muted/60"
           >
             <PaperclipIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate">Open attachment on GitHub</span>
+            <span className="min-w-0 flex-1 truncate">
+              Open attachment on {hostMedia?.definition.label ?? new URL(segment.url).hostname}
+            </span>
             <ExternalLinkIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
           </a>
         );

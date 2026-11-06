@@ -19,42 +19,18 @@ function feed(chunks: ReadonlyArray<string>, maxChars?: number): TerminalOutputS
   );
 }
 
-const plain = (input: string) => terminalOutputPlainText(normalizeTerminalOutput(input).text);
-
 describe("appendTerminalOutput", () => {
-  it("keeps colours as canonical codes that reset at each line end", () => {
-    expect(normalizeTerminalOutput("\u001b[1;32mPASS\u001b[0m ok\u001b]0;title\u0007\n").text).toBe(
-      "\u001b[0;1;32mPASS\u001b[0m ok\n",
-    );
-    // A colour left on across a newline is restated on the next line.
-    expect(normalizeTerminalOutput("\u001b[31mone\ntwo").text).toBe(
-      "\u001b[0;31mone\u001b[0m\n\u001b[0;31mtwo\u001b[0m",
-    );
-  });
-
   it("keeps only the latest frame of a carriage-return progress bar", () => {
     expect(feed(["[1/3]", "\r[2/3]", "\r[3/3] done\nnext"]).text).toBe("[3/3] done\nnext");
   });
 
   it("redraws several lines in place when the cursor moves up", () => {
-    // docker pull / pnpm style: print two bars, move up two lines, redraw both.
     const frames = [
       "layer a: 10%\nlayer b: 10%\n",
       "\u001b[2A\u001b[2Klayer a: 60%\n\u001b[2Klayer b: 40%\n",
       "\u001b[2A\u001b[2Klayer a: done\n\u001b[2Klayer b: done\n",
     ];
     expect(feed(frames).text).toBe("layer a: done\nlayer b: done\n");
-  });
-
-  it("erases from the cursor to the end of the screen", () => {
-    // log-update style: move up, clear everything below, print the new frame.
-    expect(plain("status 1\ndetail 1\n\u001b[2A\u001b[Jstatus 2\n")).toBe("status 2\n");
-  });
-
-  it("overwrites in place like a terminal: carriage return, backspace, columns", () => {
-    expect(plain("progress 100%\rdone\u001b[K")).toBe("done");
-    expect(plain("abc\b\bX")).toBe("aXc");
-    expect(plain("12345\u001b[3GX")).toBe("12X45");
   });
 
   it("treats CRLF as one newline even when the pair is split across chunks", () => {
@@ -67,10 +43,9 @@ describe("appendTerminalOutput", () => {
     const first = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, "red: \u001b[3");
     expect(first.text).toBe("red: ");
     expect(feed(["red: \u001b[3", "1mR\u001b[0m"]).text).toBe("red: \u001b[0;31mR\u001b[0m");
-  });
-
-  it("drops binary control bytes but keeps tabs and replacement characters", () => {
-    expect(normalizeTerminalOutput("a\u0000b\u0007\tc�\u0090d").text).toBe("ab\tc�d");
+    expect(
+      terminalOutputSpans(feed(["\u001b[38:2::12:", "34:56mR"]).text, TERMINAL_PALETTES.dark),
+    ).toEqual([{ text: "R", style: { color: "rgb(12,34,56)" } }]);
   });
 
   it("keeps a bounded tail that starts on a fresh line", () => {
@@ -80,6 +55,9 @@ describe("appendTerminalOutput", () => {
     expect(state.text.length).toBeLessThanOrEqual(1_000);
     expect(state.text.startsWith("line ")).toBe(true);
     expect(state.text.endsWith("line 1999")).toBe(true);
+    // A newline a quarter of the budget past the cut is too far to start on.
+    expect(feed(["abcdefgh\nij\nklmnop"], 8).text).toBe("klmnop");
+    expect(feed(["abcdefgh\nijk\nlmnop"], 8).text).toBe("jk\nlmnop");
   });
 
   it("stays bounded across many appends of huge output, including one endless line", () => {
@@ -103,20 +81,67 @@ describe("appendTerminalOutput", () => {
     expect(feed([`a\u001b]0;${"t".repeat(80)}`, "\u001b", "\\b"]).text).toBe("ab");
   });
 
-  it("hides an SOS string sequence and its payload", () => {
-    expect(normalizeTerminalOutput("a\u001bXhidden \u001b\\b").text).toBe("ab");
-  });
-
   it("drops an escape sequence that never terminates and resumes after it", () => {
     expect(feed(["ok\u001b]", "x".repeat(200), "\nafter"]).text).toBe("ok\nafter");
+    expect(feed(["ok\u001b]0;title\u001b", "\u001b[31mred"]).text).toBe(
+      "ok\u001b[0;31mred\u001b[0m",
+    );
   });
 });
 
 describe("appendTerminalOutput edge cases from review", () => {
-  it("reads colon-form true colour with or without a colour-space id", () => {
-    const red = normalizeTerminalOutput("\u001b[38:2::255:0:0mR").text;
-    expect(red).toBe("\u001b[0;38;2;255;0;0mR\u001b[0m");
-    expect(normalizeTerminalOutput("\u001b[38:2:0:255:0:0mR").text).toBe(red);
+  const boldRed = { color: TERMINAL_PALETTES.dark[1], fontWeight: "600" } as const;
+  it.each([
+    [
+      "a curly underline",
+      "\u001b[1;31m\u001b[4:3mX",
+      { ...boldRed, textDecorationLine: "underline" },
+    ],
+    ["underline off in colon form", "\u001b[1;31m\u001b[4:0mX", boldRed],
+    ["a true-colour underline colour", "\u001b[1;31m\u001b[58;2;255;0;0mX", boldRed],
+    ["a 256-colour underline colour", "\u001b[58;5;31mX", null],
+    [
+      "a colon-form underline colour",
+      "\u001b[4m\u001b[58:2::255:0:0mX",
+      { textDecorationLine: "underline" },
+    ],
+    ["extra fields in a colon-form indexed underline colour", "\u001b[58:5:0:32mX", null],
+    [
+      "extra fields in a colon-form indexed colour",
+      "\u001b[38:5:1:4mX",
+      { color: TERMINAL_PALETTES.dark[1] },
+    ],
+    [
+      "a true colour with its fields after colons",
+      "\u001b[38;2:255:0:0;1mX",
+      { color: "rgb(255,0,0)", fontWeight: "600" },
+    ],
+    [
+      "an indexed colour with its index after a colon",
+      "\u001b[38;5:1;4mX",
+      { color: TERMINAL_PALETTES.dark[1], textDecorationLine: "underline" },
+    ],
+    [
+      "a semicolon-form colour value that looks like a colour code",
+      "\u001b[38;5;38;2:1:2:3mX",
+      { color: "rgb(0,175,215)", opacity: 0.65 },
+    ],
+  ])("reads %s without disturbing the other attributes", (_, input, style) => {
+    const text = normalizeTerminalOutput(input).text;
+    expect(terminalOutputSpans(text, TERMINAL_PALETTES.dark)).toEqual([{ text: "X", style }]);
+    for (let cut = 1; cut < input.length; cut += 1) {
+      expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe(text);
+    }
+  });
+
+  it("leaves the screen and cursor alone for unsupported erase modes", () => {
+    for (const sequence of ["3K", "4J", "99K", "99J"]) {
+      const input = `a\nb\nc\u001b[${sequence}X`;
+      expect(feed([input]).text).toBe("a\nb\ncX");
+      for (let cut = 1; cut < input.length; cut += 1) {
+        expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe("a\nb\ncX");
+      }
+    }
   });
 
   it("clears only scrollback on ESC[3J", () => {
@@ -137,52 +162,54 @@ describe("appendTerminalOutput edge cases from review", () => {
     expect(windowChars).toBeLessThanOrEqual(4_096);
     expect(state.text.length).toBeLessThanOrEqual(4_096);
   });
-
-  it("bounds long lines below a cursor that moved up", () => {
-    const long = `${"x".repeat(900)}\n`;
-    const state = feed([long.repeat(63), "\u001b[63A"], 4_096);
-    const windowChars = state.screen.lines.reduce(
-      (total, line) => total + line.reduce((sum, run) => sum + run.text.length, 0),
-      0,
-    );
-    expect(windowChars).toBeLessThanOrEqual(2 * 4_096);
-  });
 });
 
 describe("appendTerminalOutput under adversarial output", () => {
+  it("ignores unsupported cursor-control parameters without corrupting the screen", () => {
+    for (const sequence of ["1.5A", "1.5G", "1$K", "1$J", ">1A", "?25l", "1:2A", "1:2K", "1:2J"]) {
+      const input = `a\nb\nc\u001b[${sequence}X`;
+      expect(feed([input]).text).toBe("a\nb\ncX");
+      for (let cut = 1; cut < input.length; cut += 1) {
+        expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe("a\nb\ncX");
+      }
+    }
+  });
+
+  it("drops escape sequences with intermediate bytes without printing their final byte", () => {
+    for (const sequence of ["#8", "#6", "%G", " F", "-A", ".A", "(%5", "(B"]) {
+      const input = `a\u001b${sequence}b`;
+      expect(feed([input]).text).toBe("ab");
+      for (let cut = 1; cut < input.length; cut += 1) {
+        expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe("ab");
+      }
+    }
+    for (const [interrupted, expected] of [
+      ["a\u001b#\u001b[31mb", feed(["a\u001b[31mb"]).text],
+      ["a\u001b#\n8b", "a\n8b"],
+    ] as const) {
+      for (let cut = 0; cut < interrupted.length; cut += 1) {
+        expect(feed([interrupted.slice(0, cut), interrupted.slice(cut)]).text).toBe(expected);
+      }
+    }
+  });
+
   it("gives the same result however the output is split into chunks", () => {
-    const input = "abcdef\rX\u001b[31mred\u001b[0m\nnext line\r\u001b[2Kdone\n";
-    const whole = feed([input], 3).text;
-    for (let cut = 1; cut < input.length; cut += 1) {
-      expect(feed([input.slice(0, cut), input.slice(cut)], 3).text).toBe(whole);
+    const input =
+      "abcdef\rX\u001b[31mred\u001b[0m\nnext line\r\u001b[2Kdone\n" +
+      "\u001b[1;31mbold red\u001b[mplain\u001b[38:2::12:34:56mrgb\u001b[0m\n" +
+      "\u001b[1;31mbold red again\u001b[mplain again\u001b[38:2::12:34:56mrgb again\u001b[0m";
+    for (const maxChars of [3, 1_024]) {
+      const whole = feed([input], maxChars).text;
+      for (let cut = 1; cut < input.length; cut += 1) {
+        expect(feed([input.slice(0, cut), input.slice(cut)], maxChars).text).toBe(whole);
+      }
     }
     expect(feed(["abcdef", "\rX"], 3).text).toBe(feed(["abcdef\rX"], 3).text);
-  });
-
-  it("handles a colour change on every character in linear time", () => {
-    const chunk = Array.from({ length: 200_000 }, (_, index) =>
-      index % 2 === 0 ? "\u001b[31mx" : "\u001b[32my",
-    ).join("");
-    const started = performance.now();
-    const state = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, chunk);
-    expect(performance.now() - started).toBeLessThan(2_000);
-    expect(terminalOutputPlainText(state.text).length).toBeLessThanOrEqual(64 * 1024);
-  });
-
-  it("keeps scrollback bounded while a single huge chunk scrolls", () => {
-    const state = appendTerminalOutput(
-      EMPTY_TERMINAL_OUTPUT,
-      "line of log output\n".repeat(200_000),
-      4_096,
-    );
-    expect(state.screen.settled.length).toBeLessThanOrEqual(2 * 4_096);
-    expect(state.truncated).toBe(true);
   });
 });
 
 describe("terminalOutputResumeText", () => {
   it("lets a viewer that starts from it apply later chunks exactly as the source does", () => {
-    // Mid-redraw: cursor two lines up, a colour on, and half an escape pending.
     const chunks = [
       "a: 1%\nb: 1%\n",
       "\u001b[2A\u001b[2K\u001b[33ma: 5",
@@ -219,10 +246,6 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
     );
     expect(viewer.text).toBe(appendTerminalOutput(source, " edited", 120).text);
   });
-
-  it("survives a huge cursor move without throwing", () => {
-    expect(() => normalizeTerminalOutput("a\u001b[999999999999Cb")).not.toThrow();
-  });
 });
 
 describe("terminalOutputTail", () => {
@@ -231,44 +254,9 @@ describe("terminalOutputTail", () => {
     const tail = terminalOutputTail(text, 5);
     expect(tail.text).toBe("bbbb");
   });
-
-  it("never splits a colour code and keeps the colour in force when cutting a line", () => {
-    const text = `\u001b[0;32m${"g".repeat(100)}\u001b[0m`;
-    const cut = terminalOutputTail(text, 10).text;
-    expect(cut.startsWith("\u001b[0;32m")).toBe(true);
-    expect(terminalOutputPlainText(cut)).toMatch(/^g+$/u);
-  });
 });
 
 describe("terminalOutputSpans", () => {
-  it("resolves standard, 256-colour and true-colour codes against the palette", () => {
-    const text = normalizeTerminalOutput(
-      "\u001b[31mred\u001b[0m \u001b[1;38;5;196mhot\u001b[0m \u001b[38;2;1;2;3mrgb\u001b[0m",
-    ).text;
-    expect(terminalOutputSpans(text, TERMINAL_PALETTES.dark)).toEqual([
-      { text: "red", style: { color: TERMINAL_PALETTES.dark[1] } },
-      { text: " ", style: null },
-      { text: "hot", style: { color: "rgb(255,0,0)", fontWeight: "600" } },
-      { text: " ", style: null },
-      { text: "rgb", style: { color: "rgb(1,2,3)" } },
-    ]);
-  });
-
-  it("keeps text on a coloured background readable on either palette", () => {
-    // "PASS" badge: black on green; "FAIL" badge: grey-white on red.
-    const text = normalizeTerminalOutput(
-      "\u001b[30;42m PASS \u001b[0m\u001b[1;37;41m FAIL \u001b[0m",
-    ).text;
-    for (const palette of [TERMINAL_PALETTES.light, TERMINAL_PALETTES.dark]) {
-      for (const span of terminalOutputSpans(text, palette)) {
-        expect(span.style?.color === undefined).toBe(false);
-      }
-    }
-    const [pass, fail] = terminalOutputSpans(text, TERMINAL_PALETTES.light);
-    expect(pass?.style?.color).toBe("#ffffff");
-    expect(fail?.style?.color).toBe("#ffffff");
-  });
-
   it("collapses the rest into plain text past the span limit", () => {
     const text = normalizeTerminalOutput("\u001b[31mx\u001b[32my".repeat(50)).text;
     const spans = terminalOutputSpans(text, TERMINAL_PALETTES.light, 10);

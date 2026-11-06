@@ -1,33 +1,36 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import Animated, {
+  cubicBezier,
   runOnJS,
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
   withTiming,
   type SharedValue,
 } from "react-native-reanimated";
 
 import { constrainAuxiliaryPaneWidth, type WorkspacePaneLayout } from "../../lib/layout";
-import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspacePaneDivider } from "./workspace-pane-divider";
+import { InspectorPanes } from "./inspector-host";
+import type { InspectorContent } from "./inspector-panes";
 
-/**
- * Receives the pane layout via props (not the workspace context hook) so this module stays
- * import-cycle-free with AdaptiveWorkspaceLayout.
- */
+// CSS form of WORKSPACE_PANE_TIMING's Easing.inOut(Easing.cubic).
+const PANE_EASING = cubicBezier(0.65, 0, 0.35, 1);
+
+/** Pass layout props to avoid an import cycle with AdaptiveWorkspaceLayout. */
 export function WorkspaceInspectorPane(props: {
-  readonly pathname: string;
   readonly renderedInspectorWidth: SharedValue<number>;
   readonly active?: boolean;
+  readonly onClose: () => void;
   readonly onClosed?: () => void;
   readonly panes: WorkspacePaneLayout;
-  readonly renderInspector?: () => ReactNode;
+  readonly content: InspectorContent | undefined;
   readonly setAuxiliaryPaneWidth: (width: number) => void;
 }) {
   const { panes, setAuxiliaryPaneWidth } = props;
   const inspectorWidth = panes.auxiliaryPaneWidth;
-  const inspectorSupported = props.renderInspector !== undefined && inspectorWidth !== null;
+  const inspectorSupported = props.content !== undefined && inspectorWidth !== null;
   const inspectorVisible =
     inspectorSupported && panes.auxiliaryPaneVisible && (props.active ?? true);
   const resizeStartWidth = useRef(0);
@@ -35,23 +38,22 @@ export function WorkspaceInspectorPane(props: {
 
   const inspectorProgress = useSharedValue(inspectorVisible ? 1 : 0);
   const { renderedInspectorWidth } = props;
-  const renderedContentWidth = useSharedValue(inspectorWidth ?? 0);
+  const reduceMotion = useReducedMotion();
 
   const onClosed = props.onClosed;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- animates the Reanimated inspector progress and width shared values when visibility or width changes
   useEffect(() => {
-    inspectorProgress.value = withTiming(
-      inspectorVisible ? 1 : 0,
-      WORKSPACE_PANE_TIMING,
-      (finished) => {
+    inspectorProgress.set(
+      withTiming(inspectorVisible ? 1 : 0, WORKSPACE_PANE_TIMING, (finished) => {
         if (finished === true && !inspectorVisible && onClosed !== undefined) {
           runOnJS(onClosed)();
         }
-      },
+      }),
     );
     const targetWidth = inspectorVisible ? (inspectorWidth ?? 0) : 0;
-    renderedInspectorWidth.value = resizing
-      ? targetWidth
-      : withTiming(targetWidth, WORKSPACE_PANE_TIMING);
+    renderedInspectorWidth.set(
+      resizing ? targetWidth : withTiming(targetWidth, WORKSPACE_PANE_TIMING),
+    );
   }, [
     inspectorProgress,
     inspectorVisible,
@@ -61,15 +63,6 @@ export function WorkspaceInspectorPane(props: {
     resizing,
   ]);
 
-  useEffect(() => {
-    const targetWidth = inspectorWidth ?? 0;
-    if (!inspectorVisible || resizing) {
-      renderedContentWidth.value = targetWidth;
-      return;
-    }
-    renderedContentWidth.value = withTiming(targetWidth, WORKSPACE_PANE_TIMING);
-  }, [inspectorVisible, inspectorWidth, renderedContentWidth, resizing]);
-
   const inspectorStyle = useAnimatedStyle(
     () => ({
       opacity: inspectorProgress.value,
@@ -78,25 +71,29 @@ export function WorkspaceInspectorPane(props: {
     }),
     [],
   );
-  const inspectorContentStyle = useAnimatedStyle(() => ({ width: renderedContentWidth.value }), []);
-  const beginResize = useCallback(() => {
+  // A hidden or resizing pane takes its width at once; a visible one eases with the column.
+  const inspectorContentStyle = {
+    width: inspectorWidth ?? 0,
+    transitionProperty: "width",
+    transitionDuration:
+      !inspectorVisible || resizing || reduceMotion ? 0 : WORKSPACE_PANE_TIMING.duration,
+    transitionTimingFunction: PANE_EASING,
+  } as const;
+  const beginResize = () => {
     resizeStartWidth.current = inspectorWidth ?? 0;
     setResizing(true);
-  }, [inspectorWidth]);
-  const resizeBy = useCallback(
-    (delta: number) => {
-      setAuxiliaryPaneWidth(
-        constrainAuxiliaryPaneWidth({
-          preferredWidth: resizeStartWidth.current + delta,
-          availableWidth: panes.contentPaneWidth,
-        }),
-      );
-    },
-    [panes.contentPaneWidth, setAuxiliaryPaneWidth],
-  );
-  const endResize = useCallback(() => {
+  };
+  const resizeBy = (delta: number) => {
+    setAuxiliaryPaneWidth(
+      constrainAuxiliaryPaneWidth({
+        preferredWidth: resizeStartWidth.current + delta,
+        availableWidth: panes.contentPaneWidth,
+      }),
+    );
+  };
+  const endResize = () => {
     setResizing(false);
-  }, []);
+  };
 
   return (
     <>
@@ -120,23 +117,10 @@ export function WorkspaceInspectorPane(props: {
           style={inspectorStyle}
         >
           <Animated.View className="flex-1" style={inspectorContentStyle}>
-            <RenderErrorBoundary
-              resetKeys={[props.pathname]}
-              renderFallback={(fallback) => (
-                <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
-              )}
-            >
-              <InspectorRenderer render={props.renderInspector} />
-            </RenderErrorBoundary>
+            <InspectorPanes content={props.content} onClose={props.onClose} />
           </Animated.View>
         </Animated.View>
       ) : null}
     </>
   );
-}
-
-// The render callback must run inside the boundary's child, not while its
-// parent constructs the boundary element.
-function InspectorRenderer(props: { readonly render?: () => ReactNode }) {
-  return <>{props.render?.()}</>;
 }

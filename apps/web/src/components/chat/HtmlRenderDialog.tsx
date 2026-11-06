@@ -35,7 +35,7 @@ export function HtmlRenderDialog(props: {
           >
             <XIcon />
           </Button>
-          <div className="h-[min(86vh,calc(100vh-160px))] overflow-auto overscroll-contain rounded-lg bg-background shadow-2xl ring-1 ring-border/70 [container-type:size]">
+          <div className="h-[min(86vh,calc(100vh-160px))] overflow-auto overscroll-contain rounded-lg bg-background p-4 shadow-2xl ring-1 ring-border/70 [container-type:size]">
             <div className="h-[100cqh] w-[100cqw]" style={{ zoom }}>
               <HtmlRenderDocument
                 src={props.src}

@@ -33,7 +33,8 @@ describe("ignored command prefix persistence", () => {
             stored = Option.some({ payload, updatedAt });
           }),
       });
-      const makeStore = MobilePreferences.make().pipe(
+      const makeStore = MobilePreferences.MobilePreferencesStore.pipe(
+        Effect.provide(MobilePreferences.layer),
         Effect.provideService(MobileDatabase, database),
         Effect.provideService(MobileSecureStorage, {
           getItem: () => Effect.succeed(null),

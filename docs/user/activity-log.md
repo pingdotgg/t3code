@@ -6,7 +6,7 @@ command's output updates live, and long output shows only its most recent part. 
 a file change to review its contents.
 
 To hide command wrappers in activity labels and previews, add their prefixes under **Settings >
-General > Top-level commands to ignore** on web and desktop, or **Settings > Thread behavior > Top-level
+General > Top-level commands to ignore** on web and desktop, or **Settings > General > Top-level
 commands to ignore** on mobile. Enter one prefix per line. Prefixes can include subcommands, and
 the longest matching prefix takes priority. This preference is saved separately in each browser or app. Remove
 a prefix or reset the list to show it again. Expanded details and copied commands keep the full
@@ -24,3 +24,14 @@ Failed calls do not count as successful messages or creations. Waiting on a thre
 it finished, and an interrupt or cancellation request does not mean the thread stopped. When tool
 details are unavailable, summaries use a broader description instead of guessing how many threads
 were affected.
+
+## Hide tool calls
+
+**Settings → Labs → Tool calls in chat** hides commands, file edits, searches, and MCP tool calls
+from the conversation. **Hide successful** shows a call while it runs and keeps
+it only if it fails. **Hide all** hides every call and shows **Thinking** while the agent works.
+**Zen** also hides the agent's in-between messages, so each turn shows your message
+and the agent's last reply, which appears when the turn ends. If you steer while the agent is
+answering, the answer it finished before reading your steer stays too. On web and desktop, Find
+shows the in-between messages while it is open. Approvals, questions, and errors always show. The
+setting applies to this browser or device only.

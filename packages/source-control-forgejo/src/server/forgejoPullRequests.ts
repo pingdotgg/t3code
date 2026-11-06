@@ -35,6 +35,7 @@ export function toForgejoChangeRequest(raw: typeof ForgejoPullRequestSchema.Type
     isDraft: raw.draft ?? /^(?:\[WIP\]|WIP:)/i.test(raw.title),
     baseRefName: raw.base.ref,
     headRefName: raw.head.ref,
+    ...(raw.head.sha.trim().length > 0 ? { headSha: raw.head.sha.trim() } : {}),
     closedAt: raw.closed_at ?? null,
     mergedAt: raw.merged_at ?? null,
     updatedAt: raw.updated_at ?? Option.none(),

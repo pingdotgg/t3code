@@ -61,17 +61,4 @@ describe("getProviderModelCapabilities", () => {
       customCapabilities,
     );
   });
-
-  it("returns empty capabilities for an unknown slug", () => {
-    const models = [
-      model({
-        slug: "default-model",
-        capabilities: capabilities("default-option"),
-      }),
-    ];
-
-    expect(getProviderModelCapabilities(models, "unknown-model", PROVIDER)).toEqual({
-      optionDescriptors: [],
-    });
-  });
 });

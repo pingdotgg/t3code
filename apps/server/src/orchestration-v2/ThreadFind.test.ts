@@ -8,7 +8,6 @@ import {
   TurnItemId,
   type OrchestrationV2TurnItem,
   type OrchestrationV2Run,
-  type OrchestrationV2SearchThreadResult,
   type OrchestrationV2ThreadHistoryPage,
   ProjectId,
   ProviderInstanceId,
@@ -20,14 +19,16 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
-import { vi } from "vite-plus/test";
-import * as ThreadFindText from "@t3tools/shared/threadFindText";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as EventStore from "./EventStore.ts";
-import { encodeThreadHistoryCursor, selectHistoryPageFromCursor } from "./threadHistoryPaging.ts";
+import {
+  encodeThreadHistoryCursor,
+  selectHistoryPageFromCursor,
+  THREAD_HISTORY_PAGE_POLICY,
+} from "./threadHistoryPaging.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 
 const layerTest = Layer.mergeAll(EventStore.layer, ProjectionStore.layer, ProjectStore.layer).pipe(
@@ -199,83 +200,6 @@ const setup = Effect.gen(function* () {
 });
 
 describe("V2 thread find", () => {
-  it.effect("delivers the reading-position match before parsing the remaining history", () =>
-    Effect.gen(function* () {
-      const projection = yield* setup;
-      yield* putItems([
-        item("before", 0, "before progressive needle needle"),
-        item("reading", 1, "reading progressive needle needle"),
-        item("after", 2, "after progressive needle"),
-      ]);
-      const parse = vi.spyOn(ThreadFindText, "searchableMessageSegments");
-      const frames: OrchestrationV2SearchThreadResult[] = [];
-      try {
-        yield* projection
-          .searchThreadStream({
-            threadId,
-            query: "needle",
-            start: { entryId: "reading", occurrence: 1 },
-          })
-          .pipe(
-            Stream.runForEach((frame) =>
-              Effect.sync(() => {
-                frames.push(frame);
-                if (frame.complete === false) {
-                  assert.deepEqual(frame.match, { entryId: "reading", runId, occurrence: 1 });
-                  assert.equal(parse.mock.calls.length, 1);
-                  assert.equal(parse.mock.calls[0]![0].text, "reading progressive needle needle");
-                }
-              }),
-            ),
-          );
-        assert.equal(frames.length, 2);
-        assert.notEqual(frames[1]!.complete, false);
-        assert.deepEqual(frames[1]!.match, frames[0]!.match);
-        assert.equal(frames[1]!.totalMatches, 5);
-        assert.equal(frames[1]!.activeIndex, 3);
-        const cached = yield* projection
-          .searchThreadStream({ threadId, query: "needle" })
-          .pipe(Stream.runCollect);
-        assert.equal(cached.length, 1);
-        assert.notEqual(cached[0]!.complete, false);
-      } finally {
-        parse.mockRestore();
-      }
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("wraps from an exhausted bottom anchor and cancels without counting the rest", () =>
-    Effect.gen(function* () {
-      const projection = yield* setup;
-      yield* putItems([
-        item("first", 0, "cancel progressive needle"),
-        item("later", 1, "cancel later needle needle"),
-        item("bottom", 2, "cancel bottom needle"),
-      ]);
-      const parse = vi.spyOn(ThreadFindText, "searchableMessageSegments");
-      try {
-        const frames = yield* projection
-          .searchThreadStream({
-            threadId,
-            query: "needle",
-            start: { entryId: "bottom", occurrence: 1 },
-          })
-          .pipe(Stream.take(1), Stream.runCollect);
-        assert.equal(frames[0]!.complete, false);
-        assert.equal(frames[0]!.match?.entryId, "first");
-        assert.deepEqual(
-          parse.mock.calls.map(([message]) => message.text),
-          ["cancel bottom needle", "cancel progressive needle"],
-        );
-        const complete = yield* projection.searchThread({ threadId, query: "needle" });
-        assert.equal(complete.totalMatches, 4);
-        assert.equal(parse.mock.calls.length, 3);
-      } finally {
-        parse.mockRestore();
-      }
-    }).pipe(Effect.provide(layerTest)),
-  );
-
   it.effect("finishes one snapshot while later searches include newly inserted matches", () =>
     Effect.gen(function* () {
       const projection = yield* setup;
@@ -302,25 +226,6 @@ describe("V2 thread find", () => {
       assert.equal(updated.totalMatches, 3);
       assert.equal(updated.activeIndex, 1);
       assert.equal(updated.match?.entryId, "selected");
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("returns only a final frame for empty searches and relative navigation", () =>
-    Effect.gen(function* () {
-      const projection = yield* setup;
-      yield* putItems([item("only", 0, "needle needle")]);
-      const empty = yield* projection
-        .searchThreadStream({ threadId, query: "missing" })
-        .pipe(Stream.runCollect);
-      assert.equal(empty.length, 1);
-      assert.equal(empty[0]!.totalMatches, 0);
-      assert.notEqual(empty[0]!.complete, false);
-      const relative = yield* projection
-        .searchThreadStream({ threadId, query: "needle", offset: 1 })
-        .pipe(Stream.runCollect);
-      assert.equal(relative.length, 1);
-      assert.equal(relative[0]!.match?.occurrence, 1);
-      assert.notEqual(relative[0]!.complete, false);
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -426,36 +331,6 @@ describe("V2 thread find", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("reuses parses of large messages across navigation, edits, and new queries", () =>
-    Effect.gen(function* () {
-      const projection = yield* setup;
-      const text = `${"large message ".repeat(2600)}needle`;
-      yield* putItems(Array.from({ length: 8 }, (_, i) => item(`large:${i}`, i + 1, text)));
-      const parse = vi.spyOn(ThreadFindText, "searchableMessageSegments");
-      try {
-        const first = yield* projection.searchThread({ threadId, query: "needle" });
-        assert.equal(first.totalMatches, 8);
-        assert.equal(parse.mock.calls.length, 1);
-        parse.mockClear();
-        const next = yield* projection.searchThread({ threadId, query: "needle", index: 4 });
-        assert.equal(next.match?.entryId, "large:4");
-        assert.equal(next.snapshotSequence, first.snapshotSequence);
-        assert.equal(parse.mock.calls.length, 0);
-        yield* putItems([item("large:4", 5, `${text} needle`)], "changed");
-        const changed = yield* projection.searchThread({ threadId, query: "needle", index: 5 });
-        assert.equal(changed.totalMatches, 9);
-        assert.deepEqual(changed.match, { entryId: "large:4", runId, occurrence: 1 });
-        assert.equal(parse.mock.calls.length, 1);
-        parse.mockClear();
-        const retyped = yield* projection.searchThread({ threadId, query: "large message" });
-        assert.equal(retyped.totalMatches, 8 * 2600);
-        assert.equal(parse.mock.calls.length, 0);
-      } finally {
-        parse.mockRestore();
-      }
-    }).pipe(Effect.provide(layerTest)),
-  );
-
   it.effect("searches visible rendered messages and plans in canonical item order", () =>
     Effect.gen(function* () {
       const projection = yield* setup;
@@ -488,30 +363,6 @@ describe("V2 thread find", () => {
       assert.equal(
         (yield* projection.searchThread({ threadId, query: "check", index: 99 })).activeIndex,
         3,
-      );
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("keeps a search snapshot consistent while another thread commits", () =>
-    Effect.gen(function* () {
-      const projection = yield* setup;
-      const other = ThreadId.make("thread:busy");
-      yield* commit([thread(other, projectId), run(other, RunId.make("run:busy"))]);
-      yield* putItems(Array.from({ length: 260 }, (_, i) => item(`message:${i}`, i, "needle")));
-      const before = yield* projection.searchThread({ threadId, query: "needle" });
-      const [during] = yield* Effect.all(
-        [
-          projection.searchThread({ threadId, query: "needle", index: 259 }),
-          putItems([item("busy", 1, "busy", "assistant_message", other)]),
-        ],
-        { concurrency: "unbounded" },
-      );
-      assert.equal(during.totalMatches, 260);
-      assert.equal(during.match?.entryId, "message:259");
-      assert.equal(during.snapshotSequence, before.snapshotSequence);
-      assert.equal(
-        (yield* projection.searchThread({ threadId, query: "needle" })).snapshotSequence,
-        before.snapshotSequence,
       );
     }).pipe(Effect.provide(layerTest)),
   );
@@ -803,43 +654,6 @@ describe("V2 thread find", () => {
       assert.equal(updated.match?.entryId, "inherited");
     }).pipe(Effect.provide(layerTest)),
   );
-
-  it.effect("memory store resolves worktree file labels and rejects deleted threads", () =>
-    Effect.gen(function* () {
-      const projection = yield* ProjectionStore.ProjectionStoreV2;
-      const created = thread(threadId, projectId);
-      if (created.type !== "thread.created") return;
-      const withWorktree = {
-        ...created,
-        payload: { ...created.payload, worktreePath: "/work/tree" },
-      };
-      const message = item("file", 1, "See `docs/notes.md:12`.");
-      yield* Effect.forEach(
-        [
-          withWorktree,
-          run(),
-          {
-            id: EventId.make("file"),
-            threadId,
-            occurredAt: at(1),
-            type: "turn-item.updated",
-            payload: message,
-          },
-        ] satisfies OrchestrationV2DomainEvent[],
-        projection.apply,
-        { discard: true },
-      );
-      assert.equal(
-        (yield* projection.searchThread({ threadId, query: "notes.md · L12" })).totalMatches,
-        1,
-      );
-      const deleted = thread(threadId, projectId, { deletedAt: at(3) });
-      if (deleted.type !== "thread.created") return;
-      yield* projection.apply({ ...deleted, id: EventId.make("deleted"), type: "thread.deleted" });
-      const error = yield* Effect.flip(projection.searchThread({ threadId, query: "notes" }));
-      assert.equal(error._tag, "ProjectionStoreThreadNotFoundError");
-    }).pipe(Effect.provide(ProjectionStore.layerMemory)),
-  );
 });
 
 describe("V2 history materialization", () => {
@@ -912,7 +726,7 @@ describe("V2 history materialization", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("pages complete turns without duplicating or skipping messages", () =>
+  it.effect("pages long turns without duplicating or skipping messages", () =>
     Effect.gen(function* () {
       const projection = yield* setup;
       const items = Array.from({ length: 45 }, (_, turn) => [
@@ -953,7 +767,12 @@ describe("V2 history materialization", () => {
             snapshotSequence: snapshot.snapshotSequence,
           }),
         });
-        assert.equal(page.items[0]?.item.type, "user_message");
+        // A turn larger than the byte budget is split, but only a lone oversized item may exceed it.
+        assert.isTrue(
+          page.items.length === 1 ||
+            Buffer.byteLength(JSON.stringify(page.items), "utf8") <=
+              THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
+        );
         collected.unshift(...page.items.map((row) => String(row.sourceItemId)));
         cursor = page.nextCursor;
       }

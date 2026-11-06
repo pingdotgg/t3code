@@ -18,6 +18,13 @@
         "image": "macos-tahoe-26.6-xcode-27.1"
       }
     },
+    "development-simulator": {
+      "extends": "development",
+      "ios": {
+        "simulator": true,
+        "image": "macos-tahoe-26.6-xcode-27.1"
+      }
+    },
     "preview": {
       "corepack": true,
       "env": {
@@ -59,7 +66,8 @@
       "corepack": true,
       "env": {
         "APP_VARIANT": "production",
-        "NODE_OPTIONS": "--max-old-space-size=4096"
+        "NODE_OPTIONS": "--max-old-space-size=4096",
+        "SOURCEMAP_FILE": "/tmp/t3code-ios-main.jsbundle.map"
       },
       "channel": "production",
       "environment": "production",
