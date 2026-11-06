@@ -25,7 +25,6 @@ import {
   threadLinkRefs,
   type ThreadLink,
 } from "@t3tools/shared/threadLinks";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -117,7 +116,7 @@ const threadProjectChipIconAtom = Atom.family((key: string) => {
     );
     if (!icon) return null;
     if (icon.kind === "favicon") return icon.uri;
-    return Option.getOrNull(AsyncResult.value(get(projectGlyphImageAtom(projectGlyphKey(icon)))));
+    return AsyncResult.getOrElse(get(projectGlyphImageAtom(projectGlyphKey(icon))), () => null);
   }).pipe(Atom.withLabel(`mobile-thread-project-chip-icon:${key}`));
 });
 
@@ -174,6 +173,11 @@ export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.threadShellsAtom);
 }
 
+/** Thread shells minus those the tag filter hides, for lists that show threads to the user. */
+export function useVisibleThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
+  return useAtomValue(environmentThreadShells.visibleThreadShellsAtom);
+}
+
 export function useNavigationThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
 }
@@ -197,6 +201,10 @@ export function useQuietThreadShell(ref: ScopedThreadRef | null): EnvironmentThr
 
 export function useChildThreadInputs(ref: ScopedThreadRef) {
   return useAtomValue(environmentThreadShells.childThreadInputsAtom(ref));
+}
+
+export function useSideChats(ref: ScopedThreadRef) {
+  return useAtomValue(environmentThreadShells.sideChatsAtom(ref));
 }
 
 export function useLiveThreadLinkLabels(markdown: string, environmentId: EnvironmentId): string {

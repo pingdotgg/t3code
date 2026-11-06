@@ -362,6 +362,7 @@ describe("pull request detail decoding", () => {
             baseRefName: "main",
             headRefOid: "abc123",
             isCrossRepository: false,
+            maintainerCanModify: true,
             headRepositoryOwner: null,
             headRepository: null,
             headRef: null,
@@ -378,7 +379,10 @@ describe("pull request detail decoding", () => {
                 {
                   commit: {
                     statusCheckRollup: {
-                      contexts: { nodes: rollup, pageInfo: { hasNextPage: false } },
+                      contexts: {
+                        nodes: rollup,
+                        pageInfo: { hasNextPage: false, endCursor: null },
+                      },
                     },
                   },
                 },
@@ -393,6 +397,30 @@ describe("pull request detail decoding", () => {
     rollup: ReadonlyArray<Record<string, unknown>>,
     pullRequest?: Record<string, unknown>,
   ) => expectSuccess(decodePullRequestCoreJson(coreJson(rollup, pullRequest)));
+
+  it.each([
+    [{}, true],
+    [{ viewerDidAuthor: false }, false],
+    [{ isCrossRepository: false }, false],
+    [{ state: "CLOSED" }, false],
+    [{ headRepositoryOwner: { __typename: "Organization", login: "team" } }, false],
+    [{ headRepository: null }, false],
+  ])(
+    "reads maintainer edits and lets only the author of an open personal fork change them: %j",
+    (overrides, allowed) => {
+      const detail = detailOf([], {
+        maintainerCanModify: false,
+        isCrossRepository: true,
+        viewerDidAuthor: true,
+        headRepositoryOwner: { __typename: "User", login: "octocat" },
+        headRepository: { nameWithOwner: "octocat/t3code", viewerPermission: "ADMIN" },
+        headRef: { id: "REF_7" },
+        ...overrides,
+      });
+      expect(detail.maintainerCanModify).toBe(false);
+      expect(detail.canEditMaintainerEdits).toBe(allowed);
+    },
+  );
 
   const detailJson = JSON.stringify({
     comments: [{ id: "c1", body: "second", createdAt: "2026-07-04T00:00:00Z" }],
@@ -1435,6 +1463,7 @@ describe("decodePullRequestFilesJson", () => {
     expect(result.patch).toBe(
       [
         String.raw`diff --git "a/ old\\name.ts " "b/ new\\name.ts "`,
+        "similarity index 100%",
         String.raw`rename from " old\\name.ts "`,
         String.raw`rename to " new\\name.ts "`,
         String.raw`--- "a/ old\\name.ts "`,
@@ -1490,6 +1519,7 @@ describe("decodePullRequestFilesJson", () => {
     expect(result.patch).toBe(
       [
         "diff --git a/src/old.ts b/src/new.ts",
+        "similarity index 0%",
         "rename from src/old.ts",
         "rename to src/new.ts",
         "--- a/src/old.ts",

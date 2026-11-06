@@ -244,6 +244,7 @@ export type PullRequestReviewCapabilities = typeof PullRequestReviewCapabilities
 export const PullRequestEditCapabilities = Schema.Struct({
   changeRequest: Schema.Boolean,
   comment: Schema.Boolean,
+  maintainerEdits: Schema.optional(Schema.Boolean),
 });
 export type PullRequestEditCapabilities = typeof PullRequestEditCapabilities.Type;
 
@@ -295,6 +296,7 @@ export const PullRequestViewerPermissions = Schema.Struct({
   updateMethods: Schema.optional(ForwardCompatibleArray(PullRequestUpdateMethod)),
   labels: Schema.optional(Schema.Boolean),
   editChangeRequest: Schema.optional(Schema.Boolean),
+  maintainerEdits: Schema.optional(Schema.Boolean),
 });
 export type PullRequestViewerPermissions = typeof PullRequestViewerPermissions.Type;
 
@@ -446,6 +448,8 @@ export const PullRequestPreview = Schema.Struct({
   state: PullRequestState,
   isDraft: Schema.Boolean,
   createdAt: IsoDateTime,
+  updatedAt: Schema.optional(IsoDateTime),
+  observedAt: Schema.optional(Schema.Finite),
 });
 export type PullRequestPreview = typeof PullRequestPreview.Type;
 
@@ -473,6 +477,10 @@ export const PullRequestSummary = Schema.Struct({
   mergeability: Schema.optional(PullRequestMergeability),
   /** Null when the host says the pull request is in no stack; absent when the read did not ask. */
   stack: Schema.optional(Schema.NullOr(PullRequestStackMembership)),
+  headSha: Schema.optional(TrimmedNonEmptyString),
+  /** Absent means the read did not report auto-merge state, not that it is off. */
+  autoMergeEnabled: Schema.optional(Schema.Boolean),
+  autoMergeMethod: Schema.optional(PullRequestMergeMethod),
 });
 export type PullRequestSummary = typeof PullRequestSummary.Type;
 
@@ -589,6 +597,7 @@ export const PullRequestDetail = Schema.Struct({
   autoMergeEnabled: Schema.optional(Schema.Boolean),
   autoMergeMethod: Schema.optional(PullRequestMergeMethod),
   workflowApprovalsRequired: Schema.optional(NonNegativeInt),
+  maintainerCanModify: Schema.optional(Schema.Boolean),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 
@@ -730,6 +739,8 @@ export const PullRequestActionInput = Schema.Struct({
   action: PullRequestAction,
   mergeMethod: Schema.optional(PullRequestMergeMethod),
   updateMethod: Schema.optional(PullRequestUpdateMethod),
+  /** Opt-in, because older clients decode the action's success as void and reject a summary. */
+  replyWithSummary: Schema.optional(Schema.Literal(true)),
 });
 export type PullRequestActionInput = typeof PullRequestActionInput.Type;
 
@@ -746,6 +757,7 @@ export const PullRequestUpdateInput = Schema.Struct({
   ...PullRequestRef.fields,
   title: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(1024))),
   body: Schema.optional(Schema.String.check(Schema.isMaxLength(65_536))),
+  maintainerCanModify: Schema.optional(Schema.Boolean),
 });
 export type PullRequestUpdateInput = typeof PullRequestUpdateInput.Type;
 

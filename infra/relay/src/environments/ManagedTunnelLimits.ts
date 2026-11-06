@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlError from "effect/sql/SqlError";
-import { T3CHAT_PLAN_TUNNEL_LIMITS } from "@t3tools/contracts/relay";
+import { DEFAULT_MANAGED_TUNNEL_LIMIT, T3CHAT_PLAN_TUNNEL_LIMITS } from "@t3tools/contracts/relay";
 
 import * as RelayDb from "../db.ts";
 import {
@@ -16,7 +16,6 @@ import {
 } from "../persistence/schema.ts";
 import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
 
-export const DEFAULT_MANAGED_TUNNEL_LIMIT = 3;
 // Reserve-to-tunnel takes two Cloudflare calls capped at 8 seconds each; a reservation older than this was abandoned.
 const MANAGED_TUNNEL_PENDING_WINDOW_MINUTES = 15;
 
@@ -47,6 +46,58 @@ export class ManagedTunnelLimitExceeded extends Schema.TaggedError<ManagedTunnel
   }
 }
 
+const allocation = relayManagedEndpointAllocations;
+
+const withdrawnLink = (since: typeof allocation.updatedAt) =>
+  exists(
+    new QueryBuilder()
+      .select({ userId: relayEnvironmentLinks.userId })
+      .from(relayEnvironmentLinks)
+      .where(
+        and(
+          eq(relayEnvironmentLinks.userId, allocation.userId),
+          eq(relayEnvironmentLinks.environmentId, allocation.environmentId),
+          or(
+            isNotNull(relayEnvironmentLinks.revokedAt),
+            eq(relayEnvironmentLinks.managedTunnelsEnabled, false),
+          ),
+          gte(relayEnvironmentLinks.updatedAt, since),
+        ),
+      ),
+  );
+
+// Counts allocations, not links: a link is written only after its tunnel exists.
+// `environment` is `ne` for the user's other environments or `eq` for this one, which relinks without counting itself.
+// updatedAt moves only on provisioning writes and release, never on teardown claims, so a link
+// withdrawn at or after it means cleanup is owed; an older withdrawal means a relink that never finished.
+export const countedAllocations = (input: {
+  readonly userId: string;
+  readonly environmentId: string;
+  readonly pendingCutoff: string;
+  readonly environment: typeof eq;
+}) =>
+  and(
+    eq(allocation.userId, input.userId),
+    input.environment(allocation.environmentId, input.environmentId),
+    or(
+      // Reserved but not yet holding a tunnel. Release writes updatedAt = tunnelReleasedAt and
+      // a relink reserves before rewriting its link, so only a newer reservation counts here.
+      and(
+        gt(allocation.updatedAt, input.pendingCutoff),
+        or(
+          isNull(allocation.tunnelReleasedAt),
+          gt(allocation.updatedAt, allocation.tunnelReleasedAt),
+        ),
+        not(withdrawnLink(allocation.updatedAt)),
+      ),
+      and(
+        isNotNull(allocation.tunnelId),
+        isNull(allocation.tunnelReleasedAt),
+        not(withdrawnLink(allocation.updatedAt)),
+      ),
+    ),
+  );
+
 export class ManagedTunnelLimits extends Context.Service<
   ManagedTunnelLimits,
   {
@@ -55,6 +106,10 @@ export class ManagedTunnelLimits extends Context.Service<
       input: { readonly userId: string; readonly environmentId: string },
       reserve: Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | ManagedTunnelLimitExceeded | ManagedTunnelLimitPersistenceError, R>;
+    /** The user's manual cap, which replaces the default and any T3 Chat plan cap. */
+    readonly getOverride: (input: {
+      readonly userId: string;
+    }) => Effect.Effect<number | null, ManagedTunnelLimitPersistenceError>;
   }
 >()("t3code-relay/environments/ManagedTunnelLimits") {}
 
@@ -75,7 +130,24 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const loadOverride = (userId: string) =>
+    db
+      .select({ maxTunnels: relayManagedTunnelLimits.maxTunnels })
+      .from(relayManagedTunnelLimits)
+      .where(eq(relayManagedTunnelLimits.userId, userId))
+      .limit(1)
+      .pipe(
+        Effect.map((rows) => rows[0]?.maxTunnels ?? null),
+        Effect.mapError(
+          (cause) =>
+            new ManagedTunnelLimitPersistenceError({ operation: "load-limit", userId, cause }),
+        ),
+      );
+
   return ManagedTunnelLimits.of({
+    getOverride: Effect.fn("relay.managed_tunnel_limits.get_override")(function* (input) {
+      return yield* loadOverride(input.userId);
+    }),
     withCapacity: Effect.fn("relay.managed_tunnel_limits.with_capacity")(function* <A, E, R>(
       input: { readonly userId: string; readonly environmentId: string },
       reserve: Effect.Effect<A, E, R>,
@@ -97,75 +169,19 @@ const make = Effect.gen(function* () {
             ),
           );
 
-        const overrides = yield* db
-          .select({ maxTunnels: relayManagedTunnelLimits.maxTunnels })
-          .from(relayManagedTunnelLimits)
-          .where(eq(relayManagedTunnelLimits.userId, input.userId))
-          .limit(1)
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new ManagedTunnelLimitPersistenceError({
-                  operation: "load-limit",
-                  userId: input.userId,
-                  cause,
-                }),
-            ),
-          );
-        const baseMaxTunnels = overrides[0]?.maxTunnels ?? DEFAULT_MANAGED_TUNNEL_LIMIT;
+        const override = yield* loadOverride(input.userId);
+        const baseMaxTunnels = override ?? DEFAULT_MANAGED_TUNNEL_LIMIT;
 
         const pendingCutoff = DateTime.formatIso(
           DateTime.subtract(yield* DateTime.now, {
             minutes: MANAGED_TUNNEL_PENDING_WINDOW_MINUTES,
           }),
         );
-        // Counts allocations, not links: a link is written only after its tunnel exists.
-        // Excludes this environment so relinking at the limit stays idempotent.
-        const allocation = relayManagedEndpointAllocations;
-        const withdrawnLink = (since?: typeof allocation.updatedAt) =>
-          exists(
-            new QueryBuilder()
-              .select({ userId: relayEnvironmentLinks.userId })
-              .from(relayEnvironmentLinks)
-              .where(
-                and(
-                  eq(relayEnvironmentLinks.userId, allocation.userId),
-                  eq(relayEnvironmentLinks.environmentId, allocation.environmentId),
-                  or(
-                    isNotNull(relayEnvironmentLinks.revokedAt),
-                    eq(relayEnvironmentLinks.managedTunnelsEnabled, false),
-                  ),
-                  since === undefined ? undefined : gte(relayEnvironmentLinks.updatedAt, since),
-                ),
-              ),
-          );
         const countSlots = (environment: typeof eq) =>
           db
             .select({ slots: count() })
             .from(allocation)
-            .where(
-              and(
-                eq(allocation.userId, input.userId),
-                environment(allocation.environmentId, input.environmentId),
-                or(
-                  // Reserved but not yet holding a tunnel. Release writes updatedAt = tunnelReleasedAt and
-                  // a relink reserves before rewriting its link, so only a newer reservation counts here.
-                  and(
-                    gt(allocation.updatedAt, pendingCutoff),
-                    or(
-                      isNull(allocation.tunnelReleasedAt),
-                      gt(allocation.updatedAt, allocation.tunnelReleasedAt),
-                    ),
-                    not(withdrawnLink(allocation.updatedAt)),
-                  ),
-                  and(
-                    isNotNull(allocation.tunnelId),
-                    isNull(allocation.tunnelReleasedAt),
-                    not(withdrawnLink()),
-                  ),
-                ),
-              ),
-            )
+            .where(countedAllocations({ ...input, pendingCutoff, environment }))
             .pipe(
               Effect.map((rows) => rows[0]?.slots ?? 0),
               Effect.mapError(
@@ -187,7 +203,7 @@ const make = Effect.gen(function* () {
         // A manual override is the exact cap; a T3 Chat plan raises only the default.
         // Runs under the user lock, bounded by the T3 Chat request timeout.
         const maxTunnels =
-          t3Chat.available && overrides.length === 0
+          t3Chat.available && override === null
             ? Math.max(baseMaxTunnels, yield* t3ChatTunnelLimit(input.userId))
             : baseMaxTunnels;
         if (activeTunnels >= maxTunnels) {

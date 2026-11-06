@@ -247,7 +247,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
   let disconnected: BrowserFailure | undefined;
   let nextId = 0;
 
-  const post = (method: string, params: Record<string, unknown>, sessionId: string) =>
+  const post = (method: string, params: Record<string, unknown>, sessionId?: string) =>
     Queue.offer(
       outgoing,
       new TextEncoder().encode(
@@ -316,10 +316,13 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       return yield* Effect.void;
     }
     const text = consoleMessage.text.replaceAll(PAGE_URL, PAGE_NAME);
+    // Half an emoji serializes to a lone surrogate escape, which provider JSON parsers reject.
+    const last = text.charCodeAt(MAX_CONSOLE_TEXT_CHARS - 1);
+    const end =
+      last >= 0xd800 && last <= 0xdbff ? MAX_CONSOLE_TEXT_CHARS - 1 : MAX_CONSOLE_TEXT_CHARS;
     page.consoleMessages.push({
       level: consoleMessage.level,
-      text:
-        text.length > MAX_CONSOLE_TEXT_CHARS ? `${text.slice(0, MAX_CONSOLE_TEXT_CHARS)}…` : text,
+      text: text.length > MAX_CONSOLE_TEXT_CHARS ? `${text.slice(0, end)}…` : text,
     });
     return yield* Effect.void;
   });
@@ -372,6 +375,18 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     Effect.ignore,
     Effect.andThen(disconnect),
     Effect.forkScoped,
+  );
+
+  // Signals can miss a confined browser (AppArmor in LXC), so ask it to quit first.
+  // Runs before the spawn's release, which still signals a browser that stays up.
+  yield* Effect.addFinalizer(() =>
+    disconnected
+      ? Effect.void
+      : post("Browser.close", {}).pipe(
+          Effect.andThen(child.exitCode),
+          Effect.timeout("2 seconds"),
+          Effect.ignore,
+        ),
   );
 
   const send = Effect.fn("headlessChrome.send")(function* <A>(

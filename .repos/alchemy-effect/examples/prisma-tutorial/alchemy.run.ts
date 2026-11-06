@@ -1,5 +1,5 @@
+import * as Prisma from "@alchemy.run/prisma";
 import * as Alchemy from "alchemy";
-import * as Prisma from "alchemy/Prisma";
 import * as Effect from "effect/Effect";
 import Api from "./src/Api.ts";
 import { Project } from "./src/Database.ts";

@@ -87,6 +87,7 @@ query PullRequestCore(
       baseRefName
       headRefOid
       isCrossRepository
+      maintainerCanModify
       headRepositoryOwner {
         login
       }
@@ -155,6 +156,7 @@ query PullRequestCore(
                 }
                 pageInfo {
                   hasNextPage
+                  endCursor
                 }
               }
             }
