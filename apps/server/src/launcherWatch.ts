@@ -2,11 +2,21 @@ import * as NodeStream from "@effect/platform-node/NodeStream";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeNet from "node:net";
 
 import { recordShutdownIntent } from "./shutdownIntent.ts";
+
+class DesktopStopPipeError extends Schema.TaggedError<DesktopStopPipeError>()(
+  "DesktopStopPipeError",
+  { fd: Schema.Number, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Failed to open desktop stop pipe file descriptor ${this.fd}.`;
+  }
+}
 
 const DEFAULT_POLL_INTERVAL = Duration.seconds(2);
 const LAUNCHER_KILL_GRACE = Duration.seconds(5);
@@ -66,7 +76,10 @@ export const awaitLauncherStop = Effect.fn("launcherWatch.awaitLauncherStop")(fu
 export const awaitLauncherStopOnFds = (fds: { readonly stopFd: number; readonly ackFd: number }) =>
   Effect.acquireRelease(
     // Socket reads stay cancellable; filesystem pipe reads keep Node alive after scope shutdown.
-    Effect.try(() => new NodeNet.Socket({ fd: fds.stopFd, readable: true, writable: false })),
+    Effect.try({
+      try: () => new NodeNet.Socket({ fd: fds.stopFd, readable: true, writable: false }),
+      catch: (cause) => new DesktopStopPipeError({ fd: fds.stopFd, cause }),
+    }),
     (socket) => Effect.sync(() => socket.destroy()),
   ).pipe(
     Effect.matchCauseEffect({
@@ -81,9 +94,11 @@ export const awaitLauncherStopOnFds = (fds: { readonly stopFd: number; readonly 
             closeOnDone: true,
             onError: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
           }),
-          acknowledge: Effect.try(() =>
-            new NodeNet.Socket({ fd: fds.ackFd, readable: false, writable: true }).destroy(),
-          ).pipe(
+          acknowledge: Effect.try({
+            try: () =>
+              new NodeNet.Socket({ fd: fds.ackFd, readable: false, writable: true }).destroy(),
+            catch: (cause) => new DesktopStopPipeError({ fd: fds.ackFd, cause }),
+          }).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("could not acknowledge the desktop stop notice", { cause }),
             ),
