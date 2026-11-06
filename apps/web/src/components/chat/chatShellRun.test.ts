@@ -92,6 +92,12 @@ describe("chatShellRunResultMessage", () => {
     expect(ended).toContain("partial");
     const failed = chatShellRunResultMessage("x", { text: "", exitCode: null, error: "boom" });
     expect(failed).toContain("terminal error: boom");
+    const long = chatShellRunResultMessage("x", {
+      text: "",
+      exitCode: null,
+      error: "e".repeat(50_000),
+    });
+    expect(long.length).toBeLessThan(3_000);
   });
 
   it("keeps the end of very long output", () => {

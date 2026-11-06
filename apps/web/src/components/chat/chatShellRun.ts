@@ -81,6 +81,7 @@ export function parseChatShellRunOutput(raw: string, id: string): ChatShellRunOu
 
 const RESULT_MESSAGE_TAG = "t3_code_block_run";
 const MAX_RESULT_OUTPUT_CHARS = 20_000;
+const MAX_RESULT_ERROR_CHARS = 2_000;
 
 export function chatShellRunResultMessage(command: string, output: ChatShellRunOutput): string {
   const text = output.text.slice(-MAX_RESULT_OUTPUT_CHARS);
@@ -93,7 +94,7 @@ export function chatShellRunResultMessage(command: string, output: ChatShellRunO
     "",
     output.exitCode === null
       ? `The terminal ended before the command reported an exit code${
-          output.error ? ` (terminal error: ${output.error})` : ""
+          output.error ? ` (terminal error: ${output.error.slice(0, MAX_RESULT_ERROR_CHARS)})` : ""
         }. The output below may be incomplete.`
       : `Exit code: ${output.exitCode}`,
     text.length < output.text.length ? `Output (last ${text.length} characters):` : "Output:",
