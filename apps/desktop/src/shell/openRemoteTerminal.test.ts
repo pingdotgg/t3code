@@ -8,11 +8,20 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
-  cmdStartRemoteArgs,
   linuxRemoteTerminalArgs,
   openRemoteTerminal,
+  powerShellStartRemoteArgs,
   windowsTerminalRemoteArgs,
 } from "./openRemoteTerminal.ts";
+
+const decodePowerShellEncodedCommand = (encoded: string): string => {
+  const binary = atob(encoded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new TextDecoder("utf-16le").decode(bytes);
+};
 
 const captureSpawner = (spawned: Array<{ command: string; args: ReadonlyArray<string> }>) =>
   Layer.succeed(
@@ -68,7 +77,7 @@ describe("openRemoteTerminal", () => {
     }),
   );
 
-  it.effect("falls back to cmd start on Windows when Windows Terminal is missing", () =>
+  it.effect("falls back to PowerShell Start-Process when Windows Terminal is missing", () =>
     Effect.gen(function* () {
       const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
       const opened = yield* openRemoteTerminal({
@@ -78,41 +87,54 @@ describe("openRemoteTerminal", () => {
       }).pipe(
         Effect.provide(Layer.merge(NodeServices.layer, captureSpawner(spawned))),
         Effect.provideService(HostProcess.Platform, "win32"),
-        // Empty PATH so wt.exe is unavailable and the cmd.exe fallback runs.
-        Effect.provideService(HostProcess.Environment, { PATH: "", Path: "", path: "" }),
+        // Empty PATH so wt.exe is unavailable and the PowerShell fallback runs.
+        Effect.provideService(HostProcess.Environment, {
+          PATH: "",
+          Path: "",
+          path: "",
+          SYSTEMROOT: String.raw`C:\Windows`,
+        }),
       );
       assert.isTrue(opened);
-      assert.equal(spawned[0]?.command, "cmd.exe");
-      assert.deepEqual(spawned[0]?.args.slice(0, 3), ["/c", "start", ""]);
-      assert.deepEqual(
-        [...(spawned[0]?.args ?? [])].filter(
-          (arg) => arg === "ssh.exe" || arg === "-t" || arg === "--" || arg === "box",
-        ),
-        ["ssh.exe", "-t", "--", "box"],
+      assert.equal(
+        spawned[0]?.command,
+        String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,
       );
-      assert.isTrue(
-        (spawned[0]?.args ?? []).some(
-          (arg) => arg.includes("exec /bin/sh -c") && arg.includes("'/home/theo/app'"),
-        ),
-      );
+      assert.deepEqual(spawned[0]?.args.slice(0, 5), [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+      ]);
+      const script = decodePowerShellEncodedCommand(spawned[0]?.args[5] ?? "");
+      assert.match(script, /Start-Process -FilePath 'ssh\.exe'/);
+      assert.match(script, /'-t','--','box'/);
+      assert.match(script, /exec \/bin\/sh -c/);
+      assert.match(script, /'\/home\/theo\/app'/);
     }),
   );
 
-  it.effect("escapes percent sequences on the cmd fallback", () =>
+  it.effect("keeps ampersand destinations inside PowerShell string literals", () =>
     Effect.gen(function* () {
       const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
       const opened = yield* openRemoteTerminal({
-        host: "box",
+        host: "box&calc&rem",
         absolutePath: "/home/%USERPROFILE%/app",
       }).pipe(
         Effect.provide(Layer.merge(NodeServices.layer, captureSpawner(spawned))),
         Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.provideService(HostProcess.Environment, { PATH: "", Path: "", path: "" }),
+        Effect.provideService(HostProcess.Environment, {
+          PATH: "",
+          Path: "",
+          path: "",
+          SYSTEMROOT: String.raw`C:\Windows`,
+        }),
       );
       assert.isTrue(opened);
-      assert.equal(spawned[0]?.command, "cmd.exe");
-      const remoteArg = (spawned[0]?.args ?? []).find((arg) => arg.includes("USERPROFILE")) ?? "";
-      assert.match(remoteArg, /%%USERPROFILE%%/);
+      const script = decodePowerShellEncodedCommand(spawned[0]?.args[5] ?? "");
+      assert.match(script, /ArgumentList @\('-t','--','box&calc&rem',/);
+      assert.match(script, /%USERPROFILE%/);
     }),
   );
 });
@@ -163,24 +185,23 @@ describe("Windows launch argv", () => {
     );
   });
 
-  it("doubles cmd percent signs in start argv", () => {
-    assert.deepEqual(
-      cmdStartRemoteArgs("ssh.exe", [
-        "-t",
-        "--",
-        "box",
-        "exec /bin/sh -c 'cd -- \"$1\" && exec \"${SHELL:-/bin/sh}\" -l' sh '/home/%USERPROFILE%/app'",
-      ]),
-      [
-        "/c",
-        "start",
-        "",
-        "ssh.exe",
-        "-t",
-        "--",
-        "box",
-        "exec /bin/sh -c 'cd -- \"$1\" && exec \"${SHELL:-/bin/sh}\" -l' sh '/home/%%USERPROFILE%%/app'",
-      ],
-    );
+  it("encodes PowerShell Start-Process argv without cmd metacharacter splits", () => {
+    const args = powerShellStartRemoteArgs("ssh.exe", [
+      "-t",
+      "--",
+      "box&calc&rem",
+      "exec /bin/sh -c 'cd -- \"$1\" && exec \"${SHELL:-/bin/sh}\" -l' sh '/home/%USERPROFILE%/app'",
+    ]);
+    assert.deepEqual(args.slice(0, 5), [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-EncodedCommand",
+    ]);
+    const script = decodePowerShellEncodedCommand(args[5] ?? "");
+    assert.match(script, /Start-Process -FilePath 'ssh\.exe'/);
+    assert.match(script, /ArgumentList @\('-t','--','box&calc&rem',/);
+    assert.match(script, /%USERPROFILE%/);
   });
 });
