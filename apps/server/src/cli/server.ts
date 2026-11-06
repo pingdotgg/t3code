@@ -11,7 +11,7 @@ import { awaitLauncherLoss } from "../launcherWatch.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as AutomaticPort from "./automaticPort.ts";
 import { type CliServerFlags, resolveServerConfig, sharedServerCommandFlags } from "./config.ts";
-import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
+import { T3_LEARN_COMMAND, T3_LEARN_PRODUCT_NAME } from "@t3tools/shared/t3LearnIdentity";
 
 const encodeCommand = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 
@@ -80,9 +80,9 @@ export const startCommand = Command.make("start", { ...sharedServerCommandFlags 
 );
 
 export const serveCommand = Command.make("serve", { ...sharedServerCommandFlags }).pipe(
-  Command.withShortDescription("Run T3 Code in this terminal, with no browser."),
+  Command.withShortDescription(`Run ${T3_LEARN_PRODUCT_NAME} in this terminal, with no browser.`),
   Command.withDescription(
-    `Run T3 Code in this terminal without opening a browser, and print pairing details. The background service runs this. To set up access from your other devices, run \`${T3_LEARN_COMMAND} up\`.`,
+    `Run ${T3_LEARN_PRODUCT_NAME} in this terminal without opening a browser, and print pairing details. The background service runs this. To set up access from your other devices, run \`${T3_LEARN_COMMAND} up\`.`,
   ),
   Command.withHandler((flags) =>
     runServerCommand(flags, {

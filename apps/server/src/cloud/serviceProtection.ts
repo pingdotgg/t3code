@@ -5,13 +5,14 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { T3_LEARN_EXECUTABLE_NAME } from "@t3tools/shared/t3LearnIdentity";
+import { T3_LEARN_EXECUTABLE_NAME, T3_LEARN_LEGACY } from "@t3tools/shared/t3LearnIdentity";
 
 import * as ProcessRunner from "../processRunner.ts";
 import { BOOT_SERVICE_UNIT_FILE } from "./bootService.ts";
 
 // T3 Code writes the same units' drop-ins; its own name keeps either undo off the other's.
 const PROTECT_DROP_IN = `90-${T3_LEARN_EXECUTABLE_NAME}-protect.conf`;
+const LEGACY_PROTECT_DROP_IN = `90-${T3_LEARN_LEGACY.executableName}-protect.conf`;
 const SYSTEM_UNIT_DIR = "/etc/systemd/system";
 export const REMOTE_ACCESS_UNITS = ["tailscaled.service", "ssh.service", "sshd.service"];
 
@@ -104,10 +105,13 @@ export function renderPrivilegedScript(plan: ProtectionPlan, mode: "apply" | "un
   const lines = ["set -e"];
   const remove = (dropIns: ReadonlyArray<DropIn>, indent = "") => {
     for (const { path } of dropIns) {
-      lines.push(
-        `${indent}rm -f ${quoteShell(path)}`,
-        `${indent}rmdir ${quoteShell(directoryOf(path))} 2>/dev/null || true`,
-      );
+      for (const suffix of [PROTECT_DROP_IN, LEGACY_PROTECT_DROP_IN]) {
+        const legacyPath = path.slice(0, path.lastIndexOf("/")) + "/" + suffix;
+        lines.push(
+          `${indent}rm -f ${quoteShell(legacyPath)}`,
+          `${indent}rmdir ${quoteShell(directoryOf(legacyPath))} 2>/dev/null || true`,
+        );
+      }
     }
   };
   if (mode === "apply") {
@@ -121,8 +125,10 @@ export function renderPrivilegedScript(plan: ProtectionPlan, mode: "apply" | "un
     }
   } else {
     remove(plan.system.filter((dropIn) => dropIn.shared !== true));
-    const otherUsers = `${quoteShell(plan.systemUnitDir)}/user@*.service.d/${PROTECT_DROP_IN}`;
-    lines.push(`set -- ${otherUsers}`, 'if [ ! -e "$1" ]; then');
+    const otherUsers = [PROTECT_DROP_IN, LEGACY_PROTECT_DROP_IN]
+      .map((suffix) => `${quoteShell(plan.systemUnitDir)}/user@*.service.d/${suffix}`)
+      .join(" ");
+    lines.push(`set -- ${otherUsers}`, 'if [ ! -e "$1" ] && [ ! -e "$2" ]; then');
     remove(
       plan.system.filter((dropIn) => dropIn.shared === true),
       "  ",
