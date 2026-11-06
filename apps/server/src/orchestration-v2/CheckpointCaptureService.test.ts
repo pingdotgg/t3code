@@ -650,6 +650,8 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
                       diffCheckpoints: () => Effect.succeed(""),
                       listAuthoredPaths: () => Effect.succeed(null),
                     }),
+                    Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+                    NodeServices.layer,
                   ),
                 ),
               ),
