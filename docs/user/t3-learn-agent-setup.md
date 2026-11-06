@@ -83,7 +83,8 @@ Tell the user to open OminaX, go to **Settings → Environments → Add environm
 - Learn through side chats only. Highlight text in an old chat and choose **Ask in side chat**.
 - The side-chat header's map toggle (⌥⌘G on a Mac, Ctrl+Alt+G elsewhere) opens the lesson's map without leaving the chat.
 - To choose the model new side chats start with, change how they explain things, or attach skills (when the side chat's provider has them), go to **Settings → Threads → Side chats**.
-- Don't type in a copied chat's main box, revert it, or delete it along with its worktree. The copy shares T3 Code's agent session and git checkpoints, so any of those would land in the user's live T3 Code chat.
+- Don't delete a copied chat along with its worktree. The copy shares T3 Code's git checkpoints and worktree, so that would land in the user's live T3 Code chat.
+- OminaX blocks a copied chat's main box and Revert. To keep going in OminaX, use **Continue in OminaX**, which forks a new chat from the latest reply. Side chats on a copy still work.
 - Side chats can run commands in the project's real folder. Don't ask one to edit files that a live agent is working on.
 - Older chats are under **Settled**, as in T3 Code.
 
