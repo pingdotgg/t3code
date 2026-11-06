@@ -987,8 +987,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           : hasUnsentDraft
             ? cn(draftSurfaceClassName, "text-sidebar-foreground")
             : shouldRecede
-              ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+              ? cn(
+                  status === "working" || status === "preparing"
+                    ? "text-sidebar-muted-foreground"
+                    : "text-sidebar-muted-foreground/75",
+                  "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+                )
               : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
+    !variantStyled &&
+      (status === "working" || status === "preparing") &&
+      "[&_.text-secondary-label]:text-sidebar-muted-foreground",
     isFileDragOver && "ring-1 ring-inset ring-primary/70",
     isFileDragOver && !props.isActive && !isSelected && "bg-sidebar-row-hover",
     props.sortable?.isDragging &&

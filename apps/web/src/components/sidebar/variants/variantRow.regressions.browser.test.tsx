@@ -88,7 +88,9 @@ it("keeps Settle reachable on a Detailed row showing answers", async () => {
 
 it("counts Slim's workers with a static robot and a name", async () => {
   await using screen = await render(
-    <div>{row({ style: "folder-slim", workerCount: 2, workerSummary: "2 workers · 1 working" })}</div>,
+    <div>
+      {row({ style: "folder-slim", workerCount: 2, workerSummary: "2 workers · 1 working" })}
+    </div>,
   );
   const count = screen.getByRole("img", { name: "2 workers · 1 working" }).element();
   expect(count.textContent).toBe("2");
