@@ -408,6 +408,7 @@ jobs:
         run: command -v patchelf || { sudo apt-get update && sudo apt-get install -y patchelf; }
 
       - name: Build CLI archive
+        id: build_cli
         if: inputs.cli_archive
         shell: bash
         env:
@@ -425,18 +426,28 @@ jobs:
           AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
         run: |
           set -euo pipefail
-          if [[ "${{ inputs.platform }}" == "mac" && -n "${APPLE_API_KEY:-}" ]]; then
-            key_path="$RUNNER_TEMP/AuthKey_cli_${APPLE_API_KEY_ID}.p8"
-            printf '%s' "$APPLE_API_KEY" > "$key_path"
-            export APPLE_API_KEY="$key_path"
+          extra_args=()
+          if [[ "${{ inputs.platform }}" == "mac" ]]; then
+            if [[ -n "${APPLE_API_KEY:-}" ]]; then
+              key_path="$RUNNER_TEMP/AuthKey_cli_${APPLE_API_KEY_ID}.p8"
+              printf '%s' "$APPLE_API_KEY" > "$key_path"
+              trap 'rm -f "$key_path"' EXIT
+              export APPLE_API_KEY="$key_path"
+            fi
+            # Older release refs lack deferred notarization and still wait here.
+            cli_help="$(node scripts/build-cli-archive.ts --help)"
+            if [[ "$cli_help" == *--notary-submission-file* ]]; then
+              extra_args=(--notary-submission-file "$RUNNER_TEMP/t3-cli-notary-submission")
+              echo "deferred_notarization=true" >> "$GITHUB_OUTPUT"
+            fi
           fi
           node scripts/build-cli-archive.ts \
             --platform "${{ inputs.platform }}" \
             --arch "${{ inputs.arch }}" \
             --version "${{ inputs.version }}" \
             --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
-            --notary-submission-file "$RUNNER_TEMP/t3-cli-notary-submission" \
-            --output-dir release-cli
+            --output-dir release-cli \
+            ${extra_args[@]+"${extra_args[@]}"}
 
       - name: Smoke-test CLI archive
         if: inputs.cli_archive && inputs.verify_runner == ''
@@ -623,8 +634,9 @@ jobs:
       # The CLI was submitted without waiting so Apple reviews it while the
       # desktop builds. Notarization does not change the archive bytes, but
       # nothing uploads them, so nothing publishes them, until Apple accepts.
+      # With signing configured, a missing submission id fails this step.
       - name: Await CLI notarization
-        if: inputs.cli_archive && inputs.platform == 'mac'
+        if: inputs.cli_archive && inputs.platform == 'mac' && steps.build_cli.outputs.deferred_notarization == 'true'
         shell: bash
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
@@ -648,6 +660,8 @@ jobs:
           name: cli-${{ inputs.platform }}-${{ inputs.arch }}
           path: release-cli/*
           if-no-files-found: error
+          # The archive is already gzip or zip; deflating it again saves under 2%.
+          compression-level: 0
 
       # Warm installs only touch the store index, so new content means a fetch.
       - name: Check staged install cache for new content

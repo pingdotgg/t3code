@@ -76,30 +76,36 @@ it.layer(NodeServices.layer)("build-cli-archive notarization", (it) => {
   it.effect("records a deferred submission without waiting, then gates on Accepted", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const content = yield* makeContent();
-      yield* fs.writeFileString(content.submissionFile, "stale-id");
-      const stub = stubSpawner((subcommand) =>
-        subcommand === "submit"
-          ? { exitCode: 0, stdout: '{"id":"new-id","message":"Successfully uploaded file"}' }
-          : { exitCode: 0, stdout: '{"id":"new-id","status":"Accepted"}' },
-      );
+      // Apple documents id and path for an unwaited submit; a pending status must not fail it.
+      for (const submitted of [
+        '{"id":"new-id","message":"Successfully uploaded file","path":"t3.zip"}',
+        '{"id":"new-id","status":"In Progress"}',
+      ]) {
+        const content = yield* makeContent();
+        yield* fs.writeFileString(content.submissionFile, "stale-id");
+        const stub = stubSpawner((subcommand) =>
+          subcommand === "submit"
+            ? { exitCode: 0, stdout: submitted }
+            : { exitCode: 0, stdout: '{"id":"new-id","status":"Accepted"}' },
+        );
 
-      yield* withStubs(
-        signMacArchiveContents({
-          repoRoot: content.root,
-          contentDir: content.contentDir,
-          executablePath: content.executablePath,
-          notarySubmissionFile: Option.some(content.submissionFile),
-        }),
-        stub,
-      );
-      assert.equal(yield* fs.readFileString(content.submissionFile), "new-id");
-      const [submit] = notarySubcommands(stub.calls);
-      assert.equal(submit?.[0], "submit");
-      assert.isFalse(submit?.includes("--wait"));
+        yield* withStubs(
+          signMacArchiveContents({
+            repoRoot: content.root,
+            contentDir: content.contentDir,
+            executablePath: content.executablePath,
+            notarySubmissionFile: Option.some(content.submissionFile),
+          }),
+          stub,
+        );
+        assert.equal(yield* fs.readFileString(content.submissionFile), "new-id");
+        const [submit] = notarySubcommands(stub.calls);
+        assert.equal(submit?.[0], "submit");
+        assert.isFalse(submit?.includes("--wait"));
 
-      yield* withStubs(awaitCliNotarization(content.submissionFile), stub);
-      assert.deepEqual(notarySubcommands(stub.calls)[1]?.slice(0, 2), ["wait", "new-id"]);
+        yield* withStubs(awaitCliNotarization(content.submissionFile), stub);
+        assert.deepEqual(notarySubcommands(stub.calls)[1]?.slice(0, 2), ["wait", "new-id"]);
+      }
     }).pipe(Effect.scoped),
   );
 
@@ -125,6 +131,16 @@ it.layer(NodeServices.layer)("build-cli-archive notarization", (it) => {
           wait: { exitCode: 1, stdout: '{"id":"sub","status":"Rejected"}' },
           error: "CliArchiveNotarizationRejectedError",
           fetchesLog: true,
+        },
+        {
+          name: "still in progress",
+          wait: { exitCode: 0, stdout: '{"id":"sub","status":"In Progress"}' },
+          error: "CliArchiveNotarizationRejectedError",
+        },
+        {
+          name: "still in progress with a non-zero exit",
+          wait: { exitCode: 1, stdout: '{"id":"sub","status":"In Progress"}' },
+          error: "CliArchiveCommandFailedError",
         },
         {
           name: "notarytool failed",

@@ -336,7 +336,7 @@ export class CliArchiveNotarizationRejectedError extends Schema.TaggedError<CliA
   { submissionId: Schema.String, status: Schema.String },
 ) {
   override get message(): string {
-    return `Apple notarization ${this.submissionId} ended ${this.status}, not Accepted.`;
+    return `Apple notarization ${this.submissionId} is ${this.status}, not Accepted.`;
   }
 }
 
@@ -344,6 +344,8 @@ const NotarySubmission = Schema.Struct({
   id: Schema.NonEmptyString,
   status: Schema.optional(Schema.String),
 });
+// Final failures from Apple's Notary API. "In Progress" is pending and has no log yet.
+const rejectedNotaryStatuses: ReadonlySet<string> = new Set(["Invalid", "Rejected"]);
 const decodeNotarySubmission = Schema.decodeEffect(Schema.fromJsonString(NotarySubmission));
 
 /** Notarization runs only for a Developer ID identity with all three App Store Connect key values. */
@@ -378,7 +380,7 @@ const notarytool = Effect.fn("notarytool")(function* (
   const submission = yield* decodeNotarySubmission(stdout).pipe(Effect.option);
   const status = Option.getOrUndefined(submission)?.status;
   // A finished submission reports its status even when notarytool exits non-zero for it.
-  if (Option.isSome(submission) && status !== undefined && status !== "Accepted") {
+  if (Option.isSome(submission) && status !== undefined && rejectedNotaryStatuses.has(status)) {
     yield* runCommand(
       ChildProcess.make("xcrun", ["notarytool", "log", submission.value.id, ...credentials]),
       "notarytool log",
