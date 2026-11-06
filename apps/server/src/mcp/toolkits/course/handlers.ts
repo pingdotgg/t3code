@@ -163,7 +163,7 @@ const handlers = {
         "{{units}}",
         units.join(", "),
       );
-      const clientRequestId = `course-prep:${course.id}:${units.join(",")}:${DateTime.toEpochMillis(yield* DateTime.now)}`;
+      const clientRequestId = `course-prep:${course.id}:${DateTime.toEpochMillis(yield* DateTime.now)}`;
       // Recorded before the prep turn starts, so its first course_read is already allowed.
       yield* service
         .recordPrepThread(
