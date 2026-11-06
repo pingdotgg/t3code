@@ -28,6 +28,7 @@ const EXTEND_THICKNESS = 6;
 const EXTEND_GAP = 4;
 /** The dragged row covers the composer, so the mention pill's middle sits this far above it. */
 const MENTION_PILL_LIFT = 24;
+const MARKER_GAP = 3;
 
 type Box = { left: number; top: number; width: number; height: number };
 
@@ -84,6 +85,43 @@ function targetZone(state: LayoutDragState, target: LayoutDropTarget): Box | nul
     case "down":
       return box({ ...body, top: midY + half });
   }
+}
+
+function intoTabs(state: LayoutDragState, target: LayoutDropTarget) {
+  if (target.kind !== "into") return null;
+  const tabs = state.panes.find((pane) => pane.paneId === target.paneId)?.tabs ?? [];
+  const sourceTabId = state.source.kind === "tab" ? state.source.tabId : null;
+  return {
+    tabs: tabs.filter((tab) => tab.id !== sourceTabId),
+    reorder: tabs.some((tab) => tab.id === sourceTabId),
+    index: target.index,
+  };
+}
+
+function InsertionMarker({
+  tabs,
+  index,
+}: {
+  tabs: readonly { rect: LayoutDragRect }[];
+  index: number | undefined;
+}) {
+  if (index === undefined) return null;
+  const before = tabs[index - 1];
+  const after = tabs[index];
+  const anchor = after ?? before;
+  if (!anchor) return null;
+  const left =
+    before && after
+      ? (before.rect.right + after.rect.left) / 2
+      : after
+        ? after.rect.left - MARKER_GAP
+        : anchor.rect.right + MARKER_GAP;
+  return (
+    <div
+      className="absolute w-0.5 -translate-x-1/2 rounded-full bg-strong-foreground"
+      style={{ left, top: anchor.rect.top, height: anchor.rect.bottom - anchor.rect.top }}
+    />
+  );
 }
 
 function PillIcon({ target }: { target: LayoutDropTarget }) {
@@ -239,6 +277,7 @@ export function LayoutDropZones() {
   const state = useLayoutDragState();
   if (!state) return null;
   const zone = state.target ? targetZone(state, state.target) : null;
+  const into = state.target ? intoTabs(state, state.target) : null;
   return createPortal(
     <div
       data-layout-drag-overlay=""
@@ -261,10 +300,11 @@ export function LayoutDropZones() {
         {state.source.kind === "tab" ? (
           <DraggedTabGhost tabId={state.source.tabId} point={state.point} />
         ) : null}
+        {into ? <InsertionMarker tabs={into.tabs} index={into.index} /> : null}
         {zone && state.target ? (
           <DropPill x={zone.left + zone.width / 2} y={zone.top + zone.height / 2}>
             <PillIcon target={state.target} />
-            {layoutDropLabel(state.target)}
+            {layoutDropLabel(state.target, into?.reorder ?? false)}
           </DropPill>
         ) : null}
         {state.composer ? (
