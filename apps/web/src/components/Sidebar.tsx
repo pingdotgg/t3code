@@ -61,7 +61,6 @@ import {
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 
 import {
-  ChartGanttIcon,
   CheckIcon,
   ChevronDownIcon,
   FolderIcon,
@@ -132,7 +131,7 @@ import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
-import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
+import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useBoringSidebarEnabled, useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
@@ -215,7 +214,6 @@ import {
   useThreadJumpHintsVisible,
   type SidebarListItem,
   type SidebarSection,
-  resolveLoomTargets,
   resolveSidebarRowThreadRef,
 } from "./Sidebar.logic";
 import {
@@ -1263,50 +1261,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             projectRef,
           ),
         },
-      });
-    },
-  );
-  const activeProjectRef = resolveThreadActionProjectRef({
-    activeDraftThread: newThreadContext.activeDraftThread,
-    activeThread: newThreadContext.activeThread ?? undefined,
-    defaultProjectRef: null,
-    handleNewThread: newThreadContext.handleNewThread,
-  });
-  const loomTargetsFor = (projectGroup: SidebarProjectSnapshot) =>
-    resolveLoomTargets({
-      members: projectGroup.memberProjects,
-      activeProjectRef,
-      supportsLoom: (environmentId) =>
-        serverConfigs.get(environmentId)?.environment.capabilities.projectLoom === true,
-    });
-  const handleOpenLoom = useStableCallback(
-    async (event: ReactMouseEvent<HTMLElement>, projectGroup: SidebarProjectSnapshot) => {
-      event.preventDefault();
-      event.stopPropagation();
-      suppressNextScopeChangeRef.current = true;
-      dispatchProjectScopeMenu({ type: "project-settings-opened" });
-      const targets = loomTargetsFor(projectGroup);
-      let member = targets.length === 1 ? targets[0] : undefined;
-      if (targets.length > 1) {
-        const api = readLocalApi();
-        if (!api) return;
-        const clicked = await settlePromise(() =>
-          api.contextMenu.show(
-            targets.map((target) => ({
-              id: `${target.environmentId}:${target.id}`,
-              label: `Open Loom on ${target.environmentLabel ?? target.environmentId}`,
-            })),
-            { x: event.clientX, y: event.clientY },
-          ),
-        );
-        if (clicked._tag === "Failure") return;
-        member = targets.find((target) => `${target.environmentId}:${target.id}` === clicked.value);
-      }
-      if (member === undefined) return;
-      if (isMobile) setOpenMobile(false);
-      void router.navigate({
-        to: "/loom/$environmentId/$projectId",
-        params: { environmentId: member.environmentId, projectId: member.id },
       });
     },
   );
@@ -3219,20 +3173,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               )}
                             </ProjectScopeRowIcon>
                             <span className="min-w-0 truncate text-sm">{item.label}</span>
-                            {project && loomTargetsFor(project).length > 0 ? (
-                              <Button
-                                size="icon-xs"
-                                variant="ghost-muted"
-                                tabIndex={-1}
-                                aria-hidden="true"
-                                title={`Open Loom for ${project.displayName}`}
-                                className="ml-auto"
-                                onPointerDown={(event) => event.stopPropagation()}
-                                onClick={(event) => void handleOpenLoom(event, project)}
-                              >
-                                <ChartGanttIcon className="size-3.5" />
-                              </Button>
-                            ) : null}
                             {project && showProjectEnvironments ? (
                               <ProjectEnvironmentBadge
                                 group={project}

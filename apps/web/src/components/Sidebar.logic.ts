@@ -19,8 +19,6 @@ import {
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 import {
   isListedThreadLineage,
-  type ProjectId,
-  type ScopedProjectRef,
   type ScopedThreadRef,
   type ContextMenuItem,
   type EnvironmentId,
@@ -1428,24 +1426,4 @@ export function sortScopedProjectsForSidebar<
       left.environmentId.localeCompare(right.environmentId) ||
       left.id.localeCompare(right.id),
   );
-}
-
-/**
- * Which grouped-project members a Loom entry opens. The active member decides when its environment
- * has the Loom; otherwise every member that has it is offered, so the user picks the environment.
- */
-export function resolveLoomTargets<
-  TMember extends { readonly environmentId: EnvironmentId; readonly id: ProjectId },
->(input: {
-  readonly members: ReadonlyArray<TMember>;
-  readonly activeProjectRef: ScopedProjectRef | null;
-  readonly supportsLoom: (environmentId: EnvironmentId) => boolean;
-}): ReadonlyArray<TMember> {
-  const targets = input.members.filter((member) => input.supportsLoom(member.environmentId));
-  const active = targets.find(
-    (member) =>
-      member.environmentId === input.activeProjectRef?.environmentId &&
-      member.id === input.activeProjectRef.projectId,
-  );
-  return active === undefined ? targets : [active];
 }

@@ -2,7 +2,6 @@ import {
   WS_METHODS,
   type EnvironmentId,
   type LoomAncestor,
-  type LoomEdge,
   type LoomLane,
   type LoomLaneRelationship,
   type LoomMarker,
@@ -195,18 +194,6 @@ export function loomMarkerLabel(marker: LoomMarker): string {
     case "subagent_task":
       return `${MARKER_LABELS.subagent_task}${marker.remoteChild === undefined ? "" : ` on ${marker.remoteChild.label}`}: ${marker.title ?? "untitled"} (${marker.status})`;
   }
-}
-
-const EDGE_LABELS: Record<LoomEdge["type"], string> = {
-  fork: "Fork",
-  provider_handoff: "Provider handoff",
-  merge_back: "Merge back",
-  subagent_spawn: "Subagent spawned",
-  subagent_result: "Subagent result",
-};
-
-export function loomEdgeLabel(edge: LoomEdge): string {
-  return EDGE_LABELS[edge.type];
 }
 
 /** Which limits cut this window short, in reading order, for a truncation note. */
