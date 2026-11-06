@@ -45,6 +45,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
+import * as P from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
@@ -543,6 +544,27 @@ const OWNED_RECONNECT_SCHEDULE = Schedule.exponential(RECONNECT_DELAY).pipe(
     Effect.succeed(Duration.min(duration, Duration.seconds(30))),
   ),
 );
+// A live owned server is retried until it answers; these failures repeat however long it waits.
+const isPermanentRecoveryError = (error: unknown) => {
+  if (Schema.isSchemaError(error)) return true;
+  if (
+    P.isTagged(error, "UnauthorizedError") ||
+    P.isTagged(error, "InvalidRequestError") ||
+    P.isTagged(error, "InvalidCursorError")
+  ) {
+    return true;
+  }
+  const http = OpenCode2Server.httpFailureOf(error);
+  if (http !== undefined) {
+    const status = http.response?.status;
+    return status !== undefined && status >= 400 && status < 500;
+  }
+  return P.isTagged(error, "ClientError");
+};
+const OWNED_RECOVERY_RETRY = {
+  schedule: OWNED_RECONNECT_SCHEDULE,
+  while: (error: unknown) => !isPermanentRecoveryError(error),
+};
 const LOST_BACKGROUND =
   "T3 Code lost its connection to OpenCode while this subagent ran, so its result is not shown.";
 const INVENTORY_TIMEOUT = "5 seconds";
@@ -2731,16 +2753,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // HTTP waits stay outside the event lock so Stop can still settle.
       yield* connection.processExit === undefined
         ? reconcile.pipe(Effect.timeout(RECONCILE_TIMEOUT))
-        : reconcile.pipe(Effect.retry({ schedule: OWNED_RECONNECT_SCHEDULE }));
+        : reconcile.pipe(Effect.retry(OWNED_RECOVERY_RETRY));
       return stream;
     }).pipe(
-      Effect.retry({
-        times: connection.processExit === undefined ? RECONNECT_ATTEMPTS - 1 : undefined,
-        schedule:
-          connection.processExit === undefined
-            ? Schedule.spaced(RECONNECT_DELAY)
-            : OWNED_RECONNECT_SCHEDULE,
-      }),
+      Effect.retry(
+        connection.processExit === undefined
+          ? { times: RECONNECT_ATTEMPTS - 1, schedule: Schedule.spaced(RECONNECT_DELAY) }
+          : OWNED_RECOVERY_RETRY,
+      ),
     );
 
     let currentScope = initial.scope;

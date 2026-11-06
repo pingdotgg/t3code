@@ -2800,7 +2800,15 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("bounds recovery when an external server keeps rejecting requests", () =>
+  it.effect.each([
+    {
+      server: "an external server keeps rejecting requests",
+      external: true,
+      status: 503,
+      tries: 5,
+    },
+    { server: "an owned server rejects its credentials", external: false, status: 401, tries: 1 },
+  ])("bounds recovery when $server", ({ external, status, tries }) =>
     Effect.gen(function* () {
       const attempts = yield* Queue.unbounded<void>();
       const { runtime, thread } = yield* resumed(
@@ -2808,14 +2816,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           out("session.prompt", { sessionID: SESSION, text: "<any>" }),
           promptAccepted,
           { type: "runtime_exit", status: "success" },
-          ...Array.from({ length: 5 }, () => [
+          ...Array.from({ length: tries }, () => [
             out("event.subscribe"),
             out("session.active"),
-            reply("session.active", { status: 503, body: { message: "Unavailable" } }),
+            reply("session.active", { status, body: { message: "Unavailable" } }),
           ]).flat(),
         ],
         {
-          external: true,
+          external,
           beforeResponse: (path) =>
             path === "/api/session/active"
               ? Queue.offer(attempts, undefined).pipe(Effect.asVoid)
@@ -2824,7 +2832,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
       yield* runtime.startTurn(turnInput(thread));
-      for (let attempt = 0; attempt < 4; attempt += 1) {
+      for (let attempt = 1; attempt < tries; attempt += 1) {
         yield* Queue.take(attempts);
         yield* TestClock.adjust("2 seconds");
       }

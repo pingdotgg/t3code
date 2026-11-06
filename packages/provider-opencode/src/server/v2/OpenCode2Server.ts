@@ -50,7 +50,7 @@ export const serverEnvironment = (
   return { ...rest, OPENCODE_PASSWORD: Redacted.value(password) };
 };
 
-const httpFailureOf = (cause: unknown): HttpClientError.HttpClientError | undefined => {
+export const httpFailureOf = (cause: unknown): HttpClientError.HttpClientError | undefined => {
   if (HttpClientError.isHttpClientError(cause)) return cause;
   if (
     P.isTagged(cause, "ClientError") &&
