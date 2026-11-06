@@ -35,8 +35,13 @@ import {
   resolveBackgroundActivitySettings,
 } from "./backgroundActivitySettings.ts";
 
-const ServerSettingsJson = fromLenientJson(ServerSettings);
-const decodeServerSettingsJson = Schema.decodeUnknownOption(ServerSettingsJson);
+// Only observability: a value the server migrates on load elsewhere in the file must not drop it.
+const ServerObservabilitySettingsJson = fromLenientJson(
+  Schema.Struct({ observability: ServerSettings.fields.observability }),
+);
+const decodeServerObservabilitySettingsJson = Schema.decodeUnknownOption(
+  ServerObservabilitySettingsJson,
+);
 
 export function isModelSelectionProviderEnabled(
   settings: ServerSettings,
@@ -151,6 +156,24 @@ export function resolveReviewGuideModelSelection(
   return resolveSourceControlWriterModelSelection(settings, providers, projectId);
 }
 
+/** Transcript cleanup follows the text generation model unless its own usable model is set. */
+export function resolveSpeechPostProcessingModelSelection(
+  settings: ServerSettings,
+  providers?: ReadonlyArray<ServerProvider>,
+): ModelSelection {
+  const selection = settings.speechPostProcessingModelSelection;
+  if (!selection || !isModelSelectionProviderEnabled(settings, selection)) {
+    return settings.textGenerationModelSelection;
+  }
+  if (providers === undefined) return selection;
+  const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+  return provider?.enabled === true &&
+    isProviderAvailable(provider) &&
+    isProviderTextGenerationCapable(provider)
+    ? selection
+    : settings.textGenerationModelSelection;
+}
+
 export interface PersistedServerObservabilitySettings {
   readonly otlpTracesUrl: string | undefined;
   readonly otlpMetricsUrl: string | undefined;
@@ -181,7 +204,7 @@ function extractPersistedServerObservabilitySettings(input: {
 export function parsePersistedServerObservabilitySettings(
   raw: string,
 ): PersistedServerObservabilitySettings {
-  const decoded = decodeServerSettingsJson(raw);
+  const decoded = decodeServerObservabilitySettingsJson(raw);
   if (Option.isSome(decoded)) {
     return extractPersistedServerObservabilitySettings(decoded.value);
   }
@@ -581,6 +604,9 @@ export function applyServerSettingsPatch(
       : {}),
     ...(patch.fallbackModelSelection !== undefined
       ? { fallbackModelSelection: patch.fallbackModelSelection }
+      : {}),
+    ...(patch.speechPostProcessingModelSelection !== undefined
+      ? { speechPostProcessingModelSelection: patch.speechPostProcessingModelSelection }
       : {}),
     ...(patch.defaultProjectScripts !== undefined
       ? { defaultProjectScripts: patch.defaultProjectScripts }
