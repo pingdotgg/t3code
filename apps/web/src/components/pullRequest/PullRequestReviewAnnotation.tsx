@@ -426,6 +426,7 @@ export function ReviewThreadCard({
                   value={comment.body}
                   cwd={workspaceRoot}
                   environmentId={environmentId}
+                  completionScope={completionScope}
                   label="Edit comment"
                   saving={savingEdit}
                   onSave={(body) => void saveEdit(comment.id, body)}
@@ -477,7 +478,7 @@ export function ReviewThreadCard({
                   submitKeys({
                     value: reply,
                     pending,
-                    onSubmit: () => void send(),
+                    onSubmit: () => void send(reply),
                     onCancel: () => setReply(""),
                   })(event)
                 }
@@ -486,7 +487,7 @@ export function ReviewThreadCard({
               <span className="flex-1" />
             )}
             {canReply && reply.trim().length > 0 ? (
-              <Button size="sm" disabled={pending} onClick={() => void send()}>
+              <Button size="sm" disabled={pending} onClick={() => void send(reply)}>
                 Reply
               </Button>
             ) : null}
