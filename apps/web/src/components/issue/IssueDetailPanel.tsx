@@ -39,6 +39,7 @@ import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
+import { Badge } from "../ui/badge";
 import { Button, InlineButton } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -593,11 +594,14 @@ export function IssueDetailPanel({
     });
   };
 
-  const submitComment = async () => {
+  const submitComment = async (visibility: "public" | "internal" = "public") => {
     const body = draft.trim();
     if (body.length === 0 || submitting) return;
     setSubmitting(true);
-    const result = await comment({ environmentId, input: { ...reference, body: draft } });
+    const result = await comment({
+      environmentId,
+      input: { ...reference, body: draft, visibility },
+    });
     setSubmitting(false);
     if (result._tag === "Failure") {
       toastManager.add({
@@ -928,6 +932,11 @@ export function IssueDetailPanel({
                 >
                   <PullRequestMetaLine className="text-xs text-muted-foreground">
                     <PullRequestActorLabel actor={item.comment.author} />
+                    {item.comment.visibility === "internal" ? (
+                      <Badge variant="secondary">Internal</Badge>
+                    ) : item.comment.visibility === "restricted" ? (
+                      <Badge variant="outline">Restricted</Badge>
+                    ) : null}
                     {item.comment.url ? (
                       <InlineButton
                         className="text-muted-foreground"
@@ -994,7 +1003,18 @@ export function IssueDetailPanel({
               }
             }}
           />
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            {detail.capabilities.internalComments ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!canComment || submitting || draft.trim().length === 0}
+                onClick={() => void submitComment("internal")}
+              >
+                Add internal note
+              </Button>
+            ) : null}
             <Button
               type="submit"
               size="sm"

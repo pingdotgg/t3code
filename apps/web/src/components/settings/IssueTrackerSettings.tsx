@@ -121,7 +121,7 @@ function TrackerRow({
             </span>
             {status}
           </div>
-          {tracker.connected ? (
+          {tracker.connected && !tracker.environmentLogin ? (
             <Button
               size="xs"
               variant="outline"
@@ -133,52 +133,56 @@ function TrackerRow({
           ) : null}
         </div>
         {tracker.detail ? <p className="text-xs text-destructive">{tracker.detail}</p> : null}
-        <form
-          className="grid gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (draft.trim()) void submit(draft.trim());
-          }}
-        >
-          {/* Locked while saving: a successful save clears the draft, which would drop mid-request edits. */}
-          <fieldset disabled={!canEdit || busy} className="contents">
-            <div className="grid gap-1.5">
-              <Label htmlFor={`issue-tracker-${tracker.tracker}-${environmentId}`}>
-                {tracker.credential.label}
-                {tracker.credential.helpUrl ? (
-                  <>
-                    {" · "}
-                    <InlineButton
-                      render={
-                        <a
-                          href={tracker.credential.helpUrl}
-                          target="_blank"
-                          rel="noreferrer noopener"
-                        />
-                      }
-                    >
-                      Create one
-                      <ExternalLinkIcon aria-hidden className="size-3" />
-                    </InlineButton>
-                  </>
-                ) : null}
-              </Label>
-              <div className="flex gap-2">
-                <SecretInput
-                  id={`issue-tracker-${tracker.tracker}-${environmentId}`}
-                  size="sm"
-                  configured={tracker.connected}
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                />
-                <Button type="submit" size="sm" disabled={!draft.trim()}>
-                  {tracker.connected ? "Replace" : "Connect"}
-                </Button>
+        {tracker.environmentLogin ? (
+          <p className="text-xs text-muted-foreground">{tracker.environmentLogin}</p>
+        ) : (
+          <form
+            className="grid gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (draft.trim()) void submit(draft.trim());
+            }}
+          >
+            {/* Locked while saving: a successful save clears the draft, which would drop mid-request edits. */}
+            <fieldset disabled={!canEdit || busy} className="contents">
+              <div className="grid gap-1.5">
+                <Label htmlFor={`issue-tracker-${tracker.tracker}-${environmentId}`}>
+                  {tracker.credential.label}
+                  {tracker.credential.helpUrl ? (
+                    <>
+                      {" · "}
+                      <InlineButton
+                        render={
+                          <a
+                            href={tracker.credential.helpUrl}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                          />
+                        }
+                      >
+                        Create one
+                        <ExternalLinkIcon aria-hidden className="size-3" />
+                      </InlineButton>
+                    </>
+                  ) : null}
+                </Label>
+                <div className="flex gap-2">
+                  <SecretInput
+                    id={`issue-tracker-${tracker.tracker}-${environmentId}`}
+                    size="sm"
+                    configured={tracker.connected}
+                    value={draft}
+                    onChange={(event) => setDraft(event.target.value)}
+                  />
+                  <Button type="submit" size="sm" disabled={!draft.trim()}>
+                    {tracker.connected ? "Replace" : "Connect"}
+                  </Button>
+                </div>
               </div>
-            </div>
-          </fieldset>
-          {failure ? <p className="text-xs text-destructive">{failure}</p> : null}
-        </form>
+            </fieldset>
+            {failure ? <p className="text-xs text-destructive">{failure}</p> : null}
+          </form>
+        )}
         {tracker.connected && tracker.account !== null ? (
           <ProjectBindings
             environmentId={environmentId}

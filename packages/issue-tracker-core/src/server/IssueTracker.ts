@@ -136,7 +136,10 @@ export interface IssueTrackerApi {
 
   /** Only called when `capabilities.comment` is true. */
   readonly comment?: (
-    input: IssueTarget & { readonly body: string },
+    input: IssueTarget & {
+      readonly body: string;
+      readonly visibility?: "public" | "internal" | undefined;
+    },
   ) => Effect.Effect<void, IssueTrackerError>;
 
   /**
@@ -191,6 +194,9 @@ export interface IssueTrackerApi {
  */
 export interface StandaloneIssueTrackerApi extends IssueTrackerApi {
   readonly standalone: StandaloneIssueTrackerDescriptor;
+  readonly resolveScope?: (
+    scope: string,
+  ) => { readonly host: string; readonly scope: string } | null;
   /**
    * Who a credential signs in as and which scopes it reaches, asked of the tracker itself. Run on
    * a credential before it is stored, and on the stored one to report connection status.

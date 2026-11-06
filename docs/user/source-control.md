@@ -325,6 +325,12 @@ links in the conversation open there) and use **Link to this thread** in its hea
 undoes it. Linked issues are listed in the thread's details beside its pull requests, with their
 last known state. Agents link the issues they work on with the `link_issue` tool.
 
+Jira uses the existing TWG CLI login on the server environment. Install the current TWG CLI
+and run `twg login` there, then open **Settings → Issue trackers** and bind a project from its
+default Jira site. You can browse and search issues, load more results and comments, and post
+public replies or **Add internal note** in Jira Service Management. Internal and restricted
+comments carry audience badges. Editing fields and changing status stay in Jira. Jira cannot search issue mentions.
+
 Writing to a tracker over a remote connection requires the `source-control:write` scope.
 
 ## GitHub stacks

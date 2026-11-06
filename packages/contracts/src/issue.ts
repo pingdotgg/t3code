@@ -131,7 +131,11 @@ export const IssueListEntry = Schema.Struct({
 });
 export type IssueListEntry = typeof IssueListEntry.Type;
 
+export const IssueCommentVisibility = Schema.Literals(["public", "internal", "restricted"]);
+export type IssueCommentVisibility = typeof IssueCommentVisibility.Type;
+
 export const IssueComment = Schema.Struct({
+  visibility: Schema.optional(IssueCommentVisibility),
   id: TrimmedNonEmptyString,
   author: Schema.NullOr(IssueActor),
   body: Schema.String,
@@ -188,6 +192,7 @@ export type IssueLinkedPullRequest = typeof IssueLinkedPullRequest.Type;
  * service refuses a call outside these before it reaches the driver.
  */
 export const IssueCapabilities = Schema.Struct({
+  internalComments: Schema.optional(Schema.Boolean),
   create: Schema.Boolean,
   /** Title and body can be rewritten after filing. */
   edit: Schema.Boolean,
@@ -339,6 +344,7 @@ export const IssueCreateResult = Schema.Struct({
 export type IssueCreateResult = typeof IssueCreateResult.Type;
 
 export const IssueCommentInput = Schema.Struct({
+  visibility: Schema.optional(Schema.Literals(["public", "internal"])),
   ...IssueRef.fields,
   body: CommentBody,
 });
@@ -552,6 +558,7 @@ export function threadIssueRefOf(link: ThreadIssueLink): IssueRef {
  * client needs to draw the connect flow for any such tracker without knowing which one it is.
  */
 export const StandaloneIssueTrackerDescriptor = Schema.Struct({
+  environmentLogin: Schema.optional(TrimmedNonEmptyString),
   tracker: IssueTrackerKind,
   displayName: TrimmedNonEmptyString,
   /** Where the tracker is served from; what `IssueRef.host` carries for its issues. */

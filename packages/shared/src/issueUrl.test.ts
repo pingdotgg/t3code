@@ -5,6 +5,10 @@ import { parseIssueUrl } from "./issueUrl.ts";
 describe("parseIssueUrl", () => {
   it.each([
     [
+      "https://demo.atlassian.net/browse/DEMO-123",
+      { tracker: "jira", host: "demo.atlassian.net", scope: "DEMO", key: "DEMO-123" },
+    ],
+    [
       "https://github.com/T3Tools/T3Code/issues/123",
       { tracker: "github", host: "github.com", scope: "t3tools/t3code", key: "123" },
     ],

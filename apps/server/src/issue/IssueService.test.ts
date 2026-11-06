@@ -520,3 +520,62 @@ describe("IssueService with a standalone tracker", () => {
     }),
   );
 });
+
+it.effect(
+  "resolves a CLI tracker site and preserves internal visibility at the service boundary",
+  () =>
+    Effect.gen(function* () {
+      const jira = IssueTrackerKind.make("jira");
+      const base = fakeStandaloneTracker();
+      let audience: string | undefined;
+      const api: StandaloneIssueTrackerApi = {
+        ...base,
+        kind: jira,
+        standalone: { ...base.standalone, tracker: jira, host: "atlassian.net" },
+        resolveScope: () => ({ host: "demo.atlassian.net", scope: "DEMO" }),
+        capabilities: { ...base.capabilities, internalComments: true },
+        comment: (input) =>
+          Effect.sync(() => {
+            audience = input.visibility;
+          }),
+      };
+      const service = yield* makeService({
+        projects: [project({ id: "web" })],
+        trackers: [api],
+        bindings: { web: { tracker: jira, scope: "demo.atlassian.net/DEMO" } },
+      });
+      const ref = {
+        projectId: "web" as ProjectId,
+        tracker: jira,
+        host: "demo.atlassian.net",
+        scope: "DEMO",
+        key: "DEMO-1",
+      };
+      expect(yield* service.detail(ref)).toMatchObject({
+        host: "demo.atlassian.net",
+        writable: true,
+      });
+      expect(yield* service.resolveUrl("https://demo.atlassian.net/browse/DEMO-1")).toMatchObject({
+        ...ref,
+        writable: true,
+      });
+      yield* service.comment({ ...ref, body: "Team only", visibility: "internal" });
+      expect(audience).toBe("internal");
+      const unsupported = yield* makeService({
+        projects: [project({ id: "web", repository: "acme/web" })],
+        trackers: [fakeTracker()],
+      });
+      expect(
+        yield* Effect.flip(
+          unsupported.comment({
+            projectId: "web" as ProjectId,
+            tracker: GITHUB,
+            scope: "acme/web",
+            key: "1",
+            body: "Internal",
+            visibility: "internal",
+          }),
+        ),
+      ).toMatchObject({ _tag: "IssueOperationError" });
+    }),
+);
