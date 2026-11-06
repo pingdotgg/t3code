@@ -383,7 +383,7 @@ can break the preview, so save a copy if you need to keep it.
 
 ## Files outside the workspace
 
-Follow an agent's file link to read a report or other file outside the workspace. These files open read-only, except files in a repository worktree attached to the thread, which you can edit. An HTML file outside the workspace cannot load scripts, styles, or images from neighboring files.
+Follow an agent's file link to read a report or other file outside the workspace. These files open read-only, except that on web and desktop you can edit text files in a repository worktree attached to the thread. An HTML file outside the workspace cannot load scripts, styles, or images from neighboring files.
 
 ## HTML and PDF files in the file viewer
 
