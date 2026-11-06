@@ -140,6 +140,18 @@ describe("ProjectSetupScriptRunner", () => {
     }),
   );
 
+  it.effect("drops whole escape sequences from output lines", () =>
+    Effect.gen(function* () {
+      const { outputLines, emit } = yield* setup();
+      yield* emit({
+        ...event,
+        type: "output",
+        data: "\x1b7\x1b[24;0fProgress: [ 40%]\x1b8\r\n\x1b%G\x1b#8\x1b[4:3mdone\x1bM\r\n",
+      });
+      expect(yield* Queue.takeAll(outputLines)).toEqual(["Progress: [ 40%]", "done"]);
+    }),
+  );
+
   it.effect("types into a quiet shell that has no line editor", () =>
     Effect.gen(function* () {
       const { writes } = yield* setup();
