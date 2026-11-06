@@ -128,7 +128,18 @@ foreach ($launcherName in @("ominax", "t3-learn")) {
     Log "$launcherName launcher is not reachable until Settings -> About installs the CLI; skipping"
   }
 }
-if (Test-Path "apps/desktop/scripts/plant-saved-connection.mjs") { node apps/desktop/scripts/plant-saved-connection.mjs check }
+if (Test-Path "apps/desktop/scripts/plant-saved-connection.mjs") {
+  # N's renderer migrates saved connections when it loads them, shortly after its server is up.
+  $secretsOk = $false
+  for ($i = 0; $i -lt 30 -and -not $secretsOk; $i++) {
+    node apps/desktop/scripts/plant-saved-connection.mjs check
+    if ($LASTEXITCODE -eq 0) { $secretsOk = $true } else { Start-Sleep -Seconds 2 }
+  }
+  if (-not $secretsOk) { Fail "the saved connection planted under N-1 does not decrypt under N" }
+}
+foreach ($scheme in @("ominax", "t3learn")) {
+  if (-not (Test-Path "HKCU:\Software\Classes\$scheme")) { Fail "the app does not register ${scheme}:// links" }
+}
 
 if ($Scenario -eq "next-to-t3-code") {
   Log "Checking that T3 Code is untouched"

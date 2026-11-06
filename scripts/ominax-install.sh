@@ -299,6 +299,7 @@ Exec=${exec_line}
 Icon=${exe}
 Terminal=false
 Categories=Development;
+MimeType=x-scheme-handler/ominax;x-scheme-handler/t3learn;
 StartupWMClass=${exe}
 EOF
   command -v update-desktop-database >/dev/null 2>&1 &&
