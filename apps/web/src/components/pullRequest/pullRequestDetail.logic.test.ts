@@ -933,7 +933,7 @@ describe("one finding handed over on its own", () => {
     const [chip] = handoff.reviewComments;
 
     expect(handoff.additive).toBe(true);
-    expect(handoff.reviewComments).toHaveLength(1);
+    expect(handoff.reviewComments).toHaveLength(2);
     expect(reviewCommentContextLabel(chip!)).toMatch(/^Failing checks on #\d+$/);
     expect(chip!.rangeLabel).toBe("2 failing");
     expect(chip!.text).toContain("- lint (https://github.com/o/r/runs/1)");

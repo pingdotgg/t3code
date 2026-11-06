@@ -1113,6 +1113,7 @@ export function buildFixFindingHandoff(input: {
           ...preamble,
         ],
       }),
+      pullRequestContextComment(input, []),
     ],
     additive: true,
   };
@@ -1124,6 +1125,8 @@ export function buildFixChecksHandoff(input: {
   readonly url: string;
   readonly headBranch: string;
   readonly baseBranch: string;
+  readonly state: PullRequestState;
+  readonly isDraft: boolean;
   readonly checks: ReadonlyArray<PullRequestCheck>;
 }): FixFindingsHandoff {
   const term = terminologyForUrl(input.url).singular;
@@ -1159,6 +1162,7 @@ export function buildFixChecksHandoff(input: {
           ...instructions,
         ],
       }),
+      pullRequestContextComment(input, []),
     ],
     additive: true,
   };
