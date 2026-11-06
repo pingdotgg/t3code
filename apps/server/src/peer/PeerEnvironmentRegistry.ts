@@ -307,6 +307,18 @@ const make = Effect.gen(function* () {
       });
     }
     const urls = yield* Effect.forEach(input.urls, originOf);
+    const previous = yield* readRow(input.environmentId);
+    const previousUrls = Option.isSome(previous)
+      ? yield* decodeUrls(previous.value.urls_json).pipe(Effect.catch(failStorage))
+      : [];
+    // Pairing put the verified address first; the same addresses keep that order and the session.
+    const keepSession =
+      Option.isSome(previous) &&
+      previousUrls.length === urls.length &&
+      urls.every((url) => previousUrls.includes(url));
+    const urlsJson = keepSession
+      ? previous.value.urls_json
+      : yield* encodeUrls([...urls]).pipe(Effect.catch(failStorage));
     const now = yield* DateTime.now;
     yield* sql`
       INSERT INTO fleet_peer_environments (
@@ -314,7 +326,7 @@ const make = Effect.gen(function* () {
         session_scopes_json, session_expires_at, registered_at, last_error
       ) VALUES (
         ${input.environmentId}, ${input.role}, ${input.label},
-        ${yield* encodeUrls([...urls]).pipe(Effect.catch(failStorage))},
+        ${urlsJson},
         ${input.workerClass ?? null}, NULL, NULL, NULL, ${DateTime.formatIso(now)}, NULL
       )
       ON CONFLICT (environment_id) DO UPDATE SET
@@ -322,8 +334,15 @@ const make = Effect.gen(function* () {
         label = excluded.label,
         urls_json = excluded.urls_json,
         worker_class = excluded.worker_class,
+        secret_name = CASE WHEN ${keepSession ? 1 : 0} = 1 THEN secret_name END,
+        session_scopes_json = CASE WHEN ${keepSession ? 1 : 0} = 1 THEN session_scopes_json END,
+        session_expires_at = CASE WHEN ${keepSession ? 1 : 0} = 1 THEN session_expires_at END,
         last_error = NULL
     `.pipe(Effect.catch(failStorage));
+    // New addresses were never checked against this peer, so its token must not follow them.
+    if (Option.isSome(previous) && !keepSession && previous.value.secret_name !== null) {
+      yield* secrets.remove(previous.value.secret_name).pipe(Effect.ignore);
+    }
     return Option.getOrThrow(yield* get(input.environmentId));
   });
 
@@ -400,6 +419,11 @@ const make = Effect.gen(function* () {
       });
     }
     const descriptor = found.descriptor as ExecutionEnvironmentDescriptor;
+    // resolveSession sends the token to the first address, so that must be the verified one.
+    const verifiedUrlsJson = yield* encodeUrls([
+      found.origin,
+      ...urls.filter((url) => url !== found.origin),
+    ]).pipe(Effect.catch(failStorage));
     const exchanged = yield* clientFor(found.origin).pipe(
       Effect.flatMap((client) =>
         client.auth.token({
@@ -444,19 +468,20 @@ const make = Effect.gen(function* () {
     // and the fresh secret is discarded instead of leaving an orphan token behind.
     const updated = yield* sql<{ readonly secret_name: string | null }>`
       UPDATE fleet_peer_environments
-      SET secret_name = ${secretName}, session_scopes_json = ${yield* encodeScopes(granted).pipe(
-        Effect.catch(failStorage),
-      )},
+      SET urls_json = ${verifiedUrlsJson},
+          secret_name = ${secretName}, session_scopes_json = ${yield* encodeScopes(granted).pipe(
+            Effect.catch(failStorage),
+          )},
           session_expires_at = ${DateTime.formatIso(expiresAt)}, label = ${descriptor.label},
           last_error = NULL
-      WHERE environment_id = ${input.environmentId}
+      WHERE environment_id = ${input.environmentId} AND urls_json = ${row.urls_json}
       RETURNING secret_name
     `.pipe(Effect.catch(failStorage));
     if (updated.length === 0) {
       yield* secrets.remove(secretName).pipe(Effect.ignore);
       return yield* new PeerEnvironmentRegistryError({
         reason: "unknown_peer",
-        message: `${input.environmentId} is no longer registered, so its session was not stored.`,
+        message: `${input.environmentId} was unregistered or changed addresses during pairing, so its session was not stored.`,
       });
     }
     const previous = row;
