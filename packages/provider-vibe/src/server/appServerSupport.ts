@@ -8,6 +8,7 @@ import type { VibeSettings } from "../settings.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as Scope from "effect/Scope";
@@ -100,6 +101,28 @@ export const DEFAULT_VIBE_MODEL = "mistral-medium-3.5";
 
 /** Mistral Vibe's application rate-limit code, outside the JSON-RPC reserved range. */
 export const MISTRAL_VIBE_RATE_LIMITED = -31001;
+
+export class VibeModelUnavailableError extends Schema.TaggedError<VibeModelUnavailableError>()(
+  "VibeModelUnavailableError",
+  {
+    model: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Vibe can't run the model "${this.model}" on your Mistral account right now. Choose another Vibe model, then retry.`;
+  }
+}
+
+const isVibeRequestError = Schema.is(VibeError.VibeAppServerRequestError);
+
+/** Vibe's `config/model/write` rejection of a model the account does not offer (`_config_write.py`). */
+export const vibeModelWriteError = (model: string, cause: unknown): unknown =>
+  isVibeRequestError(cause) &&
+  cause.code === "invalid_params" &&
+  cause.detail.startsWith("Unknown model:")
+    ? new VibeModelUnavailableError({ model, cause })
+    : cause;
 
 type VibeAppServerSettings = Pick<
   VibeSettings,

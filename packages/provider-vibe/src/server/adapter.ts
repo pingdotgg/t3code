@@ -48,6 +48,7 @@ import {
   buildVibeSpawnInput,
   resolveVibeModelId,
   vibeAgentForRuntimeMode,
+  vibeModelWriteError,
 } from "./appServerSupport.ts";
 import { vibeEffectSettled, vibeHistoryTurnItem } from "./historyItems.ts";
 
@@ -810,21 +811,26 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         rootNodeId: turnInput.rootNodeId,
       };
       // A rejected model write must not silently run the turn with the previous model.
-      yield* Effect.mapError(
-        client.configModelWrite({
+      const modelAlias = resolveVibeModelId(turnInput.modelSelection.model);
+      yield* client
+        .configModelWrite({
           sessionId: nativeSessionId,
-          modelAlias: resolveVibeModelId(turnInput.modelSelection.model),
+          modelAlias,
           reasoningEffort: getModelSelectionStringOptionValue(turnInput.modelSelection, "thinking"),
           sessionOnly: true,
-        }),
-        protocolError,
-      ).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Vibe rejected the model write; the turn keeps the session model.", {
-            cause,
-          }),
-        ),
-      );
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapter.ProviderAdapterTurnStartError({
+                driver: VIBE_PROVIDER,
+                threadId: turnInput.threadId,
+                providerThreadId: turnInput.providerThread.id,
+                runId: turnInput.runId,
+                cause: vibeModelWriteError(modelAlias, cause),
+              }),
+          ),
+        );
       const mcpSession = yield* mcpSessions.read(turnInput.threadId);
       const hasDeviceTools = mcpSession?.capabilities?.has("device") === true;
       const promptText = t3OrchestrationPrompt({

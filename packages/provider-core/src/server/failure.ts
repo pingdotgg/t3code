@@ -124,6 +124,7 @@ function curatedCauseMessages(cause: unknown): {
         case "ClaudeCodeRootRefusalError":
         case "ClaudeConversationNotFoundError":
         case "CursorModelUnavailableError":
+        case "VibeModelUnavailableError":
         case "CodexGoalObjectiveTooLongError":
         case "ProviderSetupError":
         case "ProviderAdapterThreadInUseError":
