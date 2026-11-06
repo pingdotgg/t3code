@@ -23,6 +23,7 @@ import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -33,6 +34,7 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 import type * as SqlClient from "effect/sql/SqlClient";
 import { McpSchema, McpServer } from "effect/ai";
 
@@ -1775,6 +1777,102 @@ it.effect("cancelling a running task the box refuses to stop says it may still r
       expect(yield* Ref.get(thread.stops)).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "a wait on a thread's ended run answers with it while a newer message's run is active",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const a = yield* makeLaptop(database, offers);
+        yield* seedParent(a);
+        const { runs } = yield* a.orchestrator.getThreadProjection(parentThreadId);
+        const first = runs.find((run) => run.id === parentRunId)!;
+        const newerRunId = RunId.make("run:laptop-parent:newer");
+        const newerMessageId = MessageId.make("message:laptop-parent:newer");
+        const at = DateTime.makeUnsafe(4_000);
+        // The waited run ended; a user's message then started a run that waits for approval.
+        yield* a.sink.write({
+          commandId: CommandId.make("command:newer-run-while-unwatched"),
+          events: [
+            {
+              id: EventId.make("event:ended-run-while-unwatched"),
+              type: "run.updated",
+              threadId: parentThreadId,
+              runId: parentRunId,
+              providerInstanceId: instanceId,
+              occurredAt: at,
+              payload: {
+                ...first,
+                status: "completed",
+                requestedAt: DateTime.makeUnsafe(1_000),
+                startedAt: DateTime.makeUnsafe(1_000),
+                completedAt: DateTime.makeUnsafe(2_000),
+              },
+            },
+            {
+              id: EventId.make("event:newer-run-while-unwatched"),
+              type: "run.updated",
+              threadId: parentThreadId,
+              runId: newerRunId,
+              providerInstanceId: instanceId,
+              occurredAt: at,
+              payload: {
+                ...first,
+                id: newerRunId,
+                userMessageId: newerMessageId,
+                ordinal: 2,
+                status: "running",
+                requestedAt: DateTime.makeUnsafe(3_000),
+                startedAt: DateTime.makeUnsafe(3_000),
+                completedAt: null,
+              },
+            },
+            {
+              id: EventId.make("event:newer-message-while-unwatched"),
+              type: "message.updated",
+              threadId: parentThreadId,
+              runId: newerRunId,
+              providerInstanceId: instanceId,
+              occurredAt: at,
+              payload: {
+                id: newerMessageId,
+                threadId: parentThreadId,
+                runId: newerRunId,
+                nodeId: null,
+                role: "user",
+                text: "Something else.",
+                attachments: [],
+                streaming: false,
+                createdAt: at,
+                updatedAt: at,
+                createdBy: "user",
+                creationSource: "web",
+              },
+            },
+          ],
+        });
+
+        const wait = yield* a.threads
+          .waitForThread({
+            projectId: ProjectId.make("project:laptop"),
+            threadId: parentThreadId,
+            runId: parentRunId,
+            timeoutMs: 1,
+            untilDelegatedWorkSettled: true,
+          })
+          .pipe(Effect.forkChild);
+        yield* TestClock.adjust(Duration.millis(1));
+        expect(yield* Fiber.join(wait)).toMatchObject({
+          timedOut: false,
+          resultRun: { id: parentRunId },
+        });
+      }),
+    ),
 );
 
 it.effect("a deleted parent's finished task is not followed again after a restart", () =>

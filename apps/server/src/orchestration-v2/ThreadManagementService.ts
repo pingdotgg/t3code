@@ -544,34 +544,49 @@ const runBeganAfter = (run: OrchestrationV2Run, other: OrchestrationV2Run) =>
   runBegan(run) === runBegan(other) ? run.ordinal > other.ordinal : runBegan(run) > runBegan(other);
 
 /**
- * The run that started first after `after` did, other than `after` restarted. Queued runs can
- * start out of ordinal order, so start time orders them; one that never started counts only if
- * it failed trying, as it ended. A queued message removed or still held is no run yet.
+ * The run that started first after `after` did, other than `after` restarted; with `isNext`, the
+ * first it holds for, each passed run starting the search again. Queued runs can start out of
+ * ordinal order, so start time orders them; one that never started counts only if it failed
+ * trying, as it ended. A queued message removed or still held is no run yet.
  */
 function laterRun(
   runs: ReadonlyArray<OrchestrationV2Run>,
   after: OrchestrationV2Run,
+  isNext: (run: OrchestrationV2Run) => boolean = () => true,
 ): OrchestrationV2Run | undefined {
-  const restarts = new Set<RunId>([after.id]);
-  let earliest: OrchestrationV2Run | undefined;
-  for (const run of runs.toSorted((left, right) => left.ordinal - right.ordinal)) {
-    if (
-      run.restartContinuationOfRunId !== undefined &&
-      restarts.has(run.restartContinuationOfRunId)
-    ) {
-      restarts.add(run.id);
-      continue;
-    }
-    if (
-      run.id === after.id ||
-      run.status === "rolled_back" ||
-      (run.startedAt === null && run.status !== "failed")
-    )
-      continue;
-    if (!runBeganAfter(run, after)) continue;
-    if (earliest === undefined || runBeganAfter(earliest, run)) earliest = run;
+  const continuations = new Map<RunId, Array<OrchestrationV2Run>>();
+  for (const run of runs) {
+    if (run.restartContinuationOfRunId === undefined) continue;
+    const siblings = continuations.get(run.restartContinuationOfRunId);
+    if (siblings === undefined) continuations.set(run.restartContinuationOfRunId, [run]);
+    else siblings.push(run);
   }
-  return earliest;
+  const restartsOf = (run: OrchestrationV2Run) => {
+    const restarts = new Set<RunId>([run.id]);
+    const pending = [run];
+    for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+      for (const continuation of continuations.get(next.id) ?? []) {
+        if (restarts.has(continuation.id)) continue;
+        restarts.add(continuation.id);
+        pending.push(continuation);
+      }
+    }
+    return restarts;
+  };
+  let previous = after;
+  let restarts = restartsOf(after);
+  const candidates = runs
+    .filter(
+      (run) => run.status !== "rolled_back" && (run.startedAt !== null || run.status === "failed"),
+    )
+    .toSorted((left, right) => runBegan(left) - runBegan(right) || left.ordinal - right.ordinal);
+  for (const run of candidates) {
+    if (restarts.has(run.id) || !runBeganAfter(run, previous)) continue;
+    if (isNext(run)) return run;
+    previous = run;
+    restarts = restartsOf(run);
+  }
+  return undefined;
 }
 
 function latestRestartContinuation(
@@ -1060,13 +1075,10 @@ const make = Effect.gen(function* () {
         messageRoles: ["user"],
         messageIds: later.map((run) => run.userMessageId),
       });
-      const startedByMessage = (run: OrchestrationV2Run) =>
-        messages.some(
-          (message) => message.id === run.userMessageId && message.notification === undefined,
-        );
-      let newWork = laterRun(runs, selected);
-      while (newWork !== undefined && !startedByMessage(newWork)) newWork = laterRun(runs, newWork);
-      const bound = newWork;
+      const byMessage = new Set(
+        messages.filter((message) => message.notification === undefined).map(({ id }) => id),
+      );
+      const bound = laterRun(runs, selected, (run) => byMessage.has(run.userMessageId));
       return bound === undefined
         ? runs
         : runs.filter((run) => run.id !== bound.id && !runBeganAfter(run, bound));
@@ -1078,7 +1090,21 @@ const make = Effect.gen(function* () {
         { messageRoles: ["user"], monitorNotificationsOnly: true },
       );
       const runs = yield* ownWork(records.runs, selected);
-      const progress = delegatedTaskProgress({ ...records, runs });
+      const bounded = runs.length < records.runs.length;
+      const own = new Set(runs.map((run) => run.id));
+      // Past new work, only the tasks its own runs started count; background work names no run.
+      const progress = delegatedTaskProgress(
+        bounded
+          ? {
+              ...records,
+              runs,
+              subagents: records.subagents.filter(
+                (task) => task.runId !== null && own.has(task.runId),
+              ),
+              providerThreads: [],
+            }
+          : records,
+      );
       // A thread rolled back past all its work, with nothing left running, has no answer to wait for.
       if (
         progress.resultRun === undefined &&
@@ -1089,18 +1115,20 @@ const make = Effect.gen(function* () {
       if (progress.state !== "result_available" || progress.resultRun === undefined) {
         return undefined;
       }
-      const pending = yield* orchestrator
-        .delegatedTaskResultPending(input.threadId)
-        .pipe(Effect.mapError(loadError));
-      if (pending) return undefined;
+      const { resultRun } = progress;
+      const pending = yield* Effect.forEach(
+        runs.filter((run) => run.id === resultRun.id || runRanAfter(run, resultRun)),
+        orchestrator.restartContinuationPending,
+      );
+      if (pending.includes(true)) return undefined;
       // A run waited on by id that is no result candidate, as a monitor's or one that failed to
       // start, answers for itself over an earlier one; a rolled-back or unrun one never does.
       return input.runId !== undefined &&
         selected.status !== "rolled_back" &&
         (selected.startedAt !== null || selected.status === "failed") &&
-        runRanAfter(selected, progress.resultRun)
+        runRanAfter(selected, resultRun)
         ? selected
-        : progress.resultRun;
+        : resultRun;
     });
     const evaluate = Effect.fn("orchestrationV2.threadManagement.evaluate")(function* (
       runs: ReadonlyArray<OrchestrationV2Run>,
