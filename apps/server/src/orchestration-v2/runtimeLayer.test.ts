@@ -47,6 +47,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { createAttachmentId } from "../attachmentStore.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ServerConfig from "../config.ts";
@@ -830,7 +831,264 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
       }).pipe(Effect.ensuring(Effect.sync(() => lockSpy.mockRestore())));
     }),
   );
+
+  it.effect.each(["fork", "side chat"] as const)(
+    "keeps a deleted thread's pages until its last %s family member goes",
+    (relationship) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const key = relationship === "fork" ? "fork" : "side-chat";
+        const source = yield* seedPageThread(`keep:${key}`);
+        const forkId = ThreadId.make(`page-family-fork:keep:${key}`);
+        yield* orchestrator.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make(`page-family-fork:keep:${key}`),
+          sourceThreadId: source.threadId,
+          targetThreadId: forkId,
+          sourcePoint: { type: "run", runId: source.runId },
+          ...(relationship === "side chat" ? { sideChat: true } : {}),
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const { cleanup, spy } = spyAttachmentCleanup(eventSink);
+        yield* Effect.gen(function* () {
+          const deleteSource = CommandId.make(`page-family-delete-source:keep:${key}`);
+          yield* orchestrator.dispatch({
+            type: "thread.delete",
+            commandId: deleteSource,
+            threadId: source.threadId,
+          });
+          if (relationship === "side chat") {
+            // The cascade deletes the side chat in the same commit.
+            assert.deepEqual(cleanup.get(deleteSource), [source.attachmentId]);
+            return;
+          }
+          assert.deepEqual(cleanup.get(deleteSource), undefined);
+          const deleteFork = CommandId.make(`page-family-delete-fork:keep:${key}`);
+          yield* orchestrator.dispatch({
+            type: "thread.delete",
+            commandId: deleteFork,
+            threadId: forkId,
+          });
+          assert.deepEqual(cleanup.get(deleteFork), [source.attachmentId]);
+        }).pipe(Effect.ensuring(Effect.sync(() => spy.mockRestore())));
+      }),
+  );
+
+  it.effect.each(["fork", "delete"] as const)(
+    "a fork racing its source's deletion either keeps the pages or is refused: %s first",
+    (first) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        const source = yield* seedPageThread(`race:${first}`);
+        const forkId = ThreadId.make(`page-family-fork:race:${first}`);
+        const forkCommandId = CommandId.make(`page-family-fork:race:${first}`);
+        const deleteCommandId = CommandId.make(`page-family-delete:race:${first}`);
+        const firstReady = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const secondQueued = yield* Deferred.make<void>();
+        const cleanupIds: Array<string> = [];
+        const commitCommand = eventSink.commitCommand;
+        const commitSpy = vi.spyOn(eventSink, "commitCommand").mockImplementation((input) => {
+          if (input.commandId === deleteCommandId) {
+            for (const effect of input.effects ?? []) {
+              if (effect.request.type === "attachment.cleanup")
+                cleanupIds.push(...effect.request.attachmentIds);
+            }
+          }
+          return input.commandId === (first === "fork" ? forkCommandId : deleteCommandId)
+            ? Deferred.succeed(firstReady, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseFirst)),
+                Effect.andThen(commitCommand(input)),
+              )
+            : commitCommand(input);
+        });
+        const withLock = executor.withLock;
+        let sourceLockRuns = 0;
+        // Dispatch builds locks it may not run, so count when one runs.
+        const observeLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
+          key,
+          effect,
+        ) =>
+          key !== source.threadId
+            ? withLock(key, effect)
+            : Effect.suspend(() =>
+                ++sourceLockRuns === 2
+                  ? Deferred.succeed(secondQueued, undefined).pipe(
+                      Effect.andThen(withLock(key, effect)),
+                    )
+                  : withLock(key, effect),
+              );
+        const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
+        yield* Effect.gen(function* () {
+          const fork = orchestrator
+            .dispatch({
+              type: "thread.fork",
+              commandId: forkCommandId,
+              sourceThreadId: source.threadId,
+              targetThreadId: forkId,
+              sourcePoint: { type: "run", runId: source.runId },
+              createdBy: "user",
+              creationSource: "web",
+            })
+            .pipe(Effect.result);
+          const deletion = orchestrator
+            .dispatch({
+              type: "thread.delete",
+              commandId: deleteCommandId,
+              threadId: source.threadId,
+            })
+            .pipe(Effect.result);
+          const firstFiber = yield* (first === "fork" ? fork : deletion).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Effect.raceFirst(
+            Deferred.await(firstReady),
+            Fiber.join(firstFiber).pipe(Effect.andThen(Effect.die("Missing commit barrier"))),
+          );
+          const secondFiber = yield* (first === "fork" ? deletion : fork).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Effect.raceFirst(Deferred.await(secondQueued), Fiber.await(secondFiber));
+          yield* Deferred.succeed(releaseFirst, undefined);
+          assert.equal((yield* Fiber.join(firstFiber))._tag, "Success");
+          const second = yield* Fiber.join(secondFiber);
+          if (first === "fork") {
+            assert.equal(second._tag, "Success");
+            assert.deepEqual(cleanupIds, []);
+            assert.isNull((yield* orchestrator.getThreadProjection(forkId)).thread.deletedAt);
+          } else {
+            assert.equal(second._tag, "Failure");
+            assert.deepEqual(cleanupIds, [source.attachmentId]);
+            assert.equal(
+              (yield* orchestrator.getThreadProjection(forkId).pipe(Effect.result))._tag,
+              "Failure",
+            );
+          }
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              commitSpy.mockRestore();
+              lockSpy.mockRestore();
+            }),
+          ),
+        );
+      }),
+  );
 });
+
+/** A thread with one completed run that published an html_render page. */
+const seedPageThread = Effect.fn("runtimeLayerTest.seedPageThread")(function* (key: string) {
+  const projects = yield* ProjectService.ProjectService;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const eventSink = yield* EventSink.EventSinkV2;
+  const now = yield* DateTime.now;
+  const projectId = ProjectId.make(`page-family-project:${key}`);
+  const threadId = ThreadId.make(`page-family-source:${key}`);
+  const runId = RunId.make(`page-family-run:${key}`);
+  const attachmentId = createAttachmentId(threadId, "html")!;
+  yield* projects.create({
+    commandId: CommandId.make(`page-family-project:${key}`),
+    projectId,
+    title: "Page family",
+    workspaceRoot: `/work/page-family/${key}`,
+  });
+  yield* orchestrator.dispatch({
+    type: "thread.create",
+    commandId: CommandId.make(`page-family-create:${key}`),
+    createdBy: "user",
+    creationSource: "web",
+    threadId,
+    projectId,
+    title: "Page source",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+  });
+  yield* eventSink.write({
+    events: [
+      {
+        id: EventId.make(`page-family-run:${key}`),
+        type: "run.created",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId: modelSelection.instanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make(`page-family-message:${key}`),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      },
+      {
+        id: EventId.make(`page-family-page:${key}`),
+        type: "turn-item.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`page-family-page:${key}`),
+          threadId,
+          runId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "completed",
+          title: "Shared page",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "dynamic_tool",
+          toolName: "mcp__t3-code__html_render",
+          input: {},
+          output: { htmlRender: { attachmentId, title: "Shared page", height: 300 } },
+        },
+      },
+    ],
+  });
+  return { threadId, runId, attachmentId };
+});
+
+/** Collects the attachment ids each committed command schedules for cleanup. */
+const spyAttachmentCleanup = (eventSink: EventSink.EventSinkV2["Service"]) => {
+  const cleanup = new Map<CommandId, Array<string>>();
+  const commitCommand = eventSink.commitCommand;
+  const spy = vi.spyOn(eventSink, "commitCommand").mockImplementation((input) =>
+    commitCommand(input).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          for (const effect of input.effects ?? []) {
+            if (effect.request.type !== "attachment.cleanup") continue;
+            cleanup.set(input.commandId, [
+              ...(cleanup.get(input.commandId) ?? []),
+              ...effect.request.attachmentIds,
+            ]);
+          }
+        }),
+      ),
+    ),
+  );
+  return { cleanup, spy };
+};
 
 const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
   layerProjectionReplayTest,

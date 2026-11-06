@@ -4602,9 +4602,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
-    // Only side chat forks lock the source; validate the modes copied here, not an earlier read.
+    // Read under the source's lock; validate the modes copied here, not an earlier read.
     yield* refuseAboveDispatchModeLimit(command, command.sourceThreadId, sourceProjection.thread);
-    if (command.sideChat === true && sourceProjection.thread.deletedAt !== null) {
+    if (sourceProjection.thread.deletedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -13409,6 +13409,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const now = yield* DateTime.now;
         const planDeletion = Effect.fn("Orchestrator.planDeletion")(function* (
           deletion: typeof command,
+          attachmentIds: ReadonlyArray<string>,
         ) {
           const projection = yield* projectionStore
             .getThreadRecords(deletion.threadId, [
@@ -13428,9 +13429,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             planThreadDeletion({
               command: deletion,
               projection,
-              attachmentIds: yield* projectionStore
-                .getThreadAttachmentIds(deletion.threadId)
-                .pipe(mapDispatchError(command)),
+              attachmentIds,
               now,
               idAllocator,
             }),
@@ -13450,14 +13449,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }
         }
         // The dispatch wrapper holds each side chat's lock, so none can commit after this plan.
+        // Side chats share the parent's fork family, so the parent's plan carries its files.
+        const attachmentIds = yield* projectionStore
+          .getDeletableAttachmentIds([command.threadId, ...sideChatIds])
+          .pipe(mapDispatchError(command));
         const plans = [
-          yield* planDeletion(command),
+          yield* planDeletion(command, attachmentIds),
           ...(yield* Effect.forEach(sideChatIds, (threadId) =>
-            planDeletion({
-              ...command,
-              commandId: CommandId.make(`${command.commandId}:side-chat:${threadId}`),
-              threadId,
-            }),
+            planDeletion(
+              {
+                ...command,
+                commandId: CommandId.make(`${command.commandId}:side-chat:${threadId}`),
+                threadId,
+              },
+              [],
+            ),
           )),
         ];
         return {
@@ -14038,17 +14044,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       commandThreadId(command),
       dispatchWithReceiptEffect(command),
     );
-    // A parent's lock comes before its side chats' locks, so a delete cascade and a side chat
-    // fork or command never interleave. A fork from a side chat or onto an existing thread would
-    // invert that order; dispatch rejects both, so they skip the source lock.
-    if (
-      command.type === "thread.fork" &&
-      command.sideChat === true &&
-      command.sourceThreadId !== command.targetThreadId
-    ) {
+    // A fork holds its source's lock so the source's deletion sees the fork, or the fork sees the
+    // deletion. A parent's lock comes before its side chats' locks; a fork onto an existing thread
+    // would invert that order, and dispatch rejects it, so it skips the source lock.
+    if (command.type === "thread.fork" && command.sourceThreadId !== command.targetThreadId) {
       const source = yield* findThread(command.sourceThreadId);
       const target = yield* findThread(command.targetThreadId);
-      return yield* source === null || source.lineage.sideChat === true || target !== null
+      return yield* source === null || target !== null
         ? dispatch
         : threadDispatch.withLock(command.sourceThreadId, dispatch);
     }
