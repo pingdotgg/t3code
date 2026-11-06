@@ -1,5 +1,5 @@
 agent-device 0.21.31 prints this help; apps/server/src/device/deviceToolVersions.json pins that version. Regenerate from
-the repo root with: node scripts/node_modules/agent-device/bin/agent-device.mjs help [commands|record|screenshot|open|settings]
+the repo root with: node scripts/node_modules/agent-device/bin/agent-device.mjs help [commands|record|screenshot|open|settings|fill]
 
 $ agent-device help
 agent-device <command> [args] [--json]
@@ -260,3 +260,21 @@ Settings:
 
 Command flags:
   --app <id-or-name>  Target an app without opening it: doctor verifies an installed app by id or name; settings applies an app-scoped change (permission, iOS location) to a bundle id or package
+
+$ agent-device help fill
+Usage:
+  agent-device fill <x> <y> <text> | fill <@ref|selector> <text> | fill <x y|@ref|selector> --text-stdin
+
+Replace text in a UI input selected by snapshot ref, selector, or coordinates. Pass an empty text to clear the field. Inspect unconfirmed evidence and assert the expected value or resulting screen before continuing. Prefer refs or selectors after snapshot; use recordAs to keep sensitive text out of a recorded replay while sending it to the live app. Every positional after an @ref is the replacement text, so fill @e57 good morning enters "good morning"; quote the text when the shell must preserve exact whitespace. Clear a field with an empty text argument: fill @e57 "" (the argument must be present — fill @e57 alone is a missing argument, not a clear). When visible label text also matches a non-input element, constrain the target with editable=true, for example fill 'label="Email" editable=true' "qa@example.com". To keep a secret out of argv, omit the text and pipe it in: printf %s "$PASSWORD" | fill @e57 --text-stdin (max 64 KiB, one trailing newline removed).
+
+Command flags:
+  --delay-ms <ms>      Delay between typed characters
+  --record-as <VAR>    Fill: send the live text but publish ${VAR} in an armed .ad recording
+  --text-stdin         Fill: read the text from stdin (max 64 KiB, one trailing newline removed) instead of argv
+  --verify             Capture cheap post-action evidence (AX digest, node counts, changedFromBefore) instead of a follow-up snapshot
+  --settle             After the action, wait for the UI to go quiet and return the settled diff vs the pre-action tree in the same response (best-effort; never fails the action)
+  --settle-quiet <ms>  Settle: quiet window the UI must hold to count as settled (default 500ms; 300ms when the settled tree comes from the iOS simulator snapshot bridge). On iOS, a broad screen replacement such as a modal dismissal is confirmed for at least 1500ms whatever window is asked for, within the --timeout settle deadline; a replacement from a screen the pre-action capture read as presenting nothing, such as a tab switch, gets no 1500ms confirmation and keeps the asked window
+  --timeout <ms>       Boot/Open/Prepare: startup budget covering the device boot (and runner preparation for prepare). Replay/Snapshot/Test: maximum wall-clock time for the command or attempt. With --settle: the settle-wait deadline (default 10s)
+  --depth, -d <depth>  Snapshot: limit snapshot depth
+  --scope, -s <scope>  Snapshot: scope snapshot to label/identifier
+  --raw                Snapshot: raw node output
