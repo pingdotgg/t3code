@@ -124,7 +124,28 @@ describe("descriptor helpers", () => {
         status: "ready",
         auth: { status: "authenticated" },
         checkedAt: "2026-01-01T00:00:00.000Z",
-        models: [{ slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: codexCaps }],
+        models: [
+          { slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: codexCaps },
+          {
+            slug: "ultracode-model",
+            name: "Ultracode model",
+            isCustom: false,
+            capabilities: createModelCapabilities({
+              optionDescriptors: [
+                {
+                  id: "effort",
+                  label: "Reasoning",
+                  type: "select",
+                  options: [
+                    { id: "high", label: "High", isDefault: true },
+                    { id: "xhigh", label: "Extra High" },
+                  ],
+                },
+                { id: "ultracode", label: "Ultracode", type: "boolean" },
+              ],
+            }),
+          },
+        ],
         slashCommands: [],
         skills: [],
       },
@@ -138,6 +159,18 @@ describe("descriptor helpers", () => {
       { id: "fastMode", value: true },
     ]);
     expect(draftModelPickMatchesThread(fastPick, thread, providers)).toBe(false);
+    const staleValuePick = createModelSelection(instanceId, "gpt-5.4", [
+      { id: "reasoningEffort", value: "max" },
+    ]);
+    expect(draftModelPickMatchesThread(staleValuePick, thread, providers)).toBe(true);
+    const legacyUltracodePick = createModelSelection(instanceId, "ultracode-model", [
+      { id: "effort", value: "ultracode" },
+    ]);
+    const ultracodeThread = createModelSelection(instanceId, "ultracode-model", [
+      { id: "effort", value: "xhigh" },
+      { id: "ultracode", value: true },
+    ]);
+    expect(draftModelPickMatchesThread(legacyUltracodePick, ultracodeThread, providers)).toBe(true);
   });
 });
 

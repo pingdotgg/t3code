@@ -120,26 +120,30 @@ export function modelSelectionsEqual(left: ModelSelection, right: ModelSelection
 /**
  * Whether a composer's draft model pick is what the thread already runs. Web sends
  * `fastMode: false` for models with a fast toggle while mobile omits it, so off counts as unset.
- * The server drops options the model does not advertise, so those are ignored once the
- * catalog knows the model; without it the options must match exactly.
+ * Once the catalog knows the model, both sides are compared as the composer would send them,
+ * so unadvertised options and stale values do not count; without it they must match exactly.
  */
 export function draftModelPickMatchesThread(
   pick: ModelSelection,
   thread: ModelSelection,
   providers: ReadonlyArray<ServerProvider> | null | undefined,
 ): boolean {
-  const advertisedIds = providers
+  const caps = providers
     ?.find((provider) => provider.instanceId === pick.instanceId)
-    ?.models.find((model) => model.slug === pick.model)
-    ?.capabilities?.optionDescriptors?.map((descriptor) => descriptor.id);
+    ?.models.find((model) => model.slug === pick.model)?.capabilities;
+  const asSent = (options: ModelSelection["options"]) =>
+    caps?.optionDescriptors
+      ? buildExplicitProviderOptionSelectionsFromDescriptors(
+          getProviderOptionDescriptors({ caps, selections: options }),
+          options,
+        )
+      : options;
   const comparable = (selection: ModelSelection) =>
     createModelSelection(
       selection.instanceId,
       selection.model,
-      selection.options?.filter(
-        (option) =>
-          (option.id !== "fastMode" || option.value !== false) &&
-          (advertisedIds === undefined || advertisedIds.includes(option.id)),
+      asSent(selection.options)?.filter(
+        (option) => option.id !== "fastMode" || option.value !== false,
       ),
     );
   return modelSelectionsEqual(comparable(pick), comparable(thread));
