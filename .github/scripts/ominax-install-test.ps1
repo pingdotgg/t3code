@@ -15,8 +15,7 @@ function Fail([string] $message) { throw "FAIL: $message" }
 $legacyData = Join-Path $HOME ".t3-learn"
 $newData = Join-Path $HOME ".ominax"
 function Plant-Learning {
-  # N-1 keeps its data in ~/.t3-learn; a fresh N install starts in ~/.ominax.
-  $learning = if (Test-Path (Join-Path $newData "userdata")) { Join-Path $newData "userdata" } else { Join-Path $legacyData "userdata" }
+  $learning = Join-Path $newData "userdata"
   New-Item -ItemType Directory -Force -Path (Join-Path $learning "courses\install-test\units"), (Join-Path $learning "visuals\install-test") | Out-Null
   '[{"topic":"install test","explanation":"kept across updates","buildsOn":[],"doneAt":"2026-11-05T00:00:00.000Z","threadId":"install-test"}]' | Set-Content (Join-Path $learning "knowledge.json")
   '{"title":"install test"}' | Set-Content (Join-Path $learning "courses\install-test\course.json")
@@ -24,7 +23,7 @@ function Plant-Learning {
   '{"concept":"install-test"}' | Set-Content (Join-Path $learning "visuals\install-test\meta.json")
 }
 function Check-Learning {
-  $learning = if (Test-Path (Join-Path $newData "userdata")) { Join-Path $newData "userdata" } else { Join-Path $legacyData "userdata" }
+  $learning = Join-Path $newData "userdata"
   foreach ($item in @("knowledge.json", "courses", "visuals")) {
     if (-not (Test-Path (Join-Path $learning $item))) { Fail "learning data $item is missing" }
   }
@@ -86,10 +85,13 @@ if ($Scenario -eq "fresh") {
     $previousCommand = "irm https://github.com/$repo/releases/download/v$previous/install.ps1 | iex"
     powershell -NoProfile -Command $previousCommand
     if ($LASTEXITCODE -ne 0) { Fail "the previous installer failed" }
-    $previousRunning = Wait-Server (Join-Path $HOME ".t3-learn") $previous
+    $previousRunning = Wait-Server $newData $previous
     Log "OminaX $previousRunning is running"
     Plant-Learning
-    if (Test-Path "apps/desktop/scripts/plant-saved-connection.mjs") { node apps/desktop/scripts/plant-saved-connection.mjs plant }
+    if (Test-Path "apps/desktop/scripts/plant-saved-connection.mjs") {
+      node apps/desktop/scripts/plant-saved-connection.mjs plant
+      if ($LASTEXITCODE -ne 0) { Fail "planting the saved connection failed" }
+    }
   } else {
     Log "No distinct previous promoted release; installing OminaX $Version fresh"
   }
@@ -120,9 +122,8 @@ $uninstallKeys = @(Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersio
 if ($uninstallKeys.Count -ne 1) { Fail "expected one OminaX entry in Installed apps, found $($uninstallKeys.Count)" }
 $legacyDataItem = Get-Item $legacyData -Force -ErrorAction SilentlyContinue
 if (-not (Test-Path (Join-Path $newData "userdata"))) { Fail "~/.ominax\userdata is missing" }
-if ($previousRunning) {
-  if (-not $legacyDataItem -or $legacyDataItem.LinkType -notin @("SymbolicLink", "Junction")) { Fail "OminaX data migration did not leave a legacy link at ~/.t3-learn" }
-} elseif ($legacyDataItem) { Fail "a fresh install created ~/.t3-learn" }
+# N-1 is R1 or later, which already lives in ~/.ominax.
+if ($legacyDataItem) { Fail "OminaX created ~/.t3-learn" }
 Check-Learning
 foreach ($launcherName in @("ominax", "t3-learn")) {
   $launcher = Get-ChildItem $installedDirs[0] -Recurse -File -ErrorAction SilentlyContinue |
@@ -168,7 +169,7 @@ if (Test-Path (Join-Path $learnDir "OminaX.exe")) { Fail "OminaX is still instal
 foreach ($scheme in @("ominax", "t3learn")) {
   if (Test-Path "HKCU:\Software\Classes\$scheme") { Fail "uninstall left the ${scheme}:// link registered" }
 }
-if (-not (Test-Path (Join-Path $newData "userdata")) -and -not (Test-Path (Join-Path $legacyData "userdata"))) { Fail "uninstall removed OminaX's data" }
+if (-not (Test-Path (Join-Path $newData "userdata"))) { Fail "uninstall removed OminaX's data" }
 if ($Scenario -eq "next-to-t3-code") {
   if ((Wait-Server (Join-Path $HOME ".t3") $t3CodeVersion) -ne $t3CodeVersion) { Fail "T3 Code stopped after uninstalling OminaX" }
 }

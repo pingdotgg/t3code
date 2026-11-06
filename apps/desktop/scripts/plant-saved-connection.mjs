@@ -129,15 +129,9 @@ function parseArgs(argv) {
     );
   const home = process.env.HOME || process.env.USERPROFILE || NodeOS.homedir();
   const appData = process.env.APPDATA || NodePath.join(home, "AppData", "Roaming");
-  const userData =
-    platform === "win32"
-      ? NodePath.join(appData, command === "plant" ? "t3learn" : "ominax")
-      : null;
-  const defaultState = NodePath.join(
-    home,
-    command === "plant" ? ".t3-learn" : ".ominax",
-    "userdata",
-  );
+  // N-1 is R1 or later, so N-1 and N share OminaX's folders and key.
+  const userData = platform === "win32" ? NodePath.join(appData, "ominax") : null;
+  const defaultState = NodePath.join(home, ".ominax", "userdata");
   const stateDir = values["state-dir"] || defaultState;
   return {
     command,
@@ -149,16 +143,10 @@ function parseArgs(argv) {
 }
 function main(input) {
   const file = NodePath.join(input.stateDir, "connection-catalog.json");
-  // check must never create folders: an early ~/.ominax would make the app skip its migration.
   if (input.command === "plant") NodeFS.mkdirSync(input.stateDir, { recursive: true });
   let key;
   if (input.platform === "win32") {
-    const plantedMarker = NodePath.join(
-      process.env.USERPROFILE || process.env.HOME || NodeOS.homedir(),
-      ".t3-learn",
-      "userdata",
-      MARKER,
-    );
+    const plantedMarker = NodePath.join(input.stateDir, MARKER);
     if (input.command === "check" && NodeFS.existsSync(plantedMarker)) {
       console.log("skipped saved connection check: Windows Local State was absent during plant");
       return;
@@ -176,7 +164,7 @@ function main(input) {
   if (input.command === "plant") {
     const password =
       input.platform === "darwin"
-        ? darwinPassword("t3learn Safe Storage", "t3learn Key", input.password)
+        ? darwinPassword("ominax Safe Storage", "ominax Key", input.password)
         : input.password;
     const encryptedCatalog = (
       input.platform === "win32"
@@ -186,19 +174,6 @@ function main(input) {
     NodeFS.writeFileSync(file, `${JSON.stringify({ version: 1, encryptedCatalog })}\n`);
     console.log("planted Planted box");
     return;
-  }
-  if (input.platform === "linux") {
-    const currentHome = NodePath.dirname(input.stateDir);
-    const legacyHome = NodePath.join(NodePath.dirname(currentHome), ".t3-learn");
-    if (
-      !NodeFS.statSync(currentHome).isDirectory() ||
-      !NodeFS.lstatSync(legacyHome).isSymbolicLink()
-    ) {
-      throw new Error("OminaX home migration not found");
-    }
-    if (NodeFS.realpathSync(legacyHome) !== NodeFS.realpathSync(currentHome)) {
-      throw new Error("legacy T3 Learn home does not link to OminaX home");
-    }
   }
   const document = JSON.parse(NodeFS.readFileSync(file, "utf8"));
   const password =
@@ -213,13 +188,8 @@ function main(input) {
   const found =
     decoded.targets?.some((target) => target.label === "Planted box") &&
     decoded.credentials?.some((entry) => entry.credential?.token === TOKEN);
-  const backupRequired =
-    input.platform === "darwin" || (input.platform === "linux" && Boolean(input.password));
-  if (!found || (backupRequired && !NodeFS.existsSync(`${file}.pre-ominax`)))
-    throw new Error("saved connection migration not found");
-  console.log(
-    `checked Planted box${backupRequired ? " and migration backup" : ""}${input.platform === "linux" && !input.password ? " (shared Linux key)" : ""} in ${input.stateDir}`,
-  );
+  if (!found) throw new Error("saved connection not found");
+  console.log(`checked Planted box in ${input.stateDir}`);
 }
 if (process.argv[1]?.endsWith("plant-saved-connection.mjs")) {
   try {
