@@ -105,6 +105,7 @@ import {
   threadRouteOpensDraft,
 } from "./thread-route-hydration";
 import { ThreadHeader } from "./ThreadHeader";
+import { withThreadOpenPullRequest } from "../../state/thread-pr-presentation";
 import { resumeThread } from "./resume-thread";
 import {
   useAndroidWorkspaceBack,
@@ -786,7 +787,11 @@ function ThreadRouteContent(
         ? () => void handleMergeBack()
         : undefined,
     currentBranch: selectedThread?.branch ?? null,
-    gitStatus: gitStatus.data,
+    gitStatus: withThreadOpenPullRequest(
+      gitStatus.data ?? null,
+      selectedThread?.pullRequests ?? [],
+      routeEnvironmentRuntime?.serverConfig?.environment.capabilities.threadPullRequests === true,
+    ),
     gitOperationLabel: gitState.gitOperationLabel,
     canOpenTerminal:
       Boolean(selectedThreadProject?.workspaceRoot) && (canReadTerminal || canOperateTerminal),
@@ -961,6 +966,7 @@ function ThreadRouteContent(
               <ThreadHeader
                 title={selectedThread.title}
                 subtitle={headerSubtitle}
+                thread={selectedThread}
                 gitControls={threadGitControlProps}
                 hasThreadCwd={selectedThreadCwd !== null}
                 fileInspectorSupported={fileInspector.supported}
