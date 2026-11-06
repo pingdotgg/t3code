@@ -303,6 +303,14 @@ it.effect.each([
     isolated: false,
   },
   {
+    child: "a completed subagent with a held queued follow-up",
+    depth: 1,
+    parent: "restoring",
+    record: "completed",
+    live: { runs: ["completed", "queued"] },
+    isolated: false,
+  },
+  {
     child: "a subagent with background work",
     depth: 1,
     parent: "restoring",
@@ -366,7 +374,13 @@ it.effect.each([
                           status: candidate === tested ? record : "completed",
                         })),
                     }
-                  : { turnItems: [{ type: "file_change" }] },
+                  : fields.includes("runs")
+                    ? {
+                        runs: (threadId === tested.id && "runs" in live ? live.runs : []).map(
+                          (status) => ({ status }),
+                        ),
+                      }
+                    : { turnItems: [{ type: "file_change" }] },
               ),
             getCheckpointContext: () =>
               Effect.succeed({ checkpointScopes: [{ cwd: worktreePath }] }),

@@ -2,6 +2,7 @@ import {
   isLiveSubagentShell,
   type OrchestrationV2AppThread,
   type OrchestrationV2CheckpointScope,
+  type OrchestrationV2RunStatus,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
@@ -12,6 +13,14 @@ import type * as ProjectStore from "./ProjectStore.ts";
 
 export const SHARED_WORKSPACE_RESTORE_MESSAGE =
   "File restore requires an isolated worktree. This workspace may contain changes from another thread or a side chat. Rewind the conversation without restoring files instead, or delete side chats you no longer need.";
+
+const UNFINISHED_RUN_STATUSES: ReadonlySet<OrchestrationV2RunStatus> = new Set([
+  "preparing",
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+]);
 
 // Check isolation at admission and rollback; checkpoints restore whole checkouts, which may become shared.
 export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpointRestoreIsolated")(
@@ -84,9 +93,12 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
             const records = subagents.filter(
               (subagent) => subagent.childThreadId === otherThread.id,
             );
+            // The shell leaves held queued runs out of its status, so read the child's own runs.
+            const { runs } = yield* projections.getThreadRecords(otherThread.id, ["runs"]);
             if (
               records.length > 0 &&
-              records.every((subagent) => subagent.status === "completed")
+              records.every((subagent) => subagent.status === "completed") &&
+              runs.every((run) => !UNFINISHED_RUN_STATUSES.has(run.status))
             ) {
               continue;
             }
