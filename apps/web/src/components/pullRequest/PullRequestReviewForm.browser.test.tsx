@@ -35,7 +35,7 @@ it("submits only the line comments still in the draft when dictation finishes", 
       environmentId={EnvironmentId.make("test")}
       reference={reference}
       term="pull request"
-      verdicts={["comment"]}
+      verdict="comment"
       requestChangesSummaryRequired={false}
       textareaRef={createRef()}
       pending={false}

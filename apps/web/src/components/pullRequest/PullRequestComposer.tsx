@@ -174,7 +174,7 @@ export function PullRequestComposer({
         {verdicts.length > 0 ? (
           <div hidden={!sendsReview}>
             <PullRequestReviewForm
-              active={open && mode === "review"}
+              active={open && sendsReview}
               environmentId={environmentId}
               reference={reference}
               verdict={mode}
