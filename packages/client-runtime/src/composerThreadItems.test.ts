@@ -156,6 +156,16 @@ describe("rankComposerMentionItems", () => {
       [thread("Partner sync"), thread("ner plan"), file("planner.md"), file("ner-notes.md")],
       ["ner plan", "ner-notes.md", "Partner sync", "planner.md"],
     ],
+    [
+      "model",
+      [file("model-notes.md"), thread("FixModelPicker")],
+      ["FixModelPicker", "model-notes.md"],
+    ],
+    [
+      "resume",
+      [file("resume-notes.md"), thread("Résumé fixes")],
+      ["Résumé fixes", "resume-notes.md"],
+    ],
   ])("orders results for %s", (query, items, expected) => {
     expect(rankComposerMentionItems(items, query).map((item) => item.label)).toEqual(expected);
   });
