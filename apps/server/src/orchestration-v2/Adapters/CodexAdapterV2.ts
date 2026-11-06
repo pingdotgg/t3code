@@ -778,7 +778,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
-    readonly cyberAccessProgram?: string | undefined;
+    readonly defaultCyberAccessProgram?: string | undefined;
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const approvalPolicy =
@@ -798,9 +798,10 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       input.omitServiceTier === true
         ? undefined
         : getCodexServiceTierOptionValue(input.modelSelection);
-    const cyberAccessProgram = isCodexCyberAccessProgram(input.cyberAccessProgram)
-      ? input.cyberAccessProgram
-      : undefined;
+    const selectedCyberAccessProgram = getCodexCyberAccessProgramOptionValue(input.modelSelection);
+    const cyberAccessProgram = [selectedCyberAccessProgram, input.defaultCyberAccessProgram].find(
+      isCodexCyberAccessProgram,
+    );
     // MCP-written app context must be quoted user input, not developer instructions.
     const appContext = Object.fromEntries(
       (input.appContext ?? []).map((entry) => [
@@ -1668,7 +1669,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
   hooks: Pick<
     CodexAdapterV2Options,
-    "onUsageLimits" | "resolveRuntime" | "compatibility" | "resolveCyberAccessProgram"
+    "onUsageLimits" | "resolveRuntime" | "compatibility" | "defaultCyberAccessProgram"
   > = {},
 ) {
   const clientFactory = yield* CodexAppServerClientFactory;
@@ -1719,10 +1720,7 @@ export interface CodexAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   readonly clientFactory: CodexAppServerClientFactoryShape;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
-  /** Checks the selection against the model's current catalog entry, falling back to its default. */
-  readonly resolveCyberAccessProgram?: (
-    modelSelection: ModelSelection,
-  ) => Effect.Effect<string | undefined>;
+  readonly defaultCyberAccessProgram?: (model: string) => Effect.Effect<string | undefined>;
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
   readonly compatibility?: (
     version: string,
@@ -6870,12 +6868,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ) {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
-            const cyberAccessProgram =
-              adapterOptions.resolveCyberAccessProgram === undefined
-                ? getCodexCyberAccessProgramOptionValue(turnInput.modelSelection)
-                : yield* adapterOptions.resolveCyberAccessProgram(turnInput.modelSelection);
+            const defaultCyberAccessProgram =
+              adapterOptions.defaultCyberAccessProgram === undefined
+                ? undefined
+                : yield* adapterOptions.defaultCyberAccessProgram(turnInput.modelSelection.model);
             const turnStartParams = yield* buildCodexTurnStartParams({
-              cyberAccessProgram,
+              defaultCyberAccessProgram,
               nativeThreadId: threadId,
               codexInput,
               runtimePolicy: turnInput.runtimePolicy,

@@ -27,7 +27,7 @@ import {
   makePendingCodexProvider,
   probeCodexSkillsForCwd,
   withCodexAppServerClient,
-  codexCyberAccessProgram,
+  codexDefaultCyberAccessProgram,
 } from "../CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -216,9 +216,9 @@ export const CodexDriver: ProviderDriver<
       },
       {
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
-        resolveCyberAccessProgram: (modelSelection) =>
+        defaultCyberAccessProgram: (model) =>
           snapshot.getSnapshot.pipe(
-            Effect.map((value) => codexCyberAccessProgram(value.models, modelSelection)),
+            Effect.map((value) => codexDefaultCyberAccessProgram(value.models, model)),
           ),
         compatibility: installation.compatibility,
       },

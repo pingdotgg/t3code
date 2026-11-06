@@ -23,7 +23,6 @@ import type {
   ServerProvider,
   ServerProviderState,
   ModelCapabilities,
-  ModelSelection,
   ProviderOptionDescriptor,
   ServerProviderModel,
   ServerProviderSkill,
@@ -37,7 +36,6 @@ import {
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
-import { getCodexCyberAccessProgramOptionValue } from "../codexModelOptions.ts";
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
@@ -350,22 +348,15 @@ export function applyConfiguredCodexCyberAccess(
   });
 }
 
-/**
- * A selection the model does not offer, such as one kept from another model,
- * gets the model's default, as do older threads and agent-started turns.
- */
-export function codexCyberAccessProgram(
+/** Applies when a selection names no program, such as older threads and agent-started turns. */
+export function codexDefaultCyberAccessProgram(
   models: ReadonlyArray<ServerProviderModel>,
-  modelSelection: ModelSelection,
+  slug: string,
 ): string | undefined {
-  const selected = getCodexCyberAccessProgramOptionValue(modelSelection);
   const descriptor = models
-    .find((model) => model.slug === modelSelection.model)
+    .find((model) => model.slug === slug)
     ?.capabilities?.optionDescriptors?.find(({ id }) => id === "cyberAccessProgram");
-  if (descriptor?.type !== "select") return undefined;
-  return descriptor.options.some((option) => option.id === selected)
-    ? selected
-    : descriptor.currentValue;
+  return descriptor?.type === "select" ? descriptor.currentValue : undefined;
 }
 
 /** An unread config may have them disabled, and Codex rejects a program it does not allow. */
