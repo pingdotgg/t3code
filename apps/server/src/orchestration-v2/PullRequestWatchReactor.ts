@@ -397,27 +397,27 @@ export const make = Effect.gen(function* () {
       ),
   );
 
-  const closed = (target: WatchTarget) =>
+  // Whoever merged or closed it, an agent waiting on the PR needs the news to continue.
+  const finished = (target: WatchTarget, state: "merged" | "closed") =>
     record(target, null, {
-      text: `Pull request #${target.link.number} (${target.link.url}) was closed, so T3 Code stopped watching it. Call watch_pull_request if it reopens.`,
+      text: `Pull request #${target.link.number} (${target.link.url}) was ${state}, so T3 Code stopped watching it. ${state === "merged" ? "Continue with whatever your task needs next." : "Call watch_pull_request if it reopens."}`,
       notification: {
         source: { kind: "monitor" },
-        outcome: "updated",
-        summary: `#${target.link.number}: closed, stopped watching`,
+        outcome: state === "merged" ? "completed" : "updated",
+        summary: `#${target.link.number}: ${state}, stopped watching`,
       },
     }).pipe(
       Effect.tap(() => woke(target)),
-      Effect.tap(() => ended(target, "closed")),
+      Effect.tap(() => ended(target, state)),
     );
 
-  const endsWithoutRead = ({ thread, link }: WatchTarget): WatchEndReason | undefined =>
-    link.snapshot?.state === "merged"
-      ? "merged"
-      : thread.settledOverride === "settled" || thread.settledAt !== null
-        ? "settled"
-        : thread.lineage.relationshipToParent === "subagent"
-          ? "subagent"
-          : undefined;
+  // A merged snapshot still gets read, so the merge wakes the agent like any other news.
+  const endsWithoutRead = ({ thread }: WatchTarget): WatchEndReason | undefined =>
+    thread.settledOverride === "settled" || thread.settledAt !== null
+      ? "settled"
+      : thread.lineage.relationshipToParent === "subagent"
+        ? "subagent"
+        : undefined;
 
   const eachTarget = <E>(
     group: WatchGroup,
@@ -526,11 +526,8 @@ export const make = Effect.gen(function* () {
     }
     if (detail.state !== "open") {
       lastReads.delete(group.key);
-      return yield* eachTarget(group, (target) =>
-        detail.state === "closed"
-          ? closed(target)
-          : record(target, null).pipe(Effect.tap(() => ended(target, "merged"))),
-      );
+      const state = detail.state;
+      return yield* eachTarget(group, (target) => finished(target, state));
     }
 
     // Never advance the remark watermark past comments an incomplete read could have missed.
