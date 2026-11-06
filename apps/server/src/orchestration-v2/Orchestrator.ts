@@ -5354,10 +5354,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           sourceProjection.thread.projectId,
         ).settings.sideChatRuntimeMode
       : undefined;
-    const runtimeMode =
+    const selectedRuntimeMode =
       sideChatRuntimeMode === "inherit-parent"
         ? sourceProjection.thread.runtimeMode
         : sideChatRuntimeMode;
+    const runtimeMode =
+      selectedRuntimeMode !== undefined &&
+      runtimeModeCeiling !== undefined &&
+      isRuntimeModeAbove(selectedRuntimeMode, runtimeModeCeiling.maxRuntimeMode)
+        ? runtimeModeCeiling.maxRuntimeMode
+        : selectedRuntimeMode;
+    if (runtimeMode !== undefined) {
+      yield* refuseAboveDispatchModeLimit(command, command.sourceThreadId, {
+        runtimeMode,
+        interactionMode: sourceProjection.thread.interactionMode,
+      });
+    }
     const { targetThread, transfer } = yield* threadForkService
       .plan({
         sourceProjection,
@@ -5378,11 +5390,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? {}
           : {
               sideChat: true,
-              sideChatRuntimeMode:
-                runtimeModeCeiling !== undefined &&
-                isRuntimeModeAbove(runtimeMode, runtimeModeCeiling.maxRuntimeMode)
-                  ? runtimeModeCeiling.maxRuntimeMode
-                  : runtimeMode,
+              sideChatRuntimeMode: runtimeMode,
             }),
         createdBy: command.createdBy,
         creationSource: command.creationSource,
