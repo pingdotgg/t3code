@@ -147,7 +147,7 @@ export function SecretProviderDialog({
                     <AutocompleteList>
                       {listedAccounts.map((item) => (
                         <AutocompleteItem key={item.account} value={item}>
-                          <span className="min-w-0 truncate text-sm font-medium">
+                          <span className="min-w-0 max-w-2/3 truncate text-sm font-medium">
                             {item.address}
                           </span>
                           <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
