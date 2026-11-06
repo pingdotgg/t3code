@@ -120,9 +120,13 @@ const make = Effect.gen(function* () {
   const isHeld = (file: string) => readRecord(file).pipe(Effect.map((record) => record.held));
 
   /** Publishes a complete record exclusively; a paused writer must never look abandoned. */
-  const createExclusively = (file: string, contents: string, owner: string) => {
+  const createExclusively = Effect.fn("ProviderInstallLock.createExclusively")(function* (
+    file: string,
+    contents: string,
+    owner: string,
+  ) {
     const temporary = `${file}.${owner}.tmp`;
-    return Effect.gen(function* () {
+    return yield* Effect.gen(function* () {
       const handle = yield* fileSystem.open(temporary, { flag: "wx" });
       yield* handle.writeAll(new TextEncoder().encode(contents));
     }).pipe(
@@ -136,7 +140,7 @@ const make = Effect.gen(function* () {
           error.reason._tag === "AlreadyExists" ? Effect.succeed(false) : Effect.fail(error),
       }),
     );
-  };
+  });
 
   const generations = Effect.gen(function* () {
     const names = yield* fileSystem.readDirectory(directory).pipe(ignoreNotFound([]));
@@ -146,13 +150,17 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const replace = (file: string, next: string, owner: string) => {
+  const replace = Effect.fn("ProviderInstallLock.replace")(function* (
+    file: string,
+    next: string,
+    owner: string,
+  ) {
     const temporary = `${file}.${owner}.tmp`;
-    return fileSystem.writeFileString(temporary, next).pipe(
+    return yield* fileSystem.writeFileString(temporary, next).pipe(
       Effect.andThen(fileSystem.rename(temporary, file)),
       Effect.onError(() => fileSystem.remove(temporary, { force: true }).pipe(Effect.ignore)),
     );
-  };
+  });
   const historyFile = (provider: string) =>
     path.join(directory, `${encodeURIComponent(provider)}.installed`);
 
