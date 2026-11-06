@@ -1535,6 +1535,10 @@ it.effect("keeps replay keys when dispatch succeeds but completion bookkeeping f
       );
       yield* Queue.take(launches);
       assert.equal((yield* sql`SELECT 1 FROM scheduled_task_webhook_replay_keys`).length, 1);
+      assert.equal(
+        (yield* service.list()).tasks[0]?.lastRunError,
+        "Could not record schedule task run.",
+      );
       yield* sql`DROP TRIGGER fail_completion`;
       const retry = yield* service.triggerWebhook(requestFor(task));
       assert.equal(retry._tag === "accepted" && retry.outcome, "duplicate");
