@@ -2,6 +2,8 @@
 
 When a lesson raises a question, highlight the part you want to understand and choose **Ask in side chat**. The side chat opens beside the lesson with the highlight and its context. Choose **Done** when you are finished; the side chat leaves a note that the next lesson message can use. Sending a message in the lesson also finishes side chats you left open, unless one is still answering. Ask something in a finished side chat to reopen it; messages from scheduled tasks or agents wait in its queue until you do, or until you choose **Send now** on one. Side chats can nest, so follow a question as far as you need.
 
+Reopen the usage tour from **Settings → About**, **Help → Welcome Guide**, or the command palette.
+
 Side chats asked under a reply headed "Lesson 2" or a short section code such as "U2:" are grouped under that section in the side-chat map; sections can be collapsed.
 
 You can also highlight text inside an HTML embed, or use its corner button to ask about the whole embed.

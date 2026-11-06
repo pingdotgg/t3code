@@ -795,7 +795,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "welcome-guide",
     title: "Welcome guide",
     to: "/settings/about",
-    searchTerms: ["welcome guide tour onboarding tutorial help intro side chat notes map OminaX"],
+    searchTerms: [
+      "welcome guide tour onboarding tutorial help intro usage guide lessons quiz courses side chat notes map OminaX",
+    ],
   },
   {
     id: "mobile-app",
