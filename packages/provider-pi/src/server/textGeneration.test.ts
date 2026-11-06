@@ -169,6 +169,24 @@ it.effect("keeps Pi's raw error text out of the error", () =>
   }),
 );
 
+it.effect("reports the HTTP status of Gemini and Mistral errors", () =>
+  Effect.gen(function* () {
+    // Pi's errorMessage for a 429 from its Gemini and Mistral providers.
+    for (const errorMessage of [
+      '{"error":{"code":429,"message":"Quota exceeded for key AIzaSECRET123","status":"RESOURCE_EXHAUSTED"}}',
+      'Mistral API error (429): {"object":"error","message":"Rate limit exceeded for SECRET123"}',
+    ]) {
+      const error = yield* generateCommitMessage([failedTurnWith(errorMessage)]).pipe(Effect.flip);
+
+      assert.equal(
+        error.detail,
+        "Pi could not generate text: the model provider returned HTTP 429.",
+      );
+      assert.notInclude(error.message, "SECRET123");
+    }
+  }),
+);
+
 it.effect("keeps the reply when Pi answers after a failed attempt", () =>
   Effect.gen(function* () {
     const result = yield* generateCommitMessage(
