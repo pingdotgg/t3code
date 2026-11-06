@@ -584,6 +584,25 @@ it.effect("waitForThread with afterRunId counts a run that failed to start", () 
   }),
 );
 
+it.effect("waitForThread with afterRunId skips a rolled-back run for the one after it", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:wait-after-rolled-back");
+    const threadId = ThreadId.make("thread:thread-management:wait-after-rolled-back");
+    let runs = [timedRun("run:r1", 1, "completed", 1), timedRun("run:r2", 2, "rolled_back", 5)];
+    const service = yield* settledRunsService(projectId, threadId, () => runs);
+    const afterR1 = service.waitForThread({
+      projectId,
+      threadId,
+      afterRunId: RunId.make("run:r1"),
+      timeoutMs: 1,
+    });
+
+    expect(yield* afterR1).toMatchObject({ timedOut: true, run: { id: "run:r1" } });
+    runs = [...runs, timedRun("run:r3", 3, "completed", 10)];
+    expect(yield* afterR1).toMatchObject({ timedOut: false, run: { id: "run:r3" } });
+  }),
+);
+
 it.effect("waitForThread on a rolled-back run answers with the work that survived", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:wait-rolled-back");

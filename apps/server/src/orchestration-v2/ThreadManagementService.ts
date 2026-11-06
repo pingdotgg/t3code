@@ -559,7 +559,12 @@ function laterRun(
       restarts.add(run.id);
       continue;
     }
-    if (run.id === after.id || (run.startedAt === null && run.status !== "failed")) continue;
+    if (
+      run.id === after.id ||
+      run.status === "rolled_back" ||
+      (run.startedAt === null && run.status !== "failed")
+    )
+      continue;
     if (!beganAfter(run, after)) continue;
     if (earliest === undefined || beganAfter(earliest, run)) earliest = run;
   }
