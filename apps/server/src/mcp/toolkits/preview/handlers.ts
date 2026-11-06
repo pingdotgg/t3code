@@ -239,7 +239,7 @@ const handlers = {
     ),
   ),
   preview_evaluate: McpToolAccess.actsAsCaller(({ tabId, ...input }) =>
-    invoke<unknown>("evaluate", input, undefined, tabId).pipe(
+    invoke<unknown>("evaluate", input, input.timeoutMs, tabId).pipe(
       Effect.map(({ result, toolIcon }) => ({
         value: result ?? null,
         ...(toolIcon ? { toolIcon } : {}),
