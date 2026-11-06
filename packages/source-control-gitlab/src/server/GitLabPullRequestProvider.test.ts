@@ -500,7 +500,12 @@ describe("optional activity reads", () => {
     listCommits: () => Effect.succeed([commit]),
     listDiscussions: () => Effect.succeed({ threads: [], truncated: false }),
     listReactions: () =>
-      Effect.succeed({ reactions: [], reactionsByNoteId: new Map(), botLogins: new Set<string>() }),
+      Effect.succeed({
+        reactions: [],
+        reactionsByNoteId: new Map(),
+        editedAtByNoteId: new Map(),
+        botLogins: new Set<string>(),
+      }),
   };
   const context = {
     operation: "execute" as const,
@@ -545,6 +550,46 @@ describe("optional activity reads", () => {
           },
         });
       }),
+  );
+
+  it.effect("dates edited comments in the conversation and in threads", () =>
+    Effect.gen(function* () {
+      const editedAt = "2026-07-02T00:00:00Z";
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...reads,
+            listDiscussions: () =>
+              Effect.succeed({
+                threads: [
+                  {
+                    id: "d1",
+                    path: "src/a.ts",
+                    line: 1,
+                    side: "right" as const,
+                    isResolved: false,
+                    isOutdated: false,
+                    comments: [comment],
+                  },
+                ],
+                truncated: false,
+              }),
+            listReactions: () =>
+              Effect.succeed({
+                reactions: [],
+                reactionsByNoteId: new Map(),
+                editedAtByNoteId: new Map([[comment.id, editedAt]]),
+                botLogins: new Set<string>(),
+              }),
+          }),
+        ),
+      );
+
+      const activity = yield* provider.getChangeRequestActivity(reference);
+
+      expect(activity.comments[0]?.editedAt).toBe(editedAt);
+      expect(activity.reviewThreads[0]?.comments[0]?.editedAt).toBe(editedAt);
+    }),
   );
 
   it.effect("keeps comments and commits when optional discussions and reactions fail", () =>
@@ -615,6 +660,7 @@ describe("optional activity reads", () => {
               Effect.succeed({
                 reactions: [],
                 reactionsByNoteId: new Map(),
+                editedAtByNoteId: new Map(),
                 botLogins: new Set([bot.login.toUpperCase()]),
               }),
           }),
