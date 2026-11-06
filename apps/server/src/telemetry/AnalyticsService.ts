@@ -1,4 +1,4 @@
-// T3 ingest retains events and forwards to PostHog; UUIDs deduplicate retries there.
+// Batches go to the PostHog host the install configures; UUIDs deduplicate retries there.
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { ClientOs } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -65,12 +65,9 @@ function retryDelayMs(failures: number, random: number): number {
 }
 
 const TelemetryEnvConfig = Config.all({
-  posthogKey: Config.String("T3CODE_POSTHOG_KEY").pipe(
-    Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),
-  ),
-  posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(
-    Config.withDefault("https://ingest.t3.codes"),
-  ),
+  // T3 Learn: no default key or host, so an opt-in can never reach T3 Code's ingest.
+  posthogKey: Config.String("T3CODE_POSTHOG_KEY").pipe(Config.withDefault("")),
+  posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(Config.withDefault("")),
   // T3 Learn: usage data is off unless T3CODE_TELEMETRY_ENABLED=true (D16).
   enabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.withDefault(false)),
   flushBatchSize: Config.Number("T3CODE_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
@@ -126,9 +123,17 @@ export const make = Effect.gen(function* () {
   // A managed policy can switch analytics off over the environment, never on.
   const policyAllows =
     ManagedPolicy.deniedBy(yield* ManagedPolicy.ManagedPolicy, "telemetry") === undefined;
+  // T3 Learn: a Dock-launched desktop learns key and host from the login shell, after startup.
+  const endpoint = () => {
+    const late = (name: "T3CODE_POSTHOG_KEY" | "T3CODE_POSTHOG_HOST") =>
+      awaitingShellConsent ? (hostEnvironment[name]?.trim() ?? "") : "";
+    const key = telemetryConfig.posthogKey.trim() || late("T3CODE_POSTHOG_KEY");
+    const host = telemetryConfig.posthogHost.trim() || late("T3CODE_POSTHOG_HOST");
+    return key && host ? { key, host } : undefined;
+  };
   // A cached PATH does not establish consent from the current login shell.
   const telemetryEnabled = Effect.suspend(() => {
-    if (!policyAllows) return Effect.succeed(false);
+    if (!policyAllows || endpoint() === undefined) return Effect.succeed(false);
     // T3 Learn: a desktop launch learns a shell-profile opt-in only from the late read below.
     if (!awaitingShellConsent) return Effect.succeed(telemetryConfig.enabled);
     if (hostEnvironment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING === "1")
@@ -201,10 +206,11 @@ export const make = Effect.gen(function* () {
   const sendBatch = Effect.fn("AnalyticsService.sendBatch")(function* (
     events: ReadonlyArray<BufferedAnalyticsEvent>,
   ) {
-    if (!(yield* telemetryEnabled) || !distinctId) return;
+    const target = endpoint();
+    if (!(yield* telemetryEnabled) || !distinctId || target === undefined) return;
 
     const payload = {
-      api_key: telemetryConfig.posthogKey,
+      api_key: target.key,
       batch: events.map((event) => ({
         uuid: event.uuid,
         event: event.event,
@@ -229,7 +235,7 @@ export const make = Effect.gen(function* () {
       })),
     };
 
-    yield* HttpClientRequest.post(`${telemetryConfig.posthogHost}/batch/`).pipe(
+    yield* HttpClientRequest.post(`${target.host}/batch/`).pipe(
       HttpClientRequest.bodyJson(payload),
       Effect.flatMap(httpClient.execute),
       Effect.flatMap(HttpClientResponse.filterStatusOk),

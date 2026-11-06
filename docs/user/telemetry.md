@@ -1,19 +1,25 @@
 # Product usage data
 
-OminaX sends no product usage events and no relay connection traces by default. To send product
-usage events, set `T3CODE_TELEMETRY_ENABLED=true` in the server's environment. The rest of this page
-describes what they contain.
+OminaX sends no product usage events and no relay connection traces by default, and never sends
+usage events to T3 Code. To send them to your own PostHog server, set all three in the server's
+environment:
 
-The T3 Code server sends product usage events to T3 Code's own endpoint at `ingest.t3.codes`,
-associated with a hashed account or installation identifier. To count how many installations one person
+- `T3CODE_TELEMETRY_ENABLED=true`
+- `T3CODE_POSTHOG_KEY` to your PostHog project key
+- `T3CODE_POSTHOG_HOST` to your PostHog URL, for example `https://posthog.example.ts.net`
+
+Without a key and host, nothing is sent. The rest of this page describes what the events contain.
+
+Product usage events are associated with a hashed account or installation identifier. To count how many installations one person
 uses, the server also sends hashed account identifiers: your T3 Connect account, your OpenAI and
-Claude accounts when you are signed in, and a random identifier for each device that connects. The endpoint keeps a copy of each
-event and forwards events to PostHog. Events include the provider, model, reasoning effort,
+Claude accounts when you are signed in, and a random identifier for each device that connects. Events include the provider, model, reasoning effort,
 permission mode, turn and request results, duration, release channel, and token counts when
 available. Child-agent token counts are reported separately from the main agent's. Model names
-are sent only when they appear in a provider's public model list.
+are sent only when they appear in a provider's public model list. Lesson features are counted
+too: new lessons, side chats opened and finished, quiz cards and whether each answer was right,
+What's new actions, viewing and changing the knowledge map, and changes to courses.
 
-Events do not include prompts, responses, file contents, authentication tokens, conversation IDs,
+Events do not include prompts, responses, lesson text, the text of quiz answers, file contents, authentication tokens, conversation IDs,
 raw provider events, or child-agent output.
 
 T3 Code also sends relay connection traces to Axiom to diagnose T3 Connect connectivity.
@@ -26,8 +32,9 @@ environment before starting it. Relay tracing also stops when `T3CODE_OTEL_SDK_D
 An administrator can turn product events and relay tracing off for every user on a machine with
 a [managed policy](./managed-policy.md#other-capabilities).
 
-The desktop app reads `T3CODE_TELEMETRY_ENABLED` from your shell profile (for example `~/.zshrc`) on macOS and
-Linux, so export it there and restart the app. On Windows, set it as a user environment variable.
+On macOS and Linux, the desktop app reads all three from your shell profile (for example
+`~/.zshrc`), so it sends events even when opened from the Dock or a launcher. On Windows, set all
+three as user environment variables; a WSL backend receives them too.
 
 ## Mobile app crash reports
 

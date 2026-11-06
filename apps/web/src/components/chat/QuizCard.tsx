@@ -89,7 +89,7 @@ export function QuizCardTimelineCard(props: {
                 value={confidence}
                 onChange={(event) => setConfidence(Number(event.target.value))}
                 disabled={sending}
-                className="mt-2 w-full"
+                className="mt-2 w-full accent-primary"
               />
             </>
           )}

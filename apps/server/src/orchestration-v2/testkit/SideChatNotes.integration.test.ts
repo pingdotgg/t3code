@@ -1,6 +1,7 @@
 import {
   CommandId,
   EventId,
+  MessageId,
   type OrchestrationV2SideChatOutcome,
   ScheduledTaskId,
   SIDE_CHAT_NOTES_HANDOFF_TITLE,
@@ -15,6 +16,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
+import { autoFinishedSideChats } from "../../telemetry/FeatureUsage.ts";
 import { withWorkspaceLease } from "../../workspace/workspaceLease.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import {
@@ -442,8 +444,25 @@ describe("side-chat notes", () => {
           harness.scriptNote(BOX, { text: BOX_BOUNDS_NOTE });
           harness.scriptNote(SPACE, { text: SPACE_NOTE });
 
-          yield* harness.send(lesson, "Continue the lesson.");
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const after = yield* harness.mark;
+          const messageId = MessageId.make("message:auto-done-lesson");
+          const command = {
+            type: "message.dispatch",
+            commandId: CommandId.make("send:auto-done-lesson"),
+            threadId: lesson,
+            messageId,
+            text: "Continue the lesson.",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          } as const;
+          const dispatched = yield* orchestrator.dispatch(command);
+          yield* harness.awaitRun(after, messageId, "completed");
 
+          // Analytics counts each side chat the message finished, nested ones included.
+          assert.equal(autoFinishedSideChats(command, dispatched.storedEvents), 2);
           assert.equal((yield* harness.thread(space)).sideChat?.done?.outcome.status, "ready");
           assert.equal((yield* harness.thread(box)).sideChat?.done?.outcome.status, "ready");
           assert.include(harness.outcomeInputFor(SPACE), boxLine);

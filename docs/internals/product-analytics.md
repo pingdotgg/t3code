@@ -118,7 +118,11 @@ are recorded by the dispatch handler, which can tell a retry apart.
 the methods and commands, and takes variants only from closed contract enums,
 so paths, ids, and text never reach analytics. Guests of a shared thread have no
 WebSocket connection, so the guest share service records their joins and messages
-itself, with no `surface`.
+itself, with no `surface`. UI-only uses (What's new, viewing the knowledge map) have no
+server request of their own, so clients report them through `learn.featureUsed`, whose
+payload is only closed enums. A quiz answer keeps only its grade, and a side chat that a
+lesson message finishes by itself is counted from the events that dispatch committed, so
+the Orchestrator stays free of analytics.
 
 Agent tool events report driver kinds, never instance ids: users name
 instances, so an instance id can identify an account or employer.
@@ -134,9 +138,10 @@ repeating the call's outcome and duration, so event counts are not call counts.
 
 ## Delivery
 
-The server sends batches to the ingest endpoint at `ingest.t3.codes`, which archives
-every event and forwards some of them to PostHog. A send can fail after the endpoint
-has stored the batch, so every retry is a copy.
+The server sends batches to the PostHog host in `T3CODE_POSTHOG_HOST` with the key in
+`T3CODE_POSTHOG_KEY`. T3 Learn sets no default for either and sends nothing until both
+are set, so turning telemetry on can never reach T3 Code's `ingest.t3.codes`. A send
+can fail after the endpoint has stored the batch, so every retry is a copy.
 [Delivery](../../apps/server/src/telemetry/AnalyticsService.ts) gives each event a
 uuid when it is recorded (the endpoint rejects events without one), backs off after
 a failed send, and drops a batch after a few tries. Without these limits, one stuck
@@ -151,4 +156,5 @@ must not reject a connection. PostHog person profiles remain disabled.
 
 Dev-runner servers and the CI archive smoke test turn telemetry off, which also
 stops relay tracing, because each would count as a new install. Set
-`T3CODE_TELEMETRY_ENABLED=true` to test analytics or relay tracing from a dev server.
+`T3CODE_TELEMETRY_ENABLED=true` (plus a key and host for analytics) to test
+analytics or relay tracing from a dev server.

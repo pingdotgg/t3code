@@ -2049,7 +2049,7 @@ export function AboutSettingsPanel() {
           {...searchableSetting("privacy-policy")}
           description={
             telemetryOff === undefined
-              ? "How T3 Code handles your data. By default, OminaX sends no usage data to T3 Code's analytics."
+              ? "How T3 Code handles your data. OminaX never sends usage data to T3 Code, and sends none at all unless you set up your own analytics server."
               : `How T3 Code handles your data. ${telemetryOff}`
           }
           control={

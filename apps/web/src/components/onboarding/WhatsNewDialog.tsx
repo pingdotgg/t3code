@@ -13,6 +13,9 @@ import {
   WELCOME_GUIDE_SEEN_STORAGE_KEY,
 } from "./WelcomeGuideDialog";
 import { environmentPresentations } from "~/state/presentation";
+import { usePrimaryEnvironmentId } from "~/state/environments";
+import { serverEnvironment } from "~/state/server";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { resolveWhatsNewGuides, whatsNewGuides, type WhatsNewGuide } from "./whatsNewGuides";
 import { useClientSettings } from "~/hooks/useSettings";
 import { Button } from "../ui/button";
@@ -98,6 +101,11 @@ function WhatsNewDialog({
   readonly onClose: () => void;
 }) {
   const navigate = useNavigate();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const reportFeatureUsed = useAtomCommand(serverEnvironment.reportFeatureUsed, {
+    reportFailure: false,
+    reportDefect: false,
+  });
   const [step, setStep] = useState(0);
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const nextRef = useRef<HTMLButtonElement>(null);
@@ -107,6 +115,12 @@ function WhatsNewDialog({
   const guide = guides[index]!;
 
   const runAction = () => {
+    if (primaryEnvironmentId !== null) {
+      void reportFeatureUsed({
+        environmentId: primaryEnvironmentId,
+        input: { feature: "whats_new.action", variant: guide.id },
+      });
+    }
     onClose();
     queueMicrotask(() => {
       switch (guide.id) {
