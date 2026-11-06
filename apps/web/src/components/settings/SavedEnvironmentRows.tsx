@@ -451,16 +451,21 @@ export function LocalEnvironmentMcpUrlRow({ entry }: { readonly entry: Connectio
   });
   if (mcpUrl === null) return null;
   const tunnelAvailable = cloudLink.data?.managedTunnelHttpBaseUrl != null;
+  const tunnelReachability = tunnelAvailable ? cloudLink.data?.reachability : undefined;
   const loopback = isLoopbackHostname(new URL(mcpUrl).hostname);
   return (
     <SettingsRow
       {...searchableSetting("mcp-url")}
       description={
-        tunnelAvailable
-          ? `Give this URL to a hosted agent, such as ChatGPT: ${mcpUrl}`
-          : loopback
-            ? `Give this URL to an agent running on this machine: ${mcpUrl}`
-            : `Give this URL to an agent that can reach this environment: ${mcpUrl}`
+        tunnelReachability?.status === "reachable"
+          ? `Tunnel connected. Give this URL to a hosted agent, such as ChatGPT: ${mcpUrl}`
+          : tunnelReachability?.status === "unreachable"
+            ? `T3 Connect is unreachable right now, so a hosted agent can use this URL after the tunnel recovers: ${mcpUrl}`
+            : tunnelAvailable
+              ? `Give this URL to a hosted agent, such as ChatGPT: ${mcpUrl}`
+              : loopback
+                ? `Give this URL to an agent running on this machine: ${mcpUrl}`
+                : `Give this URL to an agent that can reach this environment: ${mcpUrl}`
       }
       control={
         <Button size="sm" variant="outline" onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>
