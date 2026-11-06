@@ -392,6 +392,17 @@ interface PendingPiPrompt {
   runtimeRequest: OrchestrationV2RuntimeRequest;
   readonly node: OrchestrationV2ExecutionNode;
   readonly turnItem: OrchestrationV2TurnItem;
+  readonly customAnswerRoute: PiCustomAnswerRoute | undefined;
+}
+
+/**
+ * The ask_user_question extension misreads typed text sent as a select value, so a custom answer
+ * picks the select's last "Type something." line and answers the input dialog that follows.
+ */
+interface PiCustomAnswerRoute {
+  readonly lines: ReadonlyArray<unknown>;
+  readonly sentinel: string;
+  readonly followUpTitlePrefix: string;
 }
 
 function piApprovalRequestKind(title: string): "command" | "file-change" {
@@ -535,6 +546,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ProviderAdapter.ProviderAdapterV2Error | Cause.Done
       >();
       const pendingPrompts = new Map<string, PendingPiPrompt>();
+      let customAnswerFollowUp: { readonly titlePrefix: string; readonly value: string } | null =
+        null;
       const sessionApprovals = new Set<string>();
       // Pi can settle immediately after dialog response; serialize so terminal cannot overtake request resolution.
       const sessionEventPermit = yield* Semaphore.make(1);
@@ -1475,6 +1488,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return;
         }
         if (nativeRequestId === undefined) return;
+        const followUp = customAnswerFollowUp;
+        customAnswerFollowUp = null;
+        if (
+          followUp !== null &&
+          method === "input" &&
+          recordString(event, "title")?.startsWith(followUp.titlePrefix)
+        ) {
+          yield* connection.send({
+            type: "extension_ui_response",
+            id: nativeRequestId,
+            value: followUp.value,
+          });
+          return;
+        }
         const approvalTitle = recordString(event, "title") ?? "";
         const approvalKey = `${approvalTitle.length}:${approvalTitle}${recordString(event, "message") ?? ""}`;
         if (method === "confirm" && sessionApprovals.has(approvalKey)) {
@@ -1549,6 +1576,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           completedAt: null,
           updatedAt: createdAt,
         };
+        const askUser =
+          method === "select" && turn !== null
+            ? piAskUserSingleSelectQuestion(nativeRequestId, title, event, turn.toolArgs)
+            : undefined;
         const turnItem: OrchestrationV2TurnItem =
           method === "confirm"
             ? {
@@ -1562,11 +1593,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 ...itemBase,
                 type: "user_input_request",
                 requestId,
-                questions: [
-                  (method === "select" && turn !== null
-                    ? piAskUserSingleSelectQuestion(nativeRequestId, title, event, turn.toolArgs)
-                    : undefined) ?? piQuestion(nativeRequestId, method, title, event),
-                ],
+                questions: [askUser?.question ?? piQuestion(nativeRequestId, method, title, event)],
               };
         const pending: PendingPiPrompt = {
           nativeRequestId,
@@ -1578,6 +1605,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           runtimeRequest,
           node,
           turnItem,
+          customAnswerRoute: askUser?.customAnswerRoute,
         };
         pendingPrompts.set(String(requestId), pending);
         yield* emit({
@@ -2996,7 +3024,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 `Pi extension request ${requestInput.requestId} has expired`,
               );
             }
-            const response = piUiResponse(pending, requestInput.decision, requestInput.answers);
+            let response = piUiResponse(pending, requestInput.decision, requestInput.answers);
+            const route = pending.customAnswerRoute;
+            if (
+              route !== undefined &&
+              typeof response["value"] === "string" &&
+              response["value"].trim().length > 0 &&
+              !route.lines.includes(response["value"])
+            ) {
+              customAnswerFollowUp = {
+                titlePrefix: route.followUpTitlePrefix,
+                value: response["value"],
+              };
+              response = { value: route.sentinel };
+            }
             yield* connection.send({
               type: "extension_ui_response",
               id: pending.nativeRequestId,
@@ -3613,6 +3654,17 @@ const rpivPreviewBlock = (options: ReadonlyArray<unknown>) => {
   return blocks.length > 0 ? `\n\n${blocks.join("\n\n")}` : "";
 };
 
+/** Mirrors the extension's `prepareQuestionArguments`: some models JSON-encode nested args. */
+const rpivDecoded = (value: unknown, isShape: (parsed: unknown) => boolean) => {
+  if (typeof value !== "string") return value;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isShape(parsed) ? parsed : value;
+  } catch {
+    return value;
+  }
+};
+
 /**
  * @juicesharp/rpiv-ask-user-question asks a single-select question over RPC as a select of
  * "N. label — description" lines plus a trailing "Type something." entry. Rebuild the question
@@ -3624,36 +3676,46 @@ function piAskUserSingleSelectQuestion(
   title: string,
   event: PiRpcRecord,
   toolArgs: ReadonlyMap<string, unknown>,
-): OrchestrationV2UserInputQuestion | undefined {
+):
+  | { question: OrchestrationV2UserInputQuestion; customAnswerRoute: PiCustomAnswerRoute }
+  | undefined {
   const lines = event["options"];
   if (!Array.isArray(lines) || lines.length < 2) return undefined;
+  const sentinel = lines.at(-1);
+  if (typeof sentinel !== "string") return undefined;
   for (const args of toolArgs.values()) {
-    const questions = recordField(args, "questions");
+    const questions = rpivDecoded(recordField(args, "questions"), Array.isArray);
     if (!Array.isArray(questions)) continue;
-    for (const question of questions) {
+    for (const entry of questions) {
+      const question = rpivDecoded(entry, Predicate.isObject);
       const text = rpivField(question, "question");
       const header = rpivField(question, "header");
-      const options = recordField(question, "options");
       if (recordField(question, "multiSelect") === true || !text?.trim()) continue;
-      if (!Array.isArray(options) || options.length !== lines.length - 1) continue;
       const prefix = header ? `[${header}] ` : "";
+      if (!title.startsWith(`${prefix}${text}`)) continue;
+      const encodedOptions = rpivDecoded(recordField(question, "options"), Array.isArray);
+      if (!Array.isArray(encodedOptions) || encodedOptions.length !== lines.length - 1) continue;
+      const options = encodedOptions.map((option) => rpivDecoded(option, Predicate.isObject));
       const body = `${text}${rpivPreviewBlock(options)}`;
       if (title !== `${prefix}${body}`) continue;
       if (!options.every((option, index) => lines[index] === rpivOptionLine(option, index))) {
         continue;
       }
       return {
-        id: questionId,
-        header: header?.trim() || "Question",
-        question: body.trim(),
-        options: options.map((option, index) => {
-          const label = rpivField(option, "label")?.trim() || `Option ${index + 1}`;
-          return {
-            label,
-            description: rpivField(option, "description")?.trim() || label,
-            value: rpivOptionLine(option, index),
-          };
-        }),
+        question: {
+          id: questionId,
+          header: header?.trim() || "Question",
+          question: body.trim(),
+          options: options.map((option, index) => {
+            const label = rpivField(option, "label")?.trim() || `Option ${index + 1}`;
+            return {
+              label,
+              description: rpivField(option, "description")?.trim() || label,
+              value: rpivOptionLine(option, index),
+            };
+          }),
+        },
+        customAnswerRoute: { lines, sentinel, followUpTitlePrefix: `${prefix}${text}\n\n` },
       };
     }
   }

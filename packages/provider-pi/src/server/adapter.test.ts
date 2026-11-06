@@ -3907,11 +3907,12 @@ describe("PiAdapterV2", () => {
         type: "tool_execution_start",
         toolCallId: "ask-call",
         toolName: "ask_user_question",
+        // Some models JSON-encode `questions`; the extension decodes it before asking.
         args: {
-          questions: [
+          questions: JSON.stringify([
             { header: "Deploy", question: "Proceed?", options },
             { header: "Deploy", question: "Proceed? Only for staging?", options },
-          ],
+          ]),
         },
       });
       yield* fake.emit({
@@ -3930,6 +3931,86 @@ describe("PiAdapterV2", () => {
       }
       const question = decodeUserInputQuestions(event.turnItem.questions)[0];
       assert.equal(question?.question, "Proceed? Only for staging?");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("answers an ask_user_question with custom text through the extension's input", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "ask-call",
+        toolName: "ask_user_question",
+        args: {
+          questions: [
+            {
+              question: "How many replicas?",
+              options: [
+                { label: "One", description: "Single instance" },
+                { label: "Three", description: "High availability" },
+              ],
+            },
+          ],
+        },
+      });
+      const lines = ["1. One — Single instance", "2. Three — High availability"];
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-ask",
+        method: "select",
+        title: "How many replicas?",
+        options: [...lines, "3. Type something."],
+      });
+      const event = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+      );
+      if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
+        return assert.fail("expected a user input request");
+      }
+      // The extension reads a bare number sent as the select's value as that option.
+      yield* runtime.respondToRuntimeRequest({
+        requestId: event.turnItem.requestId,
+        answers: { [event.turnItem.questions[0]!.id]: "2" },
+      });
+      const selectResponse = yield* fake.takeRequest("extension_ui_response");
+      assert.equal(selectResponse["value"], "3. Type something.");
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-custom",
+        method: "input",
+        title: `How many replicas?\n\n${lines.join("\n")}\n\nType your answer:`,
+        placeholder: "",
+      });
+      const inputResponse = yield* fake.takeRequest("extension_ui_response");
+      assert.deepEqual(
+        { id: inputResponse["id"], value: inputResponse["value"] },
+        { id: "ui-custom", value: "2" },
+      );
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-next",
+        method: "input",
+        title: "Anything else?",
+      });
+      const next = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "user_input_request" &&
+          event.turnItem.status === "waiting",
+      );
+      assert.equal(
+        next.type === "turn_item.updated" ? next.turnItem.title : undefined,
+        "Anything else?",
+      );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
