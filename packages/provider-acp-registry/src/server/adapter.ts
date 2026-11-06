@@ -223,8 +223,12 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ...(registryAgentId === "factory-droid"
       ? { extractElicitationForm: extractDroidElicitationForm }
       : {}),
-    // glm-acp-agent is the one agent whose per-turn usage a live probe has verified.
-    ...(registryAgentId === "glm-acp-agent" ? { reportsPerTurnPromptUsage: true } : {}),
+    // Per-turn prompt usage is proven live for glm-acp-agent (a probe reading
+    // PromptResponse.usage), and for mistral-vibe since 3.1.0, whose
+    // PromptResponse.usage reports the delta the prompt covered.
+    ...(registryAgentId === "glm-acp-agent" || registryAgentId === "mistral-vibe"
+      ? { reportsPerTurnPromptUsage: true }
+      : {}),
     ...(registryAgentId === "mistral-vibe"
       ? { registerExtensions: registerMistralVibeAcpExtensions }
       : {}),
