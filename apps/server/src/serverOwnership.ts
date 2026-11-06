@@ -15,6 +15,8 @@ import * as Schema from "effect/Schema";
 
 import {
   BOOT_SERVICE_LAUNCHD_LABEL,
+  LEGACY_BOOT_SERVICE_LAUNCHD_LABEL,
+  LEGACY_BOOT_SERVICE_UNIT_FILE,
   BOOT_SERVICE_PLIST_FILE,
   BOOT_SERVICE_UNIT_FILE,
   bootServiceBaseDirOf,
@@ -35,7 +37,7 @@ import {
   readPersistedServerRuntimeState,
   type PersistedServerRuntimeState,
 } from "./serverRuntimeState.ts";
-import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
+import { T3_LEARN_COMMAND, T3_LEARN_PRODUCT_NAME } from "@t3tools/shared/t3LearnIdentity";
 
 export class ServerAlreadyRunningError extends Schema.TaggedError<ServerAlreadyRunningError>()(
   "ServerAlreadyRunningError",
@@ -45,7 +47,7 @@ export class ServerAlreadyRunningError extends Schema.TaggedError<ServerAlreadyR
   override readonly [Runtime.errorExitCode] = SERVER_EXIT_CODE_STATE_DIR_OWNED;
 
   override get message(): string {
-    return `A T3 Code server already owns ${this.stateDir}. Stop that server, or use a separate T3 home and pair with it, then retry. No server was stopped. server-owner.sqlite is the ownership lock; do not delete it while a server is running.`;
+    return `A ${T3_LEARN_PRODUCT_NAME} server already owns ${this.stateDir}. Stop that server, or use a separate T3 home and pair with it, then retry. No server was stopped. server-owner.sqlite is the ownership lock; do not delete it while a server is running.`;
   }
 }
 
@@ -56,7 +58,7 @@ export class OlderBootServiceError extends Schema.TaggedError<OlderBootServiceEr
   override readonly [Runtime.errorExitCode] = SERVER_EXIT_CODE_STATE_DIR_OWNED;
 
   override get message(): string {
-    return `A T3 Code background service set up for ${this.baseDir} may still run a release without the ownership lock. On that machine, try \`${T3_LEARN_COMMAND} update\` and let it restart (or run \`${T3_LEARN_COMMAND} service restart\` if the update is already installed). If the older launcher cannot update, run \`${T3_LEARN_COMMAND} service uninstall\`, then reinstall with \`${T3_LEARN_COMMAND} service install\` from a current CLI. You can also leave the service uninstalled. Pass \`--base-dir ${this.baseDir}\` to each command. Then retry. No server was stopped.`;
+    return `A ${T3_LEARN_PRODUCT_NAME} background service set up for ${this.baseDir} may still run a release without the ownership lock. On that machine, try \`${T3_LEARN_COMMAND} update\` and let it restart (or run \`${T3_LEARN_COMMAND} service restart\` if the update is already installed). If the older launcher cannot update, run \`${T3_LEARN_COMMAND} service uninstall\`, then reinstall with \`${T3_LEARN_COMMAND} service install\` from a current CLI. You can also leave the service uninstalled. Pass \`--base-dir ${this.baseDir}\` to each command. Then retry. No server was stopped.`;
   }
 }
 
@@ -127,7 +129,17 @@ const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
       platform === "darwin"
         ? NodePath.join(homeDir, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE)
         : NodePath.join(homeDir, ".config", "systemd", "user", BOOT_SERVICE_UNIT_FILE);
-    const baseDir = bootServiceBaseDirOf(yield* fs.readFileString(unitPath));
+    const legacyUnitPath =
+      platform === "darwin"
+        ? NodePath.join(
+            homeDir,
+            "Library",
+            "LaunchAgents",
+            `${LEGACY_BOOT_SERVICE_LAUNCHD_LABEL}.plist`,
+          )
+        : NodePath.join(homeDir, ".config", "systemd", "user", LEGACY_BOOT_SERVICE_UNIT_FILE);
+    const selectedUnitPath = (yield* fs.exists(unitPath)) ? unitPath : legacyUnitPath;
+    const baseDir = bootServiceBaseDirOf(yield* fs.readFileString(selectedUnitPath));
     if (
       baseDir === undefined ||
       (yield* fs.realPath(NodePath.join(baseDir, "userdata"))) !== (yield* fs.realPath(stateDir))
@@ -144,23 +156,36 @@ const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
     let loaded: boolean;
     if (platform === "darwin") {
       loaded =
-        (yield* run("launchctl", ["print", `gui/${uid}/${BOOT_SERVICE_LAUNCHD_LABEL}`])).code === 0;
+        (yield* run("launchctl", ["print", `gui/${uid}/${BOOT_SERVICE_LAUNCHD_LABEL}`])).code ===
+          0 ||
+        (yield* run("launchctl", ["print", `gui/${uid}/${LEGACY_BOOT_SERVICE_LAUNCHD_LABEL}`]))
+          .code === 0;
       if (!loaded) {
         const disabled = yield* run("launchctl", ["print-disabled", `gui/${uid}`]);
         // Older macOS versions print `true` instead of `disabled`.
         if (
           disabled.code !== 0 ||
           disabled.stdout.includes(`"${BOOT_SERVICE_LAUNCHD_LABEL}" => disabled`) ||
-          disabled.stdout.includes(`"${BOOT_SERVICE_LAUNCHD_LABEL}" => true`)
+          disabled.stdout.includes(`"${BOOT_SERVICE_LAUNCHD_LABEL}" => true`) ||
+          disabled.stdout.includes(`"${LEGACY_BOOT_SERVICE_LAUNCHD_LABEL}" => disabled`) ||
+          disabled.stdout.includes(`"${LEGACY_BOOT_SERVICE_LAUNCHD_LABEL}" => true`)
         )
           return undefined;
       }
     } else {
-      const active = yield* run("systemctl", ["--user", "is-active", BOOT_SERVICE_UNIT_FILE]);
+      const active = yield* run("systemctl", [
+        "--user",
+        "is-active",
+        NodePath.basename(selectedUnitPath),
+      ]);
       // A unit waiting out its Restart= delay is activating, with exit code 3.
       loaded = active.code === 0 || (active.code === 3 && active.stdout.trim() === "activating");
       if (!loaded) {
-        const enabled = yield* run("systemctl", ["--user", "is-enabled", BOOT_SERVICE_UNIT_FILE]);
+        const enabled = yield* run("systemctl", [
+          "--user",
+          "is-enabled",
+          NodePath.basename(selectedUnitPath),
+        ]);
         if (enabled.code !== 0 || enabled.stdout.trim() !== "enabled") return undefined;
       }
     }

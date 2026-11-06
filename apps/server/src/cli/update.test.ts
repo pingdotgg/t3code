@@ -52,7 +52,7 @@ it.effect("authenticates each release page until the requested channel is found"
     const httpClient = HttpClient.make((request) => {
       const url = new URL(request.url);
       assert.equal(url.origin, "https://api.github.com");
-      assert.equal(url.pathname, "/repos/aabdel0181/t3-learn/releases");
+      assert.equal(url.pathname, "/repos/aabdel0181/ominax/releases");
       assert.equal(request.headers.accept, "application/vnd.github+json");
       assert.equal(request.headers.authorization, "Bearer gh-token");
       const page = url.searchParams.get("page") ?? "";
@@ -545,7 +545,7 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
 
       assert.include(
         output,
-        `Background service still running the version before ${version}. Run \`t3-learn service restart\` when you are ready to switch it to ${version}.`,
+        `  Background service still running the version before ${version}. Run \`ominax service restart\` when you are ready to switch it to ${version}.`,
       );
     }).pipe(
       Effect.scoped,
