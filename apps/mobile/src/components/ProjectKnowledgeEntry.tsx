@@ -440,6 +440,8 @@ function ProjectKnowledgeSheet(
         <ScrollView
           className="flex-1"
           contentInsetAdjustmentBehavior="automatic"
+          automaticallyAdjustKeyboardInsets
+          keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ padding: 20, gap: 14 }}
         >
