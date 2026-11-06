@@ -362,7 +362,11 @@ export const make = Effect.gen(function* () {
         [
           recoverRead(cli.listNotes(input), { comments: [], truncated: true }),
           recoverRead(cli.listCommits(input), []),
-          recoverRead(cli.listDiscussions(input), { threads: [], truncated: true }),
+          recoverRead(cli.listDiscussions(input), {
+            threads: [],
+            overviewFindingIds: [],
+            truncated: true,
+          }),
           recoverRead(cli.listReactions(input), {
             reactions: [] as ReadonlyArray<PullRequestReaction>,
             reactionsByNoteId: new Map<string, ReadonlyArray<PullRequestReaction>>(),
@@ -381,6 +385,7 @@ export const make = Effect.gen(function* () {
         Effect.map(
           ([notes, commits, discussions, awards, webUrl]): ProviderChangeRequestActivity => {
             const noteUrl = (id: string) => (webUrl === null ? null : `${webUrl}#note_${id}`);
+            const findingIds = new Set(discussions.overviewFindingIds);
             const edited = (id: string) => {
               const editedAt = awards.editedAtByNoteId.get(id);
               return editedAt === undefined ? {} : { editedAt };
@@ -394,6 +399,7 @@ export const make = Effect.gen(function* () {
               reactions: awards.reactions,
               comments: notes.comments.map((comment) => ({
                 ...comment,
+                ...(findingIds.has(comment.id) ? { kind: "review-comment" as const } : {}),
                 ...edited(comment.id),
                 author: withBotFlag(comment.author),
                 url: noteUrl(comment.id),
