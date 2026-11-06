@@ -1227,6 +1227,13 @@ it.effect("discovers Forgejo accounts and retains the server port", () =>
   }),
 );
 
+it("reads SCP-style remotes on an IPv6 host like their ssh:// form", () => {
+  const expected = ForgejoCli.parseForgejoRemote("ssh://git@[2001:db8::1]/maria/project.git");
+  for (const remote of ["git@[2001:db8::1]:maria/project.git", "[2001:db8::1]:maria/project.git"]) {
+    assert.deepStrictEqual(ForgejoCli.parseForgejoRemote(remote), expected);
+  }
+});
+
 it.effect("does not choose a default Forgejo login across ambiguous SSH server ports", () =>
   Effect.gen(function* () {
     const logins = ForgejoCli.parseForgejoLogins(
