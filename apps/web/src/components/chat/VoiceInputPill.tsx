@@ -24,7 +24,7 @@ export const VoiceWaveform = memo(function VoiceWaveform(props: { level: number 
   }, [prefersReducedMotion, props.level]);
 
   return (
-    <div aria-hidden className="flex h-5 min-w-0 items-center gap-0.5 overflow-hidden">
+    <div aria-hidden className="flex h-5 min-w-0 items-center justify-end gap-0.5 overflow-hidden">
       {WAVEFORM_BAR_IDS.map((id, index) => (
         <span
           key={id}

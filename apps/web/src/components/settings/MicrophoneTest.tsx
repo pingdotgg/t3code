@@ -225,7 +225,7 @@ export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
           <VoiceWaveform level={level} />
           <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
           <span
-            className="flex-1 shrink-0 text-xs tabular-nums text-muted-foreground"
+            className="shrink-0 text-xs tabular-nums text-muted-foreground"
             aria-label="Recording time"
           >
             {formatTime(elapsed)} / {formatTime(LOOPBACK_SECONDS)}
@@ -246,6 +246,7 @@ export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
       <Button
         size="icon-sm-pill"
         aria-label="Stop recording"
+        className="ms-auto"
         disabled={phase !== "recording"}
         onClick={() => {
           const recorder = capture.current?.recorder;
