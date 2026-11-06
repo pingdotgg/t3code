@@ -489,6 +489,7 @@ export const make = Effect.gen(function* () {
     const fallbackHost =
       remoteHosts.find((candidate) => candidate.toLowerCase() === host.toLowerCase()) ?? host;
     const candidates = new Set([...remoteHosts, fallbackHost]);
+    let settled = true;
     for (const cliHost of candidates) {
       const result = yield* run(
         {
@@ -500,23 +501,28 @@ export const make = Effect.gen(function* () {
         (error) =>
           GitLabCliCommandError.fromVcsError({ operation: "execute", command: "glab", cwd }, error),
       ).pipe(Effect.option);
-      if (Option.isNone(result)) continue;
-      const webHost = gitLabApiHost(result.value.stdout) ?? cliHost.toLowerCase();
+      if (Option.isNone(result)) {
+        settled = false;
+        continue;
+      }
+      const apiHost = gitLabApiHost(result.value.stdout);
+      const webHost = apiHost ?? cliHost.toLowerCase();
       if (cliHost.toLowerCase() === host.toLowerCase() || webHost === host.toLowerCase()) {
-        return { cliHost, webHost };
+        return { route: { cliHost, webHost }, settled: apiHost !== null || settled };
       }
     }
-    return { cliHost: fallbackHost, webHost: host.toLowerCase() };
+    return { route: { cliHost: fallbackHost, webHost: host.toLowerCase() }, settled };
   });
   const hosts = yield* Cache.makeWith(resolveHostUncached, {
     capacity: 128,
-    timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.minutes(1) : Duration.zero),
+    timeToLive: (exit) =>
+      Exit.isSuccess(exit) && exit.value.settled ? Duration.minutes(1) : Duration.zero,
   });
   const resolveHost: GitLabCli["Service"]["resolveHost"] = (input) =>
     Cache.get(
       hosts,
       new HostLookup({ cwd: input.cwd, host: input.host, remoteUrl: input.remoteUrl ?? null }),
-    );
+    ).pipe(Effect.map(({ route }) => route));
 
   const execute: GitLabCli["Service"]["execute"] = Effect.fn("GitLabCli.execute")(
     function* (input) {

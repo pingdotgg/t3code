@@ -296,7 +296,7 @@ it.effect("keeps the login host's casing when configuration fails after provider
       yield* cli.execute({ cwd: "/repo", host, args: ["api", "user"] });
     }).pipe(Effect.provide(services));
     assert.deepStrictEqual(requestHosts, [cliHost, cliHost]);
-    assert.deepStrictEqual(configHosts, [cliHost, cliHost]);
+    assert.deepStrictEqual(configHosts, [cliHost, cliHost, cliHost]);
   }),
 );
 

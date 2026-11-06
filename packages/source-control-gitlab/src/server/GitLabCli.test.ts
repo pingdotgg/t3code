@@ -42,6 +42,12 @@ it.effect.each([
     mapped: false,
     configFailure: "all",
   },
+  {
+    operation: "api",
+    requestedHost: "gitlab.example.test:8443",
+    mapped: false,
+    configFailure: "recover",
+  },
   { operation: "api", requestedHost: "other.gitlab.example.test:8443", mapped: false },
   { operation: "api", requestedHost: "gitlab.example.test:9443", mapped: false },
   {
@@ -55,6 +61,9 @@ it.effect.each([
   (scenario) =>
     Effect.gen(function* () {
       const { operation, requestedHost, mapped } = scenario;
+      const recovering = "configFailure" in scenario && scenario.configFailure === "recover";
+      const allQueriesFail = "configFailure" in scenario && scenario.configFailure === "all";
+      let recovered = false;
       const calls: SourceControlHost.SourceControlProcessInput[] = [];
       const webHost = "gitlab.example.test:8443";
       const cliHost = "GitLab-SSH.example.test";
@@ -100,7 +109,8 @@ it.effect.each([
                   const candidate = input.args[4];
                   if (
                     candidate === "unavailable.example.test" ||
-                    ("configFailure" in scenario && scenario.configFailure === "all")
+                    allQueriesFail ||
+                    (recovering && candidate === cliHost && !recovered)
                   ) {
                     return Effect.fail(
                       new VcsProcessExitError({
@@ -122,7 +132,11 @@ it.effect.each([
                     ),
                   );
                 }
-                assert.strictEqual(input.env?.GITLAB_HOST, mapped ? cliHost : requestedHost);
+                assert.strictEqual(
+                  input.env?.GITLAB_HOST,
+                  mapped || (recovering && recovered) ? cliHost : requestedHost,
+                );
+                if (recovering) recovered = true;
                 if (operation !== "api") {
                   assert.strictEqual(input.args.at(-1), `https://${cliHost}${path}`);
                 }
@@ -152,14 +166,16 @@ it.effect.each([
       } else {
         yield* glab.execute({ cwd: "/repo", host: requestedHost, args: ["api", "user"] });
         yield* glab.execute({ cwd: "/repo", host: requestedHost, args: ["api", "user"] });
+        if (recovering)
+          yield* glab.execute({ cwd: "/repo", host: requestedHost, args: ["api", "user"] });
       }
       assert.strictEqual(
         calls.filter((input) => input.args[0] !== "config").length,
-        operation === "api" ? 2 : 1,
+        operation === "api" ? (recovering ? 3 : 2) : 1,
       );
       assert.strictEqual(
         calls.filter((input) => input.args[0] === "config").length,
-        (mapped ? 1 : 2) +
+        (recovering ? 3 : allQueriesFail ? 4 : mapped ? 1 : 2) +
           ("configFailure" in scenario && scenario.configFailure === "first" ? 1 : 0),
       );
     }),
