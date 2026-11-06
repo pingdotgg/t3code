@@ -2365,18 +2365,21 @@ export const make = Effect.gen(function* () {
           [
             mergeRequestDetail(input),
             projectUsers({ ...input, search: input.query }),
-            // GitLab before 16.8 rejects the field; keep the default of many reviewers.
-            orWhenUnanswered(
-              graphqlRead({
-                cwd: input.cwd,
-                host: input.host,
-                operation: "getReviewerLimit",
-                query: REVIEWER_LIMIT_GRAPHQL_QUERY,
-                variables: { fullPath: input.repository, iid: String(input.number) },
-                decode: decodeReviewerLimitJson,
-              }),
-              true,
-            ),
+            // A search only adds rows; the picker reads the limit from the unsearched list.
+            input.query?.trim()
+              ? Effect.undefined
+              : // GitLab before 16.8 rejects the field; keep the default of many reviewers.
+                orWhenUnanswered(
+                  graphqlRead({
+                    cwd: input.cwd,
+                    host: input.host,
+                    operation: "getReviewerLimit",
+                    query: REVIEWER_LIMIT_GRAPHQL_QUERY,
+                    variables: { fullPath: input.repository, iid: String(input.number) },
+                    decode: decodeReviewerLimitJson,
+                  }),
+                  true,
+                ),
           ],
           { concurrency: 3 },
         ).pipe(
@@ -2411,7 +2414,7 @@ export const make = Effect.gen(function* () {
                   ),
               ],
               truncated: users.rawCount >= MAX_PAGE_SIZE,
-              multiple,
+              ...(multiple === undefined ? {} : { multiple }),
             };
           }),
         );

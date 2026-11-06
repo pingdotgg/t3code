@@ -2112,7 +2112,8 @@ layer("GitLabPullRequestCli.layer", (it) => {
           .mockReturnValueOnce(
             Effect.succeed(output(mergeRequestJson({ reviewers: [{ id: 42, username: "late" }] }))),
           )
-          .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))));
+          .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))))
+          .mockReturnValueOnce(Effect.succeed(output("{}")));
         const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
         const list = yield* cli.listReviewerCandidates({
@@ -2140,7 +2141,8 @@ layer("GitLabPullRequestCli.layer", (it) => {
         .mockReturnValueOnce(
           Effect.succeed(output(mergeRequestJson({ reviewers: [{ id: 5, username: "" }] }))),
         )
-        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))));
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))))
+        .mockReturnValueOnce(Effect.succeed(output("{}")));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
       const list = yield* cli.listReviewerCandidates({
@@ -2177,6 +2179,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         [reviewer.username, true],
       ]);
       expect(argsOfCall(1)[1]).toBe("projects/acme%2Fweb/users?per_page=100&search=octo%20cat");
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
     }),
   );
 
