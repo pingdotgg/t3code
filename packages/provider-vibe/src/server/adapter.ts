@@ -18,6 +18,7 @@ import type { VibeSettings } from "../settings.ts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -246,7 +247,10 @@ interface AdapterState {
   /** History entries by native id, so `history/entryUpdated` patches can be applied. */
   entries: Map<string, Record<string, unknown>>;
   /** Maps a T3 runtime-request id to the native callback id answered via `callback/result`. */
-  callbackByRequest: Map<RuntimeRequestId, string>;
+  callbackByRequest: Map<
+    RuntimeRequestId,
+    { readonly callbackId: string; readonly kind: "permission" | "user_input" }
+  >;
 }
 
 export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
@@ -265,6 +269,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
     });
 
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const openSessionInner = Effect.fn("VibeAdapterV2.openSession")(function* (
     input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
@@ -289,7 +294,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         clientVersion: "0.0.0",
         capabilities: {
           callbackKinds: ["approval", "user_input"],
-          clientTools: ["filesystem/read", "filesystem/write", "terminal"],
+          clientTools: ["filesystem/read", "filesystem/write"],
         },
       }),
       protocolError,
@@ -462,12 +467,15 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           const { providerTurnId } = state.activeTurn;
           const completedAt = yield* DateTime.now;
           const status = str(turn?.["status"]) ?? method.replace("turn/", "");
+          // A user-cancelled turn is its own terminal status, not a failure.
           const terminalStatus =
-            status === "failed" || status === "cancelled"
+            status === "failed"
               ? "failed"
-              : status === "interrupted"
-                ? "interrupted"
-                : "completed";
+              : status === "cancelled"
+                ? "cancelled"
+                : status === "interrupted"
+                  ? "interrupted"
+                  : "completed";
           yield* emit({
             type: "provider_turn.updated",
             driver: VIBE_PROVIDER,
@@ -498,7 +506,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
               providerThreadId: state.thread.id,
               providerTurnId,
               runOrdinal: Math.max(1, state.lastRunOrdinal),
-              status: terminalStatus === "failed" ? "cancelled" : terminalStatus,
+              status: terminalStatus as "cancelled" | "completed" | "interrupted",
               failure: null,
               threadDisposition: "reusable",
             });
@@ -542,56 +550,105 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
 
     // Approvals and structured questions arrive as the `callback/call` server request:
     // surface them as a live runtime request, ack the call, and answer later via `callback/result`.
-    yield* client.handleUnknownServerRequest(
-      Effect.fn("VibeAdapterV2.onServerRequest")(function* (method: string, params: unknown) {
-        const toWireError = (cause: unknown) =>
-          new VibeAppServerError.VibeAppServerRequestError({
-            method,
-            code: "internal_error",
-            detail: cause instanceof Error ? cause.message : String(cause),
-          });
-        if (method !== "callback/call") {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const onServerRequest = Effect.fn("VibeAdapterV2.onServerRequest")(function* (
+      method: string,
+      params: unknown,
+    ) {
+      const toWireError = (cause: unknown) =>
+        new VibeAppServerError.VibeAppServerRequestError({
+          method,
+          code: "internal_error",
+          detail: cause instanceof Error ? cause.message : String(cause),
+        });
+      // Advertised client tools get matching handlers: serve file read/write from the session checkout.
+      if (method === "clientTool/readTextFile" || method === "clientTool/writeTextFile") {
+        const record = asRecord(params) ?? {};
+        const filePath = str(record["path"]);
+        if (!filePath) {
           return yield* new VibeAppServerError.VibeAppServerRequestError({
             method,
-            code: "method_not_found",
-            detail: `Unsupported vibe-app-server request: ${method}`,
+            code: "invalid_params",
+            detail: "path is required",
           });
         }
-        const callback = asRecord(asRecord(params)?.["callback"]);
-        const callbackId = str(callback?.["callbackId"]) ?? str(callback?.["callback_id"]);
-        if (!callbackId) {
-          return { accepted: false };
+        const absolute = filePath.startsWith("/") ? filePath : `${cwd}/${filePath}`;
+        const fileSystem = yield* FileSystem.FileSystem;
+        if (method === "clientTool/readTextFile") {
+          const content = yield* fileSystem.readFileString(absolute).pipe(
+            Effect.mapError(
+              (cause) =>
+                new VibeAppServerError.VibeAppServerRequestError({
+                  method,
+                  code: "internal_error",
+                  detail: "read failed",
+                  data: cause,
+                }),
+            ),
+          );
+          return { content };
         }
-        const requestId = yield* idAllocator.allocate
-          .runtimeRequest({
-            driver: VIBE_PROVIDER,
-            ...(state.activeTurn !== undefined
-              ? { providerTurnId: state.activeTurn.providerTurnId }
-              : {}),
-            nativeRequestId: callbackId,
-          })
-          .pipe(Effect.mapError(toWireError));
-        state.callbackByRequest.set(requestId, callbackId);
-        const createdAt = yield* DateTime.now;
-        const kind = str(callback?.["kind"]) ?? "permission";
-        yield* emit({
-          type: "runtime_request.updated",
-          driver: VIBE_PROVIDER,
-          threadId: input.threadId,
-          runtimeRequest: {
-            id: requestId,
-            nodeId: state.currentRun?.rootNodeId ?? NodeId.make(`vibe-request-${requestId}`),
-            providerTurnId: state.activeTurn?.providerTurnId ?? null,
-            nativeRequestRef: nativeRef(callbackId),
-            kind: kind === "user_input" ? "permission" : "permission",
-            status: "pending",
-            responseCapability: { type: "live", providerSessionId },
-            createdAt,
-            resolvedAt: null,
-          } satisfies OrchestrationV2RuntimeRequest,
+        const content = typeof record["content"] === "string" ? record["content"] : "";
+        yield* fileSystem.writeFileString(absolute, content).pipe(
+          Effect.mapError(
+            (cause) =>
+              new VibeAppServerError.VibeAppServerRequestError({
+                method,
+                code: "internal_error",
+                detail: "write failed",
+                data: cause,
+              }),
+          ),
+        );
+        return {};
+      }
+      if (method !== "callback/call") {
+        return yield* new VibeAppServerError.VibeAppServerRequestError({
+          method,
+          code: "method_not_found",
+          detail: `Unsupported vibe-app-server request: ${method}`,
         });
-        return { callbackId, accepted: true };
-      }),
+      }
+      const callback = asRecord(asRecord(params)?.["callback"]);
+      const callbackId = str(callback?.["callbackId"]) ?? str(callback?.["callback_id"]);
+      if (!callbackId) {
+        return { accepted: false };
+      }
+      const requestId = yield* idAllocator.allocate
+        .runtimeRequest({
+          driver: VIBE_PROVIDER,
+          ...(state.activeTurn !== undefined
+            ? { providerTurnId: state.activeTurn.providerTurnId }
+            : {}),
+          nativeRequestId: callbackId,
+        })
+        .pipe(Effect.mapError(toWireError));
+      const kind =
+        str(callback?.["kind"]) === "user_input"
+          ? ("user_input" as const)
+          : ("permission" as const);
+      state.callbackByRequest.set(requestId, { callbackId, kind });
+      const createdAt = yield* DateTime.now;
+      yield* emit({
+        type: "runtime_request.updated",
+        driver: VIBE_PROVIDER,
+        threadId: input.threadId,
+        runtimeRequest: {
+          id: requestId,
+          nodeId: state.currentRun?.rootNodeId ?? NodeId.make(`vibe-request-${requestId}`),
+          providerTurnId: state.activeTurn?.providerTurnId ?? null,
+          nativeRequestRef: nativeRef(callbackId),
+          kind,
+          status: "pending",
+          responseCapability: { type: "live", providerSessionId },
+          createdAt,
+          resolvedAt: null,
+        } satisfies OrchestrationV2RuntimeRequest,
+      });
+      return { callbackId, accepted: true };
+    });
+    yield* client.handleUnknownServerRequest((method, params) =>
+      Effect.provideService(onServerRequest(method, params), FileSystem.FileSystem, fileSystem),
     );
 
     const ensureThread: ProviderAdapter.ProviderAdapterV2SessionRuntime["ensureThread"] = Effect.fn(
@@ -761,8 +818,9 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           });
         }
         const decision = responseInput.decision ?? "cancel";
-        const callbackId =
-          state.callbackByRequest.get(responseInput.requestId) ?? responseInput.requestId;
+        const pending = state.callbackByRequest.get(responseInput.requestId);
+        const callbackId = pending?.callbackId ?? responseInput.requestId;
+        const requestKind = pending?.kind ?? "permission";
         const result =
           decision === "cancel"
             ? { outcome: "cancelled" as const }
@@ -792,7 +850,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
               NodeId.make(`vibe-request-${responseInput.requestId}`),
             providerTurnId: state.activeTurn?.providerTurnId ?? null,
             nativeRequestRef: nativeRef(callbackId),
-            kind: "permission",
+            kind: requestKind,
             status: "resolved",
             responseCapability: { type: "live", providerSessionId },
             createdAt: resolvedAt,
@@ -1015,9 +1073,13 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
     }),
     openSession: Effect.fn("VibeAdapterV2.openSession")(function* (input) {
       return yield* Effect.provideService(
-        openSessionInner(input),
-        ChildProcessSpawner.ChildProcessSpawner,
-        spawner,
+        Effect.provideService(
+          openSessionInner(input),
+          ChildProcessSpawner.ChildProcessSpawner,
+          spawner,
+        ),
+        FileSystem.FileSystem,
+        fileSystem,
       );
     }),
   });
@@ -1025,6 +1087,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
 
 export type VibeAdapterV2Env =
   | ChildProcessSpawner.ChildProcessSpawner
+  | FileSystem.FileSystem
   | SecureRandom.SecureRandom
   | IdAllocator.IdAllocatorV2
   | ProviderHost.ProviderHost;
