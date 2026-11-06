@@ -74,21 +74,30 @@ describe("server browser page copies", () => {
   });
 
   it.each([
-    { target: "document", capture: true, format: "text/plain" },
-    { target: "document", capture: false, format: "text" },
-    { target: "window", capture: true, format: "TEXT/PLAIN" },
-    { target: "window", capture: false, format: "Text" },
+    { target: "document", capture: true, format: "text/plain", items: false },
+    { target: "document", capture: false, format: "text", items: false },
+    { target: "window", capture: true, format: "TEXT/PLAIN", items: false },
+    { target: "window", capture: false, format: "Text", items: false },
+    { target: "document", capture: true, format: "text/plain", items: true },
   ])(
-    "keeps the final copy and cut payload from $target handlers (capture: $capture)",
-    async ({ target, capture, format }) => {
+    "keeps the final copy and cut payload from $target handlers (capture: $capture, items: $items)",
+    async ({ target, capture, format, items }) => {
       await inPage(`
         for (const type of ["copy", "cut"]) {
           ${target}.addEventListener(type, (event) => {
             event.preventDefault();
             event.clipboardData.setData("text/plain", "replaced earlier");
-            event.clipboardData.setData("${format}", "page " + event.type);
+            if (!${items}) event.clipboardData.setData("${format}", "page " + event.type);
             event.clipboardData.setData("text/html", "<p>other format</p>");
-            if (document.body.dataset.clear === "yes") event.clipboardData.clearData();
+            if (${items}) {
+              event.clipboardData.items.clear();
+              event.clipboardData.items.add("page " + event.type, "text/plain");
+            }
+            if (document.body.dataset.clear === "yes") {
+              if (${items}) event.clipboardData.items.clear();
+              else event.clipboardData.clearData();
+            }
+            if (document.body.dataset.clear === "remove") event.clipboardData.items.remove(0);
             event.stopImmediatePropagation();
           }, ${capture});
         }
@@ -119,11 +128,50 @@ describe("server browser page copies", () => {
       await page.locator("#replace").click();
       expect(await takeCopy(true)).toBe("");
       expect(await takeCopy(false)).toBe("");
+      if (items) {
+        await inPage(`document.body.dataset.clear = "remove"`);
+        await page.locator("#text").selectText();
+        await page.locator("#replace").click();
+        expect(await takeCopy(true)).toBe("");
+        expect(await takeCopy(false)).toBe("");
+      }
     },
   );
 
+  it("keeps copies delegated from a child frame to its parent", async () => {
+    await inPage(`
+      globalThis.writeFromChild = async () => {
+        await navigator.permissions.query({ name: "clipboard-write" });
+        await navigator.clipboard.writeText("delegated");
+        document.body.dataset.delegated = "yes";
+      };
+      globalThis.execFromChild = (command) => {
+        const field = document.createElement("textarea");
+        field.value = "delegated " + command;
+        document.body.append(field);
+        field.select();
+        document.execCommand(command);
+        field.remove();
+      };
+      const frame = document.createElement("iframe");
+      frame.srcdoc = '<button id="write" onclick="parent.writeFromChild()">write</button><button id="copy" onclick="parent.execFromChild(this.id)">copy</button><button id="cut" onclick="parent.execFromChild(this.id)">cut</button>';
+      document.body.append(frame);
+    `);
+    expect(await inPage("navigator.userActivation.hasBeenActive")).toBe(false);
+    const frame = page.frameLocator("iframe");
+    await frame.locator("#write").click();
+    await page.locator("body[data-delegated=yes]").waitFor();
+    expect(await takeCopy(true)).toBe("delegated");
+    expect(await takeCopy(false)).toBe("");
+    for (const command of ["copy", "cut"]) {
+      await frame.locator(`#${command}`).click();
+      expect(await takeCopy(true)).toBe(`delegated ${command}`);
+      expect(await takeCopy(false)).toBe("");
+    }
+  });
+
   it.each(["right", "middle"] as const)(
-    "keeps nothing the page copies from a %s click",
+    "keeps native %s activation apart from the copy keys",
     async (button) => {
       await inPage(`
         for (const id of ["write", "exec"]) {
@@ -133,9 +181,10 @@ describe("server browser page copies", () => {
       `);
       await page.locator("#write").click({ button });
       await page.locator("body[data-written=yes]").waitFor();
-      expect(await takeCopy(true)).toBe("");
+      expect(await takeCopy(true)).toBe("written");
+      expect(await takeCopy(false)).toBe("");
       await page.locator("#exec").click({ button });
-      expect(await takeCopy(true)).toBe("");
+      expect(await takeCopy(true)).toBe("executed");
       expect(await takeCopy(false)).toBe("");
     },
   );

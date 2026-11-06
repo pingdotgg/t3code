@@ -453,6 +453,8 @@ const CLIPBOARD_SCRIPT = `(() => {
       if (event.isTrusted && event.button === 0) clickedAt = performance.now();
     }, true);
   }
+  const canClickCopy = () =>
+    performance.now() - clickedAt < ${CLICK_COPY_MS} || navigator.userActivation?.isActive === true;
   const selection = () => {
     let field = document.activeElement;
     while (field?.shadowRoot?.activeElement) field = field.shadowRoot.activeElement;
@@ -475,7 +477,7 @@ const CLIPBOARD_SCRIPT = `(() => {
   const snapshot = (event) => {
     if (!event.isTrusted) return;
     settle();
-    if (!keying && performance.now() - clickedAt >= ${CLICK_COPY_MS}) return;
+    if (!keying && !canClickCopy()) return;
     pending = { event, key: keying, data: undefined };
     record(selection(), pending.key);
     setTimeout(settle);
@@ -488,7 +490,7 @@ const CLIPBOARD_SCRIPT = `(() => {
       pending.data = event.detail;
   }, true);
   addEventListener("${CLIPBOARD_WRITE_EVENT}", (event) => {
-    if (!keying && performance.now() - clickedAt < ${CLICK_COPY_MS} && typeof event.detail === "string")
+    if (!keying && canClickCopy() && typeof event.detail === "string")
       record(event.detail, false);
   }, true);
   globalThis.takeCopy = (click) => {
@@ -528,6 +530,33 @@ const CLIPBOARD_WRITE_SCRIPT = `(() => {
       apply(target, self, args) {
         const result = Reflect.apply(target, self, args);
         report("${CLIPBOARD_DATA_EVENT}", Reflect.apply(getData, self, ["text/plain"]));
+        return result;
+      },
+    });
+  }
+  const owners = new WeakMap();
+  const items = transfer && Object.getOwnPropertyDescriptor(transfer, "items");
+  if (typeof items?.get === "function") {
+    Object.defineProperty(transfer, "items", {
+      ...items,
+      get: new Proxy(items.get, {
+        apply(target, self, args) {
+          const list = Reflect.apply(target, self, args);
+          owners.set(list, self);
+          return list;
+        },
+      }),
+    });
+  }
+  const itemList = globalThis.DataTransferItemList?.prototype;
+  for (const method of ["add", "remove", "clear"]) {
+    const changeItems = itemList?.[method];
+    if (typeof changeItems !== "function" || typeof getData !== "function") continue;
+    itemList[method] = new Proxy(changeItems, {
+      apply(target, self, args) {
+        const result = Reflect.apply(target, self, args);
+        const owner = owners.get(self);
+        if (owner) report("${CLIPBOARD_DATA_EVENT}", Reflect.apply(getData, owner, ["text/plain"]));
         return result;
       },
     });
