@@ -207,13 +207,15 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
   const fail = (id: JsonRpcId, code: number, message: string) =>
     post({ jsonrpc: "2.0", id, error: { code, message } });
 
+  // Responses to the app's own calls wait for it, so a slow image load cannot overwrite newer data.
+  let toolResultDelivered: Promise<void> = Promise.resolve();
   const sendToolResult = (result: McpAppCallToolResult) => {
     const hydrating = hydrateMcpAppToolResultImages(result, options.loadToolOutputImage);
     if (hydrating === undefined) {
       notify("ui/notifications/tool-result", normalizeMcpAppToolResult(result));
       return;
     }
-    void hydrating.then((hydrated) =>
+    toolResultDelivered = hydrating.then((hydrated) =>
       notify("ui/notifications/tool-result", normalizeMcpAppToolResult(hydrated)),
     );
   };
@@ -234,14 +236,16 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
     }
     pending += 1;
     void run().then(
-      (result) => {
-        pending -= 1;
-        respond(id, result);
-      },
-      (error: unknown) => {
-        pending -= 1;
-        fail(id, -32000, errorMessage(error));
-      },
+      (result) =>
+        toolResultDelivered.then(() => {
+          pending -= 1;
+          respond(id, result);
+        }),
+      (error: unknown) =>
+        toolResultDelivered.then(() => {
+          pending -= 1;
+          fail(id, -32000, errorMessage(error));
+        }),
     );
   };
 

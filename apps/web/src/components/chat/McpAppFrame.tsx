@@ -161,7 +161,10 @@ export function McpAppFrame(props: {
   const updateModelContext = useAtomCommand(mcpAppEnvironment.updateModelContext, {
     reportFailure: false,
   });
-  const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
+  const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
+    reportFailure: false,
+    refresh: true,
+  });
   const connection = usePreparedConnection(props.environmentId);
   const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
 

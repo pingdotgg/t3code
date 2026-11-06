@@ -201,6 +201,40 @@ describe("makeMcpAppHost", () => {
     ).toEqual(["ui/notifications/tool-input", "ui/notifications/tool-result"]);
   });
 
+  it("answers the app's own tool call only after the stored screenshot it was opened with", async () => {
+    const image = Promise.withResolvers<Uint8Array>();
+    const called = Promise.withResolvers<void>();
+    const answered = Promise.withResolvers<void>();
+    const sent: Array<Record<string, unknown>> = [];
+    const { host } = setup({
+      post: (message) => {
+        const record = message as Record<string, unknown>;
+        sent.push(record);
+        if (record.id === 9) answered.resolve();
+      },
+      callTool: async () => {
+        called.resolve();
+        return { content: [{ type: "text", text: "newer" }] };
+      },
+      loadToolOutputImage: () => image.promise,
+    });
+    host.setToolCall({
+      arguments: {},
+      result: { content: [{ type: "image", mimeType: "image/png" }] },
+    });
+    initialize(host);
+    host.receive({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "refresh" } });
+    await called.promise;
+    await flush();
+    expect(sent.some((m) => m.id === 9)).toBe(false);
+    image.resolve(new Uint8Array([1, 2, 3]));
+    await answered.promise;
+    const order = sent
+      .filter((m) => m.id === 9 || m.method === "ui/notifications/tool-result")
+      .map((m) => m.id ?? m.method);
+    expect(order).toEqual(["ui/notifications/tool-result", 9]);
+  });
+
   it("accepts ui/message as one text block or the SDK's block array", async () => {
     const messages: Array<string> = [];
     const { host, sent } = setup({ sendMessage: async (text) => void messages.push(text) });
