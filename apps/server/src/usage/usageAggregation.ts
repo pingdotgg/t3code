@@ -69,6 +69,7 @@ export interface AggregateOptions {
   readonly rates: RateTable;
   readonly priceOverrides?: RateTable;
   readonly modelAliases?: ReadonlyMap<string, string>;
+  readonly rateModel?: (provider: UsageRecord["provider"], model: string) => string | undefined;
   readonly modelFilter?: UsageModelFilter;
   readonly resolution?: UsageResolution;
   readonly sinceTimeMs?: number;
@@ -235,12 +236,13 @@ export class UsageAggregator {
     return true;
   }
 
-  // Aliases use the target's rate, replacing provider-specific rateModel.
+  // Aliases use the target's rate, which a provider may name apart from the target's ID.
   #mapModel(record: UsageRecord): UsageRecord {
     const model = this.#options.modelAliases?.get(record.model);
     if (model === undefined) return record;
     const { rateModel: _rateModel, ...rest } = record;
-    return { ...rest, model };
+    const rateModel = this.#options.rateModel?.(record.provider, model);
+    return rateModel === undefined ? { ...rest, model } : { ...rest, model, rateModel };
   }
 
   // Time-ordered records usually reuse the previous bucket; avoid rebuilding its key.
