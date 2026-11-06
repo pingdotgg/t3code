@@ -7,11 +7,12 @@ import {
 import { page, userEvent } from "vite-plus/test/browser";
 import { expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 
+const mocks = vi.hoisted(() => ({ post: vi.fn() }));
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
-  useAtomCommand: (() => vi.fn()) as never,
+  useAtomCommand: (() => mocks.post) as never,
 }));
 
 import { PullRequestComposer } from "./PullRequestComposer";
@@ -112,4 +113,34 @@ it("closes only the verdict menu on Escape", async () => {
   await userEvent.keyboard("{Escape}");
   await expect.element(page.getByRole("option", { name: "Approve" })).not.toBeInTheDocument();
   await expect.element(screen.getByRole("textbox", { name: "Review summary" })).toBeVisible();
+});
+
+it("returns focus to the bar after posting unless the user moved it elsewhere", async () => {
+  mocks.post.mockReset();
+  mocks.post.mockResolvedValueOnce({ _tag: "Success" });
+  await using screen = await render(
+    <>
+      <input aria-label="Elsewhere" />
+      {composer}
+    </>,
+  );
+  const bar = screen.getByRole("button", { name: "Comment on pull request" });
+  const textarea = screen.getByRole("textbox", { name: "Comment on this pull request" });
+  const post = async () => {
+    await userEvent.click(bar);
+    await userEvent.type(textarea, "Note");
+    await userEvent.keyboard("{Control>}{Enter}{/Control}");
+  };
+
+  await post();
+  await expect.element(bar).toHaveFocus();
+
+  let finish = (_result: { _tag: "Success" }) => {};
+  mocks.post.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+  await post();
+  const elsewhere = screen.getByRole("textbox", { name: "Elsewhere" });
+  await userEvent.click(elsewhere);
+  await act(async () => finish({ _tag: "Success" }));
+  await expect.element(bar).toBeVisible();
+  await expect.element(elsewhere).toHaveFocus();
 });
