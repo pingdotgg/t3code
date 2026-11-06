@@ -1,214 +1,299 @@
 import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
-import { MicIcon, MicOffIcon } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { CheckIcon, MicIcon, XIcon } from "lucide-react";
+import { useEffect, useState } from "react";
 
-import { useNavigate } from "@tanstack/react-router";
-import type { useEnvironmentSpeechInput } from "~/speech/useEnvironmentSpeechInput";
-import { useMediaQuery } from "~/hooks/useMediaQuery";
-import { cn } from "~/lib/utils";
+import { VoiceInputErrorPill } from "./VoiceInputErrorPill";
+import { VoiceInputPill, VoiceWaveform } from "./VoiceInputPill";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
+import { Text } from "../ui/text";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { COMPOSER_PILL_BUTTON_CLASS_NAME } from "./ComposerPrimaryActions";
 
-type SpeechLevel = ReturnType<typeof useEnvironmentSpeechInput>["level"];
+type SpeechPresentation = {
+  status: string | null;
+  showsCancel: boolean;
+  showsConfirm: boolean;
+  confirmEnabled: boolean;
+  showsSend: boolean;
+};
 
-// Each bar reads the level a sample apart so the three never move in lockstep.
-const BAR_SAMPLE_OFFSETS = [1, 0, 2] as const;
-const RESTING_SCALE = 0.4;
-const STATIC_SCALE = 0.7;
-
-export function shouldShowComposerFooter(
-  collapsed: boolean,
-  phase: VoiceInputState<true>["phase"],
-): boolean {
-  return phase !== "idle" || !collapsed;
+export function resolveSpeechPresentation(
+  state: VoiceInputState,
+  progress: { downloaded: number; total: number } | null,
+): SpeechPresentation {
+  switch (state.phase) {
+    case "idle":
+      return {
+        status: null,
+        showsCancel: false,
+        showsConfirm: false,
+        confirmEnabled: false,
+        showsSend: true,
+      };
+    case "error":
+      return {
+        status: state.error ?? "Voice input failed",
+        showsCancel: false,
+        showsConfirm: false,
+        confirmEnabled: false,
+        showsSend: true,
+      };
+    case "preparing":
+      return {
+        status: progress
+          ? `Downloading speech model ${Math.round((progress.downloaded / Math.max(1, progress.total)) * 100)}%`
+          : "Preparing",
+        showsCancel: true,
+        showsConfirm: true,
+        confirmEnabled: false,
+        showsSend: true,
+      };
+    case "recording":
+      return {
+        status: "Recording",
+        showsCancel: true,
+        showsConfirm: true,
+        confirmEnabled: true,
+        showsSend: true,
+      };
+    case "transcribing":
+      return {
+        status: "Transcribing",
+        showsCancel: true,
+        showsConfirm: true,
+        confirmEnabled: false,
+        showsSend: true,
+      };
+    case "post-processing":
+      return {
+        status: "Post-processing",
+        showsCancel: true,
+        showsConfirm: true,
+        confirmEnabled: false,
+        showsSend: true,
+      };
+  }
 }
 
-/** Three vertical bars that follow the microphone level while `active`, and settle when not. */
-function SpeechBars(props: { level: SpeechLevel; active: boolean }) {
-  const { level, active } = props;
-  const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const barsRef = useRef<Array<HTMLSpanElement | null>>([]);
+function formatElapsed(seconds: number) {
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Publish microphone samples to the bar DOM while recording, without rerendering React per sample.
+function RecordingStatus(props: { level: number; recordingLimitSeconds?: number | undefined }) {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the timer displaying the native recording duration
   useEffect(() => {
-    const paint = (scale: (index: number) => number) => {
-      barsRef.current.forEach((bar, index) => {
-        if (bar) bar.style.transform = `scaleY(${scale(index)})`;
-      });
-    };
-    if (!active) {
-      paint(() => RESTING_SCALE);
-      return;
-    }
-    if (prefersReducedMotion) {
-      paint(() => STATIC_SCALE);
-      return;
-    }
-    const history = [0, 0, 0];
-    const sample = () => {
-      history.copyWithin(0, 1);
-      history[2] = level.getSnapshot();
-      paint((index) => {
-        const value = history[2 - BAR_SAMPLE_OFFSETS[index]!] ?? 0;
-        return RESTING_SCALE + (1 - RESTING_SCALE) * Math.min(1, value);
-      });
-    };
-    sample();
-    return level.subscribe(sample);
-  }, [active, level, prefersReducedMotion]);
+    const startedAt = Date.now();
+    const timer = window.setInterval(
+      () => setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1_000)),
+      250,
+    );
+    return () => window.clearInterval(timer);
+  }, []);
 
   return (
-    <span aria-hidden className="flex h-4 items-center justify-center gap-0.5">
-      {BAR_SAMPLE_OFFSETS.map((offset, index) => (
-        <span
-          key={offset}
-          ref={(bar) => {
-            barsRef.current[index] = bar;
-          }}
-          className="h-full w-0.75 origin-center rounded-full bg-current transition-transform duration-100 ease-out motion-reduce:transition-none"
-          style={{ transform: `scaleY(${RESTING_SCALE})` }}
-        />
-      ))}
-    </span>
+    <>
+      <VoiceWaveform level={props.level} />
+      <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
+      <Text variant="meta" tone="muted" numeric>
+        {formatElapsed(elapsedSeconds)}
+        {props.recordingLimitSeconds !== undefined
+          ? ` / ${formatElapsed(props.recordingLimitSeconds)}`
+          : ""}
+      </Text>
+    </>
   );
 }
 
-/** A disabled mic in the send pill whose tooltip says why voice input is off here. */
-export function ComposerSpeechUnavailableMic(props: { reason: string }) {
-  return (
-    <Tooltip>
-      {/* A span trigger keeps the reason reachable on hover while the button is disabled. */}
-      <TooltipTrigger render={<span className="flex h-full" />}>
-        <button
-          type="button"
-          disabled
-          aria-label={`Voice input unavailable: ${props.reason}`}
-          className={cn(COMPOSER_PILL_BUTTON_CLASS_NAME, "w-8")}
-        >
-          <span aria-hidden className="flex text-composer-icon">
-            <MicOffIcon className="size-3.5" />
-          </span>
-        </button>
-      </TooltipTrigger>
-      <TooltipPopup side="top">{props.reason}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
-/**
- * The one dictation control on every surface. The mic morphs into three level bars
- * while recording, shows a spinner while the engine is busy, and clicking it again stops.
- */
-export function ComposerSpeechMicButton(props: {
-  state: VoiceInputState<true>;
-  level: SpeechLevel;
-  appearance?: "pill" | "field";
-  shortcutLabel?: string | null;
-  disabled?: boolean;
-  onStart(): void;
-  onStop(): void;
-  onCancel(): void;
-  onSkipPostProcessing(): void;
+function ComposerSpeechStatus(props: {
+  state: VoiceInputState;
+  progress: { downloaded: number; total: number } | null;
+  level: number;
+  recordingLimitSeconds?: number | undefined;
 }) {
-  const navigate = useNavigate();
-  const { phase } = props.state;
-  const openSettings = phase === "error" && props.state.errorAction === "settings";
-  const isRecording = phase === "recording";
-  const isBusy = phase === "preparing" || phase === "transcribing" || phase === "post-processing";
-  const label = openSettings
-    ? "Open voice settings"
-    : isRecording
-      ? "Finish voice input"
-      : phase === "preparing"
-        ? "Cancel voice input"
-        : phase === "post-processing"
-          ? "Skip post-processing"
-          : isBusy
-            ? "Transcribing"
-            : "Start voice input";
-  const showShortcut = (phase === "idle" || phase === "error" || isRecording) && !openSettings;
-  const isPill = (props.appearance ?? "pill") === "pill";
-  const onClick = () => {
-    if (openSettings) {
-      props.onCancel();
-      void navigate({ to: "/settings/voice" });
-    } else if (isRecording) {
-      props.onStop();
-    } else if (phase === "preparing") {
-      props.onCancel();
-    } else if (phase === "post-processing") {
-      props.onSkipPostProcessing();
-    } else if (!isBusy) {
-      props.onStart();
-    }
-  };
-  const disabled = (props.disabled && phase === "idle") || phase === "transcribing";
-  const glyph = (
-    // The mic and the bars share one cell and cross-fade, so the button never changes size.
-    <span aria-hidden className={cn("flex", isPill ? "text-composer-icon" : "text-current")}>
-      {isBusy ? (
-        <Spinner size="sm" />
+  const presentation = resolveSpeechPresentation(props.state, props.progress);
+
+  if (!presentation.status) return null;
+  const isRecording = props.state.phase === "recording";
+  const isError = props.state.phase === "error";
+
+  return (
+    <div
+      className="flex h-7 min-w-0 flex-1 items-center gap-2"
+      role="status"
+      aria-live={isRecording ? "off" : "polite"}
+      aria-label={presentation.status}
+    >
+      {isRecording ? (
+        <RecordingStatus level={props.level} recordingLimitSeconds={props.recordingLimitSeconds} />
       ) : (
-        <span className="grid size-4 place-items-center *:col-start-1 *:row-start-1">
-          <MicIcon
-            className={cn(
-              "size-3.5 transition-[opacity,transform] duration-150 motion-reduce:transition-none",
-              isRecording ? "scale-75 opacity-0" : "opacity-100",
-            )}
-          />
-          <span
-            className={cn(
-              "transition-[opacity,transform] duration-150 motion-reduce:transition-none",
-              isRecording ? "opacity-100" : "scale-75 opacity-0",
-            )}
-          >
-            <SpeechBars level={props.level} active={isRecording} />
-          </span>
+        <span className="min-w-0 flex-1 text-right">
+          <Text tone={isError ? "destructive" : "muted"} truncate>
+            {presentation.status}
+          </Text>
         </span>
       )}
-    </span>
+    </div>
   );
+}
+
+function ComposerSpeechCancelButton(props: {
+  state: VoiceInputState;
+  shortcutLabel?: string | null;
+  onCancel(): void;
+}) {
+  if (props.state.phase === "idle") return null;
+  const label = props.state.phase === "error" ? "Dismiss voice input error" : "Cancel voice input";
 
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          isPill ? (
-            <button
-              type="button"
-              aria-label={label}
-              aria-pressed={isRecording}
-              disabled={disabled}
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={onClick}
-              data-listening={isRecording || undefined}
-              className={cn(COMPOSER_PILL_BUTTON_CLASS_NAME, "w-8")}
-            />
-          ) : (
-            <Button
-              type="button"
-              size="icon-sm"
-              variant="ghost"
-              aria-label={label}
-              aria-pressed={isRecording}
-              disabled={disabled}
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={onClick}
-              data-listening={isRecording || undefined}
-              className="shrink-0"
-            />
-          )
+          <Button
+            type="button"
+            size="icon-sm-pill"
+            variant="ghost"
+            aria-label={label}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={props.onCancel}
+            className="shrink-0"
+          >
+            <XIcon />
+          </Button>
         }
-      >
-        {glyph}
-      </TooltipTrigger>
+      />
       <TooltipPopup side="top">
         {label}
-        {showShortcut && props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
-        {isBusy ? " (Esc cancels)" : ""}
+        {props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
       </TooltipPopup>
     </Tooltip>
+  );
+}
+
+export function ComposerSpeechButton(props: {
+  state: VoiceInputState;
+  progress: { downloaded: number; total: number } | null;
+  shortcutLabel?: string | null;
+  disabled?: boolean;
+  onStart(): void;
+  onCancel(): void;
+}) {
+  const presentation = resolveSpeechPresentation(props.state, props.progress);
+  const label = "Start voice input";
+
+  if (presentation.showsConfirm || props.state.phase === "error") return null;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label={label}
+            disabled={props.disabled}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => {
+              if (props.disabled) return;
+              props.onStart();
+            }}
+            className="relative shrink-0"
+          >
+            <MicIcon className="text-composer-icon" />
+          </Button>
+        }
+      />
+      <TooltipPopup side="top">
+        {label}
+        {props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+export function ComposerSpeechRecordingPill(props: {
+  state: VoiceInputState;
+  progress: { downloaded: number; total: number } | null;
+  finishShortcutLabel?: string | null;
+  cancelShortcutLabel?: string | null;
+  level: number;
+  recordingLimitSeconds?: number | undefined;
+  onStart(): void;
+  disabled?: boolean;
+  onStop(): void;
+  onCancel(): void;
+  onSkipPostProcessing(): void;
+}) {
+  const presentation = resolveSpeechPresentation(props.state, props.progress);
+  if (props.state.phase === "error") {
+    return (
+      <VoiceInputErrorPill
+        error={props.state.error}
+        errorAction={props.state.errorAction}
+        disabled={props.disabled ?? false}
+        cancelShortcutLabel={props.cancelShortcutLabel ?? null}
+        onRetry={props.onStart}
+        onDismiss={props.onCancel}
+      />
+    );
+  }
+  if (!presentation.showsConfirm) return null;
+
+  const label = presentation.confirmEnabled
+    ? "Finish voice input"
+    : (presentation.status ?? "Voice input is busy");
+
+  return (
+    <VoiceInputPill>
+      <ComposerSpeechCancelButton
+        state={props.state}
+        shortcutLabel={props.cancelShortcutLabel ?? null}
+        onCancel={props.onCancel}
+      />
+      <ComposerSpeechStatus
+        state={props.state}
+        progress={props.progress}
+        level={props.level}
+        recordingLimitSeconds={props.recordingLimitSeconds}
+      />
+      {props.state.phase === "post-processing" ? (
+        <Button
+          type="button"
+          size="sm-pill"
+          variant="ghost"
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={props.onSkipPostProcessing}
+          className="shrink-0"
+        >
+          Skip
+        </Button>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-sm-pill"
+                aria-label={label}
+                disabled={!presentation.confirmEnabled}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={props.onStop}
+                className="shrink-0"
+              >
+                {presentation.confirmEnabled ? <CheckIcon /> : <Spinner aria-hidden />}
+              </Button>
+            }
+          />
+          <TooltipPopup side="top">
+            {label}
+            {presentation.confirmEnabled && props.finishShortcutLabel
+              ? ` (${props.finishShortcutLabel})`
+              : ""}
+          </TooltipPopup>
+        </Tooltip>
+      )}
+    </VoiceInputPill>
   );
 }

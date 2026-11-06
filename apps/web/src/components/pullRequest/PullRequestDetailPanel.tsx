@@ -37,6 +37,7 @@ import {
   type PullRequestUpdateMethod,
   type PullRequestRef,
   type PullRequestReviewGuideStop,
+  type PullRequestSummary,
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -100,7 +101,7 @@ import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import { type PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
-import { pullRequestAutolinkPlugins } from "./pullRequestMarkdown.logic";
+import { pullRequestMarkdownPlugins } from "./pullRequestMarkdown.logic";
 import { PullRequestComposer } from "./PullRequestComposer";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
@@ -225,13 +226,14 @@ function resolvePullRequestReference(
 }
 
 function pullRequestMarkdownContext(
-  detail: Pick<PullRequestDetail, "provider" | "url"> | null,
+  detail: Pick<PullRequestDetail, "provider" | "url" | "repository"> | null,
   threadRef: ScopedThreadRef | null,
 ) {
   return {
-    remarkPlugins: pullRequestAutolinkPlugins(detail),
+    remarkPlugins: pullRequestMarkdownPlugins(detail),
     lineBreaks: sourceControlClients.find(detail?.provider ?? "")?.hardLineBreaks ?? false,
     threadRef,
+    repository: detail?.repository ?? null,
   };
 }
 
@@ -280,7 +282,11 @@ export function PullRequestDetailPanel({
    * notification can switch it.
    */
   tabOnPage?: boolean;
-  onActed?: (action?: PullRequestAction, phase?: "sent" | "done" | "failed") => void;
+  onActed?: (
+    action?: PullRequestAction,
+    phase?: "sent" | "done" | "failed",
+    reply?: PullRequestSummary,
+  ) => void;
   onClose?: () => void;
   context?: "page" | "thread";
   composerDraftTarget?: ScopedThreadRef | DraftId;
@@ -691,9 +697,11 @@ export function PullRequestDetailPanel({
     if (pullRequestActionNeedsHostRefresh(action)) {
       void refreshFromHost();
     } else {
-      refreshDetail();
+      // The action command already showed the reply in the detail or re-read it.
+      activityQuery.refresh();
+      nativeStackQuery.refresh();
     }
-    onActed?.(action, "done");
+    onActed?.(action, "done", result.value);
     return true;
   };
 
