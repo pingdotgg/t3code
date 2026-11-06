@@ -41,6 +41,8 @@ interface FakeToken {
   /** The access token it mints; defaults to one fixed value. */
   readonly accessToken?: string | (() => string);
   readonly status?: number;
+  /** Only this origin answers the descriptor probe; default: every origin. */
+  readonly answersAt?: string;
 }
 
 /**
@@ -54,6 +56,11 @@ const fakePeer = (descriptor: ExecutionEnvironmentDescriptor, token: FakeToken =
     const url = new URL(request.url);
     if (url.pathname === "/.well-known/t3/environment") {
       probes += 1;
+      if (token.answersAt !== undefined && url.origin !== token.answersAt) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(request, new Response(null, { status: 404 })),
+        );
+      }
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
@@ -223,6 +230,37 @@ describe("PeerEnvironmentRegistry", () => {
       assert.equal(resolved.token, "session-token");
       assert.equal(resolved.url, "http://127.0.0.1:8111");
       assert.equal(resolved.label, "Worker One");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("binds the session to the verified address and drops it when addresses change", () =>
+    Effect.gen(function* () {
+      const peer = fakePeer(workerPeer, { answersAt: "http://127.0.0.1:8112" });
+      const registry = Context.get(
+        yield* buildContext(peer.http),
+        PeerEnvironmentRegistry.PeerEnvironmentRegistry,
+      );
+      const urls = ["http://127.0.0.1:8111", "http://127.0.0.1:8112"];
+      const registered = yield* registry.register(worker(urls));
+      yield* registry.exchangeBootstrap({
+        environmentId: registered.environmentId,
+        bootstrapCredential: "one-time-bootstrap-credential",
+      });
+      assert.equal(
+        (yield* registry.resolveSession(registered.environmentId)).url,
+        "http://127.0.0.1:8112",
+      );
+
+      // Re-registering the same addresses keeps the session and its verified address.
+      yield* registry.register(worker(urls));
+      assert.equal(
+        (yield* registry.resolveSession(registered.environmentId)).url,
+        "http://127.0.0.1:8112",
+      );
+
+      yield* registry.register(worker(["http://127.0.0.1:9999"]));
+      const refused = yield* registry.resolveSession(registered.environmentId).pipe(Effect.flip);
+      assert.equal(refused.reason, "not_paired");
     }).pipe(Effect.scoped),
   );
 
