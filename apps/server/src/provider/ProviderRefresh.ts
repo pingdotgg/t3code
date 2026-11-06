@@ -7,6 +7,7 @@ import { UsagePolling, UsageProviderFilter } from "@t3tools/provider-core/server
 import { withUsageLimitsCommands } from "@t3tools/shared/usageLimits";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
@@ -22,7 +23,10 @@ export class ProviderRefresh extends Context.Service<
   {
     readonly refresh: (
       input: RefreshInput,
-    ) => Effect.Effect<{ readonly providers: ReadonlyArray<ServerProvider> }, ProviderSetupError>;
+    ) => Effect.Effect<
+      { readonly providers: ReadonlyArray<ServerProvider>; readonly serverTime?: number },
+      ProviderSetupError
+    >;
   }
 >()("t3/provider/ProviderRefresh") {}
 
@@ -154,19 +158,21 @@ const make = Effect.gen(function* () {
         providers = yield* providerRegistry.refreshInstance(instance.instanceId);
       }
     }
-    if (input.workspaceSnapshotsOnDemand !== true) return { providers };
+    const serverTime = yield* Clock.currentTimeMillis;
+    if (input.workspaceSnapshotsOnDemand !== true) return { providers, serverTime };
     const commandProviders =
       input.usageLimitsCommand === true
         ? withUsageLimitsCommands(providers, yield* usageLimitSources.current)
         : providers;
     const { instanceId, cwd } = input;
     if (instanceId === undefined || cwd === undefined) {
-      return { providers: withoutWorkspaceSnapshots(commandProviders) };
+      return { providers: withoutWorkspaceSnapshots(commandProviders), serverTime };
     }
     const catalogOnDemand =
       input.providerCatalogsOnDemand === true &&
       (yield* providerInstances.getInstance(instanceId))?.snapshotForCwd !== undefined;
     return {
+      serverTime,
       providers: commandProviders
         .filter((provider) => provider.instanceId === instanceId)
         .map((provider) => ({

@@ -2,6 +2,7 @@ import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import { useNewThreadUsage } from "../hooks/useNewThreadUsage";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
@@ -770,8 +771,8 @@ export default function ChatView(props: ChatViewProps) {
         fallbackDraftProject ?? undefined,
       ).settings.defaultModelSelection
     : null;
-  const draftModelResolution = draftThread
-    ? resolveNewThreadModelSelection({
+  const draftSelectionInput = draftThread
+    ? {
         defaultSelection:
           draftDefaultModelSelection ??
           resolveProjectDefaultProviderModelSelection(
@@ -779,12 +780,20 @@ export default function ChatView(props: ChatViewProps) {
             settings,
             draftThread.projectId,
           ),
+        explicitSelection: composerModelSelectionExplicit ? composerSelectedModelSelection : null,
         fallbackSelection: settings.fallbackModelSelection,
         providers: providersByEnvironment.get(draftThread.environmentId) ?? [],
         settings,
         projectId: draftThread.projectId,
         now: Date.parse(`${nowMinute}:00Z`),
-      })
+      }
+    : null;
+  const draftUsage = useNewThreadUsage(
+    draftThread?.environmentId ?? environmentId,
+    draftSelectionInput,
+  );
+  const draftModelResolution = draftSelectionInput
+    ? resolveNewThreadModelSelection({ ...draftSelectionInput, providers: draftUsage.providers })
     : null;
   const draftFallback = draftModelResolution?.fallback ? draftModelResolution : null;
   const localDraftThread = draftThread
@@ -1416,7 +1425,7 @@ export default function ChatView(props: ChatViewProps) {
     resetLocalDispatch,
     localDispatchStartedAt,
     isPreparingWorktree: isLocallyPreparingWorktree,
-    isSendBusy,
+    isSendBusy: isDispatchBusy,
     backgroundSubmissionPending,
   } = useLocalDispatchState({
     activeThread,
@@ -1428,6 +1437,7 @@ export default function ChatView(props: ChatViewProps) {
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
     threadError,
   });
+  const isSendBusy = isDispatchBusy || draftUsage.pending;
   const optimisticCompactionMessage = optimisticUserMessages.at(-1);
   const latestServerUserItem = serverVisibleTurnItems.findLast(
     (row) => row.item.type === "user_message",

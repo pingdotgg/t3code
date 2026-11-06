@@ -30,23 +30,26 @@ export function useUsageLimitsRefresh(
         input: driver ? { usage: true, usageProviders: [driver] } : { instanceId, usage: true },
       }).then((result) =>
         AsyncResult.isSuccess(result)
-          ? usageRefreshDeadline([
-              ...result.value.providers
-                .filter((provider) =>
-                  driver ? provider.driver === driver : provider.instanceId === instanceId,
-                )
-                .map((provider) => provider.usageLimits),
-              ...(driver
-                ? (
-                    appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))
-                      ?.usageLimitSources ?? []
-                  ).flatMap((source) =>
-                    source.accounts
-                      .filter((account) => account.driver === driver)
-                      .map((account) => account.usageLimits),
+          ? usageRefreshDeadline(
+              [
+                ...result.value.providers
+                  .filter((provider) =>
+                    driver ? provider.driver === driver : provider.instanceId === instanceId,
                   )
-                : []),
-            ])
+                  .map((provider) => provider.usageLimits),
+                ...(driver
+                  ? (
+                      appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))
+                        ?.usageLimitSources ?? []
+                    ).flatMap((source) =>
+                      source.accounts
+                        .filter((account) => account.driver === driver)
+                        .map((account) => account.usageLimits),
+                    )
+                  : []),
+              ],
+              result.value.serverTime,
+            )
           : undefined,
       );
     },

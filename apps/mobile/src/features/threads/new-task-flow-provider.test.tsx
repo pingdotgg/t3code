@@ -58,6 +58,14 @@ vi.mock("../../state/session", () => ({
 vi.mock("../../state/presentation", () => ({
   useEnvironmentPresentation: mocks.presentation,
 }));
+vi.mock("../../state/server", () => ({
+  serverEnvironment: {
+    refreshProviders: {
+      label: "refresh providers",
+      run: async () => AsyncResult.success({ providers: [] }),
+    },
+  },
+}));
 vi.mock("../../state/orchestration", () => ({ orchestrationEnvironment: {} }));
 vi.mock("../../state/threads", () => ({ olderSettledThreads: {}, threadFamilies: {} }));
 vi.mock("../../state/pull-requests", () => ({ composerPullRequests: {} }));

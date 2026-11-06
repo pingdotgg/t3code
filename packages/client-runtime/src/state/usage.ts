@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  ProviderInstanceId,
   ServerProvider,
   ServerProviderUsageLimits,
   UsageModelFilter,
@@ -7,6 +8,8 @@ import type {
   UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { exhaustedUsageWindow, resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import { AsyncResult } from "effect/reactivity";
 import type { AtomRegistry } from "effect/reactivity";
 
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
@@ -53,16 +56,52 @@ export function usageSummaryInput(
   return modelFilter === undefined ? input : { ...input, modelFilter };
 }
 
+export async function refreshNewThreadUsage({
+  registry,
+  server,
+  environmentId,
+  input,
+}: {
+  readonly registry: AtomRegistry.AtomRegistry;
+  readonly server: Pick<ReturnType<typeof createServerEnvironmentAtoms>, "refreshProviders">;
+  readonly environmentId: EnvironmentId;
+  readonly input: Parameters<typeof resolveNewThreadModelSelection>[0];
+}): Promise<readonly ServerProvider[]> {
+  if (input.explicitSelection || !input.defaultSelection || !input.fallbackSelection)
+    return input.providers;
+  const refresh = async (instanceId: ProviderInstanceId) => {
+    const result = await runAtomCommand(
+      registry,
+      server.refreshProviders,
+      { environmentId, input: { instanceId, usage: true } },
+      { reportFailure: false },
+    );
+    return AsyncResult.isSuccess(result) ? result.value.providers : undefined;
+  };
+  let providers = (await refresh(input.defaultSelection.instanceId)) ?? input.providers;
+  if (
+    exhaustedUsageWindow(
+      providers.find((provider) => provider.instanceId === input.defaultSelection?.instanceId),
+      input.now,
+      input.defaultSelection.model,
+    )
+  ) {
+    providers = (await refresh(input.fallbackSelection.instanceId)) ?? providers;
+  }
+  return providers;
+}
+
 export function usageRefreshDeadline(
   limits: Iterable<ServerProviderUsageLimits | undefined>,
+  serverTime?: number,
 ): number | undefined {
   // @effect-diagnostics-next-line globalDate:off
   const now = Date.now();
   const deadlines = Array.from(limits, (reading) => reading?.refreshAfter).filter(
     (deadline): deadline is number =>
-      deadline !== undefined && Number.isFinite(deadline) && deadline > now,
+      deadline !== undefined && Number.isFinite(deadline) && deadline > (serverTime ?? now),
   );
-  return deadlines.length ? Math.min(...deadlines) : undefined;
+  return deadlines.length ? now + Math.min(...deadlines) - (serverTime ?? now) : undefined;
 }
 
 const limitsRefreshAfter = new Map<string, number>();

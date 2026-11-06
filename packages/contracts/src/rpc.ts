@@ -665,7 +665,10 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
     /** As on `subscribeServerConfig`: a failed cwd scan replies with the machine catalog as a pending snapshot. */
     providerCatalogsOnDemand: Schema.optional(Schema.Boolean),
   }),
-  success: ServerProviderUpdatedPayload,
+  success: Schema.Struct({
+    ...ServerProviderUpdatedPayload.fields,
+    serverTime: Schema.optional(NonNegativeInt),
+  }),
   error: Schema.Union([EnvironmentAuthorizationError, ProviderSetupError]),
 });
 

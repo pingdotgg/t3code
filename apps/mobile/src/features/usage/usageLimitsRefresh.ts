@@ -85,28 +85,31 @@ export async function refreshEnvironmentLimits(
         : { key: "", resources: environmentLimitsRefreshKeys(registry, environmentId) }),
       refreshDeadline: (result) =>
         AsyncResult.isSuccess(result)
-          ? usageRefreshDeadline([
-              ...result.value.providers
-                .filter((provider) =>
-                  options.driver
-                    ? provider.driver === options.driver
-                    : options.instanceId === undefined ||
-                      provider.instanceId === options.instanceId,
-                )
-                .map((provider) => provider.usageLimits),
-              ...(
-                registry.get(serverEnvironment.configValueAtom(environmentId))?.usageLimitSources ??
-                []
-              ).flatMap((source) =>
-                source.accounts
-                  .filter((account) =>
+          ? usageRefreshDeadline(
+              [
+                ...result.value.providers
+                  .filter((provider) =>
                     options.driver
-                      ? account.driver === options.driver
-                      : options.instanceId === undefined,
+                      ? provider.driver === options.driver
+                      : options.instanceId === undefined ||
+                        provider.instanceId === options.instanceId,
                   )
-                  .map((account) => account.usageLimits),
-              ),
-            ])
+                  .map((provider) => provider.usageLimits),
+                ...(
+                  registry.get(serverEnvironment.configValueAtom(environmentId))
+                    ?.usageLimitSources ?? []
+                ).flatMap((source) =>
+                  source.accounts
+                    .filter((account) =>
+                      options.driver
+                        ? account.driver === options.driver
+                        : options.instanceId === undefined,
+                    )
+                    .map((account) => account.usageLimits),
+                ),
+              ],
+              result.value.serverTime,
+            )
           : undefined,
     },
   );

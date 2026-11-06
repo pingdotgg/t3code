@@ -20,6 +20,7 @@ import {
   refreshUsage,
   refreshUsageLimits,
   usageLimitsRefreshDelay,
+  usageRefreshDeadline,
 } from "./usage.ts";
 
 const input = {
@@ -243,6 +244,15 @@ describe("limits refresh cooldown", () => {
     const id = EnvironmentId.make("limits-shared-deadlines");
     using now = vi.spyOn(Date, "now").mockReturnValue(0);
     const remote = EnvironmentId.make("limits-remote-client");
+    for (const skew of [-3_600_000, -1_000, 1_000, 3_600_000]) {
+      now.mockReturnValue(240_000 + skew);
+      expect(
+        usageRefreshDeadline(
+          [{ checkedAt: "2026-01-01T00:00:00Z", windows: [], refreshAfter: 300_000 }],
+          240_000,
+        ),
+      ).toBe(300_000 + skew);
+    }
     now.mockReturnValue(4 * 60_000);
     await refreshUsageLimits(remote, async () => 300_000, true, false, {
       key: "",
