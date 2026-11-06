@@ -3,20 +3,20 @@ import { userEvent } from "vite-plus/test/browser";
 import { shouldRefocusComposerOnWindowFocus } from "./ChatView.logic";
 
 it("keeps keyboard focus on a sidebar row on window return, but not a clicked row", async () => {
-  const tree = document.createElement("div");
-  tree.setAttribute("role", "tree");
-  const row = (name: string, tabIndex: number) => {
+  const list = document.createElement("ul");
+  const row = (name: string) => {
     const element = document.createElement("div");
-    element.setAttribute("role", "treeitem");
-    element.tabIndex = tabIndex;
+    element.setAttribute("role", "button");
+    element.tabIndex = 0;
+    element.dataset.sidebarRow = name;
     element.textContent = name;
-    tree.append(element);
+    list.append(element);
     return element;
   };
-  const clicked = row("Clicked thread", -1);
-  const tabbed = row("Tabbed thread", 0);
-  document.body.append(tree);
-  using _tree = { [Symbol.dispose]: () => tree.remove() };
+  const clicked = row("Clicked thread");
+  const tabbed = row("Tabbed thread");
+  document.body.append(list);
+  using _list = { [Symbol.dispose]: () => list.remove() };
 
   await userEvent.click(clicked);
   expect(document.activeElement).toBe(clicked);

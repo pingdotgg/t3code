@@ -18,7 +18,7 @@ New here? [Set up credentials](/github/setup) first.
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as GitHub from "alchemy/GitHub";
+import * as GitHub from "@alchemy.run/github";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -170,42 +170,42 @@ The token needs the `delete_repo` scope for this (plain `repo` scope
 covers everything else). Deletion resolves the repository by its
 stable `repoId`, so it targets the right repo even after a rename.
 
-## Escape hatch: Octokit
+## Escape hatch: the GitHub SDK
 
-For anything the resource model doesn't cover, the
-`GitHubCredentials` service hands you an authenticated
-[Octokit](https://github.com/octokit/rest.js) client — the same one
-every GitHub resource uses:
+For anything the resource model doesn't cover, call the
+[distilled GitHub SDK](https://github.com/alchemy-run/distilled/tree/main/packages/github)
+directly. It uses the same `Credentials` every GitHub resource does:
 
 ```typescript
-import * as GitHub from "alchemy/GitHub";
+import * as Repos from "@distilled.cloud/github/repos";
 import * as Effect from "effect/Effect";
 
 const program = Effect.gen(function* () {
-  const creds = yield* yield* GitHub.GitHubCredentials;
-  const octokit = creds.octokit();
-
-  const { data } = yield* Effect.tryPromise(() =>
-    octokit.rest.repos.get({ owner: "my-org", repo: "api" }),
-  );
-  return data;
+  const repo = yield* Repos.get({ owner: "my-org", repo: "api" });
+  return repo.default_branch;
 });
 ```
 
-(`GitHubCredentials` resolves to an effect that yields the service,
-hence the double `yield*`.)
+Failures are typed: catch a missing repository with
+`Effect.catchTag("NotFound", ...)`. List operations page for you:
+`Repos.listForOrg.items({ org: "my-org" })` streams every repository.
 
-Inside a stack, `GitHub.providers()` already carries
-`GitHubCredentials`, resolved via [the login flow](/github/setup).
-Outside one, build the layer directly:
+Inside a stack, `GitHub.providers()` already provides `Credentials`,
+resolved via [the login flow](/github/setup). Outside one, build the
+layer directly:
 
 - **`GitHub.fromEnv()`** — reads `GITHUB_ACCESS_TOKEN` or
   `GITHUB_TOKEN`.
 - **`GitHub.fromToken(token)`** — a literal token, plain string or
   `Redacted` — useful in tests.
 
+It also needs an HTTP client:
+
 ```typescript
-program.pipe(Effect.provide(GitHub.fromEnv()));
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as Layer from "effect/Layer";
+
+program.pipe(Effect.provide(Layer.mergeAll(GitHub.fromEnv(), FetchHttpClient.layer)));
 ```
 
 ## Where next
