@@ -110,6 +110,8 @@ export interface DeviceOperations {
       readonly detail: string | undefined;
       /** Some Android virtual devices could not be listed; the rest are. */
       readonly androidDiscoveryIncomplete?: boolean;
+      /** Platforms that could not be listed; their last known devices stay listed. */
+      readonly incompletePlatforms?: ReadonlyArray<DevicePlatform>;
     },
     DeviceOperationError
   >;
@@ -145,6 +147,16 @@ export interface DeviceOperations {
 
 export interface DeviceHostReady {
   readonly nodePath: string;
+  /**
+   * Ends an agent-device session on the daemon that serves `deviceId`. Hosts
+   * with a shared daemon provide it only while that daemon runs; hosts with a
+   * daemon per device succeed when the device's daemon is gone. Cleanup never
+   * starts a daemon or a device.
+   */
+  readonly releaseAgentSession?: (
+    session: string,
+    deviceId: string,
+  ) => Effect.Effect<void, DeviceOperationError>;
   readonly hub: DeviceHubEndpoint;
   readonly devices: DeviceOperations;
   readonly run: (
