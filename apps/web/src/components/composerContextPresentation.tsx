@@ -141,6 +141,7 @@ function ContextChip(props: {
   details: ReactNode;
   detailsMode: ContextPresentationCapability["details"];
   kind: ContextChipKind;
+  openOnHover?: boolean;
 }) {
   if (props.detailsMode === "popover") {
     return (
@@ -149,6 +150,7 @@ function ContextChip(props: {
         icon={props.icon}
         label={props.label}
         accessibleLabel={props.kindLabel + ", " + props.label}
+        openOnHover={props.openOnHover === true}
       >
         {props.details}
       </ContextChipPopover>
@@ -431,6 +433,7 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
             details={<ComposerReviewCommentDetails comment={entry.record} />}
             detailsMode={definition.capabilities.details}
             kind={isPullRequest ? PULL_REQUEST_CHIP_KINDS[pullRequestState] : "review-comment"}
+            openOnHover
           />
         );
       },

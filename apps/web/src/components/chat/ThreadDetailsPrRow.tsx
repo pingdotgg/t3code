@@ -35,7 +35,7 @@ import {
 
 import {
   buildFixFindingsHandoff,
-  buildResolveConflictsPrompt,
+  buildResolveConflictsHandoff,
   classifyPullRequestChecks,
   describePullRequestChecks,
   isPullRequestConflicting,
@@ -202,14 +202,7 @@ export function ThreadDetailsPrRow({
 
   const startResolveConflicts = () => {
     if (detail === null) return;
-    void startHandoff("conflicts", {
-      prompt: buildResolveConflictsPrompt({
-        number: detail.number,
-        url: detail.url,
-        headBranch: detail.headBranch,
-        baseBranch: detail.baseBranch,
-      }),
-    });
+    void startHandoff("conflicts", buildResolveConflictsHandoff(detail));
   };
 
   const startFixChecks = () => {
