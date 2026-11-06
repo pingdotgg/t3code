@@ -3,7 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 
 import type { DesktopCliCommandState } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
+import { T3_LEARN_COMMAND, T3_LEARN_LEGACY } from "@t3tools/shared/t3LearnIdentity";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -91,7 +91,7 @@ export const make = Effect.gen(function* () {
       const info = yield* fs.stat(link);
       if (info.type !== "File" || Number(info.size) > 16_384) return false;
       const content = yield* fs.readFileString(link);
-      return content.includes(DesktopCliShim.MARKER);
+      return DesktopCliShim.isOurLauncher(content);
     },
     Effect.orElseSucceed(() => false),
   );
@@ -104,7 +104,7 @@ export const make = Effect.gen(function* () {
       if (resolved !== ours) return false;
       const info = yield* fs.stat(candidate);
       if (info.type !== "File" || Number(info.size) > 16_384) return false;
-      return (yield* fs.readFileString(candidate)).includes(DesktopCliShim.MARKER);
+      return DesktopCliShim.isOurLauncher(yield* fs.readFileString(candidate));
     },
     Effect.orElseSucceed(() => false),
   );
@@ -150,9 +150,11 @@ export const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => false),
   );
 
-  const firstOnPath = Effect.gen(function* () {
+  const firstOnPath = Effect.fn("DesktopCliCommand.firstOnPath")(function* (
+    command = T3_LEARN_COMMAND,
+  ) {
     for (const directory of pathEntries(env.PATH, ":")) {
-      const candidate = path.join(directory, T3_LEARN_COMMAND);
+      const candidate = path.join(directory, command);
       if (yield* isExecutableFile(candidate)) return Option.some(candidate);
     }
     return Option.none<string>();
@@ -160,9 +162,9 @@ export const make = Effect.gen(function* () {
 
   const foreignFirstOnPath = Effect.gen(function* () {
     if (windows) return Option.none<string>();
-    const first = yield* firstOnPath;
-    if (Option.isNone(first) || (yield* runsOurLauncher(first.value))) return Option.none<string>();
-    return first;
+    const first = yield* firstOnPath();
+    if (Option.isSome(first) && !(yield* runsOurLauncher(first.value))) return first;
+    return Option.none<string>();
   });
 
   const installedAt = Effect.gen(function* () {
@@ -174,8 +176,10 @@ export const make = Effect.gen(function* () {
         : Option.none<string>();
     }
     for (const directory of unixCandidates(environment.homeDirectory, environment.platform)) {
-      const link = path.join(directory, T3_LEARN_COMMAND);
-      if (yield* isOurLink(link)) return Option.some(link);
+      for (const command of [T3_LEARN_COMMAND, T3_LEARN_LEGACY.command]) {
+        const link = path.join(directory, command);
+        if (yield* isOurLink(link)) return Option.some(link);
+      }
     }
     return Option.none<string>();
   });
@@ -188,10 +192,12 @@ export const make = Effect.gen(function* () {
     const installed = yield* installedAt;
     const shadowedBy = yield* foreignFirstOnPath;
     const shadow = Option.isSome(shadowedBy) ? { shadowedBy: shadowedBy.value } : {};
-    const first = yield* firstOnPath;
+    const first = yield* firstOnPath();
+    const legacyFirst = yield* firstOnPath(T3_LEARN_LEGACY.command);
     const onPath = windows
       ? Option.isSome(installed)
-      : Option.isSome(first) && (yield* runsOurLauncher(first.value));
+      : (Option.isSome(first) && (yield* runsOurLauncher(first.value))) ||
+        (Option.isSome(legacyFirst) && (yield* runsOurLauncher(legacyFirst.value)));
     return {
       supported: true,
       installedPath: Option.getOrNull(installed),
@@ -213,14 +219,14 @@ export const make = Effect.gen(function* () {
     Effect.provideService(FileSystem.FileSystem, fs),
     Effect.flatMap(
       Option.match({
-        onNone: () => Effect.fail(fail(`Could not set up the t3-learn launcher at ${launcher}.`)),
+        onNone: () => Effect.fail(fail(`Could not set up the OminaX launcher at ${launcher}.`)),
         onSome: () => Effect.void,
       }),
     ),
   );
 
   const install: DesktopCliCommand["Service"]["install"] = Effect.gen(function* () {
-    if (!environment.isPackaged) return yield* fail("The t3-learn command needs an installed app.");
+    if (!environment.isPackaged) return yield* fail("The ominax command needs an installed app.");
     yield* ensureLauncher;
     if (windows) {
       const entries = pathEntries(yield* readUserPath, ";");
@@ -228,33 +234,35 @@ export const make = Effect.gen(function* () {
         yield* writeUserPath([...entries, binDirectory].join(";"));
         yield* fs
           .writeFileString(ownedPathMarker, `${binDirectory}\n`)
-          .pipe(
-            Effect.mapError(() => fail("Added t3-learn to your PATH but could not record it.")),
-          );
+          .pipe(Effect.mapError(() => fail("Added ominax to your PATH but could not record it.")));
       }
       return yield* state;
-    }
-    const existing = yield* installedAt;
-    if (Option.isSome(existing)) {
-      const target = yield* fs.readLink(existing.value).pipe(Effect.option);
-      if (Option.getOrUndefined(target) === launcher) return yield* state;
-      yield* fs
-        .remove(existing.value)
-        .pipe(Effect.mapError(() => fail(`Could not replace ${existing.value}.`)));
     }
     const shadowedBy = yield* foreignFirstOnPath;
     if (Option.isSome(shadowedBy)) {
       return yield* fail(
-        `Another t3-learn at ${shadowedBy.value} runs first in a new terminal. Remove it, or run the launcher directly at ${launcher}.`,
+        `Another ominax at ${shadowedBy.value} runs first in a new terminal. Remove it, or run the launcher directly at ${launcher}.`,
       );
     }
     const onPath = pathEntries(env.PATH, ":");
     const candidates = unixCandidates(environment.homeDirectory, environment.platform);
+    for (const directory of candidates) {
+      const legacy = path.join(directory, T3_LEARN_LEGACY.command);
+      if (!(yield* isOurLink(legacy))) continue;
+      const target = yield* fs.readLink(legacy).pipe(Effect.option);
+      if (Option.getOrUndefined(target) === launcher) continue;
+      const staging = `${legacy}.${process.pid}.tmp`;
+      yield* fs
+        .symlink(launcher, staging)
+        .pipe(Effect.mapError(() => fail(`Could not replace ${legacy}.`)));
+      yield* fs
+        .rename(staging, legacy)
+        .pipe(Effect.mapError(() => fail(`Could not replace ${legacy}.`)));
+    }
     for (const directory of [
       ...candidates.filter((candidate) => onPath.includes(candidate)),
       ...candidates.filter((candidate) => !onPath.includes(candidate)),
     ]) {
-      const link = path.join(directory, T3_LEARN_COMMAND);
       const created = (yield* exists(directory))
         ? yield* writableDirectory(directory)
         : yield* fs.makeDirectory(directory, { recursive: true }).pipe(
@@ -262,14 +270,29 @@ export const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => false),
           );
       if (!created) continue;
-      const linked = yield* fs.symlink(launcher, link).pipe(
-        Effect.as(true),
-        Effect.orElseSucceed(() => false),
-      );
-      if (linked) return yield* state;
+      const replaceLink = (target: string, command: string, required: boolean) => {
+        const alias = path.join(directory, command);
+        return Effect.gen(function* () {
+          if (yield* isOurLink(alias)) {
+            const existingTarget = yield* fs.readLink(alias).pipe(Effect.option);
+            if (Option.getOrUndefined(existingTarget) === target) return true;
+            yield* fs.remove(alias).pipe(Effect.ignore);
+          } else if (yield* exists(alias)) {
+            return !required;
+          }
+          return yield* fs.symlink(target, alias).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          );
+        });
+      };
+      const linked = yield* replaceLink(launcher, T3_LEARN_COMMAND, true);
+      if (!linked) continue;
+      yield* replaceLink(launcher, T3_LEARN_LEGACY.command, false);
+      return yield* state;
     }
     return yield* fail(
-      `Another t3-learn command is already installed, or no folder on your PATH is writable. Run the launcher directly at ${launcher}.`,
+      `Another ominax command is already installed, or no folder on your PATH is writable. Run the launcher directly at ${launcher}.`,
     );
   }).pipe(Effect.withSpan("desktop.cliCommand.install"));
 
@@ -284,9 +307,11 @@ export const make = Effect.gen(function* () {
       return yield* state;
     }
     for (const directory of unixCandidates(environment.homeDirectory, environment.platform)) {
-      const link = path.join(directory, T3_LEARN_COMMAND);
-      if (yield* isOurLink(link)) {
-        yield* fs.remove(link).pipe(Effect.mapError(() => fail(`Could not remove ${link}.`)));
+      for (const command of [T3_LEARN_COMMAND, T3_LEARN_LEGACY.command]) {
+        const link = path.join(directory, command);
+        if (yield* isOurLink(link)) {
+          yield* fs.remove(link).pipe(Effect.mapError(() => fail(`Could not remove ${link}.`)));
+        }
       }
     }
     return yield* state;

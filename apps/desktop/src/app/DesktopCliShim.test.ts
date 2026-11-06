@@ -6,7 +6,13 @@ import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { type CliShimTarget, renderCliShim } from "./DesktopCliShim.ts";
+import {
+  type CliShimTarget,
+  LEGACY_MARKER,
+  MARKER,
+  isOurLauncher,
+  renderCliShim,
+} from "./DesktopCliShim.ts";
 
 const directories: Array<string> = [];
 afterEach(() => {
@@ -27,7 +33,7 @@ const writeExecutable = (path: string, content: string) => {
 };
 
 const writeShim = (root: string, target: CliShimTarget) => {
-  const shim = NodePath.join(root, "bin", "t3-learn");
+  const shim = NodePath.join(root, "bin", "ominax");
   writeExecutable(shim, renderCliShim({ target, shimPath: shim, t3Home: `${root}/home` }));
   return shim;
 };
@@ -64,6 +70,12 @@ const fakeAppImage = (canMount = true) => {
 };
 
 describe("renderCliShim", () => {
+  it("recognizes both launcher marker generations", () => {
+    expect(isOurLauncher(MARKER)).toBe(true);
+    expect(isOurLauncher(LEGACY_MARKER)).toBe(true);
+    expect(isOurLauncher("foreign launcher")).toBe(false);
+  });
+
   it("extracts the AppImage where it cannot be mounted", () => {
     const { shim } = fakeAppImage(false);
     const result = run(shim, ["--version"], { APPIMAGE_EXTRACT_AND_RUN: "1" });
@@ -73,7 +85,7 @@ describe("renderCliShim", () => {
     );
   });
 
-  it("keeps the install's T3 home under sudo, unless T3LEARN_HOME is set", () => {
+  it("prefers OMINAX_HOME, then T3LEARN_HOME, over the baked home", () => {
     const root = tempRoot();
     writeExecutable(NodePath.join(root, "app"), REPORTER);
     const shim = writeShim(root, {
@@ -84,10 +96,14 @@ describe("renderCliShim", () => {
     expect(run(shim, []).stdout).toContain(`home=${root}/home`);
     expect(run(shim, [], { T3CODE_HOME: "/t3code-home" }).stdout).toContain(`home=${root}/home`);
     expect(run(shim, [], { T3LEARN_HOME: "/elsewhere" }).stdout).toContain("home=/elsewhere");
+    expect(run(shim, [], { OMINAX_HOME: "/ominax" }).stdout).toContain("home=/ominax");
     expect(
       run(shim, [], { T3CODE_HOME: "/t3code-home", T3LEARN_HOME: "/elsewhere" }).stdout,
     ).toContain("home=/elsewhere");
-    const relative = NodeChildProcess.spawnSync("./bin/t3-learn", [], {
+    expect(run(shim, [], { OMINAX_HOME: "/ominax", T3LEARN_HOME: "/elsewhere" }).stdout).toContain(
+      "home=/ominax",
+    );
+    const relative = NodeChildProcess.spawnSync("./bin/ominax", [], {
       cwd: root,
       encoding: "utf8",
     });
@@ -105,7 +121,7 @@ describe("renderCliShim", () => {
     });
     // Launchers written by released installs are recognised by this exact text.
     expect(NodeFS.readFileSync(shim, "utf8")).toContain(
-      "Written by T3 Learn: runs the desktop app's bundled t3 CLI.",
+      "Written by OminaX: runs the desktop app's bundled t3 CLI.",
     );
     expect(run(shim, ["browser", "setup"]).stdout.split("\n").slice(1)).toEqual([
       "/opt/T3's/app.asar/bin.mjs",
@@ -119,8 +135,8 @@ describe("renderCliShim", () => {
     const executable = "C:\\Apps\\R&whoami&X 100%\\!CHANNEL!\\T3 Learn.exe";
     const script = renderCliShim({
       target: { kind: "windows", executable, entry: "C:\\Apps\\server.asar\\bin.mjs" },
-      shimPath: "C:\\Users\\José\\.t3-learn\\bin\\t3-learn.cmd",
-      t3Home: "C:\\Users\\José\\.t3-learn",
+      shimPath: "C:\\Users\\José\\.ominax\\bin\\ominax.cmd",
+      t3Home: "C:\\Users\\José\\.ominax",
     });
     const lines = script.split("\r\n");
     expect(lines).toContain("setlocal EnableExtensions DisableDelayedExpansion");
@@ -132,19 +148,20 @@ describe("renderCliShim", () => {
       (line) => line.includes("whoami") && !/"[^"]*whoami[^"]*"/.test(line),
     );
     expect(bare).toEqual([]);
-    expect(lines).toContain('set "T3CODE_CLI_PATH=C:\\Users\\José\\.t3-learn\\bin\\t3-learn.cmd"');
+    expect(lines).toContain('set "T3CODE_CLI_PATH=C:\\Users\\José\\.ominax\\bin\\ominax.cmd"');
   });
 
   it("writes a Windows launcher that ignores T3 Code's T3CODE_HOME but honors T3LEARN_HOME", () => {
     const lines = renderCliShim({
       target: { kind: "windows", executable: "C:\\Apps\\T3 Learn.exe", entry: "C:\\bin.mjs" },
-      shimPath: "C:\\Users\\Me\\.t3-learn\\bin\\t3-learn.cmd",
-      t3Home: "C:\\Users\\Me\\.t3-learn",
+      shimPath: "C:\\Users\\Me\\.ominax\\bin\\ominax.cmd",
+      t3Home: "C:\\Users\\Me\\.ominax",
     }).split("\r\n");
     const homeLines = lines.filter((line) => line.includes("T3CODE_HOME"));
     expect(homeLines).toEqual([
-      'set "T3CODE_HOME=C:\\Users\\Me\\.t3-learn"',
+      'set "T3CODE_HOME=C:\\Users\\Me\\.ominax"',
       'if defined T3LEARN_HOME set "T3CODE_HOME=%T3LEARN_HOME%"',
+      'if defined OMINAX_HOME set "T3CODE_HOME=%OMINAX_HOME%"',
     ]);
   });
 });
