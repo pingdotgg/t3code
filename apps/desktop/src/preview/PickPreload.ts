@@ -633,6 +633,8 @@ function startAnnotation(
     " h-7 w-7 shrink-0 rounded-full border-primary bg-primary p-0 text-primary-foreground hover:bg-primary/90";
   const voiceSkip = createButton("Skip", "Skip transcript cleanup");
   voiceSkip.className += " h-7 shrink-0 rounded-full px-2.5";
+  // createButton's rounded-md sorts after rounded-full in the generated CSS, so it would win.
+  for (const button of [voiceCancel, voiceFinish, voiceSkip]) button.classList.remove("rounded-md");
   const voiceStatus = document.createElement("div");
   voiceStatus.className = "flex h-7 min-w-0 flex-1 items-center gap-2";
   voiceStatus.setAttribute("role", "status");
