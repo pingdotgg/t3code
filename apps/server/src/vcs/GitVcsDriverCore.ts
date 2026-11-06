@@ -42,7 +42,7 @@ import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEmptyDirectory.ts";
-import { explicitBareRepositoryEnv, gitConfigEnv } from "./VcsProcess.ts";
+import { gitConfigEnv, gitProcessEnv } from "./VcsProcess.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import {
@@ -975,14 +975,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               }),
           ),
         );
-        const baseEnv = {
+        const env = {
           ...(yield* HostProcess.Environment),
-          // Concurrent status polls must not take index.lock to save refreshed indexes.
-          GIT_OPTIONAL_LOCKS: "0",
-          ...input.env,
-          ...trace2Monitor.env,
+          ...gitProcessEnv(hostPlatform, {
+            // Concurrent status polls must not take index.lock to save refreshed indexes.
+            GIT_OPTIONAL_LOCKS: "0",
+            ...input.env,
+            ...trace2Monitor.env,
+          }),
         };
-        const env = { ...baseEnv, ...explicitBareRepositoryEnv(baseEnv, hostPlatform) };
         const spawnEnv = { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) };
         const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
         // cmd wrappers truncate multiline commits; leave git.cmd handling to Node lookup.

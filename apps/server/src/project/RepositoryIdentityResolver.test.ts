@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -94,6 +95,25 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
+  it.effect("ignores repository selectors inherited by the server", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-identity-cwd-" });
+      const other = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-identity-other-" });
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
+      yield* git(other, ["init"]);
+      yield* git(other, ["remote", "add", "origin", "git@github.com:T3Tools/other.git"]);
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
+      vi.stubEnv("GIT_DIR", path.join(other, ".git"));
+      vi.stubEnv("GIT_WORK_TREE", other);
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      expect((yield* resolver.resolve(cwd))?.canonicalKey).toBe("github.com/t3tools/t3code");
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
   it.effect("returns the git top-level root path when resolving from a nested workspace", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -106,6 +126,9 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       yield* fileSystem.makeDirectory(nestedWorkspace, { recursive: true });
       yield* git(repoRoot, ["init"]);
       yield* git(repoRoot, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
+
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
+      vi.stubEnv("GIT_CEILING_DIRECTORIES", repoRoot);
 
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const identity = yield* resolver.resolve(nestedWorkspace);
