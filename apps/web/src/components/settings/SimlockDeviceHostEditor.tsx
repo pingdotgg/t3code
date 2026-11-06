@@ -311,6 +311,7 @@ function SimlockTokenField(props: {
                 : ""
           }
           sources={sources}
+          environmentId={props.environmentId}
           onValidityChange={props.onValidityChange}
           onSecretChange={(secret) =>
             props.onChange(

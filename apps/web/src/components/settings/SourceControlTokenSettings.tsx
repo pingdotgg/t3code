@@ -130,6 +130,7 @@ export function SourceControlTokenSettings({
               configured={isSaved && !isSecretReference(savedToken)}
               value={draft}
               sources={secretSources}
+              environmentId={environmentId}
               onChange={(event) => setPending({ key: sourceKey, draft: event.target.value })}
               onSecretChange={(secret) => setPending({ key: sourceKey, draft: secret ?? "" })}
             />

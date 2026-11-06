@@ -24,7 +24,7 @@ const make = Effect.gen(function* () {
   const check = Effect.fn("SecretCheck.check")(function* (reference: SecretReference) {
     yield* resolver.invalidate([reference]);
     const [value] = yield* resolver.read([reference]);
-    if (value === undefined) {
+    if (value === undefined || value.trim() === "") {
       return {
         _tag: "Failed",
         detail: `Could not read this secret from "${reference.provider}". Check the provider's settings and that its store is unlocked.`,
