@@ -1,8 +1,8 @@
-import cloudflareVitePlugin from "../plugin.ts";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vite from "vite";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import cloudflareVitePlugin from "../plugin.ts";
 
 /**
  * A Worker whose default entrypoint reaches the Worker's own exports, so a test
@@ -60,6 +60,7 @@ async function startDevServer(source: string) {
   const server = await vite.createServer({
     root,
     configFile: false,
+    cacheDir: path.join(root, ".vite"),
     logLevel: "silent",
     server: { port: 0 },
     plugins: [
