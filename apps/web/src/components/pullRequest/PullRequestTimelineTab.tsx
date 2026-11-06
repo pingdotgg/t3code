@@ -64,7 +64,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 interface ReactionSurface {
   readonly canReact: boolean;
   /** Absent where there is no composer beside the panel to add a remark to. */
-  readonly onAddToChat?: ((commentId: string) => void) | undefined;
+  readonly onAddToChat?: ((comment: PullRequestComment) => void) | undefined;
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef | null;
   readonly reference: PullRequestRef;
@@ -171,7 +171,13 @@ function ReviewStateBadge({ state }: { state: string }) {
   );
 }
 
-function AddToChatButton({ id, reactions }: { id: string; reactions: ReactionSurface }) {
+function AddToChatButton({
+  comment,
+  reactions,
+}: {
+  comment: PullRequestComment;
+  reactions: ReactionSurface;
+}) {
   const onAddToChat = reactions.onAddToChat;
   return onAddToChat === undefined ? null : (
     <Tooltip>
@@ -182,7 +188,7 @@ function AddToChatButton({ id, reactions }: { id: string; reactions: ReactionSur
             variant="ghost-muted"
             className="-mt-1 shrink-0"
             aria-label="Add to chat"
-            onClick={() => onAddToChat(id)}
+            onClick={() => onAddToChat(comment)}
           />
         }
       >
@@ -214,6 +220,7 @@ function ConversationCard({
   onOpen,
   reactions,
   showPath = true,
+  reply = false,
 }: {
   event: PullRequestTimelineEvent;
   editable: PullRequestComment | null;
@@ -221,6 +228,8 @@ function ConversationCard({
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
   showPath?: boolean;
+  /** A reply goes with its conversation, from the card that heads it. */
+  reply?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -269,7 +278,9 @@ function ConversationCard({
           {editable !== null && !editing ? (
             <PullRequestEditButton aria-label="Edit comment" onClick={() => setEditing(true)} />
           ) : null}
-          {event.body ? <AddToChatButton id={event.id} reactions={reactions} /> : null}
+          {event.body && event.comment && !reply ? (
+            <AddToChatButton comment={event.comment} reactions={reactions} />
+          ) : null}
           {reactions.canReact || event.reactions.length > 0 ? (
             <PullRequestReactionBar
               className="ml-auto justify-end"
@@ -477,6 +488,7 @@ function ReviewThreadEvent({
                   onOpen={onOpen}
                   reactions={reactions}
                   showPath={false}
+                  reply
                 />
               ))}
             </div>
@@ -627,7 +639,9 @@ function ReviewVerdictEvent({
             </PullRequestMetaLine>
           </div>
         </div>
-        {event.body ? <AddToChatButton id={event.id} reactions={reactions} /> : null}
+        {event.body && event.comment ? (
+          <AddToChatButton comment={event.comment} reactions={reactions} />
+        ) : null}
         {reactions.canReact || event.reactions.length > 0 ? (
           <PullRequestReactionBar
             className="ml-auto justify-end"
@@ -680,12 +694,7 @@ export function PullRequestTimelineTab({
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
     canReact: detail.capabilities.reactions === true,
-    onAddToChat:
-      onAddToChat &&
-      ((commentId) => {
-        const comment = detail.comments.find((candidate) => candidate.id === commentId);
-        if (comment !== undefined) onAddToChat({ kind: "comment", comment });
-      }),
+    onAddToChat: onAddToChat && ((comment) => onAddToChat({ kind: "comment", comment })),
     environmentId,
     threadRef,
     reference,

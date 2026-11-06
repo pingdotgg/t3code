@@ -1,3 +1,5 @@
+import type { Nodes as MdastNodes } from "mdast";
+import { fromMarkdown } from "mdast-util-from-markdown";
 import {
   capitalizeTerm,
   sourceControlClients,
@@ -239,12 +241,11 @@ export function threadPullRequestPanelTarget(thread: {
 }
 
 export function pullRequestHandoffLabels(inThisThread: boolean) {
-  // Beside a composer the per-comment buttons share their header with Add to chat, and where
-  // the fix lands goes without saying.
+  // Beside a composer a remark's Fix shares its header with Add to chat.
   return inThisThread
     ? {
         fixFinding: "Fix",
-        fixCheck: "Fix",
+        fixCheck: "Fix in this thread",
         fixFindings: "Fix findings in this thread",
       }
     : {
@@ -654,86 +655,39 @@ export function pagePullRequestConversationItems(
   return { shown, hidden: items.length - shown.length };
 }
 
-const HTML_COMMENT = /<!--[\s\S]*?-->/gu;
-// A backtick fence's info string cannot hold a backtick, or "```x```" opening a line would read
-// as a fence rather than as inline code.
-const FENCE_OPEN = /^ {0,3}(?:(`{3,})[^`]*|(~{3,}).*)$/u;
-const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/u;
-// Fences can sit inside a blockquote, as review bots quote code.
-const BLOCKQUOTE_MARKER = /^ {0,3}>[ \t]?/u;
-
-function stripQuotes(line: string, limit = Infinity): { depth: number; rest: string } {
-  let depth = 0;
-  let rest = line;
-  while (depth < limit) {
-    const marker = BLOCKQUOTE_MARKER.exec(rest);
-    if (marker === null) break;
-    rest = rest.slice(marker[0].length);
-    depth += 1;
-  }
-  return { depth, rest };
-}
-
 /**
  * A body as it reads, for text sent to the agent under a length bound. A bot's HTML-comment
- * bookkeeping would otherwise use up the bound before the remark got any of it. Comments inside
- * a code fence are source the remark is showing, so they stay; a fence inside a comment is
- * hidden with the rest of it. Null for a body with no words.
+ * bookkeeping would otherwise use up the bound before the remark got any of it. Comments in code
+ * are source the remark is showing, so they stay. Null for a body with no words.
  */
-function readableBody(body: string): string | null {
-  if (visibleBody(body) === null) return null;
-  const kept: string[] = [];
-  let fence: { marker: string; depth: number } | null = null;
-  let inComment = false;
-  // Hosts pass bodies on with whatever line endings they were written with, and a `\r` left on a
-  // closing fence would hold the fence open over everything after it.
-  for (const line of body.split(/\r\n|\r|\n/u)) {
-    if (fence !== null) {
-      // A deeper "> ```" is fence content; a shallower line ends the blockquote and the fence.
-      const { depth, rest } = stripQuotes(line, fence.depth);
-      if (depth === fence.depth) {
-        kept.push(line);
-        const closing = FENCE_CLOSE.exec(rest)?.[1];
-        if (
-          closing !== undefined &&
-          closing[0] === fence.marker[0] &&
-          closing.length >= fence.marker.length
-        ) {
-          fence = null;
-        }
-        continue;
-      }
-      fence = null;
+function readableBody(raw: string): string | null {
+  if (visibleBody(raw) === null) return null;
+  const body = raw.replace(/\r\n?/gu, "\n");
+  const cuts: Array<[number, number]> = [];
+  const visit = (node: MdastNodes) => {
+    if (node.type === "html" && node.position?.start.offset !== undefined) {
+      cuts.push([node.position.start.offset, node.position.end.offset ?? body.length]);
     }
-    let rest = line;
-    if (inComment) {
-      const end = rest.indexOf("-->");
-      if (end === -1) continue;
-      rest = rest.slice(end + 3);
-      inComment = false;
-    } else {
-      const { depth, rest: unquoted } = stripQuotes(line);
-      const marker = FENCE_OPEN.exec(unquoted)
-        ?.slice(1)
-        .find((group) => group !== undefined);
-      if (marker !== undefined) {
-        fence = { marker, depth };
-        kept.push(line);
-        continue;
-      }
-    }
-    rest = rest.replace(HTML_COMMENT, "");
-    const unclosed = rest.indexOf("<!--");
-    if (unclosed !== -1) {
-      rest = rest.slice(0, unclosed);
-      inComment = true;
-    }
+    if ("children" in node) for (const child of node.children) visit(child);
+  };
+  visit(fromMarkdown(body));
+  let readable = "";
+  let from = 0;
+  for (const [start, end] of cuts) {
+    readable += body.slice(from, start);
+    // An HTML block can carry markup around its comment; only the comment itself is hidden.
+    const html = body.slice(start, end).replace(/<!--[\s\S]*?(?:-->|$)/gu, "");
     // A line that was all comment is dropped rather than left as a blank one.
-    if (rest.trim() === "" && line.trim() !== "") continue;
-    kept.push(rest);
+    const ownLine = /(?:^|\n)[ \t>]*$/u.test(readable) && /^[ \t]*(?:\n|$)/u.test(body.slice(end));
+    if (ownLine && html.trim() === "") {
+      readable = readable.replace(/[ \t>]*$/u, "");
+      from = end + (/^[ \t]*\n/u.exec(body.slice(end))?.[0].length ?? 0);
+    } else {
+      readable += html;
+      from = end;
+    }
   }
-  // An unfinished comment can still hide every word visibleBody saw.
-  const readable = kept.join("\n").trim();
+  readable = (readable + body.slice(from)).trim();
   return readable === "" ? null : readable;
 }
 
@@ -1167,13 +1121,17 @@ export function buildPullRequestReferenceContext(
   return { ...comment, id: `pr-reference:${input.url}` };
 }
 
+/** The pull request chip a fix hand-off attaches, so the two dedupe in one draft. */
+export function buildPullRequestContext(input: PullRequestContextMetadata): ReviewCommentContext {
+  return pullRequestContextComment(input, []);
+}
+
 /** A remark the reader can bring into the chat: a conversation on a line, or one comment. */
 export type PullRequestChatSubject = Extract<PullRequestFinding, { kind: "thread" | "comment" }>;
 
 /**
- * A remark or conversation brought into the chat to talk about, not to fix. Its id sits outside
- * the `pull-request-` namespace hand-offs sweep, and carries the URL because host ids are only
- * unique within a repository. Null when there are no words in it.
+ * A remark or conversation brought into the chat to talk about, not to fix. Its id carries the
+ * URL because host ids are only unique within a repository. Null when there are no words in it.
  */
 export function buildPullRequestCommentContext(
   pullRequest: { readonly number: number; readonly url: string },
