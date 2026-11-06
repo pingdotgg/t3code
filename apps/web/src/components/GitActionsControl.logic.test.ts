@@ -212,7 +212,7 @@ describe("when: the ref is on GitLab", () => {
     assert.equal(resolveQuickAction(ahead, false).label, "Push & create MR");
     assert.equal(
       resolveQuickAction(status({ ...gitLab, hasWorkingTreeChanges: true }), false).label,
-      "Commit, push & MR",
+      "Commit",
     );
     assert.equal(buildMenuItems(ahead, false).find((item) => item.id === "pr")?.label, "Create MR");
 

@@ -3815,7 +3815,7 @@ describe("linked timeline resources", () => {
     ]);
   });
 
-  it("shows a created chat after a steer only when that steer's segment is open", () => {
+  it("keeps created chats and assistant messages visible across steer segments", () => {
     const message = (id: string, role: "user" | "assistant", second: number) => ({
       kind: "message" as const,
       id,
@@ -3845,17 +3845,9 @@ describe("linked timeline resources", () => {
         timelineEntries,
         expandedRunIds: new Set(expanded),
       }).map((row) => row.id);
-    expect(rowIds([runId])).not.toContain("created");
-    expect(rowIds([segmentKey])).toEqual([
-      `turn-fold:${runId}`,
-      "steer",
-      `turn-fold:${segmentKey}`,
-      "created",
-      "after-steer",
-      "final",
-      "summary:created",
-      "assistant-meta:final",
-    ]);
+    const expected = ["intro", "steer", "created", "after-steer", "final", "summary:created", "assistant-meta:final"];
+    expect(rowIds([runId])).toEqual(expected);
+    expect(rowIds([segmentKey])).toEqual(expected);
   });
 });
 
@@ -4502,6 +4494,7 @@ describe("subagent continued by a later turn", () => {
       "answer-1",
       "prompt-2",
       `turn-fold:${run2}`,
+      "answer-2",
       "closing-2",
     ]);
   });

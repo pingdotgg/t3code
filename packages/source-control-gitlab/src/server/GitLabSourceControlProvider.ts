@@ -217,7 +217,7 @@ export const make = Effect.gen(function* () {
           Effect.flatMap((configured) =>
             configured === null
               ? GitLabChangeRequestTemplate.detect(cwd, treeish, git.execute)
-              : Effect.succeed(Option.some(configured)),
+              : Effect.succeedSome(configured),
           ),
         );
       },

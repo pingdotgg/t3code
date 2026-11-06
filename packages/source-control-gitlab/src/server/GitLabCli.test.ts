@@ -147,7 +147,6 @@ layer("GitLabCli.layer", (it) => {
       mockedRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               default_branch: "main",
               merge_requests_template: "  ## Summary\n\nDescribe the change.  ",

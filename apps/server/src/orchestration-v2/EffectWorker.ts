@@ -166,14 +166,6 @@ export const layerExecutor: Layer.Layer<
                   }),
                 ),
                 Effect.asVoid,
-                Effect.tapError(() =>
-                  threads.dispatch({
-                    type: "thread.tool.stop.failed",
-                    commandId: CommandId.make(`${effect.id}:failed:${effect.attemptCount}`),
-                    threadId: effect.threadId,
-                    itemId: effect.request.itemId,
-                  }),
-                ),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({

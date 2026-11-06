@@ -44,6 +44,7 @@ export class TextGeneration extends Context.Service<TextGeneration, ProviderText
 ) {}
 
 type TextGenerationOp =
+  | "generateCommitPlan"
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"

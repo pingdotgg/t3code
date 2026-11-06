@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { mariaDbPreview } from "./mariaDbPreview.js";
+import { describe, expect, it } from "vite-plus/test";
+import { mariaDbPreview } from "./mariaDbPreview.ts";
 
 describe("mariaDbPreview", () => {
   it("shows SQL before output is fetched and adds returned rows when available", () => {

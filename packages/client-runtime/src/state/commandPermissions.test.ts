@@ -16,7 +16,6 @@ import {
   AuthSourceControlWriteScope,
   ThreadId,
   EnvironmentId,
-  ORCHESTRATION_V2_WS_METHODS,
   ScheduledTaskId,
   WS_METHODS,
   ORCHESTRATION_V2_WS_METHODS,

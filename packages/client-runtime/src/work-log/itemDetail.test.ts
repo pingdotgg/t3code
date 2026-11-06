@@ -33,7 +33,7 @@ describe("isJsonToolText", () => {
   });
 });
 
-function toolItem(output: unknown): OrchestrationV2TurnItem {
+function toolItem(output: unknown): Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }> {
   return {
     id: TurnItemId.make("images"),
     threadId: ThreadId.make("thread"),
