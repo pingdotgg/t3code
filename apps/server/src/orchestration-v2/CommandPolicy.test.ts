@@ -118,6 +118,40 @@ it("resolves automatic message delivery from authoritative provider capabilities
   );
 });
 
+// regression: these messages failed outright on Copilot's SDK transport, which cannot restart
+it("queues a message a provider can neither steer nor restart for", () => {
+  const projection = dispatchProjection(
+    capabilities((current) => ({
+      ...current,
+      turns: {
+        ...current.turns,
+        supportsActiveSteering: true,
+        activeSteeringAcceptsAttachments: false,
+        supportsSteeringByInterruptRestart: false,
+        supportsQueuedMessages: true,
+      },
+    })),
+  );
+  const dispatch = (message: { hasAttachments: boolean; switchesProvider: boolean }) =>
+    CommandPolicy.resolveMessageDispatchIntent(
+      projection,
+      { type: "start_immediately" },
+      "auto",
+      message,
+    );
+
+  assert.deepEqual(dispatch({ hasAttachments: false, switchesProvider: false }), {
+    type: "steer_active",
+    targetRunId: activeRunId,
+  });
+  assert.deepEqual(dispatch({ hasAttachments: true, switchesProvider: false }), {
+    type: "queue_after_active",
+  });
+  assert.deepEqual(dispatch({ hasAttachments: false, switchesProvider: true }), {
+    type: "queue_after_active",
+  });
+});
+
 it.each(["preparing", "starting"] as const)(
   "queues an automatic message while the handoff run is %s",
   (status) => {

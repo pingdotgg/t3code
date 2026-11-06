@@ -114,7 +114,13 @@ export function makeCopilotSubagentRouting() {
           return context.finishSubagent({
             sessionId: event.sessionId,
             childSessionId: childSessionId(data.toolCallId),
-            status: event.type === "subagent.failed" ? "failed" : "completed",
+            // Copilot reports a stopped agent as completed, marked cancelled.
+            status:
+              event.type === "subagent.failed"
+                ? "failed"
+                : data.cancelled === true
+                  ? "cancelled"
+                  : "completed",
             result: typeof data.error === "string" ? data.error : null,
           });
         }

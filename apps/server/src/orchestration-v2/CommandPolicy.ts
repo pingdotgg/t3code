@@ -93,6 +93,7 @@ export function resolveMessageDispatchIntent(
   projection: OrchestrationV2ThreadProjection,
   requestedMode: MessageDispatchMode,
   deliveryIntent?: "auto" | "steer" | "restart",
+  message?: { readonly hasAttachments: boolean; readonly switchesProvider: boolean },
 ): MessageDispatchMode {
   const mode = resolveDeliveryIntent(projection, requestedMode, deliveryIntent);
   if (mode.type !== "steer_active") return mode;
@@ -102,13 +103,17 @@ export function resolveMessageDispatchIntent(
   if (targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage)) {
     return { type: "queue_after_active" };
   }
-  // A provider that can neither steer nor restart its turn takes the message after the turn.
+  // A provider that can neither steer this message nor restart its turn takes it after the turn.
   const turns =
     target === undefined || !isActiveRun(target)
       ? undefined
       : providerTurnCapabilities(projection, target);
+  const canSteerMessage =
+    turns?.supportsActiveSteering === true &&
+    message?.switchesProvider !== true &&
+    !(message?.hasAttachments === true && turns.activeSteeringAcceptsAttachments === false);
   return turns !== undefined &&
-    !turns.supportsActiveSteering &&
+    !canSteerMessage &&
     !(turns.supportsInterrupt && turns.supportsSteeringByInterruptRestart) &&
     turns.supportsQueuedMessages
     ? { type: "queue_after_active" }
