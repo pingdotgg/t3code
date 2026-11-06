@@ -34,9 +34,11 @@ const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]);
 
 it("waits for PNG processing in a renderer without decoding on the main process", async () => {
   const contents = setup();
+  const sent = Promise.withResolvers<void>();
+  contents.send.mockImplementation(() => sent.resolve());
   const result = resizeLinuxCapture(png);
   expect(result).toBeInstanceOf(Promise);
-  await Promise.resolve();
+  await sent.promise;
   expect(decodeOnMain).not.toHaveBeenCalled();
   expect(contents.send).toHaveBeenCalledWith("t3:linux-capture", png);
   const resized = new Uint8Array([1, 2, 3]);
