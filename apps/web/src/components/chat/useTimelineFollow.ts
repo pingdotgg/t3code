@@ -28,7 +28,11 @@ import {
   type TimelineNavigation,
   type TimelineViewport,
 } from "./timelineViewport";
-import { resolveTimelineIsAtEnd, type MessagesTimelineRow } from "./MessagesTimeline.logic";
+import {
+  resolveTimelineIsAtEnd,
+  timelineRowIsOwnUserMessage,
+  type MessagesTimelineRow,
+} from "./MessagesTimeline.logic";
 import { measuredEndOffset, settleListScroll } from "./useTimelinePositionRestore";
 import {
   releaseChatTimelineAnchor,
@@ -364,8 +368,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   const scrollToLastUserMessage = () => {
     const list = legendListRef.current;
     const rows = list?.getState().data as ReadonlyArray<MessagesTimelineRow> | undefined;
-    const index =
-      rows?.findLastIndex((row) => row.kind === "message" && row.message.role === "user") ?? -1;
+    const index = rows?.findLastIndex(timelineRowIsOwnUserMessage) ?? -1;
     if (!list || index < 0) return;
     viewportRef.current?.navigate({ releasesFollow: true });
     void list.scrollToIndex({

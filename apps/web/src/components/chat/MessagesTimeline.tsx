@@ -85,6 +85,7 @@ import {
   resolveTimelineMinimapHitStripWidth,
   timelineTurnFoldRunIdsByEntryId,
   liveAnswerPreview,
+  timelineRowIsOwnUserMessage,
   type MessagesTimelineRow,
   type TimelineLatestRun,
 } from "./MessagesTimeline.logic";
@@ -713,6 +714,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = deriveTimelineMinimapItems(rows);
   const minimapRowIndices = minimapItems.map((item) => item.rowIndex);
+  const lastOwnUserRowIndex = rows.findLastIndex(timelineRowIsOwnUserMessage);
   const restoreRowIndex =
     restoringThreadPosition && rememberedPosition?.atEnd === false
       ? rows.findIndex((row) => row.id === rememberedPosition.rowId)
@@ -893,9 +895,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setMinimapCurrentIndex((current) =>
       current === nextCurrentIndex ? current : nextCurrentIndex,
     );
-    const lastUserRowIndex = minimapRowIndices.at(-1);
     const lastUserRowTop =
-      lastUserRowIndex === undefined ? undefined : state.positionAtIndex(lastUserRowIndex);
+      lastOwnUserRowIndex < 0 ? undefined : state.positionAtIndex(lastOwnUserRowIndex);
     onLastUserMessageAboveChange?.(lastUserRowTop !== undefined && lastUserRowTop < scroll);
   });
 

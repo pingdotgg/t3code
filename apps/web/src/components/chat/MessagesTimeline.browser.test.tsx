@@ -482,6 +482,8 @@ describe("MessagesTimeline messages", () => {
     const entries = [
       message("Ship it"),
       message(`Done\n\n${"line\n\n".repeat(200)}`, { role: "assistant" }, "reply"),
+      // Below the view, and not the user's own message.
+      message("Nightly check", { scheduledTaskId: TASK_ID }, "automation"),
     ];
     rememberTimelinePosition(
       other,
