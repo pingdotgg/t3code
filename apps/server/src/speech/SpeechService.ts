@@ -1,62 +1,52 @@
-import type {
-  EnvironmentSpeechModel,
-  EnvironmentSpeechStatus,
-  SpeechAcceleration,
-  SpeechCustomWords,
-  SpeechLanguage,
-  SpeechModelUnloadTimeout,
+import {
+  SPEECH_STREAM_MAX_CHUNK_BYTES,
+  type EnvironmentSpeechModel,
+  type EnvironmentSpeechStatus,
+  type SpeechAcceleration,
+  type SpeechModelUnloadTimeout,
+  type SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Queue from "effect/Queue";
-import * as Stream from "effect/Stream";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
-import type * as Scope from "effect/Scope";
-import { SPEECH_STREAM_MAX_CHUNK_BYTES } from "@t3tools/contracts";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 
-import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import type * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import type * as TextGeneration from "../textGeneration/TextGeneration.ts";
-import type * as ManagedPolicy from "../policy/ManagedPolicy.ts";
-import { postProcessTranscript } from "./postProcessing.ts";
-import { listNativeSpeechGpuDevices, loadNativeSpeechModel } from "./native.ts";
+import { makeSpeechTextCorrector, normalizeSpeechCustomWords } from "./customWords.ts";
+import { removeSpeechFillerWords } from "./fillerWords.ts";
 import {
   DEFAULT_SPEECH_MODEL_ID,
-  downloadSpeechModel,
   effectiveSpeechLanguage,
   getSpeechModel,
-  isSpeechModelReady,
-  removeSpeechModel,
   SPEECH_MODELS,
-  speechModelPath,
+  type SpeechModel,
 } from "./model.ts";
-import {
-  applySpeechCustomWords,
-  applySpeechAliases,
-  makeSpeechAliasReplacer,
-  normalizeSpeechCustomWords,
-  transcriptionCustomWords,
-} from "./customWords.ts";
-import { removeSpeechFillerWords } from "./fillerWords.ts";
+import { listNativeSpeechGpuDevices, loadNativeSpeechModel } from "./native.ts";
+import { SILERO_VAD } from "./silero.ts";
+import { isSpeechPlatformSupported } from "./platform.ts";
+import * as SpeechModelStore from "./SpeechModelStore.ts";
 
 const SAMPLE_RATE = 16_000;
 const MAX_SPEECH_DURATION_SECONDS = 5 * 60;
 export const MAX_SPEECH_BYTES =
   SAMPLE_RATE * Float32Array.BYTES_PER_ELEMENT * MAX_SPEECH_DURATION_SECONDS;
-const MIN_CAPTURE_RMS = 0.0005;
 
 export class SpeechInvalidAudioError extends Schema.TaggedError<SpeechInvalidAudioError>()(
   "SpeechInvalidAudioError",
   { byteLength: Schema.Number, message: Schema.String },
 ) {}
 
-export function decodeSpeechPcm(pcmBytes: Uint8Array, preserveSilence = false): Float32Array {
+export function decodeSpeechPcm(pcmBytes: Uint8Array): Float32Array {
   if (
     pcmBytes.byteLength === 0 ||
     pcmBytes.byteLength > MAX_SPEECH_BYTES ||
@@ -70,7 +60,6 @@ export function decodeSpeechPcm(pcmBytes: Uint8Array, preserveSilence = false): 
   // WebSocket frames can be pooled Node Buffers whose backing storage is larger
   // than the frame. Copy the view so only the received bytes are decoded.
   const pcm = new Float32Array(Uint8Array.from(pcmBytes).buffer);
-  let energy = 0;
   for (const sample of pcm) {
     if (!Number.isFinite(sample) || sample < -1 || sample > 1) {
       throw new SpeechInvalidAudioError({
@@ -78,19 +67,13 @@ export function decodeSpeechPcm(pcmBytes: Uint8Array, preserveSilence = false): 
         message: "audio contains an invalid PCM sample",
       });
     }
-    energy += sample * sample;
   }
-  return !preserveSilence && Math.sqrt(energy / pcm.length) < MIN_CAPTURE_RMS
-    ? new Float32Array()
-    : pcm;
+  return pcm;
 }
 
 export class SpeechOperationError extends Schema.TaggedError<SpeechOperationError>()(
   "SpeechOperationError",
-  {
-    operation: Schema.String,
-    cause: Schema.Defect(),
-  },
+  { operation: Schema.String, cause: Schema.Defect() },
 ) {
   override get message(): string {
     return `Environment speech ${this.operation} failed.`;
@@ -116,7 +99,7 @@ export class SpeechDownloadCancelledError extends Schema.TaggedError<SpeechDownl
   { modelId: Schema.String },
 ) {}
 
-type SpeechError =
+export type SpeechError =
   | SpeechOperationError
   | SpeechInvalidAudioError
   | SpeechUnsupportedPlatformError
@@ -136,12 +119,7 @@ const isSpeechError = Schema.is(
 );
 
 type LoadedModel = Awaited<ReturnType<typeof loadNativeSpeechModel>>;
-
-const resetStreamOrThrow = (model: LoadedModel) =>
-  Effect.tryPromise({
-    try: () => model.reset(),
-    catch: (cause) => new SpeechOperationError({ operation: "stream reset", cause }),
-  }).pipe(Effect.timeout("2500 millis"), Effect.interruptible);
+type SpeechModels = { readonly models: ReadonlyArray<EnvironmentSpeechModel> };
 
 export type SpeechStream = {
   readonly feed: (
@@ -153,126 +131,122 @@ export type SpeechStream = {
 export class SpeechService extends Context.Service<
   SpeechService,
   {
-    readonly status: Effect.Effect<EnvironmentSpeechStatus, SpeechOperationError>;
-    readonly models: Effect.Effect<
-      { readonly models: ReadonlyArray<EnvironmentSpeechModel> },
-      SpeechOperationError
-    >;
-    readonly downloadModel: (
-      modelId: string,
-    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
-    readonly selectModel: (modelId: string) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
-    readonly cancelDownload: (
-      modelId: string,
-    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    readonly status: Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    readonly models: (includeBenchmarks: boolean) => Effect.Effect<SpeechModels, SpeechError>;
+    readonly downloadModel: (modelId: string) => Effect.Effect<SpeechModels, SpeechError>;
+    readonly selectModel: (modelId: string) => Effect.Effect<SpeechModels, SpeechError>;
+    readonly cancelDownload: (modelId: string) => Effect.Effect<SpeechModels, SpeechError>;
+    readonly removeModel: (modelId: string) => Effect.Effect<SpeechModels, SpeechError>;
+    readonly prepareModel: Effect.Effect<void, SpeechError>;
     readonly transcribe: (
       pcmBytes: Uint8Array,
-      projectName?: string,
+      options: SpeechTranscriptionOptions,
     ) => Effect.Effect<string, SpeechError>;
-    readonly postProcess: (
-      input: Pick<Parameters<typeof postProcessTranscript>[0], "transcript" | "draft">,
-    ) => Effect.Effect<
-      string,
-      SpeechOperationError,
-      | ProviderRegistry.ProviderRegistry
-      | TextGeneration.TextGeneration
-      | ManagedPolicy.ManagedPolicy
-    >;
-    readonly prepareModel: Effect.Effect<void, SpeechError>;
-    readonly updateCustomWords: (
-      words: SpeechCustomWords,
-    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
-    readonly updateFillerWordRemoval: (
-      enabled: boolean,
-    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    readonly startStream: (
+      options: SpeechTranscriptionOptions,
+    ) => Effect.Effect<SpeechStream, SpeechError, Scope.Scope>;
     readonly updateAcceleration: (
       acceleration: SpeechAcceleration,
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly updateModelUnloadTimeout: (
       timeout: SpeechModelUnloadTimeout,
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
-    readonly updateLanguage: (
-      language: SpeechLanguage,
-    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
-    readonly updateTranslation: (
-      enabled: boolean,
-    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
-    readonly startStream: (
-      projectName?: string,
-    ) => Effect.Effect<SpeechStream, SpeechError, Scope.Scope>;
-    readonly removeModel: (modelId: string) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
   }
 >()("t3/speech/SpeechService") {}
 
-function supported(platform: string, architecture: string): string | null {
-  const tuple = `${platform}-${architecture}`;
-  return new Set(["darwin-arm64", "darwin-x64", "win32-x64", "linux-x64", "linux-arm64"]).has(tuple)
-    ? null
-    : `voice transcription is not available on ${tuple}`;
-}
+const UNLOAD_MILLISECONDS: Record<Exclude<SpeechModelUnloadTimeout, "never">, number> = {
+  immediately: 0,
+  min_2: 2 * 60_000,
+  min_5: 5 * 60_000,
+  min_10: 10 * 60_000,
+  min_15: 15 * 60_000,
+  hour_1: 60 * 60_000,
+};
 
-/** @public */
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
-  const config = yield* ServerConfig.ServerConfig;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
+  const store = yield* SpeechModelStore.SpeechModelStore;
+  const scope = yield* Effect.scope;
   const clock = yield* Clock.Clock;
-  const now = () => Number(clock.monotonicTimeNanosUnsafe()) / 1_000_000;
-  const unsupportedReason = supported(platform, architecture);
-  const modelDirectory = path.join(config.stateDir, "speech", "models");
+  const now = () => clock.currentTimeMillisUnsafe();
+  const libc = platform === "linux" ? yield* HostProcess.LinuxLibc : undefined;
+  const unsupportedReason = isSpeechPlatformSupported(platform, architecture, libc)
+    ? null
+    : `voice transcription is not available on ${platform}-${architecture}`;
+
   let model: LoadedModel | undefined;
   let loadedModelId: string | undefined;
   let loadedAcceleration: string | undefined;
-  let gpuDevices: ReturnType<typeof listNativeSpeechGpuDevices> | undefined;
+  let autoCpuModel: string | undefined;
   let loading: Promise<LoadedModel> | undefined;
+  const discoverGpuDevices = yield* Effect.tryPromise({
+    try: () => listNativeSpeechGpuDevices(),
+    catch: (cause) => new SpeechOperationError({ operation: "discover GPU devices", cause }),
+  }).pipe(Effect.cachedWithTTL((exit) => (Exit.isSuccess(exit) ? Duration.infinity : "1 minute")));
   let downloading:
-    | { modelId: string; downloaded: number; verifying: boolean; controller: AbortController }
+    | {
+        modelId: string;
+        downloaded: number;
+        verifying: boolean;
+        fiber: Deferred.Deferred<Fiber.Fiber<string, SpeechError>>;
+      }
     | undefined;
   let activeTranscriptions = 0;
+  // One native request at a time; the slot is a promise so unload waits for it.
   let activeOperation: Promise<unknown> | undefined;
-  // Batch inference detached by cancellation: still running in the isolated
-  // process, no longer awaited by anyone. New work preempts it on arrival.
-  let orphaned: { done: Promise<void>; target: LoadedModel } | undefined;
+  const operationBusy = () => Boolean(activeOperation || downloading);
   let closing = false;
+  // @effect-diagnostics-next-line abortControllerInEffect:off - Cached native workers must also stop on service shutdown.
+  const lifetime = new AbortController();
   let unloadTimeout: SpeechModelUnloadTimeout = "min_15";
-  const unloadRequests = yield* Queue.sliding<{ deadline: number; generation: number } | null>(1);
-  let unloadGeneration = 0;
-  let lastUse = 0;
-  const unloadMilliseconds: Record<Exclude<SpeechModelUnloadTimeout, "never">, number> = {
-    immediately: 0,
-    min_2: 2 * 60_000,
-    min_5: 5 * 60_000,
-    min_10: 10 * 60_000,
-    min_15: 15 * 60_000,
-    hour_1: 60 * 60_000,
-  };
-  const clearUnloadTimer = () => {
-    unloadGeneration += 1;
-    Queue.offerUnsafe(unloadRequests, null);
-  };
-  const scheduleUnload = (minimumDelay = 0) => {
+
+  // Deadlines are absolute: the consumer fiber registers its sleep a few scheduler
+  // hops after the request, so a relative delay would drift.
+  const unloadRequests = yield* Queue.sliding<{ deadline: number } | null>(1);
+  const clearUnloadTimer = () => Queue.offerUnsafe(unloadRequests, null);
+  const scheduleUnload = (minimumDelayMs = 0) => {
     clearUnloadTimer();
     if (!model || closing || unloadTimeout === "never") return;
-    const delay = Math.max(minimumDelay, unloadMilliseconds[unloadTimeout] - (now() - lastUse));
-    Queue.offerUnsafe(unloadRequests, { deadline: now() + delay, generation: unloadGeneration });
+    Queue.offerUnsafe(unloadRequests, {
+      deadline: now() + Math.max(minimumDelayMs, UNLOAD_MILLISECONDS[unloadTimeout]),
+    });
   };
+
+  const forgetModel = (target: LoadedModel) => {
+    if (model !== target) return;
+    model = undefined;
+    loadedModelId = undefined;
+    loadedAcceleration = undefined;
+  };
+  const disposeModel = async () => {
+    const target = model;
+    if (!target) return;
+    forgetModel(target);
+    await target.dispose();
+  };
+  // Stops the isolated process without waiting for native work to settle.
+  const dropModel = (target: LoadedModel) => {
+    forgetModel(target);
+    void Promise.resolve()
+      .then(() => target.dispose())
+      .catch(() => undefined);
+  };
+
+  // Auto placement may land on a GPU the native engine cannot actually run; one retry on
+  // this host's CPU recovers it. A GPU the person chose, and CPU itself, report the error.
+  const canRetryOnCpu = (acceleration: SpeechAcceleration, loaded: LoadedModel) =>
+    acceleration === "auto" && loaded.backend.toLowerCase() !== "cpu";
 
   yield* Effect.addFinalizer(() =>
     Effect.promise(async () => {
       closing = true;
       clearUnloadTimer();
-      await model?.dispose();
-      model = undefined;
-      loadedModelId = undefined;
-      loadedAcceleration = undefined;
-      loading = undefined;
+      lifetime.abort();
+      await disposeModel();
     }),
   );
-
-  const lifetime = yield* Effect.abortSignal;
 
   yield* Stream.fromQueue(unloadRequests).pipe(
     Stream.switchMap((request) =>
@@ -281,28 +255,13 @@ export const make = Effect.gen(function* () {
         : Stream.fromEffect(
             Effect.gen(function* () {
               yield* Effect.sleep(Math.max(0, request.deadline - now()));
-              if (closing || request.generation !== unloadGeneration) return;
-              if (activeOperation || activeTranscriptions || loading) {
+              if (closing) return;
+              if (operationBusy() || activeTranscriptions || loading) {
                 scheduleUnload(1000);
                 return;
               }
-              const loaded = model;
-              model = undefined;
-              loadedModelId = undefined;
-              loadedAcceleration = undefined;
-              if (!loaded) return;
-              yield* Effect.uninterruptible(
-                Effect.gen(function* () {
-                  const pending = Promise.resolve().then(() => loaded.dispose());
-                  activeOperation = pending;
-                  yield* Effect.promise(() => pending.catch(() => undefined)).pipe(
-                    Effect.ensuring(
-                      Effect.sync(() => {
-                        if (activeOperation === pending) activeOperation = undefined;
-                      }),
-                    ),
-                  );
-                }),
+              yield* Effect.promise(() => disposeModel().catch(() => undefined)).pipe(
+                Effect.uninterruptible,
               );
             }),
           ),
@@ -315,139 +274,144 @@ export const make = Effect.gen(function* () {
     ServerSettings.ServerSettingsService["Service"]["getSettings"]
   >;
 
-  const selectedModel = (settings: SettingsSnapshot) => {
-    return getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
-  };
+  const selectedModel = (settings: SettingsSnapshot): SpeechModel =>
+    getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
 
-  const download = async (modelId: string, signal = lifetime) => {
-    const definition = getSpeechModel(modelId);
-    if (!definition) throw new SpeechModelNotFoundError({ modelId });
-    if (downloading) throw new SpeechBusyError({ operation: "model download" });
-    const controller = new AbortController();
-    const operation = { modelId, downloaded: 0, verifying: false, controller };
-    downloading = operation;
-    const abort = () => controller.abort();
-    signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) abort();
-    try {
-      const modelPath = await downloadSpeechModel(
-        modelDirectory,
-        definition,
-        controller.signal,
-        (downloaded) => {
-          operation.downloaded = downloaded;
-          operation.verifying = false;
-        },
-        () => {
-          operation.verifying = true;
-        },
-      );
-      return modelPath;
-    } catch (error) {
-      if (controller.signal.aborted) throw new SpeechDownloadCancelledError({ modelId });
-      throw error;
-    } finally {
-      signal.removeEventListener("abort", abort);
-      if (downloading === operation) downloading = undefined;
+  let silenceRetryAt = 0;
+  const acquireSilenceModel = Effect.fn("SpeechService.acquireSilenceModel")(function* (
+    purpose: "installation" | "recording",
+  ) {
+    if (purpose === "recording" && now() < silenceRetryAt) return undefined;
+    const path = yield* store.download(SILERO_VAD).pipe(
+      Effect.timeout(purpose === "recording" ? "15 seconds" : "2 minutes"),
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (path !== undefined) {
+      silenceRetryAt = 0;
+      return path;
     }
-  };
+    silenceRetryAt = now() + 10 * 60_000;
+    yield* Effect.logWarning("Silero unavailable; using raw audio with bounded ASR processing.");
+  });
+
+  // Publish the reservation before forking: a cached transfer can finish before forkIn returns.
+  const downloadFiber = Effect.fn("SpeechService.downloadFiber")(function* (modelId: string) {
+    const definition = getSpeechModel(modelId);
+    if (!definition) return yield* new SpeechModelNotFoundError({ modelId });
+    if (closing || activeOperation || (downloading && downloading.modelId !== modelId))
+      return yield* new SpeechBusyError({ operation: "model download" });
+    if (downloading) return yield* Deferred.await(downloading.fiber);
+    const transfer = {
+      modelId,
+      downloaded: 0,
+      verifying: false,
+      fiber: Deferred.makeUnsafe<Fiber.Fiber<string, SpeechError>>(),
+    };
+    downloading = transfer;
+    const fiber = yield* store
+      .download(definition, {
+        onProgress: (downloaded) => {
+          transfer.downloaded = downloaded;
+          transfer.verifying = false;
+        },
+        onVerificationStart: () => {
+          transfer.verifying = true;
+        },
+      })
+      .pipe(
+        (modelDownload) =>
+          Effect.all([modelDownload, acquireSilenceModel("installation")], { concurrency: 2 }),
+        Effect.map(([modelPath]) => modelPath),
+        Effect.mapError((cause) => speechError("model download", cause)),
+        Effect.forkIn(scope),
+      );
+    fiber.addObserver(() => {
+      if (downloading !== transfer) return;
+      downloading = undefined;
+      scheduleUnload();
+    });
+    yield* Deferred.succeed(transfer.fiber, fiber);
+    return fiber;
+  }, Effect.uninterruptible);
+
+  const download = Effect.fn("SpeechService.download")(function* (modelId: string) {
+    const exit = yield* Fiber.await(yield* downloadFiber(modelId));
+    if (Exit.isSuccess(exit)) return exit.value;
+    return yield* Cause.hasInterruptsOnly(exit.cause)
+      ? new SpeechDownloadCancelledError({ modelId })
+      : Effect.failCause(exit.cause);
+  });
+
+  const installedModelPath = (definition: SpeechModel) =>
+    store.installedPath(definition).pipe(
+      Effect.filterOrFail(
+        (modelPath) => modelPath !== undefined,
+        () => new SpeechModelNotFoundError({ modelId: definition.id }),
+      ),
+    );
 
   const loadModel = async (
-    definition: ReturnType<typeof selectedModel>,
-    signal = lifetime,
-    acceleration = "auto",
+    modelPath: string,
+    definition: SpeechModel,
+    signal = lifetime.signal,
+    requestedAcceleration = "auto",
   ) => {
+    const acceleration =
+      requestedAcceleration === "auto" && autoCpuModel === definition.id
+        ? "cpu"
+        : requestedAcceleration;
     if (model && loadedModelId === definition.id && loadedAcceleration === acceleration) {
-      lastUse = now();
       scheduleUnload();
       return model;
     }
-    if (model) {
-      await model.dispose();
-      model = undefined;
-      loadedModelId = undefined;
-      loadedAcceleration = undefined;
-    }
-    // An installed model was verified when it was downloaded. Loading it
-    // as is skips re-hashing gigabytes on every cold load, and does not wait
-    // on the download slot a Settings download of another model holds.
-    const installedOrDownloaded = async () =>
-      (await isSpeechModelReady(modelDirectory, definition))
-        ? speechModelPath(modelDirectory, definition)
-        : download(definition.id, signal);
-    const pending =
-      loading ??
-      installedOrDownloaded()
-        .then(async (modelPath) => {
-          const preparation = new AbortController();
-          const abort = () => preparation.abort(signal.reason);
-          signal.addEventListener("abort", abort, { once: true });
-          if (signal.aborted) abort();
-          let loaded: LoadedModel;
-          try {
-            loaded = await loadNativeSpeechModel(
-              modelPath,
-              AbortSignal.any([lifetime, preparation.signal]),
-              undefined,
-              acceleration,
-            );
-          } finally {
-            signal.removeEventListener("abort", abort);
-          }
-          if (signal.aborted) {
-            await loaded.dispose();
-            signal.throwIfAborted();
-          }
-          if (closing) {
-            await loaded.dispose();
-            throw new SpeechBusyError({ operation: "model preparation" });
-          }
-          model = loaded;
-          lastUse = now();
-          // Batch preparation can precede up to five minutes of recording.
-          scheduleUnload();
-          loadedModelId = definition.id;
-          loadedAcceleration = acceleration;
-          loading = undefined;
-          return loaded;
-        })
-        .catch((error) => {
-          loading = undefined;
-          throw error;
-        });
+    if (loading) return loading;
+    await disposeModel();
+    signal.throwIfAborted();
+    const pending = loadNativeSpeechModel(modelPath, signal, undefined, acceleration).then(
+      async (loaded) => {
+        if (closing || signal.aborted) {
+          await loaded.dispose();
+          signal.throwIfAborted();
+          throw new SpeechBusyError({ operation: "model preparation" });
+        }
+        model = loaded;
+        loadedModelId = definition.id;
+        loadedAcceleration = acceleration;
+        scheduleUnload();
+        return loaded;
+      },
+    );
+    const release = () => {
+      if (loading === pending) loading = undefined;
+    };
     loading = pending;
-    return pending;
+    signal.addEventListener("abort", release, { once: true });
+    try {
+      return await pending;
+    } finally {
+      signal.removeEventListener("abort", release);
+      release();
+    }
   };
-
-  const attempt = <A>(operation: string, run: () => Promise<A>) =>
-    Effect.tryPromise({
-      try: run,
-      catch: (cause) => new SpeechOperationError({ operation, cause }),
-    });
 
   const speechError = (operation: string, cause: unknown): SpeechError =>
     isSpeechError(cause) ? cause : new SpeechOperationError({ operation, cause });
 
-  const attemptSpeech = <A>(operation: string, run: () => Promise<A>) =>
-    Effect.tryPromise({
-      try: run,
-      catch: (cause) => speechError(operation, cause),
-    });
+  const attempt = <A>(operation: string, run: (signal: AbortSignal) => Promise<A>) =>
+    Effect.tryPromise({ try: run, catch: (cause) => speechError(operation, cause) });
 
-  // Interruptible variant of `exclusive`: the slot is released by an Effect
-  // finalizer, so interrupting the fiber frees it immediately instead of
-  // waiting for dangling native work to settle.
-  const exclusiveEffect = <A, E>(operation: string, effect: Effect.Effect<A, E>) =>
+  // The busy slot is released by a finalizer, so interrupting the fiber frees it at
+  // once instead of waiting for native work that may never settle.
+  const exclusive = <A, E, R>(operation: string, effect: Effect.Effect<A, E, R>) =>
     Effect.uninterruptibleMask((restore) =>
-      Effect.suspend<A, E | SpeechBusyError, never>(() => {
-        if (closing || activeOperation) return Effect.fail(new SpeechBusyError({ operation }));
+      Effect.suspend<A, E | SpeechBusyError, R>(() => {
+        if (closing || operationBusy()) return Effect.fail(new SpeechBusyError({ operation }));
         const gate = Promise.withResolvers<void>();
         activeOperation = gate.promise;
         return restore(effect).pipe(
           Effect.ensuring(
             Effect.sync(() => {
               if (activeOperation === gate.promise) activeOperation = undefined;
-              lastUse = now();
               scheduleUnload(
                 operation === "model preparation" ? MAX_SPEECH_DURATION_SECONDS * 1000 : 0,
               );
@@ -458,105 +422,12 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  // Runs one native transcription so fiber interruption detaches the
-  // underlying work instead of leaving it holding the busy slot: the isolated
-  // process keeps running in the background and the model stays warm. New work
-  // preempts it on arrival (see preemptOrphaned).
-  const transcribeAbortable = (
-    target: LoadedModel,
-    pcm: Float32Array,
-    options: Parameters<LoadedModel["transcribe"]>[1],
-    onAbort: (detached: LoadedModel, settled: Promise<void>) => void,
-  ) =>
-    Effect.tryPromise({
-      try: (signal) =>
-        new Promise<Awaited<ReturnType<LoadedModel["transcribe"]>>>((resolve, reject) => {
-          const raw = target.transcribe(pcm, options);
-          const settled = raw.then(
-            () => undefined,
-            () => undefined,
-          );
-          const abort = () => {
-            onAbort(target, settled);
-            reject(signal.reason ?? new Error("Speech transcription was cancelled."));
-          };
-          if (signal.aborted) {
-            abort();
-            return;
-          }
-          signal.addEventListener("abort", abort, { once: true });
-          raw.then(
-            (result) => {
-              signal.removeEventListener("abort", abort);
-              resolve(result);
-            },
-            (cause) => {
-              signal.removeEventListener("abort", abort);
-              reject(cause);
-            },
-          );
-        }),
-      catch: (cause) => speechError("transcription", cause),
-    });
-
-  // Drops the cached model and stops its isolated process. The next
-  // transcription reloads instead of talking to a dead process.
-  const dropCachedModel = (target: LoadedModel) => {
-    if (model === target) {
-      model = undefined;
-      loadedModelId = undefined;
-      loadedAcceleration = undefined;
-      loading = undefined;
-    }
-    try {
-      const stopped: unknown = target.dispose();
-      if (stopped instanceof Promise) stopped.catch(() => undefined);
-    } catch {
-      // The isolated process is already gone.
-    }
-  };
-
-  // Remembers cancelled batch inference without stopping it, so an idle cancel
-  // keeps a warm model. A superseded orphan from an older generation is dead
-  // weight and gets stopped right away.
-  const detachTranscribeModel = (target: LoadedModel, settled: Promise<void>) => {
-    const previous = orphaned;
-    orphaned = { done: settled, target };
-    if (previous && previous.target !== target) dropCachedModel(previous.target);
-  };
-
-  // Grace for abandoned inference to finish before new work kills it. Lets a
-  // nearly done transcription keep the model warm while cutting off a long one.
-  const ORPHANED_TRANSCRIPTION_GRACE_MS = 2_500;
-
-  // Runs before any model use: if cancelled batch inference is still running
-  // on the cached model, wait briefly for it, else stop it and reload below.
-  const preemptOrphaned = Effect.gen(function* () {
-    const orphan = orphaned;
-    if (!orphan || orphan.target !== model) {
-      if (orphaned === orphan) orphaned = undefined;
-      return;
-    }
-    const settled = yield* Effect.tryPromise({
-      try: () => orphan.done,
-      catch: (cause) => speechError("abandoned transcription", cause),
-    }).pipe(
-      Effect.as(true),
-      Effect.timeoutOrElse({
-        duration: ORPHANED_TRANSCRIPTION_GRACE_MS,
-        orElse: () => Effect.succeed(false),
-      }),
-    );
-    if (orphaned !== orphan) return;
-    orphaned = undefined;
-    if (settled || orphan.target !== model) return;
-    dropCachedModel(orphan.target);
-  });
-
   const readSettings = (operation: string) =>
     serverSettings.getSettings.pipe(
       Effect.tap((settings) =>
         Effect.sync(() => {
+          if (settings.speechModelId !== autoCpuModel || settings.speechAcceleration !== "auto")
+            autoCpuModel = undefined;
           if (unloadTimeout !== settings.speechModelUnloadTimeout) {
             unloadTimeout = settings.speechModelUnloadTimeout;
             scheduleUnload();
@@ -574,326 +445,495 @@ export const make = Effect.gen(function* () {
       .updateSettings(patch)
       .pipe(Effect.mapError((cause) => new SpeechOperationError({ operation, cause })));
 
-  const exclusive = <A>(operation: string, run: () => Promise<A>) =>
-    Effect.tryPromise({
-      try: async () => {
-        if (closing || activeOperation) throw new SpeechBusyError({ operation });
-        const pending = run();
-        activeOperation = pending;
-        try {
-          return await pending;
-        } finally {
-          activeOperation = undefined;
-          lastUse = now();
-          scheduleUnload(
-            operation === "model preparation" ? MAX_SPEECH_DURATION_SECONDS * 1000 : 0,
-          );
-        }
-      },
-      catch: (cause) => speechError(operation, cause),
-    });
-
-  const currentStatus = async (settings: SettingsSnapshot): Promise<EnvironmentSpeechStatus> => {
+  const currentStatus = Effect.fn("SpeechService.currentStatus")(function* (
+    settings: SettingsSnapshot,
+  ): Effect.fn.Return<EnvironmentSpeechStatus> {
     if (unsupportedReason) return { supported: false, reason: unsupportedReason };
     const definition = selectedModel(settings);
+    const ready = yield* store.isReady(definition);
     return {
       supported: true,
-      state:
-        activeTranscriptions > 0
-          ? "transcribing"
-          : (await isSpeechModelReady(modelDirectory, definition))
-            ? "ready"
-            : "missing-model",
+      state: activeTranscriptions > 0 ? "transcribing" : ready ? "ready" : "missing-model",
       modelId: definition.id,
       model: definition.name,
       size: definition.size,
       supportsStreaming: definition.supportsStreaming,
+      supportsBufferedStreaming: true,
       supportsTranslation: definition.supportsTranslation,
-      translateToEnglish: settings.speechTranslateToEnglish,
-      language: settings.speechLanguage,
-      effectiveLanguage: effectiveSpeechLanguage(definition, settings.speechLanguage),
+      languages: definition.languages,
+      supportsLanguageDetection: definition.supportsLanguageDetection,
       acceleration: settings.speechAcceleration,
       modelUnloadTimeout: settings.speechModelUnloadTimeout,
-      gpuDevices: await (gpuDevices ??= listNativeSpeechGpuDevices().catch(() => [])),
-      customWords: normalizeSpeechCustomWords(settings.speechCustomWords),
-      removeFillerWords: settings.speechRemoveFillerWords,
+      gpuDevices: yield* discoverGpuDevices.pipe(Effect.orElseSucceed(() => [])),
     };
-  };
+  });
 
-  const listModels = async (settings: SettingsSnapshot) => {
+  const listModels = Effect.fn("SpeechService.listModels")(function* (
+    settings: SettingsSnapshot,
+    includeBenchmarks: boolean,
+  ): Effect.fn.Return<SpeechModels> {
     const selected = selectedModel(settings);
-    return {
-      models: await Promise.all(
-        SPEECH_MODELS.map(async (definition) => {
-          const ready = await isSpeechModelReady(modelDirectory, definition);
-          const operation = downloading?.modelId === definition.id ? downloading : undefined;
-          return {
-            id: definition.id,
-            name: definition.name,
-            description: definition.description,
-            size: definition.size,
-            languages: definition.languages,
-            accuracy: definition.accuracy,
-            speed: definition.speed,
-            recommended: definition.recommended,
-            supportsStreaming: definition.supportsStreaming,
-            supportsLanguageDetection: definition.supportsLanguageDetection,
-            supportsTranslation: definition.supportsTranslation,
-            active: ready && selected.id === definition.id,
-            state: operation
-              ? operation.verifying
-                ? ("verifying" as const)
-                : ("downloading" as const)
-              : ready
-                ? ("installed" as const)
-                : ("downloadable" as const),
-            ...(operation ? { downloaded: operation.downloaded } : {}),
-          };
-        }),
-      ),
-    };
-  };
+    const models = yield* Effect.forEach(
+      SPEECH_MODELS,
+      (definition) =>
+        store.isReady(definition).pipe(
+          Effect.map((ready): EnvironmentSpeechModel => {
+            const operation = downloading?.modelId === definition.id ? downloading : undefined;
+            return {
+              id: definition.id,
+              name: definition.name,
+              description: definition.description,
+              size: definition.size,
+              languages: definition.languages,
+              accuracy: definition.accuracy,
+              speed: definition.speed,
+              ...(includeBenchmarks ? { benchmark: definition.benchmark } : {}),
+              recommended: definition.recommended,
+              supportsStreaming: definition.supportsStreaming,
+              supportsLanguageDetection: definition.supportsLanguageDetection,
+              supportsTranslation: definition.supportsTranslation,
+              active: ready && selected.id === definition.id,
+              state: operation
+                ? operation.verifying
+                  ? "verifying"
+                  : "downloading"
+                : ready
+                  ? "installed"
+                  : "downloadable",
+              ...(operation ? { downloaded: operation.downloaded } : {}),
+            };
+          }),
+        ),
+      { concurrency: "unbounded" },
+    );
+    return { models };
+  });
 
   const freshStatus = (operation: string) =>
-    readSettings(operation).pipe(
-      Effect.flatMap((settings) => attempt(operation, () => currentStatus(settings))),
+    readSettings(operation).pipe(Effect.flatMap(currentStatus));
+  const readModels = (includeBenchmarks: boolean) =>
+    readSettings("model listing").pipe(
+      Effect.flatMap((settings) => listModels(settings, includeBenchmarks)),
     );
+  const modelsEffect = readModels(false);
 
-  const statusEffect = freshStatus("status");
-  const modelsEffect = readSettings("model listing").pipe(
-    Effect.flatMap((settings) => attempt("model listing", () => listModels(settings))),
+  const requireSupported = Effect.suspend(() =>
+    unsupportedReason
+      ? Effect.fail(new SpeechUnsupportedPlatformError({ platform, architecture }))
+      : Effect.void,
   );
 
-  return SpeechService.of({
-    postProcess: Effect.fn("SpeechService.postProcess")(
-      function* (input) {
-        const settings = yield* serverSettings.getSettings;
-        const cwd = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-voice-post-processing-",
-        });
-        return yield* postProcessTranscript({ ...input, cwd, settings });
-      },
-      Effect.scoped,
-      Effect.mapError((cause) => new SpeechOperationError({ operation: "post-processing", cause })),
-    ),
-    prepareModel: readSettings("model preparation").pipe(
-      Effect.flatMap((settings) =>
-        exclusiveEffect(
-          "model preparation",
-          preemptOrphaned.pipe(
-            Effect.andThen(
-              // Keep ownership until the native load settles, even if its request is cancelled.
-              attemptSpeech("model preparation", async () => {
-                if (unsupportedReason)
-                  throw new SpeechUnsupportedPlatformError({ platform, architecture });
-                await loadModel(selectedModel(settings), lifetime, settings.speechAcceleration);
-              }).pipe(Effect.uninterruptible),
+  const finalizeTranscript = (
+    text: string,
+    options: SpeechTranscriptionOptions,
+    language: string | undefined,
+  ) => {
+    return (
+      options.speechRemoveFillerWords
+        ? removeSpeechFillerWords(text, language, options.speechCorrectionWord)
+        : text
+    ).trim();
+  };
+
+  const prepareModel = readSettings("model preparation").pipe(
+    Effect.flatMap((settings) =>
+      exclusive(
+        "model preparation",
+        requireSupported.pipe(
+          Effect.andThen(installedModelPath(selectedModel(settings))),
+          Effect.flatMap((modelPath) =>
+            attempt("model preparation", (signal) =>
+              loadModel(
+                modelPath,
+                selectedModel(settings),
+                AbortSignal.any([signal, lifetime.signal]),
+                settings.speechAcceleration,
+              ),
+            ).pipe(
+              Effect.timeout("2 minutes"),
+              Effect.catchTags({
+                TimeoutError: (cause) =>
+                  Effect.fail(new SpeechOperationError({ operation: "model preparation", cause })),
+              }),
             ),
           ),
         ),
       ),
     ),
-    startStream: Effect.fn("SpeechService.startStream")(function* (projectName?: string) {
-      const operation = "streaming transcription";
-      if (closing || activeOperation) return yield* new SpeechBusyError({ operation });
-      if (unsupportedReason)
-        return yield* new SpeechUnsupportedPlatformError({ platform, architecture });
-      const released = Promise.withResolvers<void>();
-      activeOperation = released.promise;
-      activeTranscriptions += 1;
-      let finished = false;
-      let started = false;
-      let loaded: LoadedModel | undefined;
-      yield* Effect.addFinalizer(() =>
+  );
+
+  const silenceModelPath = Effect.fn("SpeechService.silenceModelPath")(function* (
+    loaded: LoadedModel,
+    options: SpeechTranscriptionOptions,
+  ) {
+    if (!options.speechSilenceFiltering && (loaded.supportsStreaming || loaded.supportsLongForm))
+      return undefined;
+    return yield* acquireSilenceModel("recording");
+  });
+
+  const transcribe: SpeechService["Service"]["transcribe"] = Effect.fn("SpeechService.transcribe")(
+    function* (pcmBytes, options) {
+      const settings = yield* readSettings("transcription");
+      return yield* exclusive(
+        "transcription",
         Effect.gen(function* () {
-          if (!finished) {
-            const disposeStream = Effect.promise(async () => {
-              if (loaded ?? loading) {
-                await loading?.catch(() => undefined);
-                await (loaded ?? model)?.dispose();
-                model = undefined;
-                loadedModelId = undefined;
-                loadedAcceleration = undefined;
-              }
+          yield* requireSupported;
+          const pcm = yield* Effect.try({
+            try: () => decodeSpeechPcm(pcmBytes),
+            catch: (cause) => speechError("transcription", cause),
+          });
+          if (pcm.length === 0) return "";
+          activeTranscriptions += 1;
+          return yield* Effect.gen(function* () {
+            const definition = selectedModel(settings);
+            const language = effectiveSpeechLanguage(definition, options.speechLanguage);
+            const translateToEnglish =
+              options.speechTranslateToEnglish &&
+              definition.supportsTranslation &&
+              language !== "en";
+            const modelPath = yield* installedModelPath(definition);
+            const loaded = yield* Effect.tryPromise({
+              try: (signal) =>
+                loadModel(
+                  modelPath,
+                  definition,
+                  AbortSignal.any([signal, lifetime.signal]),
+                  settings.speechAcceleration,
+                ),
+              catch: (cause) => speechError("model preparation", cause),
             });
-            if (loaded && started) {
-              yield* resetStreamOrThrow(loaded).pipe(Effect.catch(() => disposeStream));
-            } else {
-              yield* disposeStream;
-            }
-          }
+            const vadPath = yield* silenceModelPath(loaded, options);
+            const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
+            const customWords = dictionary.map(({ term }) => term);
+            // The vocabulary capability guarantees plain transcription, not translation.
+            const vocabularyFor = (inference: LoadedModel) =>
+              inference.supportsVocabulary && !translateToEnglish ? customWords : [];
+            const transcribeWith = (inference: LoadedModel) =>
+              Effect.tryPromise({
+                try: (signal) => {
+                  // Interruption kills the isolated process; the next request reloads the model.
+                  signal.addEventListener("abort", () => dropModel(inference), { once: true });
+                  return inference.transcribe(
+                    pcm,
+                    {
+                      timestamps: "none",
+                      ...(language === "auto" ? {} : { language }),
+                      ...(translateToEnglish
+                        ? { task: "translate" as const, targetLanguage: "en" as const }
+                        : {}),
+                      ...(vocabularyFor(inference).length > 0 ? { vocabulary: customWords } : {}),
+                    },
+                    options.speechSilenceFiltering,
+                    vadPath,
+                  );
+                },
+                catch: (cause) => {
+                  dropModel(inference);
+                  return speechError("inference", cause);
+                },
+              });
+            let inference = loaded;
+            const result = yield* transcribeWith(loaded).pipe(
+              Effect.catch((error) => {
+                if (!canRetryOnCpu(settings.speechAcceleration, loaded)) return Effect.fail(error);
+                return Effect.tryPromise({
+                  try: (signal) =>
+                    loadModel(
+                      modelPath,
+                      definition,
+                      AbortSignal.any([signal, lifetime.signal]),
+                      "cpu",
+                    ),
+                  catch: (cause) => speechError("model preparation", cause),
+                }).pipe(
+                  Effect.flatMap((cpu) => {
+                    autoCpuModel = definition.id;
+                    inference = cpu;
+                    return transcribeWith(cpu);
+                  }),
+                );
+              }),
+            );
+            const correct = makeSpeechTextCorrector(
+              vocabularyFor(inference).length > 0 ? [] : customWords,
+              dictionary,
+            );
+            return finalizeTranscript(
+              correct(result.text),
+              options,
+              translateToEnglish ? "en" : language === "auto" ? undefined : language,
+            );
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                activeTranscriptions -= 1;
+              }),
+            ),
+          );
+        }),
+      );
+    },
+  );
+
+  // Stream setup shares the public startStream span.
+  const openStream = Effect.fnUntraced(function* (options: SpeechTranscriptionOptions) {
+    const operation = "streaming transcription";
+    yield* requireSupported;
+    const released = Promise.withResolvers<void>();
+    // @effect-diagnostics-next-line abortControllerInEffect:off - Stream cancellation must abort native work independently of the caller fiber.
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, lifetime.signal]);
+    let finished = false;
+    let closed = false;
+    let started = false;
+    let loaded: LoadedModel | undefined;
+    yield* Effect.acquireRelease(
+      Effect.suspend(() => {
+        if (closing || operationBusy()) return Effect.fail(new SpeechBusyError({ operation }));
+        activeOperation = released.promise;
+        activeTranscriptions += 1;
+        return Effect.void;
+      }),
+      () =>
+        Effect.sync(() => {
           activeTranscriptions -= 1;
           if (activeOperation === released.promise) activeOperation = undefined;
-          lastUse = now();
           scheduleUnload();
           released.resolve();
         }),
-      );
-      const streamSignal = yield* Effect.abortSignal;
-      const signal = AbortSignal.any([streamSignal, lifetime]);
-      const settings = yield* readSettings("custom words loading");
-      const customWords = transcriptionCustomWords(settings, projectName);
-      const dictionary = normalizeSpeechCustomWords(settings.speechCustomWords);
-      const replaceAliases = makeSpeechAliasReplacer(dictionary);
-      const correct = (text: string) => replaceAliases(applySpeechCustomWords(text, customWords));
-      const removeFillerWords = settings.speechRemoveFillerWords;
-      const definition =
-        getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
-      const language = effectiveSpeechLanguage(definition, settings.speechLanguage);
-      const fillerWordLanguage = language === "auto" ? undefined : language;
-      yield* preemptOrphaned;
-      const preparation = yield* attemptSpeech(operation, async () => {
-        const startedAt = performance.now();
-        const prepared = await loadModel(definition, signal, settings.speechAcceleration);
-        loaded = prepared;
-        if (!prepared.supportsStreaming)
-          throw new Error("The selected model does not support streaming.");
-        await prepared.begin(language === "auto" ? undefined : language);
-        started = true;
-        return { prepared, durationMs: performance.now() - startedAt };
-      });
-      let streamModel = preparation.prepared;
-      loaded = streamModel;
-      yield* Effect.logInfo("Speech stream prepared", {
-        backend: streamModel.backend,
-        durationMs: Math.round(preparation.durationMs),
-      });
-      let byteLength = 0;
-      const received: Float32Array[] = [];
-      let usedCpuFallback = false;
-      let busy = false;
-      const run = <A>(work: () => Promise<A>) =>
-        attemptSpeech(operation, async () => {
-          if (busy || finished || signal.aborted) throw new Error("Speech stream is not ready.");
-          busy = true;
-          try {
-            return await work();
-          } finally {
-            busy = false;
-          }
-        });
-      return {
-        feed: (bytes: Uint8Array) =>
-          run(async () => {
-            if (
-              bytes.byteLength > SPEECH_STREAM_MAX_CHUNK_BYTES ||
-              byteLength + bytes.byteLength > MAX_SPEECH_BYTES
-            )
-              throw new SpeechInvalidAudioError({
-                byteLength: bytes.byteLength,
-                message: "Speech stream audio limit exceeded.",
-              });
-            const pcm = decodeSpeechPcm(bytes, true);
-            byteLength += bytes.byteLength;
-            received.push(pcm);
-            try {
-              const update = await streamModel.feed(pcm);
-              return {
-                ...update,
-                text: update.text
-                  ? {
-                      committed: correct(update.text.committed),
-                      tentative: correct(update.text.tentative),
-                    }
-                  : null,
-              };
-            } catch (cause) {
-              if (
-                usedCpuFallback ||
-                settings.speechAcceleration !== "auto" ||
-                streamModel.backend.toLowerCase() === "cpu"
-              )
-                throw cause;
-              usedCpuFallback = true;
-              await streamModel.dispose();
-              if (model === streamModel) {
-                model = undefined;
-                loadedModelId = undefined;
-                loadedAcceleration = undefined;
-                loading = undefined;
-              }
-              streamModel = await loadModel(definition, signal, "cpu");
-              loaded = streamModel;
-              await streamModel.begin(language === "auto" ? undefined : language);
-              let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
-              for (const chunk of received) update = await streamModel.feed(chunk);
-              if (!update) throw cause;
-              return {
-                ...update,
-                text: update.text
-                  ? {
-                      committed: correct(update.text.committed),
-                      tentative: correct(update.text.tentative),
-                    }
-                  : null,
-              };
+    );
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* () {
+        closed = true;
+        if (!finished) {
+          const dispose = Effect.promise(async () => {
+            const pending = loading;
+            controller.abort();
+            await pending?.catch(() => undefined);
+            if (loaded) {
+              forgetModel(loaded);
+              await loaded.dispose();
             }
-          }),
-        finish: run(async () => {
-          const startedAt = performance.now();
-          const corrected = correct(await streamModel.finish());
-          const text = removeFillerWords
-            ? removeSpeechFillerWords(
-                corrected,
-                fillerWordLanguage,
-                settings.speechPostProcessingEnabled ? settings.speechCorrectionWord : undefined,
-              )
-            : corrected;
-          finished = true;
-          return { text: text.trim(), durationMs: performance.now() - startedAt };
-        }).pipe(
-          Effect.tap(({ durationMs }) =>
-            Effect.logInfo("Speech stream finalized", {
-              backend: streamModel.backend,
-              durationMs: Math.round(durationMs),
-            }),
-          ),
-          Effect.map(({ text }) => text),
-        ),
-      };
+          });
+          if (loaded && started) {
+            yield* attempt("reset stream", () => loaded!.reset()).pipe(
+              Effect.timeout("2500 millis"),
+              Effect.catch(() => dispose),
+            );
+          } else {
+            yield* dispose;
+          }
+        }
+      }),
+    );
+    const settings = yield* readSettings(operation);
+    const definition = selectedModel(settings);
+    const language = effectiveSpeechLanguage(definition, options.speechLanguage);
+    const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
+    const customWords = dictionary.map(({ term }) => term);
+    let correct = makeSpeechTextCorrector(customWords, dictionary);
+    const modelPath = yield* installedModelPath(definition);
+    let streamModel = yield* attempt(operation, () =>
+      loadModel(modelPath, definition, signal, settings.speechAcceleration),
+    );
+    loaded = streamModel;
+    const vadPath = yield* silenceModelPath(streamModel, options);
+    let translateToEnglish = false;
+    const beginStream = async () => {
+      translateToEnglish =
+        options.speechTranslateToEnglish &&
+        !streamModel.supportsStreaming &&
+        streamModel.supportsTranslation &&
+        language !== "en";
+      const vocabulary =
+        streamModel.supportsVocabulary && !translateToEnglish && customWords.length
+          ? customWords
+          : undefined;
+      await streamModel.begin(
+        {
+          timestamps: "none",
+          ...(language === "auto" ? {} : { language }),
+          ...(translateToEnglish ? { task: "translate", targetLanguage: "en" } : {}),
+          ...(vocabulary ? { vocabulary } : {}),
+        },
+        options.speechSilenceFiltering,
+        vadPath,
+      );
+      correct = makeSpeechTextCorrector(vocabulary ? [] : customWords, dictionary);
+      started = true;
+    };
+    // Audio already fed is kept so a CPU restart can replay it; the limit caps it at one recording.
+    const received: Float32Array[] = [];
+    let retriedOnCpu = false;
+    const recoverOnCpu = async (cause: unknown) => {
+      started = false;
+      if (closed || signal.aborted || retriedOnCpu) throw cause;
+      if (!canRetryOnCpu(settings.speechAcceleration, streamModel)) throw cause;
+      retriedOnCpu = true;
+      forgetModel(streamModel);
+      await streamModel.dispose();
+      if (closed || signal.aborted) throw cause;
+      streamModel = await loadModel(modelPath, definition, signal, "cpu");
+      autoCpuModel = definition.id;
+      loaded = streamModel;
+      await beginStream();
+      let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
+      for (const chunk of received) {
+        if (closed || signal.aborted) throw new Error("Speech stream is closed.");
+        update = await streamModel.feed(chunk);
+      }
+      return update;
+    };
+    yield* attempt(operation, async () => {
+      try {
+        await beginStream();
+      } catch (cause) {
+        await recoverOnCpu(cause);
+      }
+    });
+    let byteLength = 0;
+    let busy = false;
+    // Client revisions stay monotonic across a native restart, whose own counter resets.
+    let revisionBase = 0;
+    let lastNativeRevision = 0;
+    const run = <A>(work: () => Promise<A>) =>
+      attempt(operation, async () => {
+        if (busy || finished || closed || !started || signal.aborted)
+          throw new Error("Speech stream is not ready.");
+        busy = true;
+        try {
+          return await work();
+        } finally {
+          busy = false;
+        }
+      });
+    return {
+      feed: (bytes: Uint8Array) =>
+        run(async () => {
+          if (
+            bytes.byteLength > SPEECH_STREAM_MAX_CHUNK_BYTES ||
+            byteLength + bytes.byteLength > MAX_SPEECH_BYTES
+          )
+            throw new SpeechInvalidAudioError({
+              byteLength: bytes.byteLength,
+              message: "Speech stream audio limit exceeded.",
+            });
+          const pcm = decodeSpeechPcm(bytes);
+          byteLength += bytes.byteLength;
+          received.push(pcm);
+          let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
+          try {
+            update = await streamModel.feed(pcm);
+          } catch (cause) {
+            update = await recoverOnCpu(cause);
+            revisionBase += lastNativeRevision;
+            lastNativeRevision = 0;
+          }
+          if (update) lastNativeRevision = update.revision;
+          return {
+            revision: revisionBase + (update?.revision ?? lastNativeRevision),
+            text: update?.text
+              ? {
+                  committed: correct(update.text.committed),
+                  tentative: correct(update.text.tentative),
+                }
+              : null,
+          };
+        }),
+      finish: run(async () => {
+        let text: string;
+        try {
+          text = await streamModel.finish().catch(async (cause: unknown) => {
+            await recoverOnCpu(cause);
+            if (closed || signal.aborted) throw cause;
+            return streamModel.finish();
+          });
+        } catch (cause) {
+          started = false;
+          throw cause;
+        }
+        finished = true;
+        return finalizeTranscript(
+          correct(text),
+          options,
+          translateToEnglish ? "en" : language === "auto" ? undefined : language,
+        );
+      }),
+    };
+  });
+
+  return SpeechService.of({
+    status: freshStatus("status"),
+    models: readModels,
+    prepareModel,
+    transcribe,
+    startStream: Effect.fn("SpeechService.startStream")(function* (options) {
+      const session = yield* Scope.fork(yield* Effect.scope);
+      return yield* openStream(options).pipe(
+        Scope.provide(session),
+        Effect.onError((cause) => Scope.close(session, Exit.failCause(cause))),
+      );
     }),
-    status: statusEffect,
-    models: modelsEffect,
-    // Not exclusive: a download that takes minutes must not hold the slot
-    // dictation needs. The download slot keeps it to one at a time.
     downloadModel: Effect.fn("SpeechService.downloadModel")((modelId) =>
-      attemptSpeech("model download", async () => {
-        if (unsupportedReason) throw new SpeechUnsupportedPlatformError({ platform, architecture });
-        if (closing || downloading) throw new SpeechBusyError({ operation: "model download" });
-        await download(modelId);
-      }).pipe(Effect.andThen(freshStatus("model download"))),
+      requireSupported.pipe(
+        Effect.andThen(download(modelId)),
+        Effect.catchTags({ SpeechDownloadCancelledError: () => Effect.void }),
+        Effect.andThen(modelsEffect),
+      ),
     ),
     selectModel: Effect.fn("SpeechService.selectModel")((modelId) =>
-      exclusive("model selection", async () => {
-        if (!getSpeechModel(modelId)) throw new SpeechModelNotFoundError({ modelId });
-        await model?.dispose();
-        model = undefined;
-        loadedModelId = undefined;
-        loadedAcceleration = undefined;
-        loading = undefined;
-      }).pipe(
+      exclusive(
+        "model selection",
+        attempt("model selection", async () => {
+          if (!getSpeechModel(modelId)) throw new SpeechModelNotFoundError({ modelId });
+          await disposeModel();
+        }),
+      ).pipe(
         Effect.andThen(writeSettings("model selection", { speechModelId: modelId })),
-        Effect.andThen(freshStatus("model selection")),
+        Effect.andThen(modelsEffect),
       ),
     ),
     cancelDownload: Effect.fn("SpeechService.cancelDownload")((modelId) =>
-      Effect.sync(() => {
-        if (downloading?.modelId === modelId) downloading.controller.abort();
-      }).pipe(Effect.andThen(freshStatus("model download cancellation"))),
+      Effect.suspend(() =>
+        downloading?.modelId === modelId
+          ? Deferred.await(downloading.fiber).pipe(Effect.flatMap(Fiber.interrupt))
+          : Effect.void,
+      ).pipe(Effect.andThen(modelsEffect)),
     ),
-    updateCustomWords: Effect.fn("SpeechService.updateCustomWords")((words) => {
-      const customWords = normalizeSpeechCustomWords(words);
-      return exclusive("custom words update", async () => {}).pipe(
-        Effect.andThen(writeSettings("custom words update", { speechCustomWords: customWords })),
-        Effect.andThen(freshStatus("custom words update")),
-      );
-    }),
-    updateFillerWordRemoval: Effect.fn("SpeechService.updateFillerWordRemoval")((enabled) =>
-      exclusive("filler word removal update", async () => {}).pipe(
-        Effect.andThen(
-          writeSettings("filler word removal update", { speechRemoveFillerWords: enabled }),
+    removeModel: Effect.fn("SpeechService.removeModel")((modelId) =>
+      readSettings("model removal").pipe(
+        Effect.flatMap((settings) =>
+          exclusive(
+            "model removal",
+            Effect.gen(function* () {
+              const definition = getSpeechModel(modelId);
+              if (!definition) return yield* new SpeechModelNotFoundError({ modelId });
+              yield* attempt("model removal", async () => {
+                await loading?.catch(() => undefined);
+                if (loadedModelId === modelId) await disposeModel();
+              });
+              yield* store
+                .remove(definition)
+                .pipe(Effect.mapError((cause) => speechError("model removal", cause)));
+              if (selectedModel(settings).id !== modelId) return undefined;
+              const candidates = yield* Effect.forEach(
+                SPEECH_MODELS.filter((candidate) => candidate.id !== modelId),
+                (candidate) =>
+                  store.isReady(candidate).pipe(Effect.map((ready) => ({ candidate, ready }))),
+                { concurrency: "unbounded" },
+              );
+              return candidates.find(({ ready }) => ready)?.candidate.id;
+            }),
+          ).pipe(
+            Effect.flatMap((replacementId) =>
+              replacementId
+                ? writeSettings("model removal", { speechModelId: replacementId }).pipe(
+                    Effect.andThen(modelsEffect),
+                  )
+                : modelsEffect,
+            ),
+          ),
         ),
-        Effect.andThen(freshStatus("filler word removal update")),
       ),
     ),
     updateAcceleration: Effect.fn("SpeechService.updateAcceleration")((acceleration) =>
@@ -904,206 +944,6 @@ export const make = Effect.gen(function* () {
     updateModelUnloadTimeout: Effect.fn("SpeechService.updateModelUnloadTimeout")((timeout) =>
       writeSettings("model unload timeout update", { speechModelUnloadTimeout: timeout }).pipe(
         Effect.andThen(freshStatus("model unload timeout update")),
-      ),
-    ),
-    updateLanguage: Effect.fn("SpeechService.updateLanguage")((language) =>
-      writeSettings("language update", { speechLanguage: language }).pipe(
-        Effect.andThen(freshStatus("language update")),
-      ),
-    ),
-    updateTranslation: Effect.fn("SpeechService.updateTranslation")((enabled) =>
-      writeSettings("translation update", { speechTranslateToEnglish: enabled }).pipe(
-        Effect.andThen(freshStatus("translation update")),
-      ),
-    ),
-    transcribe: Effect.fn("SpeechService.transcribe")((pcmBytes, projectName) =>
-      readSettings("transcription").pipe(
-        Effect.flatMap((settings) =>
-          exclusiveEffect(
-            "transcription",
-            Effect.gen(function* () {
-              if (unsupportedReason)
-                return yield* new SpeechUnsupportedPlatformError({ platform, architecture });
-              const pcm = yield* Effect.try({
-                try: () => decodeSpeechPcm(pcmBytes),
-                catch: (cause) => speechError("transcription", cause),
-              });
-              if (pcm.length === 0)
-                return { text: "", backend: "none", prepareDurationMs: 0, inferenceDurationMs: 0 };
-              activeTranscriptions += 1;
-              return yield* Effect.gen(function* () {
-                const definition = selectedModel(settings);
-                const language = effectiveSpeechLanguage(definition, settings.speechLanguage);
-                const translateToEnglish =
-                  settings.speechTranslateToEnglish &&
-                  definition.supportsTranslation &&
-                  language !== "en";
-                const prepareStartedAt = performance.now();
-                yield* preemptOrphaned;
-                const loaded = yield* Effect.tryPromise({
-                  try: (signal) =>
-                    loadModel(
-                      definition,
-                      AbortSignal.any([signal, lifetime]),
-                      settings.speechAcceleration,
-                    ),
-                  catch: (cause) => speechError("model preparation", cause),
-                });
-                const prepareDurationMs = performance.now() - prepareStartedAt;
-                const inferenceStartedAt = performance.now();
-                let inferenceModel = loaded;
-                const customWords = transcriptionCustomWords(settings, projectName);
-                const dictionary = normalizeSpeechCustomWords(settings.speechCustomWords);
-                const removeFillerWords = settings.speechRemoveFillerWords;
-                const fillerWordLanguage = translateToEnglish
-                  ? "en"
-                  : language === "auto"
-                    ? undefined
-                    : language;
-                const options = {
-                  timestamps: "none" as const,
-                  ...(language === "auto" ? {} : { language }),
-                  ...(translateToEnglish
-                    ? { task: "translate" as const, targetLanguage: "en" as const }
-                    : {}),
-                  ...(customWords.length > 0 && loaded.supportsInitialPrompt
-                    ? {
-                        family: {
-                          kind: "whisper" as const,
-                          initialPrompt: customWords.join(", "),
-                        },
-                      }
-                    : {}),
-                };
-                const result = yield* transcribeAbortable(
-                  inferenceModel,
-                  pcm,
-                  options,
-                  detachTranscribeModel,
-                ).pipe(
-                  Effect.catch((cause) =>
-                    Effect.gen(function* () {
-                      if (model === inferenceModel) {
-                        model = undefined;
-                        loadedModelId = undefined;
-                        loadedAcceleration = undefined;
-                        loading = undefined;
-                      }
-                      if (
-                        settings.speechAcceleration !== "auto" ||
-                        inferenceModel.backend.toLowerCase() === "cpu"
-                      ) {
-                        yield* Effect.tryPromise({
-                          try: () => Promise.resolve().then(() => inferenceModel.dispose()),
-                          catch: (disposeCause) => speechError("transcription", disposeCause),
-                        });
-                        return yield* speechError("inference", cause);
-                      }
-                      yield* Effect.tryPromise({
-                        try: () => Promise.resolve().then(() => inferenceModel.dispose()),
-                        catch: (disposeCause) => speechError("transcription", disposeCause),
-                      });
-                      const cpu = yield* Effect.tryPromise({
-                        try: (signal) =>
-                          loadModel(definition, AbortSignal.any([signal, lifetime]), "cpu"),
-                        catch: (loadCause) => speechError("transcription", loadCause),
-                      });
-                      inferenceModel = cpu;
-                      return yield* transcribeAbortable(
-                        cpu,
-                        pcm,
-                        options,
-                        detachTranscribeModel,
-                      ).pipe(
-                        Effect.catch((fallbackCause) => {
-                          dropCachedModel(cpu);
-                          return Effect.fail(speechError("inference", fallbackCause));
-                        }),
-                      );
-                    }),
-                  ),
-                );
-                const corrected = applySpeechAliases(
-                  loaded.supportsInitialPrompt
-                    ? result.text
-                    : applySpeechCustomWords(result.text, customWords),
-                  dictionary,
-                );
-                return {
-                  text: (removeFillerWords
-                    ? removeSpeechFillerWords(
-                        corrected,
-                        fillerWordLanguage,
-                        settings.speechPostProcessingEnabled
-                          ? settings.speechCorrectionWord
-                          : undefined,
-                      )
-                    : corrected
-                  ).trim(),
-                  backend: inferenceModel.backend,
-                  prepareDurationMs,
-                  inferenceDurationMs: performance.now() - inferenceStartedAt,
-                };
-              }).pipe(
-                Effect.ensuring(
-                  Effect.sync(() => {
-                    activeTranscriptions -= 1;
-                  }),
-                ),
-              );
-            }),
-          ),
-        ),
-        Effect.tap(({ backend, prepareDurationMs, inferenceDurationMs }) =>
-          Effect.logInfo("Speech transcription completed", {
-            backend,
-            prepareDurationMs: Math.round(prepareDurationMs),
-            inferenceDurationMs: Math.round(inferenceDurationMs),
-          }),
-        ),
-        Effect.map(({ text }) => text),
-      ),
-    ),
-    removeModel: Effect.fn("SpeechService.removeModel")((modelId) =>
-      readSettings("model removal").pipe(
-        Effect.flatMap((settings) =>
-          exclusive("model removal", async () => {
-            const definition = getSpeechModel(modelId);
-            if (!definition) throw new SpeechModelNotFoundError({ modelId });
-            // Downloads no longer hold the exclusive slot; one in flight would
-            // put the file back after removal.
-            if (downloading?.modelId === modelId)
-              throw new SpeechBusyError({ operation: "model removal" });
-            const selected = selectedModel(settings);
-            await loading?.catch(() => undefined);
-            if (loadedModelId === modelId) {
-              await model?.dispose();
-              model = undefined;
-              loadedModelId = undefined;
-              loadedAcceleration = undefined;
-              loading = undefined;
-            }
-            await removeSpeechModel(modelDirectory, definition);
-            if (selected.id !== modelId) return undefined;
-            const candidates = await Promise.all(
-              SPEECH_MODELS.filter((candidate) => candidate.id !== modelId).map(
-                async (candidate) => ({
-                  candidate,
-                  ready: await isSpeechModelReady(modelDirectory, candidate),
-                }),
-              ),
-            );
-            return candidates.find(({ ready }) => ready)?.candidate.id;
-          }).pipe(
-            Effect.flatMap((replacementId) =>
-              replacementId
-                ? writeSettings("model removal", { speechModelId: replacementId }).pipe(
-                    Effect.andThen(freshStatus("model removal")),
-                  )
-                : freshStatus("model removal"),
-            ),
-          ),
-        ),
       ),
     ),
   });

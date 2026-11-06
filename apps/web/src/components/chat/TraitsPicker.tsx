@@ -407,7 +407,8 @@ export function TraitsMenuContent(props: TraitsSelectionInput & { reasoningOnly?
     !props.reasoningOnly ||
     isReasoningControl(descriptor) ||
     descriptor.id === "serviceTier" ||
-    descriptor.id === "fastMode";
+    descriptor.id === "fastMode" ||
+    descriptor.id === "ultracode";
   const selectDescriptors = allSelectDescriptors.filter(inReasoningMenu);
   const booleanDescriptors = allBooleanDescriptors.filter(inReasoningMenu);
 

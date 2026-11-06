@@ -14,6 +14,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
   idleCompactionPatch,
+  PROJECT_SCOPED_SERVER_SETTING_KEYS,
   requiredScopesForProjectMutation,
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
@@ -311,62 +312,6 @@ describe("ClientSettings notifications", () => {
   });
 });
 
-describe("ClientSettings microphone", () => {
-  it("defaults to auto dictation and accepts the other shortcut modes", () => {
-    expect(decodeClientSettings({}).voiceShortcutMode).toBe("auto");
-    expect(decodeClientSettingsPatch({ voiceShortcutMode: "hold" }).voiceShortcutMode).toBe("hold");
-    expect(decodeClientSettingsPatch({ voiceShortcutMode: "toggle" }).voiceShortcutMode).toBe(
-      "toggle",
-    );
-    expect(() => decodeClientSettingsPatch({ voiceShortcutMode: "invalid" })).toThrow();
-  });
-  it("accepts microphone selection patches", () => {
-    expect(decodeClientSettingsPatch({ voiceMicrophone: "studio-mic" }).voiceMicrophone).toBe(
-      "studio-mic",
-    );
-  });
-
-  it("follows the primary transcription environment by default", () => {
-    expect(decodeClientSettings({}).voiceTranscriptionEnvironmentId).toBeNull();
-  });
-
-  it("accepts a transcription environment selection", () => {
-    expect(
-      decodeClientSettingsPatch({ voiceTranscriptionEnvironmentId: "environment-2" })
-        .voiceTranscriptionEnvironmentId,
-    ).toBe("environment-2");
-  });
-});
-
-describe("ServerSettings speech model", () => {
-  it("uses the recommended local transcription model by default", () => {
-    expect(DEFAULT_SERVER_SETTINGS.speechModelId).toBe(
-      "handy-computer/parakeet-unified-en-0.6b-gguf",
-    );
-  });
-
-  it("starts with no custom transcription words", () => {
-    expect(DEFAULT_SERVER_SETTINGS.speechAcceleration).toBe("auto");
-    expect(DEFAULT_SERVER_SETTINGS.speechModelUnloadTimeout).toBe("min_15");
-    expect(DEFAULT_SERVER_SETTINGS.speechLanguage).toBe("auto");
-    expect(DEFAULT_SERVER_SETTINGS.speechCustomWords).toEqual([]);
-    expect(DEFAULT_SERVER_SETTINGS.speechRemoveFillerWords).toBe(true);
-    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingEnabled).toBe(false);
-    expect(DEFAULT_SERVER_SETTINGS.speechCorrectionWord).toBe("");
-    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingModelSelection).not.toBe(
-      DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
-    );
-    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingModelSelection).toMatchObject({
-      model: "gpt-6-luna",
-      options: [{ id: "reasoningEffort", value: "low" }],
-    });
-    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingPrompt).toEqual({
-      mode: "default",
-      customInstructions: "",
-    });
-  });
-});
-
 describe("ClientSettings surface style", () => {
   it("keeps the gradient rim for existing settings without a saved style", () => {
     expect(decodeClientSettings({}).surfaceStyle).toBe("gradient-rim");
@@ -572,6 +517,39 @@ describe("requiredScopesForProjectMutation", () => {
         scripts: [],
       }),
     ).toEqual(["orchestration:operate", "settings:write"]);
+  });
+});
+
+describe("voice settings", () => {
+  it("does not import voice consent from ordinary device preferences", () => {
+    const imported = {
+      voiceTranscriptionEnvironmentId: "env-1",
+      voiceTranscriptionDestination: { kind: "environment", environmentId: "env-1" },
+      speechPostProcessingEnabled: true,
+    };
+    expect(decodeClientSettings({}).speechSilenceFiltering).toBe(true);
+    expect(decodeClientSettingsPatch({ speechSilenceFiltering: false })).toEqual({
+      speechSilenceFiltering: false,
+    });
+    for (const key of Object.keys(imported)) {
+      expect(decodeClientSettings(imported)).not.toHaveProperty(key);
+      expect(decodeClientSettingsPatch(imported)).not.toHaveProperty(key);
+    }
+  });
+
+  it("keeps the correction cue personal and project vocabulary on the environment", () => {
+    expect(decodeClientSettings({}).speechCorrectionWord).toBe("");
+    expect(() => decodeClientSettingsPatch({ speechCorrectionWord: "x".repeat(51) })).toThrow();
+    expect(DEFAULT_SERVER_SETTINGS.speechProjectCustomWords).toEqual([]);
+    expect(PROJECT_SCOPED_SERVER_SETTING_KEYS).toContain("speechProjectCustomWords");
+  });
+
+  it("stores the transcription model and resources on the environment", () => {
+    expect(DEFAULT_SERVER_SETTINGS).toMatchObject({
+      speechModelId: "handy-computer/parakeet-unified-en-0.6b-gguf",
+      speechAcceleration: "auto",
+      speechModelUnloadTimeout: "min_15",
+    });
   });
 });
 

@@ -168,7 +168,6 @@ function pagedContainer() {
   return container;
 }
 
-// Rows are virtualized, so a header far down is not rendered until the view scrolls to it.
 async function expectFileHeaderShown(
   screen: Awaited<ReturnType<typeof render>>,
   container: HTMLElement,
@@ -181,10 +180,10 @@ async function expectFileHeaderShown(
       .elements()
       .find((element) => element.checkVisibility());
     if (!header) throw new Error(`No visible file header for ${path}`);
-    const top = header.getBoundingClientRect().top;
-    const bounds = container.getBoundingClientRect();
+    const bounds = container.querySelector(".diff-render-surface")!.getBoundingClientRect();
+    const { top, bottom } = header.getBoundingClientRect();
     expect(top).toBeGreaterThanOrEqual(bounds.top);
-    expect(top).toBeLessThan(bounds.top + bounds.height / 2);
+    expect(bottom).toBeLessThanOrEqual(bounds.bottom);
   });
 }
 

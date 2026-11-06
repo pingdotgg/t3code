@@ -4,27 +4,24 @@ import {
   SPEECH_STREAM_MAX_QUEUED_BYTES,
   SpeechStreamEvent,
   type SpeechStreamText,
+  type SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechStreamEvent));
 
 /** Audio stays bounded while the environment acknowledges a small send window. */
-export async function openSpeechStream(input: {
+export function openSpeechStream(input: {
   readonly url: string;
+  readonly options: SpeechTranscriptionOptions;
   readonly signal: AbortSignal;
-  readonly onText?: (text: SpeechStreamText) => void;
+  readonly canSend: () => boolean;
+  readonly onText: (text: SpeechStreamText) => void;
   readonly onError: (error: Error) => void;
   readonly createSocket?: (url: string) => WebSocket;
 }) {
   input.signal.throwIfAborted();
   const socket = (input.createSocket ?? ((url) => new WebSocket(url)))(input.url);
-  let resolveReady!: () => void;
-  let rejectReady!: (error: Error) => void;
-  const ready = new Promise<void>((resolve, reject) => {
-    resolveReady = resolve;
-    rejectReady = reject;
-  });
   let resolveFinal!: (text: string) => void;
   let rejectFinal!: (error: Error) => void;
   const final = new Promise<string>((resolve, reject) => {
@@ -53,10 +50,9 @@ export async function openSpeechStream(input: {
     if (closed) return;
     closed = true;
     cleanup();
-    rejectReady(error);
     rejectFinal(error);
     socket.close();
-    if (notify && isReady) input.onError(error);
+    if (notify) input.onError(error);
   };
   const armTimeout = () => {
     clearTimeout(timer);
@@ -65,6 +61,7 @@ export async function openSpeechStream(input: {
   const abort = () => fail(new Error("Voice transcription was cancelled."), false);
   const pump = () => {
     if (!isReady || closed || finishSent) return;
+    if (!input.canSend()) return fail(new Error("Voice consent was revoked."));
     while (inFlight.length < 2 && queue.length) {
       const chunk = queue.shift()!;
       inFlight.push(chunk.byteLength);
@@ -79,8 +76,13 @@ export async function openSpeechStream(input: {
       armTimeout();
     }
   };
+  socket.addEventListener("open", () => {
+    if (!input.canSend()) return fail(new Error("Voice consent was revoked."));
+    if (!closed) socket.send(JSON.stringify({ type: "start", options: input.options }));
+  });
   socket.addEventListener("message", (event) => {
     if (closed) return;
+    if (!input.canSend()) return fail(new Error("Voice consent was revoked."));
     try {
       const message = decodeEvent(event.data);
       switch (message.type) {
@@ -88,7 +90,7 @@ export async function openSpeechStream(input: {
           if (isReady) throw new Error("Unexpected speech stream response.");
           isReady = true;
           clearTimeout(timer);
-          resolveReady();
+          pump();
           break;
         case "update":
           if (!inFlight.length || message.revision < revision)
@@ -96,7 +98,7 @@ export async function openSpeechStream(input: {
           revision = message.revision;
           inFlightBytes -= inFlight.shift()!;
           clearTimeout(timer);
-          if (message.text) input.onText?.(message.text);
+          if (message.text) input.onText(message.text);
           pump();
           if (inFlight.length) armTimeout();
           break;
@@ -123,7 +125,6 @@ export async function openSpeechStream(input: {
   input.signal.addEventListener("abort", abort, { once: true });
   armTimeout();
   if (input.signal.aborted) abort();
-  await ready;
   return {
     feed: (pcm: Float32Array) => {
       if (closed || finishing) return;
