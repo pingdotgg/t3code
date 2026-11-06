@@ -13,7 +13,7 @@ class T3ReviewDiffModule : Module() {
         view.setTokensResetKey(tokensResetKey)
       }
       Prop("contentResetKey") { view: T3ReviewDiffView, contentResetKey: String ->
-        view.setContentResetKey(resetKey)
+        view.setContentResetKey(contentResetKey)
       }
       Prop("collapsedFileIdsJson") { view: T3ReviewDiffView, collapsedFileIdsJson: String ->
         view.setCollapsedFileIdsJson(collapsedFileIdsJson)
