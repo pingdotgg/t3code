@@ -33,6 +33,7 @@ const FAKE_KIND = SecretProviderKind.make("fake");
 const secretProvider = SecretProviderId.make("personal");
 const wanted: SecretReference = { provider: secretProvider, reference: "fake://wanted" };
 const other: SecretReference = { provider: secretProvider, reference: "fake://other" };
+const locked: SecretReference = { provider: secretProvider, reference: "fake://locked" };
 const driverKind = ProviderDriverKind.make("fake-provider");
 const dependent = ProviderInstanceId.make("dependent");
 const unrelated = ProviderInstanceId.make("unrelated");
@@ -52,15 +53,16 @@ const providerSnapshot = (instanceId: ProviderInstanceId): ServerProvider => ({
 });
 
 /**
- * A server whose `dependent` instance reads `wanted` and `unrelated` reads `other`, both through
- * the real resolver, instance registry and provider registry. `vault` answers each read of a
- * reference with the next queued value, repeating the last one.
+ * A server whose `dependent` instance reads `dependentReads` and `unrelated` reads `other`, all
+ * through the real resolver, instance registry and provider registry. `vault` answers each read of
+ * a reference with the next queued value, repeating the last one.
  */
 const setup = Effect.fn("SecretCheckTest.setup")(function* (
   vault: Map<string, Array<string | undefined>>,
+  dependentReads: ReadonlyArray<SecretReference> = [wanted],
 ) {
   const reads: Array<string> = [];
-  const created: Array<{ instanceId: ProviderInstanceId; secret: unknown }> = [];
+  const created: Array<{ instanceId: ProviderInstanceId; secrets: ReadonlyArray<unknown> }> = [];
   const refreshed: Array<ProviderInstanceId> = [];
 
   const secretDriver = defineSecretProviderDriver({
@@ -90,7 +92,10 @@ const setup = Effect.fn("SecretCheckTest.setup")(function* (
     defaultConfig: () => ({}),
     create: (input) =>
       Effect.sync(() => {
-        created.push({ instanceId: input.instanceId, secret: input.environment[0]?.value });
+        created.push({
+          instanceId: input.instanceId,
+          secrets: input.environment.map((variable) => variable.value),
+        });
         const snapshot = providerSnapshot(input.instanceId);
         return {
           instanceId: input.instanceId,
@@ -119,10 +124,14 @@ const setup = Effect.fn("SecretCheckTest.setup")(function* (
         } satisfies ProviderInstance;
       }),
   };
-  const instanceConfig = (secret: SecretReference) => ({
+  const instanceConfig = (secrets: ReadonlyArray<SecretReference>) => ({
     driver: driverKind,
     config: {},
-    environment: [{ name: "API_KEY", value: secret, sensitive: true }],
+    environment: secrets.map((secret, index) => ({
+      name: `API_KEY_${index}`,
+      value: secret,
+      sensitive: true,
+    })),
   });
 
   const resolverContext = yield* Layer.build(
@@ -135,7 +144,10 @@ const setup = Effect.fn("SecretCheckTest.setup")(function* (
   );
   const { registry, mutator } = yield* ProviderInstanceRegistry.makeProviderInstanceRegistry({
     drivers: [driver],
-    configMap: { [dependent]: instanceConfig(wanted), [unrelated]: instanceConfig(other) },
+    configMap: {
+      [dependent]: instanceConfig(dependentReads),
+      [unrelated]: instanceConfig([other]),
+    },
   }).pipe(Effect.provide(resolverContext));
   // Secrets are read after startup, so wait for the change that applies them.
   const changes = yield* registry.subscribeChanges;
@@ -194,7 +206,7 @@ it.layer(layerTest)("SecretCheck", (it) => {
         assert.notInclude(JSON.stringify(result), "wanted-key");
         assert.deepStrictEqual(server.reads.slice(readsBefore), [wanted.reference]);
         assert.deepStrictEqual(server.created.slice(createdBefore), [
-          { instanceId: dependent, secret: "wanted-key" },
+          { instanceId: dependent, secrets: ["wanted-key"] },
         ]);
         assert.deepStrictEqual(server.refreshed, [dependent]);
         assert.deepStrictEqual(yield* server.registry.listUnavailable, []);
@@ -213,13 +225,35 @@ it.layer(layerTest)("SecretCheck", (it) => {
       const result = yield* server.secretCheck.check(wanted);
 
       assert.strictEqual(result._tag, "Failed");
-      if (result._tag === "Failed") assert.include(result.detail, secretProvider);
+      if (result._tag === "Failed") assert.include(result.detail, "Personal");
       assert.deepStrictEqual(server.created.slice(createdBefore), []);
       assert.deepStrictEqual(server.refreshed, []);
       assert.deepStrictEqual(
         (yield* server.registry.listUnavailable).map((entry) => entry.instanceId),
         [dependent],
       );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a failed check keeps the value an instance already reads", () =>
+    Effect.gen(function* () {
+      const vault = new Map<string, Array<string | undefined>>([
+        [wanted.reference, ["wanted-old"]],
+        [locked.reference, ["locked-key", undefined]],
+        [other.reference, ["other-key"]],
+      ]);
+      const server = yield* setup(vault, [wanted, locked]);
+      const readsBefore = server.reads.length;
+
+      assert.strictEqual((yield* server.secretCheck.check(locked))._tag, "Failed");
+      vault.set(wanted.reference, ["wanted-new"]);
+      assert.deepStrictEqual(yield* server.secretCheck.check(wanted), { _tag: "Resolved" });
+
+      assert.deepStrictEqual(server.reads.slice(readsBefore), [locked.reference, wanted.reference]);
+      assert.deepStrictEqual(server.created.at(-1), {
+        instanceId: dependent,
+        secrets: ["wanted-new", "locked-key"],
+      });
     }).pipe(Effect.scoped),
   );
 });

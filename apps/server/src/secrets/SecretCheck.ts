@@ -22,12 +22,11 @@ const make = Effect.gen(function* () {
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
 
   const check = Effect.fn("SecretCheck.check")(function* (reference: SecretReference) {
-    yield* resolver.invalidate([reference]);
-    const [value] = yield* resolver.read([reference]);
+    const [value] = yield* resolver.read([reference], { fresh: true });
     if (value === undefined || value.trim() === "") {
       return {
         _tag: "Failed",
-        detail: `Could not read this secret from "${reference.provider}". Check the provider's settings and that its store is unlocked.`,
+        detail: `Could not read this secret from "${yield* resolver.label(reference.provider)}". Check the provider's settings and that its store is unlocked.`,
       } as const;
     }
     yield* providerRegistry.applySecretAndRefresh(reference);

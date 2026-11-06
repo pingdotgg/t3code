@@ -127,6 +127,10 @@ function SecretCheckButton(props: {
   readonly label: string;
 }) {
   const { environmentId, secret } = props;
+  const supported = useAtomValue(
+    serverEnvironment.configValueAtom(environmentId),
+    (config) => config?.environment.capabilities.secretSourceCheck === true,
+  );
   const canCheck = useAtomValue(serverEnvironment.checkSecretSource.permissionAtom(environmentId));
   const checkSecretSource = useAtomCommand(serverEnvironment.checkSecretSource);
   const secretKey = `${secret.provider}\u0000${secret.reference}`;
@@ -150,6 +154,7 @@ function SecretCheckButton(props: {
     );
   };
 
+  if (!supported) return null;
   const description = !canCheck
     ? "You cannot check secrets on this environment"
     : state === undefined
@@ -290,7 +295,10 @@ export function SecretSourceInput({
             aria-label={`${label} reference`}
             aria-invalid={rejectedReference !== null}
           />
-          {environmentId !== undefined && secret !== undefined && pendingProvider === null ? (
+          {environmentId !== undefined &&
+          secret !== undefined &&
+          pendingProvider === null &&
+          rejectedReference === null ? (
             <SecretCheckButton
               environmentId={environmentId}
               secret={secret}
