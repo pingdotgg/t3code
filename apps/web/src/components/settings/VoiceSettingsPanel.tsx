@@ -1283,7 +1283,7 @@ export function VoiceSettingsPanel() {
       <SettingsSection id={searchableSetting("speech-post-processing").id} title="Cleanup">
         <SettingsRow
           title="Clean up transcripts with a provider"
-          description="Sends each transcript, plus the draft text around your cursor, to the text generation provider on the draft’s environment to fix punctuation, numbers, and spoken corrections. Your audio is never sent. Off by default."
+          description="Sends each transcript and the draft text around your cursor to the draft environment’s text generation provider to fix punctuation, numbers, and spoken corrections. Your audio is never sent."
           control={
             <Switch
               aria-label="Clean up transcripts with a provider"
