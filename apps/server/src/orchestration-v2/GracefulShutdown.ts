@@ -84,10 +84,7 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
   const clearIfShutdown = Effect.fn("GracefulShutdown.clearIfShutdown")(function* (
     shutdownId: GracefulShutdownId,
   ) {
-    const state = yield* gate.getState;
-    if (state.shutdownId === shutdownId) {
-      yield* gate.clear;
-    }
+    yield* gate.clearIfShutdown(shutdownId);
   });
 
   const countActiveInScope = Effect.fn("GracefulShutdown.countActiveInScope")(function* (
@@ -126,11 +123,14 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
 
   const countPendingSaveWork = Effect.fn("GracefulShutdown.countPendingSaveWork")(function* (
     messageIds: ReadonlySet<MessageId>,
+    threadIds: ReadonlySet<ThreadId>,
   ) {
     if (messageIds.size === 0) return 0;
     const shells = yield* listShutdownShells();
+    const targets =
+      threadIds.size === 0 ? shells : shells.filter((shell) => threadIds.has(shell.id));
     let count = 0;
-    for (const shell of shells) {
+    for (const shell of targets) {
       const records = yield* threads.getThreadRecords(shell.id, ["runs"]);
       if (
         records.runs.some(
@@ -294,20 +294,17 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
           );
           saveWorkMessageIds = prompted.messageIds;
           saveWorkThreadIds = prompted.threadIds;
-          const current = yield* gate.getState;
-          if (current.shutdownId === shutdownId) {
-            yield* gate.setState({
-              phase: "draining",
-              shutdownId,
-              scope: input.scope,
-              reason: input.reason ?? null,
-              startedAt: DateTime.formatIso(started),
-              deadlineAt: DateTime.formatIso(deadline),
-              saveWorkPrompted: true,
-              saveWorkMessageIds,
-              saveWorkThreadIds,
-            });
-          }
+          yield* gate.updateIfShutdown(shutdownId, () => ({
+            phase: "draining",
+            shutdownId,
+            scope: input.scope,
+            reason: input.reason ?? null,
+            startedAt: DateTime.formatIso(started),
+            deadlineAt: DateTime.formatIso(deadline),
+            saveWorkPrompted: true,
+            saveWorkMessageIds,
+            saveWorkThreadIds,
+          }));
         }
 
         const waitQuiesced = Effect.gen(function* () {
@@ -317,7 +314,10 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
                 mapShutdownError("Could not inspect in-scope runs during graceful shutdown."),
               ),
             );
-            const pendingSave = yield* countPendingSaveWork(saveWorkMessageIds).pipe(
+            const pendingSave = yield* countPendingSaveWork(
+              saveWorkMessageIds,
+              saveWorkThreadIds,
+            ).pipe(
               Effect.mapError(
                 mapShutdownError("Could not inspect save-work turns during graceful shutdown."),
               ),
@@ -337,13 +337,10 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
           Effect.orElseSucceed(() => 0),
         );
         const phase = outcome === "quiesced" ? ("quiesced" as const) : ("timed_out" as const);
-        const state = yield* gate.getState;
-        if (state.shutdownId === shutdownId) {
-          yield* gate.setState({
-            ...state,
-            phase,
-          });
-        }
+        yield* gate.updateIfShutdown(shutdownId, (state) => ({
+          ...state,
+          phase,
+        }));
 
         return {
           shutdownId,
@@ -380,16 +377,15 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
 
   const complete = Effect.fn("GracefulShutdown.complete")(
     function* (shutdownId?: GracefulShutdownId) {
-      const state = yield* gate.getState;
-      if (!GracefulShutdownGate.isDrainActive(state)) return;
-      if (shutdownId !== undefined && state.shutdownId !== shutdownId) {
+      const outcome = yield* gate.tryComplete(shutdownId);
+      if (outcome === "idle") return;
+      if (outcome === "mismatch") {
         return yield* new GracefulShutdownError({
           reason: "That graceful shutdown is no longer active.",
         });
       }
       // Drain only blocks startNextQueuedRun; it never sets queueHeld. Kick the
       // queue without queue.resume so pre-existing manual holds stay held.
-      yield* gate.clear;
       yield* orchestrator.resumeQueuedRuns.pipe(
         Effect.mapError(
           (cause) =>
