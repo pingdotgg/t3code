@@ -15,7 +15,7 @@ const UNIVERSAL_FILLER_WORDS = [
 ] as const;
 
 const LANGUAGE_FILLER_WORDS: Readonly<Record<string, readonly string[]>> = {
-  en: ["um", "ah", "eh", "ha"],
+  en: ["um", "ah", "eh"],
   de: ["äh", "ähm"],
   fr: ["euh"],
 };
@@ -25,21 +25,18 @@ const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$
 export function removeSpeechFillerWords(
   text: string,
   language?: string,
-  protectedWord?: string,
+  correctionCue?: string,
 ): string {
   const baseLanguage = language?.split(/[-_]/, 1)[0]?.toLowerCase();
   const words = [
     ...UNIVERSAL_FILLER_WORDS,
     ...(baseLanguage ? (LANGUAGE_FILLER_WORDS[baseLanguage] ?? []) : []),
   ];
-  let filtered = text;
-  for (const word of words) {
-    if (word.toLocaleLowerCase() === protectedWord?.trim().toLocaleLowerCase()) continue;
-    const pattern = new RegExp(
-      `(?<![\\p{L}\\p{N}_])${escapeRegex(word)}(?![\\p{L}\\p{N}_])[,.]?`,
-      "giu",
-    );
-    filtered = filtered.replace(pattern, "");
-  }
+  const cuePattern = correctionCue?.trim().split(/\s+/).map(escapeRegex).join("\\s+");
+  const pattern = new RegExp(
+    `(?<![\\p{L}\\p{N}_])(?:(${cuePattern || "(?!)"})(?![\\p{L}\\p{N}_])|(?:${words.map(escapeRegex).join("|")})(?![\\p{L}\\p{N}_])[,.]?)`,
+    "giu",
+  );
+  const filtered = text.replace(pattern, (_match, cue: string | undefined) => cue ?? "");
   return filtered.replace(/\s{2,}/g, " ").trim();
 }
