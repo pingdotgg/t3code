@@ -1839,8 +1839,12 @@ function revealCaretInEditor(editor: TiptapEditor): void {
   const scroller = editor.view.dom;
   const caret = editor.view.coordsAtPos(editor.state.selection.head);
   const box = scroller.getBoundingClientRect();
-  if (caret.bottom > box.bottom) scroller.scrollTop += caret.bottom - box.bottom;
-  else if (caret.top < box.top) scroller.scrollTop -= box.top - caret.top;
+  // Padding can be reserved for controls drawn over the box, such as mobile pending-answer actions.
+  const style = getComputedStyle(scroller);
+  const bottom = box.bottom - parseFloat(style.paddingBottom);
+  const top = box.top + parseFloat(style.paddingTop);
+  if (caret.bottom > bottom) scroller.scrollTop += caret.bottom - bottom;
+  else if (caret.top < top) scroller.scrollTop -= top - caret.top;
 }
 
 function caretLineRect(range: Range, edge: "start" | "end"): DOMRect | null {
