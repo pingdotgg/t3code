@@ -549,15 +549,29 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
   it.effect("retains known account metadata when a local health check fails", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const harness = yield* makeHarness();
+        const limits: ServerProviderUsageLimits = {
+          checkedAt: "1970-01-01T00:00:00.000Z",
+          windows: [{ id: "gemini-5h", kind: "session", label: "Gemini", usedPercent: 25 }],
+        };
+        const usageReads = yield* Ref.make(0);
+        const harness = yield* makeHarness({
+          probeUsage: Ref.update(usageReads, (count) => count + 1).pipe(Effect.as(limits)),
+        });
         yield* harness.initialize;
         yield* harness.provider.onSessionStarted(started, "/workspace");
         yield* harness.provider.onAvailableCommands(commands, "/workspace");
+        yield* harness.provider.snapshot.refreshUsage!;
+        expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual({
+          ...limits,
+          refreshAfter: 300_000,
+        });
+        yield* TestClock.adjust("5 minutes");
         yield* Ref.set(
           harness.probe,
           Effect.fail(EffectAcpErrors.AcpRequestError.internalError("probe failed")),
         );
-        const snapshot = yield* harness.provider.snapshot.refresh;
+        yield* harness.provider.snapshot.refreshUsage!;
+        const snapshot = yield* harness.provider.snapshot.getSnapshot;
         expect(snapshot).toMatchObject({
           installed: true,
           status: "error",
@@ -566,6 +580,24 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         expect(snapshot.models).toEqual(buildAntigravityModelsFromSession(sessionSetupResult));
         expect(snapshot.slashCommands).toEqual(expectedCommands);
         expect(snapshot.workspaceSnapshots?.[0]?.cwd).toBe("/workspace");
+        expect(snapshot.usageLimits).toEqual({ ...limits, stale: true, refreshAfter: 600_000 });
+        const failedChecks = yield* Ref.get(harness.probeCalls);
+        yield* harness.provider.snapshot.refreshUsage!;
+        expect(yield* Ref.get(harness.probeCalls)).toBe(failedChecks);
+        yield* TestClock.adjust("4 minutes");
+        expect((yield* harness.provider.snapshot.refresh).usageLimits?.refreshAfter).toBe(600_000);
+        const healthChecks = yield* Ref.get(harness.probeCalls);
+        yield* harness.provider.snapshot.refreshUsage!;
+        expect(yield* Ref.get(harness.probeCalls)).toBe(healthChecks);
+        yield* TestClock.adjust("1 minute");
+        yield* harness.provider.snapshot.refreshUsage!;
+        expect(yield* Ref.get(harness.probeCalls)).toBe(healthChecks + 1);
+        expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual({
+          ...limits,
+          stale: true,
+          refreshAfter: 900_000,
+        });
+        expect(yield* Ref.get(usageReads)).toBe(1);
       }),
     ),
   );

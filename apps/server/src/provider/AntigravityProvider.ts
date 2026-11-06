@@ -308,6 +308,10 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const supportsTextGeneration =
       initialized !== undefined ? yield* options.supportsTextGeneration : false;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
+    const usageRetryAfter =
+      initialized === undefined && (yield* UsagePolling) && !(yield* PublishingUsage)
+        ? (yield* Clock.currentTimeMillis) + 5 * 60_000
+        : undefined;
     const next = yield* SubscriptionRef.updateAndGet(metadata, (state) => {
       if (state.authRevision !== before.authRevision) return state;
       const { message: _previousMessage, ...draft } = state.draft;
@@ -328,7 +332,15 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           version: version === "unknown" ? draft.version : version || draft.version,
           status: errorMessage ? "error" : authenticated ? "ready" : "warning",
           checkedAt: updatedAt,
-          usageLimits: missingInstallation ? undefined : draft.usageLimits,
+          usageLimits: missingInstallation
+            ? undefined
+            : usageRetryAfter !== undefined && draft.usageLimits
+              ? {
+                  ...draft.usageLimits,
+                  stale: true,
+                  refreshAfter: Math.max(usageRetryAfter, draft.usageLimits.refreshAfter ?? 0),
+                }
+              : draft.usageLimits,
           ...(missingInstallation
             ? {
                 models: [],
