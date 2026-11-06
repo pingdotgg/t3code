@@ -34,13 +34,8 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import {
-  base64UrlDecodeUtf8,
-  base64UrlEncode,
-  signPayload,
-  timingSafeEqualBase64Url,
-} from "../auth/utils.ts";
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { base64UrlDecodeUtf8, base64UrlEncode, timingSafeEqualBase64Url } from "../auth/utils.ts";
+import * as PayloadSigner from "../auth/PayloadSigner.ts";
 import {
   attachmentFileExtension,
   createAttachmentId,
@@ -56,9 +51,9 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { coalesceThreadLiveStream } from "../orchestration-v2/ThreadLiveEventCoalescer.ts";
 import { buildBoundedThreadStreamSnapshot } from "../orchestration-v2/ThreadStream.ts";
 import {
-  projectDomainEventForWire,
   projectTurnItemForDetail,
   projectTurnItemForWire,
+  threadStreamEventItem,
 } from "../orchestration-v2/WireProjection.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -140,15 +135,6 @@ const SessionClaims = Schema.Struct({
 });
 type SessionClaims = typeof SessionClaims.Type;
 const decodeSessionClaims = Schema.decodeUnknownOption(Schema.fromJsonString(SessionClaims));
-
-/** A truncated HMAC keeps invite links short. 128 bits is still far beyond guessing range. */
-const inviteSignature = (shareId: string, key: Uint8Array) =>
-  base64UrlEncode(
-    Buffer.from(signPayload(`guest-invite:${shareId}`, key), "base64url").subarray(
-      0,
-      INVITE_SIGNATURE_BYTES,
-    ),
-  );
 
 const inactive = new GuestShareAccessError({ reason: "inactive" });
 
@@ -240,23 +226,30 @@ const make = Effect.gen(function* () {
   const { attachmentsDir } = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const random = yield* SecureRandom.SecureRandom;
-  const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const analytics = yield* AnalyticsService.AnalyticsService;
-  const signingKey = yield* Effect.cached(
-    secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(Effect.orDie),
-  );
+  const signer = yield* PayloadSigner.make(SIGNING_SECRET_NAME);
+  /** A truncated HMAC keeps invite links short. 128 bits is still far beyond guessing range. */
+  const inviteSignature = (shareId: string) =>
+    signer.sign(`guest-invite:${shareId}`).pipe(
+      Effect.orDie,
+      Effect.map((signature) =>
+        base64UrlEncode(Buffer.from(signature, "base64url").subarray(0, INVITE_SIGNATURE_BYTES)),
+      ),
+    );
 
   // Tokens are derived from the share id, so nothing secret is stored and replacing or closing
   // the share in the thread projection revokes every token for it. An invite is
   // `<shareId>.<signature>` and the thread is looked up by share id; a session token carries
   // signed claims.
   const signInvite = (shareId: GuestShareId) =>
-    Effect.map(signingKey, (key) => `${shareId}.${inviteSignature(shareId, key)}`);
-  const signSession = (claims: SessionClaims) =>
-    Effect.map(signingKey, (key) => {
-      const payload = base64UrlEncode(JSON.stringify(claims));
-      return `${payload}.${signPayload(payload, key)}`;
-    });
+    inviteSignature(shareId).pipe(Effect.map((signature) => `${shareId}.${signature}`));
+  const signSession = (claims: SessionClaims) => {
+    const payload = base64UrlEncode(JSON.stringify(claims));
+    return signer.sign(payload).pipe(
+      Effect.orDie,
+      Effect.map((signature) => `${payload}.${signature}`),
+    );
+  };
   const splitToken = (token: string) => {
     const [payload, signature, extra] = token.split(".");
     return payload && signature && extra === undefined ? { payload, signature } : null;
@@ -264,8 +257,8 @@ const make = Effect.gen(function* () {
   const verifyInvite = Effect.fn("GuestShareService.verifyInvite")(function* (token: string) {
     const parts = splitToken(token);
     if (parts === null) return Option.none<SessionClaims>();
-    const key = yield* signingKey;
-    if (!timingSafeEqualBase64Url(parts.signature, inviteSignature(parts.payload, key))) {
+    const expected = yield* inviteSignature(parts.payload);
+    if (!timingSafeEqualBase64Url(parts.signature, expected)) {
       return Option.none<SessionClaims>();
     }
     const shareId = GuestShareId.make(parts.payload);
@@ -276,15 +269,15 @@ const make = Effect.gen(function* () {
       ? Option.none<SessionClaims>()
       : Option.some<SessionClaims>({ kind: "session", threadId, shareId });
   });
-  const verifySession = (token: string) =>
-    Effect.map(signingKey, (key) => {
-      const parts = splitToken(token);
-      if (parts === null) return Option.none<SessionClaims>();
-      if (!timingSafeEqualBase64Url(parts.signature, signPayload(parts.payload, key))) {
-        return Option.none<SessionClaims>();
-      }
-      return decodeSessionClaims(base64UrlDecodeUtf8(parts.payload));
-    });
+  // Untraced: runs on every guest request, like the Effect.map it replaced.
+  const verifySession = Effect.fnUntraced(function* (token: string) {
+    const parts = splitToken(token);
+    if (parts === null) return Option.none<SessionClaims>();
+    if (!(yield* signer.verify(parts.payload, parts.signature).pipe(Effect.orDie))) {
+      return Option.none<SessionClaims>();
+    }
+    return decodeSessionClaims(base64UrlDecodeUtf8(parts.payload));
+  });
 
   const connectHostname = managedEndpoint.inspectConnector.pipe(
     Effect.map((facts) => facts?.hostname ?? null),
@@ -557,11 +550,7 @@ const make = Effect.gen(function* () {
     const live = orchestrator
       .streamStoredEventsFrom({ threadId: thread.id, afterSequence: snapshot.snapshotSequence })
       .pipe(
-        Stream.map((stored) => ({
-          kind: "event" as const,
-          sequence: stored.sequence,
-          event: projectDomainEventForWire(stored.event),
-        })),
+        Stream.map(threadStreamEventItem),
         // Ending the source here flushes what the coalescer holds, so `ended` is not held back.
         Stream.takeUntil((item) => endsShare(item.event)),
         coalesceThreadLiveStream,
@@ -715,7 +704,18 @@ const make = Effect.gen(function* () {
             .find((candidate) => candidate.id === attachmentId),
         ),
         Effect.mapError(() => unavailable),
-      ));
+      )) ??
+      // A fork shows its source's earlier messages, which stay in the source thread.
+      (thread.forkedFrom === null
+        ? undefined
+        : yield* orchestrator.getTimelinePage(thread.id, { attachmentId, limit: 1 }).pipe(
+            Effect.map(({ items }) =>
+              items
+                .flatMap(({ item }) => (item.type === "user_message" ? item.attachments : []))
+                .find((candidate) => candidate.id === attachmentId),
+            ),
+            Effect.mapError(() => unavailable),
+          ));
     const path =
       found === undefined ? null : resolveAttachmentPath({ attachmentsDir, attachment: found });
     if (found === undefined || path === null) return yield* unavailable;

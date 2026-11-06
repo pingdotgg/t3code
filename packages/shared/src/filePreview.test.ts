@@ -24,7 +24,16 @@ describe("workspace file previews", () => {
     ["db", "sqlite", "application/vnd.sqlite3"],
   ])("recognizes binary preview %s", (extension, kind, mimeType) => {
     const name = `files#draft/sample.${extension.toUpperCase()}`;
-    expect(filePreviewKind({ name, mimeType: "application/octet-stream" })).toBe(kind);
+    for (const genericMime of [
+      "",
+      "application/octet-stream",
+      "binary/octet-stream",
+      "application/unknown",
+      " APPLICATION/UNKNOWN ; charset=utf-8",
+      "text/plain",
+    ]) {
+      expect(filePreviewKind({ name, mimeType: genericMime })).toBe(kind);
+    }
     expect(filePreviewKind({ name: "download", mimeType })).toBe(kind);
     expect(isWorkspacePreviewEntryPath(name)).toBe(true);
     expect(isWorkspacePreviewEntryPath(`${name}?download=1`)).toBe(false);
@@ -79,7 +88,16 @@ describe("workspace file previews", () => {
     ["analysis.ipynb", "ipynb", "application/x-ipynb+json"],
   ])("recognizes Office assets at literal path %s", (name, kind, mimeType) => {
     expect(officePreviewKind({ name })).toBe(kind);
-    expect(filePreviewKind({ name, mimeType: "application/octet-stream" })).toBe(kind);
+    for (const genericMime of [
+      "",
+      "application/octet-stream",
+      "binary/octet-stream",
+      "application/unknown",
+      " APPLICATION/UNKNOWN ; charset=utf-8",
+      "text/plain",
+    ]) {
+      expect(filePreviewKind({ name, mimeType: genericMime })).toBe(kind);
+    }
     expect(isWorkspacePreviewEntryPath(name)).toBe(true);
     expect(hostPreviewMimeTypeFromExtension(`.${kind}`)).toBe(mimeType);
     expect(filePreviewKind({ name: "download", mimeType })).toBe(kind);

@@ -1,0 +1,39 @@
+import type * as personalize from "@distilled.cloud/aws/personalize";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `personalize:DescribeSolutionVersion` — Polls a solution version for training completion — pairs with
+ * {@link CreateSolutionVersion} in the MLOps retraining loop.
+ * Provide the implementation with
+ * `Effect.provide(AWS.Personalize.DescribeSolutionVersionHttp)`.
+ *
+ * ### Retraining Loop
+ * **Example:** Poll a Training Run
+ * ```typescript
+ * // init
+ * const describeSolutionVersion = yield* Personalize.DescribeSolutionVersion();
+ *
+ * const { solutionVersion } = yield* describeSolutionVersion({
+ *   solutionVersionArn,
+ * });
+ * const trained = solutionVersion?.status === "ACTIVE";
+ * ```
+ *
+ * @binding
+ */
+export interface DescribeSolutionVersion extends Binding.Service<
+  DescribeSolutionVersion,
+  "AWS.Personalize.DescribeSolutionVersion",
+  () => Effect.Effect<
+    (
+      request: personalize.DescribeSolutionVersionRequest,
+    ) => Effect.Effect<
+      personalize.DescribeSolutionVersionResponse,
+      personalize.DescribeSolutionVersionError
+    >
+  >
+> {}
+export const DescribeSolutionVersion = Binding.Service<DescribeSolutionVersion>(
+  "AWS.Personalize.DescribeSolutionVersion",
+);
