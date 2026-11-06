@@ -1,12 +1,11 @@
-import * as GCP from "alchemy/GCP";
-import * as Drizzle from "alchemy/Drizzle/Postgres";
+import * as Drizzle from "@alchemy.run/drizzle/Postgres";
+import * as GCP from "@alchemy.run/gcp";
 import { eq } from "drizzle-orm";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Schema from "effect/Schema";
 import { database } from "./database.ts";
-import { migrate } from "./migrate.ts";
 import { todos } from "./schema.ts";
 
 const Id = Schema.String.check(Schema.isUUID());
@@ -17,18 +16,18 @@ const Id = Schema.String.check(Schema.isUUID());
  * `GCP.SQL.Connect` mounts the instance's Unix socket into the revision
  * and grants the runtime service account `roles/cloudsql.client` on this
  * instance only; Drizzle then talks Postgres over
- * `/cloudsql/{connectionName}`.
+ * `/cloudsql/{connectionName}`. Binding the database makes the service
+ * deploy after its migrations are applied.
  */
 export default class Api extends GCP.Function<Api>()(
   "Api",
   Effect.gen(function* () {
-    // Depending on the migration output makes the service deploy after
-    // the schema exists, and roll a new revision when it changes.
-    const schemaVersion = yield* migrate;
+    const { schema } = yield* database;
     return {
       main: import.meta.url,
       invokerIamDisabled: true,
-      env: { SCHEMA_VERSION: schemaVersion },
+      // Rolls a new revision whenever the schema changes.
+      env: { SCHEMA_VERSION: schema.snapshotHash },
     };
   }),
   Effect.gen(function* () {
@@ -38,9 +37,7 @@ export default class Api extends GCP.Function<Api>()(
       user,
       passwordSecret,
     });
-    const db = yield* Drizzle.Postgres(
-      connect.pipe(Effect.map((info) => info.url)),
-    );
+    const db = yield* Drizzle.Postgres(connect.pipe(Effect.map((info) => info.url)));
 
     return {
       fetch: Effect.gen(function* () {
@@ -58,42 +55,26 @@ export default class Api extends GCP.Function<Api>()(
         if (url.pathname === "/todos" && request.method === "POST") {
           const input = yield* request.json.pipe(
             Effect.flatMap(
-              Schema.decodeUnknownEffect(
-                Schema.Struct({ id: Id, title: Schema.NonEmptyString }),
-              ),
+              Schema.decodeUnknownEffect(Schema.Struct({ id: Id, title: Schema.NonEmptyString })),
             ),
           );
-          return yield* HttpServerResponse.json(
-            yield* db.insert(todos).values(input).returning(),
-            { status: 201 },
-          );
+          return yield* HttpServerResponse.json(yield* db.insert(todos).values(input).returning(), {
+            status: 201,
+          });
         }
         if (url.pathname.startsWith("/todos/")) {
-          const id = yield* Schema.decodeUnknownEffect(Id)(
-            url.pathname.slice("/todos/".length),
-          );
+          const id = yield* Schema.decodeUnknownEffect(Id)(url.pathname.slice("/todos/".length));
           if (request.method === "GET") {
-            const [todo] = yield* db
-              .select()
-              .from(todos)
-              .where(eq(todos.id, id));
+            const [todo] = yield* db.select().from(todos).where(eq(todos.id, id));
             return todo
               ? yield* HttpServerResponse.json(todo)
               : HttpServerResponse.text("Not found", { status: 404 });
           }
           if (request.method === "PATCH") {
             const input = yield* request.json.pipe(
-              Effect.flatMap(
-                Schema.decodeUnknownEffect(
-                  Schema.Struct({ done: Schema.Boolean }),
-                ),
-              ),
+              Effect.flatMap(Schema.decodeUnknownEffect(Schema.Struct({ done: Schema.Boolean }))),
             );
-            const [todo] = yield* db
-              .update(todos)
-              .set(input)
-              .where(eq(todos.id, id))
-              .returning();
+            const [todo] = yield* db.update(todos).set(input).where(eq(todos.id, id)).returning();
             return todo
               ? yield* HttpServerResponse.json(todo)
               : HttpServerResponse.text("Not found", { status: 404 });
@@ -106,9 +87,7 @@ export default class Api extends GCP.Function<Api>()(
         return HttpServerResponse.text("Not found", { status: 404 });
       }).pipe(
         Effect.catchTag("SchemaError", () =>
-          Effect.succeed(
-            HttpServerResponse.text("Invalid request", { status: 400 }),
-          ),
+          Effect.succeed(HttpServerResponse.text("Invalid request", { status: 400 })),
         ),
         Effect.orDie,
       ),

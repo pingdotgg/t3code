@@ -1,0 +1,43 @@
+import type * as controltower from "@distilled.cloud/aws/controltower";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `controltower:ListEnabledControls`.
+ *
+ * An account-level operation that enumerates the controls (guardrails)
+ * enabled on an organizational unit — or, with a filter, across the whole
+ * organization. Useful for compliance dashboards and drift-detection
+ * functions. Provide the implementation with
+ * `Effect.provide(AWS.ControlTower.ListEnabledControlsHttp)`.
+ * ### Auditing Enablements
+ * **Example:** List Controls Enabled on an OU
+ * ```typescript
+ * // init — account-level binding takes no resource
+ * const listEnabledControls = yield* AWS.ControlTower.ListEnabledControls();
+ *
+ * // runtime
+ * const result = yield* listEnabledControls({ targetIdentifier: ouArn });
+ * const drifted = result.enabledControls.filter(
+ *   (c) => c.driftStatusSummary?.driftStatus === "DRIFTED",
+ * );
+ * ```
+ *
+ * @binding
+ */
+export interface ListEnabledControls extends Binding.Service<
+  ListEnabledControls,
+  "AWS.ControlTower.ListEnabledControls",
+  () => Effect.Effect<
+    (
+      request?: controltower.ListEnabledControlsInput,
+    ) => Effect.Effect<
+      controltower.ListEnabledControlsOutput,
+      controltower.ListEnabledControlsError
+    >
+  >
+> {}
+
+export const ListEnabledControls = Binding.Service<ListEnabledControls>(
+  "AWS.ControlTower.ListEnabledControls",
+);
