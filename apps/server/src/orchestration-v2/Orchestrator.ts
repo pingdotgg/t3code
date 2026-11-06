@@ -4705,15 +4705,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? sourceCwd
           : project.workspaceRoot;
         const status = yield* git.statusDetailsLocal(cwd).pipe(mapDispatchError(command));
+        const resolved = resolveProjectSettings(
+          settings,
+          project.projectId,
+          project,
+          Option.getOrNull(yield* projectFiles.load(project.workspaceRoot)),
+        ).settings;
+        const mode =
+          settings.forkThreadEnvMode === "inherit" ? resolved.defaultThreadEnvMode : "worktree";
+        if (mode === "worktree" && !status.isRepo) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause:
+              "A new worktree requires a Git repository. Choose workspace reuse for this folder.",
+          });
+        }
         if (status.isRepo) {
-          const resolved = resolveProjectSettings(
-            settings,
-            project.projectId,
-            project,
-            Option.getOrNull(yield* projectFiles.load(project.workspaceRoot)),
-          ).settings;
-          const mode =
-            settings.forkThreadEnvMode === "inherit" ? resolved.defaultThreadEnvMode : "worktree";
           if (mode === "worktree") {
             const checkpointId =
               command.sourcePoint.type === "checkpoint"
@@ -4722,19 +4730,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             const checkpoint = sourceProjection.checkpoints.find(
               (entry) => entry.id === checkpointId && entry.status === "ready",
             );
-            if (command.sourcePoint.type === "checkpoint" && checkpoint === undefined) {
+            if (
+              checkpoint === undefined &&
+              (command.sourcePoint.type === "checkpoint" || cwd !== sourceCwd)
+            ) {
               return yield* new OrchestratorDispatchError({
                 commandId: command.commandId,
                 commandType: command.type,
-                cause: `Checkpoint ${command.sourcePoint.checkpointId} is not ready to fork from.`,
+                cause:
+                  "The source snapshot is unavailable. Restore its checkout or choose a ready checkpoint.",
               });
             }
             const { commitSha } = yield* git
               .resolveCommit({
                 cwd,
-                revision:
-                  checkpoint?.ref ??
-                  (cwd === sourceCwd ? "HEAD" : (sourceProjection.thread.branch ?? "HEAD")),
+                revision: checkpoint?.ref ?? "HEAD",
               })
               .pipe(mapDispatchError(command));
             const available = yield* git
@@ -6198,10 +6208,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const latestRun = latestExecutedRun(projection.runs);
     const worktreeMissingRun =
       activeRun === undefined &&
-      dispatchMode.type === "queue_after_active" &&
+      requestedDispatchMode.type === "queue_after_active" &&
       (latestRun?.status === "failed" || latestRun?.status === "interrupted") &&
       latestRun.workspacePreparation?.type === "worktree" &&
-      projection.thread.worktreePath === null
+      worktreeSetupPending(projection)
         ? latestRun
         : undefined;
     const queueBehindRun = activeRun ?? worktreeMissingRun;
