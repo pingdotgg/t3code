@@ -29,6 +29,10 @@ if (
       // Exit 2 identifies document rejections; OS and process failures remain retryable.
       process.exitCode = 2;
     }
+  } else if (command === "__process-launcher") {
+    // Single executables host the launcher here; other builds start process-launcher.mjs directly.
+    const { runProcessLauncher } = await import("./process/processLauncherWorker.ts");
+    runProcessLauncher();
   } else if (command === "__managed-chatgpt-token") {
     const { runManagedChatGptTokenCli } = await import("./cli/managedChatGptToken.ts");
     await runManagedChatGptTokenCli(process.argv.slice(3));

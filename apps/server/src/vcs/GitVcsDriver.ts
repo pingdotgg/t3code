@@ -42,6 +42,7 @@ import {
   PATCH_RENDER_PREFIX_ARGS,
   splitNullSeparatedGitStdoutPaths,
 } from "./GitVcsDriverCore.ts";
+import * as ProcessLauncher from "../process/ProcessLauncher.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -1555,4 +1556,7 @@ export const make = Effect.gen(function* () {
 });
 
 export const layerVcs = Layer.effect(VcsDriver.VcsDriver, makeVcsDriver);
-export const layer = Layer.effect(GitVcsDriver, make);
+/** Runs git with the ChildProcessSpawner in context, which tests replace with fakes. */
+export const layerWithSpawner = Layer.effect(GitVcsDriver, make);
+
+export const layer = layerWithSpawner.pipe(Layer.provide(ProcessLauncher.layer));
