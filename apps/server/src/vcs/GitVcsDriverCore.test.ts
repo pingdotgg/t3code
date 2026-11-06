@@ -1881,7 +1881,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* initRepoWithCommit(cwd);
 
           if (unstaged) yield* writeTextFile(cwd, "README.md", "unstaged changes\n");
-          const error = yield* driver.commit(cwd, "empty", "").pipe(Effect.flip);
+          const error = yield* driver.commit(cwd, "empty", "").pipe(
+            Effect.provideService(HostProcess.Environment, {
+              ...(yield* HostProcess.Environment),
+              LC_ALL: "C",
+            }),
+            Effect.flip,
+          );
 
           assert.deepInclude(error, {
             _tag: "GitCommandError",
