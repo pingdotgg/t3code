@@ -84,14 +84,14 @@ describe("pull request body segmentation", () => {
   it("recognizes fences in a body with CRLF line endings", () => {
     const body = "```\r\nhttps://example.com/demo.mp4\r\n```";
     expect(splitPullRequestBody(body)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: body },
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
   });
 
   it("closes a CRLF fence, so a video after it still lifts out", () => {
     const code = '```html\r\n<video src="https://example.com/example.mp4"></video>\r\n```';
     expect(splitPullRequestBody(`${code}\r\n\r\nhttps://example.com/demo.mp4\r\n`)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: code },
+      { id: "markdown:0", kind: "markdown", text: code, sourceOffset: 0 },
       {
         id: "attachment:1",
         kind: "attachment",
