@@ -1,4 +1,5 @@
 import { OrchestratorMcpFailure, type ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -162,19 +163,20 @@ const handlers = {
         "{{units}}",
         units.join(", "),
       );
-      const orchestrator = yield* OrchestratorMcpService.OrchestratorMcpService;
-      const created = yield* orchestrator
+      const clientRequestId = `course-prep:${course.id}:${units.join(",")}:${DateTime.toEpochMillis(yield* DateTime.now)}`;
+      // Recorded before the prep turn starts, so its first course_read is already allowed.
+      yield* service
+        .recordPrepThread(
+          course.id,
+          OrchestratorMcpService.stableThreadId({ scope, requestKey: clientRequestId, index: 0 }),
+        )
+        .pipe(Effect.mapError(fail));
+      yield* (yield* OrchestratorMcpService.OrchestratorMcpService)
         .createThreads(scope, {
+          clientRequestId,
           threads: [{ title, prompt, runtimeMode: "approval-required" }],
         })
         .pipe(Effect.mapError(fail));
-      const prepThread = created.threads[0];
-      if (prepThread === undefined)
-        return yield* new OrchestratorMcpFailure({
-          code: "orchestration_error",
-          message: "Prep thread was not created.",
-        });
-      yield* service.recordPrepThread(course.id, prepThread.threadId).pipe(Effect.mapError(fail));
       return { started: true, units };
     }),
   ),
