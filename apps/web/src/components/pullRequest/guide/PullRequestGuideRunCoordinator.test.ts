@@ -5,9 +5,14 @@ import {
   type PullRequestRef,
   type PullRequestReviewGuideResult,
 } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
+import {
+  __resetClientSettingsPersistenceForTests,
+  __setClientSettingsForTests,
+} from "~/hooks/useSettings";
 import { guideRunKey, useGuideRunStore } from "./guideRunStore";
 import { startGuideRunNotifications } from "./PullRequestGuideRunCoordinator";
 
@@ -118,5 +123,53 @@ it("does not report the previous run's failure when a Running answer starts a wa
   expect(useGuideRunStore.getState().watches[key]).toBeDefined();
   registry.set(atom, AsyncResult.success(idle));
   expect(useGuideRunStore.getState().watches[key]).toBe(undefined);
+  stop();
+});
+
+it("gives each finished guide's notification its own tag within the Windows toast limit", () => {
+  using _cleanup = {
+    [Symbol.dispose]: () => {
+      vi.unstubAllGlobals();
+      __resetClientSettingsPersistenceForTests();
+    },
+  };
+  const tags: string[] = [];
+  vi.stubGlobal("document", { visibilityState: "hidden", hasFocus: () => false });
+  vi.stubGlobal(
+    "Notification",
+    class {
+      static permission = "granted";
+      constructor(_title: string, options: NotificationOptions) {
+        tags.push(options.tag!);
+      }
+      addEventListener() {}
+    },
+  );
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, notificationMode: "notifications" });
+  const registry = AtomRegistry.make();
+  const stop = startGuideRunNotifications(registry, { navigate: vi.fn() } as unknown as AnyRouter);
+  const uuidEnvironmentId = EnvironmentId.make("fd6fff30-f90b-4ee7-9812-4cf497791b90");
+  const written = {
+    guide: { generatedAt: "2026-10-01T00:00:00.000Z" },
+    run: null,
+  } as unknown as PullRequestReviewGuideResult;
+  for (const number of [1234, 1235]) {
+    registry.set(guideAtom(`${uuidEnvironmentId}:${number}`), AsyncResult.success(written));
+    useGuideRunStore.getState().watch({
+      environmentId: uuidEnvironmentId,
+      reference: {
+        projectId: ProjectId.make("a8395a98-a186-4fe7-9d4c-fb8ba63b7588"),
+        repository: "pingdotgg/t3code",
+        number,
+      },
+      title: null,
+      previousGuideAt: null,
+      previousFailedAt: null,
+      since: 0,
+    });
+  }
+  expect(tags).toHaveLength(2);
+  for (const tag of tags) expect(tag.length).toBeLessThanOrEqual(64);
+  expect(new Set(tags).size).toBe(2);
   stop();
 });
