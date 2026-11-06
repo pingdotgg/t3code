@@ -14,6 +14,16 @@ vi.mock(import("~/assets/assetUrls"), async (original) => ({
   },
 }));
 
+vi.mock(import("~/hooks/useSettings"), async (original) => {
+  const actual = await original();
+  type Settings = ReturnType<typeof actual.getClientSettings>;
+  function useClientSettings<T = Settings>(select?: (settings: Settings) => T): T {
+    const settings = { ...actual.getClientSettings(), mathRenderingEnabled: true };
+    return select ? select(settings) : (settings as T);
+  }
+  return { ...actual, useClientSettings };
+});
+
 function setup() {
   requested.length = 0;
 }
@@ -86,4 +96,15 @@ it("loads the body's host media in the pull request's repository, not the checko
       ]),
     ),
   );
+});
+
+it("keeps forge backslash escapes as literal text when math rendering is on", async () => {
+  await using screen = await renderBody("github", {
+    text: "- [CGY-47901](https://x) - \\[Endpoint MFE\\] Language dropdown missing _(New)_\n- \\(foo bar\\)",
+  });
+  await expect.element(screen.getByText(/Language dropdown missing/)).toBeInTheDocument();
+  const math = [...screen.container.querySelectorAll("[data-markdown-math]")];
+  expect(math.map((node) => node.getAttribute("data-markdown-math"))).toEqual([]);
+  expect(screen.container.textContent).toContain("[Endpoint MFE] Language dropdown missing");
+  expect(screen.container.textContent).toContain("(foo bar)");
 });
