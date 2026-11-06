@@ -1,10 +1,11 @@
+import { themeColorWithContrast } from "@t3tools/shared/themeContrast";
+
 import defaultThemeVariables from "../../generated-uniwind-default-theme-variables.json";
 import {
   DEFAULT_MOBILE_THEME_ID,
   flattenThemeColor,
   getMobileThemeVariables,
   themeColorWithAlpha,
-  themeColorWithContrast,
   type MobileThemeAppearance,
   type MobileThemeId,
   type MobileThemeVariables,
