@@ -24,6 +24,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type ProviderReplayEntry,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -322,6 +323,7 @@ const resumed = (
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
     readonly onPrompt?: (input: unknown) => void;
+    readonly readUsageLimits?: Effect.Effect<ServerProviderUsageLimits>;
   },
 ) =>
   Effect.gen(function* () {
@@ -352,6 +354,9 @@ const resumed = (
         ...(options?.resolveExtractedTextPath === undefined
           ? {}
           : { resolveExtractedTextPath: options.resolveExtractedTextPath }),
+        ...(options?.readUsageLimits === undefined
+          ? {}
+          : { readUsageLimits: options.readUsageLimits }),
       },
     );
     const thread = yield* runtime.resumeThread({
@@ -502,6 +507,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   it.effect.each([
     ["provider.quota", "usage_limit"],
     ["provider.rate-limit", "usage_limit"],
+    ["provider.go-limit", "usage_limit"],
     ["provider", "provider_error"],
   ] as const)("classifies a %s execution failure as %s", ([code, failureClass]) =>
     Effect.gen(function* () {
@@ -634,6 +640,125 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           resetAt: "2026-11-02T20:00:00.000Z",
         });
       }).pipe(Effect.scoped),
+  );
+
+  const goLimitMessage =
+    "OpenCode Go 5 hour usage limit reached. Switch to a free model, or turn on Extra Usage on the Go page in OpenCode Console to keep going.";
+  const goUsage = (rollingPercent: number): ServerProviderUsageLimits => ({
+    checkedAt: "2026-11-06T01:49:10.000Z",
+    windows: [
+      {
+        id: "go_rolling",
+        kind: "session",
+        label: "Go · Session",
+        usedPercent: rollingPercent,
+        resetsAt: "2026-11-06T04:12:00.000Z",
+      },
+      {
+        id: "go_weekly",
+        kind: "weekly",
+        label: "Go · Weekly",
+        usedPercent: 41,
+        resetsAt: "2026-11-09T00:00:00.000Z",
+      },
+    ],
+  });
+  const failWith = (error: Record<string, unknown>) =>
+    event("session.execution.failed", { sessionID: SESSION, error });
+  const endedBy = (
+    error: Record<string, unknown>,
+    readUsageLimits: Effect.Effect<ServerProviderUsageLimits>,
+  ) =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          failWith(error),
+        ],
+        { readUsageLimits },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      return yield* Fiber.join(terminal);
+    });
+
+  // regression: OpenCode Go threads stayed failed after the Go window reset instead of resuming
+  it.effect("reports a spent Go window as a usage limit that resets with that window", () =>
+    Effect.gen(function* () {
+      // OpenCode's usage endpoint can lag the gateway, so the named window wins even below 100%.
+      const ended = yield* endedBy(
+        { type: "provider.go-limit", message: goLimitMessage },
+        Effect.succeed(goUsage(97)),
+      );
+      assert.equal(ended?.status, "failed");
+      assert.deepEqual(ended?.failure, {
+        class: "usage_limit",
+        code: "provider.go-limit",
+        message: goLimitMessage,
+        retryable: null,
+        resetAt: "2026-11-06T04:12:00.000Z",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reads the reset for an older provider.quota Go limit from the spent window", () =>
+    Effect.gen(function* () {
+      const ended = yield* endedBy(
+        {
+          type: "provider.quota",
+          message: "Subscription quota exceeded.",
+          status: 429,
+          response: {
+            body: JSON.stringify({
+              type: "error",
+              error: { type: "GoUsageLimitError", message: "Subscription quota exceeded." },
+            }),
+          },
+        },
+        Effect.succeed(goUsage(100)),
+      );
+      assert.equal(ended?.failure?.class, "usage_limit");
+      assert.equal(ended?.failure?.resetAt, "2026-11-06T04:12:00.000Z");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a Go limit without a reset when Go usage cannot be read", () =>
+    Effect.gen(function* () {
+      const ended = yield* endedBy(
+        { type: "provider.go-limit", message: goLimitMessage },
+        Effect.succeed({
+          checkedAt: "2026-11-06T01:49:10.000Z",
+          windows: [],
+          unavailable: { reason: "probeFailed" },
+        }),
+      );
+      assert.deepEqual(ended?.failure, {
+        class: "usage_limit",
+        code: "provider.go-limit",
+        message: goLimitMessage,
+        retryable: null,
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not read Go usage for limits from other OpenCode providers", () =>
+    Effect.gen(function* () {
+      const ended = yield* endedBy(
+        {
+          type: "provider.rate-limit",
+          message: "Rate limit exceeded: free-models-per-min.",
+          status: 429,
+        },
+        Effect.die("Go usage must not be read for a non-Go limit"),
+      );
+      assert.deepEqual(ended?.failure, {
+        class: "usage_limit",
+        code: "provider.rate-limit",
+        message: "Rate limit exceeded: free-models-per-min.",
+        retryable: null,
+      });
+    }).pipe(Effect.scoped),
   );
 
   it.effect("ends the turn when its terminal event is one this build cannot decode", () =>

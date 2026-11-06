@@ -36,6 +36,7 @@ import {
   type ProviderInstanceId,
   type RunId,
   type RuntimeRequestId,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -88,6 +89,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
 import { openCodeCommandFailed, openCodeToolTurnItem } from "../toolItems.ts";
+import { openCodeGoLimitResetAt } from "../usageLimits.ts";
 
 const OpenCode2ProviderCapabilities = {
   sessions: {
@@ -664,7 +666,13 @@ const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["s
       };
 };
 
-export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: ProviderInstanceId) {
+export const make = Effect.fn("OpenCode2Adapter.make")(function* (
+  instanceId: ProviderInstanceId,
+  options?: {
+    /** OpenCode Go's usage windows, which carry the reset times its limit errors omit. */
+    readonly readUsageLimits?: Effect.Effect<ServerProviderUsageLimits>;
+  },
+) {
   const server = yield* OpenCode2Server.OpenCode2Server;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
@@ -2169,17 +2177,32 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // OpenCode types an empty balance as provider.quota too, but it answers
           // that with HTTP 402 and it never resets. Usage windows and budgets are 429.
           const claudeLimit = claudeUsageLimit(message);
+          // Newer OpenCode builds report a spent Go window as provider.go-limit;
+          // older ones sent provider.quota with a GoUsageLimitError body.
+          const goLimit =
+            type === "provider.go-limit" ||
+            (type === "provider.quota" &&
+              status === 429 &&
+              response?.body.includes("GoUsageLimitError") === true);
           const usageLimit =
+            goLimit ||
             (type === "provider.quota" && status !== 402) ||
             type === "provider.rate-limit" ||
             claudeLimit !== undefined;
+          // Go errors omit the reset time, so read it from Go's usage windows. Without
+          // one the thread stays limited, but it cannot resume on its own.
+          const resetAt =
+            claudeLimit?.resetAt ??
+            (goLimit && options?.readUsageLimits !== undefined
+              ? openCodeGoLimitResetAt(message, yield* options.readUsageLimits)
+              : null);
           return yield* endExecution(state, turn, {
             status: "failed",
             failure: makeProviderFailure({
               message: readableProviderErrorMessage(message, status, response?.body),
               code: type,
               class: usageLimit ? "usage_limit" : "provider_error",
-              resetAt: claudeLimit?.resetAt ?? null,
+              resetAt,
             }),
           });
         }

@@ -1,6 +1,6 @@
 import * as NodeSqlite from "node:sqlite";
 
-import type { ServerProviderUsageWindow } from "@t3tools/contracts";
+import type { ServerProviderUsageLimits, ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -82,6 +82,33 @@ const readStoredApiKey = (databasePath: string, integrationId: "opencode" | "ope
     },
     catch: (cause) => new OpenCodeCredentialReadError({ databasePath, cause }),
   }).pipe(Effect.orElseSucceed(() => undefined));
+
+const GO_LIMIT_WINDOWS = [
+  { id: "go_rolling", pattern: /\b5[ -]?hours?\b|\brolling\b|\bsession\b/i },
+  { id: "go_weekly", pattern: /\bweek(?:ly)?\b/i },
+  { id: "go_monthly", pattern: /\bmonth(?:ly)?\b/i },
+] as const;
+
+/**
+ * OpenCode Go names the spent window in its limit error ("OpenCode Go 5 hour usage
+ * limit reached") but not when it resets. The turn can run again once that window
+ * and every other spent Go window has reset.
+ */
+export function openCodeGoLimitResetAt(
+  message: string,
+  limits: ServerProviderUsageLimits,
+): string | null {
+  const named = GO_LIMIT_WINDOWS.find((window) => window.pattern.test(message))?.id;
+  let latest: string | null = null;
+  for (const window of limits.windows) {
+    if (window.id !== named && window.usedPercent < 100) continue;
+    if (window.resetsAt === undefined) continue;
+    if (latest === null || Date.parse(window.resetsAt) > Date.parse(latest)) {
+      latest = window.resetsAt;
+    }
+  }
+  return latest;
+}
 
 /** External OpenCode servers own their credentials; never read the host's account for them. */
 export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(function* (input: {
