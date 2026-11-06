@@ -113,6 +113,20 @@ describe("serverSettings helpers", () => {
       browserArtifactsAfterDays: null,
       logsAfterDays: 30,
     });
+
+    const limited = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      agentSessionImport: { conversationsPerRun: 250 },
+    });
+    expect(
+      applyServerSettingsPatch(limited, {
+        agentSessionImport: { windowDays: null, scanBudgetMiB: 256 },
+      }).agentSessionImport,
+    ).toEqual({
+      ...DEFAULT_SERVER_SETTINGS.agentSessionImport,
+      windowDays: null,
+      conversationsPerRun: 250,
+      scanBudgetMiB: 256,
+    });
   });
   it("replaces a source control host's patched field so a cleared account pin does not survive", () => {
     const pinned = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
