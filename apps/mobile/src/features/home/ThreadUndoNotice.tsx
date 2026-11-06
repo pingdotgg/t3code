@@ -10,8 +10,8 @@ import {
   useNativeLayoutMetrics,
   useNativeColumnLayoutMetrics,
 } from "../../native/native-layout-metrics";
-import { workspaceSearchBottomClearance } from "../workspace/workspace-tabs-state";
-import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import { workspaceSearchBottomClearance } from "../layout/workspace/workspace-tabs-state";
+import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import {
   dismissThreadUndoNotice,
   readThreadUndoNotice,
