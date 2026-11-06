@@ -760,9 +760,8 @@ function SpeechModelBrowser(props: {
         <>
           <p className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
             Pick languages to see models that support all of them. Accuracy is word or character
-            error rate: lower is better. Speed is Handy’s reference{" "}
-            {status.benchmarkTier === "cpu" ? "CPU" : "GPU"} benchmark for 30 seconds of audio, not
-            a measurement of this environment’s hardware.
+            error rate: lower is better. Speed is the time to transcribe 30 seconds of audio on
+            Handy’s benchmark {status.benchmarkTier === "cpu" ? "CPU" : "GPU"}.
           </p>
           <div className="@min-[32rem]/voice-models:grid @min-[32rem]/voice-models:grid-cols-[11rem_minmax(0,1fr)]">
             <div className="flex min-h-0 flex-col border-b border-border/60 bg-muted/10 @min-[32rem]/voice-models:border-r @min-[32rem]/voice-models:border-b-0">
