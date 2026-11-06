@@ -5,56 +5,9 @@ import {
   backgroundActivitySharedPolicySettings,
   getChangedBrowserSettingLabels,
   hasChangedBackgroundActivitySettings,
-  hasChangedVoiceTranscriptionSettings,
   normalizeProviderHealthIntervalSeconds,
   PROVIDER_HEALTH_INTERVAL_MIN_SECONDS,
-  shouldRestoreVoiceTranscriptionDefaults,
-  voiceTranscriptionModelOptions,
 } from "./SettingsPanels.logic";
-
-describe("voice transcription settings", () => {
-  it("only restores voice settings that were included in the confirmed reset", () => {
-    const liveSettings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      voiceTranscriptionApiKey: "key-saved-from-another-tab",
-      voiceTranscriptionModel: "gpt-4o-transcribe",
-      voiceTranscriptionEnabled: true,
-    };
-
-    expect(hasChangedVoiceTranscriptionSettings(DEFAULT_UNIFIED_SETTINGS)).toBe(false);
-    expect(hasChangedVoiceTranscriptionSettings(liveSettings)).toBe(true);
-    expect(
-      shouldRestoreVoiceTranscriptionDefaults({
-        wasIncludedInConfirmation: false,
-        liveSettings,
-      }),
-    ).toBe(false);
-    expect(
-      shouldRestoreVoiceTranscriptionDefaults({
-        wasIncludedInConfirmation: true,
-        liveSettings,
-      }),
-    ).toBe(true);
-    expect(
-      shouldRestoreVoiceTranscriptionDefaults({
-        wasIncludedInConfirmation: true,
-        liveSettings: DEFAULT_UNIFIED_SETTINGS,
-      }),
-    ).toBe(false);
-  });
-
-  it("keeps a selected model even when the latest provider list omits it", () => {
-    expect(voiceTranscriptionModelOptions(["gpt-4o-mini-transcribe"], "gpt-4o-transcribe")).toEqual(
-      ["gpt-4o-transcribe", "gpt-4o-mini-transcribe"],
-    );
-    expect(
-      voiceTranscriptionModelOptions(
-        ["gpt-4o-transcribe", "gpt-4o-mini-transcribe"],
-        "gpt-4o-transcribe",
-      ),
-    ).toEqual(["gpt-4o-transcribe", "gpt-4o-mini-transcribe"]);
-  });
-});
 
 describe("background activity settings restore", () => {
   it("detects legacy interval values even when the structured setting is at its default", () => {

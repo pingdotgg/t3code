@@ -17,6 +17,7 @@ import {
 
 import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { readThreadDetail } from "../../state/entities";
+import { getClientSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -960,7 +961,7 @@ export function VoiceSessionProvider({ children }: { readonly children: ReactNod
       };
 
       const callbacks = {
-        inputDeviceId: voiceSettings.inputDeviceId || undefined,
+        inputDeviceId: getClientSettings().voiceMicrophone || undefined,
         onRemoteStream: (stream: MediaStream) =>
           setCallStreams((current) => [current[0] ?? null, stream]),
         onEvent: handleEvent,

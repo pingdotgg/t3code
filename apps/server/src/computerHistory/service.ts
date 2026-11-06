@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import * as Duration from "effect/Duration";
+import * as Schema from "effect/Schema";
 import {
   defaultCodexHome,
   buildComputerHistoryContextBlock,
@@ -17,6 +18,11 @@ import {
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
+class ComputerHistoryFileError extends Schema.TaggedError<ComputerHistoryFileError>()(
+  "ComputerHistoryFileError",
+  { operation: Schema.Literals(["loadContext", "summarize"]), cause: Schema.Defect() },
+) {}
+
 export const loadComputerHistoryContext = Effect.fn("computerHistory.loadContext")(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const settings = yield* ServerSettings.ServerSettingsService;
@@ -25,9 +31,10 @@ export const loadComputerHistoryContext = Effect.fn("computerHistory.loadContext
     return undefined;
   }
   const root = resolveComputerHistoryRoot(config.stateDir);
-  const markdown = yield* Effect.tryPromise(() => loadRecentContextMarkdown(root)).pipe(
-    Effect.orElseSucceed(() => undefined),
-  );
+  const markdown = yield* Effect.tryPromise({
+    try: () => loadRecentContextMarkdown(root),
+    catch: (cause) => new ComputerHistoryFileError({ operation: "loadContext", cause }),
+  }).pipe(Effect.orElseSucceed(() => undefined));
   if (!markdown) return undefined;
   return buildComputerHistoryContextBlock(markdown);
 });
@@ -56,12 +63,14 @@ export const runComputerHistorySummarization = Effect.fn("computerHistory.summar
   }
   const root = resolveComputerHistoryRoot(config.stateDir);
   const codexHome = defaultCodexHome();
-  return yield* Effect.tryPromise(() =>
-    runSummarizationPass(root, {
-      mirrorToCodex: snapshot.computerHistory.mirrorToCodex,
-      codexHome,
-    }),
-  ).pipe(Effect.orElseSucceed(() => ({ created: 0 })));
+  return yield* Effect.tryPromise({
+    try: () =>
+      runSummarizationPass(root, {
+        mirrorToCodex: snapshot.computerHistory.mirrorToCodex,
+        codexHome,
+      }),
+    catch: (cause) => new ComputerHistoryFileError({ operation: "summarize", cause }),
+  }).pipe(Effect.orElseSucceed(() => ({ created: 0 })));
 });
 
 /**

@@ -121,6 +121,8 @@ import Migration0086 from "./Migrations/077_RepairBooleanSettledOverride.ts";
 import Migration0087 from "./Migrations/078_DropOrchestrationEventCorrelationIndex.ts";
 // Upstream 079 (delegated recovery indexes); registered as the next free fork id.
 import Migration0088 from "./Migrations/079_DelegatedRecoveryIndexes.ts";
+// Upstream 080 (scheduled task thread mode); registered as the next free fork id.
+import Migration0089 from "./Migrations/080_ScheduledTaskThreadMode.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -228,6 +230,8 @@ const migrationEntries = [
   [87, "DropOrchestrationEventCorrelationIndex", Migration0087],
   // Upstream 079 (delegated recovery indexes); next free fork id.
   [88, "DelegatedRecoveryIndexes", Migration0088],
+  // Upstream 080 (scheduled task thread mode); next free fork id.
+  [89, "ScheduledTaskThreadMode", Migration0089],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

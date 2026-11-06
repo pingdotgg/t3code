@@ -58,7 +58,8 @@ const billedEventIdentity = (...fields: readonly unknown[]) => JSON.stringify(fi
 
 const textEncoder = new TextEncoder();
 
-const accountHash = Effect.fn("accountHash")(function* (value: string) {
+// Untraced: each usage scan hashes every billed event.
+const accountHash = Effect.fnUntraced(function* (value: string) {
   const digest = yield* Digest.Digest;
   return Hex.encode(yield* digest.digest(Digest.sha256, textEncoder.encode(value)));
 });

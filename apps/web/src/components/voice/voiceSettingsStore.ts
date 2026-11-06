@@ -110,9 +110,6 @@ export type VoiceNoiseReduction = (typeof VOICE_NOISE_REDUCTION_OPTIONS)[number]
 export interface VoiceSettingsState {
   readonly provider: "codex-account" | "openai-api";
   readonly setProvider: (provider: "codex-account" | "openai-api") => void;
-  /** Empty means the system default input device. */
-  readonly inputDeviceId: string;
-  readonly setInputDeviceId: (inputDeviceId: string) => void;
   /** Empty means whichever voice Codex defaults to. */
   readonly codexVoice: CodexVoiceName;
   readonly setCodexVoice: (codexVoice: CodexVoiceName) => void;
@@ -204,7 +201,6 @@ if (typeof window !== "undefined") {
 
 const defaults = {
   provider: "codex-account",
-  inputDeviceId: "",
   codexVoice: "",
   model: "gpt-realtime-2.1-mini",
   voice: "marin",
@@ -220,7 +216,6 @@ export const useVoiceSettingsStore = create<VoiceSettingsState>()(
     (set) => ({
       ...defaults,
       setProvider: (provider) => set({ provider }),
-      setInputDeviceId: (inputDeviceId) => set({ inputDeviceId }),
       setCodexVoice: (codexVoice) => set({ codexVoice }),
       setModel: (model) => set({ model }),
       setVoice: (voice) => set({ voice }),
@@ -238,7 +233,6 @@ export const useVoiceSettingsStore = create<VoiceSettingsState>()(
       ),
       partialize: (state) => ({
         provider: state.provider,
-        inputDeviceId: state.inputDeviceId,
         codexVoice: state.codexVoice,
         model: state.model,
         voice: state.voice,
@@ -253,7 +247,6 @@ export const useVoiceSettingsStore = create<VoiceSettingsState>()(
         return {
           ...current,
           provider: value?.provider === "openai-api" ? "openai-api" : "codex-account",
-          inputDeviceId: typeof value?.inputDeviceId === "string" ? value.inputDeviceId : "",
           codexVoice: isCodexVoiceName(value?.codexVoice) ? value.codexVoice : "",
           model: isVoiceRealtimeModel(value?.model) ? value.model : defaults.model,
           voice: isVoiceName(value?.voice) ? value.voice : defaults.voice,

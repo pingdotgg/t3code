@@ -1,5 +1,5 @@
 import * as Cause from "effect/Cause";
-import * as Duration from "effect/Duration";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -23,6 +23,7 @@ import * as DesktopDeepLink from "./DesktopDeepLink.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
+import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLegacyLocalStorage from "./DesktopLegacyLocalStorage.ts";
@@ -48,6 +49,11 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
 const DESKTOP_BACKEND_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::"] as const;
+
+const LinuxDesktopSessionConfig = Config.all({
+  current: Config.String("XDG_CURRENT_DESKTOP").pipe(Config.option),
+  session: Config.String("XDG_SESSION_DESKTOP").pipe(Config.option),
+});
 
 const makeDesktopRunId = SecureRandom.SecureRandom.pipe(
   Effect.flatMap((random) => random.uuidV4()),
@@ -161,7 +167,7 @@ const stopAllPoolInstances = Effect.fn("desktop.app.stopAllPoolInstances")(
     const instances = yield* pool.list;
     yield* Effect.forEach(
       instances,
-      (instance) => instance.stop({ timeout: Duration.seconds(5) }),
+      (instance) => instance.stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT }),
       { concurrency: "unbounded" },
     );
   },
@@ -346,12 +352,13 @@ const startup = Effect.gen(function* () {
   yield* logStartupInfo("runtime logging configured", { logDir: environment.logDir });
 
   if (linuxElectronOptions !== null) {
+    const xdgDesktop = yield* LinuxDesktopSessionConfig;
     yield* logStartupInfo("linux password store configured", {
       passwordStore: hasCommandLinePasswordStore
         ? "command-line"
         : (linuxElectronOptions.passwordStore ?? "electron-default"),
-      xdgCurrentDesktop: process.env.XDG_CURRENT_DESKTOP ?? null,
-      xdgSessionDesktop: process.env.XDG_SESSION_DESKTOP ?? null,
+      xdgCurrentDesktop: Option.getOrNull(xdgDesktop.current),
+      xdgSessionDesktop: Option.getOrNull(xdgDesktop.session),
     });
   }
 
@@ -407,7 +414,11 @@ const scopedProgram = Effect.scoped(
         // finalizer means it gets hard-killed by the OS instead of
         // receiving SIGTERM + grace. Upstream's helper also bounds the wait.
         yield* stopAllPoolInstances();
-      }).pipe(Effect.ensuring(rendererHistory.shutdown), Effect.ensuring(shutdown.markComplete)),
+      }).pipe(
+        Effect.ensuring(rendererHistory.shutdown),
+        Effect.ensuring(shutdown.markComplete),
+        Effect.withSpan("desktop.app.shutdown"),
+      ),
     );
 
     yield* startup;

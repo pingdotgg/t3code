@@ -13,6 +13,12 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+
+class MunimComputerUseManifestError extends Schema.TaggedError<MunimComputerUseManifestError>()(
+  "MunimComputerUseManifestError",
+  { cause: Schema.Defect() },
+) {}
 
 /**
  * Locate the desktop-control MCP server: the munim-computer-use binary, run by
@@ -221,9 +227,10 @@ const fetchedReleaseBinary = Effect.fn("desktopControl.fetchedReleaseBinary")(fu
     .readFileString(manifestPath)
     .pipe(Effect.orElseSucceed(() => undefined));
   if (text === undefined) return undefined;
-  const manifest = yield* Effect.try(() => parseMunimComputerUseManifest(text)).pipe(
-    Effect.orElseSucceed(() => undefined),
-  );
+  const manifest = yield* Effect.try({
+    try: () => parseMunimComputerUseManifest(text),
+    catch: (cause) => new MunimComputerUseManifestError({ cause }),
+  }).pipe(Effect.orElseSucceed(() => undefined));
   if (manifest === undefined) return undefined;
   const version = manifest.version;
   const arch = yield* HostProcess.Architecture;

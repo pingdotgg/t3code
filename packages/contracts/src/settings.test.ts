@@ -14,6 +14,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
   idleCompactionPatch,
+  PROJECT_SCOPED_SERVER_SETTING_KEYS,
   requiredScopesForProjectMutation,
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
@@ -900,19 +901,19 @@ describe("ServerSettings thread settlement", () => {
   });
 });
 
-describe("ClientSettings voice transcription", () => {
-  it("defaults to OpenAI and accepts Groq", () => {
-    const settings = decodeClientSettings({});
+describe("ClientSettings retired fork dictation keys", () => {
+  it("ignores the cloud dictation keys older MT Code builds persisted", () => {
+    const settings = decodeClientSettings({
+      voiceTranscriptionEnabled: true,
+      voiceTranscriptionProvider: "groq",
+      voiceTranscriptionApiKey: "sk-old",
+      voiceTranscriptionModel: "whisper-large-v3",
+      soundNotificationsEnabled: false,
+    });
 
-    expect(settings.voiceTranscriptionProvider).toBe("openai");
-    expect(settings.voiceTranscriptionModel).toBe("");
-    expect(
-      decodeClientSettingsPatch({ voiceTranscriptionProvider: "groq" }).voiceTranscriptionProvider,
-    ).toBe("groq");
-    expect(
-      decodeClientSettingsPatch({ voiceTranscriptionModel: " whisper-large-v3 " })
-        .voiceTranscriptionModel,
-    ).toBe("whisper-large-v3");
+    expect(settings).not.toHaveProperty("voiceTranscriptionApiKey");
+    expect(settings.soundNotificationsEnabled).toBe(false);
+    expect(settings.voiceMicrophone).toBe("");
   });
 });
 
@@ -1179,6 +1180,39 @@ describe("requiredScopesForProjectMutation", () => {
         scripts: [],
       }),
     ).toEqual(["orchestration:operate", "settings:write"]);
+  });
+});
+
+describe("voice settings", () => {
+  it("does not import voice consent from ordinary device preferences", () => {
+    const imported = {
+      voiceTranscriptionEnvironmentId: "env-1",
+      voiceTranscriptionDestination: { kind: "environment", environmentId: "env-1" },
+      speechPostProcessingEnabled: true,
+    };
+    expect(decodeClientSettings({}).speechSilenceFiltering).toBe(true);
+    expect(decodeClientSettingsPatch({ speechSilenceFiltering: false })).toEqual({
+      speechSilenceFiltering: false,
+    });
+    for (const key of Object.keys(imported)) {
+      expect(decodeClientSettings(imported)).not.toHaveProperty(key);
+      expect(decodeClientSettingsPatch(imported)).not.toHaveProperty(key);
+    }
+  });
+
+  it("keeps the correction cue personal and project vocabulary on the environment", () => {
+    expect(decodeClientSettings({}).speechCorrectionWord).toBe("");
+    expect(() => decodeClientSettingsPatch({ speechCorrectionWord: "x".repeat(51) })).toThrow();
+    expect(DEFAULT_SERVER_SETTINGS.speechProjectCustomWords).toEqual([]);
+    expect(PROJECT_SCOPED_SERVER_SETTING_KEYS).toContain("speechProjectCustomWords");
+  });
+
+  it("stores the transcription model and resources on the environment", () => {
+    expect(DEFAULT_SERVER_SETTINGS).toMatchObject({
+      speechModelId: "handy-computer/parakeet-unified-en-0.6b-gguf",
+      speechAcceleration: "auto",
+      speechModelUnloadTimeout: "min_15",
+    });
   });
 });
 

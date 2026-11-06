@@ -133,3 +133,17 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
     }
   });
 });
+
+it("keeps the caret in place when an edit briefly makes the folder path not a path", async () => {
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByText("Local folder", { exact: true }).click();
+  const input = () => page.getByRole("combobox");
+  await input().fill("/workspace/project");
+  await userEvent.keyboard("{Home}{ArrowRight}{Backspace}");
+  await expect.element(input()).toHaveValue("workspace/project");
+  await userEvent.keyboard("/");
+  await expect.element(input()).toHaveValue("/workspace/project");
+  await userEvent.keyboard("w");
+  await expect.element(input()).toHaveValue("/wworkspace/project");
+});

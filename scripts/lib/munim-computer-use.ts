@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalFetch:off - release fetch/verify/extract is plain file work, run outside any Effect runtime.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalFetch:off extendsNativeError:off - release fetch/verify/extract is plain file work, run outside any Effect runtime.
 /**
  * Fetch, verify and stage munim-computer-use, the desktop-control MCP server
  * MT Code ships (github.com/munimtechnologies/munim-computer-use).
@@ -16,6 +16,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
+import * as Schema from "effect/Schema";
 
 import {
   MTCODE_AGENT_CURSOR_BUNDLE_ID,
@@ -44,7 +45,10 @@ const LOCAL_EXTENSION_ENV = "MTCODE_COMPUTER_USE_EXTENSION_DIR";
 /** Marker written after a verified unpack; its content is the archive's sha256. */
 const VERIFIED_MARKER = ".verified-sha256";
 
-class MunimComputerUseError extends Error {}
+class MunimComputerUseError extends Schema.TaggedError<MunimComputerUseError>()(
+  "MunimComputerUseError",
+  { message: Schema.String },
+) {}
 
 export async function readManifest(repoRoot: string): Promise<MunimComputerUseManifest> {
   const text = await NodeFSP.readFile(
@@ -83,11 +87,12 @@ export async function fetchPinnedAsset(options: FetchOptions): Promise<string> {
   const { manifest, key } = options;
   const problems = munimComputerUsePinProblems(manifest, [key]);
   if (problems.length > 0) {
-    throw new MunimComputerUseError(
-      `${MUNIM_COMPUTER_USE_MANIFEST_PATH} is not filled in for ${key}: ${problems.join("; ")}. ` +
+    throw new MunimComputerUseError({
+      message:
+        `${MUNIM_COMPUTER_USE_MANIFEST_PATH} is not filled in for ${key}: ${problems.join("; ")}. ` +
         `Publish the munim-computer-use release first and pin its version and SHA256SUMS here, ` +
         `or stage a local build with ${LOCAL_BINARY_ENV} / ${LOCAL_EXTENSION_ENV}.`,
-    );
+    });
   }
   const asset = manifest.assets[key]!;
   const cacheDir = munimComputerUseCacheDir({
@@ -113,9 +118,9 @@ export async function fetchPinnedAsset(options: FetchOptions): Promise<string> {
     await (options.download ?? downloadTo)(url, archive);
     const actual = await sha256File(archive);
     if (actual !== asset.sha256) {
-      throw new MunimComputerUseError(
-        `${asset.name} sha256 mismatch: pinned ${asset.sha256}, downloaded ${actual}`,
-      );
+      throw new MunimComputerUseError({
+        message: `${asset.name} sha256 mismatch: pinned ${asset.sha256}, downloaded ${actual}`,
+      });
     }
     await NodeFSP.rm(cacheDir, { recursive: true, force: true });
     await NodeFSP.mkdir(cacheDir, { recursive: true });
@@ -130,7 +135,9 @@ export async function fetchPinnedAsset(options: FetchOptions): Promise<string> {
 async function downloadTo(url: string, destination: string): Promise<void> {
   const response = await fetch(url, { redirect: "follow" });
   if (!response.ok || !response.body) {
-    throw new MunimComputerUseError(`GET ${url} failed: ${response.status} ${response.statusText}`);
+    throw new MunimComputerUseError({
+      message: `GET ${url} failed: ${response.status} ${response.statusText}`,
+    });
   }
   await NodeFSP.writeFile(destination, Buffer.from(await response.arrayBuffer()));
 }
@@ -199,7 +206,9 @@ export async function stageMunimComputerUse(options: StageOptions): Promise<stri
     ["extension manifest", NodePath.join(extensionSource, "manifest.json")],
   ] as const) {
     if (!NodeFS.existsSync(path)) {
-      throw new MunimComputerUseError(`munim-computer-use ${label} not found at ${path}`);
+      throw new MunimComputerUseError({
+        message: `munim-computer-use ${label} not found at ${path}`,
+      });
     }
   }
 

@@ -1,20 +1,18 @@
 import type { OrchestrationProjectShell } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
-export type ComputerTaskDispatchErrorCode =
-  | "dispatch_failed"
-  | "project_not_found"
-  | "project_ambiguous"
-  | "computer_offline";
+export const ComputerTaskDispatchErrorCode = Schema.Literals([
+  "dispatch_failed",
+  "project_not_found",
+  "project_ambiguous",
+  "computer_offline",
+]);
+export type ComputerTaskDispatchErrorCode = typeof ComputerTaskDispatchErrorCode.Type;
 
-export class ComputerTaskDispatchError extends Error {
-  readonly code: ComputerTaskDispatchErrorCode;
-
-  constructor(code: ComputerTaskDispatchErrorCode, detail: string) {
-    super(detail);
-    this.name = "ComputerTaskDispatchError";
-    this.code = code;
-  }
-}
+export class ComputerTaskDispatchError extends Schema.TaggedError<ComputerTaskDispatchError>()(
+  "ComputerTaskDispatchError",
+  { code: ComputerTaskDispatchErrorCode, message: Schema.String },
+) {}
 
 function basename(path: string): string {
   const trimmed = path.replaceAll("\\", "/").replace(/\/+$/, "");
@@ -99,10 +97,10 @@ export function requireMatchedProject(
   matched: ReturnType<typeof matchProject>,
 ): OrchestrationProjectShell {
   if ("error" in matched) {
-    throw new ComputerTaskDispatchError(
-      matched.error === "not_found" ? "project_not_found" : "project_ambiguous",
-      matched.detail,
-    );
+    throw new ComputerTaskDispatchError({
+      code: matched.error === "not_found" ? "project_not_found" : "project_ambiguous",
+      message: matched.detail,
+    });
   }
   return matched;
 }

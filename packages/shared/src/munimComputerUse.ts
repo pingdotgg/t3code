@@ -1,3 +1,4 @@
+// @effect-diagnostics extendsNativeError:off - plain parse helper shared with build scripts and Electron main, outside any Effect runtime.
 /**
  * MT Code runs its desktop-control MCP server from the open-source
  * munim-computer-use project (github.com/munimtechnologies/munim-computer-use)

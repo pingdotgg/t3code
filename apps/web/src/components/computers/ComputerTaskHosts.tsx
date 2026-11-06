@@ -15,6 +15,7 @@ import {
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 
@@ -83,7 +84,7 @@ function createComputerTaskRequestConsumerAtom<E>(options: {
             requestId: event.request.requestId,
             ok: false,
             error: {
-              code: error instanceof ComputerTaskDispatchError ? error.code : "dispatch_failed",
+              code: Schema.is(ComputerTaskDispatchError)(error) ? error.code : "dispatch_failed",
               detail:
                 error instanceof Error
                   ? error.message
@@ -230,10 +231,11 @@ async function waitForTargetSnapshot(
     }
     await sleep(TARGET_READY_POLL_MS);
   }
-  throw new ComputerTaskDispatchError(
-    "computer_offline",
-    lastPhase === "connected"
-      ? "That computer connected but T3 has not loaded its projects yet."
-      : `Could not reach that computer. Keep ${APP_DISPLAY_NAME} running there, or pick it in Run on first.`,
-  );
+  throw new ComputerTaskDispatchError({
+    code: "computer_offline",
+    message:
+      lastPhase === "connected"
+        ? "That computer connected but T3 has not loaded its projects yet."
+        : `Could not reach that computer. Keep ${APP_DISPLAY_NAME} running there, or pick it in Run on first.`,
+  });
 }

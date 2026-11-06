@@ -8,7 +8,6 @@ import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { injectMcpAppCookieBootstrap, injectMcpAppThemeBootstrap } from "@t3tools/shared/mcpApp";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as ByteSize from "effect/ByteSize";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -55,19 +54,8 @@ import {
   DESKTOP_RENDERER_ORIGINS,
 } from "./httpCors.ts";
 import { requestUrl } from "./requestUrl.ts";
-import {
-  forwardVoiceTranscription,
-  listVoiceTranscriptionModels,
-  MAX_TRANSCRIPTION_AUDIO_BYTES,
-  readTranscriptionAudio,
-  resolveTranscriptionProvider,
-  transcriptionEnvironmentApiKeyStatus,
-  TranscriptionProviderUnsupportedError,
-} from "./transcription.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
-const TRANSCRIPTION_PATH = "/api/transcription";
-const TRANSCRIPTION_MODELS_PATH = "/api/transcription/models";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 const INERT_TEXT_HEADERS = {
@@ -347,9 +335,10 @@ export const layerServerEnvironmentHttpApi = HttpApiBuilder.group(
   }),
 );
 
-class DecodeOtlpTraceRecordsError extends Data.TaggedError("DecodeOtlpTraceRecordsError")<{
-  readonly cause: unknown;
-}> {}
+class DecodeOtlpTraceRecordsError extends Schema.TaggedError<DecodeOtlpTraceRecordsError>()(
+  "DecodeOtlpTraceRecordsError",
+  { cause: Schema.Defect() },
+) {}
 
 // Tracing once-per-second renderer exports would create more spans than it forwards.
 export const layerOtlpTracesProxyRoute = HttpRouter.add(
@@ -404,124 +393,6 @@ export const layerOtlpTracesProxyRoute = HttpRouter.add(
     }),
     Effect.withTracerEnabled(false),
   ),
-);
-
-const transcriptionConfigRouteLayer = HttpRouter.add(
-  "GET",
-  TRANSCRIPTION_PATH,
-  Effect.gen(function* () {
-    yield* authenticateRawRouteWithScope(AuthOrchestrationOperateScope);
-    const [openai, groq] = yield* Effect.all([
-      transcriptionEnvironmentApiKeyStatus("openai"),
-      transcriptionEnvironmentApiKeyStatus("groq"),
-    ]);
-    return HttpServerResponse.jsonUnsafe({ openai, groq });
-  }).pipe(
-    Effect.catchTags({
-      EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
-      EnvironmentInternalError: HttpServerRespondable.toResponse,
-      EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
-    }),
-  ),
-);
-
-const transcriptionUploadRouteLayer = HttpRouter.add(
-  "POST",
-  TRANSCRIPTION_PATH,
-  Effect.gen(function* () {
-    yield* authenticateRawRouteWithScope(AuthOrchestrationOperateScope);
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const declaredLength = Number(request.headers["content-length"] ?? "0");
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_TRANSCRIPTION_AUDIO_BYTES) {
-      return HttpServerResponse.jsonUnsafe(
-        { error: "The recording exceeds the 25 MB limit." },
-        { status: 413 },
-      );
-    }
-
-    const provider = resolveTranscriptionProvider(
-      request.headers["x-t3-transcription-provider"] ?? "",
-    );
-    if (!provider) {
-      return yield* new TranscriptionProviderUnsupportedError();
-    }
-
-    const audio = yield* readTranscriptionAudio(request.stream);
-    const text = yield* forwardVoiceTranscription({
-      audio,
-      audioMimeType: request.headers["content-type"] ?? "audio/webm",
-      provider,
-      apiKey: request.headers["x-t3-transcription-api-key"] ?? "",
-      model: request.headers["x-t3-transcription-model"] ?? "",
-    });
-    return HttpServerResponse.jsonUnsafe({ text });
-  }).pipe(
-    Effect.catchTags({
-      EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
-      EnvironmentInternalError: HttpServerRespondable.toResponse,
-      EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
-      TranscriptionAudioTooLargeError: (error) =>
-        Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 413 })),
-      TranscriptionApiKeyMissingError: (error) =>
-        Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 400 })),
-      TranscriptionBodyReadError: (error) =>
-        Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 400 })),
-      TranscriptionEmptyAudioError: (error) =>
-        Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 400 })),
-      TranscriptionModelMissingError: (error) =>
-        Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 400 })),
-      TranscriptionProviderError: (error) =>
-        Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 502 })),
-      TranscriptionProviderUnsupportedError: (error) =>
-        Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 400 })),
-      TranscriptionRequestError: (error) =>
-        Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 502 })),
-      TranscriptionResponseError: (error) =>
-        Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 502 })),
-    }),
-  ),
-);
-
-const transcriptionModelsRouteLayer = HttpRouter.add(
-  "GET",
-  TRANSCRIPTION_MODELS_PATH,
-  Effect.gen(function* () {
-    yield* authenticateRawRouteWithScope(AuthOrchestrationOperateScope);
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const provider = resolveTranscriptionProvider(
-      request.headers["x-t3-transcription-provider"] ?? "",
-    );
-    if (!provider) {
-      return yield* new TranscriptionProviderUnsupportedError();
-    }
-    const models = yield* listVoiceTranscriptionModels({
-      provider,
-      apiKey: request.headers["x-t3-transcription-api-key"] ?? "",
-    });
-    return HttpServerResponse.jsonUnsafe({ models });
-  }).pipe(
-    Effect.catchTags({
-      EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
-      EnvironmentInternalError: HttpServerRespondable.toResponse,
-      EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
-      TranscriptionApiKeyMissingError: (error) =>
-        Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 400 })),
-      TranscriptionProviderError: (error) =>
-        Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 502 })),
-      TranscriptionProviderUnsupportedError: (error) =>
-        Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 400 })),
-      TranscriptionRequestError: (error) =>
-        Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 502 })),
-      TranscriptionResponseError: (error) =>
-        Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 502 })),
-    }),
-  ),
-);
-
-export const transcriptionRouteLayer = Layer.mergeAll(
-  transcriptionConfigRouteLayer,
-  transcriptionModelsRouteLayer,
-  transcriptionUploadRouteLayer,
 );
 
 const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_PATH]);

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { ActivityIndicator, Pressable, View } from "react-native";
 
 import * as Dialog from "../../components/ui/Dialog";
+import { SheetHeader } from "../../components/ui/SheetHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -71,43 +72,50 @@ export function SettingsEnvironmentRenameRouteScreen({
   };
 
   return (
-    <View className="flex-1 gap-5 bg-sheet px-5 pt-5">
-      <View className="gap-1.5">
-        <Text className="text-sm text-foreground-muted">
-          Clear the name to use the environment's machine name.
-        </Text>
-        <TextInput
-          autoFocus
-          autoCapitalize="words"
-          autoCorrect={false}
-          maxLength={40}
-          placeholder="Environment name"
-          value={label}
-          editable={!saving && environment !== undefined}
-          onChangeText={setLabel}
-          onSubmitEditing={() => void save()}
-          className="rounded-[14px] border border-input-border bg-input px-4 py-3 text-base text-foreground"
-        />
-      </View>
-      <View className="flex-row gap-3">
-        <Pressable
-          className="min-h-[46px] flex-1 items-center justify-center rounded-[14px] border border-input-border bg-input active:opacity-70"
-          disabled={saving}
-          onPress={() => navigation.goBack()}
-        >
-          <Text className="font-t3-bold text-foreground">Cancel</Text>
-        </Pressable>
-        <Pressable
-          className="min-h-[46px] flex-1 items-center justify-center rounded-[14px] bg-primary active:opacity-70 disabled:opacity-50"
-          disabled={saving || environment === undefined}
-          onPress={() => void save()}
-        >
-          {saving ? (
-            <ActivityIndicator color="white" />
-          ) : (
-            <Text className="font-t3-bold text-primary-foreground">Save</Text>
-          )}
-        </Pressable>
+    <View collapsable={false} className="flex-1 bg-sheet">
+      <SheetHeader
+        title="Rename Environment"
+        dismissDisabled={saving}
+        onClose={() => navigation.goBack()}
+      />
+      <View className="flex-1 gap-5 px-5 pt-5">
+        <View className="gap-1.5">
+          <Text className="text-sm text-foreground-muted">
+            Clear the name to use the environment's machine name.
+          </Text>
+          <TextInput
+            autoFocus
+            autoCapitalize="words"
+            autoCorrect={false}
+            maxLength={40}
+            placeholder="Environment name"
+            value={label}
+            editable={!saving && environment !== undefined}
+            onChangeText={setLabel}
+            onSubmitEditing={() => void save()}
+            className="rounded-[14px] border border-input-border bg-input px-4 py-3 text-base text-foreground"
+          />
+        </View>
+        <View className="flex-row gap-3">
+          <Pressable
+            className="min-h-[46px] flex-1 items-center justify-center rounded-[14px] border border-input-border bg-input active:opacity-70"
+            disabled={saving}
+            onPress={() => navigation.goBack()}
+          >
+            <Text className="font-t3-bold text-foreground">Cancel</Text>
+          </Pressable>
+          <Pressable
+            className="min-h-[46px] flex-1 items-center justify-center rounded-[14px] bg-primary active:opacity-70 disabled:opacity-50"
+            disabled={saving || environment === undefined}
+            onPress={() => void save()}
+          >
+            {saving ? (
+              <ActivityIndicator color="white" />
+            ) : (
+              <Text className="font-t3-bold text-primary-foreground">Save</Text>
+            )}
+          </Pressable>
+        </View>
       </View>
     </View>
   );

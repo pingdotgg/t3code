@@ -5,7 +5,7 @@ import type {
   RuntimeMode,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { AudioLinesIcon, BotIcon, MicIcon, PencilRulerIcon } from "lucide-react";
+import { AudioLinesIcon, BotIcon, PencilRulerIcon } from "lucide-react";
 import { type ComponentProps, memo, useId, useRef, useState } from "react";
 
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
@@ -248,6 +248,7 @@ export function ComposerPermissionsSection(props: {
 }
 
 export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
+  children?: React.ReactNode;
   compact: boolean;
   canOperateThread: boolean;
   activeContextWindow: ContextWindowSnapshot | null;
@@ -268,6 +269,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   alternateShortcutLabel: string | null;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
+  voiceInputActive?: boolean;
   isSendBusy: boolean;
   sendDisabledReason: string | null;
   isEnvironmentUnavailable: boolean;
@@ -300,6 +302,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
       ) : props.reserveContextWindowMeter ? (
         <ContextWindowMeterPlaceholder />
       ) : null}
+      {props.children}
       <ComposerPrimaryActions
         compact={props.compact}
         canOperateThread={props.canOperateThread}
@@ -311,6 +314,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         alternateShortcutLabel={props.alternateShortcutLabel}
         showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
         promptHasText={props.promptHasText}
+        voiceInputActive={props.voiceInputActive ?? false}
         isSendBusy={props.isSendBusy}
         sendDisabledReason={props.sendDisabledReason}
         isEnvironmentUnavailable={props.isEnvironmentUnavailable}
@@ -332,13 +336,10 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   );
 });
 
-/** MT Code: dictation and voice-session buttons beside the composer's send action. */
+/** MT Code: realtime voice-session button beside the composer's send action. */
 export const ComposerVoiceActions = memo(function ComposerVoiceActions(props: {
-  showDictation: boolean;
-  dictationDisabled: boolean;
   voiceSessionActive: boolean;
   preserveComposerFocusOnPointerDown: boolean;
-  onStartDictation: () => void;
   onStartVoiceSession: () => void;
 }) {
   const preventFocusLoss = props.preserveComposerFocusOnPointerDown
@@ -348,51 +349,28 @@ export const ComposerVoiceActions = memo(function ComposerVoiceActions(props: {
     ? "Open active voice session"
     : "Start voice session";
   return (
-    <>
-      {props.showDictation ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="ghost-muted"
-                disabled={props.dictationDisabled}
-                className="rounded-full"
-                onPointerDown={preventFocusLoss}
-                onClick={props.onStartDictation}
-                aria-label="Start dictation"
-              >
-                <MicIcon className="size-4" />
-              </Button>
-            }
-          />
-          <TooltipPopup side="top">Start dictation</TooltipPopup>
-        </Tooltip>
-      ) : null}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              type="button"
-              size="icon-sm"
-              variant="ghost-muted"
-              className={cn(
-                "rounded-full",
-                props.voiceSessionActive &&
-                  "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
-              )}
-              onPointerDown={preventFocusLoss}
-              onClick={props.onStartVoiceSession}
-              aria-label={voiceSessionLabel}
-            >
-              <AudioLinesIcon className="size-4" />
-            </Button>
-          }
-        />
-        <TooltipPopup side="top">{voiceSessionLabel}</TooltipPopup>
-      </Tooltip>
-    </>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost-muted"
+            className={cn(
+              "rounded-full",
+              props.voiceSessionActive &&
+                "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+            )}
+            onPointerDown={preventFocusLoss}
+            onClick={props.onStartVoiceSession}
+            aria-label={voiceSessionLabel}
+          >
+            <AudioLinesIcon className="size-4" />
+          </Button>
+        }
+      />
+      <TooltipPopup side="top">{voiceSessionLabel}</TooltipPopup>
+    </Tooltip>
   );
 });
 

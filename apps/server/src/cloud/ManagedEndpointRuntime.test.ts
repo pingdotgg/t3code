@@ -1,6 +1,8 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -80,6 +82,7 @@ const buildCloudManagedEndpointRuntime = (
   relayClientLayer = layerRelayClientAvailable,
   httpClient = unusedHttpClient,
   secretStoreLayer = emptySecretStoreLayer,
+  env: Record<string, string> = {},
 ) =>
   Effect.gen(function* () {
     const context = yield* Layer.build(
@@ -90,7 +93,10 @@ const buildCloudManagedEndpointRuntime = (
     return yield* Effect.service(ManagedEndpointRuntime.CloudManagedEndpointRuntime).pipe(
       Effect.provide(context),
     );
-  });
+  }).pipe(
+    Effect.provideService(HostProcess.Environment, env),
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+  );
 
 function makeHandle(input: {
   readonly pid: number;
@@ -345,19 +351,6 @@ describe("CloudManagedEndpointRuntime", () => {
       isRunning?: Effect.Effect<boolean>;
     } = {},
   ) {
-    yield* Effect.acquireRelease(
-      Effect.sync(() => {
-        const previous = process.env.TUNNEL_TRANSPORT_PROTOCOL;
-        if (options.transport === undefined) delete process.env.TUNNEL_TRANSPORT_PROTOCOL;
-        else process.env.TUNNEL_TRANSPORT_PROTOCOL = options.transport;
-        return previous;
-      }),
-      (previous) =>
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env.TUNNEL_TRANSPORT_PROTOCOL;
-          else process.env.TUNNEL_TRANSPORT_PROTOCOL = previous;
-        }),
-    );
     const spawned: Array<ChildProcess.StandardCommand> = [];
     const killed: Array<number> = [];
     const outputs: Array<Queue.Queue<Uint8Array>> = [];
@@ -410,7 +403,9 @@ describe("CloudManagedEndpointRuntime", () => {
         index,
         lines + "2026-10-16T20:30:00Z INF Registered tunnel connection connIndex=0\n",
       ).pipe(Effect.andThen(Stream.runHead(runtime.tunnelConnected)));
-    return { spawner, spawned, killed, exits, started, emit, observe };
+    const env: Record<string, string> =
+      options.transport === undefined ? {} : { TUNNEL_TRANSPORT_PROTOCOL: options.transport };
+    return { spawner, env, spawned, killed, exits, started, emit, observe };
   });
 
   it.effect("restarts only the inspected connector and supervises its replacement", () =>
@@ -438,7 +433,13 @@ describe("CloudManagedEndpointRuntime", () => {
   it.effect("preserves an explicit transport choice despite repeated QUIC stalls", () =>
     Effect.gen(function* () {
       const fixture = yield* makeTransportSpawner({ transport: "quic" });
-      const runtime = yield* buildCloudManagedEndpointRuntime(fixture.spawner);
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        fixture.spawner,
+        layerRelayClientAvailable,
+        unusedHttpClient,
+        emptySecretStoreLayer,
+        fixture.env,
+      );
       yield* runtime.applyConfig(tunnelConfig);
       yield* fixture.observe(runtime, 0, quicDialWarning.repeat(30));
       yield* fixture.observe(runtime, 0, quicDatagramWarning.repeat(30));
@@ -464,12 +465,13 @@ describe("CloudManagedEndpointRuntime", () => {
           context.pipe(Context.get(ServerSecretStore.ServerSecretStore)),
         );
         const fixture = yield* makeTransportSpawner();
-        const start = (spawner = fixture.spawner) =>
+        const start = (spawner = fixture.spawner, env = fixture.env) =>
           buildCloudManagedEndpointRuntime(
             spawner,
             layerRelayClientAvailable,
             unusedHttpClient,
             secretStoreLayer,
+            env,
           );
         yield* Effect.gen(function* () {
           const runtime = yield* start();
@@ -486,7 +488,7 @@ describe("CloudManagedEndpointRuntime", () => {
         for (const transport of [undefined, "quic", "http2", "auto", undefined]) {
           yield* Effect.gen(function* () {
             const next = yield* makeTransportSpawner(transport ? { transport } : {});
-            const restarted = yield* start(next.spawner);
+            const restarted = yield* start(next.spawner, next.env);
             yield* restarted.applyConfig(tunnelConfig);
             if (transport === undefined) {
               expect(next.spawned[0]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
