@@ -8,12 +8,14 @@ import * as Schema from "effect/Schema";
 
 import { CodexSettings } from "@t3tools/contracts";
 import {
+  CodexShadowHomeFileSystemError,
   CodexShadowHomePathConflictError,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 const decodeCodexSettingsValue = Schema.decodeSync(CodexSettings);
+const isCodexShadowHomeFileSystemError = Schema.is(CodexShadowHomeFileSystemError);
 const CONFLICTS_DIRECTORY = ".t3-shadow-conflicts";
 
 const decodeCodexSettings = (input: {
@@ -316,6 +318,54 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           expect(logLinkResult._tag).toBe("Failure");
           expect(memoriesLinkResult._tag).toBe("Failure");
           expect(tmpLinkResult._tag).toBe("Failure");
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "fails setup instead of starting Codex on a SQLite family it could not restore",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+          const shadowHome = path.join(shadowRoot, "shadow");
+          yield* writeTextFile(path.join(sharedHome, "queue_1.sqlite"), "shared db");
+          yield* writeTextFile(path.join(sharedHome, "queue_1.sqlite-wal"), "shared wal");
+          yield* writeTextFile(path.join(shadowHome, "queue_1.sqlite"), "shadow db");
+          yield* writeTextFile(path.join(shadowHome, "queue_1.sqlite-wal"), "shadow wal");
+          const failure = PlatformError.systemError({
+            _tag: "PermissionDenied",
+            module: "FileSystem",
+            method: "rename",
+            description: "Forced failure.",
+          });
+          // The base cannot move, and the WAL that already moved cannot come back.
+          const failingFileSystem = FileSystem.FileSystem.of({
+            ...fileSystem,
+            rename: (fromPath, toPath) =>
+              fromPath === path.join(shadowHome, "queue_1.sqlite") ||
+              fromPath.includes(CONFLICTS_DIRECTORY)
+                ? Effect.fail(failure)
+                : fileSystem.rename(fromPath, toPath),
+          });
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          );
+
+          const error = yield* materializeCodexShadowHome(layout).pipe(
+            Effect.provideService(FileSystem.FileSystem, failingFileSystem),
+            Effect.flip,
+          );
+
+          expect(error).toBeInstanceOf(CodexShadowHomeFileSystemError);
+          expect(error).toMatchObject({
+            operation: "rename",
+            entryName: "queue_1.sqlite-wal",
+            targetPath: path.join(shadowHome, "queue_1.sqlite-wal"),
+          });
+          if (!isCodexShadowHomeFileSystemError(error)) return;
+          expect(yield* fileSystem.readFileString(error.path)).toBe("shadow wal");
         }),
     );
 

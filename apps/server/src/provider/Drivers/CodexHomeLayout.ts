@@ -88,7 +88,14 @@ export class CodexShadowHomeFileSystemError extends Schema.TaggedError<CodexShad
   "CodexShadowHomeFileSystemError",
   {
     ...CodexShadowHomeContext,
-    operation: Schema.Literals(["readLink", "makeDirectory", "readDirectory", "remove", "symlink"]),
+    operation: Schema.Literals([
+      "readLink",
+      "makeDirectory",
+      "readDirectory",
+      "remove",
+      "rename",
+      "symlink",
+    ]),
     path: Schema.String,
     targetPath: Schema.optional(Schema.String),
     entryName: Schema.optional(Schema.String),
@@ -227,7 +234,9 @@ function conflictGroupMembers(entryName: string): ReadonlyArray<string> {
   return [...SQLITE_SIDECAR_SUFFIXES.map((suffix) => baseName + suffix), baseName];
 }
 
-type ResolveConflictGroup = (entryName: string) => Effect.Effect<boolean, never, Path.Path>;
+type ResolveConflictGroup = (
+  entryName: string,
+) => Effect.Effect<boolean, CodexShadowHomeError, Path.Path>;
 
 // A SQLite base and its sidecars are one unit: move every real copy aside and link what the
 // shared home has, or restore all of it, so a base never pairs with another database's journal.
@@ -238,7 +247,7 @@ const replaceConflictGroup = Effect.fn("CodexHomeLayout.replaceConflictGroup")(f
   readonly entryName: string;
   readonly sharedEntryNames: ReadonlySet<string>;
   readonly backupDirectory: Effect.Effect<string, PlatformError.PlatformError>;
-}): Effect.fn.Return<boolean, never, Path.Path> {
+}): Effect.fn.Return<boolean, CodexShadowHomeError, Path.Path> {
   const path = yield* Path.Path;
   const inspected = yield* Effect.forEach(conflictGroupMembers(input.entryName), (name) =>
     readLinkState({
@@ -284,28 +293,47 @@ const replaceConflictGroup = Effect.fn("CodexHomeLayout.replaceConflictGroup")(f
       linked.push(link);
     }
   });
+  const fileSystemError = (
+    operation: "remove" | "rename",
+    failedPath: string,
+    cause: PlatformError.PlatformError,
+    entryName?: string,
+    targetPath?: string,
+  ) =>
+    new CodexShadowHomeFileSystemError({
+      sharedHomePath: input.sharedHomePath,
+      effectiveHomePath: input.effectiveHomePath,
+      operation,
+      path: failedPath,
+      ...(targetPath === undefined ? {} : { targetPath }),
+      ...(entryName === undefined ? {} : { entryName }),
+      cause,
+    });
   const restore = Effect.gen(function* () {
+    const failures: Array<CodexShadowHomeFileSystemError> = [];
     for (const link of [...linked].reverse()) {
-      yield* input.fileSystem.remove(link).pipe(
-        Effect.catch((cause) =>
-          Effect.logError(`Could not remove Codex shadow home link '${link}' while restoring.`, {
-            cause,
-          }),
-        ),
-      );
+      yield* input.fileSystem
+        .remove(link)
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.sync(() => failures.push(fileSystemError("remove", link, cause))),
+          ),
+        );
     }
     for (const entry of [...moved].reverse()) {
       yield* input.fileSystem
         .rename(entry.backupPath, entry.path)
         .pipe(
           Effect.catch((cause) =>
-            Effect.logError(
-              `Could not restore Codex shadow home entry '${entry.name}'; it is still at '${entry.backupPath}'.`,
-              { ...entry, cause },
+            Effect.sync(() =>
+              failures.push(
+                fileSystemError("rename", entry.backupPath, cause, entry.name, entry.path),
+              ),
             ),
           ),
         );
     }
+    return failures;
   });
 
   return yield* replace.pipe(
@@ -322,19 +350,27 @@ const replaceConflictGroup = Effect.fn("CodexHomeLayout.replaceConflictGroup")(f
     ),
     Effect.as(true),
     Effect.catch((cause) =>
-      restore.pipe(
-        Effect.andThen(
-          Effect.logWarning(
-            `Could not replace Codex shadow home entry '${input.entryName}' with a shared link; it stays local until a later setup.`,
-            {
-              entryName: input.entryName,
-              path: path.join(input.effectiveHomePath, input.entryName),
-              cause,
-            },
-          ),
-        ),
-        Effect.as(false),
-      ),
+      Effect.gen(function* () {
+        const restoreFailures = yield* restore;
+        const annotations = {
+          entryName: input.entryName,
+          path: path.join(input.effectiveHomePath, input.entryName),
+          cause,
+        };
+        // A half-restored SQLite family is unsafe to open, so stop instead of starting Codex on it.
+        if (restoreFailures.length > 0) {
+          yield* Effect.logError(
+            `Could not restore Codex shadow home entry '${input.entryName}' after a failed replacement.`,
+            { ...annotations, restoreFailures },
+          );
+          return yield* restoreFailures[0]!;
+        }
+        yield* Effect.logWarning(
+          `Could not replace Codex shadow home entry '${input.entryName}' with a shared link; it stays local until a later setup.`,
+          annotations,
+        );
+        return false;
+      }),
     ),
   );
 });
