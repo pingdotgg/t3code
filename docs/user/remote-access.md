@@ -115,7 +115,8 @@ it to `service.env` (see [Configure the service environment](./background-servic
 The desktop app passes it to its own server only when the app itself starts with
 it set, such as a Windows user environment variable or a launch from a terminal.
 It applies to devices that pair after the restart; T3 Connect sign-ins keep
-renewing on their own.
+renewing on their own. Browsers keep a sign-in for at most 400 days, so a
+longer value only lengthens sign-ins in the mobile and desktop apps.
 
 ### Reach one machine several ways
 
