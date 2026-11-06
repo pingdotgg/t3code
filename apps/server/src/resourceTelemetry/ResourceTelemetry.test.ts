@@ -5,6 +5,7 @@ import type {
   ResourceMonitorSnapshotEvent,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -14,6 +15,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import { readResourceTelemetryHistory } from "./ResourceTelemetryHistoryReader.ts";
 
 import * as DesktopTelemetryReceiver from "./DesktopTelemetryReceiver.ts";
 import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
@@ -150,6 +152,64 @@ function desktopSnapshot(sampledAtUnixMs: number): DesktopHostTelemetrySnapshot 
 }
 
 describe("ResourceTelemetry", () => {
+  it.live("reports a history worker failure instead of successful zero usage", () =>
+    Effect.gen(function* () {
+      const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
+      const result = yield* Effect.flip(
+        telemetry
+          .readHistory({ windowMs: 3_600_000, bucketMs: 120_000 })
+          .pipe(
+            Effect.provideService(
+              HostProcess.ExecutablePath,
+              "/t3-resource-history-worker-does-not-exist",
+            ),
+          ),
+      );
+      expect(result._tag).toBe("ResourceTelemetryHistoryError");
+      expect(result.message).toBe("Resource telemetry history aggregation failed.");
+      expect(result.cause).toMatchObject({ _tag: "HistoryAggregationError" });
+      const failedWorker = yield* Effect.flip(
+        readResourceTelemetryHistory({
+          readAt: DateTime.makeUnsafe(10_000),
+          windowMs: 10_000,
+          bucketMs: 1_000,
+          sampleIntervalMs: 1_000,
+          serverPid: SERVER_PID,
+          sidecarPid: Option.none(),
+          desktopSnapshot: Option.none(),
+          health: (yield* telemetry.latest).health,
+          snapshots: Array.from({ length: 1_000 }, (_, index) =>
+            nativeSnapshot({
+              sequence: index + 1,
+              sampledAtUnixMs: index,
+              childCpuTimeMs: index,
+              childWriteBytes: index,
+            }),
+          ),
+        }).pipe(
+          Effect.provideService(HostProcess.IsExecutable, true),
+          Effect.provideService(HostProcess.ExecutablePath, process.execPath),
+        ),
+      );
+      expect(failedWorker.cause).toMatchObject({
+        code: 1,
+        message: expect.stringContaining("__resource-telemetry-history"),
+      });
+    }).pipe(
+      Effect.provide(
+        ResourceTelemetry.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              NativeTelemetryClient.layerTest(),
+              DesktopTelemetryReceiver.layerTest(),
+              ResourceAttribution.layer,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.live("serves the event loop before a retained history replay completes", () =>
     Effect.gen(function* () {
       const readAtMs = DateTime.toEpochMillis(yield* DateTime.now);

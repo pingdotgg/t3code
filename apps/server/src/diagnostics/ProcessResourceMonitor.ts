@@ -1,4 +1,5 @@
 import type {
+  ResourceTelemetryHistoryError,
   ResourceTelemetryProcessCategory,
   ServerProcessResourceHistoryInput,
   ServerProcessResourceHistoryResult,
@@ -15,7 +16,7 @@ export class ProcessResourceMonitor extends Context.Service<
   {
     readonly readHistory: (
       input: ServerProcessResourceHistoryInput,
-    ) => Effect.Effect<ServerProcessResourceHistoryResult>;
+    ) => Effect.Effect<ServerProcessResourceHistoryResult, ResourceTelemetryHistoryError>;
   }
 >()("t3/diagnostics/ProcessResourceMonitor") {}
 

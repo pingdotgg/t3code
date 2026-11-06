@@ -31,11 +31,11 @@ import {
 import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./ResourceAttribution.ts";
 import {
-  buildResourceTelemetryHistory,
   normalizeResourceTelemetryHistoryInput,
   type ResourceTelemetryHistoryWithLegacyBuckets,
 } from "./ResourceTelemetryHistory.ts";
 import { readResourceTelemetryHistory } from "./ResourceTelemetryHistoryReader.ts";
+import { ResourceTelemetryHistoryError } from "@t3tools/contracts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
 
 export class ResourceTelemetryRefreshFailed extends Schema.TaggedError<ResourceTelemetryRefreshFailed>()(
@@ -65,7 +65,7 @@ export class ResourceTelemetry extends Context.Service<
     >;
     readonly readHistory: (
       input: ResourceTelemetryHistoryInput,
-    ) => Effect.Effect<ResourceTelemetryHistoryWithLegacyBuckets>;
+    ) => Effect.Effect<ResourceTelemetryHistoryWithLegacyBuckets, ResourceTelemetryHistoryError>;
     readonly refresh: Effect.Effect<ResourceTelemetrySnapshot, ResourceTelemetryRefreshFailed>;
     readonly retry: Effect.Effect<ResourceTelemetryRetryResult>;
   }
@@ -443,11 +443,7 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
       }),
     };
     return yield* readResourceTelemetryHistory(historyInput).pipe(
-      Effect.catch((cause) =>
-        Effect.logWarning("Failed to aggregate resource telemetry history", { cause }).pipe(
-          Effect.as(buildResourceTelemetryHistory({ ...historyInput, snapshots: [] })),
-        ),
-      ),
+      Effect.mapError((cause) => new ResourceTelemetryHistoryError({ cause })),
     );
   }, historyMutex.withPermits(1));
   yield* nativeHealthSubscription.changes.pipe(

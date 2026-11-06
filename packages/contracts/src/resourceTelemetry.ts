@@ -497,6 +497,15 @@ export const ResourceTelemetryHistoryInput = Schema.Struct({
 });
 export type ResourceTelemetryHistoryInput = typeof ResourceTelemetryHistoryInput.Type;
 
+export class ResourceTelemetryHistoryError extends Schema.TaggedError<ResourceTelemetryHistoryError>()(
+  "ResourceTelemetryHistoryError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Resource telemetry history aggregation failed.";
+  }
+}
+
 export const ResourceTelemetryHistoryBucket = Schema.Struct({
   startedAt: Schema.DateTimeUtc,
   endedAt: Schema.DateTimeUtc,
