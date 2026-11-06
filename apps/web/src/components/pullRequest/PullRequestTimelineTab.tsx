@@ -12,14 +12,16 @@ import type {
 } from "@t3tools/contracts";
 import {
   CheckIcon,
+  ChevronDownIcon,
   ChevronRightIcon,
   ExternalLinkIcon,
   FileCodeIcon,
   GitCommitHorizontalIcon,
+  MessageSquarePlusIcon,
   UserPlusIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -27,12 +29,15 @@ import { useRelativeTimeState } from "~/hooks/useRelativeTimeState";
 
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   buildPullRequestRail,
   isPullRequestVerdictStale,
   newestPullRequestCommitAt,
+  pullRequestBodyPreview,
   visibleBody,
+  type PullRequestChatSubject,
   type PullRequestRailEntry,
 } from "./pullRequestDetail.logic";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
@@ -40,6 +45,7 @@ import {
   PullRequestActorAvatar,
   PullRequestReviewOutcomeIcon,
   pullRequestReviewOutcomeStaleLabel,
+  pullRequestReviewOutcomeVerb,
   pullRequestReviewOutcomeToneClassName,
 } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
@@ -139,6 +145,50 @@ function CommitChecksPill({ checks }: { checks: NonNullable<PullRequestCommit["c
   );
 }
 
+/** A review's text, one quiet line until opened. */
+function ReviewRailBody({
+  body,
+  cwd,
+  environmentId,
+  threadRef,
+}: {
+  body: string;
+  cwd: string;
+  environmentId: EnvironmentId;
+  threadRef: ScopedThreadRef | null;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger
+        variant="muted"
+        aria-label={open ? "Hide review text" : "Show review text"}
+        className="w-full min-w-0 gap-1 text-left"
+      >
+        <span className="min-w-0 flex-1 truncate">
+          {open ? null : pullRequestBodyPreview(body)}
+        </span>
+        <ChevronDownIcon
+          aria-hidden
+          className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-180")}
+        />
+      </CollapsibleTrigger>
+      <CollapsiblePanel>
+        {open ? (
+          <div className="pb-1 text-body text-muted-foreground">
+            <PullRequestMarkdown
+              text={body}
+              cwd={cwd}
+              environmentId={environmentId}
+              threadRef={threadRef}
+            />
+          </div>
+        ) : null}
+      </CollapsiblePanel>
+    </Collapsible>
+  );
+}
+
 function RailEntry({
   entry,
   detail,
@@ -147,6 +197,7 @@ function RailEntry({
   newestCommitAt,
   onOpenCommit,
   onOpenCode,
+  onAddToChat,
 }: {
   entry: PullRequestRailEntry;
   detail: PullRequestDetailView;
@@ -155,6 +206,8 @@ function RailEntry({
   newestCommitAt: string | null;
   onOpenCommit: (oid: string) => void;
   onOpenCode?: ((path: string) => void) | undefined;
+  /** Absent where there is no composer beside the panel to add a remark to. */
+  onAddToChat?: ((subject: PullRequestChatSubject) => void) | undefined;
 }) {
   const term = sourceControlClients.get(detail.provider).changeRequest.singular;
   const title = capitalizeTerm(term);
@@ -231,12 +284,7 @@ function RailEntry({
       const body = visibleBody(entry.comment.body);
       const first = entry.threads[0];
       const unresolved = entry.threads.filter((thread) => !thread.isResolved).length;
-      const verb =
-        entry.outcome === "approved"
-          ? "approved"
-          : entry.outcome === "changes-requested"
-            ? "requested changes"
-            : "had a review dismissed";
+      const verb = pullRequestReviewOutcomeVerb(entry.outcome);
       return (
         <li className="relative min-h-6 pb-2.5 pl-8.5 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
           <RailMarker
@@ -255,6 +303,23 @@ function RailEntry({
                 <TooltipPopup>{pullRequestReviewOutcomeStaleLabel(entry.outcome)}</TooltipPopup>
               </Tooltip>
             </div>
+            {body && onAddToChat ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost-muted"
+                      aria-label="Add to chat"
+                      onClick={() => onAddToChat({ kind: "comment", comment: entry.comment })}
+                    />
+                  }
+                >
+                  <MessageSquarePlusIcon className="size-3" />
+                </TooltipTrigger>
+                <TooltipPopup>Add to chat</TooltipPopup>
+              </Tooltip>
+            ) : null}
             {reviewUrl ? (
               <Button
                 size="icon-xs"
@@ -270,14 +335,12 @@ function RailEntry({
             </time>
           </div>
           {body ? (
-            <div className="text-body text-muted-foreground">
-              <PullRequestMarkdown
-                text={body}
-                cwd={detail.workspaceRoot}
-                environmentId={environmentId}
-                threadRef={threadRef}
-              />
-            </div>
+            <ReviewRailBody
+              body={body}
+              cwd={detail.workspaceRoot}
+              environmentId={environmentId}
+              threadRef={threadRef}
+            />
           ) : null}
           {first ? (
             <button
@@ -298,7 +361,14 @@ function RailEntry({
                   {entry.threads.length} {entry.threads.length === 1 ? "thread" : "threads"}
                 </span>
                 <span className="flex-1" />
-                {unresolved > 0 ? <Badge variant="warning">Unresolved</Badge> : null}
+                {unresolved > 0 ? (
+                  <Badge variant="warning">Unresolved</Badge>
+                ) : (
+                  <span className="inline-flex shrink-0 items-center gap-1">
+                    <CheckIcon aria-hidden className="size-3.5 text-success-foreground" />
+                    Resolved
+                  </span>
+                )}
                 <ChevronRightIcon aria-hidden className="size-3.5 shrink-0" />
               </span>
             </button>
@@ -379,6 +449,7 @@ export function PullRequestTimelineTab({
   order,
   onOpenCommit,
   onOpenCode,
+  onAddToChat,
 }: {
   scrollerRef?: (node: HTMLElement | null) => void;
   detail: PullRequestDetailView;
@@ -388,6 +459,8 @@ export function PullRequestTimelineTab({
   onOpenCommit: (oid: string) => void;
   /** Opens the Code tab, where a review's line threads are read in place. */
   onOpenCode?: (path: string) => void;
+  /** Absent where there is no composer beside the panel to add a remark to. */
+  onAddToChat?: (subject: PullRequestChatSubject) => void;
 }) {
   const entries = buildPullRequestRail(detail);
   const ordered = order === "newest" ? entries : entries.toReversed();
@@ -407,7 +480,15 @@ export function PullRequestTimelineTab({
     <LegendList<PullRequestRailEntry>
       ref={(list: LegendListRef | null) => scrollerRef?.(list?.getScrollableNode() ?? null)}
       data={ordered}
-      extraData={{ detail, environmentId, threadRef, newestCommitAt, dividerIndex, lastSeen }}
+      extraData={{
+        detail,
+        environmentId,
+        threadRef,
+        newestCommitAt,
+        dividerIndex,
+        lastSeen,
+        onAddToChat,
+      }}
       keyExtractor={(entry) => `${entry.kind}:${entry.id}`}
       renderItem={({ item: entry, index }) => (
         <>
@@ -422,6 +503,7 @@ export function PullRequestTimelineTab({
             newestCommitAt={newestCommitAt}
             onOpenCommit={onOpenCommit}
             onOpenCode={onOpenCode}
+            onAddToChat={onAddToChat}
           />
         </>
       )}
