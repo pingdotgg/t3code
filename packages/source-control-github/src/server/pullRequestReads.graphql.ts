@@ -82,6 +82,48 @@ export const CheckContext = Schema.Union([
 ])
 export type CheckContext = typeof CheckContext.Type
 
+/** An Issue is a place to discuss ideas, enhancements, tasks, and bugs for a project. */
+export const Issue = Schema.Struct({
+  __typename: Schema.Literal("Issue"),
+  /** Identifies the issue number. */
+  number: Shared.Int,
+  /** Identifies the issue title. */
+  title: Schema.String,
+  /** Identifies the state of the issue. */
+  issueState: GraphQL.enumLiterals(Shared.IssueState.literals)
+})
+export interface Issue extends Schema.Struct.Type<typeof Issue.fields> {}
+
+/** A repository pull request. */
+export const ReferenceCandidatePullRequest = Schema.Struct({
+  __typename: Schema.Literal("PullRequest"),
+  /** Identifies the pull request number. */
+  number: Shared.Int,
+  /** Identifies the pull request title. */
+  title: Schema.String,
+  /** Identifies the state of the pull request. */
+  pullRequestState: GraphQL.enumLiterals(Shared.PullRequestState.literals)
+})
+export interface ReferenceCandidatePullRequest extends Schema.Struct.Type<typeof ReferenceCandidatePullRequest.fields> {}
+
+/** Used for return value of Repository.issueOrPullRequest. */
+export const IssueOrPullRequestOther = Schema.Struct({
+  __typename: GraphQL.otherTypename<Shared.Typename.IssueOrPullRequest>()(["Issue", "PullRequest"])
+})
+export interface IssueOrPullRequestOther extends Schema.Struct.Type<typeof IssueOrPullRequestOther.fields> {}
+
+/**
+ * `fragment ReferenceCandidate on IssueOrPullRequest`
+ *
+ * Used for return value of Repository.issueOrPullRequest.
+ */
+export const ReferenceCandidate = Schema.Union([
+  Issue,
+  ReferenceCandidatePullRequest,
+  IssueOrPullRequestOther
+])
+export type ReferenceCandidate = typeof ReferenceCandidate.Type
+
 /** A user is an individual's account on GitHub that owns repositories and can make new content. */
 export const ViewerUser = Schema.Struct({
   /** Identifies the primary key from the database. */
@@ -1157,17 +1199,19 @@ export const ReviewerCandidates = GraphQL.query("ReviewerCandidates", {
     variables: [
       { name: "owner", body: "String!" },
       { name: "name", body: "String!" },
-      { name: "number", body: "Int!" }
+      { name: "number", body: "Int!" },
+      { name: "query", body: "String" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){assignableUsers(first:100){pageInfo{hasNextPage}nodes{login name avatarUrl}}pullRequest(number:$", "number", "){author{__typename login}reviewRequests(first:100){nodes{requestedReviewer{__typename...on User{login name avatarUrl}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}...on Bot{login avatarUrl}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){assignableUsers(first:100 query:$", "query", "){pageInfo{hasNextPage}nodes{login name avatarUrl}}pullRequest(number:$", "number", "){author{__typename login}reviewRequests(first:100){nodes{requestedReviewer{__typename...on User{login name avatarUrl}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}...on Bot{login avatarUrl}}}}}}"] }
     ],
     fragments: []
   },
   variables: {
     owner: Schema.String,
     name: Schema.String,
-    number: Shared.Int
+    number: Shared.Int,
+    query: Schema.optional(Schema.NullOr(Schema.String))
   },
   result: Schema.Struct({
     /** Lookup a given repository by the owner and repository name. */
@@ -1299,6 +1343,73 @@ export const RepositoryLabels = GraphQL.query("RepositoryLabels", {
 export declare namespace RepositoryLabels {
   export type Variables = typeof RepositoryLabels.variables.Type
   export type Result = typeof RepositoryLabels.result.Type
+}
+
+/** The results of a search. */
+export const SearchResultItemOther = Schema.Struct({
+  __typename: GraphQL.otherTypename<Shared.Typename.SearchResultItem>()(["Issue", "PullRequest"])
+})
+export interface SearchResultItemOther extends Schema.Struct.Type<typeof SearchResultItemOther.fields> {}
+
+/**
+ * A list of results that matched against a search query. Regardless of the number
+ * of matches, a maximum of 1,000 results will be available across all types,
+ * potentially split across many pages.
+ */
+export const SearchResultItemConnection = Schema.Struct({
+  /** Information to aid in pagination. */
+  pageInfo: AssignableUsersPageInfoPageInfo,
+  /** A list of nodes. */
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(Schema.Union([
+    Issue,
+    ReferenceCandidatePullRequest,
+    SearchResultItemOther
+  ]))))
+})
+export interface SearchResultItemConnection extends Schema.Struct.Type<typeof SearchResultItemConnection.fields> {}
+
+/** A repository contains the content for a project. */
+export const RepositoryReferencesRepositoryRepository = Schema.Struct({
+  /** Returns a single issue-like object from the current repository by number. */
+  issueOrPullRequest: Schema.NullOr(ReferenceCandidate)
+})
+export interface RepositoryReferencesRepositoryRepository extends Schema.Struct.Type<typeof RepositoryReferencesRepositoryRepository.fields> {}
+
+/** `query RepositoryReferences` */
+export const RepositoryReferences = GraphQL.query("RepositoryReferences", {
+  document: {
+    variables: [
+      { name: "owner", body: "String!" },
+      { name: "name", body: "String!" },
+      { name: "q", body: "String!" },
+      { name: "number", body: "Int!" },
+      { name: "exact", body: "Boolean!" }
+    ],
+    selections: [
+      { name: "search", body: ["(query:$", "q", " type:ISSUE first:20){pageInfo{hasNextPage}nodes{__typename...ReferenceCandidate}}"] },
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", ")@include(if:$", "exact", "){issueOrPullRequest(number:$", "number", "){__typename...ReferenceCandidate}}"] }
+    ],
+    fragments: [
+      { name: "ReferenceCandidate", body: ["on IssueOrPullRequest{__typename...on Issue{number title issueState:state}...on PullRequest{number title pullRequestState:state}}"] }
+    ]
+  },
+  variables: {
+    owner: Schema.String,
+    name: Schema.String,
+    q: Schema.String,
+    number: Shared.Int,
+    exact: Schema.Boolean
+  },
+  result: Schema.Struct({
+    /** Perform a search across resources, returning a maximum of 1,000 results. */
+    search: SearchResultItemConnection,
+    /** Lookup a given repository by the owner and repository name. */
+    repository: Schema.optionalKey(Schema.NullOr(RepositoryReferencesRepositoryRepository))
+  })
+})
+export declare namespace RepositoryReferences {
+  export type Variables = typeof RepositoryReferences.variables.Type
+  export type Result = typeof RepositoryReferences.result.Type
 }
 
 /** A repository contains the content for a project. */
@@ -1687,4 +1798,4 @@ export declare namespace PullRequestSourceBranch {
 }
 
 /** Every operation in pullRequestReads.graphql. */
-export const PullRequestReadsGraphQLGroup = GraphQLGroup.make(RoutingIdentityViewer, ActorAvatars, PullRequestCore, PullRequestCheckContexts, PullRequestPreview, PullRequestActivity, PullRequestCommitStats, PullRequestHeads, PullRequestNodeId, PullRequestSubject, ViewerPermissions, ReviewerCandidates, LabelCandidates, RepositoryLabels, RepositoryAuthors, PullRequestFilesViewed, PullRequestFileStats, PullRequestMergeMessage, PullRequestActionState, PullRequestBranchToDelete, PullRequestSourceBranch)
+export const PullRequestReadsGraphQLGroup = GraphQLGroup.make(RoutingIdentityViewer, ActorAvatars, PullRequestCore, PullRequestCheckContexts, PullRequestPreview, PullRequestActivity, PullRequestCommitStats, PullRequestHeads, PullRequestNodeId, PullRequestSubject, ViewerPermissions, ReviewerCandidates, LabelCandidates, RepositoryLabels, RepositoryReferences, RepositoryAuthors, PullRequestFilesViewed, PullRequestFileStats, PullRequestMergeMessage, PullRequestActionState, PullRequestBranchToDelete, PullRequestSourceBranch)
