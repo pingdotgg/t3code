@@ -1332,9 +1332,26 @@ function modelReconciliationHarness(
       ],
     ]),
   });
+  // A pick sent to the thread: shown over the durable snapshot until it settles.
+  const inFlightPickAtom = Atom.make<ModelSelection | null>(null);
+  const visibleSnapshotAtom = Atom.make((get) => {
+    const snapshot = get(snapshotAtom);
+    const pick = get(inFlightPickAtom);
+    if (!snapshot || !pick) return snapshot;
+    return {
+      ...snapshot,
+      threads: snapshot.threads.map((candidate) =>
+        candidate.id === threadId ? { ...candidate, modelSelection: pick } : candidate,
+      ),
+    };
+  });
+  const pendingThreadIdsAtom = Atom.map(
+    inFlightPickAtom,
+    (pick): ReadonlySet<ThreadId> => new Set(pick ? [threadId] : []),
+  );
   const shells = createEnvironmentThreadShellAtoms({
     catalogValueAtom,
-    snapshotAtom: () => snapshotAtom,
+    snapshotAtom: () => visibleSnapshotAtom,
     hiddenThreadTagsAtom: () => Atom.make(null),
   });
   const selectedShell = shells.threadShellAtom({ environmentId, threadId: selectedThreadId });
@@ -1345,11 +1362,16 @@ function modelReconciliationHarness(
       threadShellAtom: shells.threadShellAtom,
       threadRefsAtom: shells.threadRefsAtom,
       shellStateAtom: () => shellResultAtom,
+      pendingThreadIdsAtom: () => pendingThreadIdsAtom,
     }),
   );
   flush();
   return {
     flush,
+    showInFlightPick(pick: ModelSelection | null) {
+      registry.set(inFlightPickAtom, pick);
+      flush();
+    },
     setStatus(status: EnvironmentShellStatus) {
       registry.set(shellStateAtom, { ...registry.get(shellStateAtom), status });
       flush();
@@ -1558,6 +1580,34 @@ describe("composerDraftStore modelSelection", () => {
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toEqual(before);
     h.setStatus("live");
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
+  it("keeps a pick matching the old model while an earlier pick is still in flight", () => {
+    const h = modelReconciliationHarness(TEST_ENVIRONMENT_ID, threadId);
+    const store = useComposerDraftStore.getState();
+    const original = h.model();
+    const other = { ...original, model: "remote-model" };
+    store.setPrompt(threadRef, "keep this unsent follow-up");
+    store.setModelSelection(threadRef, other, { explicit: true });
+    h.showInFlightPick(other);
+    store.setModelSelection(threadRef, original, { explicit: true });
+    h.showInFlightPick(original);
+    const latest = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(latest?.modelSelectionByProvider[original.instanceId]).toEqual(original);
+
+    // The earlier pick lands, then the latest one is rejected.
+    h.update({ modelSelection: other });
+    h.showInFlightPick(null);
+    expect(h.model()).toEqual(other);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBe(latest);
+
+    // With nothing in flight, a matching durable model still reconciles the pick.
+    h.update({ modelSelection: original });
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toMatchObject({
+      prompt: "keep this unsent follow-up",
+      activeProvider: null,
+      modelSelectionByProvider: {},
+    });
   });
 
   it("releases an accepted pick only while it is still the draft's latest choice", () => {

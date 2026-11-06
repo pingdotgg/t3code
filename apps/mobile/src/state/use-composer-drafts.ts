@@ -19,6 +19,7 @@ import {
   type ProviderOptionSelection,
   type RuntimeMode,
   type ScopedThreadRef,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { useEffect, useState } from "react";
@@ -1571,6 +1572,7 @@ export function subscribeComposerDraftModelReconciliation(input: {
   readonly shellStateAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentShellState, unknown>>;
+  readonly pendingThreadIdsAtom: (environmentId: EnvironmentId) => Atom.Atom<ReadonlySet<ThreadId>>;
 }): () => void {
   const draftsAtom = Atom.make(appAtomRegistry.get(composerDraftsAtom));
   const unsubscribeDrafts = appAtomRegistry.subscribe(composerDraftsAtom, (drafts) =>
@@ -1590,6 +1592,8 @@ export function subscribeComposerDraftModelReconciliation(input: {
       const thread = get(input.threadShellAtom(ref));
       if (!thread || !draftModelPickMatchesThread(draft.modelSelection, thread.modelSelection))
         continue;
+      // The pick can match an old model while an earlier pick in flight still replaces it.
+      if (get(input.pendingThreadIdsAtom(ref.environmentId)).has(ref.threadId)) continue;
       // Status and selection must come from the same emission; derived atoms can update apart.
       const shell = AsyncResult.getOrElse(get(input.shellStateAtom(ref.environmentId)), () => null);
       if (shell?.status !== "live") continue;

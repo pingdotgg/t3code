@@ -386,6 +386,7 @@ export function createThreadEnvironmentAtoms<R, E>(
   return {
     ...commands,
     snapshotAtom: optimistic.snapshotAtom,
+    pendingThreadIdsAtom: optimistic.pendingThreadIdsAtom,
     settle: optimistic.wrap(commands.settle, (thread, _input, now, accepted) =>
       !accepted &&
       (thread.pendingRuntimeRequest !== null ||
