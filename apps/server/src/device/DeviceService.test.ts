@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   DeviceBootError,
+  DeviceError,
   DeviceId,
   DeviceOperationError,
   LOCAL_DEVICE_HOST_ID,
@@ -13,11 +14,13 @@ import {
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import { SshCommandError } from "@t3tools/ssh/errors";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -36,6 +39,7 @@ import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
 import * as DeviceService from "./DeviceService.ts";
+import * as SshDeviceHost from "./SshDeviceHost.ts";
 import { agentDeviceSession, releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -314,6 +318,7 @@ const fixture = Effect.fn("fixture")(function* (
   };
   return {
     service,
+    host,
     starts,
     agentStarts,
     agentStops,
@@ -358,6 +363,61 @@ describe("device setup consent", () => {
         detail: startupError.message,
       });
     }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    {
+      name: "a Windows host",
+      exitCode: 1,
+      stderr: "private diagnostics",
+      expected:
+        "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+    },
+    {
+      name: "a Windows host returning 9009",
+      exitCode: 9009,
+      stderr: "private diagnostics",
+      expected:
+        "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+    },
+    {
+      name: "missing Node on a Windows host with a POSIX shell",
+      exitCode: 1,
+      stderr: "private diagnostics\nNode is missing from the non-interactive SSH PATH",
+      expected:
+        "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.",
+    },
+  ])(
+    "reports SSH probe failure on $name through readiness and host status",
+    ({ exitCode, stderr, expected }) =>
+      Effect.gen(function* () {
+        const failure = new DeviceHost.DeviceHostError({
+          hostId: LOCAL_DEVICE_HOST_ID,
+          step: "probe",
+          cause: new SshDeviceHost.SshWindowsHostError({
+            cause: new SshCommandError({
+              command: ["ssh", "private arguments"],
+              exitCode,
+              stderr,
+              message: "private diagnostics",
+            }),
+          }),
+        });
+        const { service, settings } = yield* fixture(Effect.void, undefined, false, failure);
+        yield* Ref.update(settings, (current) => ({
+          ...current,
+          enableDeviceSupport: true,
+          enableAgentDeviceAccess: true,
+        }));
+        for (const readiness of [service.readiness(), service.agentReadinessIfSupported()]) {
+          const error = yield* readiness.pipe(Effect.flip);
+          expect(error).toMatchObject({ reason: expected, cause: failure });
+          expect((yield* service.state).hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
+            status: "failed",
+            detail: expected,
+          });
+        }
+      }).pipe(Effect.scoped),
   );
 
   it.effect("listing and provider startup do not start helpers before consent", () =>
@@ -533,6 +593,86 @@ describe("device setup consent", () => {
     }).pipe(Effect.scoped),
   );
 });
+
+const layerSecretResolver = Layer.succeed(SecretResolver.SecretResolver, {
+  label: (provider) => Effect.succeed(provider),
+  read: (references) => Effect.succeed(references.map(() => undefined)),
+  invalidate: () => Effect.void,
+});
+
+it.effect.each([1, 9009])(
+  "Test connection preserves Windows exit %s guidance across the wire",
+  (exitCode) =>
+    Effect.gen(function* () {
+      const { host } = yield* fixture();
+      const service = yield* DeviceService.make.pipe(
+        Effect.provideService(DeviceHost.DeviceHost, host),
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: () => Effect.die("Testing SSH does not install local tools"),
+        }),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("Testing SSH makes no hub requests")),
+        ),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            if (command._tag !== "StandardCommand") return Effect.die("Unexpected command");
+            const config = command.args.includes("-G");
+            const windows = command.args.includes("echo %OS% $env:OS");
+            return Effect.succeed(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(123),
+                stdout: Stream.make(
+                  new TextEncoder().encode(
+                    config ? "hostname 192.0.2.1\nport 22\n" : windows ? "Windows_NT\r\n" : "",
+                  ),
+                ),
+                stderr: Stream.make(new TextEncoder().encode("private SSH diagnostics")),
+                all: Stream.empty,
+                exitCode: Effect.succeed(
+                  ChildProcessSpawner.ExitCode(config || windows ? 0 : exitCode),
+                ),
+                isRunning: Effect.succeed(false),
+                kill: () => Effect.void,
+                stdin: Sink.drain,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+                unref: Effect.succeed(Effect.void),
+              }),
+            );
+          }),
+        ),
+      );
+      const error = yield* service
+        .testHost({ kind: "ssh", id: "windows", label: "Windows test", target: "windows.test" })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "DeviceHostUnavailableError",
+        hostId: "windows",
+        hostLabel: "Windows test",
+        reason:
+          "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+      });
+      const codec = Schema.fromJsonString(DeviceError);
+      const decoded = yield* Schema.decodeEffect(codec)(yield* Schema.encodeEffect(codec)(error));
+      expect(decoded.message).toBe(
+        "Windows test is unavailable: Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+      );
+      expect(decoded.message).not.toContain("private SSH diagnostics");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest(),
+          layerSecretResolver,
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-probe-" }),
+          NodeCrypto.layer,
+          NetService.layer,
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
+      Effect.scoped,
+    ),
+);
 
 it.effect("publishes boot progress and does not restore sessions after support is disabled", () =>
   Effect.gen(function* () {
@@ -1437,7 +1577,12 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
   }).pipe(
     Effect.scoped,
     Effect.provide(
-      Layer.mergeAll(ServerSettings.layerTest(), NodeServices.layer, NodeCrypto.layer),
+      Layer.mergeAll(
+        ServerSettings.layerTest(),
+        layerSecretResolver,
+        NodeServices.layer,
+        NodeCrypto.layer,
+      ),
     ),
   ),
 );
@@ -1496,6 +1641,7 @@ it.effect("a failed tool update reports npm's exit code but not its output", () 
     Effect.provide(
       Layer.mergeAll(
         ServerSettings.layerTest({ enableDeviceSupport: true }),
+        layerSecretResolver,
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-update-" }),
         NodeCrypto.layer,
         NetService.layer,

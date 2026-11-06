@@ -27,6 +27,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SchemaAST from "effect/SchemaAST";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import { sourceControlHostSecretName } from "./sourceControl/sourceControlHostSecrets.ts";
@@ -34,6 +35,7 @@ import * as ServerConfig from "./config.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerSettingsModule from "./serverSettings.ts";
+import { SECRET_REDACTED } from "./settingsSecrets.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
@@ -101,6 +103,36 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
       )
     `;
   });
+
+/** Paths of fields typed `SettingsSecretValue` that clients decode with the settings schema itself. */
+function strictSecretReferencePaths(
+  ast: SchemaAST.AST,
+  path = "",
+  seen = new Set<SchemaAST.AST>(),
+): ReadonlyArray<string> {
+  if (seen.has(ast)) return [];
+  seen.add(ast);
+  const walk = (type: SchemaAST.AST, at: string): ReadonlyArray<string> =>
+    type.context?.annotations?.settingsSecretReference === true
+      ? [at]
+      : strictSecretReferencePaths(type, `${at}.`, seen);
+  if (SchemaAST.isObjects(ast)) {
+    return [
+      ...ast.propertySignatures.flatMap((property) =>
+        walk(property.type, `${path}${String(property.name)}`),
+      ),
+      ...ast.indexSignatures.flatMap((signature) => walk(signature.type, `${path}*`)),
+    ];
+  }
+  if (SchemaAST.isArrays(ast)) {
+    return [...ast.elements, ...ast.rest].flatMap((element) => walk(element, `${path}[]`));
+  }
+  if (SchemaAST.isUnion(ast)) {
+    return ast.types.flatMap((member) => strictSecretReferencePaths(member, path, seen));
+  }
+  if (SchemaAST.isSuspend(ast)) return strictSecretReferencePaths(ast.thunk(), path, seen);
+  return [];
+}
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings", (it) => {
   it.effect("serializes concurrent model preference edits without cancelling duplicate adds", () =>
@@ -278,7 +310,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         },
       });
       assert.deepStrictEqual<unknown>(
-        ServerSettingsModule.redactServerSettingsForClient(settings).secretProviders,
+        ServerSettingsModule.redactServerSettingsForClient(settings, { secretReferences: true })
+          .secretProviders,
         {
           personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
           vault: { kind: "openbao", label: "Vault" },
@@ -1331,7 +1364,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           "quota-secret",
           "expo-secret",
         ];
-        const client = ServerSettingsModule.redactServerSettingsForClient(saved);
+        const client = ServerSettingsModule.redactServerSettingsForClient(saved, {
+          secretReferences: true,
+        });
         const disk = yield* fs.readFileString(config.settingsPath);
         for (const value of values) {
           assert.include(JSON.stringify(saved), value);
@@ -1365,7 +1400,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
             instance: { ...client.providerInstances[instanceId]!, config: { apiKey } },
           });
           assert.propertyVal(changed.providerInstances[instanceId]?.config, "apiKey", apiKey);
-          const redacted = ServerSettingsModule.redactServerSettingsForClient(changed);
+          const redacted = ServerSettingsModule.redactServerSettingsForClient(changed, {
+            secretReferences: true,
+          });
           assert.propertyVal(
             redacted.providerInstances[instanceId]?.config,
             "apiKey",
@@ -1414,9 +1451,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         });
         assert.isTrue(Option.isNone(yield* store.get(secretNames[1]!)));
         assert.deepEqual(
-          ServerSettingsModule.redactServerSettingsForClient(referenced).providerInstances[
-            instanceId
-          ]?.environment,
+          ServerSettingsModule.redactServerSettingsForClient(referenced, { secretReferences: true })
+            .providerInstances[instanceId]?.environment,
           [{ name: "API_TOKEN", value: secret, sensitive: true }],
         );
         yield* service.updateSettings({
@@ -1463,7 +1499,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         "serverPassword",
         "legacy-password",
       );
-      const client = ServerSettingsModule.redactServerSettingsForClient(saved);
+      const client = ServerSettingsModule.redactServerSettingsForClient(saved, {
+        secretReferences: true,
+      });
       for (const value of ["legacy-api-key", "legacy-password"]) {
         assert.notInclude(yield* fs.readFileString(config.settingsPath), value);
         assert.notInclude(JSON.stringify(client), value);
@@ -1507,8 +1545,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         for (const secret of ["bb-access", "ghp_dotcom", "ghp_ghe"]) assert.notInclude(raw, secret);
         assert.include(raw, "me@example.com");
 
-        const forClient =
-          ServerSettingsModule.redactServerSettingsForClient(saved).sourceControlHosts;
+        const forClient = ServerSettingsModule.redactServerSettingsForClient(saved, {
+          secretReferences: true,
+        }).sourceControlHosts;
         assert.equal(forClient.bitbucket?.email, "me@example.com");
         assert.notInclude(String(forClient.bitbucket?.accessToken), "bb-access");
         assert.isAbove(String(forClient.bitbucket?.accessToken).length, 0);
@@ -1570,13 +1609,202 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.isTrue(Option.isNone(yield* stored("bitbucket", "accessToken", null)));
         assert.isTrue(Option.isNone(yield* stored("github", "tokens", "github.com")));
         assert.isTrue(Option.isSome(yield* stored("github", "tokens", "ghe.acme.test")));
-        const redacted =
-          ServerSettingsModule.redactServerSettingsForClient(referenced).sourceControlHosts;
+        const redacted = ServerSettingsModule.redactServerSettingsForClient(referenced, {
+          secretReferences: true,
+        }).sourceControlHosts;
         assert.deepEqual(redacted.bitbucket?.accessToken, reference);
         const tokens = redacted.github?.tokens as Record<string, unknown>;
         assert.deepEqual(tokens["github.com"], gitHubReference);
         assert.notEqual(tokens["ghe.acme.test"], "ghp_ghe");
+
+        // A client that cannot decode references sees saved secrets and can send them back.
+        const usageReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Hub/key",
+        };
+        const easReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Expo/token",
+        };
+        const simlockReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Simlock/token",
+        };
+        const antigravityReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Gemini/key",
+        };
+        const openCodeReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/OpenCode/password",
+        };
+        const antigravity = ProviderInstanceId.make("antigravity");
+        const openCode = ProviderInstanceId.make("opencode");
+        const hub = UsageLimitSourceId.make("hub");
+        const withUsage = yield* serverSettings.updateSettings({
+          usageLimitSources: {
+            [hub]: {
+              kind: "cliproxy",
+              url: "https://hub.test",
+              managementKey: usageReference,
+              enabled: true,
+            },
+          },
+          easDeviceHosts: [
+            {
+              kind: "eas",
+              id: "eas",
+              label: "EAS Simulator",
+              accessToken: easReference,
+              maxSessionMinutes: 30,
+              idleMinutes: 10,
+              maxConcurrentSessions: 2,
+            },
+          ],
+          simlockDeviceHosts: [
+            {
+              kind: "simlock",
+              id: "pool",
+              label: "Device pool",
+              gatewayUrl: "https://simlock.test:4700",
+              agentToken: simlockReference,
+              maxLeases: 2,
+              maxLeaseMinutes: 60,
+            },
+          ],
+          providerInstances: {
+            [antigravity]: {
+              driver: ProviderDriverKind.make("antigravity"),
+              config: { authMethod: "gemini-api-key", apiKey: antigravityReference },
+            },
+            [openCode]: {
+              driver: ProviderDriverKind.make("opencode"),
+              config: { serverUrl: "http://127.0.0.1:4096", serverPassword: openCodeReference },
+            },
+          },
+        });
+        const legacy = ServerSettingsModule.redactServerSettingsForClient(withUsage, {
+          secretReferences: false,
+        });
+        assert.notInclude(JSON.stringify(legacy), "op://");
+        assert.equal(legacy.sourceControlHosts.bitbucket?.accessToken, SECRET_REDACTED);
+        assert.equal(legacy.usageLimitSources[hub]?.managementKey, SECRET_REDACTED);
+        assert.equal(legacy.easDeviceHosts[0]?.accessToken, SECRET_REDACTED);
+        assert.equal(legacy.simlockDeviceHosts[0]?.agentToken, SECRET_REDACTED);
+        const configOf = (settings: ServerSettings, id: ProviderInstanceId) =>
+          settings.providerInstances[id]?.config as Record<string, unknown> | undefined;
+        assert.equal(configOf(legacy, antigravity)?.apiKey, SECRET_REDACTED);
+        assert.equal(configOf(legacy, openCode)?.serverPassword, SECRET_REDACTED);
+        const echoed = yield* serverSettings.updateSettings({
+          sourceControlHosts: legacy.sourceControlHosts,
+          usageLimitSources: legacy.usageLimitSources,
+          easDeviceHosts: legacy.easDeviceHosts,
+          simlockDeviceHosts: legacy.simlockDeviceHosts,
+          providerInstances: legacy.providerInstances,
+        });
+        assert.deepEqual(echoed.sourceControlHosts.bitbucket?.accessToken, reference);
+        assert.deepEqual(echoed.sourceControlHosts.github?.tokens, {
+          "github.com": gitHubReference,
+          "ghe.acme.test": "ghp_ghe",
+        });
+        assert.deepEqual(echoed.usageLimitSources[hub]?.managementKey, usageReference);
+        assert.deepEqual(echoed.easDeviceHosts[0]?.accessToken, easReference);
+        assert.deepEqual(echoed.simlockDeviceHosts[0]?.agentToken, simlockReference);
+        assert.deepEqual(configOf(echoed, antigravity)?.apiKey, antigravityReference);
+        assert.deepEqual(configOf(echoed, openCode)?.serverPassword, openCodeReference);
+        assert.isTrue(Option.isSome(yield* stored("github", "tokens", "ghe.acme.test")));
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("removing a secret provider unsets every field that read from it", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const personal = (reference: string) => ({
+        provider: SecretProviderId.make("personal"),
+        reference: `op://Private/${reference}`,
+      });
+      const work = { provider: SecretProviderId.make("work"), reference: "op://Work/token" };
+      const instanceId = ProviderInstanceId.make("antigravity_refs");
+      const hub = UsageLimitSourceId.make("hub");
+      yield* decodeServerSettingsPatch({
+        secretProviders: {
+          personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
+          work: { kind: "one_password", label: "Work", config: { account: "work" } },
+        },
+      }).pipe(Effect.flatMap(service.updateSettings));
+      yield* service.updateSettings({
+        providerInstances: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("antigravity"),
+            environment: [
+              { name: "API_TOKEN", value: personal("Antigravity/env"), sensitive: true },
+              { name: "WORK_TOKEN", value: work, sensitive: true },
+              { name: "PLAIN", value: "kept", sensitive: false },
+            ],
+          },
+        },
+        sourceControlHosts: {
+          bitbucket: { accessToken: personal("Bitbucket/token") },
+          github: { tokens: { "github.com": personal("GitHub/token"), "ghe.acme.test": work } },
+        },
+        usageLimitSources: {
+          [hub]: {
+            kind: "cliproxy",
+            url: "https://hub.test",
+            managementKey: personal("Hub/key"),
+            enabled: true,
+          },
+        },
+        easDeviceHosts: [
+          {
+            kind: "eas",
+            id: "eas",
+            label: "EAS Simulator",
+            accessToken: personal("Expo/token"),
+            maxSessionMinutes: 30,
+            idleMinutes: 10,
+            maxConcurrentSessions: 2,
+          },
+        ],
+      });
+
+      // An older client's save echoes a reference it cannot decode as the redacted marker.
+      const removed = yield* service.updateSettings({
+        secretProviders: { [SecretProviderId.make("personal")]: null },
+        usageLimitSources: {
+          [hub]: {
+            kind: "cliproxy",
+            url: "https://hub.test",
+            managementKey: SECRET_REDACTED,
+            enabled: true,
+          },
+        },
+      });
+      assert.notInclude(JSON.stringify(removed), "op://Private");
+      assert.deepEqual(removed.providerInstances[instanceId]?.environment, [
+        { name: "WORK_TOKEN", value: work, sensitive: true },
+        { name: "PLAIN", value: "kept", sensitive: false },
+      ]);
+      assert.equal(removed.sourceControlHosts.bitbucket?.accessToken, "");
+      assert.deepEqual(removed.sourceControlHosts.github?.tokens, {
+        "github.com": "",
+        "ghe.acme.test": work,
+      });
+      assert.equal(removed.usageLimitSources[hub]?.managementKey, "");
+      assert.equal(removed.easDeviceHosts[0]?.accessToken, "");
+      assert.deepEqual(Object.keys(removed.secretProviders), ["work"]);
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("knows every strictly decoded field that can hold a secret reference", () =>
+    Effect.sync(() => {
+      // Shipped clients decode these as strings. Each must be covered by the older-client case above.
+      assert.deepEqual(strictSecretReferencePaths(ServerSettings.ast), [
+        "easDeviceHosts.[].accessToken",
+        "simlockDeviceHosts.[].agentToken",
+        "usageLimitSources.*.managementKey",
+      ]);
+    }),
   );
 
   it.effect("keeps the retired keys for another load when a token cannot be copied", () => {
@@ -2583,6 +2811,36 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         );
         const restored = yield* withPolicy(undefined, (service) => service.getSettings);
         assert.equal(restored.providerInstances[claudeId]?.environment?.[0]?.value, token.value);
+
+        // Removing a secret provider still clears a hidden variable that read from it.
+        const reference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Anthropic/key",
+        };
+        yield* withPolicy(undefined, (service) =>
+          decodeServerSettingsPatch({
+            secretProviders: {
+              personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
+            },
+          }).pipe(
+            Effect.flatMap(service.updateSettings),
+            Effect.andThen(
+              service.updateProviderInstance({
+                operation: "upsert",
+                instanceId: claudeId,
+                instance: {
+                  driver: claude,
+                  environment: [{ name: token.name, value: reference, sensitive: true }],
+                },
+              }),
+            ),
+          ),
+        );
+        yield* withPolicy(policy, (service) =>
+          service.updateSettings({ secretProviders: { [reference.provider]: null } }),
+        );
+        const cleared = yield* withPolicy(undefined, (service) => service.getSettings);
+        assert.notInclude(JSON.stringify(cleared), "op://Private");
       }).pipe(Effect.provide(shared));
     });
 
