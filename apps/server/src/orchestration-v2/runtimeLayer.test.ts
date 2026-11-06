@@ -1,6 +1,7 @@
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
+import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -8136,6 +8137,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
 
   it.effect.each([
     "resume",
+    "resume-started",
     "queued-resume",
     "rearm",
     "snooze-race",
@@ -8614,17 +8616,74 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* orchestrator.dispatch(resume);
       }
       const after = yield* orchestrator.getThreadProjection(threadId);
-      if (scenario === "resume") {
+      if (scenario === "resume" || scenario === "resume-started") {
         assert.deepInclude(after.messages.at(-1), {
           text: "Continue where you left off.",
           createdBy: "agent",
           creationSource: "server",
         });
+        const continuation = after.runs.at(-1)!;
+        assert.equal(continuation.status, "starting");
+        if (scenario === "resume-started") {
+          const startedAt = yield* DateTime.now;
+          yield* events.write({
+            events: [
+              {
+                id: EventId.make("recovery:continuation-started:resume-started"),
+                type: "run.updated",
+                threadId,
+                runId: continuation.id,
+                occurredAt: startedAt,
+                payload: { ...continuation, status: "running", startedAt },
+              },
+            ],
+          });
+        }
+        yield* (yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService).reconcile(
+          "startup",
+        );
+        const restartedShell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        const retry = limitRecoveryCommand(
+          restartedShell,
+          true,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+        if (scenario === "resume-started") {
+          assert.isNull(retry);
+          assert.equal(
+            restartedShell.limitRecovery?.requestId,
+            after.thread.limitRecovery?.requestId,
+          );
+        } else {
+          assert(retry?.type === "message.dispatch");
+          assert.notEqual(retry.commandId, resume!.commandId);
+          yield* orchestrator.dispatch(retry);
+          yield* orchestrator.dispatch(retry);
+          const resumed = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(
+            resumed.runs.map((row) => row.status),
+            ["failed", "cancelled", "starting"],
+          );
+          const visible = createOrchestrationV2TurnItemVisibility({
+            runs: resumed.runs,
+            attempts: resumed.attempts,
+            items: resumed.turnItems,
+          });
+          assert.deepEqual(
+            resumed.turnItems.flatMap((item) =>
+              item.type === "user_message" && visible(item) ? [item.runId] : [],
+            ),
+            [run.id, resumed.runs[2]!.id],
+          );
+        }
       }
       assert.lengthOf(
         after.runs,
         before.runs.length +
           (scenario === "resume" ||
+          scenario === "resume-started" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
           scenario === "independent-patches" ||
@@ -8636,6 +8695,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         after.messages,
         before.messages.length +
           (scenario === "resume" ||
+          scenario === "resume-started" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
           scenario === "independent-patches" ||
