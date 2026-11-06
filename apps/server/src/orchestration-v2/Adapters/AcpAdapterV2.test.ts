@@ -8825,8 +8825,6 @@ describe("AcpAdapterV2", () => {
           | undefined;
         const promptStarted = yield* Deferred.make<void>();
         const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
-        const promptHeld = yield* Deferred.make<void>();
-        const finalizeScheduled = yield* Deferred.make<Duration.Input>();
         const continuationOffered = yield* Deferred.make<void>();
         const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
           [];
@@ -8844,12 +8842,6 @@ describe("AcpAdapterV2", () => {
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
           selfInvocation,
-          testHooks: {
-            afterPromptSettledWithBackgroundWork: () =>
-              Deferred.succeed(promptHeld, undefined).pipe(Effect.asVoid),
-            onDeferredFinalizeScheduled: (debounce) =>
-              Deferred.succeed(finalizeScheduled, debounce).pipe(Effect.asVoid),
-          },
           flavor: {
             driver: ACP_TEST_DRIVER,
             capabilities: AcpProviderCapabilitiesV2,
@@ -8915,11 +8907,15 @@ describe("AcpAdapterV2", () => {
           runtimePolicy,
         });
         const now = yield* DateTime.now;
-        yield* runtime
-          .startTurn(
-            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
-          )
-          .pipe(Effect.forkScoped);
+        const turnInput = makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal: 1,
+        });
+        yield* runtime.startTurn(turnInput).pipe(Effect.forkScoped);
         yield* Deferred.await(promptStarted);
         assert.isDefined(sessionUpdateHandler);
         assert.isDefined(taskCompleted);
@@ -8978,9 +8974,19 @@ describe("AcpAdapterV2", () => {
           }
         });
         yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
-        yield* Deferred.await(promptHeld);
+        while (true) {
+          const event = yield* Queue.take(events);
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "early"
+          )
+            backgroundItem = event;
+          if (event.type !== "turn.terminal") continue;
+          assert.equal(event.status, "completed", "the running blocker does not hold the root");
+          break;
+        }
         yield* assertCommand(status, "EARLY_BG_DONE\n");
-        assert.lengthOf(continuationRequests, 0, "the other command still holds the root open");
+        assert.lengthOf(continuationRequests, 0, "the running blocker defers the wake");
 
         const replayAck = () =>
           update({
@@ -9008,11 +9014,15 @@ describe("AcpAdapterV2", () => {
           }
         }
         yield* complete("blocker", { exit_code: 0, output: "BLOCKER_DONE\n" });
-        yield* TestClock.adjust(yield* Deferred.await(finalizeScheduled));
         while (true) {
           const event = yield* Queue.take(events);
-          if (event.type !== "turn.terminal") continue;
-          assert.equal(event.status, "completed");
+          if (event.type !== "turn_item.updated") continue;
+          if (event.turnItem.nativeItemRef?.nativeId !== "blocker") continue;
+          if (event.turnItem.status !== "completed") continue;
+          assert.equal(event.turnItem.runId, turnInput.runId, "the row stays on its run");
+          if (event.turnItem.type === "command_execution") {
+            assert.equal(event.turnItem.output, "BLOCKER_DONE\n");
+          }
           break;
         }
         yield* Deferred.await(continuationOffered);
