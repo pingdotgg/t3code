@@ -7,7 +7,7 @@ import {
 import type { ProviderOptionDescriptor } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
-import { CheckIcon, ChevronRightIcon, GaugeIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, GaugeIcon, WorkflowIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -37,7 +37,7 @@ import {
 type SelectDescriptor = Extract<ProviderOptionDescriptor, { type: "select" }>;
 type BooleanDescriptor = Extract<ProviderOptionDescriptor, { type: "boolean" }>;
 
-/** Codex service tiers and Claude's Fast mode share the footer's speed control. */
+/** Codex service tiers, Claude's Fast mode, and Ultracode sit in the footer, not the column. */
 function splitSpeed(
   provider: TraitsSelectionInput["provider"],
   selects: ReadonlyArray<SelectDescriptor>,
@@ -48,11 +48,15 @@ function splitSpeed(
       ? (selects.find((descriptor) => descriptor.id === "serviceTier") ?? null)
       : null;
   const fastToggle = toggles.find((descriptor) => descriptor.id === "fastMode") ?? null;
+  const ultracodeToggle = toggles.find((descriptor) => descriptor.id === "ultracode") ?? null;
   return {
     speedSelect,
     fastToggle,
+    ultracodeToggle,
     columnSelects: selects.filter((descriptor) => descriptor !== speedSelect),
-    columnToggles: toggles.filter((descriptor) => descriptor !== fastToggle),
+    columnToggles: toggles.filter(
+      (descriptor) => descriptor !== fastToggle && descriptor !== ultracodeToggle,
+    ),
   };
 }
 
@@ -78,7 +82,7 @@ function columnControls(
   return { effort, others: controls.filter((control) => control !== effort) };
 }
 
-/** The reasoning chip keeps the effort display preference and spells out Fast. */
+/** The reasoning chip keeps the effort display preference, spells out Fast, and marks Ultracode. */
 export function describeComposerEffort(
   traits: TraitsSelectionInput | null,
   effortDisplay: EffortDisplay,
@@ -147,6 +151,9 @@ export function describeComposerEffort(
         ) : null}
         {fast && (word || glyph) ? (
           <span data-composer-control-label>{display.speedLabel}</span>
+        ) : null}
+        {display.ultracode ? (
+          <WorkflowIcon aria-hidden="true" data-composer-control-icon className="size-3" />
         ) : null}
       </>
     ),

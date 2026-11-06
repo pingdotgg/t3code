@@ -12,7 +12,7 @@ import { OpenAI } from "../Icons";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
-function copyAdminRequest() {
+export function copyAdminRequest() {
   void writeTextToClipboard(CHATGPT_WORKSPACE_ADMIN_REQUEST, "admin request").then(
     () =>
       toastManager.add({
@@ -101,7 +101,7 @@ export function threadErrorBannerItem({
     description: workspaceLimit
       ? "You've reached your workspace's limit for using your ChatGPT plan in other apps. Copy a request to ask your workspace admin for increased usage limits."
       : chatGptLimit
-        ? "Review your usage settings in ChatGPT."
+        ? null
         : message,
     descriptionDetails:
       !chatGptLimit && message !== error ? (
