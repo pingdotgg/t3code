@@ -21,9 +21,9 @@ import {
 } from "./useScopedSettings";
 
 const FORK_WORKSPACE_ITEMS = {
-  inherit: "Same as new threads",
-  same: "Same worktree",
-  worktree: "New worktree",
+  inherit: "Use new thread setting",
+  same: "Reuse original thread's workspace",
+  worktree: "Create a new worktree",
 };
 
 function ForkWorkspaceRow() {
@@ -35,11 +35,11 @@ function ForkWorkspaceRow() {
       serverScoped
       settingKeys={["forkThreadEnvMode"]}
       {...searchableSetting("fork-workspace")}
-      description="Where forks run. Side chats always share their parent's workspace."
+      description="Choose whether forked threads reuse the original workspace or create a new worktree. Side chats always use the parent thread's workspace."
       resetAction={
         mixed || settings.forkThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.forkThreadEnvMode ? (
           <SettingResetButton
-            label="fork workspace"
+            label="workspace for forked threads"
             onClick={() =>
               updateSettings({ forkThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.forkThreadEnvMode })
             }
@@ -55,7 +55,7 @@ function ForkWorkspaceRow() {
               updateSettings({ forkThreadEnvMode: value });
           }}
         >
-          <SelectTrigger size="sm" aria-label="Fork workspace">
+          <SelectTrigger size="sm" aria-label="Workspace for forked threads">
             <SelectValue placeholder="Mixed" />
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>

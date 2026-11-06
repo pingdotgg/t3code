@@ -749,10 +749,10 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "fork-workspace",
-    title: "Fork workspace",
+    title: "Workspace for forked threads",
     to: "/settings/worktrees",
     scope: "environment-defaults",
-    searchTerms: ["fork thread same new worktree checkout inherit workspace"],
+    searchTerms: ["fork thread same new worktree checkout inherit workspace original reuse"],
   },
   {
     id: "add-project-starts-in",
