@@ -764,6 +764,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
           (row) =>
             row.kind !== "message" ||
             row.message.id === workflowOpening?.messageId ||
+            row.id === activeFindMatch?.entryId ||
+            row.message.id === revealedMessageId ||
             !isSentMessageHidden(row.message, { agentMessageDisplay, automationMessageDisplay }),
         )
       : stableRows;

@@ -18,6 +18,7 @@ import {
   ThreadId,
   type OrchestrationV2Subagent,
 } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
   createRef,
@@ -34,6 +35,7 @@ import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import "~/index.css";
 
 import { environmentThreadDetails } from "../../state/threads";
+import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
@@ -1455,6 +1457,29 @@ describe("MessagesTimeline agent messages", () => {
     expect(range.getBoundingClientRect().bottom).toBeLessThanOrEqual(
       body.getBoundingClientRect().bottom,
     );
+  });
+  it("hides another agent's message, except while it holds find's active match", async () => {
+    setup();
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, agentMessageDisplay: "hide" });
+    onTestFinished(() => __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS));
+    const entries = [
+      message(AGENT_MESSAGE, { createdBy: "agent", senderThreadId: SENDER_THREAD_ID }),
+      message("Ship it once CI is green.", {}, "message-2"),
+    ];
+    await using screen = await renderTimeline(entries);
+    expect(screen.buttons(/^Agent/)).toHaveLength(0);
+    expect(screen.text()).toContain("Ship it once CI is green.");
+
+    await screen.rerender(
+      <MessagesTimeline
+        {...baseProps()}
+        timelineEntries={entries as Entry[]}
+        findExpanded
+        findQuery="drops the index"
+        activeFindMatch={{ entryId: "entry-message-1", runId: null, occurrence: 0 }}
+      />,
+    );
+    await vi.waitFor(() => expect(screen.text()).toContain("drops the index"));
   });
 });
 
