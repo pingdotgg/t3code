@@ -1,8 +1,10 @@
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { isCommitSha } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { resolvePullRequestAuthorFilter, VcsProcessExitError } from "@t3tools/contracts";
@@ -14,6 +16,7 @@ import type {
   PullRequestCommit,
   PullRequestInvolvement,
   PullRequestLabel,
+  PullRequestLabelCandidateList,
   PullRequestListFilters,
   PullRequestListState,
   PullRequestMergeCapabilities,
@@ -32,10 +35,13 @@ import * as GitLabCli from "./GitLabCli.ts";
 import {
   AWARD_EMOJI_GRAPHQL_QUERY,
   decodeAwardEmojiJson,
+  decodeBranchJson,
   decodeCommitDiffRefsJson,
   decodeCommitsJson,
   decodeDiffRefsJson,
   decodeDiscussionsJson,
+  decodeLabelNameJson,
+  decodeLabelPermissionJson,
   decodeMergeMessagesJson,
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
@@ -51,15 +57,18 @@ import {
   decodeProjectUsersJson,
   decodeRepositoryBlobsJson,
   decodeReviewDecisionsJson,
+  decodeSourceBranchJson,
   decodeTriggerJobChecksJson,
   decodeViewerJson,
   gitLabAwardName,
+  LABEL_PERMISSION_GRAPHQL_QUERY,
   MERGE_MESSAGES_GRAPHQL_QUERY,
   MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
   MERGE_REQUEST_STATS_GRAPHQL_QUERY,
   REPOSITORY_BLOBS_GRAPHQL_QUERY,
   APPROVALS_GRAPHQL_QUERY,
   REVIEW_DECISIONS_GRAPHQL_QUERY,
+  SOURCE_BRANCH_GRAPHQL_QUERY,
   type GitLabDiffRefs,
   type GitLabMergeRequestDetail,
   type GitLabMergeRequestListItem,
@@ -219,9 +228,63 @@ const REQUEST_CHANGES_MUTATION = `mutation($projectPath: ID!, $iid: String!) {
   mergeRequestRequestChanges(input: { projectPath: $projectPath, iid: $iid }) { errors }
 }`;
 
+export class GitLabBranchDeletionRefusedError extends Schema.TaggedError<GitLabBranchDeletionRefusedError>()(
+  "GitLabBranchDeletionRefusedError",
+  {
+    command: Schema.Literal("glab"),
+    cwd: Schema.String,
+    number: Schema.Int,
+    reason: Schema.Literals([
+      "open",
+      "not-allowed",
+      "source-unavailable",
+      "default-branch",
+      "head-changed",
+    ]),
+  },
+) {
+  get detail(): string {
+    switch (this.reason) {
+      case "open":
+        return `Close or merge merge request !${this.number} before deleting its source branch.`;
+      case "not-allowed":
+        return "GitLab does not let you delete this source branch. It may be protected, or you may not be able to push to it.";
+      case "source-unavailable":
+        return `GitLab did not report a source project for merge request !${this.number}.`;
+      case "default-branch":
+        return "The source branch is its project's default branch and cannot be deleted here.";
+      case "head-changed":
+        return "The source branch has new commits and was not deleted.";
+    }
+  }
+
+  override get message(): string {
+    return `GitLab CLI failed in deleteSourceBranch: ${this.detail}`;
+  }
+}
+
+export class GitLabUnknownLabelError extends Schema.TaggedError<GitLabUnknownLabelError>()(
+  "GitLabUnknownLabelError",
+  {
+    command: Schema.Literal("glab"),
+    cwd: Schema.String,
+    labels: Schema.Array(Schema.String),
+  },
+) {
+  get detail(): string {
+    return `The project has no label named ${this.labels.map((label) => `"${label}"`).join(", ")}.`;
+  }
+
+  override get message(): string {
+    return `GitLab CLI failed in setLabels: ${this.detail}`;
+  }
+}
+
 export type GitLabPullRequestCliError =
   | GitLabCli.GitLabCliError
+  | GitLabBranchDeletionRefusedError
   | GitLabMergeRequestReadError
+  | GitLabUnknownLabelError
   | GitLabDiffCursorError
   | GitLabDiffCommitError
   | GitLabDiffCommitParentUnavailableError
@@ -395,6 +458,22 @@ export class GitLabPullRequestCli extends Context.Service<
       GitLabPullRequestCliError
     >;
 
+    readonly listLabelCandidates: (input: {
+      readonly cwd: string;
+      readonly host?: string | undefined;
+      readonly repository: string;
+      readonly number: number;
+    }) => Effect.Effect<PullRequestLabelCandidateList, GitLabPullRequestCliError>;
+
+    readonly setLabels: (input: {
+      readonly cwd: string;
+      readonly host?: string | undefined;
+      readonly repository: string;
+      readonly number: number;
+      readonly labels: ReadonlyArray<string>;
+      readonly applied: boolean;
+    }) => Effect.Effect<void, GitLabPullRequestCliError>;
+
     readonly listProjectUsers: (input: {
       readonly cwd: string;
       readonly host?: string | undefined;
@@ -497,6 +576,8 @@ export class GitLabPullRequestCli extends Context.Service<
       {
         readonly reactions: ReadonlyArray<PullRequestReaction>;
         readonly reactionsByNoteId: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
+        readonly editedAtByNoteId: ReadonlyMap<string, string>;
+        readonly botLogins: ReadonlySet<string>;
       },
       GitLabPullRequestCliError
     >;
@@ -648,6 +729,7 @@ export const make = Effect.gen(function* () {
     readonly path: string;
     readonly method?: string;
     readonly stdin?: string;
+    readonly headers?: ReadonlyArray<string>;
     readonly maxOutputBytes?: number;
     readonly timeoutMs?: number;
   }) =>
@@ -662,6 +744,7 @@ export const make = Effect.gen(function* () {
         ...(input.stdin === undefined
           ? []
           : ["--input", "-", "--header", "Content-Type: application/json"]),
+        ...(input.headers ?? []).flatMap((header) => ["--header", header]),
       ],
       ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
       ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
@@ -1122,11 +1205,15 @@ export const make = Effect.gen(function* () {
     readonly collected: {
       readonly reactions: ReadonlyArray<PullRequestReaction>;
       readonly reactionsByNoteId: Map<string, ReadonlyArray<PullRequestReaction>>;
+      readonly editedAtByNoteId: Map<string, string>;
+      readonly botLogins: Set<string>;
     } | null;
   }): Effect.Effect<
     {
       readonly reactions: ReadonlyArray<PullRequestReaction>;
       readonly reactionsByNoteId: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
+      readonly editedAtByNoteId: ReadonlyMap<string, string>;
+      readonly botLogins: ReadonlySet<string>;
     },
     GitLabPullRequestCliError
   > =>
@@ -1159,9 +1246,14 @@ export const make = Effect.gen(function* () {
         const collected = input.collected ?? {
           reactions: decoded.success.reactions,
           reactionsByNoteId: new Map<string, ReadonlyArray<PullRequestReaction>>(),
+          editedAtByNoteId: new Map<string, string>(),
+          botLogins: new Set<string>(),
         };
         for (const [id, reactions] of decoded.success.reactionsByNoteId)
           collected.reactionsByNoteId.set(id, reactions);
+        for (const [id, editedAt] of decoded.success.editedAtByNoteId)
+          collected.editedAtByNoteId.set(id, editedAt);
+        for (const login of decoded.success.botLogins) collected.botLogins.add(login);
         return decoded.success.nextCursor === null || input.page >= CONVERSATION_PAGES
           ? Effect.succeed(collected)
           : awardsPage({
@@ -1175,6 +1267,39 @@ export const make = Effect.gen(function* () {
 
   /** The stats connection hands back one page, so a repository's rows are asked for 100 at a time. */
   const STAT_IIDS_PER_REQUEST = 100;
+
+  const projectLabels = (input: {
+    readonly cwd: string;
+    readonly host?: string | undefined;
+    readonly repository: string;
+    readonly search?: string | undefined;
+  }) =>
+    api({
+      cwd: input.cwd,
+      host: input.host,
+      path: `projects/${projectPath(input.repository)}/labels?${query([
+        ["per_page", String(MAX_PAGE_SIZE)],
+        ["include_ancestor_groups", "true"],
+        ...searchParams(input.search),
+      ])}`,
+    }).pipe(
+      Effect.flatMap((result) => {
+        const decoded = decodeProjectLabelsJson(result.stdout.trim());
+        return Result.isSuccess(decoded)
+          ? Effect.succeed({
+              labels: decoded.success.labels,
+              truncated: decoded.success.rawCount >= MAX_PAGE_SIZE,
+            })
+          : Effect.fail(
+              new GitLabMergeRequestReadError({
+                command: "glab",
+                cwd: input.cwd,
+                operation: "listProjectLabels",
+                cause: decoded.failure,
+              }),
+            );
+      }),
+    );
 
   const graphqlRead = <A>(input: {
     readonly cwd: string;
@@ -1227,6 +1352,112 @@ export const make = Effect.gen(function* () {
             ),
       ),
     );
+
+  const labelPermission = (input: {
+    readonly cwd: string;
+    readonly host?: string | undefined;
+    readonly repository: string;
+    readonly number: number;
+  }) =>
+    graphqlRead({
+      cwd: input.cwd,
+      host: input.host,
+      operation: "getLabelPermission",
+      query: LABEL_PERMISSION_GRAPHQL_QUERY,
+      variables: { fullPath: input.repository, iid: String(input.number) },
+      decode: decodeLabelPermissionJson,
+    }).pipe(
+      // The answer gates one optional control; an unusable CLI or account still surfaces.
+      Effect.catchIf(
+        (cause) =>
+          cause._tag !== "GitLabCliUnavailableError" &&
+          cause._tag !== "GitLabCliAuthenticationError" &&
+          cause._tag !== "GitLabCliRateLimitError",
+        () => Effect.succeed(false),
+      ),
+    );
+
+  const sourceBranch = (input: {
+    readonly cwd: string;
+    readonly host?: string | undefined;
+    readonly repository: string;
+    readonly number: number;
+  }) =>
+    graphqlRead({
+      cwd: input.cwd,
+      host: input.host,
+      operation: "getSourceBranch",
+      query: SOURCE_BRANCH_GRAPHQL_QUERY,
+      variables: { fullPath: input.repository, iid: String(input.number) },
+      decode: decodeSourceBranchJson,
+    });
+
+  const deleteSourceBranch = Effect.fn("GitLabPullRequestCli.deleteSourceBranch")(
+    function* (input: {
+      readonly cwd: string;
+      readonly host?: string | undefined;
+      readonly repository: string;
+      readonly number: number;
+    }) {
+      const refuse = (reason: GitLabBranchDeletionRefusedError["reason"]) =>
+        new GitLabBranchDeletionRefusedError({
+          command: "glab",
+          cwd: input.cwd,
+          number: input.number,
+          reason,
+        });
+      const source = yield* sourceBranch(input);
+      if (source === null) {
+        return yield* new GitLabMergeRequestReadError({
+          command: "glab",
+          cwd: input.cwd,
+          operation: "getSourceBranch",
+          cause: new Error("GitLab reported no merge request."),
+        });
+      }
+      if (source.open) return yield* refuse("open");
+      if (!source.canDelete) return yield* refuse("not-allowed");
+      if (source.sourceProject === null || source.headSha === null) {
+        return yield* refuse("source-unavailable");
+      }
+      const path = `projects/${projectPath(source.sourceProject)}/repository/branches/${encodeURIComponent(source.branch)}`;
+      const branch = yield* api({ cwd: input.cwd, host: input.host, path }).pipe(
+        Effect.flatMap((result) => {
+          const decoded = decodeBranchJson(result.stdout.trim());
+          return Result.isSuccess(decoded)
+            ? Effect.succeed(decoded.success)
+            : Effect.fail(
+                new GitLabMergeRequestReadError({
+                  command: "glab",
+                  cwd: input.cwd,
+                  operation: "getSourceBranch",
+                  cause: decoded.failure,
+                }),
+              );
+        }),
+      );
+      if (branch.isDefault) return yield* refuse("default-branch");
+      if (branch.headSha !== source.headSha) return yield* refuse("head-changed");
+      // GitLab's branch delete takes no expected SHA. It answers 412 when the head's authored
+      // date is newer than If-Unmodified-Since, which catches a commit pushed after this read but
+      // not a force-push of an older-dated commit (a rebase keeps author dates).
+      const authoredAt =
+        branch.headAuthoredDate === null ? Option.none() : DateTime.make(branch.headAuthoredDate);
+      yield* api({
+        cwd: input.cwd,
+        host: input.host,
+        path,
+        method: "DELETE",
+        ...(Option.isNone(authoredAt)
+          ? {}
+          : {
+              headers: [
+                `If-Unmodified-Since: ${DateTime.toDateUtc(authoredAt.value).toUTCString()}`,
+              ],
+            }),
+      });
+    },
+  );
 
   const mergeRequestStats = (input: {
     readonly cwd: string;
@@ -1420,7 +1651,30 @@ export const make = Effect.gen(function* () {
 
     getMergeRequestDetail: Effect.fn("GitLabPullRequestCli.getMergeRequestDetail")(
       function* (input) {
-        const detail = yield* mergeRequestDetail(input);
+        const [read, viewerCanEditLabels] = yield* Effect.all(
+          [mergeRequestDetail(input), labelPermission(input)],
+          { concurrency: 2 },
+        );
+        // Only a closed or merged merge request offers its branch for deletion, so an open one,
+        // the page most often read, skips the extra query.
+        const detail =
+          read.state === "open"
+            ? { ...read, viewerCanEditLabels }
+            : {
+                ...read,
+                viewerCanEditLabels,
+                viewerCanDeleteBranch: yield* sourceBranch(input).pipe(
+                  Effect.map((source) => source?.canDelete === true),
+                  // The answer gates one optional action; an unusable CLI or account still surfaces.
+                  Effect.catchIf(
+                    (cause) =>
+                      cause._tag !== "GitLabCliUnavailableError" &&
+                      cause._tag !== "GitLabCliAuthenticationError" &&
+                      cause._tag !== "GitLabCliRateLimitError",
+                    () => Effect.succeed(false),
+                  ),
+                ),
+              };
         if (input.downstreamChecks === false || detail.headPipeline === undefined) return detail;
         const downstream = yield* triggerJobChecks({
           cwd: input.cwd,
@@ -1627,31 +1881,86 @@ export const make = Effect.gen(function* () {
     ),
 
     listProjectLabels: Effect.fn("GitLabPullRequestCli.listProjectLabels")(function (input) {
-      return api({
+      return projectLabels(input).pipe(
+        Effect.map(({ labels, truncated }) => ({
+          items: labels.map(({ name, color }) => ({ name, color })),
+          truncated,
+        })),
+      );
+    }),
+
+    listLabelCandidates: Effect.fn("GitLabPullRequestCli.listLabelCandidates")(function* (input) {
+      const [mergeRequest, project] = yield* Effect.all(
+        [mergeRequestDetail(input), projectLabels(input)],
+        { concurrency: 2 },
+      );
+      const applied = new Set(mergeRequest.labels.map((label) => label.name));
+      const listed = new Set(project.labels.map((label) => label.name));
+      return {
+        // GitLab's own picker hides archived labels. Applied ones stay so they can be removed,
+        // as do applied labels past the project's first page.
+        candidates: [
+          ...mergeRequest.labels
+            .filter((label) => !listed.has(label.name))
+            .map((label) => ({ ...label, description: null, isApplied: true })),
+          ...project.labels
+            .filter((label) => !label.archived || applied.has(label.name))
+            .map(({ archived: _archived, ...label }) => ({
+              ...label,
+              isApplied: applied.has(label.name),
+            })),
+        ],
+        truncated: project.truncated,
+      };
+    }),
+
+    setLabels: Effect.fn("GitLabPullRequestCli.setLabels")(function* (input) {
+      if (input.applied) {
+        // GitLab creates any label it is asked to add that the project does not have yet.
+        const found = yield* Effect.forEach(
+          input.labels,
+          (label) =>
+            api({
+              cwd: input.cwd,
+              host: input.host,
+              path: `projects/${projectPath(input.repository)}/labels/${encodeURIComponent(label)}?${query(
+                [["include_ancestor_groups", "true"]],
+              )}`,
+            }).pipe(
+              // The lookup also matches a numeric id, so the returned name must be the one asked for.
+              Effect.map((result) => {
+                const decoded = decodeLabelNameJson(result.stdout.trim());
+                return Result.isSuccess(decoded) && decoded.success === label;
+              }),
+              Effect.catchTags({
+                GitLabCliCommandError: (error) =>
+                  isVcsProcessExitError(error.cause) && error.cause.failureKind === "not-found"
+                    ? Effect.succeed(false)
+                    : Effect.fail(error),
+              }),
+            ),
+          { concurrency: 4 },
+        );
+        const unknown = input.labels.filter((_, index) => !found[index]);
+        if (unknown.length > 0) {
+          return yield* new GitLabUnknownLabelError({
+            command: "glab",
+            cwd: input.cwd,
+            labels: unknown,
+          });
+        }
+      }
+      yield* api({
         cwd: input.cwd,
         host: input.host,
-        path: `projects/${projectPath(input.repository)}/labels?${query([
-          ["per_page", String(MAX_PAGE_SIZE)],
-          ...searchParams(input.search),
-        ])}`,
-      }).pipe(
-        Effect.flatMap((result) => {
-          const decoded = decodeProjectLabelsJson(result.stdout.trim());
-          return Result.isSuccess(decoded)
-            ? Effect.succeed({
-                items: decoded.success.labels,
-                truncated: decoded.success.rawCount >= MAX_PAGE_SIZE,
-              })
-            : Effect.fail(
-                new GitLabMergeRequestReadError({
-                  command: "glab",
-                  cwd: input.cwd,
-                  operation: "listProjectLabels",
-                  cause: decoded.failure,
-                }),
-              );
+        path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}`,
+        method: "PUT",
+        // GitLab label names cannot contain a comma.
+        // @effect-diagnostics-next-line globalJsonInEffect:off
+        stdin: JSON.stringify({
+          [input.applied ? "add_labels" : "remove_labels"]: input.labels.join(","),
         }),
-      );
+      });
     }),
 
     listProjectUsers: Effect.fn("GitLabPullRequestCli.listProjectUsers")(function (input) {
@@ -1713,6 +2022,7 @@ export const make = Effect.gen(function* () {
         // `glab mr merge` arms auto-merge and never disarms it, so the one direction the CLI has
         // no flag for is asked of GitLab directly through the same `api` passthrough the rest of
         // this module writes with.
+        if (input.action === "delete-branch") return yield* deleteSourceBranch(input);
         if (input.action === "disable-auto-merge") {
           const result = yield* api({
             cwd: input.cwd,
