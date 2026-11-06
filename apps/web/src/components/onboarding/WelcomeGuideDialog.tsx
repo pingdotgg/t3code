@@ -96,8 +96,6 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the target is DOM state outside React.
   useEffect(() => {
     let cancelled = false;
-    const previous = document.querySelector<HTMLElement>("[data-tour-target]");
-    previous?.removeAttribute("data-tour-target");
     const resolveTarget = async () => {
       if (targetRoute) await navigate({ to: targetRoute });
       if (cancelled || !targetSelector) return;
@@ -121,19 +119,9 @@ function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
     targetSelector && targetElement?.matches(targetSelector) ? targetElement : null;
   const showDialog = resolvedTarget === null;
 
-  const close = () => {
-    resolvedTarget?.removeAttribute("data-tour-target");
-    onClose();
-  };
-
-  const advance = () => {
-    resolvedTarget?.removeAttribute("data-tour-target");
-    setStep(step + 1);
-  };
-  const goBack = () => {
-    resolvedTarget?.removeAttribute("data-tour-target");
-    setStep(step - 1);
-  };
+  const close = onClose;
+  const advance = () => setStep(step + 1);
+  const goBack = () => setStep(step - 1);
 
   const targetCard = resolvedTarget ? (
     <Popover open onOpenChange={(open) => !open && close()}>
@@ -320,13 +308,13 @@ function guideSteps(askShortcut: string | null, mapShortcut: string | null) {
     },
     {
       label: "What you know",
-      target: { selector: "#knowledge-map" },
+      target: { selector: "#knowledge-map", route: "/settings/threads" },
       title: "See what you know",
       body: "See what the lessons have learned you know, which you can review.",
     },
     {
       label: "Sync",
-      target: { selector: "#chat-sync" },
+      target: { selector: "#chat-sync", route: "/settings/threads" },
       title: "Sync from T3 Code",
       body: "Bring chats over from T3 Code with Sync from T3 Code.",
     },
