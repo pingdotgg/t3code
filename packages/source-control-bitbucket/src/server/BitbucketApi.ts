@@ -1049,7 +1049,7 @@ export const make = Effect.gen(function* () {
                 detail: Option.none<string>(),
               })),
               // 403 means Bitbucket accepted the credential but it cannot read the account, as
-              // with repository, project, or workspace access tokens; 401 means it was rejected.
+              // with repository, project, or workspace access tokens.
               Effect.catch((error) =>
                 (error._tag === "BitbucketResponseError" ||
                   error._tag === "BitbucketResponseBodyReadError") &&
