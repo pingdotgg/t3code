@@ -201,3 +201,32 @@ export function codexUsageLimitResetAt(
     null,
   );
 }
+
+const CODEX_RESET_TEXT =
+  /[Tt]ry again at (?:([A-Z][a-z]{2}) (\d{1,2})(?:st|nd|rd|th), (\d{4}) )?(\d{1,2}):(\d{2}) ([AP]M)\./;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * Codex writes a usage limit's reset into its error text in its own local time:
+ * "Try again at 3:37 PM." for today, else "try again at Nov 11th, 2026 3:37 PM.".
+ * It is the only reset left when a proxy such as CLIProxyAPI strips the rate-limit snapshot.
+ */
+export function codexMessageResetAt(message: string, now: DateTime.DateTime): string | null {
+  const match = CODEX_RESET_TEXT.exec(message);
+  if (!match) return null;
+  const [, month, day, year, hour, minute, meridiem] = match;
+  const monthIndex = month === undefined ? undefined : MONTHS.indexOf(month);
+  if (monthIndex === -1) return null;
+  const reset = DateTime.setParts(DateTime.setZone(now, DateTime.zoneMakeLocal()), {
+    ...(monthIndex === undefined
+      ? {}
+      : { year: Number(year), month: monthIndex + 1, day: Number(day) }),
+    hour: (Number(hour) % 12) + (meridiem === "PM" ? 12 : 0),
+    minute: Number(minute),
+    second: 0,
+    millisecond: 0,
+  });
+  // Codex drops the seconds, so the next minute is the first one past the reset.
+  const resetAt = DateTime.add(reset, { minutes: 1 });
+  return DateTime.isGreaterThan(resetAt, now) ? DateTime.formatIso(resetAt) : null;
+}

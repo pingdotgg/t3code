@@ -1,7 +1,9 @@
+import * as DateTime from "effect/DateTime";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  codexMessageResetAt,
   codexRateLimitsFailureMessage,
   codexRateLimitsToLimits,
   codexRateLimitsToUpdate,
@@ -275,5 +277,35 @@ describe("codexUsageLimitResetAt", () => {
     expect(
       codexUsageLimitResetAt({ primary: { usedPercent: 50, resetsAt: 2000000000 } }),
     ).toBeNull();
+  });
+});
+
+describe("codexMessageResetAt", () => {
+  const local = (year: number, month: number, day: number, hour: number, minute: number) =>
+    DateTime.makeZonedUnsafe(
+      { year, month, day, hour, minute },
+      { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+    );
+  const now = local(2026, 11, 7, 9, 0);
+
+  // Codex prints local time without seconds, so the parsed reset is the minute after.
+  it("reads Codex's same-day and dated reset text in local time", () => {
+    expect(codexMessageResetAt("You’ve hit your usage limit. Try again at 3:37 PM.", now)).toBe(
+      DateTime.formatIso(local(2026, 11, 7, 15, 38)),
+    );
+    expect(codexMessageResetAt("Upgrade, or try again at Dec 1st, 2026 12:05 AM.", now)).toBe(
+      DateTime.formatIso(local(2026, 12, 1, 0, 6)),
+    );
+    expect(codexMessageResetAt("Try again at 12:30 PM.", now)).toBe(
+      DateTime.formatIso(local(2026, 11, 7, 12, 31)),
+    );
+  });
+
+  it("leaves the reset unknown without reset text or once it has passed", () => {
+    expect(codexMessageResetAt("You’ve hit your usage limit. Try again later.", now)).toBeNull();
+    expect(
+      codexMessageResetAt("exceeded retry limit, last status: 429 Too Many Requests", now),
+    ).toBeNull();
+    expect(codexMessageResetAt("Try again at 8:15 AM.", now)).toBeNull();
   });
 });
