@@ -235,7 +235,6 @@ export const make = Effect.gen(function* () {
       conversationSummaries: true,
       conversationSummarySourceFormat: 2,
       externalHistory: 1,
-      projectLoom: true,
       projectCode: true,
       projectCodeFreshness: true,
       projectCodeTests: true,
