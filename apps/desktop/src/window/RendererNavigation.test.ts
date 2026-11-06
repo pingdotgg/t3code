@@ -3,7 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { isSameOriginRendererNavigation } from "./RendererNavigation.ts";
 
 describe("isSameOriginRendererNavigation", () => {
-  it("rejects renderer navigations whose origin only serializes as null", () => {
+  it("compares protocol and host instead of origin", () => {
     for (const applicationUrl of ["t3code://app/", "t3code-dev://app/"]) {
       assert.isTrue(
         isSameOriginRendererNavigation({
