@@ -440,18 +440,26 @@ const make = Effect.gen(function* () {
     yield* secrets
       .set(secretName, new TextEncoder().encode(exchanged.access_token))
       .pipe(Effect.catch(failStorage));
-    const previous = yield* Effect.gen(function* () {
-      yield* sql`
-        UPDATE fleet_peer_environments
-        SET secret_name = ${secretName}, session_scopes_json = ${yield* encodeScopes(granted).pipe(
-          Effect.catch(failStorage),
-        )},
-            session_expires_at = ${DateTime.formatIso(expiresAt)}, label = ${descriptor.label},
-            last_error = NULL
-        WHERE environment_id = ${input.environmentId}
-      `.pipe(Effect.catch(failStorage));
-      return row;
-    }).pipe(Effect.onError(() => secrets.remove(secretName).pipe(Effect.ignore)));
+    // `RETURNING` closes the race: a peer unregistered mid-exchange yields no row,
+    // and the fresh secret is discarded instead of leaving an orphan token behind.
+    const updated = yield* sql<{ readonly secret_name: string | null }>`
+      UPDATE fleet_peer_environments
+      SET secret_name = ${secretName}, session_scopes_json = ${yield* encodeScopes(granted).pipe(
+        Effect.catch(failStorage),
+      )},
+          session_expires_at = ${DateTime.formatIso(expiresAt)}, label = ${descriptor.label},
+          last_error = NULL
+      WHERE environment_id = ${input.environmentId}
+      RETURNING secret_name
+    `.pipe(Effect.catch(failStorage));
+    if (updated.length === 0) {
+      yield* secrets.remove(secretName).pipe(Effect.ignore);
+      return yield* new PeerEnvironmentRegistryError({
+        reason: "unknown_peer",
+        message: `${input.environmentId} is no longer registered, so its session was not stored.`,
+      });
+    }
+    const previous = row;
     // Pairing again replaces the old token; a racing exchange may leave its
     // own behind, unused either way.
     if (previous.secret_name !== null && previous.secret_name !== secretName) {

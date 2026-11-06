@@ -96,7 +96,8 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   .annotate(Tool.Title, "Get orchestration capabilities")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFleetOff);
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
@@ -196,7 +197,8 @@ const ListScheduledTasksTool = Tool.make("list_scheduled_tasks", {
   .annotate(Tool.Title, "List scheduled tasks")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFleetOff);
 
 const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
   description:
@@ -249,7 +251,8 @@ const ThreadListTool = Tool.make("t3_thread_list", {
   .annotate(Tool.Title, "List T3 threads")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFleetOff);
 
 const ThreadReadTool = Tool.make("t3_thread_read", {
   description:
@@ -308,7 +311,8 @@ const ThreadWaitTool = Tool.make("t3_thread_wait", {
   .annotate(Tool.Title, "Wait for a T3 thread")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFleetOff);
 
 const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
   description:
@@ -376,7 +380,8 @@ const EnvironmentSpawnTool = Tool.make("t3_environment_spawn", {
   .annotate(Tool.Title, "Spawn a fleet worker environment")
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, true)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFleetOff);
 
 const EnvironmentRemoveTool = Tool.make("t3_environment_remove", {
   description:
@@ -390,7 +395,8 @@ const EnvironmentRemoveTool = Tool.make("t3_environment_remove", {
   .annotate(Tool.Title, "Remove a fleet worker environment")
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFleetOff);
 
 const EnvironmentListTool = Tool.make("t3_environment_list", {
   description:
@@ -404,7 +410,8 @@ const EnvironmentListTool = Tool.make("t3_environment_list", {
   .annotate(Tool.Title, "List fleet worker environments")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFleetOff);
 
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,

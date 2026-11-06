@@ -131,6 +131,11 @@ export interface McpInvocationScope {
   readonly client: McpClientCaller | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
+  /**
+   * Whether this instance can manage a fleet: the OpenShell block is on and this
+   * environment is the managing instance. Unset means unknown, so tools show.
+   */
+  readonly fleetAvailable?: boolean;
 }
 
 /**
@@ -159,6 +164,13 @@ export const hiddenFromSubagents = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.thread?.subagent !== true;
+};
+
+/** `McpSchema.EnabledWhen` for the fleet tools, hidden where no fleet can be managed. */
+export const hiddenWhileFleetOff = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.fleetAvailable !== false;
 };
 
 /** `McpSchema.EnabledWhen` for tools that only serve links, hidden while the beta is off. */

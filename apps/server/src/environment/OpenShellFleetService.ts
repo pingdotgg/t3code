@@ -137,7 +137,12 @@ const make = Effect.gen(function* () {
   const links = yield* PeerLinks.PeerLinks;
 
   // One client per process: a gateway-url change applies after a restart.
-  const parts = yield* Ref.make<Option.Option<OpenShellGatewayDriver>>(Option.none());
+  // `cached` also serializes concurrent first calls, so two callers cannot build
+  // drivers against two different gateways and cache the wrong one. A failed
+  // build is not cached, so the next call retries it.
+  const cachedDriver = yield* Ref.make<
+    Option.Option<Effect.Effect<OpenShellGatewayDriver, OpenShellFleetError>>
+  >(Option.none());
 
   const failDisabled = (message: string) => new OpenShellFleetDisabled({ message });
 
@@ -185,13 +190,19 @@ const make = Effect.gen(function* () {
     return { gatewayUrl, openshell };
   });
 
-  /** The gateway credential, decoded for the SDK's token provider. */
-  const gatewayCredential = Effect.gen(function* () {
-    const stored = yield* secrets.get(GATEWAY_CREDENTIAL_SLOT).pipe(Effect.option);
-    return Option.isSome(stored) && Option.isSome(stored.value)
-      ? new TextDecoder().decode(stored.value.value)
-      : undefined;
-  });
+  /**
+   * The gateway credential, decoded for the SDK's token provider. A slot that is
+   * not set means "no credential"; a read that failed is a typed fleet error,
+   * never silently treated as unset.
+   */
+  const gatewayCredential: Effect.Effect<string | undefined, OpenShellFleetError> = Effect.gen(
+    function* () {
+      const stored = yield* secrets
+        .get(GATEWAY_CREDENTIAL_SLOT)
+        .pipe(Effect.mapError((cause) => failed("spawn", cause)));
+      return Option.isSome(stored) ? new TextDecoder().decode(stored.value) : undefined;
+    },
+  );
 
   const openClient = Effect.fn("OpenShellFleetService.openClient")(function* (
     gatewayUrl: string,
@@ -298,22 +309,27 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const driverFor = Effect.gen(function* () {
-    const cached = yield* Ref.get(parts);
-    if (Option.isSome(cached)) return cached.value;
-    const driver = yield* buildDriver;
-    yield* Ref.set(parts, Option.some(driver));
-    return driver;
-  });
+  const driverFor: Effect.Effect<OpenShellGatewayDriver, OpenShellFleetError> = Effect.gen(
+    function* () {
+      const cached = yield* Ref.get(cachedDriver);
+      if (Option.isSome(cached)) return yield* cached.value;
+      const built = yield* Effect.cached(buildDriver);
+      yield* Ref.set(cachedDriver, Option.some(built));
+      return yield* built;
+    },
+  );
 
   const spawnWorker: OpenShellFleetService["Service"]["spawnWorker"] = Effect.fn(
     "OpenShellFleetService.spawnWorker",
   )(function* (input): Effect.fn.Return<GatewayDriverSpawnResult, OpenShellFleetError> {
-    // Inherit means the caller's own mode (spec section 5.2: never broader).
+    // `inherit` follows the caller; an omitted mode falls back to the conservative
+    // default the driver documents, never to the caller's ceiling (spec section 5.2).
     const runtimeMode =
-      input.runtimeMode === undefined || input.runtimeMode === "inherit"
-        ? input.runtimeModeCeiling
-        : input.runtimeMode;
+      input.runtimeMode === undefined
+        ? "approval-required"
+        : input.runtimeMode === "inherit"
+          ? input.runtimeModeCeiling
+          : input.runtimeMode;
     if (isRuntimeModeAbove(runtimeMode, input.runtimeModeCeiling)) {
       return yield* new OpenShellFleetSpawnRefused({
         reason: "runtime_mode_above_ceiling",
