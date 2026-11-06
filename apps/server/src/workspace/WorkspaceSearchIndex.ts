@@ -559,11 +559,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = Effect.fn(
     "WorkspaceSearchIndex.searchContents",
   )(function* (input) {
-    const { searchQuery, regexMode } = buildContentSearchQuery(input);
-    // fff reads a lone token as the pattern but parses constraint syntax (`src/`, `*.ts`, `!x`)
-    // once other tokens follow, so exclusions must not share a single-token query.
-    const pattern = searchQuery.trim();
-    const singleToken = !/\s/.test(pattern);
+    let { searchQuery, regexMode } = buildContentSearchQuery(input);
     const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
     // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.
     const rawPageSize = input.wholeWord
@@ -572,9 +568,14 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     const matches: Array<ProjectSearchContentsResult["matches"][number]> = [];
     let nextCursor: GrepCursor | null = null;
     let regexFallbackError: string | undefined;
+    let retryLiterally = false;
 
     do {
       const remainingTimeBudgetMs = Math.max(1, Math.ceil(deadline - performance.now()));
+      // fff reads a lone token as the pattern but parses constraint syntax (`src/`, `*.ts`, `!x`)
+      // once other tokens follow, so exclusions must not share a single-token query.
+      const pattern = searchQuery.trim();
+      const singleToken = !/\s/.test(pattern);
       const options = {
         smartCase: !input.caseSensitive && !regexMode,
         maxMatchesPerFile: Math.min(CONTENT_SEARCH_MAX_MATCHES_PER_FILE, rawPageSize),
@@ -598,13 +599,21 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
                 mode: regexMode ? "regex" : "plain",
               }),
             );
+      // fff searches an invalid pattern as a literal, which would keep the `(?i)` prefix.
+      retryLiterally = regexMode && !input.caseSensitive && result.regexFallbackError !== undefined;
+      if (retryLiterally) {
+        regexFallbackError = result.regexFallbackError;
+        ({ searchQuery, regexMode } = buildContentSearchQuery({ ...input, useRegex: false }));
+        continue;
+      }
 
       for (const match of result.items) {
         if (isExcludedPath(toPosixPath(match.relativePath))) continue;
         const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
           (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
         );
-        if (matchRanges.length === 0) continue;
+        // fff reports hits past its 512-char lineContent cap with no ranges, so whole words can't be verified there.
+        if (input.wholeWord && matchRanges.length === 0) continue;
         matches.push({
           path: toPosixPath(match.relativePath),
           lineNumber: match.lineNumber,
@@ -614,7 +623,10 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       }
       nextCursor = result.nextCursor;
       regexFallbackError ??= result.regexFallbackError;
-    } while (matches.length < input.limit && nextCursor !== null && performance.now() < deadline);
+    } while (
+      retryLiterally ||
+      (matches.length < input.limit && nextCursor !== null && performance.now() < deadline)
+    );
 
     return {
       matches: matches.slice(0, input.limit),
