@@ -2538,7 +2538,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           yield* service.updateSettings({ defaultAutoPull: true });
           const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
           assert.equal(stored.defaultRuntimeMode, "auto");
-          assert.equal(stored.sideChatRuntimeMode, sideChatRuntimeMode);
+          // Top-level defaults are pruned when stored; inherit-parent is the default.
+          assert.equal(
+            stored.sideChatRuntimeMode,
+            sideChatRuntimeMode === "inherit-parent" ? undefined : sideChatRuntimeMode,
+          );
           assert.equal(stored.projectSettingsOverrides[raised].defaultRuntimeMode, "full-access");
           assert.equal(
             stored.projectSettingsOverrides[raised].sideChatRuntimeMode,
