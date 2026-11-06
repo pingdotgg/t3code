@@ -4219,10 +4219,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             worktreePath: null,
             activeProviderThreadId: null,
             lineage: {
-            parentThreadId: null,
-            relationshipToParent: null,
-            rootThreadId: threadId,
-          },
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: threadId,
+            },
             forkedFrom: null,
             createdAt: now,
             updatedAt: now,
@@ -4631,10 +4631,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
               worktreePath: null,
               activeProviderThreadId: null,
               lineage: {
-            parentThreadId: null,
-            relationshipToParent: null,
-            rootThreadId: threadId,
-          },
+                parentThreadId: null,
+                relationshipToParent: null,
+                rootThreadId: threadId,
+              },
               forkedFrom: null,
               createdAt: now,
               updatedAt: now,
@@ -5095,10 +5095,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             worktreePath: null,
             activeProviderThreadId: null,
             lineage: {
-            parentThreadId: null,
-            relationshipToParent: null,
-            rootThreadId: threadId,
-          },
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: threadId,
+            },
             forkedFrom: null,
             createdAt: now,
             updatedAt: now,
@@ -6410,10 +6410,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             worktreePath: null,
             activeProviderThreadId: null,
             lineage: {
-            parentThreadId: null,
-            relationshipToParent: null,
-            rootThreadId: threadId,
-          },
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: threadId,
+            },
             forkedFrom: null,
             createdAt: now,
             updatedAt: now,
@@ -8546,5 +8546,4 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.deepEqual(projection.artifacts[0]?.payload, { path: "/tmp/out.txt" });
     }).pipe(Effect.provide(layerTest)),
   );
-
 });
