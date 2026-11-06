@@ -97,8 +97,8 @@ it.each([
         secondsPer30s,
       },
     };
-    const cpuBenchmark = `Handy’s reference CPU benchmark: ${secondsPer30s.cpu === null ? "not benchmarked" : `${secondsPer30s.cpu} s / 30 s audio`}`;
-    const gpuBenchmark = `Handy’s reference GPU benchmark: ${secondsPer30s.accelerated === null ? "not benchmarked" : `${secondsPer30s.accelerated} s / 30 s audio`}`;
+    const cpuBenchmark = `Speed: ${secondsPer30s.cpu === null ? "not benchmarked" : `${secondsPer30s.cpu} s / 30 s`}`;
+    const gpuBenchmark = `Speed: ${secondsPer30s.accelerated === null ? "not benchmarked" : `${secondsPer30s.accelerated} s / 30 s`}`;
     const fetch = globalThis.fetch;
     using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = new URL(input instanceof Request ? input.url : input, window.location.href);

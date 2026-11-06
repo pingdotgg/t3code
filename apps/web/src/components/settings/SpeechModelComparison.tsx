@@ -110,12 +110,12 @@ export function ModelBenchmarks({
         );
       })}
       <span>
-        Handy’s reference {tier === "cpu" ? "CPU" : "GPU"} benchmark:{" "}
+        Speed:{" "}
         {seconds == null ? (
           "not benchmarked"
         ) : (
           <>
-            <strong className="font-medium text-foreground">{seconds} s</strong> / 30 s audio
+            <strong className="font-medium text-foreground">{seconds} s</strong> / 30 s
           </>
         )}
       </span>
