@@ -4,6 +4,8 @@ import * as Effect from "effect/Effect";
 
 import { ResolvedKeybindingsConfig } from "./keybindings.ts";
 
+const encodeResolvedKeybindings = Schema.encodeEffect(ResolvedKeybindingsConfig);
+
 const decode = <S extends Schema.Top>(
   schema: S,
   input: unknown,
@@ -22,6 +24,20 @@ const shortcut = {
   altKey: false,
   modKey: true,
 };
+
+it.effect("preserves Space shortcuts through resolved keybinding serialization", () =>
+  Effect.gen(function* () {
+    const rules = [
+      {
+        command: "composer.dictation" as const,
+        shortcut: { ...shortcut, key: " ", metaKey: true, modKey: false },
+      },
+    ];
+    const encoded = yield* encodeResolvedKeybindings(rules);
+    assert.deepEqual(encoded, rules);
+    assert.deepEqual(yield* decode(ResolvedKeybindingsConfig, encoded), rules);
+  }),
+);
 
 it.effect("drops resolved rules with commands this build does not know", () =>
   Effect.gen(function* () {
