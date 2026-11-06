@@ -772,6 +772,7 @@ function ThreadRouteContent(
         worktreePath: preferredWorktreePath,
         env,
         initialInput: projectScriptTerminalInput(script.command),
+        stopOnSettle: script.stopOnSettle ?? false,
       },
     });
 
