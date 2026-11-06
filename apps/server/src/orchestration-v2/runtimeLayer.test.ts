@@ -1031,6 +1031,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         .rollback(CommandId.make("runtime-copied-guard-rollback"))
         .pipe(Effect.flip);
       assert.equal(copiedRollback.cause, copiedMessage.cause);
+      const copiedResume = yield* orchestrator
+        .dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make("runtime-copied-guard-resume"),
+          threadId: copied.threadId,
+        })
+        .pipe(Effect.flip);
+      assert.equal(copiedResume.cause, copiedMessage.cause);
 
       const ordinary = yield* seedFailingRollbackThread("runtime-ordinary-guard");
       const ordinaryMessage = yield* orchestrator.dispatch({

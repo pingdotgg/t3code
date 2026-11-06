@@ -553,6 +553,22 @@ const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLin
 
 const COPIED_THREAD_GUARD_MESSAGE = `This chat was copied from T3 Code. Use Continue in ${T3_LEARN_PRODUCT_NAME} to keep going.`;
 
+/** A copy keeps T3 Code's session and refs, so nothing may run or revert in it (APP-49). */
+function refuseCopiedThread(
+  command: { readonly commandId: CommandId; readonly type: OrchestrationV2Command["type"] },
+  thread: { readonly t3CodeCopiedAt?: unknown },
+) {
+  return thread.t3CodeCopiedAt === undefined
+    ? Effect.void
+    : Effect.fail(
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: COPIED_THREAD_GUARD_MESSAGE,
+        }),
+      );
+}
+
 /** Unfinished runs (including queued) or open requests block moving a thread to another project. */
 export function threadHasUnfinishedWork(records: {
   readonly runs: ReadonlyArray<{ readonly status: string }>;
@@ -4912,6 +4928,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+    // Merged context waits for the target's next message, which a copy never takes.
+    yield* refuseCopiedThread(command, targetProjection.thread);
 
     if (
       sourceProjection.thread.lineage.relationshipToParent !== "fork" ||
@@ -5778,13 +5796,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
-    if (projection.thread.t3CodeCopiedAt !== undefined) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: COPIED_THREAD_GUARD_MESSAGE,
-      });
-    }
+    yield* refuseCopiedThread(command, projection.thread);
     if (command.manualContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
       const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
@@ -10422,6 +10434,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ["runs", "attempts", "nodes", "providerThreads", "turnItems"],
         { turnItemTypes: ["command_execution"], turnItemRunId: command.runId },
       );
+      yield* refuseCopiedThread(command, projection.thread);
       const state = preparedRunState(command, projection);
       if (state === null) {
         return yield* new OrchestratorDispatchError({
@@ -10607,6 +10620,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ["runs", "attempts", "nodes", "providerThreads", "turnItems"],
       { turnItemTypes: ["command_execution", "error"], turnItemRunId: command.runId },
     );
+    yield* refuseCopiedThread(command, projection.thread);
     const state = preparedRunState(command, projection);
     const failureItem = projection.turnItems.find(
       (candidate): candidate is Extract<OrchestrationV2TurnItem, { readonly type: "error" }> =>
@@ -12885,6 +12899,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ["providerThreads", "checkpoints", "checkpointScopes", "runs", "providerTurns", "attempts"],
         { turnItemTypes: [], messageRoles: ["user"] },
       );
+      yield* refuseCopiedThread(command, projection.thread);
       const providerThread = projection.providerThreads.find(
         (candidate) => candidate.id === projection.thread.activeProviderThreadId,
       );
@@ -14043,32 +14058,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.thread_id": commandThreadId(command),
     });
 
-    if (
-      command.type === "message.dispatch" ||
-      command.type === "queued-message.promote-to-steer" ||
-      command.type === "queued-run.start" ||
-      command.type === "queue.resume" ||
-      command.type === "runtime-request.respond" ||
-      command.type === "prepared-run.release" ||
-      command.type === "prepared-run.retry" ||
-      command.type === "checkpoint.rollback"
-    ) {
-      const thread = yield* projectionStore
-        .getThread(command.threadId)
-        .pipe(
-          Effect.mapError(
-            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-          ),
-        );
-      if (thread.t3CodeCopiedAt !== undefined) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: COPIED_THREAD_GUARD_MESSAGE,
-        });
-      }
-    }
-
     const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
     const effects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
     let cancelUnsettledEffects:
@@ -14342,6 +14331,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Thread ${command.threadId} is not active.`,
           });
         }
+        yield* refuseCopiedThread(command, projection.thread);
         const selectedRunId = command.type === "queued-run.start" ? command.runId : undefined;
         const selectedRun =
           selectedRunId === undefined
