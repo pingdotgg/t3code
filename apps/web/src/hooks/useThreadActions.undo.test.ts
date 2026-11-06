@@ -50,6 +50,11 @@ const threadShell = vi.hoisted(() => ({
   pinOrderKey: "a0",
   pinnedAt: null as string | null,
   snoozedUntil: null as string | null,
+  lineage: {
+    parentThreadId: null as string | null,
+    relationshipToParent: null as "subagent" | null,
+    rootThreadId: "thread",
+  },
   projectId: "project",
   environmentId: "undo-env",
   session: null,
@@ -108,6 +113,8 @@ beforeEach(() => {
   router.state.matches[0]!.params = {};
   threadShell.pinnedAt = null;
   threadShell.snoozedUntil = null;
+  threadShell.lineage.parentThreadId = null;
+  threadShell.lineage.relationshipToParent = null;
   shellLoaded.current = true;
 });
 afterEach(() => {
@@ -140,6 +147,15 @@ describe("concurrent thread action Undo", () => {
 });
 
 describe("unpin Undo", () => {
+  it("offers no Undo for a subagent pinned before the server refused to pin one", async () => {
+    threadShell.pinnedAt = "2026-01-01T00:00:00.000Z";
+    threadShell.lineage.parentThreadId = "parent";
+    threadShell.lineage.relationshipToParent = "subagent";
+    await useThreadActions().unpinThread(target);
+    expect(commands.unpin).toHaveBeenCalledOnce();
+    expect(useThreadUndoNotice.getState().notice).toBeNull();
+  });
+
   it("restores the original snooze after restoring the pin", async () => {
     threadShell.pinnedAt = "2026-01-01T00:00:00.000Z";
     threadShell.snoozedUntil = "2030-01-01T09:00:00.000Z";
@@ -264,6 +280,22 @@ describe("settle and snooze Undo", () => {
       environmentId: target.environmentId,
       input: { threadId: target.threadId, orderKey: "a0" },
     });
+    expect(commands.snooze).toHaveBeenCalledExactlyOnceWith({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, snoozedUntil },
+    });
+  });
+
+  it("restores a settled subagent's snooze without the pin the server now refuses", async () => {
+    const snoozedUntil = "2030-01-01T09:00:00.000Z";
+    threadShell.pinnedAt = "2026-01-01T00:00:00.000Z";
+    threadShell.snoozedUntil = snoozedUntil;
+    threadShell.lineage.parentThreadId = "parent";
+    threadShell.lineage.relationshipToParent = "subagent";
+    await useThreadActions().settleThread(target);
+    await currentUndo()();
+    expect(commands.unsettle).toHaveBeenCalledOnce();
+    expect(commands.pin).not.toHaveBeenCalled();
     expect(commands.snooze).toHaveBeenCalledExactlyOnceWith({
       environmentId: target.environmentId,
       input: { threadId: target.threadId, snoozedUntil },
