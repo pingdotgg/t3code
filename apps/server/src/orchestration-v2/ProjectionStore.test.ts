@@ -6522,6 +6522,113 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect(
+    "reads the shell of a thread with a long finished run history without scanning it",
+    () =>
+      Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const sql = yield* SqlClient.SqlClient;
+        const suffix = "shell-long-history";
+        const threadId = ThreadId.make(`thread:${suffix}`);
+        const now = yield* DateTime.now;
+        yield* projectionStore.apply({
+          id: EventId.make(`event:${suffix}:thread-created`),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make(`project:${suffix}`),
+            title: "Long finished history",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+        for (let ordinal = 1; ordinal <= 3; ordinal++) {
+          const runId = RunId.make(`run:${suffix}:${ordinal}`);
+          const rootNodeId = NodeId.make(`node:${suffix}:${ordinal}`);
+          yield* projectionStore.apply({
+            id: EventId.make(`event:${suffix}:run-${ordinal}`),
+            type: "run.created",
+            threadId,
+            runId,
+            nodeId: rootNodeId,
+            driver,
+            providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: runId,
+              threadId,
+              ordinal,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: MessageId.make(`message:${suffix}:${ordinal}`),
+              rootNodeId,
+              activeAttemptId: null,
+              status: "completed" as const,
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          });
+        }
+
+        const { statements, tracer } = traceSqlStatements();
+        const shell = yield* projectionStore
+          .getThreadShell(threadId)
+          .pipe(Effect.withTracer(tracer));
+        assert.isNotNull(shell);
+        const statement = statements.find((query) => query.includes("AS activity_run_status"));
+        assert.isDefined(statement);
+        const plan = yield* sql.unsafe<{
+          readonly id: number;
+          readonly parent: number;
+          readonly detail: string;
+        }>(`EXPLAIN QUERY PLAN ${statement}`);
+        // With no live run, a lookup that walks the ordinal index reads every run the thread has had.
+        const liveRunLookups = plan.filter((row) =>
+          row.detail.startsWith("SEARCH r USING INDEX orchestration_v2_projection_runs_"),
+        );
+        assert.isAbove(liveRunLookups.length, 0);
+        for (const lookup of liveRunLookups) {
+          assert.include(
+            lookup.detail,
+            "orchestration_v2_projection_runs_thread_status_idx (thread_id=? AND status=?)",
+          );
+        }
+        // The newest run needs no sort, but the run that ended last must come from an ordered index.
+        const candidateLookups = plan.filter((row) =>
+          row.detail.startsWith("SEARCH candidate USING INDEX orchestration_v2_projection_runs_"),
+        );
+        assert.isAbove(candidateLookups.length, 0);
+        const sortedCandidates = plan.filter(
+          (row) =>
+            row.detail === "USE TEMP B-TREE FOR ORDER BY" &&
+            candidateLookups.some((lookup) => lookup.parent === row.parent),
+        );
+        assert.deepEqual(sortedCandidates, []);
+      }),
+  );
+
   it.effect("selects the latest waiting secret only from active runs", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
