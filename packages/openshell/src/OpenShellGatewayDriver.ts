@@ -19,7 +19,6 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
-import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
   type OpenShellGatewayClient,
@@ -188,15 +187,24 @@ const sandboxNameHash = (seed: string, key: string): string => {
 };
 
 /** Loser of the race keeps running; the journal makes it resumable. */
-const withDeadline = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> =>
-  await Promise.race([
-    promise,
-    Effect.runPromise(
-      Effect.flatMap(Effect.sleep(Duration.millis(timeoutMs)), () =>
-        Effect.fail(new DrainDeadlineError({ timeoutMs })),
-      ),
-    ),
-  ]);
+/**
+ * Races a drain against its deadline and clears the timer either way. The
+ * timeout itself is fenced by the caller: a run that keeps writing after it
+ * timed out writes under the old drain id, which no retry reads.
+ */
+const withDeadline = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new DrainDeadlineError({ timeoutMs })), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+};
 
 export interface GatewayDriverSpawnOptionsWithCeiling extends GatewayDriverSpawnOptions {
   /**
@@ -287,6 +295,12 @@ const drainTimeoutMsOf = (defaults: OpenShellWorkerDefaults | undefined): number
 
 const drainIdOf = (environmentId: EnvironmentId): string => `drain:${environmentId}:1`;
 
+/** The next drain run's id: a timed-out run keeps writing under the old one. */
+const nextGeneration = (drainId: string, environmentId: EnvironmentId): string => {
+  const generation = Number.parseInt(drainId.slice(drainId.lastIndexOf(":") + 1), 10);
+  return `drain:${environmentId}:${Number.isFinite(generation) ? generation + 1 : 1}`;
+};
+
 const zeroProgress = (drainId: string, startedAt: number): OpenShellDrainProgress => ({
   drainId,
   threads: { total: 0, acked: 0, failed: 0 },
@@ -302,6 +316,8 @@ export class OpenShellGatewayDriver implements GatewayDriver {
   private readonly client: OpenShellGatewayClient;
   private readonly settings: OpenShellDriverSettings | undefined;
   private readonly managedBy: string;
+  /** This managing instance's own id: a worker must never claim it. */
+  private readonly managingEnvironmentId: string | undefined;
   private readonly registrar: WorkerPairingRegistrar | undefined;
   private readonly drainExecutor: FleetDrainExecutor | undefined;
   private readonly index: FleetWorkerIndex;
@@ -311,6 +327,7 @@ export class OpenShellGatewayDriver implements GatewayDriver {
     this.client = options.client;
     this.settings = options.settings;
     this.managedBy = options.managingEnvironmentId ?? DEFAULT_MANAGED_BY;
+    this.managingEnvironmentId = options.managingEnvironmentId;
     this.registrar = options.registrar;
     this.drainExecutor = options.drainExecutor;
     this.index = options.index ?? memoryFleetWorkerIndex();
@@ -372,7 +389,18 @@ export class OpenShellGatewayDriver implements GatewayDriver {
 
     // Policy translation (spec section 5.2): the conservative default guards
     // against a caller that forgot the mode (see sandboxPolicyForRuntimeMode).
-    await this.client.setPolicy(created.name, sandboxPolicyForRuntimeMode(runtimeMode));
+    // A sandbox whose policy cannot be set is deleted again, because it would
+    // otherwise exist without a fleet row: invisible to status, TTL and removal.
+    try {
+      await this.client.setPolicy(created.name, sandboxPolicyForRuntimeMode(runtimeMode));
+    } catch (cause) {
+      await this.client.deleteSandbox(created.name).catch(() => "already_absent" as const);
+      throw new OpenShellGatewayDriverError({
+        reason: "gateway",
+        message: `The sandbox policy could not be set; ${created.name} was deleted again.`,
+        cause,
+      });
+    }
     const ready = await this.client.waitReady(created.name, IMAGE_PREP_TIMEOUT_SECS);
 
     if (this.registrar === undefined) {
@@ -407,6 +435,21 @@ export class OpenShellGatewayDriver implements GatewayDriver {
       spec.ttlMs ?? toMillis(this.settings?.workerDefaults?.ttlMs) ?? DEFAULT_WORKER_TTL_MS;
     const expiresAt = spec.workerClass === "ephemeral" ? this.now() + ttlMs : null;
 
+    if (environmentId === this.managingEnvironmentId) {
+      throw new OpenShellGatewayDriverError({
+        reason: "pairing",
+        message: `${environmentId} is this managing instance; a worker cannot report it.`,
+      });
+    }
+    const existing = await this.index.get(environmentId);
+    if (existing !== null && existing.sandboxName !== null && existing.sandboxName !== ready.name) {
+      // A worker claiming another worker's id would let a later removal target the
+      // wrong sandbox, so the binding is never replaced.
+      throw new OpenShellGatewayDriverError({
+        reason: "pairing",
+        message: `${environmentId} is already bound to sandbox ${existing.sandboxName}; ${ready.name} was not registered.`,
+      });
+    }
     await this.index.upsert({
       environmentId,
       state: "pairing",
@@ -503,11 +546,13 @@ export class OpenShellGatewayDriver implements GatewayDriver {
         timeoutMs,
       );
     } catch {
-      // Timeout or executor crash: the journal keeps whatever acked so a later
-      // remove resumes with the same drainId (spec section 7.4).
-      const progress =
-        (await this.index.get(environmentId))?.drain ?? zeroProgress(drainId, startedAt);
-      return { drainId, progress, state: "draining" };
+      // Timed out or crashed. The next attempt gets a new drain id, so a run that
+      // is still writing cannot land under the id a retry would trust, and the
+      // journal keeps whatever acked so a retry resumes instead of restarting.
+      const progress = zeroProgress(nextGeneration(drainId, environmentId), this.now());
+      await this.index.setDrain(environmentId, progress);
+      await this.index.setState(environmentId, "draining", "drain still running");
+      return { drainId: progress.drainId, progress, state: "draining" };
     }
     const progress: OpenShellDrainProgress = {
       drainId,
@@ -689,6 +734,19 @@ export class OpenShellGatewayDriver implements GatewayDriver {
     const finalized: Array<EnvironmentId> = [];
     for (const row of rows) {
       if (row.sandboxName !== null && sandboxNames.has(row.sandboxName)) continue;
+      // The labeled list is not proof of absence: a sandbox created under another
+      // managing id (or before a rename) is missing from it while still running,
+      // and finalizing its row would hide a live worker from status and removal.
+      if (row.sandboxName !== null) {
+        const sandbox = await this.client.get(row.sandboxName).catch(() => null);
+        if (sandbox !== null) {
+          leftInPlace.push({
+            name: row.sandboxName,
+            reason: "the sandbox still exists under another label",
+          });
+          continue;
+        }
+      }
       const drainUnfinished = row.drain !== null && row.drain.finishedAt === null;
       if (row.state === "draining" || row.state === "deleting" || drainUnfinished) {
         leftInPlace.push({

@@ -32,6 +32,21 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
+describe("openshell gateway patch", () => {
+  it("keeps the managing role when only the gateway URL changes", () => {
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      openshellEnabled: true,
+      openshell: { gatewayUrl: "https://gateway.example.com", managingInstance: true },
+    });
+    const next = applyServerSettingsPatch(current, {
+      openshell: { gatewayUrl: "https://other.example.com" },
+    });
+
+    expect(next.openshell.managingInstance).toBe(true);
+    expect(next.openshell.gatewayUrl).toBe("https://other.example.com");
+  });
+});
+
 describe("fallbackTextGenerationModelSelection", () => {
   it("uses Big Pickle when only OpenCode is enabled", () => {
     expect(

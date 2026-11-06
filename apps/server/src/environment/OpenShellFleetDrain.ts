@@ -52,7 +52,7 @@ export interface DrainGitPush {
 export interface DrainSource {
   readonly shell: (environmentId: EnvironmentId) => Effect.Effect<
     {
-      readonly threads: ReadonlyArray<{ readonly threadId: string }>;
+      readonly threads: ReadonlyArray<{ readonly threadId: string; readonly live: boolean }>;
       readonly projects: ReadonlyArray<{ readonly workspaceRoot: string }>;
     },
     FleetDrainStepError
@@ -96,14 +96,39 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
     const worktrees = zero();
     let failure: string | undefined;
     let deadlineHit = false;
+    let shellFailed = false;
     const shell = yield* deps.source.shell(input.environmentId).pipe(
       Effect.catch((cause) =>
         Effect.sync(() => {
           failure = cause.message;
-          return { threads: [], projects: [] };
+          shellFailed = true;
+          return { threads: [], projects: [] } as {
+            threads: ReadonlyArray<{ threadId: string; live: boolean }>;
+            projects: ReadonlyArray<{ workspaceRoot: string }>;
+          };
         }),
       ),
     );
+    if (shellFailed) {
+      // Nothing could be listed, so nothing can be acked: the sandbox is kept.
+      return reported({
+        threads: zero(),
+        worktrees: zero(),
+        state: "failed",
+        finishedAt: yield* deps.now,
+      });
+    }
+    // A child that is still working writes after this snapshot, so copying now
+    // would ack a stale thread and then delete the sandbox under it.
+    const stillWorking = shell.threads.filter((thread) => thread.live);
+    if (stillWorking.length > 0) {
+      return reported({
+        threads: { total: stillWorking.length, acked: 0, failed: stillWorking.length },
+        worktrees: zero(),
+        state: "failed",
+        finishedAt: yield* deps.now,
+      });
+    }
     for (const thread of shell.threads) {
       if ((yield* deps.now) >= input.deadlineAt) {
         failure = "The drain deadline passed before every thread was copied.";
