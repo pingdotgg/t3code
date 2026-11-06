@@ -472,7 +472,6 @@ const make = Effect.gen(function* () {
         const wasLinked = yield* engine
           .dispatch({
             type: "thread.pull-request.unlink",
-            keepActiveRun: true,
             commandId: yield* commandId("mcp-pr-unlink", thread.id),
             threadId: thread.id,
             host: target.host,
@@ -506,7 +505,6 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* engine.dispatch({
               type: "thread.pull-request.unlink",
-              keepActiveRun: true,
               commandId: yield* commandId("mcp-pr-unlink", thread.id),
               threadId: thread.id,
               host,

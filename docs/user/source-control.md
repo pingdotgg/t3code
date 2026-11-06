@@ -341,8 +341,8 @@ and T3 Code tries again after a new push or review.
 T3 Code runs the watch and prompts the agent on each change, so the agent cannot watch or stop
 watching a pull request under agent merge. Agent merge starts right away, even if the agent is idle:
 it first reviews where the pull request stands. Pick another option to change it, or stop it the same way you stop a watch. Stopping,
-changing, or unlinking cancels anything the agent has not started yet and interrupts a turn already
-working on agent merge. Permission to merge belongs to T3 Code, so it ends the moment you stop. All
+changing, or unlinking cancels anything the agent has not started yet, and a turn already running
+finishes. Permission to merge belongs to T3 Code, so it ends the moment you stop. All
 the limits above apply, and agent merge checks the host on every sweep while it is on. Starting it
 needs an active thread whose agent can push to the pull request's branch.
 

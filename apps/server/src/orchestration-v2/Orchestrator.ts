@@ -3142,13 +3142,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
-  // Withdrawing the mode removes what acts on it: undelivered briefs and the run on one. T3 Code
-  // does the merging, so a turn that cannot be interrupted just finishes without holding the stop.
+  // A queued brief describes a mode that no longer applies. A running turn just finishes: T3 Code
+  // does the merging, so the turn holds nothing to take back.
   const withdrawAgentMerge = Effect.fn("orchestrationV2.dispatch.withdrawAgentMerge")(function* (
     command: PullRequestWatchCommand,
     pullRequestKey: string,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     const projection = yield* loadProjectionForCommand(command, ["runs", "messages"], {
       turnItemTypes: [],
@@ -3160,54 +3159,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         message.id.startsWith(prefix) && message.runId !== null ? [message.runId] : [],
       ),
     );
-    let cancelUnsettledEffects: Effect.Success<ReturnType<typeof dispatchRunInterrupt>> | undefined;
     for (const run of projection.runs) {
-      if (!briefRunIds.has(run.id)) continue;
-      if (run.status === "queued") {
-        yield* dispatchQueuedRunCancel(
-          {
-            type: "queued-run.cancel",
-            commandId: command.commandId,
-            threadId: command.threadId,
-            runId: run.id,
-          },
-          events,
-        );
-      } else if (
-        !(command.type === "thread.pull-request.unlink" && command.keepActiveRun === true) &&
-        ["preparing", "starting", "running", "waiting"].includes(run.status)
-      ) {
-        const interruptEvents = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
-        const interruptEffects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
-        const interrupted = yield* Effect.exit(
-          dispatchRunInterrupt(
-            {
-              type: "run.interrupt",
-              commandId: command.commandId,
-              threadId: command.threadId,
-              runId: run.id,
-            },
-            interruptEvents,
-            interruptEffects,
-          ),
-        );
-        // A failed interrupt may have written part of its events, so they are kept apart.
-        if (Exit.isFailure(interrupted)) {
-          yield* Effect.logWarning("agent merge withdrawal could not interrupt the run", {
-            threadId: command.threadId,
-            runId: run.id,
-            cause: interrupted.cause,
-          });
-          continue;
-        }
-        const written = yield* Ref.get(interruptEvents);
-        const enqueued = yield* Ref.get(interruptEffects);
-        yield* Ref.update(events, (existing) => [...existing, ...written]);
-        yield* Ref.update(effects, (existing) => [...existing, ...enqueued]);
-        cancelUnsettledEffects = interrupted.value;
-      }
+      if (run.status !== "queued" || !briefRunIds.has(run.id)) continue;
+      yield* dispatchQueuedRunCancel(
+        {
+          type: "queued-run.cancel",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          runId: run.id,
+        },
+        events,
+      );
     }
-    return cancelUnsettledEffects;
   });
 
   // Older comments and news an ended watch already told never wake it, so the agent looks first.
@@ -3233,10 +3196,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const requested = command.type === "thread.pull-request.watch" ? command : null;
       const next = requested?.watching === true ? (requested.agentMerge ?? current) : undefined;
       yield* dispatchThreadMutation(command, events, effects);
-      const cancelUnsettledEffects =
-        link !== undefined && current !== undefined && current !== next
-          ? yield* withdrawAgentMerge(command, threadPullRequestKeyOf(link), events, effects)
-          : undefined;
+      if (link !== undefined && current !== undefined && current !== next) {
+        yield* withdrawAgentMerge(command, threadPullRequestKeyOf(link), events);
+      }
       if (link !== undefined && next !== undefined && next !== current) {
         yield* dispatchMessage(
           {
@@ -3260,7 +3222,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           effects,
         );
       }
-      return cancelUnsettledEffects;
     },
   );
 
@@ -4158,13 +4119,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : existing.watch
               : !command.watching
                 ? undefined
-                : existing.watch !== undefined
-                  ? command.agentMerge === undefined ||
-                    command.agentMerge === existing.watch.agentMerge
-                    ? existing.watch
-                    : // A new startedAt drops any read still in flight under the old mode.
-                      { ...existing.watch, startedAt, agentMerge: command.agentMerge }
-                  : {
+                : existing.watch !== undefined &&
+                    command.agentMerge !== undefined &&
+                    command.agentMerge !== existing.watch.agentMerge
+                  ? // A new startedAt drops any read still in flight under the old mode.
+                    { ...existing.watch, startedAt, agentMerge: command.agentMerge }
+                  : (existing.watch ?? {
                       startedAt,
                       ...(command.agentMerge !== undefined && { agentMerge: command.agentMerge }),
                       headSha: null,
@@ -4189,7 +4149,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       remarksThrough: startedAt,
                       remarkIds: [],
                       wakes: 0,
-                    };
+                    });
           if (watch === existing.watch && links === linked) return thread;
           const final =
             command.type === "thread.pull-request-watch.sync" && watch === undefined
@@ -11280,7 +11240,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 (cause) => new OrchestratorProjectionError({ threadId: thread.id, cause }),
               ),
             )).messages;
-    // A held run can still start later, and a stopped thread's merge permission has ended.
+    // A held run can still start later, and a stopped thread's brief no longer applies.
     const droppedMessageIds = new Set(
       queuedMessages
         .filter(
@@ -13622,7 +13582,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "thread.pull-request.watch":
       case "thread.pull-request.unlink":
-        cancelUnsettledEffects = yield* dispatchPullRequestWatch(command, events, effects);
+        yield* dispatchPullRequestWatch(command, events, effects);
         break;
       case "thread.pull-request-watch.sync":
         yield* dispatchPullRequestWatchSync(command, events, effects);

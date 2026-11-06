@@ -1059,75 +1059,16 @@ it.effect("withdrawing agent merge leaves another pull request's brief queued", 
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("stopping agent merge interrupts the run carrying its brief", () =>
+it.effect("stopping agent merge lets the turn carrying its brief finish", () =>
   Effect.gen(function* () {
     const threadId = ThreadId.make("thread:withdraw:active");
     yield* createWatchingThread(threadId, 4);
     yield* agentMerge(threadId, 4, "merge", "merge:active");
-
-    yield* stopWatching(threadId, 4);
-
-    assert.deepEqual((yield* threadState(threadId)).runs, ["interrupted"]);
-  }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect("stopping agent merge still lands when its run cannot be interrupted", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const threadId = ThreadId.make("thread:withdraw:uninterruptible");
-    yield* createWatchingThread(threadId, 4);
-    yield* agentMerge(threadId, 4, "merge", "merge:uninterruptible");
-    const [run] = (yield* orchestrator.getThreadProjection(threadId)).runs;
-    yield* projections.apply({
-      id: EventId.make("event:withdraw:uninterruptible"),
-      type: "run.updated",
-      threadId,
-      runId: run!.id,
-      occurredAt: yield* DateTime.now,
-      payload: { ...run!, providerThreadId: null },
-    });
-
-    yield* stopWatching(threadId, 4);
-
-    const shell = yield* orchestrator.getThreadShell(threadId);
-    assert.isUndefined(shell?.pullRequests?.[0]?.watch);
-    const { runs } = yield* orchestrator.getThreadProjection(threadId);
-    assert.equal(runs[0]?.status, run!.status);
-  }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect("an agent unlinking from its brief keeps the run it is finishing", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const threadId = ThreadId.make("thread:withdraw:handback");
-    yield* createWatchingThread(threadId, 4);
-    yield* agentMerge(threadId, 4, "merge", "merge:handback");
     const before = (yield* threadState(threadId)).runs;
 
-    yield* orchestrator.dispatch({
-      type: "thread.pull-request.unlink",
-      commandId: CommandId.make("unlink:handback"),
-      threadId,
-      ...pullRequest(4),
-      keepActiveRun: true,
-    });
-
-    assert.deepEqual(yield* threadState(threadId), { runs: before, watched: [] });
-  }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect("stopping agent merge leaves the user's own turn running", () =>
-  Effect.gen(function* () {
-    const threadId = ThreadId.make("thread:withdraw:user-turn");
-    yield* createWatchingThread(threadId, 4);
-    yield* send(threadId, "work", "start_immediately");
-    const running = (yield* threadState(threadId)).runs[0];
-    yield* agentMerge(threadId, 4, "feedback", "merge:user-turn");
-
     yield* stopWatching(threadId, 4);
 
-    assert.equal((yield* threadState(threadId)).runs[0], running);
+    assert.deepEqual(yield* threadState(threadId), { runs: before, watched: [] });
   }).pipe(Effect.provide(layerTest)),
 );
 
