@@ -86,6 +86,18 @@ export interface ComposerEnvironmentItem {
   readonly description: string;
 }
 
+function startsWord(label: string, lowerCaseQuery: string): boolean {
+  const text = label.toLowerCase();
+  for (
+    let index = text.indexOf(lowerCaseQuery);
+    index !== -1;
+    index = text.indexOf(lowerCaseQuery, index + 1)
+  ) {
+    if (index === 0 || !/[\p{L}\p{N}]/u.test(text.charAt(index - 1))) return true;
+  }
+  return false;
+}
+
 /**
  * The user's machines the `@` picker offers, so the agent can link or work there. The
  * composer's own environment is left out. Like threads, they need a query: bare `@` stays a
@@ -101,8 +113,7 @@ export function matchComposerEnvironmentItems(input: {
   return input.environments
     .filter(
       (environment) =>
-        environment.environmentId !== input.environmentId &&
-        environment.label.toLowerCase().includes(query),
+        environment.environmentId !== input.environmentId && startsWord(environment.label, query),
     )
     .map((environment) => ({
       id: `environment:${environment.environmentId}`,
@@ -112,4 +123,24 @@ export function matchComposerEnvironmentItems(input: {
       label: environment.label,
       description: "Machine",
     }));
+}
+
+/**
+ * Orders `@` results by how surely they are what was typed: a file with exactly that name, then
+ * machines, threads with a word starting with it, files starting with it, and the rest.
+ */
+export function rankComposerMentionItems<
+  T extends { readonly type: string; readonly label: string },
+>(items: ReadonlyArray<T>, rawQuery: string): T[] {
+  const query = rawQuery.trim().toLowerCase();
+  if (query.length === 0) return [...items];
+  const rank = ({ type, label }: T) => {
+    if (type === "environment") return 1;
+    if (type === "thread") return startsWord(label, query) ? 2 : 4;
+    const name = label.toLowerCase();
+    if (name === query || name.startsWith(`${query}.`)) return 0;
+    return name.startsWith(query) ? 3 : 5;
+  };
+  // Hermes lacks toSorted.
+  return [...items].sort((left, right) => rank(left) - rank(right));
 }

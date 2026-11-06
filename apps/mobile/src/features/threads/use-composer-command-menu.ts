@@ -11,6 +11,7 @@ import {
   type ComposerEnvironmentCandidate,
   matchComposerEnvironmentItems,
   matchComposerThreadItems,
+  rankComposerMentionItems,
 } from "@t3tools/client-runtime/composerThreadItems";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
@@ -506,22 +507,24 @@ export function useComposerCommandMenu({
       const environmentItems = environmentId
         ? matchComposerEnvironmentItems({ environments, environmentId, query: trigger.query })
         : [];
-      return [
-        // Machines lead: there are few, and the user names one on purpose.
-        ...environmentItems,
-        ...threadItems,
-        ...pathSearch.entries.map((entry) => {
-          const parts = entry.path.split("/");
-          return {
-            id: `path:${entry.path}`,
-            type: "path" as const,
-            path: entry.path,
-            kind: entry.kind,
-            label: parts[parts.length - 1] ?? entry.path,
-            description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
-          };
-        }),
-      ];
+      return rankComposerMentionItems<ComposerCommandItem>(
+        [
+          ...threadItems,
+          ...environmentItems,
+          ...pathSearch.entries.map((entry) => {
+            const parts = entry.path.split("/");
+            return {
+              id: `path:${entry.path}`,
+              type: "path" as const,
+              path: entry.path,
+              kind: entry.kind,
+              label: parts[parts.length - 1] ?? entry.path,
+              description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
+            };
+          }),
+        ],
+        trigger.query,
+      );
     }
 
     return [];
