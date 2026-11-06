@@ -930,8 +930,11 @@ export function PreviewView({
         captureDisabled={!desktopOverlay || isUnreachable}
         recording={recordingRuntimeTabId !== null}
         onPictureInPicture={
-          isPopoutWindow && webviewPartition
-            ? () => handleTabWindow(webviewPartition)
+          isPopoutWindow
+            ? () => {
+                if (previewBridge && runtimeTabId)
+                  void previewBridge.tabWindow.close(runtimeTabId).catch(() => undefined);
+              }
             : tabId && (isServerTab || previewBridge)
               ? handlePictureInPicture
               : undefined
