@@ -309,7 +309,9 @@ describe("VoiceInputController", () => {
       code: "unavailable",
       message: "This device requires iOS 26 or later.",
     });
+    const configureRecording = vi.fn(async () => undefined);
     const unavailable = createHarness({
+      configureRecording,
       getTranscriber: () => ({
         prepare: async () => {
           throw reason;
@@ -318,6 +320,8 @@ describe("VoiceInputController", () => {
     });
     await unavailable.controller.start();
     expect(unavailable.controller.currentState.error).toBe(reason.message);
+    // Environment and web transcribers gate capture on consent checked during preparation.
+    expect(configureRecording).not.toHaveBeenCalled();
     expect(unavailable.recorder.record).not.toHaveBeenCalled();
 
     const denied = createHarness({
