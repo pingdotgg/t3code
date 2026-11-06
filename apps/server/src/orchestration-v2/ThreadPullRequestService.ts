@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitManager from "../git/GitManager.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -347,6 +348,7 @@ export const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker((request: RefreshRequest) =>
     synchronize(request).pipe(
+      Effect.provideService(GitVcsDriver.BackgroundGitWork, true),
       Effect.catchCauseIf(
         (cause) => !Cause.hasInterruptsOnly(cause),
         (cause) =>
