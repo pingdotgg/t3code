@@ -547,6 +547,18 @@ export const ProjectCreateFromThreadResult = Schema.Struct({
 });
 export type ProjectCreateFromThreadResult = typeof ProjectCreateFromThreadResult.Type;
 
+/** Files a No project thread under an existing project; the thread keeps working in its own folder. */
+export const ProjectMoveThreadInput = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+});
+export type ProjectMoveThreadInput = typeof ProjectMoveThreadInput.Type;
+
+export const ProjectMoveThreadResult = Schema.Struct({
+  projectId: ProjectId,
+});
+export type ProjectMoveThreadResult = typeof ProjectMoveThreadResult.Type;
+
 export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileError>()(
   "ProjectWriteFileError",
   {

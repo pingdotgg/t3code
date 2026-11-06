@@ -74,4 +74,33 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });
+
+  it("lists move targets as a submenu, and hides it when there are none", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      moveTargets: [
+        { id: "p1", title: "Web Tweaks" },
+        { id: "p2", title: "TripLedger" },
+      ],
+    });
+    const move = items.find((item) => item.id === "move-to-project");
+    expect(move?.label).toBe("Move to project");
+    expect(move?.disabled).toBe(false);
+    expect(move?.children?.map((child) => [child.id, child.label])).toEqual([
+      ["move-to-project:p1", "Web Tweaks"],
+      ["move-to-project:p2", "TripLedger"],
+    ]);
+    expect(
+      buildThreadActionMenuItems({ ...baseState, moveTargets: [] }).some(
+        (item) => item.id === "move-to-project",
+      ),
+    ).toBe(false);
+    expect(
+      buildThreadActionMenuItems({
+        ...baseState,
+        isRunning: true,
+        moveTargets: [{ id: "p1", title: "Web Tweaks" }],
+      }).find((item) => item.id === "move-to-project")?.disabled,
+    ).toBe(true);
+  });
 });

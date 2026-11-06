@@ -7925,6 +7925,55 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
       assert.equal(stayed?.projectId, scratchProjectId);
     }),
   );
+
+  it.effect("files a thread under another project while keeping its own folder", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const scratchProjectId = ProjectId.make("runtime-layer-keep-scratch");
+      const targetProjectId = ProjectId.make("runtime-layer-keep-target");
+      const folder = "/tmp/runtime-layer-keep-scratch/2026-01-01-notes-e5f6a7b8";
+      yield* projects.create({
+        commandId: CommandId.make("runtime-layer-keep-scratch-create"),
+        projectId: scratchProjectId,
+        title: "Scratch",
+        workspaceRoot: "/tmp/runtime-layer-keep-scratch",
+      });
+      yield* projects.create({
+        commandId: CommandId.make("runtime-layer-keep-target-create"),
+        projectId: targetProjectId,
+        title: "Target",
+        workspaceRoot: "/tmp/runtime-layer-keep-target",
+      });
+      const threadId = ThreadId.make("runtime-layer-keep-thread");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-keep-thread-create"),
+        threadId,
+        projectId: scratchProjectId,
+        title: "Scratch work",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: folder,
+      });
+
+      yield* orchestrator.dispatch({
+        type: "thread.project.adopt-folder",
+        commandId: CommandId.make("runtime-layer-keep-thread-move"),
+        threadId,
+        projectId: targetProjectId,
+        keepFolder: true,
+      });
+      const shell = yield* orchestrator.getShellSnapshot();
+      const moved = shell.threads.find((thread) => thread.id === threadId);
+      assert.equal(moved?.projectId, targetProjectId);
+      assert.equal(moved?.worktreePath, folder);
+    }),
+  );
 });
 
 it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {

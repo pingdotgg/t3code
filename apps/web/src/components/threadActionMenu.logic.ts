@@ -6,6 +6,8 @@ export type ThreadActionMenuId =
   | "new-thread-on-branch"
   | "filter-by-project"
   | "turn-into-project"
+  | "move-to-project"
+  | `move-to-project:${string}`
   | "project-settings"
   | "pin"
   | "unpin"
@@ -95,6 +97,8 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** Projects a No project thread can be filed under (it keeps its own folder). */
+  readonly moveTargets?: ReadonlyArray<{ readonly id: string; readonly title: string }>;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -199,6 +203,20 @@ export function buildThreadActionMenuItems(
             label: "Turn into project",
             icon: "folder-plus",
             disabled: state.isRunning,
+          },
+        ]
+      : []),
+    ...(state.moveTargets !== undefined && state.moveTargets.length > 0
+      ? [
+          {
+            id: "move-to-project" as const,
+            label: "Move to project",
+            icon: "folder-tree",
+            disabled: state.isRunning,
+            children: state.moveTargets.map((target) => ({
+              id: `move-to-project:${target.id}` as const,
+              label: target.title,
+            })),
           },
         ]
       : []),

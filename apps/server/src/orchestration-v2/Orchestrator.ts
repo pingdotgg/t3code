@@ -4747,11 +4747,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (Option.isNone(target) || target.value.deletedAt !== null) {
       return yield* reject(`cannot move to missing project ${command.projectId}.`);
     }
-    // The thread always lands in the project root, so the move must not change its cwd.
+    // The move must never change the thread's cwd: either the thread already works in
+    // the project root, or (keepFolder) it keeps its own folder as its worktree path.
     const cwd = thread.worktreePath ?? Option.getOrUndefined(current)?.workspaceRoot;
-    if (cwd !== target.value.workspaceRoot) {
+    if (command.keepFolder === true) {
+      if (cwd === undefined) return yield* reject("has no folder to keep.");
+    } else if (cwd !== target.value.workspaceRoot) {
       return yield* reject(`does not work in ${target.value.workspaceRoot}.`);
     }
+    const worktreePath =
+      command.keepFolder === true && cwd !== target.value.workspaceRoot ? cwd : null;
     const now = yield* DateTime.now;
     yield* emit(
       events,
@@ -4761,7 +4766,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       threadId: command.threadId,
       providerInstanceId: thread.providerInstanceId,
       occurredAt: now,
-      payload: { ...thread, projectId: command.projectId, worktreePath: null, updatedAt: now },
+      payload: { ...thread, projectId: command.projectId, worktreePath, updatedAt: now },
     });
   });
 

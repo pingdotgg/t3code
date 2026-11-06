@@ -3447,6 +3447,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     projectId: ProjectId,
+    /** Keep working in the current folder instead of the project root (filing a scratch thread under a project). */
+    keepFolder: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),
