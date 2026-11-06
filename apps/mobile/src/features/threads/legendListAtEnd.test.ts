@@ -79,5 +79,20 @@ describe("patched LegendList getIsAtEnd", () => {
       isAtEnd({ ...deviceGeometry, scroll: -insetStart }),
       "a feed pulled to its start edge (scroll -116) is 77.8pt from its end",
     ).toBe(false);
+    expect(
+      isAtEnd({ ...deviceGeometry, scroll: -114 }),
+      "a feed just below its start edge (scroll -114) is 75.8pt from its end",
+    ).toBe(false);
+  });
+
+  it("measures the end without a start inset, where the header is a spacer row", () => {
+    const opaqueHeaderGeometry = { scrollLength: 800, insetStart: 0, insetEnd: 200 };
+
+    expect(
+      isAtEnd({ ...opaqueHeaderGeometry, contentLength: 700, scroll: 0 }),
+      "rows of 700 plus a composer inset of 200 at scroll 0 are 100pt from the end",
+    ).toBe(false);
+    expect(isAtEnd({ ...opaqueHeaderGeometry, contentLength: 700, scroll: 100 })).toBe(true);
+    expect(isAtEnd({ ...opaqueHeaderGeometry, contentLength: 500, scroll: 0 })).toBe(true);
   });
 });
