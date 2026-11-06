@@ -245,14 +245,17 @@ interface ChatMarkdownProps {
   /** Keep one list per configuration (a module constant): it keys the shared parse cache. */
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
-  /** The text was written on a source control host: math follows the host's syntax, and media
-      the host keeps behind a credential loads through the server, which holds `cwd`'s; without
-      it a private repository's uploads load unauthenticated and 404. */
+  /** Loads media a source control host keeps behind a credential through the server, which holds
+      `cwd`'s; without it a private repository's uploads load unauthenticated and 404. */
   sourceControlMedia?: boolean | undefined;
   /** The change request's repository, when it can differ from the checkout at `cwd`. */
   sourceControlMediaRepository?: string | undefined;
   headingLevelOffset?: number | undefined;
+  /** Text written on a source control host reads only the host's dollar math. */
+  mathSyntax?: MarkdownMathSyntax | undefined;
 }
+
+export type MarkdownMathSyntax = "chat" | "sourceControl";
 
 export interface ChatMarkdownContextReference {
   kind: string;
@@ -1733,6 +1736,7 @@ function ChatMarkdown({
   lineBreaks = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
+  mathSyntax = "chat",
   ...props
 }: ChatMarkdownProps) {
   const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
@@ -1755,9 +1759,9 @@ function ChatMarkdown({
     markdownRef.current = node;
   };
   const sharedRemarkPlugins =
-    CHAT_MARKDOWN_REMARK_PLUGIN_SETS[
-      !componentState.mathEnabled ? "off" : props.sourceControlMedia ? "sourceControl" : "chat"
-    ][lineBreaks ? "breaks" : "plain"];
+    CHAT_MARKDOWN_REMARK_PLUGIN_SETS[componentState.mathEnabled ? mathSyntax : "off"][
+      lineBreaks ? "breaks" : "plain"
+    ];
   // The incremental parser keeps per-instance state, so its output is not shared.
   const uncachedPlugins = incrementalParsing;
   const remarkPlugins = incrementalParsing
