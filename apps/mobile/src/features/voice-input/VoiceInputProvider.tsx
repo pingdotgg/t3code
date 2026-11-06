@@ -17,6 +17,7 @@ import {
   getLocalVoiceTranscriber,
   getVoiceTranscriberForLocale,
 } from "../../native/voiceTranscription";
+import { createVoiceRecorder } from "../../native/voiceRecorder";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
 import {
@@ -27,6 +28,7 @@ import { createLazyVoiceRecorder } from "./lazyVoiceRecorder";
 import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 import { VoiceInputSession } from "./voiceInputSession";
 import { createVoiceRecordingPermission } from "./voiceRecordingPermission";
+import { voiceRouteAtom } from "./voiceDestination";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
 import {
   acquireAudioSession,
@@ -65,8 +67,9 @@ export const localVoiceTranscriberAtom = makePermissionStatusAtom<
   read: () => getLocalVoiceTranscriber().catch(() => null),
 }).pipe(Atom.keepAlive);
 
-// Each foreground re-probe yields a new transcriber; composers re-render only when availability flips.
-const localVoiceInputAvailableAtom = Atom.make((get) => {
+const voiceInputAvailableAtom = Atom.make((get) => {
+  const route = get(voiceRouteAtom);
+  if (route) return route.transcriber !== null;
   const transcriber = get(localVoiceTranscriberAtom);
   return transcriber !== null && transcriber !== "checking";
 });
@@ -80,7 +83,6 @@ const voiceInputAtom = Atom.make((get) => {
   // Mounted so the recorder can read and remember microphones synchronously.
   get.mount(mobilePreferencesAtom);
   get.mount(updateMobilePreferencesAtom);
-  get.mount(localVoiceTranscriberAtom);
   const audioLevels = makeMutable<ReadonlyArray<number>>(
     Array<number>(VOICE_WAVEFORM_SAMPLE_COUNT).fill(0),
   );
@@ -90,7 +92,11 @@ const voiceInputAtom = Atom.make((get) => {
     void session.controller.appMovedToBackground();
   });
   const recorder = createLazyVoiceRecorder({
-    create: () => new AudioModule.AudioRecorder(VOICE_RECORDING_OPTIONS),
+    getDestination: () => (registry.get(voiceRouteAtom) === null ? "local" : "environment"),
+    create: (destination) =>
+      destination === "local"
+        ? createVoiceRecorder(VOICE_RECORDING_OPTIONS)
+        : new AudioModule.AudioRecorder(VOICE_RECORDING_OPTIONS),
     onStatus: (status: RecordingStatus) => {
       session.controller.handleRecorderStatus({
         isFinished: status.isFinished,
@@ -118,6 +124,8 @@ const voiceInputAtom = Atom.make((get) => {
   const session: VoiceInputSession = new VoiceInputSession({
     recorder,
     getTranscriber: () => {
+      const route = registry.get(voiceRouteAtom);
+      if (route) return route.transcriber;
       const transcriber = registry.get(localVoiceTranscriberAtom);
       if (transcriber === "checking" || transcriber === null) return null;
       const preferences = registry.get(mobilePreferencesAtom);
@@ -152,6 +160,7 @@ const voiceInputAtom = Atom.make((get) => {
     publishAudioLevels: (levels) => audioLevels.set(levels),
     keepAwake: () => keepScreenAwake(`voice-input:${++keepAwakeSequence}`),
   });
+  get.subscribe(voiceRouteAtom, () => session.controller.cancel());
   get.addFinalizer(() => {
     permission.dispose();
     session.dispose();
@@ -162,7 +171,7 @@ const voiceInputAtom = Atom.make((get) => {
 
 export function useGlobalVoiceInput() {
   const { session, audioLevels } = useAtomValue(voiceInputAtom);
-  const isTranscriberAvailable = useAtomValue(localVoiceInputAvailableAtom);
+  const isTranscriberAvailable = useAtomValue(voiceInputAvailableAtom);
   const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot);
   return {
     ...snapshot,
