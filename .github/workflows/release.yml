@@ -754,60 +754,6 @@ jobs:
       resource_key: win32-arm64
       cli_archive: true
 
-  # Nightlies attach Play's optional internal APK (~280 MB), fetched here beside
-  # the desktop builds. A failed ancestor skips every job after release, and a
-  # job timeout cancels steps past continue-on-error, so each step has its own
-  # timeout and continue-on-error, and they sum to less than the job timeout.
-  android_apk:
-    name: Stage nightly Android APK
-    needs: [preflight]
-    if: needs.preflight.outputs.release_channel == 'nightly'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 15
-    continue-on-error: true
-    permissions:
-      contents: read
-    outputs:
-      # Only this attempt's successful upload, so a rerun that finds no APK
-      # never hands release an earlier attempt's artifact.
-      apk_artifact_id: ${{ steps.upload.outcome == 'success' && steps.upload.outputs.artifact-id || '' }}
-    steps:
-      - name: Checkout
-        continue-on-error: true
-        timeout-minutes: 2
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.preflight.outputs.ref }}
-          sparse-checkout: .github/scripts
-
-      # Writes the complete APK only when Play has a processed internal build.
-      # Without credentials it fails, and the release goes out without an APK.
-      - id: mirror
-        name: Download internal Android APK
-        continue-on-error: true
-        timeout-minutes: 5
-        env:
-          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-          PACKAGE_NAME: com.t3tools.t3code
-          APK_OUTPUT_DIR: android-apk
-        run: node .github/scripts/mirror-play-apk.cjs
-
-      # With no APK, nothing uploads and artifact-id stays empty.
-      - id: upload
-        name: Upload Android APK
-        if: steps.mirror.outcome == 'success'
-        continue-on-error: true
-        timeout-minutes: 3
-        uses: actions/upload-artifact@v7
-        with:
-          name: android-apk
-          path: android-apk/*.apk
-          if-no-files-found: ignore
-          # APKs are already zip-compressed.
-          compression-level: 0
-          # GitHub allows a failed-jobs rerun for 30 days.
-          retention-days: 30
-
   release:
     name: Publish GitHub Release
     needs:
@@ -824,10 +770,7 @@ jobs:
         desktop_linux_arm64,
         desktop_win_x64,
         desktop_win_arm64,
-        android_apk,
       ]
-    # android_apk is absent from this check on purpose: it is optional and
-    # skipped outside nightly.
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.quality.result == 'success' && needs.test.result == 'success' && needs.test_web.result == 'success' && needs.test_server.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_mac_x64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
@@ -853,6 +796,26 @@ jobs:
         with:
           install-args: --filter=@t3tools/scripts...
 
+      # Play's optional internal APK downloads in the background, beside the
+      # artifact downloads, into a directory outside release-assets. fd 9 holds
+      # the lock until the fetch exits. Only this process gets the Play key.
+      - name: Start nightly Android APK download
+        if: needs.preflight.outputs.release_channel == 'nightly'
+        continue-on-error: true
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          PACKAGE_NAME: com.t3tools.t3code
+          APK_OUTPUT_DIR: ${{ runner.temp }}/android-apk
+        run: |
+          if [ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            exec 9> "$RUNNER_TEMP/android-apk.lock"
+            flock -n 9
+            # shellcheck disable=SC2016 # the child shell expands these
+            setsid bash -c 'node .github/scripts/mirror-play-apk.cjs; echo "$?" > "$RUNNER_TEMP/android-apk.status"' \
+              < /dev/null > "$RUNNER_TEMP/android-apk.log" 2>&1 &
+            echo "$!" > "$RUNNER_TEMP/android-apk.pid"
+          fi
+
       - name: Download all desktop artifacts
         uses: actions/download-artifact@v8
         with:
@@ -866,30 +829,6 @@ jobs:
           pattern: cli-*
           merge-multiple: true
           path: release-assets
-
-      # By ID only: an empty ID would download every artifact in the run. The
-      # staging directory keeps a failed or mismatched transfer out of the
-      # release assets.
-      - id: android_apk
-        name: Download nightly Android APK
-        if: needs.android_apk.outputs.apk_artifact_id != ''
-        continue-on-error: true
-        timeout-minutes: 2
-        uses: actions/download-artifact@v8
-        with:
-          artifact-ids: ${{ needs.android_apk.outputs.apk_artifact_id }}
-          path: android-apk
-          digest-mismatch: error
-
-      - name: Add nightly Android APK
-        if: steps.android_apk.outcome == 'success'
-        shell: bash
-        run: |
-          shopt -s nullglob
-          apks=(android-apk/*.apk)
-          if [[ ${#apks[@]} -gt 0 ]]; then
-            mv "${apks[@]}" release-assets/
-          fi
 
       # Installers verify archives against this file, so it is written from the
       # signed bytes that get uploaded, never from an earlier stage.
@@ -953,6 +892,35 @@ jobs:
               mv "$x64_manifest" "$merged_manifest"
             fi
           done
+
+      # Waits for the background fetch from "Start nightly Android APK download".
+      # Only a fetch that exited 0 on its own adds its APK. A timed-out one is
+      # killed and its directory is never read again.
+      - name: Add nightly Android APK
+        if: needs.preflight.outputs.release_channel == 'nightly'
+        continue-on-error: true
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          lock="$RUNNER_TEMP/android-apk.lock"
+          # No lock means no Play key, so the download never started.
+          [[ -e "$lock" ]] || exit 0
+          status="timed out"
+          if flock -w 300 "$lock" true; then
+            status="$(cat "$RUNNER_TEMP/android-apk.status" 2>/dev/null || true)"
+          else
+            kill -- "-$(cat "$RUNNER_TEMP/android-apk.pid")" || true
+          fi
+          cat "$RUNNER_TEMP/android-apk.log" || true
+          if [[ "$status" != 0 ]]; then
+            echo "Android APK download failed (${status:-no exit status})." >&2
+            exit 1
+          fi
+          shopt -s nullglob
+          apks=("$RUNNER_TEMP"/android-apk/*.apk)
+          if [[ ${#apks[@]} -gt 0 ]]; then
+            mv "${apks[@]}" release-assets/
+          fi
 
       # Updater manifests and blockmaps are what electron-updater consumes.
       # They are only listed for channels an updater is meant to follow.
