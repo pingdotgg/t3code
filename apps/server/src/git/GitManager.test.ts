@@ -799,7 +799,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
       yield* runGit(repoDir, ["push", "-u", "origin", "development"]);
-      yield* runGit(remoteDir, ["symbolic-ref", "HEAD", "refs/heads/development"]);
+      yield* runGit(remoteDir, ["--git-dir=.", "symbolic-ref", "HEAD", "refs/heads/development"]);
       yield* runGit(repoDir, ["remote", "set-head", "origin", "development"]);
       yield* runGit(repoDir, ["checkout", "-b", "source-change"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\ndetached change\n");
@@ -878,9 +878,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       expect(result.push.status).toBe("pushed");
       expect(
-        yield* runGit(remoteDir, ["log", "-1", "--pretty=%s", "feature/rebased"]).pipe(
-          Effect.map((output) => output.stdout.trim()),
-        ),
+        yield* runGit(remoteDir, [
+          "--git-dir=.",
+          "log",
+          "-1",
+          "--pretty=%s",
+          "feature/rebased",
+        ]).pipe(Effect.map((output) => output.stdout.trim())),
       ).toBe("Rebased history");
     }),
   );
@@ -1297,6 +1301,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(NodeFS.existsSync(skippedMarker)).toBe(false);
       expect(
         yield* runGit(remoteDir, [
+          "--git-dir=.",
           "show-ref",
           "--verify",
           "refs/heads/feature/failing-after-push-hook",
@@ -4292,6 +4297,16 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
+      NodeFS.mkdirSync(NodePath.join(repoDir, ".t3code"));
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".t3code/vcs.json"),
+        JSON.stringify({
+          branchNaming: { defaultPrefix: null, preserveNamespaces: true },
+        }),
+      );
+      yield* runGit(repoDir, ["add", ".t3code/vcs.json"]);
+      yield* runGit(repoDir, ["commit", "-m", "Configure branch naming"]);
+
       const mainSha = (yield* runGit(repoDir, ["rev-parse", "main"])).stdout.trim();
       for (const branch of scenario.existingBranches) {
         yield* runGit(repoDir, ["branch", branch]);

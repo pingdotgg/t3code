@@ -19,8 +19,9 @@ export function SheetActionButton(props: {
 }
 
 export function menuItemIconName(
-  icon: "commit" | "push" | "pr",
+  icon: "commit" | "push" | "pr" | "branch",
 ): ComponentProps<typeof SymbolView>["name"] {
+  if (icon === "branch") return "arrow.branch";
   if (icon === "commit") return "checkmark.circle";
   if (icon === "push") return "arrow.up.circle";
   return "arrow.up.right.circle";

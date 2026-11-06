@@ -197,7 +197,7 @@ export const make = Effect.gen(function* () {
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.succeed(Option.none<ProjectVcsConfigFile>()),
-          onSome: (configPath) => readConfig(cwd, configPath).pipe(Effect.map(Option.some)),
+          onSome: (configPath) => readConfig(cwd, configPath).pipe(Effect.asSome),
         }),
       ),
       Effect.catchTags({

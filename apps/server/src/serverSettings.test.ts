@@ -175,7 +175,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         };
         const next = yield* serverSettings.updateSettings({
           providerInstances: {
-            claudeAgent: {
+            [ProviderInstanceId.make("claudeAgent")]: {
               driver: ProviderDriverKind.make("claudeAgent"),
               enabled: false,
               config: {},

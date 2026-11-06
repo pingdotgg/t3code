@@ -404,7 +404,6 @@ export default function DiffPanel({
       ? reviewEnvironment.branchCommits({
           environmentId: activeThread.environmentId,
           input: {
-            threadId: activeThread.id,
             cwd: activeCwd,
             ...(rememberedBaseRef ? { baseRef: rememberedBaseRef } : {}),
           },

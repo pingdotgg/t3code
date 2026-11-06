@@ -1,3 +1,4 @@
+import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it, vi } from "vite-plus/test";
@@ -942,6 +943,10 @@ function makeLocalCommandHarness(input: {
         }),
         IdAllocator.layer,
         layerWorktreeLocation(input.worktreesDir),
+        Layer.mock(VcsProjectConfig.VcsProjectConfig)({
+          resolveBranchNaming: ({ fallback }) =>
+            Effect.succeed(fallback ?? { defaultPrefix: null, preserveNamespaces: true }),
+        }),
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
           : Layer.succeed(FileSystem.FileSystem, input.fileSystem),

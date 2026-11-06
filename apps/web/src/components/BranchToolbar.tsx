@@ -626,8 +626,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   const envModeLocked = envLocked || (isServerThread && activeWorktreePath !== null);
 
   // Only drafts can choose a workspace; started server threads keep their checkout.
-  const canSelectWorkspace =
-    !isServerThread && !envModeLocked && !forceNewWorktree;
+  const canSelectWorkspace = !isServerThread && !envModeLocked && !forceNewWorktree;
   const [workspacePickerRequested, setWorkspacePickerRequested] = useState(false);
   const {
     data: worktreesData,
@@ -741,7 +740,7 @@ export const BranchToolbar = memo(function BranchToolbar({
         : null,
     [activeWorktreePath, canSelectWorkspace, projectThreads],
   );
-  const onUsePreviousWorktree = useCallback(() => {
+  const onUsePreviousWorktree = () => {
     if (!previousWorktreeSeed || !activeProjectRef) return;
     // Same shape the branch selector writes when picking a branch that
     // already lives in a worktree: point the draft at the existing tree.

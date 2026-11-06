@@ -122,13 +122,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           }
         >
           {activeWorktreePath ? (
-            <FolderGitIcon
-              className="size-3"
-            />
+            <FolderGitIcon className="size-3" />
           ) : effectiveEnvMode === "worktree" ? (
-            <FolderGit2Icon
-              className="size-3"
-            />
+            <FolderGit2Icon className="size-3" />
           ) : (
             <FolderIcon className="size-3" />
           )}

@@ -462,7 +462,11 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
             .generateBranchName({
               cwd: process.cwd(),
               message: "Please update session handling.",
-              policy: { kind: "custom", branchInstructions: "Create feature branches as jm/feature/...", inferRepositoryConventions: false },
+              policy: {
+                kind: "custom",
+                branchInstructions: "Create feature branches as jm/feature/...",
+                inferRepositoryConventions: false,
+              },
               modelSelection: DEFAULT_TEST_MODEL_SELECTION,
             })
             .pipe(Effect.provideService(Scope.Scope, closedScope));
@@ -601,6 +605,7 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
         snapshot: { getSnapshot: Effect.succeed(snapshot) } as ProviderInstance["snapshot"],
         orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
         textGeneration: TextGeneration.TextGeneration.of({
+          generateCommitPlan: () => Effect.die("unused"),
           generateCommitMessage: () => Effect.die("unused"),
           generatePrContent: () => Effect.die("unused"),
           generateBranchName: () => Effect.die("unused"),

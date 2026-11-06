@@ -5,8 +5,12 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import { useMemo, useState } from "react";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
-import { buildCommitFileTree, flattenCommitFileTree, toggleCommitFiles } from "@t3tools/client-runtime/commit-file-tree";
-import { ThemedSwitch } from "../../../components/ThemedSwitch";
+import {
+  buildCommitFileTree,
+  flattenCommitFileTree,
+  toggleCommitFiles,
+} from "@t3tools/client-runtime/commit-file-tree";
+import { ThemedSwitch } from "../../../components/ui/ThemedSwitch";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
 import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
@@ -182,7 +186,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                       className="flex-row items-center gap-2"
                       style={{ paddingLeft: depth * 12 }}
                     >
-                      {(
+                      {
                         <Pressable
                           accessibilityRole="checkbox"
                           accessibilityLabel={`Include ${node.kind === "directory" ? "directory " : ""}${node.path}`}
@@ -198,7 +202,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                             tintColorClassName="accent-foreground"
                           />
                         </Pressable>
-                      )}
+                      }
                       {node.kind === "directory" ? (
                         <Pressable
                           accessibilityRole="button"

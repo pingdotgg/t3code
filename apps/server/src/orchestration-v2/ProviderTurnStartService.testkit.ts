@@ -33,6 +33,7 @@ export const layer = Layer.merge(
 // Keep repository detection, branch selection and worktree creation on the real Git path.
 export const layerRealGit = GitWorkflow.layer.pipe(
   Layer.provide(GitManager.layer),
+  Layer.provide(VcsProjectConfig.layer),
   Layer.provide(
     Layer.mergeAll(
       Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({

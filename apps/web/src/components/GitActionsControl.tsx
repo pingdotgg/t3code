@@ -461,7 +461,6 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const [publishResult, setPublishResult] = useState<SourceControlPublishRepositoryResult | null>(
     null,
   );
-  const pendingThreadBranchSyncRef = useRef<PendingThreadBranchSync | null>(null);
   const sourceControlScope = {
     environmentId: props.environmentId,
     cwd: props.gitCwd,
@@ -976,7 +975,9 @@ export default function GitActionsControl({
     activeServerThreadShell ?? activeServerThreadProjection?.projection.thread ?? null;
   const isLocalDraftThread = activeDraftThread !== null && activeServerThread === null;
   const canChangeThreadBranch = canWriteSourceControl && (isLocalDraftThread || canOperateThread);
-  const draftRefreshKey = isLocalDraftThread ? (draftId ?? activeThreadRef?.threadId ?? null) : null;
+  const draftRefreshKey = isLocalDraftThread
+    ? (draftId ?? activeThreadRef?.threadId ?? null)
+    : null;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [isSplitCommitDialogOpen, setIsSplitCommitDialogOpen] = useState(false);
@@ -989,6 +990,7 @@ export default function GitActionsControl({
   const [isForcePushDialogOpen, setIsForcePushDialogOpen] = useState(false);
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
     useState<PendingDefaultBranchAction | null>(null);
+  const pendingThreadBranchSyncRef = useRef<PendingThreadBranchSync | null>(null);
   const sourceControlScope = { environmentId: activeEnvironmentId, cwd: gitCwd };
   const vcsActionState = useAtomValue(vcsActionManager.stateAtom(sourceControlScope));
   const inlineSuccessExpired = useDeadlinePassed(inlineSuccess?.expiresAtMs ?? null);
@@ -1567,7 +1569,6 @@ export default function GitActionsControl({
         <MenuItemLabel>Split into logical commits...</MenuItemLabel>
       </MenuItem>
       <MenuItem
-        density={presentation === "menu" ? "touch" : "default"}
         disabled={
           !canWriteSourceControl ||
           isGitActionRunning ||
