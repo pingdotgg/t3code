@@ -2392,18 +2392,23 @@ export const make = Effect.gen(function* () {
         const parsed = /^\d+$/.test(input.query ?? "") ? Number(input.query) : 0;
         // GraphQL validates `$number: Int!` even when `@include` skips the lookup.
         const exact = parsed > 0 && parsed <= 2_147_483_647;
-        return client
-          .RepositoryReferences({
+        const search = (lookup: boolean) =>
+          client.RepositoryReferences({
             owner,
             name,
             q: referenceSearchQuery(input.repository, input.query),
-            number: exact ? parsed : 0,
-            exact,
-          })
-          .pipe(
-            graphql({ ...input, operation: "searchRepositoryReferences", allowReserve: true }),
-            Effect.map(toRepositoryReferences),
-          );
+            number: lookup ? parsed : 0,
+            exact: lookup,
+          });
+        return search(exact).pipe(
+          // A missing number fails the whole query, which would discard the search results.
+          Effect.catchIf(
+            (error) => exact && isNotFoundOnly(error),
+            () => search(false),
+          ),
+          graphql({ ...input, operation: "searchRepositoryReferences", allowReserve: true }),
+          Effect.map(toRepositoryReferences),
+        );
       },
     ),
 
