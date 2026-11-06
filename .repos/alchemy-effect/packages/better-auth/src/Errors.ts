@@ -30,12 +30,9 @@ export const isAPIErrorLike = (error: unknown): error is APIError =>
  */
 export const mergeAPIErrorHeaders = (error: APIError): Headers => {
   const merged = new Headers(error.headers as HeadersInit | undefined);
-  const hidden = (error as unknown as Record<symbol, unknown>)[
-    kAPIErrorHeaders
-  ];
+  const hidden = (error as unknown as Record<symbol, unknown>)[kAPIErrorHeaders];
   if (hidden instanceof Headers) {
-    const cookies =
-      typeof hidden.getSetCookie === "function" ? hidden.getSetCookie() : [];
+    const cookies = typeof hidden.getSetCookie === "function" ? hidden.getSetCookie() : [];
     hidden.forEach((value, key) => {
       if (key.toLowerCase() !== "set-cookie") {
         merged.set(key, value);
@@ -66,9 +63,7 @@ export const mergeAPIErrorHeaders = (error: APIError): Headers => {
 export class BetterAuthApiError extends Data.TaggedError("BetterAuthApiError")<{
   readonly status: string;
   readonly statusCode: number;
-  readonly body:
-    | ({ message?: string; code?: string } & Record<string, unknown>)
-    | undefined;
+  readonly body: ({ message?: string; code?: string } & Record<string, unknown>) | undefined;
   readonly headers: Headers;
   readonly cause: APIError;
 }> {
@@ -110,17 +105,13 @@ const withJsonContentType = (headers: Headers): Headers => {
 };
 
 /** Failure of the deploy-time schema migration. */
-export class BetterAuthMigrationError extends Data.TaggedError(
-  "BetterAuthMigrationError",
-)<{
+export class BetterAuthMigrationError extends Data.TaggedError("BetterAuthMigrationError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
 
 /** Failure of a `secondaryStorage` operation. */
-export class BetterAuthStorageError extends Data.TaggedError(
-  "BetterAuthStorageError",
-)<{
+export class BetterAuthStorageError extends Data.TaggedError("BetterAuthStorageError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}

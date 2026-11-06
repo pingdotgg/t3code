@@ -1,3 +1,4 @@
+import * as NodePath from "node:path";
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 /**
@@ -17,13 +18,12 @@
  * module's specifier).
  */
 import cloudflare from "@alchemy.run/cloudflare-runtime/rolldown";
-import * as FrameworkCore from "../core/index.ts";
-import { DeployTargetError, makeDeployTarget } from "../core/index.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as NodePath from "node:path";
 import * as Path from "effect/Path";
 import { rolldown } from "rolldown";
+import * as FrameworkCore from "../core/index.ts";
+import { DeployTargetError, makeDeployTarget } from "../core/index.ts";
 import { makeCloudflareAdapter } from "./Adapter.ts";
 import type { SvelteKitTarget, SvelteKitTargetConfig } from "./SvelteKit.ts";
 
@@ -65,9 +65,7 @@ const fail = (message: string, cause?: unknown) =>
  *   workspace set.
  * - `bundle` — workerd resolve conditions and the `cloudflare:` externals.
  */
-export const makeCloudflareTarget = (
-  config: SvelteKitTargetConfig = {},
-): SvelteKitTarget =>
+export const makeCloudflareTarget = (config: SvelteKitTargetConfig = {}): SvelteKitTarget =>
   makeDeployTarget({
     platform: "cloudflare",
     config,
@@ -85,6 +83,8 @@ export const makeCloudflareTarget = (
                 env: context.dev.env,
                 bindings: context.dev.bindings,
                 services: context.dev.services,
+                workerd: context.dev.workerd,
+                assetsDirectory: context.dev.assetsDirectory,
                 compatibilityDate: config.compatibilityDate,
                 compatibilityFlags: config.compatibilityFlags,
               },
@@ -97,24 +97,17 @@ export const makeCloudflareTarget = (
         const path = yield* Path.Path;
         const entry = context.entry;
         if (entry === undefined) {
-          return yield* Effect.fail(
-            fail(
-              "The SvelteKit build produced no on-disk worker entry for the finishing pass " +
-                "(context.entry is missing)",
-            ),
+          return yield* fail(
+            "The SvelteKit build produced no on-disk worker entry for the finishing pass " +
+              "(context.entry is missing)",
           );
         }
         const root = context.root;
-        const distDirectory =
-          output.distDirectory ?? path.resolve(root, "dist");
+        const distDirectory = output.distDirectory ?? path.resolve(root, "dist");
         const serverOutDir = path.join(distDirectory, "server");
         yield* fs
           .remove(serverOutDir, { recursive: true, force: true })
-          .pipe(
-            Effect.mapError((error) =>
-              fail("Failed to clean dist/server", error),
-            ),
-          );
+          .pipe(Effect.mapError((error) => fail("Failed to clean dist/server", error)));
 
         const externalDirectories = yield* Effect.tryPromise({
           try: async () => {
@@ -125,9 +118,7 @@ export const makeCloudflareTarget = (
                 ...(config.compatibilityDate !== undefined
                   ? { compatibilityDate: config.compatibilityDate }
                   : undefined),
-                compatibilityFlags: config.compatibilityFlags ?? [
-                  "nodejs_compat",
-                ],
+                compatibilityFlags: config.compatibilityFlags ?? ["nodejs_compat"],
                 exports: ["default"],
               }),
             });
@@ -158,8 +149,7 @@ export const makeCloudflareTarget = (
               await bundle.close();
             }
           },
-          catch: (error) =>
-            fail("Failed to bundle the worker for workerd", error),
+          catch: (error) => fail("Failed to bundle the worker for workerd", error),
         });
 
         const wrapCollectorError = (error: FrameworkCore.CollectorError) =>
@@ -168,14 +158,10 @@ export const makeCloudflareTarget = (
           directory: serverOutDir,
           prefix: "server",
         }).pipe(Effect.mapError(wrapCollectorError));
-        const serverModules = FrameworkCore.sortServerModules(
-          modules,
-          NodePath.join("server", "index.js"),
-        );
-        const externalWorkspaces =
-          yield* FrameworkCore.collectExternalWorkspaces(
-            externalDirectories,
-          ).pipe(Effect.mapError(wrapCollectorError));
+        const serverModules = FrameworkCore.sortServerModules(modules, "server/index.js");
+        const externalWorkspaces = yield* FrameworkCore.collectExternalWorkspaces(
+          externalDirectories,
+        ).pipe(Effect.mapError(wrapCollectorError));
 
         return {
           ...output,
