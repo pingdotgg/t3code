@@ -12,25 +12,34 @@ screen never asks which platform or window width it is on.
 
 1. **Router.** The [root stack](../../apps/mobile/src/Stack.tsx) is the layout state: what is
    selected, what is pushed, which sheet is open. Rotating, folding or resizing renders the same
-   stack differently. Nothing remembers which column a page was in. See
-   [Mobile navigation](./mobile-navigation.md).
-2. **Workspace shell.** The [adaptive layout](../../apps/mobile/src/features/layout/AdaptiveWorkspaceLayout.tsx)
-   owns placement and widths, from the width class in [`layout.ts`](../../apps/mobile/src/lib/layout.ts):
+   stack differently. Nothing remembers which column a page was in. Each route declares what it
+   is with a [preset](../../apps/mobile/src/features/layout/route-options.ts) (`pageRoute`,
+   `sheetRoute`, `modalRoute`, `immersiveRoute`); the preset owns detents, corner radius, header
+   appearance and the Android fallback. See [Mobile navigation](./mobile-navigation.md).
+2. **Workspace shell.** [`features/layout`](../../apps/mobile/src/features/layout/) owns placement
+   and widths, from the width class in [`layout.ts`](../../apps/mobile/src/lib/layout.ts):
    - _Expanded_: sidebar, content and inspector columns.
    - _Medium_ (600–720pt wide): the sidebar sits beside a list and floats over a page.
    - _Compact_ (under 600pt either way): the sidebar is the root, and pages push.
    - Where the inspector column does not fit, the inspector is a sheet.
-3. **Feature screens.** A screen places content by role. It renders its page and declares its
-   inspector panes with `<Inspector>`, and asks for them with `showInspector()`. The shell decides
-   between column and sheet. Choosing a route or a component by width or platform here is the bug
-   this structure exists to prevent.
-4. **Design system.** Every pane has an `AppBar` with the same contract as a full screen.
+
+   The workspace tabs, dock and toolbars live in `features/layout/workspace`. Stacks nested in a
+   sheet or popover, and screens rendered under a route of their own, also come from here.
+
+3. **Feature screens.** A screen places content by role. It draws one `AppBar` (or `SheetHeader`
+   for a form sheet), renders its page, declares its inspector panes with `<Inspector>`, and asks
+   for them with `showInspector()`. The shell decides between column and sheet. Choosing a route,
+   a component, header options or an inset by width or platform here is the bug this structure
+   exists to prevent.
+4. **Design system.** Every pane, page, sheet and modal has an `AppBar` with the same contract on
+   both platforms; a sheet or modal passes `onClose`.
    [`PaneContext`](../../apps/mobile/src/components/ui/Pane.tsx) tells the bar which column it is
-   in, so it adds that column's controls, such as the sidebar toggle. Chrome branches by platform
-   only here.
+   in, so it adds that column's controls, such as the sidebar toggle. Where content meets the bar
+   comes from [`useBarInset`](../../apps/mobile/src/components/ui/useBarInset.ts). Chrome
+   branches by platform only here.
 5. **Native.** On iOS 26, the columns are `UISplitViewController` columns with a navigation bar
    each. On Android and on iPadOS 18–25, the shell draws the same columns in JS from the window
-   and hinge metrics.
+   and hinge metrics. Android never shows the native stack header; every bar is drawn in-tree.
 
 Platform splits live in layers 1, 2 and 4, as `.ios` and `.android` files.
 
