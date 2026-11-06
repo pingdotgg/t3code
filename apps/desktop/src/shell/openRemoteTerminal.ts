@@ -8,6 +8,7 @@ import { resolveSshCommand } from "@t3tools/ssh/command";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isCommandAvailable } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
+import * as Base64 from "effect/encoding/Base64";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -31,6 +32,21 @@ const DETACHED_IGNORE_STDIO = {
   stderr: "ignore",
 } as const;
 
+const POWERSHELL_ATTACHED_STDIO = {
+  // Detached Windows PowerShell exits 0 without executing the encoded command.
+  stdin: "ignore",
+  stdout: "ignore",
+  stderr: "ignore",
+} as const;
+
+const POWERSHELL_ARGUMENTS_PREFIX = [
+  "-NoProfile",
+  "-NonInteractive",
+  "-ExecutionPolicy",
+  "Bypass",
+  "-EncodedCommand",
+] as const;
+
 const quoteSh = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
 
 const escapeAppleScriptString = (value: string): string =>
@@ -39,8 +55,20 @@ const escapeAppleScriptString = (value: string): string =>
 /** wt.exe treats `;` as a command separator even inside quoted argv. */
 const escapeWindowsTerminalArg = (value: string): string => value.replaceAll(";", "\\;");
 
-/** cmd.exe expands `%NAME%` in the /c string before start runs. */
-const escapeCmdPercent = (value: string): string => value.replaceAll("%", "%%");
+const escapePowerShellStringLiteral = (value: string): string => `'${value.replaceAll("'", "''")}'`;
+
+const encodeUtf16LeBase64 = (input: string): string => {
+  const bytes = new Uint8Array(input.length * 2);
+  for (let index = 0; index < input.length; index += 1) {
+    const code = input.charCodeAt(index);
+    bytes[index * 2] = code & 0xff;
+    bytes[index * 2 + 1] = code >>> 8;
+  }
+  return Base64.encode(bytes);
+};
+
+const resolvePowerShellPath = (env: NodeJS.ProcessEnv): string =>
+  `${env.SYSTEMROOT || env.windir || String.raw`C:\Windows`}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
 
 export const windowsTerminalRemoteArgs = (
   sshCommand: string,
@@ -55,16 +83,15 @@ export const windowsTerminalRemoteArgs = (
   ...sshArgs.map(escapeWindowsTerminalArg),
 ];
 
-export const cmdStartRemoteArgs = (
+/** Avoids cmd.exe parsing so metacharacters in host/path stay SSH argv. */
+export const powerShellStartRemoteArgs = (
   sshCommand: string,
   sshArgs: ReadonlyArray<string>,
-): ReadonlyArray<string> => [
-  "/c",
-  "start",
-  "",
-  escapeCmdPercent(sshCommand),
-  ...sshArgs.map(escapeCmdPercent),
-];
+): ReadonlyArray<string> => {
+  const argumentList = sshArgs.map(escapePowerShellStringLiteral).join(",");
+  const script = `$ProgressPreference = 'SilentlyContinue'; Start-Process -FilePath ${escapePowerShellStringLiteral(sshCommand)} -ArgumentList @(${argumentList})`;
+  return [...POWERSHELL_ARGUMENTS_PREFIX, encodeUtf16LeBase64(script)];
+};
 
 const launchAndUnref = Effect.fn("desktop.openRemoteTerminal.launchAndUnref")(function* (
   command: string,
@@ -127,11 +154,11 @@ const launchWindows = Effect.fn("desktop.openRemoteTerminal.launchWindows")(func
     yield* launchAndUnref("wt.exe", windowsTerminalRemoteArgs(sshCommand, sshArgs));
     return;
   }
-  // `start`'s first quoted token is the window title; keep it empty so ssh is the command.
-  yield* launchAndUnref("cmd.exe", cmdStartRemoteArgs(sshCommand, sshArgs), {
-    ...DETACHED_IGNORE_STDIO,
-    shell: false,
-  });
+  yield* launchAndUnref(
+    resolvePowerShellPath(env),
+    powerShellStartRemoteArgs(sshCommand, sshArgs),
+    POWERSHELL_ATTACHED_STDIO,
+  );
 });
 
 const launchLinux = Effect.fn("desktop.openRemoteTerminal.launchLinux")(function* (
