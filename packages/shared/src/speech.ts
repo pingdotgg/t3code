@@ -36,6 +36,39 @@ export function effectiveSpeechLanguage(
   return model.languages.find((language) => language === "en") ?? model.languages[0] ?? "auto";
 }
 
+/**
+ * The model first-run setup offers: the selected one, else a recommended one, else any that the
+ * server would really transcribe the person's language with. Undefined when none can.
+ */
+export function chooseSetupSpeechModel<
+  Model extends {
+    readonly id: string;
+    readonly languages: readonly string[];
+    readonly supportsLanguageDetection: boolean;
+    readonly recommended: boolean;
+  },
+>(
+  models: readonly Model[],
+  input: {
+    readonly selectedModelId: string;
+    readonly intent: string;
+    readonly preferred: readonly string[];
+  },
+) {
+  for (const language of input.intent === "auto" ? input.preferred : [input.intent]) {
+    const capable = models.filter((model) => {
+      const effective = effectiveSpeechLanguage(model, input.intent);
+      return effective === language || (effective === "auto" && model.languages.includes(language));
+    });
+    const model =
+      capable.find(({ id }) => id === input.selectedModelId) ??
+      capable.find(({ recommended }) => recommended) ??
+      capable[0];
+    if (model) return { model, language };
+  }
+  return undefined;
+}
+
 const vocabularyKey = (value: string) => value.trim().normalize("NFC").toLocaleLowerCase();
 
 /**

@@ -184,6 +184,7 @@ export function PreviewAnnotationSpeech({
       step={speech.setup.step}
       status={speech.status}
       model={speech.setup.model}
+      language={speech.setup.language}
       downloading={speech.setup.downloading}
       error={speech.setup.error}
       onOpenChange={speech.setup.setOpen}

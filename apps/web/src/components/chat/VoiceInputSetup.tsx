@@ -13,6 +13,7 @@ import { useClientSettings, updateClientSettings } from "../../hooks/useSettings
 import { useEnvironment } from "../../state/environments";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { useEnvironmentScope } from "../../state/session";
+import { languageLabel } from "../settings/SpeechLanguageSelect";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -24,6 +25,8 @@ export function VoiceInputSetup(props: {
   step: number;
   status: EnvironmentSpeechStatus | null;
   model: EnvironmentSpeechModel | null;
+  /** The language the offered model was chosen for. */
+  language: string | null;
   downloading: boolean;
   error: string | null;
   onOpenChange(open: boolean): void;
@@ -66,6 +69,7 @@ export function VoiceInputSetup(props: {
     : "System default";
   const status = props.status?.supported ? props.status : null;
   const model = props.model;
+  const size = model?.size ?? status?.size;
   const progress =
     model?.downloaded === undefined ? null : Math.round((model.downloaded / model.size) * 100);
   const openSettings = (hash: string) => {
@@ -87,17 +91,19 @@ export function VoiceInputSetup(props: {
             <section className="space-y-3 text-sm">
               <div className="rounded-lg border border-border/70 bg-card/60 p-4">
                 <div className="flex items-center justify-between gap-2">
-                  <h3 className="font-medium">{status?.model ?? "English transcription model"}</h3>
-                  {status?.modelId === "handy-computer/parakeet-unified-en-0.6b-gguf" ? (
+                  <h3 className="font-medium">
+                    {model?.name ?? status?.model ?? "Transcription model"}
+                  </h3>
+                  {model?.recommended && props.language ? (
                     <span className="text-xs font-medium text-primary">
-                      Recommended for English
+                      Recommended for {languageLabel(props.language)}
                     </span>
                   ) : null}
                 </div>
                 <p className="mt-2 text-muted-foreground">
-                  Download the {status ? Math.round(status.size / 1024 / 1024) : 697} MB model to{" "}
-                  {environment?.label ?? "your transcription environment"}. Microphone audio is sent
-                  there for transcription, as chosen in Voice settings.
+                  Download the {size === undefined ? 697 : Math.round(size / 1024 / 1024)} MB model
+                  to {environment?.label ?? "your transcription environment"}. Microphone audio is
+                  sent there for transcription, as chosen in Voice settings.
                 </p>
                 <p className="mt-2 text-muted-foreground">
                   Silero (1.2 MB), used for silence filtering and pause detection, downloads

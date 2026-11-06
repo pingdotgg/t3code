@@ -40,6 +40,7 @@ const mocks = vi.hoisted(() => ({
   statusModelId: "test-model",
   models: [] as EnvironmentSpeechModel[],
   download: vi.fn<(modelId: string) => Promise<void>>(),
+  selected: [] as string[],
   platforms: [] as string[],
   microphoneRequests: [] as string[],
   transcribeCalls: [] as string[],
@@ -123,7 +124,15 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
       };
     }),
   downloadEnvironmentSpeechModel: (_prepared: PreparedConnection, modelId: string) =>
-    Effect.promise(() => mocks.download(modelId)),
+    Effect.promise(async () => {
+      await mocks.download(modelId);
+      return { models: mocks.models };
+    }),
+  selectEnvironmentSpeechModel: (_prepared: PreparedConnection, modelId: string) =>
+    Effect.sync(() => {
+      mocks.selected.push(modelId);
+      return { models: mocks.models };
+    }),
   getEnvironmentSpeechModels: () => Effect.sync(() => ({ models: mocks.models })),
   postProcessEnvironmentTranscript: (
     prepared: PreparedConnection,
@@ -196,6 +205,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.statusModelId = "test-model";
   mocks.models = [];
   mocks.download.mockReset();
+  mocks.selected = [];
   mocks.platforms = [];
   mocks.microphoneRequests = [];
   mocks.transcribeCalls = [];
@@ -434,6 +444,27 @@ it.each([
   await act(() => mocks.voice.setup.download());
   expect(mocks.download).toHaveBeenCalledExactlyOnceWith(german);
   expect(mocks.voice.setup.model?.id).toBe(german);
+});
+
+it.each([
+  ["selects the offered model once its download installed it", "installed", ["german"]],
+  ["leaves the selection alone when the download did not land", "downloadable", []],
+] as const)("%s", async (_, landedState, selected) => {
+  setup({ destination: "env-a" });
+  using _languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["de-DE"]);
+  mocks.modelState = "missing-model";
+  mocks.statusModelId = "english";
+  mocks.models = [catalogModel("english", ["en"], true), catalogModel("german", ["de"], true)];
+  mocks.download.mockImplementation(async () => {
+    mocks.models = [mocks.models[0]!, { ...mocks.models[1]!, state: landedState }];
+    if (landedState === "installed") mocks.modelState = "ready";
+  });
+  await using _screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.setup.language).toBe("de");
+  await act(() => mocks.voice.setup.download());
+  expect(mocks.selected).toEqual(selected);
+  expect(mocks.voice.setup.step).toBe(landedState === "installed" ? 1 : 0);
 });
 
 it("does not resend a failed recording after consent is revoked", async () => {

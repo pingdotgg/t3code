@@ -49,9 +49,12 @@ until you choose another.
 
 ## Set up a model
 
-For environment transcription, **Set up voice input** in **Settings → Voice →
-Transcription** opens the model and microphone setup without recording. Select
-the languages you dictate in to compare models that support all of them.
+For environment transcription, open **Settings → Voice → Transcription → Set up
+voice input** to configure the model and microphone without recording. If a
+model is missing, setup recommends one for your Voice language. With
+**Auto-detect**, it uses your system’s preferred languages.
+
+Select the languages you dictate in to compare models that support all of them.
 Accuracy shows how often the model got words or characters wrong in each
 language; speed is the time to transcribe 30 seconds on a reference GPU. Choose
 **All languages** to browse the full catalog. Filtering does not switch your model.
