@@ -41,6 +41,7 @@ import {
   resolveThreadListV2SwipeActions,
   resolveThreadListV2SnoozePresets,
   resolveThreadListV2Status,
+  threadListV2SnoozedShowsStatus,
   resolveThreadListV2WokeAt,
   sortThreadsForListV2,
   threadListV2ListItemsAreEqual,
@@ -185,6 +186,27 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status(guest)).toBe("request");
     expect(resolveThreadListV2Status({ ...guest, hasPendingUserInput: true })).toBe("input");
     expect(resolveThreadListV2Status({ ...guest, hasPendingApprovals: true })).toBe("approval");
+  });
+
+  it("keeps Limited on snoozed slim rows so usage stops stay recognizable", () => {
+    const thread = {
+      ...presentThreadShell(environmentId, decodeThreadShell(makeRawThreadShell())),
+      runtime: {
+        status: "failed" as const,
+        activeRunId: null,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerName: "Codex",
+        lastError: "Plan limit reached",
+        lastErrorClass: "usage_limit" as const,
+        updatedAt: NOW,
+      },
+    };
+
+    expect(resolveThreadListV2Status(thread)).toBe("limited");
+    // Slim snoozed rows still show Limited next to the wake time.
+    expect(threadListV2SnoozedShowsStatus(resolveThreadListV2Status(thread))).toBe(true);
+    expect(threadListV2SnoozedShowsStatus("failed")).toBe(false);
+    expect(threadListV2SnoozedShowsStatus("ready")).toBe(false);
   });
 
   it.each([

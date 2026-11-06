@@ -890,6 +890,11 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   return "ready";
 }
 
+/** Slim snoozed rows keep Limited next to the wake time; other statuses stay wake-only. */
+export function sidebarSnoozedShowsStatus(status: SidebarThreadStatus): boolean {
+  return status === "limited";
+}
+
 /**
  * The dot on a closed boring-sidebar folder: the most urgent state among its
  * hidden threads. Waiting threads stay quiet, like their rows.
