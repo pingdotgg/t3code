@@ -35,6 +35,7 @@ type TestEnvironmentInput = Partial<DesktopEnvironment.MakeDesktopEnvironmentInp
 interface ElectronAppCalls {
   readonly setAboutPanelOptions: Array<Electron.AboutPanelOptionsOptions>;
   readonly setAppUserModelId: string[];
+  readonly setAsDefaultProtocolClient: string[];
   readonly setDockIcon: string[];
   readonly setName: string[];
 }
@@ -63,7 +64,11 @@ const layerElectronApp = (calls: ElectronAppCalls) =>
         calls.setAppUserModelId.push(id);
       }),
     getAppMetrics: Effect.succeed([]),
-    setAsDefaultProtocolClient: () => Effect.succeed(true),
+    setAsDefaultProtocolClient: (protocol) =>
+      Effect.sync(() => {
+        calls.setAsDefaultProtocolClient.push(protocol);
+        return true;
+      }),
     setDesktopName: () => Effect.void,
     setDockIcon: (iconPath) =>
       Effect.sync(() => {
@@ -125,6 +130,7 @@ const withIdentity = <A, E, R>(
   const calls: ElectronAppCalls = input.calls ?? {
     setAboutPanelOptions: [],
     setAppUserModelId: [],
+    setAsDefaultProtocolClient: [],
     setDockIcon: [],
     setName: [],
   };
@@ -213,6 +219,7 @@ describe("DesktopAppIdentity", () => {
     const calls: ElectronAppCalls = {
       setAboutPanelOptions: [],
       setAppUserModelId: [],
+      setAsDefaultProtocolClient: [],
       setDockIcon: [],
       setName: [],
     };
@@ -236,6 +243,7 @@ describe("DesktopAppIdentity", () => {
     const calls: ElectronAppCalls = {
       setAboutPanelOptions: [],
       setAppUserModelId: [],
+      setAsDefaultProtocolClient: [],
       setDockIcon: [],
       setName: [],
     };
@@ -246,6 +254,7 @@ describe("DesktopAppIdentity", () => {
         yield* identity.configure;
 
         assert.deepEqual(calls.setAppUserModelId, [T3_LEARN_APP_ID]);
+        assert.deepEqual(calls.setAsDefaultProtocolClient, ["ominax", "t3learn"]);
         assert.equal(calls.setName[0], "OminaX Beta");
         assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "OminaX (Beta)");
       }),

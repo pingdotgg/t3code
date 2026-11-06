@@ -143,9 +143,9 @@ if ($previousRunning -and (Test-Path "apps/desktop/scripts/plant-saved-connectio
   }
   if (-not $secretsOk) { Fail "the saved connection planted under N-1 does not decrypt under N" }
 }
-# Neither build registers its link schemes on Windows yet (APP-70); report it instead of failing.
 foreach ($scheme in @("ominax", "t3learn")) {
-  if (-not (Test-Path "HKCU:\Software\Classes\$scheme")) { Log "${scheme}:// links are not registered on Windows (APP-70)" }
+  $handler = (Get-ItemProperty "HKCU:\Software\Classes\$scheme\shell\open\command" -ErrorAction SilentlyContinue).'(default)'
+  if (-not $handler -or $handler -notlike "*OminaX.exe*") { Fail "${scheme}:// links do not open OminaX (handler: $handler)" }
 }
 
 if ($Scenario -eq "next-to-t3-code") {
@@ -156,7 +156,7 @@ if ($Scenario -eq "next-to-t3-code") {
     ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -like "T3 Code*" }
   if (-not $codeKeys) { Fail "T3 Code's entry in Installed apps is gone" }
   $handler = (Get-ItemProperty "HKCU:\Software\Classes\t3code\shell\open\command" -ErrorAction SilentlyContinue).'(default)'
-  if ($handler -and $handler -like "*\t3learn\*") { Fail "OminaX took over t3code:// links" }
+  if ($handler -and $handler -like "*OminaX.exe*") { Fail "OminaX took over t3code:// links" }
 }
 
 Log "Uninstalling OminaX"
@@ -165,6 +165,9 @@ powershell -NoProfile -Command $installCommand
 if ($LASTEXITCODE -ne 0) { Fail "the uninstaller failed" }
 Remove-Item Env:OMINAX_UNINSTALL
 if (Test-Path (Join-Path $learnDir "OminaX.exe")) { Fail "OminaX is still installed" }
+foreach ($scheme in @("ominax", "t3learn")) {
+  if (Test-Path "HKCU:\Software\Classes\$scheme") { Fail "uninstall left the ${scheme}:// link registered" }
+}
 if (-not (Test-Path (Join-Path $newData "userdata")) -and -not (Test-Path (Join-Path $legacyData "userdata"))) { Fail "uninstall removed OminaX's data" }
 if ($Scenario -eq "next-to-t3-code") {
   if ((Wait-Server (Join-Path $HOME ".t3") $t3CodeVersion) -ne $t3CodeVersion) { Fail "T3 Code stopped after uninstalling OminaX" }
