@@ -1029,6 +1029,14 @@ export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
+export const DesktopOpenRemoteTerminalInputSchema = Schema.Struct({
+  host: TrimmedNonEmptyString,
+  username: Schema.optionalKey(TrimmedNonEmptyString),
+  absolutePath: TrimmedNonEmptyString,
+  isFile: Schema.optionalKey(Schema.Boolean),
+});
+export type DesktopOpenRemoteTerminalInput = typeof DesktopOpenRemoteTerminalInputSchema.Type;
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getRelayTelemetryEnabled: () => boolean;
@@ -1122,6 +1130,8 @@ export interface DesktopBridge {
   openSystemSettings: (pane: SystemSettingsPane) => Promise<boolean>;
   checkSystemPermission: (pane: SystemSettingsPane) => Promise<boolean>;
   probeRemoteEditors: () => Promise<readonly EditorId[]>;
+  /** Opens a local system terminal that SSHs to the remote host at absolutePath. */
+  openRemoteTerminal: (input: DesktopOpenRemoteTerminalInput) => Promise<boolean>;
   pasteAsText: () => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   onSnapShotEvent: (listener: (event: DesktopSnapShotEvent) => void) => () => void;

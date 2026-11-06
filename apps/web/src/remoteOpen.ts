@@ -146,17 +146,22 @@ export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteO
 
 const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];
 
+const withRemoteTerminal = (ids: ReadonlyArray<EditorId>): ReadonlyArray<EditorId> =>
+  window.desktopBridge?.openRemoteTerminal !== undefined && !ids.includes("terminal")
+    ? [...ids, "terminal"]
+    : ids;
+
 // Probed once per page: installed editors rarely change, and the probe spawns processes.
 const remoteCapableEditorsAtom = Atom.make((get): ReadonlyArray<EditorId> => {
   const probe = window.desktopBridge?.probeRemoteEditors;
   probe?.().then(
     (ids) => {
       const remoteCapable = ids.filter((id) => REMOTE_CAPABLE_EDITOR_IDS.includes(id));
-      if (remoteCapable.length > 0) get.setSelf(remoteCapable);
+      if (remoteCapable.length > 0) get.setSelf(withRemoteTerminal(remoteCapable));
     },
     () => undefined,
   );
-  return REMOTE_FALLBACK_EDITORS;
+  return withRemoteTerminal(REMOTE_FALLBACK_EDITORS);
 }).pipe(Atom.keepAlive, Atom.withLabel("remote-capable-editors"));
 
 export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
@@ -175,6 +180,26 @@ export async function openRemoteEditorUrl(url: string): Promise<boolean> {
   }
   window.location.assign(url);
   return true;
+}
+
+/** Opens a local system terminal that SSHs into the remote host. Desktop only. */
+export async function openRemoteTerminal(input: {
+  readonly host: RemoteOpenHost;
+  readonly absolutePath: string;
+  readonly isFile?: boolean;
+}): Promise<boolean> {
+  const bridge = window.desktopBridge;
+  if (bridge?.openRemoteTerminal === undefined) return false;
+  try {
+    return await bridge.openRemoteTerminal({
+      host: input.host.host,
+      ...(input.host.username === undefined ? {} : { username: input.host.username }),
+      absolutePath: input.absolutePath,
+      ...(input.isFile === undefined ? {} : { isFile: input.isFile }),
+    });
+  } catch {
+    return false;
+  }
 }
 
 const REMOTE_OPEN_HINT_KEY = "t3code:remote-open-hint-seen";

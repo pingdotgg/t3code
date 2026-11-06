@@ -10,7 +10,12 @@ import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
 import { isOpenFavoriteEditorShortcut } from "../../keybindings";
 import { announce } from "../../lib/announce";
-import { openRemoteEditorUrl, useRemoteCapableEditors, useRemoteOpenState } from "../../remoteOpen";
+import {
+  openRemoteEditorUrl,
+  openRemoteTerminal,
+  useRemoteCapableEditors,
+  useRemoteOpenState,
+} from "../../remoteOpen";
 import { registerCommands } from "../../shortcuts/dispatcher";
 import { shellEnvironment } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -76,13 +81,18 @@ export function useOpenFavoriteEditorShortcut({
       event.preventDefault();
       const label = editorLabelForPlatform(preferredEditor, navigator.platform);
       if (remote.mode === "remote-links") {
-        const url = buildRemoteOpenUrl({
-          editor: preferredEditor,
-          ...remote.host,
-          absolutePath: openInCwd,
-        });
-        if (url === undefined) return;
-        void openRemoteEditorUrl(url).then((opened) => {
+        const open =
+          preferredEditor === "terminal"
+            ? openRemoteTerminal({ host: remote.host, absolutePath: openInCwd })
+            : (() => {
+                const url = buildRemoteOpenUrl({
+                  editor: preferredEditor,
+                  ...remote.host,
+                  absolutePath: openInCwd,
+                });
+                return url === undefined ? Promise.resolve(false) : openRemoteEditorUrl(url);
+              })();
+        void open.then((opened) => {
           if (opened) announce(`Opened in ${label}`);
         });
         return;

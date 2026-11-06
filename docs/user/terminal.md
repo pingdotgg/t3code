@@ -26,6 +26,11 @@ file preview it opens in that file's folder. On macOS this is Terminal.app, on
 Windows it is PowerShell, and on Linux T3 Code uses the first terminal it finds,
 starting with your desktop's default.
 
+When you are connected to a remote environment over SSH or an advertised
+Tailscale or local network host, Terminal (desktop app) opens a local system
+terminal that SSHs into that host and starts in the project folder, the same way
+Open in opens editors over SSH.
+
 ## fish
 
 T3 Code starts fish with `no-query-term`, avoiding startup waits for terminal

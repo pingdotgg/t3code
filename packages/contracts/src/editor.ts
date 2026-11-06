@@ -233,6 +233,25 @@ export const buildRemoteOpenUrl = (input: {
   return `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(destination)}${encodedPath}${input.isFile ? ":1:1" : ""}`;
 };
 
+/** Directory for a remote SSH terminal; file targets open in their parent folder. */
+export function remoteTerminalWorkingDirectory(absolutePath: string, isFile: boolean): string {
+  const posixPath = absolutePath.replaceAll("\\", "/");
+  const rootedPath = posixPath.startsWith("/") ? posixPath : `/${posixPath}`;
+  if (!isFile) return rootedPath;
+  const lastSlash = rootedPath.lastIndexOf("/");
+  return lastSlash <= 0 ? "/" : rootedPath.slice(0, lastSlash);
+}
+
+export function buildRemoteSshTerminalDestination(host: string, username?: string): string {
+  return username === undefined || username.length === 0 ? host : `${username}@${host}`;
+}
+
+/** Single ssh remote-command argv: cd into the path, then replace with a login shell. */
+export function buildRemoteSshTerminalRemoteCommand(directory: string): string {
+  const quoted = `'${directory.replaceAll("'", `'\\''`)}'`;
+  return `cd -- ${quoted} && exec "\${SHELL:-/bin/sh}" -l`;
+}
+
 export const RemoteOpenTargetKind = Schema.Literals(["tailscale", "mdns"]);
 export type RemoteOpenTargetKind = typeof RemoteOpenTargetKind.Type;
 

@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   clientEditors: ["vscode"] as readonly EditorId[],
   run: vi.fn(),
   openUrl: vi.fn(),
+  openTerminal: vi.fn(),
   setPreferred: vi.fn(),
   markHintSeen: vi.fn(),
   listeners: new Set<() => void>(),
@@ -63,6 +64,7 @@ vi.mock(import("../../remoteOpen"), async (importOriginal) => ({
   useRemoteCapableEditors: () => state.clientEditors,
   useRemoteOpenHint: () => [false, state.markHintSeen] as const,
   openRemoteEditorUrl: state.openUrl,
+  openRemoteTerminal: state.openTerminal,
 }));
 
 import { OpenInPicker } from "./OpenInPicker";
@@ -81,6 +83,7 @@ async function setup() {
   state.clientEditors = editors;
   state.run.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.openUrl.mockReset().mockResolvedValue(true);
+  state.openTerminal.mockReset().mockResolvedValue(true);
   state.setPreferred.mockReset();
   state.markHintSeen.mockReset();
   state.listeners.clear();
@@ -234,5 +237,27 @@ describe("open in editor announcement", () => {
     expect(await spoken()).toBe("");
     await pressOpenFavorite();
     expect(await spoken()).toBe("Opened in VS Code");
+  });
+});
+
+describe("remote SSH terminal", () => {
+  it("opens a local SSH terminal instead of an editor URL", async () => {
+    await using fixture = await setup();
+    const { renderPicker, primaryButton, click } = fixture;
+    state.remote = {
+      mode: "remote-links",
+      host: { kind: "ssh-alias", host: "sol", username: "theo" },
+    };
+    state.clientEditors = ["vscode", "terminal"];
+    window.localStorage.setItem("t3code:last-editor", JSON.stringify("terminal"));
+    await renderPicker(["vscode", "terminal"]);
+    await click(primaryButton());
+    expect(state.openTerminal).toHaveBeenCalledWith({
+      host: { kind: "ssh-alias", host: "sol", username: "theo" },
+      absolutePath: "/work/project",
+      isFile: false,
+    });
+    expect(state.openUrl).not.toHaveBeenCalled();
+    expect(state.run).not.toHaveBeenCalled();
   });
 });
