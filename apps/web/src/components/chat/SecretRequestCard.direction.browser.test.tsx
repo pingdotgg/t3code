@@ -6,7 +6,13 @@ import { userEvent } from "vite-plus/test/browser";
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => async () => ({ _tag: "Success", value: undefined }),
 }));
-vi.mock("../../state/server", () => ({ serverEnvironment: { answerSecretRequest: {} } }));
+vi.mock("../../state/server", async (importOriginal) => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    ...(await importOriginal<typeof import("../../state/server")>()),
+    serverEnvironment: { answerSecretRequest: {}, configValueAtom: () => Atom.make(null) },
+  };
+});
 
 import "~/index.css";
 import { render } from "../../../test/render";
@@ -36,7 +42,7 @@ it("reads a Hebrew request right to left and keeps its code and the typed secret
   await expect.element(reason).toHaveStyle({ direction: "rtl", textAlign: "right" });
   await expect.element(screen.getByText("`VERCEL_TOKEN`")).toHaveStyle({ direction: "ltr" });
 
-  const input = screen.getByRole("textbox");
+  const input = screen.getByLabelText("טוקן של Vercel");
   await expect.element(input).toHaveStyle({ direction: "rtl" });
   await input.click();
   await userEvent.keyboard("abc");
@@ -53,7 +59,7 @@ it("gives an English label the card side and keeps its default placeholder left 
   await expect
     .element(screen.getByText(/כדי לפתוח/))
     .toHaveStyle({ direction: "rtl", textAlign: "right" });
-  await expect.element(screen.getByRole("textbox")).toHaveStyle({ direction: "ltr" });
+  await expect.element(screen.getByLabelText("GitHub token")).toHaveStyle({ direction: "ltr" });
 });
 
 it("leaves an English request left to right", async () => {
