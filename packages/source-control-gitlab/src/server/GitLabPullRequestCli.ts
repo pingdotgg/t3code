@@ -283,6 +283,13 @@ const DIFF_TIMEOUT_MS = 60_000;
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 
+export interface GitLabDiscussionThreads {
+  readonly threads: ReadonlyArray<PullRequestReviewThread>;
+  readonly diffRefsByThreadId: ReadonlyMap<string, GitLabDiffRefs>;
+  readonly overviewFindingIds: ReadonlyArray<string>;
+  readonly truncated: boolean;
+}
+
 export interface GitLabMergeRequestListBatch {
   readonly items: ReadonlyArray<GitLabMergeRequestListItem>;
   readonly truncated: boolean;
@@ -523,14 +530,7 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly host?: string | undefined;
       readonly repository: string;
       readonly number: number;
-    }) => Effect.Effect<
-      {
-        readonly threads: ReadonlyArray<PullRequestReviewThread>;
-        readonly overviewFindingIds: ReadonlyArray<string>;
-        readonly truncated: boolean;
-      },
-      GitLabPullRequestCliError
-    >;
+    }) => Effect.Effect<GitLabDiscussionThreads, GitLabPullRequestCliError>;
 
     readonly submitReview: (input: {
       readonly cwd: string;
@@ -1073,15 +1073,9 @@ export const make = Effect.gen(function* () {
     readonly number: number;
     readonly page: number;
     readonly collected: ReadonlyArray<PullRequestReviewThread>;
+    readonly collectedDiffRefs: ReadonlyMap<string, GitLabDiffRefs>;
     readonly collectedFindingIds: ReadonlyArray<string>;
-  }): Effect.Effect<
-    {
-      readonly threads: ReadonlyArray<PullRequestReviewThread>;
-      readonly overviewFindingIds: ReadonlyArray<string>;
-      readonly truncated: boolean;
-    },
-    GitLabPullRequestCliError
-  > =>
+  }): Effect.Effect<GitLabDiscussionThreads, GitLabPullRequestCliError> =>
     api({
       cwd: input.cwd,
       host: input.host,
@@ -1105,21 +1099,31 @@ export const make = Effect.gen(function* () {
           );
         }
         const collected = [...input.collected, ...decoded.success.threads];
+        const collectedDiffRefs = new Map([
+          ...input.collectedDiffRefs,
+          ...decoded.success.diffRefsByThreadId,
+        ]);
         const collectedFindingIds = [
           ...input.collectedFindingIds,
           ...decoded.success.overviewFindingIds,
         ];
-        const done = (truncated: boolean) =>
-          Effect.succeed({
-            threads: collected,
-            overviewFindingIds: collectedFindingIds,
-            truncated,
-          });
+        const read = (truncated: boolean) => ({
+          threads: collected,
+          diffRefsByThreadId: collectedDiffRefs,
+          overviewFindingIds: collectedFindingIds,
+          truncated,
+        });
         // Plain notes count toward the page size even when no positioned threads survive decoding.
-        if (decoded.success.rawCount < MAX_PAGE_SIZE) return done(false);
+        if (decoded.success.rawCount < MAX_PAGE_SIZE) return Effect.succeed(read(false));
         return input.page >= CONVERSATION_PAGES
-          ? done(true)
-          : discussionsPage({ ...input, page: input.page + 1, collected, collectedFindingIds });
+          ? Effect.succeed(read(true))
+          : discussionsPage({
+              ...input,
+              page: input.page + 1,
+              collected,
+              collectedDiffRefs,
+              collectedFindingIds,
+            });
       }),
     );
 
@@ -2295,7 +2299,13 @@ export const make = Effect.gen(function* () {
     }),
 
     listDiscussions: Effect.fn("GitLabPullRequestCli.listDiscussions")(function (input) {
-      return discussionsPage({ ...input, page: 1, collected: [], collectedFindingIds: [] });
+      return discussionsPage({
+        ...input,
+        page: 1,
+        collected: [],
+        collectedDiffRefs: new Map(),
+        collectedFindingIds: [],
+      });
     }),
 
     submitReview: Effect.fn("GitLabPullRequestCli.submitReview")(function* (input) {
