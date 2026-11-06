@@ -1,7 +1,7 @@
 import { tooltipSafeFinalFocus } from "./focus-return";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
-import { type ComponentProps, createContext, type ReactNode, use, useState } from "react";
+import { type ComponentProps, createContext, type ReactNode, use, useId, useState } from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import {
@@ -104,6 +104,8 @@ function DialogPopup({
   variant?: "default" | "media" | "app";
   viewportProps?: Omit<DialogPrimitive.Viewport.Props, "className">;
 }) {
+  const defaultId = useId();
+  const popupId = props.id ?? defaultId;
   return (
     <DialogPortal>
       {/* Media opens from inside other overlays (a composer chip, a popover), so it sits above them. */}
@@ -135,7 +137,8 @@ function DialogPopup({
           data-slot="dialog-popup"
           render={renderRetainedPopup}
           {...props}
-          finalFocus={tooltipSafeFinalFocus(props.finalFocus)}
+          id={popupId}
+          finalFocus={tooltipSafeFinalFocus(props.finalFocus, popupId)}
         >
           {children}
           {showCloseButton && (

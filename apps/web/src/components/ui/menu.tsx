@@ -2,6 +2,7 @@ import { tooltipSafeFinalFocus } from "./focus-return";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { CheckIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import type * as React from "react";
+import { useId } from "react";
 
 import { cn } from "~/lib/utils";
 import { buttonVariants } from "./button";
@@ -52,6 +53,8 @@ function MenuPopup({
   variant?: "default" | "scope";
   spacing?: "default" | "relaxed";
 }) {
+  const defaultId = useId();
+  const popupId = props.id ?? defaultId;
   return (
     <MenuPrimitive.Portal keepMounted={keepMounted}>
       <MenuPrimitive.Positioner
@@ -82,7 +85,8 @@ function MenuPopup({
           )}
           data-slot="menu-popup"
           {...props}
-          finalFocus={tooltipSafeFinalFocus(props.finalFocus)}
+          id={popupId}
+          finalFocus={tooltipSafeFinalFocus(props.finalFocus, popupId)}
         >
           <div className="max-h-(--available-height) flex w-full flex-col overflow-y-auto p-1">
             {children}

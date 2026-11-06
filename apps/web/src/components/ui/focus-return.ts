@@ -15,8 +15,18 @@ export function isReturningFocus(document: Document) {
 
 export function tooltipSafeFinalFocus(
   finalFocus: Dialog.Popup.Props["finalFocus"],
+  popupId: string,
 ): FinalFocusHandler {
   const handleFinalFocus: FinalFocusHandler = (closeType) => {
+    const popup = document.getElementById(popupId);
+    const activeElement = document.activeElement;
+    if (
+      (finalFocus === undefined || typeof finalFocus === "boolean") &&
+      activeElement !== document.body &&
+      !popup?.contains(activeElement)
+    ) {
+      return false;
+    }
     prepareFocusReturn(document);
     if (typeof finalFocus === "function") return finalFocus(closeType);
     return typeof finalFocus === "object" ? finalFocus.current : (finalFocus ?? true);

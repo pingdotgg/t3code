@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { tooltipSafeFinalFocus } from "./focus-return";
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
 
@@ -52,6 +53,8 @@ function AlertDialogPopup({
   bottomStickOnMobile?: boolean;
   portalContainer?: AlertDialogPrimitive.Portal.Props["container"];
 }) {
+  const defaultId = useId();
+  const popupId = props.id ?? defaultId;
   return (
     <AlertDialogPortal container={portalContainer}>
       <AlertDialogBackdrop />
@@ -68,7 +71,8 @@ function AlertDialogPopup({
           data-slot="alert-dialog-popup"
           render={renderRetainedPopup}
           {...props}
-          finalFocus={tooltipSafeFinalFocus(props.finalFocus)}
+          id={popupId}
+          finalFocus={tooltipSafeFinalFocus(props.finalFocus, popupId)}
         />
       </AlertDialogViewport>
     </AlertDialogPortal>
