@@ -28,7 +28,7 @@ import * as SqlError from "effect/sql/SqlError";
 
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
-import { projectDomainEventForWire } from "./WireProjection.ts";
+import { projectStoredEventForWire } from "./WireProjection.ts";
 import { makeRunOutcomeRecorder, type RunOutcome } from "./RunMetrics.ts";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -893,7 +893,7 @@ const layerBase: Layer.Layer<
               afterSequence,
               filter: matches,
               replay,
-              project: (stored) => ({ ...stored, event: projectDomainEventForWire(stored.event) }),
+              project: projectStoredEventForWire,
             });
           }
           const subscription = yield* PubSub.subscribe(pubsub);
