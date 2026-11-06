@@ -13,7 +13,7 @@ import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } fro
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { findProjectOnChangeRequestHost } from "@t3tools/client-runtime/change-request-links";
 
-import { useProjects } from "~/state/entities";
+import { useProjects, useServerConfigs } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -27,13 +27,13 @@ function ThreadDetailsPrLinkRow({
   link,
   onOpen,
   onActed,
-  onStopWatching,
+  watch,
 }: {
   environmentId: EnvironmentId;
   link: ThreadPullRequestLink;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: (() => void) | undefined;
-  onStopWatching?: (() => void) | undefined;
+  watch?: ComponentProps<typeof ThreadDetailsPrRow>["watch"];
 }) {
   const projects = useProjects();
   const parsed = sourceControlClients.parseChangeRequestUrl(link.url)?.link;
@@ -57,7 +57,7 @@ function ThreadDetailsPrLinkRow({
       label={`#${link.number}${link.snapshot === null ? "" : `: ${link.snapshot.title}`}`}
       openAriaLabel={link.url}
       onOpen={onOpen}
-      onStopWatching={onStopWatching}
+      watch={watch}
       {...(onActed ? { onActed } : {})}
     />
   );
@@ -76,22 +76,31 @@ export function ThreadDetailsPrRows({
   onOpenLink: (event: ReactMouseEvent<HTMLElement>, url: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
-  const stopWatching = (link: ThreadPullRequestLink | null) =>
-    link?.watch === undefined
-      ? undefined
-      : () =>
-          void watch({
-            environmentId: threadRef.environmentId,
-            input: {
-              threadId: threadRef.threadId,
-              host: link.host,
-              repository: link.repository,
-              number: link.number,
-              watching: false,
-            },
-          });
-  const currentRow = <ThreadDetailsPrRow {...row} onStopWatching={stopWatching(currentLink)} />;
+  const setWatching = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
+  const supportsWatch =
+    useServerConfigs().get(threadRef.environmentId)?.environment.capabilities
+      .threadPullRequestWatch === true;
+  // Without watch support, a watch that already exists can still be stopped.
+  const watchOf = (link: ThreadPullRequestLink | null) => {
+    if (link === null) return undefined;
+    const watching = link.watch !== undefined;
+    if (!watching && !supportsWatch) return undefined;
+    return {
+      watching,
+      onToggle: () =>
+        void setWatching({
+          environmentId: threadRef.environmentId,
+          input: {
+            threadId: threadRef.threadId,
+            host: link.host,
+            repository: link.repository,
+            number: link.number,
+            watching: !watching,
+          },
+        }),
+    };
+  };
+  const currentRow = <ThreadDetailsPrRow {...row} watch={watchOf(currentLink)} />;
   const rest =
     currentLink === null
       ? []
@@ -112,7 +121,7 @@ export function ThreadDetailsPrRows({
               link={link}
               onOpen={(event) => onOpenLink(event, link.url)}
               onActed={row.onActed}
-              onStopWatching={stopWatching(link)}
+              watch={watchOf(link)}
             />
           ))}
         </div>
