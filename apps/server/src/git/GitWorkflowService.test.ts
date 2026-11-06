@@ -14,7 +14,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("GitWorkflowService", (it) => {
-  it.effect("finds a name among the refs of every namespace", () =>
+  it.effect("reads refs and tolerates a removed repository", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ref-named-" });
@@ -34,6 +34,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("GitWorkflowServi
         (refName) => workflow.hasRefNamed({ cwd, refName }),
       );
       assert.deepEqual(found, [true, true, true, true, false, false]);
+      assert.equal(yield* workflow.currentBranch(cwd), "main");
+      yield* driver.execute({ operation: "test.detach", cwd, args: ["checkout", "--detach"] });
+      assert.isNull(yield* workflow.currentBranch(cwd));
+      yield* fileSystem.rename(`${cwd}/.git`, `${cwd}/git-metadata`);
+      yield* fileSystem.writeFileString(`${cwd}/.git`, `gitdir: ${cwd}/missing-git-directory\n`);
+      assert.isNull(yield* workflow.currentBranch(cwd));
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -41,6 +47,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("GitWorkflowServi
           Layer.provide(
             Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
               resolve: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
+              detect: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
             }),
           ),
           Layer.provide(Layer.mock(GitManager.GitManager)({})),
