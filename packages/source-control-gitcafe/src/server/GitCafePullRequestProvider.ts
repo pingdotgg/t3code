@@ -44,7 +44,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     resolve: true,
     verdicts: ["approve", "request-changes", "comment"],
   },
-  reviewers: { request: true, listCandidates: true },
+  reviewers: { request: true, listCandidates: true, searchCandidates: false },
   edit: { changeRequest: true, comment: true },
 };
 
