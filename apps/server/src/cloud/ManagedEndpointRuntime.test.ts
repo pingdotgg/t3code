@@ -178,6 +178,21 @@ describe("CloudManagedEndpointRuntime", () => {
     expect(
       ManagedEndpointRuntime.classifyRelayClientOutput("2026-06-17T02:00:00Z PNC runtime panic"),
     ).toBe("warning");
+    for (const prefix of ["", "Request failed "]) {
+      expect(
+        ManagedEndpointRuntime.classifyRelayClientOutput(
+          `2026-06-17T02:00:00Z ERR ${prefix}error="Incoming request ended abruptly: context canceled" connIndex=0`,
+        ),
+      ).toBe("debug");
+    }
+    for (const line of [
+      '2026-06-17T02:00:00Z ERR error="Incoming request ended abruptly: context deadline exceeded" connIndex=0',
+      '2026-06-17T02:00:00Z ERR Failed to serve tunnel connection error="context canceled"',
+      '2026-06-17T02:00:00Z FTL error="Incoming request ended abruptly: context canceled"',
+      '2026-06-17T02:00:00Z PNC error="Incoming request ended abruptly: context canceled"',
+    ]) {
+      expect(ManagedEndpointRuntime.classifyRelayClientOutput(line)).toBe("warning");
+    }
   });
 
   it("classifies connection unregistration apart from registration and routine output", () => {
