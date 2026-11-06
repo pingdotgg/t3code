@@ -886,6 +886,11 @@ export const OrchestrationV2RemoteTaskChild = Schema.Struct({
    * on the same thread there clears it.
    */
   followsAfterRunId: Schema.optional(RunId),
+  /**
+   * The finished task whose thread there started this task's later run; the task took over
+   * following that thread. Absent on the thread's original task, whose stops keep their keys.
+   */
+  followUpOf: Schema.optional(NodeId),
 });
 export type OrchestrationV2RemoteTaskChild = typeof OrchestrationV2RemoteTaskChild.Type;
 
@@ -3445,21 +3450,19 @@ const OrchestrationV2InternalCommand = Schema.Union([
     type: Schema.Literal("delegated_task.remote.request"),
     commandId: CommandId,
     parentThreadId: ThreadId,
-    /** Absent for a `followUpOf` request, which binds to the parent's owner run at dispatch. */
+    /** Absent when `remoteChild.followUpOf` is set: it binds to the parent's owner run at dispatch. */
     parentRunId: Schema.optional(RunId),
     parentNodeId: Schema.optional(NodeId),
     task: TrimmedNonEmptyString,
     title: Schema.optional(TrimmedNonEmptyString),
     driver: ProviderDriverKind,
     modelSelection: ModelSelection,
+    /**
+     * With `followUpOf`, a later run there binds as a follow-up to a finished child here does;
+     * refused once that task no longer follows its thread there.
+     */
     remoteChild: OrchestrationV2RemoteTaskChild,
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
-    /**
-     * The finished task whose thread there started this later run: the run binds as a
-     * follow-up to a finished child here does, and takes over following that thread.
-     * Refused once that thread is no longer followed.
-     */
-    followUpOf: Schema.optional(NodeId),
   }),
   /**
    * Completes a delegated task that ran in a linked environment, with what its

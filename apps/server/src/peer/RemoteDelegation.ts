@@ -464,12 +464,13 @@ const make = Effect.gen(function* () {
     `${cancelled} It could not be stopped in ${remote.label} and may still run there: ${error.message}`;
 
   /**
-   * The key the stop a task owes is sent with: one per stop generation and task, as tasks on
-   * one thread there each count their own stops.
+   * The key the stop a task owes is sent with, one per stop generation. A follow-up on the
+   * thread there counts its own stops, so its run names them too; a thread's original task
+   * keeps the keys stops sent before follow-ups existed were sent with.
    */
   const stopKey = (remote: OrchestrationV2RemoteTaskChild) => {
     const generation = remote.stopCount === undefined ? "stop" : `stop-${remote.stopCount}`;
-    return remote.runId === undefined ? generation : `${generation}:${remote.runId}`;
+    return remote.followUpOf === undefined ? generation : `${generation}:${remote.runId}`;
   };
 
   /**
@@ -779,9 +780,9 @@ const make = Effect.gen(function* () {
           threadId: remote.threadId,
           label: remote.label,
           runId: laterRunId,
+          followUpOf: task.id,
         },
         completionWake: "always",
-        followUpOf: task.id,
       })
       .pipe(
         // Refused once a stop here ended following; the next look sees that.

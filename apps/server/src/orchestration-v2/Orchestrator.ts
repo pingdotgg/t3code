@@ -8350,13 +8350,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
+    const { followUpOf } = command.remoteChild;
     const parentProjection = yield* projectionStore
       .getThreadRecords(
         command.parentThreadId,
         ["runs", "providerTurns", "attempts", "subagents"],
-        {
-          subagentIds: command.followUpOf === undefined ? [] : [command.followUpOf],
-        },
+        { subagentIds: followUpOf === undefined ? [] : [followUpOf] },
       )
       .pipe(
         Effect.mapError(
@@ -8365,16 +8364,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     const followed = parentProjection.subagents.find(
       (task) =>
-        task.id === command.followUpOf &&
+        task.id === followUpOf &&
         task.remoteChild?.followsAfterRunId !== undefined &&
         task.remoteChild.environmentId === command.remoteChild.environmentId &&
         task.remoteChild.threadId === command.remoteChild.threadId,
     );
-    if (command.followUpOf !== undefined && followed?.remoteChild === undefined) {
+    if (followUpOf !== undefined && followed?.remoteChild === undefined) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `Delegated task ${command.followUpOf} no longer follows its thread there.`,
+        cause: `Delegated task ${followUpOf} no longer follows its thread there.`,
       });
     }
     // A follow-up binds as one to a child here does, to the owner run now, even one that has ended.

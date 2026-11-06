@@ -667,6 +667,7 @@ const makeLaptop = (
       threads: Context.get(here, ThreadManagement.ThreadManagementService),
       projections: Context.get(here, ProjectionStore.ProjectionStoreV2),
       sink: Context.get(here, EventSink.EventSinkV2),
+      forwarding: Context.get(here, PeerForwarding.PeerForwarding),
       call: (name: string, args: Record<string, unknown>, scope = parentScope) =>
         server
           .callTool({ name, arguments: args })
@@ -1558,9 +1559,9 @@ it.effect("a later run there binds to the parent's run when recorded, not one re
           threadId: delegated.remoteChild.threadId,
           label: "Box",
           runId: boxLaterRunId,
+          followUpOf: delegated.taskId,
         },
         completionWake: "always",
-        followUpOf: delegated.taskId,
       });
       expect(
         yield* taskUpdate(a, (task) => task.remoteChild?.runId === boxLaterRunId),
@@ -2340,6 +2341,63 @@ it.effect("a Stop on a task that has its result reaches there after a restart", 
       yield* after.remote.start();
       expect(yield* stoppedThere(after, delegated.taskId)).toMatchObject({ status: "completed" });
       expect(yield* Ref.get(thread.stops)).toEqual(["thread.stop", "delegated-tasks"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a Stop sent before an upgrade is the same stop there when sent again after it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
+      const finished = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const before = yield* makeLaptop(database, offers, linking);
+          yield* linkTo(before.links, b, "full-access");
+          yield* seedParent(before);
+          const task = yield* delegateToBox(before);
+          yield* Ref.set(thread.status, "completed");
+          yield* Deferred.succeed(thread.finished, undefined);
+          return (yield* taskResult(before, task.taskId))!;
+        }),
+      );
+      const remote = finished.remoteChild!;
+      // The version before sent a Stop's first stop with this key; it got there, its answer did not.
+      const there = {
+        ...parentScope,
+        requestNamespace: `remote-task:${parentThreadId}`,
+        thread: { ...parentScope.thread!, providerSessionId: `remote-task:${remote.threadId}` },
+      } as McpInvocationContext.McpThreadInvocationScope;
+      const after = yield* makeLaptop(database, offers, linking);
+      yield* after.forwarding.interruptThread(there, box.environmentId, {
+        threadId: remote.threadId,
+        stop: true,
+        clientRequestId: `stop-1:${remote.threadId}`,
+      });
+      const { followsAfterRunId: _, ...owed } = remote;
+      yield* after.sink.write({
+        commandId: CommandId.make("command:stop-owed-before-upgrade"),
+        events: [
+          {
+            id: EventId.make("event:stop-owed-before-upgrade"),
+            type: "subagent.updated",
+            threadId: parentThreadId,
+            nodeId: finished.id,
+            driver: finished.driver,
+            occurredAt: finished.updatedAt,
+            payload: { ...finished, remoteChild: { ...owed, stoppedThere: false, stopCount: 1 } },
+          },
+        ],
+      });
+
+      yield* after.remote.start();
+      yield* stoppedThere(after, finished.id);
+      expect(yield* Ref.get(thread.interrupted)).toBe(1);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
