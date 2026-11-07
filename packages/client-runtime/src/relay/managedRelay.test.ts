@@ -416,6 +416,9 @@ describe("ManagedRelayClient", () => {
       expect(
         error._tag === "ManagedRelayRequestFailedError" ? relayRequestFailureDetail(error) : null,
       ).toBe(RELAY_GATEWAY_TIMEOUT_MESSAGE);
+      expect(error.message).toBe(
+        `Could not link relay environment: ${RELAY_GATEWAY_TIMEOUT_MESSAGE}`,
+      );
     }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
   });
 
