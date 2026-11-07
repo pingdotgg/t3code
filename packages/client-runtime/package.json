@@ -7,6 +7,14 @@
       "types": "./src/assemblyHighlighting.ts",
       "default": "./src/assemblyHighlighting.ts"
     },
+    "./ai-reviewer-feedback": {
+      "types": "./src/aiReviewerFeedback.ts",
+      "default": "./src/aiReviewerFeedback.ts"
+    },
+    "./bot-badge-images": {
+      "types": "./src/botBadgeImages.ts",
+      "default": "./src/botBadgeImages.ts"
+    },
     "./zip/bounded-zip": {
       "types": "./src/zip/boundedZip.ts",
       "default": "./src/zip/boundedZip.ts"

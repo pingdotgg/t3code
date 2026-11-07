@@ -2,6 +2,11 @@ import { stripInlineContextReferences } from "~/lib/composerContextReferences";
 import type { Nodes as MdastNodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import {
+  aiReviewerFixText,
+  hasAiReviewerEasyFix,
+  parseAiReviewerFeedback,
+} from "@t3tools/client-runtime/ai-reviewer-feedback";
+import {
   capitalizeTerm,
   sourceControlClients,
   type ChangeRequestTerminology,
@@ -690,6 +695,16 @@ function readableBody(raw: string): string | null {
   return readable === "" ? null : readable;
 }
 
+/** Prefer a reviewer's agent prompt when present; otherwise the readable remark. */
+function findingBody(raw: string): string | null {
+  const parsed = parseAiReviewerFeedback(raw);
+  if (parsed !== null) {
+    const text = aiReviewerFixText(parsed);
+    return text === "" ? null : text;
+  }
+  return readableBody(raw);
+}
+
 /**
  * Merged wins over closed: GitHub sets both timestamps on a merge, and reporting "closed" for a
  * merged pull request would misstate what happened.
@@ -829,11 +844,11 @@ function reviewThreadContext(
     endIndex: lineIndex,
     rangeLabel:
       thread.line === null ? "file" : `L${thread.line}${thread.side === "left" ? " (before)" : ""}`,
-    // Strip bot bookkeeping comments before bounding finding text.
+    // Prefer AI agent prompts; otherwise strip bot bookkeeping before the bound.
     text: bounded(
       thread.comments
         .flatMap((comment) => {
-          const body = readableBody(comment.body);
+          const body = findingBody(comment.body);
           return body === null ? [] : [`${comment.author?.login ?? "ghost"}: ${body}`];
         })
         .join("\n"),
@@ -927,7 +942,7 @@ export function buildFixFindingsHandoff(input: {
         !attached.has(comment.id),
     )
     .flatMap((comment) => {
-      const body = visibleBody(comment.body);
+      const body = findingBody(comment.body);
       if (body === null) return [];
       const where = comment.path === null ? "" : ` on \`${boundedField(comment.path)}\``;
       return [`${boundedField(comment.author?.login ?? "ghost")}${where}: ${boundedField(body)}`];
@@ -998,6 +1013,22 @@ export type PullRequestFinding =
   | { readonly kind: "check"; readonly check: PullRequestCheck }
   | { readonly kind: "comment"; readonly comment: PullRequestComment };
 
+function findingHasEasyFix(finding: PullRequestFinding): boolean {
+  if (finding.kind === "check") return false;
+  if (finding.kind === "comment") return hasAiReviewerEasyFix(finding.comment.body);
+  return finding.thread.comments.some((comment) => hasAiReviewerEasyFix(comment.body));
+}
+
+/** Easy fix when the remark already carries a machine-readable agent prompt. */
+export function pullRequestFixFindingLabel(
+  finding: PullRequestFinding,
+  inThisThread: boolean,
+): string {
+  const easy = findingHasEasyFix(finding);
+  if (inThisThread) return easy ? "Easy fix" : "Fix";
+  return easy ? "Easy fix in a thread" : "Fix in a thread";
+}
+
 export function pullRequestFindingKey(finding: PullRequestFinding): string {
   switch (finding.kind) {
     case "thread":
@@ -1034,7 +1065,7 @@ export function buildFixFindingHandoff(input: {
   }
   if (input.finding.kind === "comment") {
     const comment = input.finding.comment;
-    const body = visibleBody(comment.body) ?? "";
+    const body = findingBody(comment.body) ?? "";
     const where = comment.path === null ? "" : ` on \`${boundedField(comment.path)}\``;
     return {
       prompt: [

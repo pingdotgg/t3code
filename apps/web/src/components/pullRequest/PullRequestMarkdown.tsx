@@ -1,4 +1,5 @@
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
+import { isBotBadgeImage } from "@t3tools/client-runtime/bot-badge-images";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
@@ -17,6 +18,18 @@ import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 import ChatMarkdown from "../ChatMarkdown";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { splitPullRequestBody, type PullRequestBodySegment } from "./pullRequestMarkdown.logic";
+
+const BADGE_MARKDOWN_IMAGE = /^\s*!?\[[^\]]*\]\((https?:\/\/[^)\s]+)\)\s*$/u;
+
+function withoutBotBadgeMarkdown(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => {
+      const match = BADGE_MARKDOWN_IMAGE.exec(line);
+      return match?.[1] === undefined || !isBotBadgeImage(match[1]);
+    })
+    .join("\n");
+}
 
 export const PullRequestMarkdownContext = createContext<{
   /** Stable per repository, so comments share one renderer and its parse cache. */
@@ -113,10 +126,18 @@ function PullRequestBodySegmentView({
       </div>
     );
   }
+  if (segment.kind === "attachment" && segment.media === "image" && isBotBadgeImage(segment.url)) {
+    return null;
+  }
   if (segment.kind === "markdown" || segment.media === "image") {
+    if (segment.kind !== "markdown" && isBotBadgeImage(segment.url)) return null;
     return (
       <ChatMarkdown
-        text={segment.kind === "markdown" ? segment.text : `![](<${segment.url}>)`}
+        text={
+          segment.kind === "markdown"
+            ? withoutBotBadgeMarkdown(segment.text)
+            : `![](<${segment.url}>)`
+        }
         cwd={cwd}
         threadRef={threadRef}
         pullRequestPanelRef={threadRef ?? PULL_REQUESTS_PANEL_REF}

@@ -2,10 +2,16 @@ import { PullRequestEntryRow } from "./PullRequestEntryRow";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import IconGitCommit from "@tabler/icons-react-native/IconGitCommit";
+import {
+  aiReviewerDisplayBody,
+  aiReviewerOneLine,
+  parseAiReviewerFeedback,
+} from "@t3tools/client-runtime/ai-reviewer-feedback";
 import type { PullRequestActivity, PullRequestComment } from "@t3tools/contracts";
 import { StackActions, type NavigationProp } from "@react-navigation/native";
 import { useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
+import Animated from "react-native-reanimated";
 import { parseMarkdownDocument } from "../../lib/markdownDocument";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
@@ -13,6 +19,7 @@ import { relativeTime } from "../../lib/time";
 import { PullRequestAvatar } from "./PullRequestPresentation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentFooter } from "./PullRequestReactions";
+import { PR_DISCLOSURE_ENTER, PR_ROW_LAYOUT } from "./pullRequestAnimations";
 import { pullRequestDescriptionContent } from "./pullRequestDescriptionContent";
 import { discussionCommentCountLabel } from "./pullRequestDiffComments";
 import { normalizedReviewState } from "./pullRequestStatus";
@@ -76,10 +83,17 @@ function TimelineComment({
 }) {
   const [expanded, setExpanded] = useState(false);
   const { themeVariables: colors } = useAppearancePreferences();
-  const long = comment.body.length > 450 || comment.body.split("\n").length > 8;
+  const feedback = useMemo(() => parseAiReviewerFeedback(comment.body), [comment.body]);
+  const displayBody = useMemo(
+    () => (feedback === null ? comment.body : aiReviewerDisplayBody(feedback)),
+    [comment.body, feedback],
+  );
+  const oneLine = feedback === null ? null : aiReviewerOneLine(feedback);
+  const long =
+    oneLine !== null ? true : displayBody.length > 450 || displayBody.split("\n").length > 8;
   const content = useMemo(
-    () => pullRequestDescriptionContent(parseMarkdownDocument(comment.body)),
-    [comment.body],
+    () => pullRequestDescriptionContent(parseMarkdownDocument(displayBody)),
+    [displayBody],
   );
   const preview = content.preview;
   const state = normalizedReviewState(comment.reviewState);
@@ -102,17 +116,56 @@ function TimelineComment({
         </View>
         <Text className="text-2xs text-foreground-tertiary">{relativeTime(comment.createdAt)}</Text>
       </View>
-      {comment.path ? (
+      {comment.path && oneLine === null ? (
         <Text className="font-mono text-2xs text-foreground-muted" numberOfLines={2}>
           {comment.path}
         </Text>
       ) : null}
-      {preview.trim() || content.attachments.length ? (
+      {oneLine !== null ? (
+        <Animated.View layout={PR_ROW_LAYOUT} className="w-full min-w-0">
+          <Pressable
+            onPress={() => setExpanded((current) => !current)}
+            accessibilityRole="button"
+            accessibilityState={{ expanded }}
+            className="w-full min-w-0 overflow-hidden rounded-2xl bg-grouped-card px-3 py-2.5 active:opacity-70"
+          >
+            <View className="w-full min-w-0 flex-row items-center gap-1">
+              <View className="shrink-0">
+                <SymbolView
+                  name={expanded ? "chevron.down" : "chevron.right"}
+                  size={11}
+                  tintColorClassName="accent-icon-muted"
+                />
+              </View>
+              <Text
+                className="min-w-0 flex-1 shrink text-sm text-foreground-muted"
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {oneLine}
+              </Text>
+            </View>
+            {expanded ? (
+              <Animated.View
+                entering={PR_DISCLOSURE_ENTER}
+                className="mt-2 w-full min-w-0 gap-2 overflow-hidden"
+              >
+                {comment.path ? (
+                  <Text className="font-mono text-2xs text-foreground-tertiary" numberOfLines={2}>
+                    {comment.path}
+                  </Text>
+                ) : null}
+                <PullRequestMarkdown markdown={displayBody} imageGroupMarkdown={displayBody} />
+              </Animated.View>
+            ) : null}
+          </Pressable>
+        </Animated.View>
+      ) : preview.trim() || content.attachments.length ? (
         <View className="gap-2 overflow-hidden rounded-2xl bg-grouped-card p-3">
           <View style={long && !expanded ? { maxHeight: 240, overflow: "hidden" } : undefined}>
             <PullRequestMarkdown
-              markdown={long && !expanded ? comment.body.slice(0, 1200) : comment.body}
-              imageGroupMarkdown={comment.body}
+              markdown={long && !expanded ? displayBody.slice(0, 1200) : displayBody}
+              imageGroupMarkdown={displayBody}
             />
           </View>
           {long && !expanded ? (
