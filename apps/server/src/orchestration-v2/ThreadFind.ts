@@ -9,13 +9,12 @@ import {
 } from "@t3tools/contracts";
 import { searchableMessageSegments, searchablePlanSegments } from "@t3tools/shared/threadFindText";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
-import * as Cache from "effect/Cache";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as SqlClient from "effect/sql/SqlClient";
+import { makeThreadFindTextCache, TextKey } from "./ThreadFindTextCache.ts";
 import {
   ProjectionStoreReadError,
   ProjectionStoreThreadNotFoundError,
@@ -38,15 +37,6 @@ interface FindDocument extends FindRow {
   readonly runId: OrchestrationV2TurnItem["runId"];
   readonly count: number;
 }
-class TextKey extends Data.Class<{
-  text: string;
-  role: "user" | "assistant" | "plan";
-  streaming: boolean;
-  hasContext: boolean;
-  cwd: string | undefined;
-  skills: NonNullable<OrchestrationV2SearchThreadInput["skills"]>;
-}> {}
-
 function textKey(
   item: OrchestrationV2TurnItem,
   cwd: string | undefined,
@@ -232,18 +222,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
           });
     });
   });
-  // Scans visit every message; a cache smaller than the thread churns without hits.
-  const textCache = yield* Cache.make({
-    capacity: 8192,
-    timeToLive: "1 minute",
-    lookup: (key: TextKey) => Effect.sync(() => parseText(key)),
-  });
-  // Bounded separately because each entry can hold a large body; typing reuses the parse.
-  const largeTextCache = yield* Cache.make({
-    capacity: 32,
-    timeToLive: "1 minute",
-    lookup: (key: TextKey) => Effect.sync(() => parseText(key)),
-  });
+  const textCache = yield* makeThreadFindTextCache(parseText);
   const scans = new Map<
     string,
     {
@@ -356,10 +335,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
           if (cached) return cached;
           const decoded = yield* decode(row);
           const key = textKey(decoded.item, cwd, input.skills ?? []);
-          const segments = yield* Cache.get(
-            key.text.length <= 32_768 ? textCache : largeTextCache,
-            key,
-          );
+          const segments = yield* textCache.get(key);
           const document = documentFor(decoded, countSegments(segments, input.query));
           documents.set(row.position, document);
           yield* Effect.yieldNow;
