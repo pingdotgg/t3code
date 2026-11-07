@@ -1,10 +1,17 @@
-import { CommandId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import {
+  CommandId,
+  type MessageId,
+  type OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import type * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 
@@ -72,6 +79,54 @@ export const layer = Layer.effectDiscard(
         updated.set(key, attempt + 1);
         return [Math.min(100 * 2 ** Math.min(attempt, 6), 5_000), updated] as const;
       });
+
+    // Cancelling or stopping a queued continuation ends it unstarted; only the request can release the adapter's wake latch.
+    const releaseIfNeverStarted = Effect.fn("ProviderContinuationService.releaseIfNeverStarted")(
+      function* (
+        request: ProviderContinuationRequests.ProviderContinuationRequest,
+        messageId: MessageId,
+        dispatched: Orchestrator.OrchestratorV2DispatchResult,
+      ) {
+        const onRunEndedWithoutStarting = request.onRunEndedWithoutStarting;
+        if (onRunEndedWithoutStarting === undefined) return;
+        const runId = dispatched.storedEvents.flatMap(({ event }) =>
+          event.type === "run.created" && event.payload.userMessageId === messageId
+            ? [event.payload.id]
+            : [],
+        )[0];
+        if (runId === undefined) return;
+        yield* threads
+          .streamStoredEventsFrom({
+            threadId: request.threadId,
+            afterSequence: dispatched.sequence,
+            eventType: "run.updated",
+          })
+          .pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "run.updated" &&
+                event.payload.id === runId &&
+                ThreadManagementService.isTerminalRunStatus(event.payload.status),
+            ),
+            Stream.runHead,
+            Effect.flatMap((ended) =>
+              Option.isSome(ended) &&
+              ended.value.event.type === "run.updated" &&
+              ended.value.event.payload.startedAt === null
+                ? onRunEndedWithoutStarting()
+                : Effect.void,
+            ),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("orchestration-v2.provider-continuation.run-watch-failed", {
+                threadId: request.threadId,
+                providerThreadId: request.providerThreadId,
+                cause,
+              }),
+            ),
+            Effect.forkScoped,
+          );
+      },
+    );
 
     const dispatchContinuation = Effect.fn("ProviderContinuationService.dispatchContinuation")(
       function* (request: ProviderContinuationRequests.ProviderContinuationRequest) {
@@ -187,23 +242,25 @@ export const layer = Layer.effectDiscard(
             ordinal: projection.messages.length + 1,
           }));
         const commandId = CommandId.make(`provider-continuation:${messageId}`);
-        const dispatch = threads.dispatch({
-          type: "message.dispatch",
-          commandId,
-          threadId: request.threadId,
-          messageId,
-          text: request.detail ?? CONTINUATION_MESSAGE_TEXT,
-          notification: request.notification ?? {
-            source: { kind: "background_task" },
-            outcome: "updated",
-            summary: "Background activity updated",
-          },
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          // Only buffered wakes use creationSource "provider"; Claude would drain an empty buffer instead of prompting message_text.
-          creationSource: request.delivery === "message_text" ? "server" : "provider",
-        });
+        const dispatch = threads
+          .dispatch({
+            type: "message.dispatch",
+            commandId,
+            threadId: request.threadId,
+            messageId,
+            text: request.detail ?? CONTINUATION_MESSAGE_TEXT,
+            notification: request.notification ?? {
+              source: { kind: "background_task" },
+              outcome: "updated",
+              summary: "Background activity updated",
+            },
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "agent",
+            // Only buffered wakes use creationSource "provider"; Claude would drain an empty buffer instead of prompting message_text.
+            creationSource: request.delivery === "message_text" ? "server" : "provider",
+          })
+          .pipe(Effect.tap((dispatched) => releaseIfNeverStarted(request, messageId, dispatched)));
         // Catch after dispatchIfCurrent so adapters see raw failures first; clearIfCurrent is idempotent and covers others.
         const logInstanceDisabled = (
           error: ThreadManagementService.ThreadManagementProviderInstanceDisabledError,
