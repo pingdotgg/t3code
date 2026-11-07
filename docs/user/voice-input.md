@@ -12,9 +12,10 @@ to a named environment on that phone, open **Settings → Voice → Transcribe o
 
 ## Choose where audio goes
 
-On web and desktop, transcription runs on one of your T3 Code environments.
+On web and desktop, you choose where transcription runs.
 Nothing is sent until you choose one: open **Settings → Voice** and set
-**Send microphone audio to** the environment that should transcribe for you.
+**Transcribe with** to the environment that should transcribe for you.
+On a new device, the microphone or dictation shortcut opens that setting from the composer.
 Microphone audio recorded on this device is sent to that environment over your
 authenticated connection, transcribed there, and discarded. The choice is saved
 on this device only, so every computer and browser you use asks for it once.
@@ -23,11 +24,37 @@ Set it back to **Off** at any time; a recording in progress is discarded.
 If the chosen environment goes offline, voice input waits for it. T3 Code never
 substitutes another environment.
 
+For cloud dictation, choose **OpenAI** or **Grok Voice Transcribe** via the environment
+you want to use. If it needs a key, enter one and choose **Save and enable**.
+You can also choose a [secret provider](secrets.md) instead of **Value** and enter a
+reference. Unlock the vault on that environment before dictating. Anyone with
+dictation access to the environment can use the key, but only this device opts in.
+If a key is already saved, just confirm the provider. After
+you stop, the environment forwards your recording and any vocabulary hints to
+the selected provider, which bills its API account. No local model download or chat
+subscription is needed. Switch back to **This device** on mobile or **Off** on
+web and desktop to stop sharing. Removing the key stops that provider for everyone
+on the environment.
+
+**OpenRouter** works the same way but has no default model: pick one from its live
+speech-to-text catalog when you enable it, or later under **Manage OpenRouter**.
+The model choice is yours alone and needs no settings access, so anyone with
+dictation access can pick a different model without touching the saved key.
+OpenRouter chooses who runs the model. T3 requests zero data retention; your
+OpenRouter account can also allow safety retention. If no endpoint qualifies,
+dictation fails instead of switching models.
+Vocabulary hints are not sent to OpenRouter; dictionary spellings are applied
+after transcription. If OpenRouter stops listing your model, dictation stops
+until you choose another.
+
 ## Set up a model
 
-The first time you dictate, T3 Code offers to download the recommended English
-model to the chosen environment. In **Settings → Voice → Transcription**, select
-the languages you dictate in to compare models that support all of them.
+In **Settings → Voice → Transcription**, download a model and choose **Use model** if it
+isn’t already selected. **Test model** lets you try it without sending a message.
+If you use the composer microphone before a model is installed, it offers to download one.
+The recommendation uses your Voice language, or your system’s preferred languages with **Auto-detect**.
+
+Select the languages you dictate in to compare models that support all of them.
 Accuracy shows how often the model got words or characters wrong in each
 language; speed is the time to transcribe 30 seconds on a reference GPU. Choose
 **All languages** to browse the full catalog. Filtering does not switch your model.
