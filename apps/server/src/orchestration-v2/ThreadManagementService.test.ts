@@ -563,6 +563,7 @@ it.effect.each([
   { status: "failed" as const, followUp: "none", settles: false },
   { status: "interrupted" as const, followUp: "none", settles: false },
   { status: "completed" as const, followUp: "notification", settles: true },
+  { status: "completed" as const, followUp: "moved", settles: true },
   { status: "completed" as const, followUp: "replayed-notification", settles: true },
   { status: "completed" as const, followUp: "delegated", settles: true },
   { status: "completed" as const, followUp: "failed-notification", settles: false },
@@ -575,6 +576,7 @@ it.effect.each([
     const threadId = ThreadId.make("thread:thread-management:settle-after-run");
     const runId = RunId.make("run:thread-management:settle-after-run");
     const followUpId = RunId.make(`${runId}:follow-up`);
+    const hasFollowUp = followUp !== "none" && followUp !== "moved";
     const subscribed = yield* Deferred.make<void>();
     const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
     const replayRejected = yield* Deferred.make<void>();
@@ -610,7 +612,15 @@ it.effect.each([
             Effect.sync(
               () =>
                 ({
-                  thread: { id: threadId, projectId, deletedAt: null },
+                  thread: {
+                    id: threadId,
+                    // A deferred move can land before the settle's first read.
+                    projectId:
+                      followUp === "moved"
+                        ? ProjectId.make("project:thread-management:settle-moved")
+                        : projectId,
+                    deletedAt: null,
+                  },
                   runs: raced ? [...runs, nextRun] : runs,
                   messages: [
                     { id: MessageId.make("original"), runId, role: "user" as const },
@@ -644,7 +654,7 @@ it.effect.each([
             ),
           dispatch: (command) =>
             Effect.gen(function* () {
-              if (followUp !== "none" && !raced) {
+              if (hasFollowUp && !raced) {
                 raced = true;
                 rejectedCommandId = command.commandId;
                 return yield* new Orchestrator.OrchestratorDispatchError({
@@ -675,7 +685,7 @@ it.effect.each([
     const fiber = yield* service
       .settleAfterRun({ projectId, threadId, runId })
       .pipe(Effect.forkChild);
-    if (followUp !== "none") {
+    if (hasFollowUp) {
       yield* Deferred.await(subscribed);
       expect(dispatched).toEqual([]);
       nextRun.status =
@@ -700,6 +710,394 @@ it.effect.each([
     }
     yield* Fiber.join(fiber);
     expect(dispatched).toEqual(settles ? ["thread.settle"] : []);
+  }),
+);
+
+it.effect.each([
+  { status: "completed", moves: true },
+  { status: "failed", moves: false },
+] as const)("moveThreadToProject handles a $status turn", ({ status, moves }) =>
+  Effect.gen(function* () {
+    const sourceProjectId = ProjectId.make("project:thread-management:move-source");
+    const targetProjectId = ProjectId.make("project:thread-management:move-target");
+    const threadId = ThreadId.make("thread:thread-management:move");
+    const runId = RunId.make("run:thread-management:move");
+    const queuedRunId = RunId.make("run:thread-management:move-queued");
+    const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+    const subscribed = yield* Deferred.make<void>();
+    const continued = yield* Deferred.make<void>();
+    const refused = yield* Deferred.make<void>();
+    const runs: Array<{
+      id: RunId;
+      ordinal: number;
+      status: OrchestrationV2Run["status"];
+      userMessageId: MessageId;
+    }> = [{ id: runId, ordinal: 1, status: "running", userMessageId: MessageId.make("original") }];
+    let projectId = sourceProjectId;
+    let sequence = 0;
+    let queuedRunBusy = true;
+    const terminalRead = yield* Deferred.make<void>();
+    const moveCommands: Array<CommandId> = [];
+    let afterMoveRuns = 0;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.sync(() => sequence),
+          getThreadShell: () =>
+            Effect.succeed({
+              id: threadId,
+              projectId,
+              activeRunId: runId,
+              providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+            } as never),
+          restartContinuationPending: () => Effect.succeed(false),
+          streamStoredEventsFrom: (input) =>
+            input?.eventType === "run.updated"
+              ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                  Stream.drain,
+                  Stream.concat(Stream.fromQueue(events)),
+                )
+              : Stream.never,
+          getThreadRecords: () =>
+            Effect.gen(function* () {
+              if (runs[0]!.status !== "running") yield* Deferred.succeed(terminalRead, undefined);
+              return {
+                thread: {
+                  id: threadId,
+                  projectId,
+                  archivedAt: null,
+                  deletedAt: null,
+                  modelSelection: {
+                    instanceId: ProviderInstanceId.make("claudeAgent"),
+                    model: "test",
+                  },
+                },
+                runs,
+                messages: [],
+                turnItems: [],
+                providerTurns: [],
+              } as unknown as OrchestrationV2ThreadProjection;
+            }),
+          dispatch: (command) =>
+            Effect.gen(function* () {
+              if (command.type === "thread.project.move") {
+                moveCommands.push(command.commandId);
+                // A message queued during the turn runs before the move can apply.
+                if (queuedRunBusy) {
+                  yield* Deferred.succeed(refused, undefined);
+                  return yield* new Orchestrator.OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause: "Thread still has work in progress.",
+                  });
+                }
+                projectId = command.projectId;
+              }
+              if (command.type === "message.dispatch") {
+                expect(projectId).toBe(targetProjectId);
+                expect(command.text).toBe("Carry on.");
+                expect(afterMoveRuns).toBe(1);
+                yield* Deferred.succeed(continued, undefined);
+              }
+              return { sequence: 1, storedEvents: [] } as never;
+            }),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ThreadManagementService.ThreadManagementService;
+      const result = yield* service.moveThreadToProject({
+        threadId,
+        projectId: targetProjectId,
+        commandId: CommandId.make("command:thread-management:move"),
+        afterMove: Effect.sync(() => {
+          afterMoveRuns += 1;
+        }),
+        continuation: {
+          commandId: CommandId.make("command:thread-management:move-continuation"),
+          messageId: MessageId.make("message:thread-management:move-continuation"),
+          text: "Carry on.",
+        },
+      });
+      expect(result).toEqual({ movesWhenTurnEnds: true });
+      yield* Deferred.await(subscribed);
+      expect(moveCommands).toEqual([]);
+
+      const second = yield* service
+        .moveThreadToProject({
+          threadId,
+          projectId: ProjectId.make("project:thread-management:move-other"),
+          commandId: CommandId.make("command:thread-management:move-second"),
+          afterMove: Effect.void,
+        })
+        .pipe(Effect.flip);
+      expect(second).toMatchObject({
+        cause: `Thread ${threadId} already has a move pending.`,
+      });
+
+      runs[0]!.status = status;
+      sequence = 1;
+      yield* Queue.offer(events, {
+        sequence,
+        event: { type: "run.updated", threadId, payload: { id: runId } },
+      } as unknown as OrchestrationV2StoredEvent);
+      yield* Deferred.await(terminalRead);
+      if (!moves) {
+        expect(moveCommands).toEqual([]);
+        expect(afterMoveRuns).toBe(0);
+        return;
+      }
+
+      yield* Deferred.await(refused);
+      expect(projectId).toBe(sourceProjectId);
+      queuedRunBusy = false;
+      sequence = 2;
+      yield* Queue.offer(events, {
+        sequence,
+        event: { type: "run.updated", threadId, payload: { id: queuedRunId } },
+      } as unknown as OrchestrationV2StoredEvent);
+      yield* Deferred.await(continued);
+      expect(new Set(moveCommands).size).toBe(moveCommands.length);
+    }).pipe(Effect.provide(layerTest));
+  }),
+);
+
+it.effect.each([
+  { name: "a refused move fails at once", moveFails: true },
+  { name: "a disabled provider refuses the move", disabled: true },
+  { name: "a failed continuation still reports the move", sendFails: true },
+  { name: "a missing shell still runs the post-move steps", shellMissing: true, sendFails: true },
+] as const)("moveThreadToProject on an idle thread: $name", (row) =>
+  Effect.gen(function* () {
+    const moveFails = "moveFails" in row;
+    const disabled = "disabled" in row;
+    const sendFails = "sendFails" in row;
+    const shellMissing = "shellMissing" in row;
+    const targetProjectId = ProjectId.make("project:thread-management:idle-move-target");
+    const threadId = ThreadId.make("thread:thread-management:idle-move");
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    let moves = 0;
+    let afterMoveRuns = 0;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.succeed(0),
+          getThreadShell: () =>
+            Effect.succeed(
+              (shellMissing
+                ? null
+                : {
+                    id: threadId,
+                    projectId: ProjectId.make("project:thread-management:idle-move-source"),
+                    activeRunId: null,
+                    providerInstanceId: instanceId,
+                  }) as never,
+            ),
+          // A retry stream would wait here forever.
+          streamStoredEventsFrom: () => Stream.never,
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: {
+                id: threadId,
+                projectId: targetProjectId,
+                archivedAt: null,
+                deletedAt: null,
+                modelSelection: { instanceId, model: "test" },
+              },
+              runs: [],
+              messages: [],
+              turnItems: [],
+              providerTurns: [],
+            } as unknown as OrchestrationV2ThreadProjection),
+          dispatch: (command) => {
+            if (command.type === "thread.project.move") {
+              moves += 1;
+              if (moveFails) {
+                return Effect.fail(
+                  new Orchestrator.OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause: "Thread still has work in progress.",
+                  }),
+                );
+              }
+            }
+            if (command.type === "message.dispatch" && sendFails) {
+              return Effect.fail(
+                new Orchestrator.OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: "Message refused.",
+                }),
+              );
+            }
+            return Effect.succeed({ sequence: 1, storedEvents: [] } as never);
+          },
+        }),
+      ),
+      Layer.provide(
+        ServerSettings.layerTest(
+          disabled
+            ? {
+                projectSettingsOverrides: {
+                  [targetProjectId]: { providerInstances: { [instanceId]: { enabled: false } } },
+                },
+              }
+            : {},
+        ),
+      ),
+      Layer.provide(layerReceiptsTest),
+    );
+
+    const exit = yield* Effect.gen(function* () {
+      const service = yield* ThreadManagementService.ThreadManagementService;
+      return yield* service.moveThreadToProject({
+        threadId,
+        projectId: targetProjectId,
+        commandId: CommandId.make("command:thread-management:idle-move"),
+        afterMove: Effect.sync(() => {
+          afterMoveRuns += 1;
+        }),
+        continuation: {
+          commandId: CommandId.make("command:thread-management:idle-move-continuation"),
+          messageId: MessageId.make("message:thread-management:idle-move-continuation"),
+          text: "Carry on.",
+        },
+      });
+    }).pipe(Effect.provide(layerTest), Effect.exit);
+
+    expect(moves).toBe(disabled ? 0 : 1);
+    expect(afterMoveRuns).toBe(moveFails || disabled ? 0 : 1);
+    if (moveFails || disabled) {
+      expect(exit._tag).toBe("Failure");
+      return;
+    }
+    expect(exit).toMatchObject({
+      _tag: "Success",
+      value: { movesWhenTurnEnds: false, continuationFailure: expect.any(String) },
+    });
+  }),
+);
+
+it.effect("moveThreadToProject holds the thread during an immediate move", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:thread-management:concurrent-move");
+    const entered = yield* Deferred.make<void>();
+    const gate = yield* Deferred.make<void>();
+    const moved: Array<string> = [];
+    let moveCalls = 0;
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(
+        ThreadManagementService.layer.pipe(
+          Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+          Layer.provide(
+            Layer.mock(Orchestrator.OrchestratorV2)({
+              getThreadEventSequence: () => Effect.succeed(0),
+              getThreadShell: () =>
+                Effect.succeed({
+                  id: threadId,
+                  projectId: ProjectId.make("project:thread-management:concurrent-source"),
+                  activeRunId: null,
+                  providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+                } as never),
+              dispatch: () =>
+                Effect.gen(function* () {
+                  moveCalls += 1;
+                  if (moveCalls === 1) {
+                    yield* Deferred.succeed(entered, undefined);
+                    yield* Deferred.await(gate);
+                  }
+                  return { sequence: 1, storedEvents: [] } as never;
+                }),
+            }),
+          ),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(layerReceiptsTest),
+        ),
+      ),
+    );
+    const move = (destination: string) =>
+      service.moveThreadToProject({
+        threadId,
+        projectId: ProjectId.make(destination),
+        commandId: CommandId.make(`command:thread-management:${destination}`),
+        afterMove: Effect.sync(() => {
+          moved.push(destination);
+        }),
+      });
+
+    const first = yield* move("first").pipe(Effect.forkChild);
+    yield* Deferred.await(entered);
+    const second = yield* move("second").pipe(Effect.flip);
+    expect(second).toMatchObject({ cause: `Thread ${threadId} already has a move pending.` });
+    yield* Deferred.succeed(gate, undefined);
+    yield* Fiber.join(first);
+
+    yield* move("third");
+    expect(moved).toEqual(["first", "third"]);
+  }),
+);
+
+it.effect("waitForThread follows a thread that moves to another project", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:wait-source");
+    const threadId = ThreadId.make("thread:thread-management:wait-move");
+    const runId = RunId.make("run:thread-management:wait-move");
+    const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+    const run: { id: RunId; ordinal: number; status: OrchestrationV2Run["status"] } = {
+      id: runId,
+      ordinal: 1,
+      status: "running",
+    };
+    let currentProjectId = projectId;
+    const subscribed = yield* Deferred.make<void>();
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(
+        ThreadManagementService.layer.pipe(
+          Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+          Layer.provide(
+            Layer.mock(Orchestrator.OrchestratorV2)({
+              getThreadEventSequence: () => Effect.succeed(0),
+              restartContinuationPending: () => Effect.succeed(false),
+              streamStoredEventsFrom: (input) =>
+                input?.eventType === "run.updated"
+                  ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                      Stream.drain,
+                      Stream.concat(Stream.fromQueue(events)),
+                    )
+                  : Stream.never,
+              getThreadRecords: () =>
+                Effect.sync(
+                  () =>
+                    ({
+                      thread: { id: threadId, projectId: currentProjectId, deletedAt: null },
+                      runs: [run],
+                    }) as unknown as OrchestrationV2ThreadProjection,
+                ),
+            }),
+          ),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(layerReceiptsTest),
+        ),
+      ),
+    );
+    const fiber = yield* service
+      .waitForThread({ projectId, threadId, runId, timeoutMs: 60_000 })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(subscribed);
+    run.status = "completed";
+    currentProjectId = ProjectId.make("project:thread-management:wait-target");
+    yield* Queue.offer(events, {
+      sequence: 1,
+      event: { type: "run.updated", threadId, payload: { id: runId } },
+    } as unknown as OrchestrationV2StoredEvent);
+    const result = yield* Fiber.join(fiber);
+    expect(result).toMatchObject({ timedOut: false, run: { status: "completed" } });
   }),
 );
 

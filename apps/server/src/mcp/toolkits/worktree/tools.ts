@@ -4,6 +4,8 @@ import {
   OrchestratorMcpFailure,
   VcsListRefsInput,
   VcsListRefsResult,
+  ThreadMoveMcpInput,
+  ThreadMoveMcpResult,
   WorktreeMcpHandoffInput,
   WorktreeMcpHandoffResult,
   WorktreeMcpStatusResult,
@@ -39,6 +41,21 @@ const WorktreeHandoffTool = Tool.make("t3_worktree_handoff", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, true);
+
+const ThreadMoveTool = Tool.make("t3_thread_move", {
+  description:
+    "Move THIS thread to another folder when the user asks, keeping its conversation. A separate thread: `t3_thread_launch`. Uses or registers the project rooted at `path`. Files stay; branch and worktree are cleared. Call last: the move happens when the turn ends. Needs full access.",
+  parameters: ThreadMoveMcpInput,
+  success: ThreadMoveMcpResult,
+  failure: WorktreeToolFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Move thread")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false);
 
 const WorktreeStatusTool = Tool.make("t3_worktree_status", {
   description:
@@ -84,6 +101,7 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
   .annotate(Tool.Destructive, false);
 export const WorktreeToolkit = Toolkit.make(
   WorktreeHandoffTool,
+  ThreadMoveTool,
   WorktreeStatusTool,
   WorktreeListTool,
 );

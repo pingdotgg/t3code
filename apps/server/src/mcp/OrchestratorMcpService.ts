@@ -124,7 +124,7 @@ import {
   runtimeModeRank,
   taskPrompt,
 } from "./delegatedTaskModes.ts";
-import { isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
+import { isLiveCallerShell, readInCurrentProject, threadNotFound } from "./threadAccess.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -1120,22 +1120,20 @@ const make = Effect.gen(function* () {
     projectId: OrchestrationV2ThreadProjection["thread"]["projectId"],
     threadId: ThreadId,
   ) =>
-    threadManagement
-      .getProjectThreadRecords(
-        { projectId, threadId },
-        [
-          "runs",
-          "messages",
-          "subagents",
-          "providerThreads",
-          "providerTurns",
-          "runtimeRequests",
-          "contextTransfers",
-          "turnItems",
-        ],
-        { turnItemTypes: [], messageRoles: ["user"] },
-      )
-      .pipe(Effect.mapError(threadManagementFailure));
+    threadManagement.getProjectThreadRecords(
+      { projectId, threadId },
+      [
+        "runs",
+        "messages",
+        "subagents",
+        "providerThreads",
+        "providerTurns",
+        "runtimeRequests",
+        "contextTransfers",
+        "turnItems",
+      ],
+      { turnItemTypes: [], messageRoles: ["user"] },
+    );
 
   const loadCaller = Effect.fn("OrchestratorMcpService.loadCaller")(function* (
     scope: McpInvocationScope,
@@ -1194,11 +1192,11 @@ const make = Effect.gen(function* () {
       return yield* threadNotFound(threadManagement, threadId, `Thread ${threadId} was not found.`);
     }
     // Native wait owns its history reads; keep legacy import and project validation here.
-    return yield* includeHistory
-      ? loadProjectThread(shell.projectId, threadId)
-      : threadManagement
-          .getProjectThreadRecords({ projectId: shell.projectId, threadId }, [])
-          .pipe(Effect.mapError(threadManagementFailure));
+    return yield* readInCurrentProject(threadManagement, threadId, shell.projectId, (projectId) =>
+      includeHistory
+        ? loadProjectThread(projectId, threadId)
+        : threadManagement.getProjectThreadRecords({ projectId, threadId }, []),
+    ).pipe(Effect.mapError(threadManagementFailure));
   });
 
   const loadScopedThread = Effect.fn("OrchestratorMcpService.loadScopedThread")(function* (
@@ -1275,19 +1273,22 @@ const make = Effect.gen(function* () {
         `Thread ${threadId} is no longer available.`,
       );
     }
-    const input = { projectId: shell.projectId, threadId };
     // Transfers are needed only to acknowledge a caller's child-task result.
-    const records =
-      parent === undefined
-        ? threadManagement
-            .getProjectThreadRecords(input, ["runs", "runtimeRequests"])
-            .pipe(Effect.map((target) => ({ ...target, contextTransfers: [] })))
-        : threadManagement.getProjectThreadRecords(input, [
-            "runs",
-            "runtimeRequests",
-            "contextTransfers",
-          ]);
-    const target = yield* records.pipe(Effect.mapError(threadManagementFailure));
+    const target = yield* readInCurrentProject(
+      threadManagement,
+      threadId,
+      shell.projectId,
+      (projectId) =>
+        parent === undefined
+          ? threadManagement
+              .getProjectThreadRecords({ projectId, threadId }, ["runs", "runtimeRequests"])
+              .pipe(Effect.map((target) => ({ ...target, contextTransfers: [] })))
+          : threadManagement.getProjectThreadRecords({ projectId, threadId }, [
+              "runs",
+              "runtimeRequests",
+              "contextTransfers",
+            ]),
+    ).pipe(Effect.mapError(threadManagementFailure));
     return { parent, target, shell } as const;
   });
 

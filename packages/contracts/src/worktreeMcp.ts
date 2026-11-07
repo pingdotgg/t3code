@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /** Uses the managed worktree folder; handoff detaches the provider, ending this turn and resuming there next run. */
 export const WorktreeMcpHandoffInput = Schema.Struct({
@@ -73,6 +73,28 @@ export const WorktreeMcpHandoffResult = Schema.Struct({
   note: Schema.String,
 });
 export type WorktreeMcpHandoffResult = typeof WorktreeMcpHandoffResult.Type;
+
+/** Keeps the conversation; the move waits for this turn to end, and the next turn resumes in the folder. */
+export const ThreadMoveMcpInput = Schema.Struct({
+  path: TrimmedNonEmptyString.annotate({
+    description: "Absolute path of an existing folder.",
+  }),
+  continuationPrompt: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
+      description: "Work to resume there. Omitted: thread waits.",
+    }),
+  ),
+});
+export type ThreadMoveMcpInput = typeof ThreadMoveMcpInput.Type;
+
+export const ThreadMoveMcpResult = Schema.Struct({
+  projectId: ProjectId,
+  workspaceRoot: TrimmedNonEmptyString,
+  projectCreated: Schema.Boolean,
+  movesWhenTurnEnds: Schema.Boolean,
+  note: Schema.String,
+});
+export type ThreadMoveMcpResult = typeof ThreadMoveMcpResult.Type;
 
 export const WorktreeMcpStatusResult = Schema.Struct({
   attached: Schema.Boolean,

@@ -2,7 +2,9 @@ import {
   CommandId,
   type GitCommandError,
   MessageId,
-  type ProjectId,
+  ProjectId,
+  type ThreadMoveMcpInput,
+  type ThreadMoveMcpResult,
   WorktreeMcpFailure,
   type WorktreeMcpContinuationStatus,
   type WorktreeMcpHandoffInput,
@@ -20,12 +22,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
@@ -37,6 +41,11 @@ export class WorktreeMcpService extends Context.Service<
       scope: McpInvocationScope,
       input: WorktreeMcpHandoffInput,
     ) => Effect.Effect<WorktreeMcpHandoffResult, WorktreeMcpFailure>;
+    /** Moves the calling thread to the project rooted at a folder, registering one if needed. */
+    readonly moveToFolder: (
+      scope: McpInvocationScope,
+      input: ThreadMoveMcpInput,
+    ) => Effect.Effect<ThreadMoveMcpResult, WorktreeMcpFailure>;
     readonly status: (
       scope: McpInvocationScope,
     ) => Effect.Effect<WorktreeMcpStatusResult, WorktreeMcpFailure>;
@@ -61,6 +70,9 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
+const isUnfinishedSubagent = ({ status }: { readonly status: string }) =>
+  status === "pending" || status === "running" || status === "waiting";
+
 const asOperationFailed = (prefix: string) =>
   Effect.mapError((error: unknown) =>
     failure("operation_failed", `${prefix}: ${errorMessage(error)}`),
@@ -69,9 +81,11 @@ const asOperationFailed = (prefix: string) =>
 const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const setupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -426,6 +440,122 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const moveToFolder: WorktreeMcpService["Service"]["moveToFolder"] = Effect.fn(
+    "WorktreeMcpService.moveToFolder",
+  )(function* (callerScope, input) {
+    yield* requireCapability(callerScope);
+    // Registering the destination project is an orchestration write.
+    if (!callerScope.capabilities.has("orchestration")) {
+      return yield* failure(
+        "capability_denied",
+        "This MCP credential cannot register the destination project.",
+      );
+    }
+    const scope = yield* requireThreadScope(callerScope);
+    if (scope.thread.subagent) {
+      return yield* failure("invalid_request", "A subagent stays with its parent thread.");
+    }
+    if (!path.isAbsolute(input.path)) {
+      return yield* failure("invalid_request", `'${input.path}' is not an absolute path.`);
+    }
+    const workspaceRoot = path.resolve(input.path);
+    const destination = yield* fileSystem.realPath(workspaceRoot).pipe(
+      Effect.flatMap((resolved) =>
+        fileSystem.stat(resolved).pipe(Effect.map((info) => ({ resolved, info }))),
+      ),
+      Effect.mapError(() =>
+        failure("invalid_request", `Folder '${workspaceRoot}' does not exist.`),
+      ),
+    );
+    if (destination.info.type !== "Directory") {
+      return yield* failure("invalid_request", `'${workspaceRoot}' is not a folder.`);
+    }
+
+    const records = yield* threadManagement
+      .getThreadRecords(scope.thread.threadId, ["subagents"])
+      .pipe(asOperationFailed(`Unable to read thread ${scope.thread.threadId}`));
+    const { thread } = records;
+    if (thread.deletedAt !== null) {
+      return yield* failure("thread_not_found", `Thread '${scope.thread.threadId}' was not found.`);
+    }
+    if (thread.archivedAt !== null) {
+      return yield* failure("invalid_request", `Thread '${thread.id}' is archived.`);
+    }
+    if (records.subagents.some(isUnfinishedSubagent)) {
+      return yield* failure(
+        "invalid_request",
+        "This thread still has running subagents. Wait for them to finish, then move it.",
+      );
+    }
+    const current = yield* loadProject(scope, thread.projectId);
+    const currentFolder = yield* fileSystem
+      .realPath(thread.worktreePath ?? current.workspaceRoot)
+      .pipe(Effect.orElseSucceed(() => thread.worktreePath ?? current.workspaceRoot));
+    if (currentFolder === destination.resolved) {
+      return yield* failure("invalid_request", `This thread already works in '${workspaceRoot}'.`);
+    }
+
+    const uuid = yield* random.uuidV4().pipe(Effect.orDie);
+    const part = (kind: string, operation: string) =>
+      [kind, "mcp", encodeURIComponent(scope.thread.providerSessionId), operation, uuid].join(":");
+    const { projectId, projectCreated } = yield* projects
+      .bootstrap({
+        commandId: CommandId.make(part("command", "thread-move-project")),
+        projectId: ProjectId.make(uuid),
+        title: path.basename(workspaceRoot) || workspaceRoot,
+        workspaceRoot,
+      })
+      .pipe(
+        Effect.map(({ project, created }) => ({ projectId: project.id, projectCreated: created })),
+        // bootstrap reads before locking; racing creates return the winner in a conflict.
+        Effect.catchTags({
+          ProjectConflictError: (conflict) =>
+            Effect.succeed({
+              projectId: conflict.conflictingProjectId,
+              projectCreated: false,
+            }),
+        }),
+        asOperationFailed(`Unable to register a project for '${workspaceRoot}'`),
+      );
+    const { movesWhenTurnEnds, continuationFailure } = yield* threadManagement
+      .moveThreadToProject({
+        threadId: thread.id,
+        projectId,
+        commandId: CommandId.make(part("command", "thread-move")),
+        afterMove: scheduledTasks
+          .moveThreadTasks({ threadIds: [thread.id], projectId })
+          .pipe(Effect.ignoreCause({ log: true })),
+        ...(input.continuationPrompt === undefined
+          ? {}
+          : {
+              continuation: {
+                commandId: CommandId.make(part("command", "thread-move-continuation")),
+                messageId: MessageId.make(part("message", "thread-move-continuation")),
+                text: input.continuationPrompt,
+              },
+            }),
+      })
+      .pipe(asOperationFailed("The thread did not move"));
+
+    return {
+      projectId,
+      workspaceRoot,
+      projectCreated,
+      movesWhenTurnEnds,
+      note: `The thread moves to ${workspaceRoot} ${
+        movesWhenTurnEnds
+          ? "when this turn ends, so finish now and do not start more work here. A failed or stopped turn drops the move"
+          : "now"
+      }. ${
+        continuationFailure !== undefined
+          ? `The continuation prompt was not queued (${continuationFailure}), so send it again.`
+          : input.continuationPrompt === undefined
+            ? "The conversation continues there when the thread receives its next message."
+            : "The continuation prompt then starts the next turn there."
+      } Files and any worktree in the previous folder stay where they are.`,
+    };
+  });
+
   const status: WorktreeMcpService["Service"]["status"] = Effect.fn("WorktreeMcpService.status")(
     function* (callerScope) {
       yield* requireCapability(callerScope);
@@ -457,7 +587,7 @@ const make = Effect.gen(function* () {
     return yield* gitWorkflow.listRefs({ ...refs, cwd });
   });
 
-  return WorktreeMcpService.of({ handoff, status, listRefs });
+  return WorktreeMcpService.of({ handoff, moveToFolder, status, listRefs });
 });
 
 export const layer: Layer.Layer<
@@ -465,9 +595,11 @@ export const layer: Layer.Layer<
   never,
   | SecureRandom.SecureRandom
   | FileSystem.FileSystem
+  | Path.Path
   | ThreadManagementService.ThreadManagementService
   | ProjectService.ProjectService
   | ServerSettings.ServerSettingsService
+  | ScheduledTaskService.ScheduledTaskService
   | GitWorkflowService.GitWorkflowService
   | ProjectSetupScriptRunner.ProjectSetupScriptRunner
   | VcsStatusBroadcaster.VcsStatusBroadcaster

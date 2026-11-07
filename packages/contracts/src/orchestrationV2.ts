@@ -3422,6 +3422,13 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     projectId: ProjectId,
   }),
+  /** Moves an idle thread to another project's root. Its provider session restarts there on the next turn. */
+  Schema.Struct({
+    type: Schema.Literal("thread.project.move"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    projectId: ProjectId,
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),
     commandId: CommandId,
