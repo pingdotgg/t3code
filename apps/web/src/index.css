@@ -577,6 +577,27 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+/* A thread title being regenerated: the live-tool shine sweeps across it.
+   `!important` beats the row's own text colour; without motion it dims. */
+@utility thread-title-regenerating {
+  @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+    color: transparent !important;
+    background-image:
+      linear-gradient(to right, transparent, var(--contrast-foreground), transparent),
+      linear-gradient(var(--contrast-secondary-label), var(--contrast-secondary-label));
+    background-size:
+      4.5rem 100%,
+      100% 100%;
+    background-repeat: no-repeat;
+    background-clip: text;
+    animation: live-tool-shine 1.6s steps(30) infinite;
+    animation-play-state: var(--visible-animation-state, paused);
+  }
+  @media (prefers-reduced-motion: reduce), (forced-colors: active) {
+    opacity: 0.55;
+  }
+}
+
 @utility visible-animate-spin {
   animation: var(--animate-spin);
   animation-play-state: var(--visible-animation-state, paused);
