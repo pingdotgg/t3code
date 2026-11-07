@@ -1044,7 +1044,7 @@ function ThreadDetailBody(
       windowHeight: screenAreaHeight,
       keyboardHeight: keyboardStickyEnabled ? -keyboardTranslation.value : 0,
       navigationHeaderHeight,
-      composerOverlapHeight: composerBottomInset,
+      composerOverlapHeight: composerBottomInset + controlInsets.bottom,
     }),
   );
   const composerPanelsHeightStyle = useAnimatedStyle(() => ({
@@ -1172,6 +1172,15 @@ function ThreadDetailBody(
       combinedContentInsetEndAdjustment.set(value);
     },
     [questionInFlow, userInputCoverageApplies],
+  );
+  const secretRequestMaxHeight = useDerivedValue(() =>
+    derivePendingUserInputMaxHeight({
+      windowHeight: screenAreaHeight,
+      keyboardHeight: keyboardStickyEnabled ? -keyboardTranslation.value : 0,
+      navigationHeaderHeight,
+      composerOverlapHeight:
+        combinedContentInsetEndAdjustment.value + nativeInsetOvercount + controlInsets.bottom,
+    }),
   );
   const composerPopoverLift = useDerivedValue(() =>
     withTiming(
@@ -1519,6 +1528,7 @@ function ThreadDetailBody(
                 onJumpedToMessage={() => finishThreadMessageJump(selectedThreadKey)}
                 ref={feedRef}
                 contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
+                secretRequestMaxHeight={secretRequestMaxHeight}
                 keyboardOffset={composerKeyboardOffset}
                 sendingWithKeyboard={sendingWithKeyboard}
                 fitShortFeedToViewport={questionInFlow && !isKeyboardVisible}

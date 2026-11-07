@@ -1,5 +1,4 @@
 const PENDING_USER_INPUT_MAX_HEIGHT = 560;
-const PENDING_USER_INPUT_MIN_HEIGHT = 160;
 const PENDING_USER_INPUT_VERTICAL_GAP = 12;
 
 export const ESTIMATED_KEYBOARD_HEIGHT = 336;
@@ -21,8 +20,5 @@ export function derivePendingUserInputMaxHeight(input: {
     Math.max(0, input.composerOverlapHeight) -
     PENDING_USER_INPUT_VERTICAL_GAP;
 
-  return Math.min(
-    PENDING_USER_INPUT_MAX_HEIGHT,
-    Math.max(PENDING_USER_INPUT_MIN_HEIGHT, availableHeight),
-  );
+  return Math.min(PENDING_USER_INPUT_MAX_HEIGHT, Math.max(0, availableHeight));
 }

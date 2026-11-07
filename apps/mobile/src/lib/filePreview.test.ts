@@ -460,6 +460,9 @@ describe("ThreadInlineFilePreview playback", () => {
               typeof ThreadFeed
             >[0]["contentInsetEndAdjustment"],
             anchorMessageId: null,
+            secretRequestMaxHeight: { value: 560 } as Parameters<
+              typeof ThreadFeed
+            >[0]["secretRequestMaxHeight"],
             keyboardOffset: 0,
           }),
         ),
@@ -1399,6 +1402,9 @@ describe("ThreadFeed previews", () => {
             typeof ThreadFeed
           >[0]["contentInsetEndAdjustment"],
           anchorMessageId: null,
+          secretRequestMaxHeight: { value: 560 } as Parameters<
+            typeof ThreadFeed
+          >[0]["secretRequestMaxHeight"],
           keyboardOffset: 0,
         }),
         createElement(CommitProbe),
