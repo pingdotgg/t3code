@@ -1967,7 +1967,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           case "message_end": {
             if (turn === null) return;
             const message = event["message"];
-            if (recordString(message, "role") === "custom") {
+            const role = recordString(message, "role");
+            if (role === "custom") {
               if (recordField(message, "display") !== true) return;
               const text = contentText(recordField(message, "content"));
               if (text.trim().length === 0) return;
@@ -1979,7 +1980,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               );
               return;
             }
-            if (recordString(message, "role") !== "assistant") return;
+            if (role !== "assistant") return;
             yield* completeOpenStreamItems(turn);
             if (recordString(message, "stopReason") === "error" && turn.failure === null) {
               turn.failure = makeProviderFailure({

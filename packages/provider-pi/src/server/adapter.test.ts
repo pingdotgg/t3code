@@ -3518,87 +3518,108 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect.each(["notify", "custom string", "custom blocks"])(
-    "settles a command-only prompt with %s output from its deferred ack and idle probe",
-    (output) =>
-      Effect.gen(function* () {
-        const fake = yield* makeFakePi;
-        const { runtime, takeEvent } = yield* openRuntime(fake);
-        const providerThread = yield* runtime.ensureThread({
-          threadId: THREAD_ID,
-          modelSelection: modelSelection("default"),
-          runtimePolicy,
-        });
-        yield* startTurn(runtime, providerThread, "default", [], "/command-only");
-        yield* fake.takeRequest("prompt");
-        if (output === "notify") {
-          yield* fake.emit({
-            type: "extension_ui_request",
-            id: "ui-cmd",
-            method: "notify",
-            message: "Command finished\nwith details",
-            notifyType: "info",
-          });
-        } else {
-          const custom = {
-            role: "custom",
-            customType: "command-result",
-            display: true,
-            content:
-              output === "custom string"
-                ? "Command finished\nwith details"
-                : [
-                    { type: "text", text: "Command finished\n" },
-                    { type: "image", data: "Never display image", mimeType: "image/png" },
-                    { type: "text", text: "with details" },
-                  ],
-            details: { secret: "Never display details" },
-          };
-          for (const message of [
-            { ...custom, display: false },
-            { ...custom, display: undefined },
-            { ...custom, display: "true" },
-            { ...custom, content: [{ type: "image", data: "Never display image" }] },
-            { ...custom, content: "   " },
-            custom,
-            custom,
-          ]) {
-            yield* fake.emit({ type: "message_start", message });
-            yield* fake.emit({ type: "message_end", message });
-          }
-        }
-        yield* fake.emit({ type: "response", command: "prompt", success: true });
-        const notices = [];
-        while (true) {
-          const event = yield* takeEvent(
-            (event) =>
-              event.type === "turn.terminal" ||
-              event.type === "message.updated" ||
-              (event.type === "turn_item.updated" && event.turnItem.type === "system_notice"),
-          );
-          if (event.type === "turn.terminal") {
-            assert.equal(event.status, "completed");
-            break;
-          }
-          if (event.type !== "turn_item.updated" || event.turnItem.type !== "system_notice") {
-            return yield* Effect.die("Custom output must not create assistant messages");
-          }
-          assert.equal(event.turnItem.status, "completed");
-          notices.push(event.turnItem);
-        }
-        assert.deepEqual(
-          notices.map((item) => item.message),
-          output === "notify"
-            ? ["Command finished\nwith details"]
-            : [
-                "[command-result] Command finished\nwith details",
-                "[command-result] Command finished\nwith details",
-              ],
+  it.effect("settles a command-only prompt from its deferred ack and idle probe", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread, "default", [], "/command-only");
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-cmd",
+        method: "notify",
+        message: "Command finished\nwith details",
+        notifyType: "info",
+      });
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      const notice = yield* takeEvent(
+        (event) =>
+          (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") ||
+          event.type === "turn.terminal",
+      );
+      assert.isTrue(
+        notice.type === "turn_item.updated" &&
+          notice.turnItem.type === "system_notice" &&
+          notice.turnItem.status === "completed" &&
+          notice.turnItem.message === "Command finished\nwith details",
+      );
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    { shape: "string", content: "Command finished\nwith details" },
+    {
+      shape: "text block",
+      content: [
+        { type: "text", text: "Command finished\n" },
+        { type: "image", data: "Never display image", mimeType: "image/png" },
+        { type: "text", text: "with details" },
+      ],
+    },
+  ])("shows only displayable $shape custom output of a command-only prompt", ({ content }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread, "default", [], "/command-only");
+      yield* fake.takeRequest("prompt");
+      const custom = {
+        role: "custom",
+        customType: "command-result",
+        display: true,
+        content,
+        details: { secret: "Never display details" },
+      };
+      for (const message of [
+        { ...custom, display: false },
+        { ...custom, display: undefined },
+        { ...custom, display: "true" },
+        { ...custom, content: [{ type: "image", data: "Never display image" }] },
+        { ...custom, content: "   " },
+        custom,
+        custom,
+      ]) {
+        yield* fake.emit({ type: "message_start", message });
+        yield* fake.emit({ type: "message_end", message });
+      }
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      const notices = [];
+      while (true) {
+        const event = yield* takeEvent(
+          (event) =>
+            event.type === "turn.terminal" ||
+            event.type === "message.updated" ||
+            (event.type === "turn_item.updated" && event.turnItem.type === "system_notice"),
         );
-        assert.equal(new Set(notices.map((item) => item.id)).size, notices.length);
-        assert.equal(new Set(notices.map((item) => item.nodeId)).size, notices.length);
-        if (notices.length === 2) assert.isBelow(notices[0]!.ordinal, notices[1]!.ordinal);
-      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+        if (event.type === "turn.terminal") {
+          assert.equal(event.status, "completed");
+          break;
+        }
+        if (event.type !== "turn_item.updated" || event.turnItem.type !== "system_notice") {
+          return yield* Effect.die("Custom output must not create assistant messages");
+        }
+        assert.equal(event.turnItem.status, "completed");
+        notices.push(event.turnItem);
+      }
+      assert.deepEqual(
+        notices.map((item) => item.message),
+        Array(2).fill("[command-result] Command finished\nwith details"),
+      );
+      assert.notEqual(notices[0]!.id, notices[1]!.id);
+      assert.notEqual(notices[0]!.nodeId, notices[1]!.nodeId);
+      assert.isBelow(notices[0]!.ordinal, notices[1]!.ordinal);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("keeps assistant identities and custom notices ordered within an active turn", () =>
