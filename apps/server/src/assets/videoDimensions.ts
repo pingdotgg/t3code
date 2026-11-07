@@ -68,7 +68,7 @@ async function readIsoBmff(read: ReadAt, fileSize: number): Promise<ImageDimensi
       for await (const child of isoBoxes(read, track.bodyStart, track.end)) {
         if (child.type !== "tkhd") continue;
         const dimensions = readTrackHeader(
-          await read(child.bodyStart, child.end - child.bodyStart),
+          await read(child.bodyStart, Math.min(TRACK_HEADER_BYTES, child.end - child.bodyStart)),
         );
         if (dimensions) return dimensions;
         break;
@@ -78,6 +78,9 @@ async function readIsoBmff(read: ReadAt, fileSize: number): Promise<ImageDimensi
   }
   return null;
 }
+
+// A version 1 `tkhd` ends its width and height 96 bytes into the body.
+const TRACK_HEADER_BYTES = 96;
 
 function readTrackHeader(body: Uint8Array): ImageDimensions | null {
   const matrixOffset = body[0] === 1 ? 52 : 40;

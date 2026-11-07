@@ -23,9 +23,13 @@ const box = (type: string, ...children: ReadonlyArray<Uint8Array>) => {
 const IDENTITY = [0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000];
 const QUARTER_TURN = [0, 0x10000, 0, -0x10000, 0, 0, 0, 0, 0x40000000];
 
-function tkhd(width: number, height: number, options: { version?: 0 | 1; matrix?: number[] } = {}) {
+function tkhd(
+  width: number,
+  height: number,
+  options: { version?: 0 | 1; matrix?: number[]; padding?: number } = {},
+) {
   const matrixOffset = options.version === 1 ? 52 : 40;
-  const body = new Uint8Array(matrixOffset + 44);
+  const body = new Uint8Array(matrixOffset + 44 + (options.padding ?? 0));
   const data = new DataView(body.buffer);
   body[0] = options.version ?? 0;
   (options.matrix ?? IDENTITY).forEach((value, index) =>
@@ -61,10 +65,11 @@ const liveSegment = (...children: ReadonlyArray<Uint8Array>) =>
   concat(idBytes(0x18538067), UNKNOWN_SIZE, ...children);
 
 async function dimensionsOf(bytes: Uint8Array) {
-  return readVideoDimensions(
-    async (offset, length) => bytes.subarray(offset, offset + length),
-    bytes.length,
-  );
+  return readVideoDimensions(async (offset, length) => {
+    // A box's declared size must never decide how much the parser reads.
+    expect(length).toBeLessThanOrEqual(96);
+    return bytes.subarray(offset, offset + length);
+  }, bytes.length);
 }
 
 describe("readVideoDimensions", () => {
@@ -91,6 +96,11 @@ describe("readVideoDimensions", () => {
       name: "a version 1 track header",
       bytes: concat(ftyp, box("moov", box("trak", tkhd(640, 480, { version: 1 })))),
       expected: { width: 640, height: 480 },
+    },
+    {
+      name: "a track header that declares a large body",
+      bytes: concat(ftyp, box("moov", box("trak", tkhd(1080, 1920, { padding: 1 << 20 })))),
+      expected: { width: 1080, height: 1920 },
     },
     {
       name: "a phone recording rotated a quarter turn",

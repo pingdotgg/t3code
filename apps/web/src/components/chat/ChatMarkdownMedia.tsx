@@ -380,13 +380,13 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         : fallbackSrc + (props.srcFragment ?? "");
   const knownSize = assetUrl._tag === "Success" ? assetUrl.imageDimensions : undefined;
   const maxHeightRem = props.maxHeightRem ?? 30;
-  const style =
+  const sizedStyle =
     props.style ??
     (knownSize
       ? authoredImageSizeStyle(knownSize.width, knownSize.height, maxHeightRem)
-      : maxHeightRem !== 30
-        ? { maxHeight: `${maxHeightRem}rem` }
-        : undefined);
+      : undefined);
+  const style =
+    sizedStyle ?? (maxHeightRem !== 30 ? { maxHeight: `${maxHeightRem}rem` } : undefined);
   const actionsSource: MediaActionSource = {
     kind: props.kind ?? "image",
     name: props.alt || (props.kind ?? "image"),
@@ -416,7 +416,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         alt={props.alt}
         copyMarkdown={props.copyMarkdown}
         originalUrl={props.originalUrl}
-        style={style}
+        style={sizedStyle}
         mediaIdentity={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
         onRetry={refreshAssetUrl}
         actionsSource={actionsSource}
