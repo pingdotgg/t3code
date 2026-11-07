@@ -145,6 +145,19 @@ describe("pdfFindMatchRuns", () => {
     expect(pdfFindIncludes(page, " ")).toBe(false);
   });
 
+  it("matches straight quotes typed for typeset curly ones", () => {
+    expect(pdfFindMatchRuns(["We don\u2019t ", "ship \u201cbeta\u201d"], "don't")).toEqual([
+      true,
+      false,
+    ]);
+    expect(pdfFindMatchRuns(["We don\u2019t ", "ship \u201cbeta\u201d"], '"beta"')).toEqual([
+      false,
+      true,
+    ]);
+    expect(pdfFindIncludes("We don\u2019t ship \u201cbeta\u201d", 'don\'t ship "beta"')).toBe(true);
+    expect(pdfFindIncludes("We don't ship", "don\u2019t")).toBe(true);
+  });
+
   it("highlights nothing for a blank or missing query", () => {
     expect(pdfFindMatchRuns(["a b", "c"], " ")).toEqual([false, false]);
     expect(pdfFindMatchRuns(["a b", "c"], "")).toEqual([false, false]);
