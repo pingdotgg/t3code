@@ -19,6 +19,31 @@ const filePathCollator = new Intl.Collator(undefined, {
 });
 const INITIAL_FILE_COUNT = 4;
 
+export function buildReviewFilePatchScope({
+  environmentId,
+  cwd,
+  source,
+  baseRef,
+  ignoreWhitespace,
+}: {
+  environmentId: EnvironmentId | undefined;
+  cwd: string | undefined;
+  source: Pick<ReviewDiffPreviewSource, "kind" | "id" | "baseRef" | "headRef"> | null;
+  baseRef: string | null;
+  ignoreWhitespace: boolean;
+}) {
+  return JSON.stringify([
+    environmentId,
+    cwd,
+    source?.kind,
+    source?.baseRef,
+    source?.headRef,
+    source?.kind === "commit" ? source.id : null,
+    baseRef,
+    ignoreWhitespace,
+  ]);
+}
+
 export function useReviewFilePatches({
   environmentId,
   cwd,
@@ -40,15 +65,13 @@ export function useReviewFilePatches({
   preview: RenderablePatch | null;
 }) {
   const registry = useContext(RegistryContext);
-  const scope = JSON.stringify([
+  const scope = buildReviewFilePatchScope({
     environmentId,
     cwd,
-    source?.kind,
-    source?.baseRef,
-    source?.headRef,
+    source,
     baseRef,
     ignoreWhitespace,
-  ]);
+  });
   const files = sortedReviewFiles(source);
   const automaticPaths = files.slice(0, INITIAL_FILE_COUNT).map((file) => file.path);
   const [requested, setRequested] = useState(() => ({ scope, paths: automaticPaths }));

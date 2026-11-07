@@ -268,3 +268,65 @@ it.each([false, true])(
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
   },
 );
+
+it("preserves the viewer and comment draft when a lazy comparison refreshes", async () => {
+  using context = setup("origin/orphan");
+  const metadata = preview();
+  const source = {
+    ...metadata.sources[0]!,
+    truncated: true,
+    diffHash: "before",
+    files: [{ path: "refresh.txt", previousPath: null, additions: 1, deletions: 1 }],
+  };
+  const previewAtom = Atom.make(AsyncResult.success({ ...metadata, sources: [source] }));
+  state.previews.set("main", previewAtom);
+  useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  await act(() =>
+    context.registry.set(
+      context.patch,
+      AsyncResult.success({
+        ...source,
+        truncated: false,
+        diff: "diff --git a/refresh.txt b/refresh.txt\n--- a/refresh.txt\n+++ b/refresh.txt\n@@ -1 +1 @@\n-before\n+after\n",
+      }),
+    ),
+  );
+  await expect.element(screen.getByText("after", { exact: true })).toBeVisible();
+  const viewer = screen.container.querySelector("diffs-container")!;
+  const gutter = viewer.shadowRoot!.querySelector<HTMLElement>("[data-column-number]")!;
+  await userEvent.hover(gutter);
+  const utility = viewer.shadowRoot!.querySelector<HTMLButtonElement>("[data-utility-button]")!;
+  await userEvent.click(utility);
+  const editor = screen.getByPlaceholder("Add a comment…");
+  await userEvent.fill(editor, "Keep this draft");
+  await act(() =>
+    context.registry.set(
+      previewAtom,
+      AsyncResult.success({
+        ...metadata,
+        sources: [{ ...source, diffHash: "after" }],
+      }),
+    ),
+  );
+  await act(() =>
+    context.registry.set(
+      context.patch,
+      AsyncResult.success({
+        ...source,
+        diffHash: "after",
+        truncated: false,
+        diff: "diff --git a/refresh.txt b/refresh.txt\n--- a/refresh.txt\n+++ b/refresh.txt\n@@ -1 +1 @@\n-before\n+refreshed\n",
+      }),
+    ),
+  );
+  await expect.element(screen.getByText("refreshed", { exact: true })).toBeVisible();
+  await expect.element(editor).toHaveValue("Keep this draft");
+  await vi.waitFor(() => expect(screen.container.querySelector("diffs-container")).toBe(viewer));
+});
