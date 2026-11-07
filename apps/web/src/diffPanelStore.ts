@@ -1,7 +1,13 @@
 import type { ThreadStructureVisibleTurnItem } from "@t3tools/client-runtime/state/shell";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { RunId, ScopedThreadRef, ThreadId, TurnItemId } from "@t3tools/contracts";
+import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import type {
+  EnvironmentId,
+  RunId,
+  ScopedThreadRef,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -179,6 +185,17 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
     },
   ),
 );
+
+export function clearDiffPanelEnvironment(environmentId: EnvironmentId): void {
+  const kept = ([threadKey]: [string, unknown]) =>
+    parseScopedThreadKey(threadKey)?.environmentId !== environmentId;
+  useDiffPanelStore.setState((state) => ({
+    byThreadKey: Object.fromEntries(Object.entries(state.byThreadKey).filter(kept)),
+    branchBaseRefByThreadKey: Object.fromEntries(
+      Object.entries(state.branchBaseRefByThreadKey).filter(kept),
+    ),
+  }));
+}
 
 interface DiffPanelSessionStoreState {
   collapsedFileKeysByScopeKey: Record<string, ReadonlySet<string>>;

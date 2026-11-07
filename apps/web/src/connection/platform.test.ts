@@ -2,6 +2,8 @@ import {
   AuthStandardClientScopes,
   EnvironmentId,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
+  ProjectId,
+  ThreadId,
   type DesktopBridge,
   type DesktopSshEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
@@ -10,11 +12,17 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { afterEach, vi } from "vite-plus/test";
-import { ClientCapabilities } from "@t3tools/client-runtime/platform";
+import { ClientCapabilities, Persistence } from "@t3tools/client-runtime/platform";
 import {
   ConnectionBlockedError,
   ConnectionTransientError,
 } from "@t3tools/client-runtime/connection";
+import {
+  scopeProjectRef,
+  scopeThreadRef,
+  scopedProjectKey,
+  scopedThreadKey,
+} from "@t3tools/client-runtime/environment";
 
 import {
   canRetainCachedPlatformRegistrationAfterRefreshFailure,
@@ -29,6 +37,12 @@ import {
   secondaryRegistrationsToRetainAfterTopologyRead,
 } from "./platform.ts";
 import { APP_VERSION } from "../branding.ts";
+import { useBrowserFaviconStore } from "../browserFaviconStore.ts";
+import { useClosedViewStore } from "../closedViewStore.ts";
+import { useDiffPanelStore } from "../diffPanelStore.ts";
+import { PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore.ts";
+import { useTerminalUiStateStore } from "../terminalUiStateStore.ts";
+import { useUiStateStore } from "../uiStateStore.ts";
 
 const TARGET: DesktopSshEnvironmentTarget = {
   alias: "devbox",
@@ -449,4 +463,70 @@ describe("primary topology cache", () => {
       }),
     ).toBe(cached);
   });
+});
+
+describe("environment-owned data cleanup", () => {
+  it.effect("clears only the removed environment's browser-local UI state", () =>
+    Effect.gen(function* () {
+      const removed = EnvironmentId.make("removed-env");
+      const kept = EnvironmentId.make("kept-env");
+      for (const environmentId of [removed, kept]) {
+        const threadRef = scopeThreadRef(environmentId, ThreadId.make("thread-1"));
+        const threadKey = scopedThreadKey(threadRef);
+        const projectKey = scopedProjectKey(
+          scopeProjectRef(environmentId, ProjectId.make("project-1")),
+        );
+        useClosedViewStore.getState().remember({
+          kind: "panel-tab",
+          threadRef,
+          surface: { id: "files", kind: "files" },
+        });
+        useClosedViewStore.getState().remember({
+          kind: "panel-tab",
+          threadRef: PULL_REQUESTS_PANEL_REF,
+          surface: {
+            id: `pull-request:${environmentId}:acme/app:1`,
+            kind: "pull-request",
+            environmentId,
+            projectId: "project-1",
+            repository: "acme/app",
+            number: 1,
+          },
+        });
+        useDiffPanelStore.getState().selectBranchBaseRef(threadRef, "main");
+        useRightPanelStore.getState().open(threadRef, "diff");
+        useTerminalUiStateStore.getState().setTerminalOpen(threadRef, true);
+        useBrowserFaviconStore
+          .getState()
+          .recordFavicon(
+            `${projectKey} https://intranet.test:443`,
+            "data:image/png;base64,iVBORw0KGgo=",
+            1,
+          );
+        useUiStateStore.getState().markThreadVisited(threadKey, "2026-11-07T00:00:00.000Z");
+        useUiStateStore.getState().setThreadChangedFilesExpanded(threadKey, "turn-1", false);
+      }
+      const stores = () => ({
+        closedViews: useClosedViewStore.getState(),
+        diffPanel: useDiffPanelStore.getState(),
+        rightPanel: useRightPanelStore.getState(),
+        terminal: useTerminalUiStateStore.getState(),
+        favicons: useBrowserFaviconStore.getState(),
+        uiState: useUiStateStore.getState(),
+      });
+      const storesHolding = (environmentId: EnvironmentId) =>
+        Object.entries(stores())
+          .filter(([, state]) => JSON.stringify(state).includes(environmentId))
+          .map(([name]) => name);
+      const allStores = Object.keys(stores());
+      expect(storesHolding(removed)).toEqual(allStores);
+
+      vi.stubGlobal("window", { desktopBridge: makeBridge([]) });
+      const cleanup = yield* Persistence.EnvironmentOwnedDataCleanup.pipe(Effect.provide(layer));
+      yield* cleanup.clear(removed);
+
+      expect(storesHolding(removed)).toEqual([]);
+      expect(storesHolding(kept)).toEqual(allStores);
+    }),
+  );
 });

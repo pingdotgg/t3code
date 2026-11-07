@@ -1,6 +1,7 @@
 import { Debouncer } from "@tanstack/react-pacer";
-import type { PullRequestMergeMethod } from "@t3tools/contracts";
+import type { EnvironmentId, PullRequestMergeMethod } from "@t3tools/contracts";
 import { create } from "zustand";
+import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { normalizeProjectPathForComparison } from "@t3tools/client-runtime/state/projects";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
@@ -465,6 +466,20 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
+
+export function clearUiStateEnvironment(environmentId: EnvironmentId): void {
+  const kept = ([threadKey]: [string, unknown]) =>
+    parseScopedThreadKey(threadKey)?.environmentId !== environmentId;
+  useUiStateStore.setState((state) => ({
+    threadLastVisitedAtById: Object.fromEntries(
+      Object.entries(state.threadLastVisitedAtById).filter(kept),
+    ),
+    threadChangedFilesExpandedById: Object.fromEntries(
+      Object.entries(state.threadChangedFilesExpandedById).filter(kept),
+    ),
+  }));
+  debouncedPersistState.flush();
+}
 
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("beforeunload", () => {

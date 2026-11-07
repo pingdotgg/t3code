@@ -1,5 +1,5 @@
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { type ScopedThreadRef } from "@t3tools/contracts";
+import { type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
@@ -776,3 +776,15 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
     },
   ),
 );
+
+export function clearTerminalUiStateEnvironment(environmentId: EnvironmentId): void {
+  const state = useTerminalUiStateStore.getState();
+  state.removeOrphanedTerminalUiStates(
+    new Set(
+      [
+        ...Object.keys(state.terminalUiStateByThreadKey),
+        ...Object.keys(state.suppressedTerminalIdsByThreadKey),
+      ].filter((threadKey) => parseScopedThreadKey(threadKey)?.environmentId !== environmentId),
+    ),
+  );
+}

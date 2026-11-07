@@ -49,12 +49,17 @@ import {
   readPrimaryEnvironmentTarget,
   type PrimaryEnvironmentTarget,
 } from "../environments/primary/target";
+import { clearClosedViewsEnvironment } from "../closedViewStore";
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
+import { clearDiffPanelEnvironment } from "../diffPanelStore";
 import { isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { randomUUID } from "../lib/utils";
+import { clearRightPanelEnvironment } from "../rightPanelStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { acknowledgeRpcRequest, trackRpcRequestSent } from "../rpc/requestLatencyState";
+import { clearTerminalUiStateEnvironment } from "../terminalUiStateStore";
+import { clearUiStateEnvironment } from "../uiStateStore";
 import {
   desktopLocalConnectionId,
   readDesktopSecondaryBootstrapsResult,
@@ -793,10 +798,20 @@ const layerPlatformConnectionSource = Layer.effect(
 const layerEnvironmentOwnedDataCleanup = Layer.succeed(
   Persistence.EnvironmentOwnedDataCleanup,
   Persistence.EnvironmentOwnedDataCleanup.of({
-    clear: Effect.fn("Persistence.EnvironmentOwnedDataCleanup.clear")(function (environmentId) {
-      return Effect.sync(() => {
-        clearComposerDraftsEnvironment(environmentId);
-      });
+    clear: Effect.fn("Persistence.EnvironmentOwnedDataCleanup.clear")(function* (environmentId) {
+      clearComposerDraftsEnvironment(environmentId);
+      clearClosedViewsEnvironment(environmentId);
+      clearDiffPanelEnvironment(environmentId);
+      clearRightPanelEnvironment(environmentId);
+      clearTerminalUiStateEnvironment(environmentId);
+      clearUiStateEnvironment(environmentId);
+      // A static import would cycle back here through state/session and connection/runtime.
+      yield* Effect.promise(() => import("../browserFaviconStore")).pipe(
+        Effect.map((favicons) => favicons.clearBrowserFaviconsEnvironment(environmentId)),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not clear the environment's browser favicons.", { cause }),
+        ),
+      );
     }),
   }),
 );

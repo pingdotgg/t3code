@@ -1,10 +1,16 @@
 import {
   parseScopedProjectKey,
+  parseScopedThreadKey,
   scopedProjectKey,
   scopedThreadKey,
   scopeProjectRef,
 } from "@t3tools/client-runtime/environment";
-import type { DesktopPreviewFavicon, ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  DesktopPreviewFavicon,
+  EnvironmentId,
+  ScopedProjectRef,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -343,6 +349,22 @@ function lookupFaviconEntry(
   } catch {
     return null;
   }
+}
+
+export function clearBrowserFaviconsEnvironment(environmentId: EnvironmentId): void {
+  useBrowserFaviconStore.setState((state) => ({
+    byKey: Object.fromEntries(
+      Object.entries(state.byKey).filter(
+        ([key]) =>
+          parseScopedProjectKey(key.slice(0, key.indexOf(" ")))?.environmentId !== environmentId,
+      ),
+    ),
+    pendingByThreadKey: Object.fromEntries(
+      Object.entries(state.pendingByThreadKey).filter(
+        ([threadKey]) => parseScopedThreadKey(threadKey)?.environmentId !== environmentId,
+      ),
+    ),
+  }));
 }
 
 export function resetBrowserFaviconsForTests(): void {

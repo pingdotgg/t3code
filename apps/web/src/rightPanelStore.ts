@@ -1206,6 +1206,23 @@ useRightPanelStore.subscribe((next, previous) => {
   }
 });
 
+export function clearRightPanelEnvironment(environmentId: EnvironmentId): void {
+  const kept = ([threadKey]: [string, unknown]) =>
+    parseScopedThreadKey(threadKey)?.environmentId !== environmentId;
+  useRightPanelStore.setState((state) => ({
+    byThreadKey: Object.fromEntries(Object.entries(state.byThreadKey).filter(kept)),
+    threadPanelVisibilityByThreadKey: Object.fromEntries(
+      Object.entries(state.threadPanelVisibilityByThreadKey).filter(kept),
+    ),
+    userActionRevisionByThreadKey: Object.fromEntries(
+      Object.entries(state.userActionRevisionByThreadKey).filter(kept),
+    ),
+    closeRevisionByThreadKey: Object.fromEntries(
+      Object.entries(state.closeRevisionByThreadKey).filter(kept),
+    ),
+  }));
+}
+
 export function selectThreadRightPanelState(
   byThreadKey: Record<string, ThreadRightPanelState>,
   ref: ScopedThreadRef | null | undefined,

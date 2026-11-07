@@ -1,6 +1,7 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   ChatFileAttachment,
+  type EnvironmentId,
   INCOGNITO_BROWSER_PROFILE_ID,
   PreviewSessionSnapshot,
   ScopedThreadRef,
@@ -143,3 +144,17 @@ export const useClosedViewStore = create<ClosedViewStoreState>()(
     },
   ),
 );
+
+export function clearClosedViewsEnvironment(environmentId: EnvironmentId): void {
+  useClosedViewStore.setState((state) => ({
+    entries: state.entries.filter(
+      (entry) =>
+        entry.threadRef.environmentId !== environmentId &&
+        !(
+          entry.kind === "panel-tab" &&
+          entry.surface.kind === "pull-request" &&
+          entry.surface.environmentId === environmentId
+        ),
+    ),
+  }));
+}
