@@ -2,6 +2,7 @@ import type { ProviderInstanceId } from "@t3tools/contracts";
 
 const MODEL_KEY_PREFIX = "model:";
 const LEGACY_SECTION_KEY_PREFIX = "legacy-models:";
+const VENDOR_SECTION_KEY_PREFIX = "vendor-section:";
 
 export function modelPickerModelKey(instanceId: ProviderInstanceId, slug: string): string {
   return `${MODEL_KEY_PREFIX}${instanceId.length}:${instanceId}${slug}`;
@@ -34,6 +35,13 @@ export function parseModelPickerModelKey(
     instanceId: value.slice(0, instanceIdLength) as ProviderInstanceId,
     slug: value.slice(instanceIdLength),
   };
+}
+
+export function modelPickerVendorSectionKey(
+  instanceId: ProviderInstanceId,
+  vendor: string,
+): string {
+  return `${VENDOR_SECTION_KEY_PREFIX}${instanceId.length}:${instanceId}${vendor}`;
 }
 
 export function modelPickerLegacySectionKey(instanceId: ProviderInstanceId): string {

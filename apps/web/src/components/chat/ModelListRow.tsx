@@ -16,6 +16,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   slug: string;
   name: string;
   subProvider?: string | undefined;
+  showSubProvider?: boolean;
   instanceId: ProviderInstanceId;
   driverKind: ProviderDriverKind;
   providerDisplayName: string;
@@ -81,7 +82,13 @@ export const ModelListRow = memo(function ModelListRow(props: {
         </div>
         {props.isSelected ? <CheckIcon className="size-3.5 shrink-0" aria-hidden="true" /> : null}
         {props.subProvider ? (
-          <span className="min-w-0 shrink truncate text-xs text-muted-foreground/70">
+          <span
+            className={
+              props.showSubProvider === false
+                ? "sr-only"
+                : "min-w-0 shrink truncate text-xs text-muted-foreground/70"
+            }
+          >
             {props.subProvider}
           </span>
         ) : null}
