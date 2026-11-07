@@ -224,6 +224,8 @@ interface MessagesTimelineProps {
   citationRequest?: AssistantCitationRequest | null;
   citationHistory?: CitedHistory;
   citationDraftTarget?: ComposerThreadTarget;
+  citationRichTextEnabled?: boolean;
+  showingCitationDraft?: boolean;
   onOpenDraftCitation?: (key: string, anchor: AssistantCitationSourceAnchor) => void;
   onCiteAssistantText?: (
     citation: AssistantCitation,
@@ -343,6 +345,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   citationHistory = CITED_HISTORY_LOADING,
   onCiteAssistantText,
   citationDraftTarget,
+  citationRichTextEnabled = false,
+  showingCitationDraft = true,
   onOpenDraftCitation,
   isWorking,
   runlessWorkActive = false,
@@ -1329,6 +1333,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
               <ActiveDraftCitationMarkers
                 viewport={timelineViewportElement}
                 draftTarget={citationDraftTarget}
+                richTextEnabled={citationRichTextEnabled}
+                showingDraft={showingCitationDraft}
                 onOpen={onOpenDraftCitation}
               />
             )}

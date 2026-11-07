@@ -1,3 +1,4 @@
+import { Badge } from "~/components/ui/badge";
 import { useComposerDraftStore, type ComposerThreadTarget } from "~/composerDraftStore";
 import { draftCitationMarkers } from "./assistantCitationMarkers.logic";
 import { useLayoutEffect, useRef } from "react";
@@ -11,13 +12,21 @@ import {
 export function AssistantCitationMarkers({
   viewport,
   prompt,
+  richTextEnabled,
+  showingDraft = true,
   onOpen,
 }: {
   viewport: HTMLElement | null;
   prompt: string;
+  richTextEnabled: boolean;
+  showingDraft?: boolean;
   onOpen: (key: string, anchor: AssistantCitationSourceAnchor) => void;
 }) {
-  const citationJson = JSON.stringify(draftCitationMarkers(buildDocJson(prompt, () => null)));
+  const citationJson = JSON.stringify(
+    draftCitationMarkers(
+      buildDocJson(showingDraft ? prompt : "", () => null, { styling: richTextEnabled }),
+    ),
+  );
   const citations = JSON.parse(citationJson) as ReturnType<typeof draftCitationMarkers>;
   const overlayRef = useRef<HTMLDivElement>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- positions markers against rendered source ranges as the timeline scrolls and virtualizes rows
@@ -136,12 +145,12 @@ export function AssistantCitationMarkers({
       aria-label="Draft citation markers"
     >
       {citations.map(({ citation, key }, index) => (
-        <button
+        <Badge
           key={key}
           data-citation-marker-key={key}
-          type="button"
+          render={<button type="button" />}
           hidden={!viewport}
-          className="pointer-events-auto absolute flex size-5 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground"
+          className="pointer-events-auto absolute"
           aria-label={`Edit citation ${index + 1} comment`}
           onPointerDown={(event) => event.preventDefault()}
           onClick={() => {
@@ -155,7 +164,7 @@ export function AssistantCitationMarkers({
           }}
         >
           {index + 1}
-        </button>
+        </Badge>
       ))}
     </div>
   );

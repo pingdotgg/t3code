@@ -3445,6 +3445,12 @@ export default function ChatView(props: ChatViewProps) {
                   citationHistory={citationHistory}
                   onCiteAssistantText={citeAssistantTextStable}
                   citationDraftTarget={composerDraftTarget}
+                  citationRichTextEnabled={settings.composerRichTextEnabled}
+                  showingCitationDraft={
+                    !activePendingProgress ||
+                    (pendingUserInputs[0] !== undefined &&
+                      heldApprovalRequestIds.has(pendingUserInputs[0].requestId))
+                  }
                   onOpenDraftCitation={openDraftCitation}
                   {...(activeProject
                     ? { onRunShellCommand: parentPanel?.runShellCommand ?? runShellCommandStable }

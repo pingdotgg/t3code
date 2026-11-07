@@ -34,9 +34,11 @@ function Composer({
   question,
   editorRef,
   initialPrompt = promptBefore,
+  richTextEnabled = false,
 }: {
   question: boolean;
   initialPrompt?: string;
+  richTextEnabled?: boolean;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }) {
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
@@ -54,13 +56,16 @@ function Composer({
         </p>
         <AssistantCitationMarkers
           viewport={viewport}
-          prompt={question ? answer : prompt}
+          prompt={prompt}
+          richTextEnabled={richTextEnabled}
+          showingDraft={!question}
           onOpen={(key, anchor) => editorRef.current?.openCitation(key, anchor)}
         />
       </div>
       <output data-prompt={prompt} data-answer={answer} />
       <ComposerPromptEditor
         editorRef={editorRef}
+        richTextEnabled={richTextEnabled}
         value={question ? answer : prompt}
         cursor={0}
         contextRecords={new Map()}
@@ -100,6 +105,9 @@ it("keeps an unsaved citation comment when a question takes the composer", async
 
   await screen.rerender(<Composer question editorRef={editorRef} />);
   expect(drafts()?.answer).toBe("");
+  await expect
+    .element(page.getByRole("button", { name: "Edit citation 1 comment" }))
+    .not.toBeInTheDocument();
   await screen.rerender(<Composer question={false} editorRef={editorRef} />);
 
   expect(drafts()?.prompt).toBe(
@@ -144,4 +152,26 @@ it("opens each duplicate marker's own comment and restores marker focus", async 
   await expect.element(one).toHaveFocus();
   await userEvent.click(two);
   await expect.element(page.getByLabelText("Comment on selected text")).toHaveValue("second");
+});
+
+it("matches the editor citation nodes when rich text is toggled", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  const initialPrompt = "```text\n" + serializeAssistantCitation(citation) + "\n```";
+  await using screen = await render(
+    <Composer question={false} editorRef={editorRef} initialPrompt={initialPrompt} />,
+  );
+  const marker = page.getByRole("button", { name: "Edit citation 1 comment" });
+  await expect.element(marker).toBeVisible();
+  await marker.click();
+  await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  await screen.rerender(
+    <Composer
+      question={false}
+      editorRef={editorRef}
+      initialPrompt={initialPrompt}
+      richTextEnabled
+    />,
+  );
+  await expect.element(marker).not.toBeInTheDocument();
 });
