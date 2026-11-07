@@ -399,6 +399,7 @@ export function buildReviewThreads(
 
   return [...threads.values()].flatMap((thread) => {
     const entries = (replies.get(Number(thread.id)) ?? [])
+      .filter((comment) => comment.deleted !== true)
       .toSorted((left, right) => left.created_on.localeCompare(right.created_on))
       .map((comment) => ({
         id: String(comment.id),
@@ -422,7 +423,11 @@ export function decodeCommentsJson(raw: string): Result.Result<BitbucketComments
     const decodedComment = decodeCommentEntry(entry);
     if (Exit.isFailure(decodedComment)) continue;
     const comment = decodedComment.value;
-    if (comment.deleted === true || comment.pending === true) continue;
+    if (comment.pending === true) continue;
+    if (comment.deleted === true) {
+      kept.push(comment);
+      continue;
+    }
     const body = comment.content?.raw ?? "";
     if (body.trim().length === 0) continue;
     kept.push(comment);
