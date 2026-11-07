@@ -2907,6 +2907,210 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  const asyncSubagentSnapshot = (
+    fake: FakePi,
+    runs: ReadonlyArray<unknown> | undefined,
+    omitted: unknown = { runs: 0, children: 0, byteLimitExceeded: false },
+  ) =>
+    fake.emit({
+      type: "extension_ui_request",
+      id: "widget-1",
+      method: "setWidget",
+      widgetKey: "subagent-async",
+      ...(runs === undefined
+        ? {}
+        : {
+            widgetLines: [
+              `PI_SUBAGENT_ASYNC_JSON:${JSON.stringify({
+                kind: "pi-subagents.async-status-snapshot",
+                version: 1,
+                omitted,
+                runs,
+              })}`,
+            ],
+          }),
+    });
+
+  const asyncReviewerRun = (state: "running" | "complete") => ({
+    id: "async-1",
+    kind: "subagent",
+    label: "reviewer",
+    state,
+    children: [
+      {
+        id: "step:0",
+        kind: "step",
+        label: "reviewer",
+        state,
+        agent: "reviewer",
+        model: "anthropic/claude-opus-5-5",
+        ...(state === "running" ? { activity: { currentTool: "bash" } } : { endedAt: 5_000 }),
+      },
+    ],
+  });
+
+  /** Launches a background reviewer during a turn and settles the turn while it runs. */
+  const launchAsyncReviewer = Effect.fnUntraced(function* (fake: FakePi) {
+    const { runtime, takeEvent } = yield* openRuntime(fake);
+    const providerThread = yield* runtime.ensureThread({
+      threadId: THREAD_ID,
+      modelSelection: modelSelection("default"),
+      runtimePolicy,
+    });
+    yield* startTurn(runtime, providerThread);
+    yield* fake.takeRequest("prompt");
+    yield* fake.emit({ type: "agent_start" });
+    yield* fake.emit({
+      type: "tool_execution_start",
+      toolCallId: "call_async",
+      toolName: "subagent",
+      args: { agent: "reviewer", task: "review the diff", async: true },
+    });
+    yield* asyncSubagentSnapshot(fake, [asyncReviewerRun("running")]);
+    const pending = yield* takeEvent((event) => event.type === "background_work.updated");
+    assert.isTrue(pending.type === "background_work.updated" && pending.pending);
+    const running = yield* takeEvent(
+      (event) => event.type === "subagent.updated" && event.subagent.status === "running",
+    );
+    yield* fake.emit({
+      type: "tool_execution_end",
+      toolCallId: "call_async",
+      toolName: "subagent",
+      isError: false,
+      result: {
+        content: [{ type: "text", text: "Started async-1 in the background" }],
+        details: { mode: "single", runId: "async-1", asyncId: "async-1", results: [] },
+      },
+    });
+    yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+    yield* fake.emit({ type: "agent_settled" });
+    const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+    assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
+    return {
+      runtime,
+      takeEvent,
+      providerThread,
+      running,
+      providerTurnId: terminal.type === "turn.terminal" ? terminal.providerTurnId : null,
+    };
+  });
+
+  it.effect("keeps background subagents on their launching turn until they report done", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent, running } = yield* launchAsyncReviewer(fake);
+      assert.isTrue(running.type === "subagent.updated");
+      if (running.type !== "subagent.updated") return;
+      assert.equal(running.subagent.title, "reviewer");
+      assert.equal(running.subagent.prompt, "review the diff");
+      assert.equal(running.subagent.model, "anthropic/claude-opus-5-5");
+      assert.equal(running.subagent.progress, "bash");
+      assert.equal(running.subagent.runId, RunId.make(`run:${THREAD_ID}:1`));
+      assert.equal(
+        running.subagent.parentNodeId,
+        NodeId.make("node:provider:pi:native-item:call_async"),
+      );
+
+      // pi-subagents clears the widget while it compacts and drops runs past its caps.
+      yield* asyncSubagentSnapshot(fake, undefined);
+      yield* asyncSubagentSnapshot(fake, [], { runs: 1, byteLimitExceeded: false });
+      yield* asyncSubagentSnapshot(fake, [asyncReviewerRun("running")]);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+
+      yield* asyncSubagentSnapshot(fake, [asyncReviewerRun("complete")]);
+      const done = yield* takeEvent(
+        (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
+      );
+      assert.isTrue(done.type === "subagent.updated" && done.subagent.id === running.subagent.id);
+      const doneItem = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "subagent" &&
+          event.turnItem.status === "completed",
+      );
+      assert.isTrue(
+        doneItem.type === "turn_item.updated" &&
+          doneItem.turnItem.runId === RunId.make(`run:${THREAD_ID}:1`) &&
+          doneItem.turnItem.completedAt !== null &&
+          DateTime.toEpochMillis(doneItem.turnItem.completedAt) === 5_000,
+      );
+      const settled = yield* takeEvent((event) => event.type === "background_work.updated");
+      assert.isTrue(settled.type === "background_work.updated" && !settled.pending);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("stops reporting background subagents when Stop reaches a settled turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent, providerThread, providerTurnId } =
+        yield* launchAsyncReviewer(fake);
+      assert.isNotNull(providerTurnId);
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: providerTurnId!,
+        requestRuntimeRestart: true,
+      });
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+
+      // The stopped run keeps reporting until it ends; the next turn must not adopt it.
+      yield* startTurn(runtime, providerThread, "default", [], "Hello again", undefined, 2);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* asyncSubagentSnapshot(fake, [asyncReviewerRun("running")]);
+      yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("moves a background run to the parallel subagent call that launched it", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      // Pi announces every call of a message before executing them together.
+      for (const toolCallId of ["call_a", "call_b"]) {
+        yield* fake.emit({
+          type: "tool_execution_start",
+          toolCallId,
+          toolName: "subagent",
+          args: { agent: "scout", task: `task ${toolCallId}`, async: true },
+        });
+      }
+      yield* asyncSubagentSnapshot(fake, [asyncReviewerRun("running")]);
+      const guessed = yield* takeEvent((event) => event.type === "subagent.updated");
+      assert.isTrue(
+        guessed.type === "subagent.updated" &&
+          guessed.subagent.parentNodeId === NodeId.make("node:provider:pi:native-item:call_b"),
+      );
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_a",
+        toolName: "subagent",
+        isError: false,
+        result: {
+          content: [{ type: "text", text: "Started async-1 in the background" }],
+          details: { mode: "single", runId: "async-1", asyncId: "async-1", results: [] },
+        },
+      });
+      const bound = yield* takeEvent((event) => event.type === "subagent.updated");
+      assert.isTrue(
+        bound.type === "subagent.updated" &&
+          bound.subagent.id === (guessed.type === "subagent.updated" ? guessed.subagent.id : "") &&
+          bound.subagent.parentNodeId === NodeId.make("node:provider:pi:native-item:call_a"),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("persists edit patches and write content on file change items", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
