@@ -18,6 +18,8 @@ it.each([
   ["git@github.com:T3Tools/t3code.git", "T3Tools/t3code"],
   ["github.com:T3Tools/t3code.git", "T3Tools/t3code"],
   ["gitlab.com:T3Tools/platform/t3code", "T3Tools/platform/t3code"],
+  ["git@[2001:db8::1]:T3Tools/t3code.git", "T3Tools/t3code"],
+  ["[2001:db8::1]:T3Tools/t3code.git", "T3Tools/t3code"],
   ["https://github.com/T3Tools/t3code.git", "T3Tools/t3code"],
   ["C:/repos/t3code", null],
 ])("reads the repository path of %s", (remoteUrl, expected) => {

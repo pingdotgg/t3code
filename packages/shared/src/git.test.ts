@@ -63,6 +63,16 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("C:/repos/project")).toBe("c:/repos/project");
     expect(normalizeGitRemoteUrl("git@x:team/project.git")).toBe("x/team/project");
   });
+
+  it("keys an SCP-like remote on an IPv6 host like its ssh:// form", () => {
+    for (const remote of [
+      "ssh://git@[2001:db8::1]/team/project.git",
+      "git@[2001:db8::1]:team/project.git",
+      "[2001:db8::1]:team/project.git",
+    ]) {
+      expect(normalizeGitRemoteUrl(remote)).toBe("[2001:db8::1]/team/project");
+    }
+  });
 });
 
 describe("isBareGitConfig", () => {

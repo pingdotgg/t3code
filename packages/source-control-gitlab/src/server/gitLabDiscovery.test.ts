@@ -131,6 +131,18 @@ self-hosted.example.test
 `,
     exitCode: 0,
   },
+  ...["git@[2001:db8::1]:group/project.git", "[2001:db8::1]:group/project.git"].map(
+    (remoteUrl) => ({
+      name: `on an IPv6 host over SSH (${remoteUrl})`,
+      remoteUrl,
+      host: "[2001:db8::1]",
+      stdout: `[2001:db8::1]
+  ✓ Logged in to [2001:db8::1] as gitlab-user
+  ✓ Token found: ******
+`,
+      exitCode: 0,
+    }),
+  ),
 ] as const)("claims a self-hosted remote glab is signed in to $name", (scenario) =>
   Effect.gen(function* () {
     const remote = parseGitRemoteHost(scenario.remoteUrl);
