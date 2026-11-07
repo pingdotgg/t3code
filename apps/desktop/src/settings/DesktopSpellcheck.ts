@@ -19,39 +19,44 @@ export class DesktopSpellcheck extends Context.Service<
   }
 >()("@t3tools/desktop/settings/DesktopSpellcheck") {}
 
-/** Unknown codes are dropped so a stale setting can never leave spellcheck with no language. */
-function resolveSpellCheckerLanguages(
-  requested: ReadonlyArray<string>,
+/** Electron seeds its list from the app locale; Chromium falls back to the base language. */
+function localeDefaultLanguages(
+  locale: string,
   available: ReadonlyArray<string>,
-  systemDefault: ReadonlyArray<string>,
 ): ReadonlyArray<string> {
-  const supported = new Set(available);
-  const languages = [...new Set(requested)].filter((language) => supported.has(language));
-  return languages.length > 0 ? languages : systemDefault;
+  const base = locale.split("-")[0] ?? locale;
+  const match =
+    available.find((language) => language === locale) ??
+    available.find((language) => language === base) ??
+    available.find((language) => language.startsWith(`${base}-`));
+  return [match ?? "en-US"];
 }
 
 /** @public */
 export const make = Effect.gen(function* () {
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const platform = yield* HostProcess.Platform;
-  // Electron's own locale-derived choice, captured before the first override so clearing the setting restores it.
-  const systemDefaultRef = yield* Ref.make(Option.none<ReadonlyArray<string>>());
+  // Electron persists the list across restarts, so only undo an override this app applied;
+  // a list the user set in Chromium's Preferences by hand is left alone.
+  const overriddenRef = yield* Ref.make(false);
 
   const configure = Effect.fn("desktop.spellcheck.configure")(function* (settings: ClientSettings) {
     // macOS always uses the native spellchecker, which ignores Electron's language list.
     if (platform === "darwin") return;
     const session = Electron.session.defaultSession;
-    const systemDefault = yield* Ref.modify(systemDefaultRef, (stored) => {
-      const value = Option.getOrElse(stored, () => session.getSpellCheckerLanguages());
-      return [value, Option.some(value)] as const;
-    });
-    const languages = resolveSpellCheckerLanguages(
-      settings.spellcheckLanguages,
-      session.availableSpellCheckerLanguages,
-      systemDefault,
+    const available = session.availableSpellCheckerLanguages;
+    const supported = new Set(available);
+    const requested = [...new Set(settings.spellcheckLanguages)].filter((language) =>
+      supported.has(language),
     );
+    const overridden = yield* Ref.getAndSet(overriddenRef, requested.length > 0);
+    if (requested.length === 0 && !overridden) return;
+    const languages =
+      requested.length > 0
+        ? requested
+        : localeDefaultLanguages(Electron.app.getLocale(), available);
     yield* Effect.annotateCurrentSpan({ languages: languages.join(",") });
-    // Only throws for codes outside availableSpellCheckerLanguages, which resolve has dropped.
+    // Only throws for codes outside availableSpellCheckerLanguages, which are filtered out above.
     yield* Effect.sync(() => session.setSpellCheckerLanguages([...languages]));
   });
 

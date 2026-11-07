@@ -57,6 +57,7 @@ export interface SettingsSearchItem {
   readonly scope?: SettingsSearchScope;
   readonly desktopOnly?: boolean;
   readonly macOnly?: boolean;
+  readonly nonMacOnly?: boolean;
   readonly windowsOnly?: boolean;
   readonly releaseChannelOnly?: boolean;
   readonly secretsFeatureOnly?: boolean;
@@ -707,6 +708,8 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/chat",
     searchTerms: ["spelling dictionary dictionaries language red underline typo composer"],
     desktopOnly: true,
+    // macOS spellchecks natively, so ChatSettingsPanel never renders this row there.
+    nonMacOnly: true,
   },
   {
     id: "follow-up-behavior",
@@ -1475,6 +1478,7 @@ export function settingsForThisPlatform(
       (!item.releaseChannelOnly || isElectron || HOSTED_APP_CHANNEL !== null) &&
       (!item.secretsFeatureOnly || isSecretsFeatureEnabled) &&
       (!item.macOnly || isMacPlatform(platform)) &&
+      (!item.nonMacOnly || !isMacPlatform(platform)) &&
       (!item.windowsOnly || isWindowsPlatform(platform)),
   );
 }
