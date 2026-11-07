@@ -162,6 +162,15 @@ describe("DesktopPreReadyPlatform", () => {
       }),
   );
 
+  it.effect("respects a user who disabled the fresh capture surface", () =>
+    Effect.gen(function* () {
+      const commandLine = yield* launchWithCommandLine("darwin", [
+        ["disable-features", "CDPScreenshotNewSurface"],
+      ]);
+      assert.isFalse(commandLine.has("enable-features"));
+    }),
+  );
+
   it.effect.each([
     { previousEntry: undefined, label: "missing" },
     { previousEntry: 'Exec="/Applications/deleted-previous.AppImage" %U', label: "stale" },
@@ -285,7 +294,10 @@ describe("DesktopPreReadyPlatform", () => {
         });
         assert.deepEqual(events, ["pre-ready", "clerk"]);
         assert.equal(registerSchemesMock.mock.calls.length, 1);
-        assert.equal(appendSwitchMock.mock.calls.length, 0);
+        assert.deepEqual(
+          appendSwitchMock.mock.calls.map(([name]) => name),
+          ["enable-features"],
+        );
         assert.equal(setDesktopNameMock.mock.calls.length, 0);
       }),
   );

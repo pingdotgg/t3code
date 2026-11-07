@@ -157,6 +157,14 @@ export const make = Effect.gen(function* () {
       }
     }
 
+    const enableFeatures = DesktopEarlyElectronStartup.resolveEnableFeaturesSwitch({
+      enableFeatures: readCommandLineSwitchValue(Electron.app.commandLine, "enable-features"),
+      disableFeatures: readCommandLineSwitchValue(Electron.app.commandLine, "disable-features"),
+    });
+    if (enableFeatures !== null) {
+      Electron.app.commandLine.appendSwitch("enable-features", enableFeatures);
+    }
+
     return { linux, linuxPasswordStoreCommandLine };
   });
 }).pipe(Effect.withSpan("desktop.electron.configureBeforeReady"));
