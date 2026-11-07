@@ -5641,6 +5641,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const failure = latestRootProviderFailure(run, projection.turnItems);
       const recovery = projection.thread.limitRecovery;
       const now = yield* DateTime.now;
+      const parentId =
+        projection.thread.lineage.relationshipToParent === "subagent"
+          ? projection.thread.lineage.parentThreadId
+          : null;
+      // A subagent of a settled parent is abandoned work; resuming it would reopen the parent.
+      const parentSettled =
+        parentId !== null &&
+        (yield* projectionStore
+          .getThreadShell(parentId)
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: parentId, cause }),
+            ),
+          ))?.settledOverride === "settled";
       if (
         run?.id !== command.usageLimitContinuationOfRunId ||
         failure?.class !== "usage_limit" ||
@@ -5653,11 +5667,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
         projection.thread.settledOverride === "settled" ||
+        parentSettled ||
         projection.thread.providerInstanceId !== run.providerInstanceId ||
         projection.runtimeRequests.some((request) => request.status === "pending") ||
         (projection.thread.snoozedUntil != null &&
           DateTime.toEpochMillis(projection.thread.snoozedUntil) > DateTime.toEpochMillis(now))
       ) {
+        const recoveryMatches =
+          recovery?.autoResume &&
+          recovery.requestId === command.usageLimitRecoveryRequestId &&
+          recovery.runId === command.usageLimitContinuationOfRunId;
         yield* emit(
           events,
           command,
@@ -5667,13 +5686,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: {
             ...projection.thread,
-            ...(recovery?.autoResume &&
-            recovery.requestId === command.usageLimitRecoveryRequestId &&
-            recovery.runId === command.usageLimitContinuationOfRunId &&
-            projection.thread.snoozedUntil != null &&
-            DateTime.toEpochMillis(projection.thread.snoozedUntil) > DateTime.toEpochMillis(now)
-              ? { limitRecovery: { ...recovery, requestId: command.commandId } }
-              : {}),
+            // A settled parent retires the resume; leaving it armed would replay this receipt.
+            ...(recoveryMatches && parentSettled
+              ? { limitRecovery: { ...recovery, autoResume: false, requestId: command.commandId } }
+              : recoveryMatches &&
+                  projection.thread.snoozedUntil != null &&
+                  DateTime.toEpochMillis(projection.thread.snoozedUntil) >
+                    DateTime.toEpochMillis(now)
+                ? { limitRecovery: { ...recovery, requestId: command.commandId } }
+                : {}),
           },
         });
         return;

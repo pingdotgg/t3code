@@ -8783,6 +8783,166 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       }
     }),
   );
+
+  it.effect("retires a usage-limited subagent resume once its parent settles", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const events = yield* EventSink.EventSinkV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const parentId = ThreadId.make("recovery:settled-parent:parent");
+      const childId = ThreadId.make("recovery:settled-parent:child");
+      const projectId = ProjectId.make("recovery:settled-parent:project");
+      yield* seedProject({
+        projectId,
+        title: "Recovery project",
+        workspaceRoot: process.cwd(),
+        defaultModelSelection: modelSelection,
+        createdAt: DateTime.formatIso(yield* DateTime.now),
+      });
+      for (const threadId of [parentId, childId])
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId,
+          title: "Limited thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("recovery:settled-parent:message"),
+        threadId: childId,
+        messageId: MessageId.make("recovery:settled-parent:message"),
+        text: "Work on this.",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const child = yield* orchestrator.getThreadProjection(childId);
+      const run = child.runs[0]!;
+      const now = yield* DateTime.now;
+      const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
+      yield* events.write({
+        events: [
+          {
+            id: EventId.make("recovery:settled-parent:lineage"),
+            type: "thread.metadata-updated",
+            threadId: childId,
+            occurredAt: now,
+            payload: {
+              ...child.thread,
+              lineage: {
+                parentThreadId: parentId,
+                rootThreadId: parentId,
+                relationshipToParent: "subagent",
+              },
+            },
+          },
+          {
+            id: EventId.make("recovery:settled-parent:run"),
+            type: "run.updated",
+            threadId: childId,
+            occurredAt: now,
+            payload: { ...run, status: "failed", completedAt: now },
+          },
+          {
+            id: EventId.make("recovery:settled-parent:error"),
+            type: "turn-item.updated",
+            threadId: childId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("recovery:settled-parent:error"),
+              type: "error",
+              threadId: childId,
+              runId: run.id,
+              nodeId: run.rootNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Usage limit reached",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "usage_limit",
+                message: "Plan limit reached.",
+                code: "usageLimitExceeded",
+                retryable: null,
+                resetAt,
+              },
+            },
+          },
+        ],
+      });
+      const sweep = Effect.fnUntraced(function* (nowMs: number) {
+        const candidate = (yield* projections.getLimitRecoveryCandidates({
+          now: DateTime.makeUnsafe(nowMs),
+          autoResume: true,
+          snooze: false,
+        })).find((row) => row.id === childId);
+        return candidate === undefined ? null : limitRecoveryCommand(candidate, true, nowMs);
+      });
+      const arm = yield* sweep(DateTime.toEpochMillis(now));
+      assert(arm?.type === "thread.metadata.update" && arm.limitRecovery != null);
+      yield* orchestrator.autoArmLimitRecovery({
+        commandId: arm.commandId,
+        threadId: childId,
+        limitRecovery: arm.limitRecovery,
+      });
+      const resume = yield* sweep(Date.parse(resetAt));
+      assert.equal(resume?.type, "message.dispatch");
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("recovery:settled-parent:settle"),
+        threadId: parentId,
+      });
+      yield* TestClock.adjust("1 minute");
+      yield* orchestrator.dispatch(resume!);
+      let current = yield* orchestrator.getThreadProjection(childId);
+      assert.lengthOf(current.runs, 1);
+      assert.isFalse(current.thread.limitRecovery!.autoResume);
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(parentId)).thread.settledOverride,
+        "settled",
+      );
+      yield* orchestrator.dispatch({
+        type: "thread.unsettle",
+        commandId: CommandId.make("recovery:settled-parent:unsettle"),
+        threadId: parentId,
+        reason: "user",
+      });
+      assert.isNull(yield* sweep(DateTime.toEpochMillis(yield* DateTime.now)));
+      yield* orchestrator.dispatch(resume!);
+      current = yield* orchestrator.getThreadProjection(childId);
+      assert.lengthOf(current.runs, 1);
+      assert.isFalse(current.thread.limitRecovery!.autoResume);
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("recovery:settled-parent:rearm"),
+        threadId: childId,
+        limitRecovery: { runId: run.id, resetAt, autoResume: true },
+      });
+      const rearmed = (yield* orchestrator.getThreadProjection(childId)).thread.limitRecovery;
+      assert.isTrue(rearmed!.autoResume);
+      yield* orchestrator.dispatch({
+        ...resume!,
+        commandId: CommandId.make("recovery:settled-parent:stale-resume"),
+      });
+      current = yield* orchestrator.getThreadProjection(childId);
+      assert.lengthOf(current.runs, 1);
+      assert.deepEqual(current.thread.limitRecovery, rearmed);
+    }),
+  );
 });
 
 const queueResumeDisabledInstanceProjectId = ProjectId.make(
