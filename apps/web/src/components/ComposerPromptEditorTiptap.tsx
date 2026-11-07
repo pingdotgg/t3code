@@ -200,7 +200,7 @@ type CitationInsertedSpaces = { before: boolean; after: boolean };
 type OpenCitationComment = {
   key: string;
   sourceAnchor?: AssistantCitationSourceAnchor;
-  removeOnCancel?: CitationInsertedSpaces;
+  insertedSpaces?: CitationInsertedSpaces;
 };
 
 const ComposerCitationCommentContext = createContext<{
@@ -418,7 +418,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     return true;
   };
 
-  const removeOnCancel = commentTarget?.removeOnCancel;
+  const insertedSpaces = commentTarget?.insertedSpaces;
   const onRemove = () => {
     if (!editor.isEditable) return;
     const pos = nodePos();
@@ -427,10 +427,10 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     const current = doc.nodeAt(pos);
     if (!current) return;
     const end = pos + current.nodeSize;
-    const from = removeOnCancel?.before && doc.textBetween(pos - 1, pos) === " " ? pos - 1 : pos;
-    const to = removeOnCancel?.after && doc.textBetween(end, end + 1) === " " ? end + 1 : end;
+    const from = insertedSpaces?.before && doc.textBetween(pos - 1, pos) === " " ? pos - 1 : pos;
+    const to = insertedSpaces?.after && doc.textBetween(end, end + 1) === " " ? end + 1 : end;
     commentContext.onOpenChange(citeKey, false);
-    editor.chain().focus().deleteRange({ from, to }).run();
+    editor.chain().deleteRange({ from, to }).focus(from).run();
   };
 
   const onRestoreFocus = () => {
@@ -1543,7 +1543,7 @@ function ComposerPromptEditorTiptapInner(
           setOpenCitation({
             key: citeKey,
             sourceAnchor: pendingCitation.sourceAnchor,
-            removeOnCancel: pendingCitation.insertedSpaces,
+            insertedSpaces: pendingCitation.insertedSpaces,
           });
         }
       }
@@ -1659,7 +1659,7 @@ function ComposerPromptEditorTiptapInner(
           setOpenCitation({
             key: citeKey,
             sourceAnchor: request.sourceAnchor,
-            removeOnCancel: request.insertedSpaces,
+            insertedSpaces: request.insertedSpaces,
           });
         }
       },
