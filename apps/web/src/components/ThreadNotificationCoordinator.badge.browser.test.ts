@@ -6,6 +6,7 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { stubGlobal } from "../../test/render";
+import { selectActiveRightPanelSurface, useRightPanelStore } from "../rightPanelStore";
 
 const state = vi.hoisted(() => ({
   mode: "notifications",
@@ -204,11 +205,17 @@ function setup() {
       .spyOn(document, "visibilityState", "get")
       .mockImplementation(() => visibility as DocumentVisibilityState),
   );
+  const panels = useRightPanelStore.getState();
+  stack.defer(() => {
+    useRightPanelStore.setState(panels, true);
+  });
+  const route = { params: {} as Record<string, string> };
   const router = {
-    state: { matches: [{ params: {} }] },
+    state: { matches: [route] },
     navigate: state.navigate,
   } as unknown as AnyRouter;
   return {
+    route,
     start: () => {
       stack.defer(startThreadNotifications(testRegistry, router));
     },
@@ -252,6 +259,110 @@ it("presents completion notifications and sound as soon as the shell completes",
   );
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
   expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
+});
+
+const parentRef = { environmentId: EnvironmentId.make("one"), threadId: "thread" as never };
+const completedTurn = {
+  turnId: "turn",
+  state: "completed",
+  completedAt: "2026-09-13T07:00:01.000Z" as string | null,
+};
+function withSideChat(overrides: Partial<typeof thread>) {
+  return {
+    status: "live",
+    snapshot: Option.some({
+      threads: [
+        toV2ThreadShell(thread),
+        {
+          ...toV2ThreadShell({ ...thread, id: "side", title: "Side chat", ...overrides }),
+          lineage: {
+            rootThreadId: "thread",
+            parentThreadId: "thread",
+            relationshipToParent: "fork",
+            sideChat: true,
+          },
+        },
+      ],
+    }),
+  };
+}
+
+it("presents a completed side chat while the user is on another thread", async () => {
+  await using app = setup();
+  state.mode = "notifications-and-sound";
+  state.inApp = true;
+  focused = true;
+  state.shells.set("one", withSideChat({}));
+  app.start();
+  state.shells.set("one", withSideChat({ latestTurn: completedTurn }));
+  expect(state.toast).toHaveBeenCalledWith(
+    expect.objectContaining({ title: "Side chat completed", description: "Side chat" }),
+  );
+  expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
+
+  state.toast.mock.calls[0]![0].actionProps.onClick();
+  expect(state.navigate).toHaveBeenCalledWith({
+    to: "/$environmentId/$threadId",
+    params: { environmentId: "one", threadId: "thread" },
+  });
+  expect(
+    selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, parentRef)?.id,
+  ).toBe("side-chat:side");
+});
+
+it("leaves a side chat's own approval to its parent", async () => {
+  await using app = setup();
+  state.shells.set("one", withSideChat({}));
+  app.start();
+  state.shells.set("one", withSideChat({ hasPendingApprovals: true }));
+  expect(TestNotification.sent).toEqual([]);
+});
+
+it("presents a failed side chat", async () => {
+  await using app = setup();
+  state.inApp = true;
+  focused = true;
+  state.shells.set("one", withSideChat({}));
+  app.start();
+  state.shells.set(
+    "one",
+    withSideChat({
+      latestTurn: { turnId: "turn", state: "error", completedAt: "2026-09-13T07:00:01.000Z" },
+    }),
+  );
+  expect(state.toast).toHaveBeenCalledWith(
+    expect.objectContaining({ title: "Thread failed", description: "Side chat" }),
+  );
+});
+
+it("does not toast a side chat open in its parent's right panel", async () => {
+  await using app = setup();
+  state.inApp = true;
+  focused = true;
+  app.route.params = { environmentId: "one", threadId: "thread" };
+  useRightPanelStore.getState().openSideChat(parentRef, "side" as never);
+  state.shells.set("one", withSideChat({}));
+  app.start();
+  state.shells.set("one", withSideChat({ latestTurn: completedTurn }));
+  expect(state.toast).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["closed", () => useRightPanelStore.getState().close(parentRef)],
+  ["showing another tab", () => useRightPanelStore.getState().open(parentRef, "files")],
+])("toasts a side chat when its parent's right panel is %s", async (_, hideSideChat) => {
+  await using app = setup();
+  state.inApp = true;
+  focused = true;
+  app.route.params = { environmentId: "one", threadId: "thread" };
+  useRightPanelStore.getState().openSideChat(parentRef, "side" as never);
+  hideSideChat();
+  state.shells.set("one", withSideChat({}));
+  app.start();
+  state.shells.set("one", withSideChat({ latestTurn: completedTurn }));
+  expect(state.toast).toHaveBeenCalledWith(
+    expect.objectContaining({ title: "Side chat completed", description: "Side chat" }),
+  );
 });
 
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(

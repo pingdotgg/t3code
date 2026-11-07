@@ -19,6 +19,7 @@ import {
 
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
 import { isWindowsPlatform } from "../lib/utils";
+import { selectActiveRightPanelSurface, useRightPanelStore } from "../rightPanelStore";
 import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
@@ -117,6 +118,8 @@ export function startThreadNotifications(
     kind: ThreadNotificationKind,
   ) => {
     const { thread, status } = state;
+    const sideChatParentId =
+      state.raw.lineage.sideChat === true ? state.raw.lineage.parentThreadId : null;
     if (
       registry
         .get(environmentThreadShells.hiddenThreadKeysAtom)
@@ -128,9 +131,32 @@ export function startThreadNotifications(
       environmentId?: string;
       threadId?: string;
     };
+    const viewing =
+      active.environmentId === environmentId &&
+      (active.threadId === thread.id ||
+        (sideChatParentId !== null &&
+          active.threadId === sideChatParentId &&
+          selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, {
+            environmentId,
+            threadId: sideChatParentId,
+          })?.id === `side-chat:${thread.id}`));
+    // A side chat lives in its parent's right panel, so it opens there.
+    const openThread = () => {
+      void router.navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId, threadId: sideChatParentId ?? thread.id },
+      });
+      if (sideChatParentId !== null) {
+        useRightPanelStore
+          .getState()
+          .openSideChat({ environmentId, threadId: sideChatParentId }, thread.id);
+      }
+    };
     const title =
       kind === "completion"
-        ? "Thread completed"
+        ? sideChatParentId !== null
+          ? "Side chat completed"
+          : "Thread completed"
         : status === "approval"
           ? "Approval needed"
           : status === "limited"
@@ -149,7 +175,7 @@ export function startThreadNotifications(
       inAppNotificationsEnabled &&
       document.visibilityState === "visible" &&
       document.hasFocus() &&
-      (active.environmentId !== environmentId || active.threadId !== thread.id)
+      !viewing
     ) {
       const toastKey = threadKey({ environmentId, threadId: thread.id });
       const toastId: ToastId = toastManager.add({
@@ -176,10 +202,7 @@ export function startThreadNotifications(
           children: "Open thread",
           onClick: () => {
             toastManager.close(toastId);
-            void router.navigate({
-              to: "/$environmentId/$threadId",
-              params: { environmentId, threadId: thread.id },
-            });
+            openThread();
           },
         },
       });
@@ -206,10 +229,7 @@ export function startThreadNotifications(
         notification.close();
         window.focus();
         void window.desktopBridge?.revealWindow().catch(() => undefined);
-        void router.navigate({
-          to: "/$environmentId/$threadId",
-          params: { environmentId, threadId: thread.id },
-        });
+        openThread();
       });
     } catch {
       // Some browsers expose Notification but reject desktop presentation.
@@ -230,7 +250,10 @@ export function startThreadNotifications(
     const delegatedUnderParent = registry.get(environmentThreadShells.delegatedUnderParentAtom);
     const changed: Array<[NotificationState | undefined, NotificationState]> = [];
     for (const rawThread of threads) {
+      // A side chat's questions and approvals already notify on its parent; its outcome is its own.
+      const sideChat = rawThread.lineage.sideChat === true;
       if (
+        !sideChat &&
         isShownUnderParent(
           { environmentId, threadId: rawThread.id },
           rawThread.lineage,
@@ -253,11 +276,9 @@ export function startThreadNotifications(
       let status = resolveSidebarThreadStatus(thread);
       if (status === "ready" && thread.latestRun?.status === "failed") status = "failed";
       const attention =
-        status === "input" ||
-        status === "request" ||
-        status === "approval" ||
         status === "failed" ||
-        status === "limited"
+        status === "limited" ||
+        (!sideChat && (status === "input" || status === "request" || status === "approval"))
           ? `${thread.latestRun?.runId ?? ""}:${status}`
           : null;
       const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
