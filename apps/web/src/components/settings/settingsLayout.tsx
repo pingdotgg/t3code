@@ -5,11 +5,10 @@ import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/sessi
 import { useServerConfigs } from "../../state/entities";
 import { InfoIcon, Undo2Icon } from "lucide-react";
 import {
-  DEFAULT_SERVER_SETTINGS,
   isManagedSettingPath,
   type ServerSettings,
+  type StorageCleanupSettings,
 } from "@t3tools/contracts";
-import * as Equal from "effect/Equal";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { createContext, type ComponentPropsWithoutRef, type ReactNode, useContext } from "react";
 
@@ -32,6 +31,7 @@ import {
 } from "./scopedSettings";
 import { useClearProjectOverrides, useClearScopedSettings } from "./useScopedSettings";
 import {
+  environmentSettingIsSet,
   SettingInheritance,
   type SettingInheritanceState,
   type SettingOverridingProject,
@@ -311,6 +311,7 @@ export function SettingsRow({
   control,
   serverScoped = false,
   settingKeys = EMPTY_SETTING_KEYS,
+  settingField,
   managedPaths = EMPTY_MANAGED_PATHS,
   mixed: mixedOverride,
   managed,
@@ -326,6 +327,8 @@ export function SettingsRow({
   control?: ReactNode;
   serverScoped?: boolean;
   settingKeys?: readonly (keyof ServerSettings)[];
+  /** The `storageCleanup` rule this row edits, so its chain shows that rule alone. */
+  settingField?: keyof StorageCleanupSettings;
   /** Dot paths inside a setting, such as `storageCleanup.logsAfterDays`, an administrator can lock. */
   managedPaths?: readonly string[];
   mixed?: boolean;
@@ -349,7 +352,8 @@ export function SettingsRow({
     : primaryCanWrite;
   const serverConfigs = useServerConfigs();
   // An administrator's lock on any target wins over every other reason a control is inert.
-  const lockablePaths = [...settingKeys, ...managedPaths];
+  // A row for one `storageCleanup` rule locks by its own paths, not the whole setting.
+  const lockablePaths = settingField ? managedPaths : [...settingKeys, ...managedPaths];
   const managedBy =
     lockablePaths.length === 0
       ? undefined
@@ -454,7 +458,7 @@ export function SettingsRow({
         const environmentSettings = environmentSettingsById.get(candidate.environmentId);
         return (
           environmentSettings !== undefined &&
-          !Equal.equals(environmentSettings[key], DEFAULT_SERVER_SETTINGS[key])
+          environmentSettingIsSet(environmentSettings, key, settingField)
         );
       }),
     );
@@ -477,6 +481,7 @@ export function SettingsRow({
         targets={context.targets}
         environments={context.connectedEnvironments}
         keys={settingKeys}
+        {...(settingField ? { field: settingField } : {})}
         overridingProjects={overridingProjects}
         {...(canWriteSettings
           ? {
