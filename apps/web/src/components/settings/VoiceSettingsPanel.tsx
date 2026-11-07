@@ -45,7 +45,7 @@ import {
   useCleanupGrant,
 } from "../../speech/voiceConsent";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
-import { runtime } from "../../lib/runtime";
+import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
@@ -542,8 +542,8 @@ function useVoiceModels(prepared: PreparedConnection | null) {
       const revision = ++refreshRevision.current;
       try {
         const [nextStatus, nextModels] = await Promise.all([
-          runtime.runPromise(getEnvironmentSpeechStatus(connection)),
-          runtime.runPromise(getEnvironmentSpeechModels(connection, mode === "foreground")),
+          runEnvironmentSpeech(getEnvironmentSpeechStatus(connection)),
+          runEnvironmentSpeech(getEnvironmentSpeechModels(connection, mode === "foreground")),
         ]);
         if (current !== epoch.current || revision !== refreshRevision.current) return;
         setStatus(nextStatus);
@@ -649,7 +649,7 @@ function AdvancedSpeechSettings({
             onValueChange={(value) => {
               if (value)
                 void run("Could not change transcription hardware", () =>
-                  runtime.runPromise(
+                  runEnvironmentSpeech(
                     updateEnvironmentSpeechAcceleration(prepared, value as SpeechAcceleration),
                   ),
                 );
@@ -688,7 +688,7 @@ function AdvancedSpeechSettings({
             onValueChange={(value) => {
               if (value)
                 void run("Could not change when the model unloads", () =>
-                  runtime.runPromise(
+                  runEnvironmentSpeech(
                     updateEnvironmentSpeechModelUnloadTimeout(
                       prepared,
                       value as SpeechModelUnloadTimeout,
@@ -896,22 +896,22 @@ function SpeechModelBrowser(props: {
                       void run(
                         "Could not download the model",
                         () =>
-                          runtime.runPromise(downloadEnvironmentSpeechModel(prepared, model.id)),
+                          runEnvironmentSpeech(downloadEnvironmentSpeechModel(prepared, model.id)),
                         model.id,
                       ),
                     onSelect: () =>
                       void run("Could not select the model", () =>
-                        runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id)),
+                        runEnvironmentSpeech(selectEnvironmentSpeechModel(prepared, model.id)),
                       ),
                     onCancel: () =>
                       void run("Could not cancel the download", () =>
-                        runtime.runPromise(
+                        runEnvironmentSpeech(
                           cancelEnvironmentSpeechModelDownload(prepared, model.id),
                         ),
                       ),
                     onDelete: () =>
                       void run("Could not delete the model", () =>
-                        runtime.runPromise(removeEnvironmentSpeechModel(prepared, model.id)),
+                        runEnvironmentSpeech(removeEnvironmentSpeechModel(prepared, model.id)),
                       ),
                   };
                   return model.active ? (
