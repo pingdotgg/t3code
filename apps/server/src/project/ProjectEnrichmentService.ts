@@ -93,8 +93,8 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
 
   // Outlives the cache entry so an expired or refreshing identity still reads as its last value.
   const lastRepositoryIdentities = new Map<string, RepositoryIdentity>();
-  // A lookup still running when `invalidate` lands must not overwrite what a newer lookup remembered.
-  let invalidations = 0;
+  // `invalidate` drops a root's in-flight lookup so its late result cannot overwrite a newer one.
+  const lookupsInFlight = new Map<string, object>();
   const rememberRepositoryIdentity = (
     workspaceRoot: string,
     repositoryIdentity: RepositoryIdentity | null,
@@ -111,12 +111,21 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
   const repositoryIdentityCache = yield* Cache.makeWith(
     (workspaceRoot: string) =>
       Effect.suspend(() => {
-        const startedAfter = invalidations;
+        const lookup = {};
+        lookupsInFlight.set(workspaceRoot, lookup);
+        const isCurrent = () => lookupsInFlight.get(workspaceRoot) === lookup;
         return Effect.exit(repositoryIdentityResolver.resolve(workspaceRoot)).pipe(
           Effect.tap((result) =>
-            Exit.isSuccess(result) && startedAfter === invalidations
-              ? Effect.sync(() => rememberRepositoryIdentity(workspaceRoot, result.value))
-              : Effect.void,
+            Effect.sync(() => {
+              if (Exit.isSuccess(result) && isCurrent()) {
+                rememberRepositoryIdentity(workspaceRoot, result.value);
+              }
+            }),
+          ),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (isCurrent()) lookupsInFlight.delete(workspaceRoot);
+            }),
           ),
         );
       }),
@@ -318,7 +327,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
           [
             Cache.invalidate(repositoryIdentityCache, workspaceRoot),
             Effect.sync(() => {
-              invalidations += 1;
+              lookupsInFlight.delete(workspaceRoot);
               lastRepositoryIdentities.delete(workspaceRoot);
             }),
             Cache.invalidate(faviconCache, workspaceRoot),

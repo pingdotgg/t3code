@@ -355,3 +355,36 @@ it.effect("does not let a lookup invalidated mid-flight replace a newer last ide
     }).pipe(Effect.provide(layer(layerMetadata)));
   }),
 );
+
+it.effect("keeps a lookup's identity when another root is invalidated mid-flight", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const layerMetadata = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (workspaceRoot) =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as(identity(workspaceRoot)),
+          ),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
+        resolvePath: () => Effect.succeed(null),
+      }),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+      const lookup = yield* Effect.forkChild(service.readRepositoryIdentity("/widgets"));
+      yield* Deferred.await(started);
+      yield* service.invalidate(["/other"]);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(lookup);
+      yield* TestClock.adjust(Duration.seconds(61));
+
+      const expired = yield* service.peek("/widgets");
+      assert.equal(expired.repositoryIdentity?.canonicalKey, "example.test/v1/widgets");
+    }).pipe(Effect.provide(layer(layerMetadata)));
+  }),
+);
