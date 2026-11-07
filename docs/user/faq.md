@@ -35,6 +35,8 @@ Yes. Link your T3 Chat account and T3 Connect raises your limit: up to 10 machin
 
 T3 Code drives Claude through Anthropic's Agent SDK. I confirmed it's a real bug on Anthropic's side: all Agent SDK usage will drain your 5h limits faster than using Claude Code directly. To be clear: this does not affect weekly limits. We have reported it to Anthropic and are hoping for a fix soon. [My post on it](https://x.com/theo/status/2114166439813017873)
 
+Verified Claude Ultra accounts have no 5-hour limit. Claude's responses stop listing that window, and T3 Code drops the Session row after the first turn that streams them. Max and unverified Ultra accounts keep it.
+
 ## How do I use T3 Code remotely?
 
 Your agents run wherever T3 Code runs: your desktop, a server, a VPS. You connect to it from anywhere. I do this constantly. Less than 5% of my prompts run on my laptop. Run `npx t3 up` on that machine and you get really good remote support. T3 Connect is the easy path. LAN pairing and Tailscale work too, and [app.t3.codes](https://app.t3.codes) is the web client. [Remote access](./remote-access.md)

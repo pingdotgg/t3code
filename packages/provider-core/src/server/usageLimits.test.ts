@@ -60,6 +60,29 @@ describe("applyUsageLimitsUpdate", () => {
     ).toBe(published);
   });
 
+  it("drops retired windows and reports no change once they are gone", () => {
+    const next = applyUsageLimitsUpdate({
+      previous: published,
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: { windows: [], removeWindowIds: ["five_hour"] },
+    });
+    expect(next).toEqual({ checkedAt: "2026-09-03T12:00:05.000Z", windows: [weekly] });
+    expect(
+      applyUsageLimitsUpdate({
+        previous: next,
+        checkedAt: "2026-09-03T12:00:10.000Z",
+        update: { windows: [], removeWindowIds: ["five_hour"] },
+      }),
+    ).toBe(next);
+    expect(
+      applyUsageLimitsUpdate({
+        previous: undefined,
+        checkedAt,
+        update: { windows: [], removeWindowIds: ["five_hour"] },
+      }),
+    ).toBeUndefined();
+  });
+
   it("marks a first sparse update as unavailable", () => {
     expect(
       applyUsageLimitsUpdate({ previous: undefined, checkedAt, update: { windows: [weekly] } }),
