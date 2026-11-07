@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off preferSchemaOverJson:off globalConsole:off - a tiny stdio ACP agent spawned by the server; plain Node keeps it dependency-free.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalJsonInEffect:off globalConsole:off - a tiny stdio ACP agent spawned by the server; plain Node keeps it dependency-free.
 /**
  * A scripted stand-in for the `fx` CLI, registered as an Fx provider instance so the
  * server streams deterministic replies with no model. A `[[eval:<script>]]` marker in

@@ -339,7 +339,7 @@ index 81819c1d771bdeec093bb35a65a5e1e1af0cf9d7..cd0c7624b4cd8a4ebf7ed3b3390cfc76
    return map
  }
  
-+internal fun recordingInputs(manager: AudioManager): List<AudioDeviceInfo> {
++fun recordingInputs(manager: AudioManager): List<AudioDeviceInfo> {
 +  val inputs = manager.getDevices(AudioManager.GET_DEVICES_INPUTS).filter {
 +    recordingInputType(it.type) != null
 +  }
@@ -367,7 +367,7 @@ index 81819c1d771bdeec093bb35a65a5e1e1af0cf9d7..cd0c7624b4cd8a4ebf7ed3b3390cfc76
 +  else -> null
 +}
 +
-+internal fun recordingInputUid(device: AudioDeviceInfo, inputs: List<AudioDeviceInfo> = emptyList()): String {
++fun recordingInputUid(device: AudioDeviceInfo, inputs: List<AudioDeviceInfo> = emptyList()): String {
 +  val base = recordingInputBaseUid(device)
 +  val ambiguous = !isBluetoothInput(device.type) && inputs.any {
 +    it.id != device.id && recordingInputBaseUid(it) == base
@@ -401,7 +401,7 @@ index 0000000000000000000000000000000000000000..cdba9724318cf06afd21b4df6b895b38
 +import kotlinx.coroutines.withTimeout
 +
 +@RequiresApi(31)
-+internal class RecordingInputRoute(private val manager: AudioManager) : Closeable {
++class RecordingInputRoute(private val manager: AudioManager) : Closeable {
 +  private var previousMode: Int? = null
 +
 +  suspend fun select(input: AudioDeviceInfo) {
