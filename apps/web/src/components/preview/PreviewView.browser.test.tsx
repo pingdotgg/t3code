@@ -31,11 +31,13 @@ const mocks = vi.hoisted(() => ({
   pictureInPicture: false,
   showEmptyState: false,
   loading: false,
+  loadFailed: false,
   nativeServerTab: false,
   serverEpoch: null as string | null,
   servers: [] as PreviewableServer[],
   recordingTabIds: new Set<string>(),
   recordingRuntimeTabId: null as string | null,
+  stopBrowserRecording: vi.fn(async (_runtimeTabId: string) => null),
   recordVisitForThread: vi.fn(),
 }));
 
@@ -117,7 +119,15 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
             threadId: "thread-1",
             tabId: "tab-1",
             runtime: mocks.nativeServerTab ? "server" : "desktop",
-            navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
+            navStatus: mocks.loadFailed
+              ? {
+                  _tag: "LoadFailed",
+                  url: "http://example.com/",
+                  title: "",
+                  code: -102,
+                  description: "ERR_CONNECTION_REFUSED",
+                }
+              : { _tag: "Success", url: "http://example.com/", title: "Example" },
             canGoBack: false,
             canGoForward: false,
             updatedAt: "2026-07-13T00:00:00.000Z",
@@ -135,6 +145,7 @@ vi.mock(import("~/browser/browserRecording"), async (original) => ({
   ...(await original()),
   findActiveBrowserRecordingRuntimeTabId: () => mocks.recordingRuntimeTabId,
   useActiveBrowserRecordingTabIds: () => mocks.recordingTabIds,
+  stopBrowserRecording: mocks.stopBrowserRecording,
 }));
 vi.mock(import("./useDiscoveredLocalServers"), async (original) => ({
   ...(await original()),
@@ -202,6 +213,7 @@ function setup() {
   mocks.pictureInPicture = false;
   mocks.showEmptyState = false;
   mocks.loading = false;
+  mocks.loadFailed = false;
   mocks.nativeServerTab = false;
   mocks.serverEpoch = null;
   mocks.servers = [];
@@ -328,6 +340,19 @@ describe("PreviewView", () => {
     await forward();
     await expect.element(address).not.toHaveFocus();
     expect(listeners.size).toBe(0);
+  });
+
+  it("stops an active recording after the page fails to load", async () => {
+    setup();
+    mocks.loadFailed = true;
+    mocks.recordingTabIds = new Set([TEST_RUNTIME_TAB_ID]);
+    await using _screen = await render(view());
+
+    const stop = page.getByRole("button", { name: "Stop recording" });
+    await expect.element(stop).toBeEnabled();
+    await userEvent.click(stop);
+
+    expect(mocks.stopBrowserRecording).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID);
   });
 
   it("focuses the address bar each time the focus-url shortcut fires", async () => {

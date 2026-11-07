@@ -918,7 +918,7 @@ export function PreviewView({
         onSubmit={(next) => void handleSubmitUrl(next)}
         onOpenInBrowser={tabId ? handleOpenInBrowser : undefined}
         onCapture={previewBridge && tabId && !isServerTab ? handleCapture : undefined}
-        captureDisabled={!desktopOverlay || isUnreachable}
+        captureDisabled={recordingRuntimeTabId === null && (!desktopOverlay || isUnreachable)}
         recording={recordingRuntimeTabId !== null}
         onPictureInPicture={
           tabId && (isServerTab || previewBridge) ? handlePictureInPicture : undefined
