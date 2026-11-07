@@ -1,5 +1,6 @@
 import {
   AuthOrchestrationOperateScope,
+  AuthPreviewOperateScope,
   EnvironmentId,
   ProjectId,
   ThreadId,
@@ -20,6 +21,8 @@ const state = vi.hoisted(() => ({
   link: vi.fn(),
   unlink: vi.fn(),
   search: vi.fn(),
+  metadata: vi.fn(),
+  openBrowser: vi.fn(),
   choose: vi.fn(),
   openFile: vi.fn(),
   openExternal: vi.fn(),
@@ -27,10 +30,14 @@ const state = vi.hoisted(() => ({
   pullRequests: [] as ThreadPullRequestLink[],
 }));
 
-vi.mock(import("../state/use-atom-query-runner"), async (original) => ({
-  ...(await original()),
-  useAtomQueryRunner: (() => state.search) as never,
-}));
+vi.mock(import("../state/use-atom-query-runner"), async (original) => {
+  const { filesystemEnvironment } = await import("../state/filesystem");
+  return {
+    ...(await original()),
+    useAtomQueryRunner: ((query: unknown) =>
+      query === filesystemEnvironment.getMetadata ? state.metadata : state.search) as never,
+  };
+});
 vi.mock(import("../state/use-atom-command"), async (original) => {
   const { threadEnvironment } = await import("../state/threads");
   return {
@@ -47,10 +54,13 @@ vi.mock(import("../state/session"), async (original) => {
   const { useSyncExternalStore } = await import("react");
   const readEnvironmentScope = (id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
     id !== null &&
-    (scope !== AuthOrchestrationOperateScope || id !== threadRef.environmentId || state.allowed);
+    ((scope !== AuthOrchestrationOperateScope && scope !== AuthPreviewOperateScope) ||
+      id !== threadRef.environmentId ||
+      state.allowed);
   return {
     ...(await original()),
     readEnvironmentScope,
+    readPreparedConnection: (() => ({ httpBaseUrl: "https://host.test" })) as never,
     useEnvironmentScope: (id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
       useSyncExternalStore(
         (listener) => {
@@ -95,6 +105,14 @@ vi.mock(import("../localApi"), async (original) => ({
       shell: { openExternal: state.openExternal },
     }) as never,
 }));
+vi.mock(import("../browser/previewRuntime"), async (original) => ({
+  ...(await original()),
+  isPreviewAvailableFor: () => true,
+}));
+vi.mock(import("../browser/openFileInPreview"), async (original) => ({
+  ...(await original()),
+  openFileInPreview: state.openBrowser,
+}));
 vi.mock(import("@t3tools/client-runtime/change-request-links"), async (original) => ({
   ...(await original()),
   resolvePullRequestPreviewTarget: () => null,
@@ -134,6 +152,8 @@ function setup() {
   state.link.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.unlink.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.search.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
+  state.metadata.mockReset().mockResolvedValue(AsyncResult.success({ entries: [null] }));
+  state.openBrowser.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.choose.mockReset().mockResolvedValue(null);
   state.openFile.mockReset();
   state.openExternal.mockReset().mockResolvedValue(undefined);
@@ -278,3 +298,103 @@ it.each(["link-to-thread", "unlink-from-thread"])(
     );
   },
 );
+
+function deferSearch() {
+  let finish: (paths: readonly string[]) => void = () => {
+    throw new Error("Lookup not started");
+  };
+  state.search.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = (paths) =>
+          resolve(
+            AsyncResult.success({
+              entries: paths.map((path) => ({ path, kind: "file" })),
+              truncated: false,
+            }),
+          );
+      }),
+  );
+  return (paths: readonly string[]) => act(async () => finish(paths));
+}
+
+const indexedPlan = "BudgetLens/docs/plan.html";
+
+it.each([
+  [
+    "open",
+    () => [
+      expect.objectContaining({
+        input: expect.objectContaining({ cwd: `/work/${indexedPlan}:12:3` }),
+      }),
+    ],
+  ],
+  [
+    "reveal",
+    () => [
+      expect.objectContaining({
+        input: expect.objectContaining({ cwd: `/work/${indexedPlan}`, reveal: true }),
+      }),
+    ],
+  ],
+] as const)(
+  "resolves a missing slashed path through the workspace index for %s",
+  async (action, expected) => {
+    using _setup = setup();
+    state.search.mockResolvedValue(
+      AsyncResult.success({ entries: [{ path: indexedPlan, kind: "file" }], truncated: true }),
+    );
+    state.choose.mockResolvedValue(action);
+    await using screen = await renderMarkdown("[Plan](docs/plan.html:12:3)");
+    await screen.openContextMenu();
+    await vi.waitFor(() => expect(state.openEditor).toHaveBeenCalledWith(...expected()));
+  },
+);
+
+it("opens a missing slashed path in the browser at its indexed match", async () => {
+  using _setup = setup();
+  state.search.mockResolvedValue(
+    AsyncResult.success({ entries: [{ path: indexedPlan, kind: "file" }], truncated: false }),
+  );
+  state.choose.mockResolvedValue("open-in-browser");
+  await using screen = await renderMarkdown("[Plan](docs/plan.html:12:3)");
+  await screen.openContextMenu();
+  await vi.waitFor(() =>
+    expect(state.openBrowser).toHaveBeenCalledWith(
+      expect.objectContaining({ filePath: `/work/${indexedPlan}` }),
+    ),
+  );
+});
+
+it.each(["open", "open-in-browser", "reveal"])(
+  "discards a pending %s lookup after a newer panel open",
+  async (action) => {
+    using _setup = setup();
+    const finishLookup = deferSearch();
+    state.choose.mockResolvedValue(action);
+    await using screen = await renderMarkdown(
+      "[Plan](docs/plan.html:12:3) and [Other](/outside/newer.ts:8)",
+    );
+    await screen.openContextMenu();
+    expect(state.search).toHaveBeenCalledOnce();
+    await act(async () => screen.container.querySelectorAll("a")[1]!.click());
+    await finishLookup([indexedPlan]);
+
+    expect(state.openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/outside/newer.ts", 8);
+    expect(state.openEditor).not.toHaveBeenCalled();
+    expect(state.openBrowser).not.toHaveBeenCalled();
+  },
+);
+
+it("rechecks browser permission after the file lookup", async () => {
+  using _setup = setup();
+  const finishLookup = deferSearch();
+  state.choose.mockResolvedValue("open-in-browser");
+  await using screen = await renderMarkdown("[Plan](docs/plan.html:12:3)");
+  await screen.openContextMenu();
+  expect(state.search).toHaveBeenCalledOnce();
+  await setAllowed(false);
+  await finishLookup([indexedPlan]);
+
+  expect(state.openBrowser).not.toHaveBeenCalled();
+});
