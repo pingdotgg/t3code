@@ -64,6 +64,7 @@ import { recordPromptSent } from "../GitHubStarPrompt";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
+import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   beginBackgroundDraftSubmissionByRef,
@@ -256,6 +257,18 @@ interface ComposerSendInput {
     runtimeMode: RuntimeMode;
     interactionMode: ProviderInteractionMode;
   }) => Promise<AtomCommandResult<void, unknown>>;
+}
+
+// Outside the hook, so a toast that stays open holds only the text, not the send's snapshots.
+function copyFailedMessageAction(text: string) {
+  return {
+    children: "Copy message",
+    onClick: () => {
+      void writeTextToClipboard(text, "message").catch(() =>
+        toastManager.add({ type: "error", title: "Could not copy the message" }),
+      );
+    },
+  };
 }
 
 /**
@@ -1468,17 +1481,20 @@ export function useComposerSend(input: ComposerSendInput) {
         );
         clearBackgroundDraftSubmissionByRef(scopeThreadRef(environmentId, threadIdForSend));
       }
-      if (
-        !composerDraftHasUserContent(
-          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-        )
-      ) {
-        setOptimisticUserMessages((existing) => {
-          const next = existing.filter((message) => message.id !== messageIdForSend);
-          return next.length === existing.length ? existing : next;
-        });
-        // The restored draft clones its images, so the sent copies are no longer used.
-        optimisticBlobPreviews.release(optimisticMessage);
+      setOptimisticUserMessages((existing) => {
+        const next = existing.filter((message) => message.id !== messageIdForSend);
+        return next.length === existing.length ? existing : next;
+      });
+      // The restored draft clones its images, so the sent copies are no longer used.
+      optimisticBlobPreviews.release(optimisticMessage);
+      const restoresDraft = !composerDraftHasUserContent(
+        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+      );
+      const copyFailedMessage =
+        !restoresDraft && messageTextForSend
+          ? copyFailedMessageAction(messageTextForSend)
+          : undefined;
+      if (restoresDraft) {
         const retryComposerImages = restoreComposerDraft(composerDraftTarget, sendSnapshot);
         if (currentRouteThreadKeyRef.current === routeThreadKey) {
           promptRef.current = messageTextForSend;
@@ -1492,6 +1508,7 @@ export function useComposerSend(input: ComposerSendInput) {
           });
         }
       }
+      let failureToastShown = false;
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
         setThreadError(
@@ -1516,9 +1533,26 @@ export function useComposerSend(input: ComposerSendInput) {
                   void navigate({ to: "/draft/$draftId", params: { draftId } });
                 },
               },
+              // The toast is then the only copy of the failed text, so it stays until dismissed.
+              ...(copyFailedMessage
+                ? { timeout: 0, data: { secondaryActionProps: copyFailedMessage } }
+                : {}),
             }),
           );
+          failureToastShown = true;
         }
+      }
+      // An interrupted send shows no error, but its text still needs a way back.
+      if (copyFailedMessage && !failureToastShown) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Message not sent",
+            description: "Your new draft was kept.",
+            timeout: 0,
+            actionProps: copyFailedMessage,
+          }),
+        );
       }
     }
     sendInFlightRef.current = false;
