@@ -856,7 +856,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const update = Effect.fn("PreviewManager.update")(function* (
     tabId: string,
     patch: Partial<PreviewTabState>,
-    humanPoint?: { readonly x: number; readonly y: number },
   ) {
     const updatedAt = yield* currentIso;
     const next = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
@@ -872,17 +871,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     // syncTabAudible can commit after this update; emitIfCurrent prevents publishing a stale snapshot.
     if (Option.isSome(next)) {
-      if (patch.controller !== undefined && next.value.webContentsId != null) {
-        const capture = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
-        const webContentsId = next.value.webContentsId;
-        if (capture?.consumers.has("recording")) {
-          yield* attempt({ operation: "recording.controller", tabId }, () => {
-            const contents = webContents.fromId(webContentsId);
-            if (contents && !contents.isDestroyed())
-              contents.send(RECORDING_CONTROLLER_CHANNEL, patch.controller, humanPoint);
-          }).pipe(Effect.ignore);
-        }
-      }
       yield* emitIfCurrent(tabId, next.value);
     }
   });
@@ -1388,21 +1376,75 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }),
       );
     };
+    let humanInputWorker = false;
+    let humanInputDeadline = 0;
+    let listening = true;
+    const publishHumanController = Effect.fn("PreviewManager.publishHumanController")(function* (
+      controller: "human" | "none",
+      humanPoint?: { readonly x: number; readonly y: number },
+    ) {
+      const now = yield* currentMillis;
+      const updatedAt = yield* currentIso;
+      const result = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+        const current = tabs.get(tabId);
+        if (
+          !current ||
+          current.webContentsId !== wc.id ||
+          (controller === "human"
+            ? !listening || webContents.fromId(wc.id) !== wc
+            : current.controller !== "human" || humanInputDeadline > now)
+        )
+          return [undefined, tabs] as const;
+        const changed = current.controller !== controller;
+        const state = changed ? { ...current, controller, updatedAt } : current;
+        return [
+          { state, changed },
+          changed
+            ? replaceMap(tabs, (copy) => {
+                copy.set(tabId, state);
+              })
+            : tabs,
+        ] as const;
+      });
+      if (!result) return;
+      const capture = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
+      if (capture?.consumers.has("recording")) {
+        yield* attempt({ operation: "recording.controller", tabId }, () => {
+          if (!wc.isDestroyed()) wc.send(RECORDING_CONTROLLER_CHANNEL, controller, humanPoint);
+        }).pipe(Effect.ignore);
+      }
+      if (result.changed) yield* emitIfCurrent(tabId, result.state);
+    });
+    yield* Scope.addFinalizer(
+      scope,
+      Effect.gen(function* () {
+        listening = false;
+        humanInputDeadline = 0;
+        yield* publishHumanController("none");
+      }),
+    );
     const handleHumanInput = Effect.fn("PreviewManager.handleHumanInput")(function* (
       rawSignal?: unknown,
     ) {
-      yield* update(
-        tabId,
-        { controller: "human" },
+      if (!listening) return;
+      humanInputDeadline = (yield* currentMillis) + 750;
+      if (!humanInputWorker) {
+        humanInputWorker = true;
+        yield* Effect.gen(function* () {
+          let remaining: number;
+          while ((remaining = humanInputDeadline - (yield* currentMillis)) > 0) {
+            yield* Effect.sleep(remaining);
+          }
+          humanInputWorker = false;
+          yield* publishHumanController("none");
+        }).pipe(Effect.forkIn(scope));
+      }
+      yield* publishHumanController(
+        "human",
         isPreviewInputSignal(rawSignal) && rawSignal.kind === "pointer"
           ? { x: rawSignal.x, y: rawSignal.y }
           : undefined,
       );
-      yield* Effect.sleep(750);
-      const tabs = yield* SynchronizedRef.get(tabsRef);
-      if (tabs.get(tabId)?.controller === "human") {
-        yield* update(tabId, { controller: "none" });
-      }
     });
     const recordingInput = (_event: unknown, input: unknown) => {
       if (!isRecordingInput(input)) return;

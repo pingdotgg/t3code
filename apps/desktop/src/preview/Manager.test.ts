@@ -8,6 +8,7 @@ import type {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -1996,6 +1997,173 @@ describe("PreviewManager", () => {
         yield* manager.stopRecording("tab_race_b");
       }),
     ),
+  );
+
+  effectIt.effect(
+    "publishes human ownership only on transitions while retaining every recording press",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const callbacks = new Map<string, (event: unknown, input: unknown) => void>();
+          const contents = makeTestPreviewWebContents(async () => ({
+            toJPEG: () => Buffer.from("frame"),
+            getSize: () => ({ width: 800, height: 600 }),
+          }));
+          contents.ipc.on = (channel, callback) => {
+            callbacks.set(channel, (_event, input) => callback({} as Electron.IpcMainEvent, input));
+            return contents.ipc;
+          };
+          fromId.mockReturnValue(contents);
+          yield* manager.createTab("tab_human");
+          yield* manager.registerWebview("tab_human", 42);
+          yield* manager.startRecording("tab_human", {
+            showKeyPresses: true,
+            showMousePresses: true,
+          });
+          const states: PreviewManager.PreviewTabState[] = [];
+          const feedback = yield* Queue.unbounded<void>();
+          webviewSend.mockImplementation((channel) => {
+            if (channel === "preview:recording-controller") {
+              Queue.offerUnsafe(feedback, undefined);
+            }
+          });
+          yield* manager.subscribeStateChanges((_tabId, state) =>
+            Effect.sync(() => {
+              states.push(state);
+            }),
+          );
+          const inputs: DesktopPreviewRecordingInputEvent[] = [];
+          yield* manager.subscribeRecordingInputs((event) =>
+            Effect.sync(() => {
+              inputs.push(event);
+            }),
+          );
+          const presses = [
+            { kind: "pointer", x: 10, y: 20, button: 0 },
+            { kind: "pointer", x: 30, y: 40, button: 0 },
+            { kind: "key", key: "a", code: "KeyA" },
+          ];
+          for (const press of presses) {
+            callbacks.get("preview:human-input")?.(null, press);
+            yield* Queue.take(feedback);
+          }
+          expect(states.map((state) => state.controller)).toEqual(["human"]);
+          expect(
+            webviewSend.mock.calls.filter(
+              ([channel]) => channel === "preview:recording-controller",
+            ),
+          ).toEqual([
+            ["preview:recording-controller", "human", { x: 10, y: 20 }],
+            ["preview:recording-controller", "human", { x: 30, y: 40 }],
+            ["preview:recording-controller", "human", undefined],
+          ]);
+          const key = { type: "key", label: "A", held: true, width: 800 };
+          callbacks.get("preview:recording-input")?.(null, key);
+          callbacks.get("preview:recording-input")?.(null, key);
+          yield* TestClock.adjust(0);
+          expect(inputs).toEqual([
+            { tabId: "tab_human", input: key },
+            { tabId: "tab_human", input: key },
+          ]);
+          yield* TestClock.adjust(750);
+          expect(states.map((state) => state.controller)).toEqual(["human", "none"]);
+        }),
+      ),
+  );
+
+  effectIt.effect(
+    "keeps human ownership until the last input's idle deadline with one waiter",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const clock = yield* Clock.Clock;
+          const sleep = clock.sleep.bind(clock);
+          let waiters = 0;
+          using _sleep = vi.spyOn(clock, "sleep").mockImplementation((duration) =>
+            Effect.sync(() => {
+              waiters++;
+            }).pipe(
+              Effect.andThen(sleep(duration)),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  waiters--;
+                }),
+              ),
+            ),
+          );
+          let humanInput: ((event: unknown, input: unknown) => void) | undefined;
+          const contents = makeTestPreviewWebContents(async () => ({
+            toJPEG: () => Buffer.from("frame"),
+            getSize: () => ({ width: 800, height: 600 }),
+          }));
+          contents.ipc.on = (channel, callback) => {
+            if (channel === "preview:human-input")
+              humanInput = (_event, input) => callback({} as Electron.IpcMainEvent, input);
+            return contents.ipc;
+          };
+          fromId.mockReturnValue(contents);
+          yield* manager.createTab("tab_idle");
+          yield* manager.registerWebview("tab_idle", 42);
+          const controllers: string[] = [];
+          yield* manager.subscribeStateChanges((_tabId, state) =>
+            Effect.sync(() => {
+              controllers.push(state.controller);
+            }),
+          );
+          const press = () => humanInput?.(null, { kind: "key", key: "a", code: "KeyA" });
+          press();
+          yield* TestClock.adjust(500);
+          press();
+          yield* TestClock.adjust(250);
+          expect(controllers.at(-1)).toBe("human");
+          press();
+          yield* TestClock.adjust(0);
+          expect(waiters).toBe(1);
+          yield* TestClock.adjust(749);
+          expect(controllers).toEqual(["human"]);
+          yield* TestClock.adjust(1);
+          expect(controllers).toEqual(["human", "none"]);
+          expect(waiters).toBe(0);
+          press();
+          yield* TestClock.adjust(750);
+          expect(controllers).toEqual(["human", "none", "human", "none"]);
+          press();
+          yield* TestClock.adjust(500);
+          const staleInput = humanInput;
+          const replacement = makeTestPreviewWebContents(
+            async () => ({
+              toJPEG: () => Buffer.from("frame"),
+              getSize: () => ({ width: 800, height: 600 }),
+            }),
+            43,
+          );
+          replacement.ipc.on = contents.ipc.on;
+          contents.isDestroyed = () => true;
+          fromId.mockImplementation((id) => (id === 43 ? replacement : null));
+          yield* manager.registerWebview("tab_idle", 43);
+          expect(controllers.at(-1)).toBe("none");
+          expect(waiters).toBe(0);
+          const count = controllers.length;
+          staleInput?.(null, { kind: "key", key: "b", code: "KeyB" });
+          yield* TestClock.adjust(750);
+          expect(controllers).toHaveLength(count);
+          press();
+          yield* TestClock.adjust(750);
+          expect(controllers.slice(-2)).toEqual(["human", "none"]);
+          press();
+          yield* TestClock.adjust(0);
+          yield* manager.closeTab("tab_idle");
+          expect(waiters).toBe(0);
+          yield* manager.createTab("tab_idle");
+          yield* TestClock.adjust(750);
+          expect(controllers.slice(-2)).toEqual(["none", "none"]);
+          yield* manager.registerWebview("tab_idle", 43);
+          press();
+          yield* TestClock.adjust(0);
+          expect(waiters).toBe(1);
+          return () => waiters;
+        }),
+      ).pipe(Effect.tap((readWaiters) => Effect.sync(() => expect(readWaiters()).toBe(0)))),
   );
 
   effectIt.effect("gates recording decorations and isolates failed subscribers", () =>
