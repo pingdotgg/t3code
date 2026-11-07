@@ -44,6 +44,9 @@ export const isWindowsCommandNotFound = Effect.fn("isWindowsCommandNotFound")(fu
 
 export const DEFAULT_TIMEOUT_MS = 4_000;
 export const AUTH_PROBE_TIMEOUT_MS = 10_000;
+// Probe output is a version line or a small JSON document; the cap only stops
+// a misbehaving CLI from filling server memory before its timeout fires.
+const PROVIDER_COMMAND_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
 export const COMPACT_SLASH_COMMAND = {
   name: "compact",
@@ -71,6 +74,18 @@ export class ProviderCommandNotFoundError extends Schema.TaggedError<ProviderCom
 }
 
 const isProviderCommandNotFoundError = Schema.is(ProviderCommandNotFoundError);
+
+export class ProviderCommandOutputLimitError extends Schema.TaggedError<ProviderCommandOutputLimitError>()(
+  "ProviderCommandOutputLimitError",
+  {
+    binaryPath: Schema.String,
+    maxBytes: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Provider command ${this.binaryPath} wrote more than ${this.maxBytes} bytes to stdout or stderr.`;
+  }
+}
 
 export interface ProviderProbeResult {
   readonly installed: boolean;
@@ -109,15 +124,22 @@ export const spawnAndCollect = Effect.fn("snapshotProbe.spawnAndCollect")(functi
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const child = yield* spawner.spawn(command);
-  const [stdout, stderr, exitCode] = yield* Effect.all(
+  const maxBytes = PROVIDER_COMMAND_MAX_OUTPUT_BYTES;
+  const [collectedStdout, collectedStderr, exitCode] = yield* Effect.all(
     [
-      collectStreamAsString(child.stdout),
-      collectStreamAsString(child.stderr),
+      collectUint8StreamText({ stream: child.stdout, maxBytes }),
+      collectUint8StreamText({ stream: child.stderr, maxBytes }),
       child.exitCode.pipe(Effect.map(Number)),
     ],
     { concurrency: "unbounded" },
   );
+  // Fail rather than hand parsers a cut-off JSON document or version line.
+  if (collectedStdout.truncated || collectedStderr.truncated) {
+    return yield* new ProviderCommandOutputLimitError({ binaryPath, maxBytes });
+  }
 
+  const stdout = collectedStdout.text;
+  const stderr = collectedStderr.text;
   const result: CommandResult = { stdout, stderr, code: exitCode };
   if (yield* isWindowsCommandNotFound(exitCode, stderr)) {
     return yield* new ProviderCommandNotFoundError({
