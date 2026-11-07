@@ -20,8 +20,12 @@ const loaderEntry = `
     const { getGbnfGrammarForGbnfJsonSchema } =
       await fromPackage("dist/utils/gbnfJson/getGbnfGrammarForGbnfJsonSchema.js");
     return { load: async ({ path, gpu, schema }) => {
+      const { availableParallelism } = await import("node:os");
+      // Speech recognition and synthesis share the CPU during a call; llama.cpp spins every
+      // thread it owns, and oversubscribed it slows by an order of magnitude.
       const llama = await llamaCpp.getLlama({ gpu, build: "never", skipDownload: true,
-        progressLogs: false, logLevel: "error" });
+        progressLogs: false, logLevel: "error",
+        maxThreads: Math.max(1, Math.floor(availableParallelism() / 2)) });
       const model = await llama.loadModel({ modelPath: path });
       const context = await model.createContext({ contextSize: 8192 });
       // Thinking would spend the latency budget before the first decision token.
@@ -51,6 +55,9 @@ const loaderEntry = `
 `;
 
 const entry = `
+// node-llama-cpp probes each prebuilt binary in a fork that inherits execArgv; this worker's own
+// "-e" entry would run there instead of the probe script and fail every binary.
+process.execArgv.splice(0);
 let engine;
 let running = Promise.resolve();
 const controllers = new Map();

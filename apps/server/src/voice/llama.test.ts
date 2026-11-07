@@ -5,7 +5,8 @@ import { loadFrontLlama } from "./llama.ts";
 // Replies with the last message; "hang" generates until the worker aborts it.
 const fixture = `data:text/javascript,${encodeURIComponent(`
   export const load = async ({ path, gpu, schema }) => ({
-    gpu: gpu === false ? "cpu" : "fake",
+    // Forks made while loading must not inherit the worker's own entry.
+    gpu: \`\${gpu === false ? "cpu" : "fake"} \${JSON.stringify(process.execArgv)}\`,
     decide: (messages, signal) => {
       const last = messages.at(-1).content;
       if (last !== "hang") return Promise.resolve(JSON.stringify({ path, last, keys: schema.required }));
@@ -19,7 +20,7 @@ it("decides from an isolated process and keeps working after an interrupted deci
     moduleUrl: fixture,
   });
   try {
-    expect(llama.gpu).toBe("fake");
+    expect(llama.gpu).toBe("fake []");
     const interrupted = new AbortController();
     const hung = llama.decide([{ role: "user", content: "hang" }], interrupted.signal);
     const next = llama.decide([{ role: "user", content: "hi" }], new AbortController().signal);
