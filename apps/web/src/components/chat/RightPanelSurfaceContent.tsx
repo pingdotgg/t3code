@@ -33,6 +33,9 @@ const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
+const InsightsPanel = lazy(() =>
+  import("../InsightsPanel").then((module) => ({ default: module.InsightsPanel })),
+);
 
 type RightPanelTerminalProps = Omit<
   PersistentThreadTerminalPanelProps,
@@ -115,6 +118,12 @@ export function RightPanelSurfaceContent(props: {
             workspaceMutationId={props.workspaceMutationId}
             visible={visible}
           />
+        </Suspense>
+      );
+    case "insights":
+      return (
+        <Suspense fallback={null}>
+          <InsightsPanel key={scopedThreadKey(threadRef)} threadRef={threadRef} visible={visible} />
         </Suspense>
       );
     case "pull-request": {
