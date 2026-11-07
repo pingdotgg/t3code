@@ -1,3 +1,4 @@
+import { readTargets } from "./ExternalToolTargets.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -12,7 +13,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
 import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { FetchHttpClient, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   DeviceToolError,
   OrchestratorMcpFailure,
@@ -78,6 +79,9 @@ import {
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
+import * as ExternalToolBroker from "./ExternalToolBroker.ts";
+import { ExternalToolToolkit } from "./toolkits/external-tools/tools.ts";
+import * as ExternalToolHandlers from "./toolkits/external-tools/handlers.ts";
 import { requestUrl } from "../requestUrl.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
@@ -1241,6 +1245,17 @@ export const layerTools = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  Layer.unwrap(
+    readTargets.pipe(
+      Effect.map((targets) =>
+        Object.keys(targets).length === 0
+          ? Layer.empty
+          : toolkitRegistration(ExternalToolToolkit, ExternalToolHandlers.layer).pipe(
+              Layer.provide(ExternalToolBroker.layer.pipe(Layer.provide(FetchHttpClient.layer))),
+            ),
+      ),
+    ),
+  ),
 );
 
 export const layer = layerMcpTransport(layerTools);

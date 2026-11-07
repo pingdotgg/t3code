@@ -190,14 +190,19 @@ describe("CodexAdapterV2 runtime policy", () => {
     Effect.gen(function* () {
       const build = (
         runtimeMode: "approval-required" | "auto-accept-edits" | "auto" | "full-access",
+        externalToolAttestationEnabled = false,
+        interactionMode: "default" | "plan" = "default",
+        approvalPolicy?: "never",
       ) =>
         CodexAdapterV2.buildCodexTurnStartParams({
+          externalToolAttestationEnabled,
           nativeThreadId: `native-${runtimeMode}`,
           codexInput: [{ type: "text", text: "test" }],
           runtimePolicy: {
             runtimeMode,
-            interactionMode: "default",
+            interactionMode,
             cwd: null,
+            ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
           },
           modelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
@@ -220,6 +225,21 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.equal(auto.approvalsReviewer, "auto_review");
       assert.equal(auto.sandboxPolicy?.type, "workspaceWrite");
       assert.equal(fullAccess.approvalPolicy, "never");
+      assert.deepEqual((yield* build("full-access", true)).approvalPolicy, {
+        granular: {
+          mcp_elicitations: true,
+          rules: false,
+          sandbox_approval: false,
+          request_permissions: false,
+          skill_approval: false,
+        },
+      });
+      assert.equal((yield* build("full-access", true, "plan")).approvalPolicy, "never");
+      assert.equal((yield* build("approval-required", true)).approvalPolicy, "untrusted");
+      assert.equal(
+        (yield* build("approval-required", true, "default", "never")).approvalPolicy,
+        "never",
+      );
       assert.equal(fullAccess.approvalsReviewer, "user");
       assert.equal(fullAccess.sandboxPolicy?.type, "dangerFullAccess");
     }),

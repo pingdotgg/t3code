@@ -122,6 +122,11 @@ import {
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import {
+  handleHostElicitation,
+  hostVerificationApplies,
+  withHostElicitation,
+} from "./codexHostElicitation.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
@@ -762,6 +767,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly modelSelection: ModelSelection;
     readonly hasT3Mcp?: boolean;
+    readonly externalToolAttestationEnabled?: boolean;
     readonly browserToolsAvailable?: boolean;
     readonly deviceToolsAvailable?: boolean;
     /** ChatGPT token sharing does not accept service tiers. */
@@ -769,10 +775,16 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
-    const approvalPolicy =
+    const requestedApprovalPolicy =
       input.runtimePolicy.approvalPolicy === undefined
         ? runtimeModeDefaults.approvalPolicy
         : yield* decodeTurnApprovalPolicy(input.runtimePolicy.approvalPolicy);
+    const approvalPolicy = hostVerificationApplies(
+      input.externalToolAttestationEnabled,
+      input.runtimePolicy,
+    )
+      ? withHostElicitation(requestedApprovalPolicy ?? runtimeModeDefaults.approvalPolicy, true)
+      : requestedApprovalPolicy;
     const sandboxPolicy =
       input.runtimePolicy.sandboxPolicy === undefined
         ? runtimeModeDefaults.sandboxPolicy
@@ -5517,6 +5529,29 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerRequest("mcpServer/elicitation/request", (payload) =>
           Effect.gen(function* () {
+            const hostReply = yield* handleHostElicitation(
+              payload,
+              (turnId) =>
+                Effect.gen(function* () {
+                  const context = yield* awaitActiveTurn(turnId);
+                  if (context === undefined) return undefined;
+                  const config = yield* mcpSessions.read(context.input.threadId);
+                  if (config === undefined) return undefined;
+                  return {
+                    nativeThreadId: yield* getNativeThreadId(context.providerThread),
+                    providerSessionId: config.providerSessionId,
+                    nativeChild: context.subagent !== null,
+                    enabled: hostVerificationApplies(
+                      config.externalToolAttestationEnabled,
+                      context.input.runtimePolicy,
+                    ),
+                    approvalPolicy: context.input.runtimePolicy.approvalPolicy,
+                    fullAccess: context.input.runtimePolicy.runtimeMode === "full-access",
+                  };
+                }).pipe(Effect.orElseSucceed(() => undefined)),
+              mcpSessions.attestHostInvocation,
+            );
+            if (hostReply !== undefined) return hostReply;
             if (toMcpElicitationResponse(payload, "accept").action !== "accept") {
               yield* Effect.logWarning("Declined an unsupported MCP elicitation.", {
                 serverName: payload.serverName,
@@ -6790,6 +6825,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               runtimePolicy: turnInput.runtimePolicy,
               modelSelection: turnInput.modelSelection,
               hasT3Mcp: mcpSession !== undefined,
+              externalToolAttestationEnabled: mcpSession?.externalToolAttestationEnabled === true,
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,

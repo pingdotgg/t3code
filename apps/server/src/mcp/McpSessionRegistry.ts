@@ -20,6 +20,7 @@ export interface McpCredentialRequest {
   readonly browserToolsAvailable?: boolean;
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
   readonly subagent?: boolean;
+  readonly externalToolAttestationEnabled?: boolean;
 }
 
 export interface McpIssuedCredential {
@@ -109,6 +110,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerSessionId,
           providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
           subagent: request.subagent === true,
+          externalToolAttestationEnabled: request.externalToolAttestationEnabled === true,
         },
         client: undefined,
         capabilities: new Set<McpInvocationContext.McpCapability>([
@@ -132,6 +134,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerInstanceId: scope.thread.providerInstanceId,
           endpoint,
           authorizationHeader: `Bearer ${rawToken}`,
+          externalToolAttestationEnabled: request.externalToolAttestationEnabled === true,
           browserToolsAvailable: scope.capabilities.has("preview"),
           capabilities: scope.capabilities,
         },

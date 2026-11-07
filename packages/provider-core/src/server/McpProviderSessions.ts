@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Pure synchronous hashing keeps page matching bounded without a runtime dependency.
+// @effect-diagnostics nodeBuiltinImport:off -- Host challenges and page hashes use Node crypto outside provider prompts.
 import * as NodeCrypto from "node:crypto";
 import type { ThreadId } from "@t3tools/contracts";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
@@ -33,6 +33,16 @@ export class McpProviderSessions extends Context.Service<
     readonly set: (config: McpProviderSessionConfig) => Effect.Effect<void>;
     readonly read: (threadId: ThreadId) => Effect.Effect<McpProviderSessionConfig | undefined>;
     readonly clear: (threadId: ThreadId) => Effect.Effect<void>;
+    readonly beginHostInvocation: (providerSessionId: string) => Effect.Effect<string | undefined>;
+    readonly attestHostInvocation: (
+      challengeId: string,
+      providerSessionId: string,
+      subagent: boolean,
+    ) => Effect.Effect<boolean>;
+    readonly takeHostInvocation: (
+      challengeId: string,
+      providerSessionId: string,
+    ) => Effect.Effect<boolean | undefined>;
     readonly recordHtmlRender: (
       threadId: ThreadId,
       input: { readonly html: string; readonly title: string; readonly height: number },
@@ -79,8 +89,50 @@ const matchingPageIndex = (
 
 const make = Effect.gen(function* () {
   const sessions = yield* Ref.make(new Map<ThreadId, McpProviderSessionConfig>());
+  const hostInvocations = yield* Ref.make(
+    new Map<string, { providerSessionId: string; subagent?: boolean }>(),
+  );
   const htmlRenders = yield* Ref.make(new Map<ThreadId, ReadonlyArray<KeptHtmlRender>>());
   return McpProviderSessions.of({
+    beginHostInvocation: Effect.fn("McpProviderSessions.beginHostInvocation")(
+      function* (providerSessionId) {
+        if (
+          ![...(yield* Ref.get(sessions)).values()].some(
+            (config) => config.providerSessionId === providerSessionId,
+          )
+        )
+          return undefined;
+        const challengeId = NodeCrypto.randomUUID();
+        yield* Ref.update(hostInvocations, (current) =>
+          new Map(current).set(challengeId, { providerSessionId }),
+        );
+        return challengeId;
+      },
+    ),
+    attestHostInvocation: Effect.fn("McpProviderSessions.attestHostInvocation")(
+      function (challengeId, providerSessionId, subagent) {
+        return Ref.modify(hostInvocations, (current) => {
+          const pending = current.get(challengeId);
+          if (pending?.providerSessionId !== providerSessionId || pending.subagent !== undefined)
+            return [false, current];
+          return [true, new Map(current).set(challengeId, { providerSessionId, subagent })];
+        });
+      },
+    ),
+    takeHostInvocation: Effect.fn("McpProviderSessions.takeHostInvocation")(
+      function* (challengeId, providerSessionId) {
+        const alive = [...(yield* Ref.get(sessions)).values()].some(
+          (config) => config.providerSessionId === providerSessionId,
+        );
+        return yield* Ref.modify(hostInvocations, (current) => {
+          const pending = current.get(challengeId);
+          if (pending?.providerSessionId !== providerSessionId) return [undefined, current];
+          const next = new Map(current);
+          next.delete(challengeId);
+          return [alive ? pending.subagent : undefined, next];
+        });
+      },
+    ),
     set: Effect.fn("McpProviderSessions.set")(function* (config) {
       const current = yield* Ref.get(sessions);
       if (current.get(config.threadId)?.providerSessionId !== config.providerSessionId) {

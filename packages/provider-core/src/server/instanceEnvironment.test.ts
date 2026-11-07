@@ -109,3 +109,20 @@ describe("mergeProviderInstanceEnvironment", () => {
     }),
   );
 });
+
+it.effect("keeps host external target configuration out of provider environments", () =>
+  Effect.gen(function* () {
+    const base = {
+      PATH: "/bin",
+      T3CODE_EXTERNAL_TOOL_TARGETS: "host-only",
+      t3code_external_tool_targets: "also-host",
+    };
+    for (const overrides of [
+      undefined,
+      [{ name: "T3CODE_EXTERNAL_TOOL_TARGETS", value: "override", sensitive: false }],
+    ]) {
+      expect(yield* mergeProviderInstanceEnvironment(overrides, base)).toEqual({ PATH: "/bin" });
+      expect(base.T3CODE_EXTERNAL_TOOL_TARGETS).toBe("host-only");
+    }
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
