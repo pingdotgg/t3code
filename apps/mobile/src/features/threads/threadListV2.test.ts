@@ -1870,4 +1870,32 @@ describe("queued messages keep a settled thread active", () => {
     expect(layout.workingShelfHeaderIndex).toBe(1);
     expect(layout.settledCount).toBe(1);
   });
+
+  it("keeps a queued thread with an attention request in Active", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("queued-approval"),
+          title: "Queued with approval",
+          hasPendingApprovals: true,
+        }),
+        makeThread({ id: ThreadId.make("ready-queued"), title: "Ready with outbox" }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      queuedThreadKeys: new Set([
+        `${environmentId}:queued-approval`,
+        `${environmentId}:ready-queued`,
+      ]),
+      workingShelfEnabled: true,
+      workingShelfExpanded: true,
+    });
+    expect(layout.items.map((item) => [item.thread.id, item.variant] as const)).toEqual([
+      ["queued-approval", "card"],
+      ["ready-queued", "card"],
+    ]);
+    expect(layout.workingCount).toBe(1);
+    expect(layout.workingShelfHeaderIndex).toBe(1);
+  });
 });

@@ -757,13 +757,19 @@ export function buildThreadListV2Items(input: {
     }
     const hasQueuedMessages =
       queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) === true;
+    // Match isThreadWorking: attention stays in Active so a collapsed Working shelf
+    // cannot hide an approval, question, or subagent request behind a queued send.
+    const hasAttentionRequest =
+      thread.hasPendingApprovals ||
+      thread.hasPendingUserInput ||
+      thread.pendingSubagentRequest != null;
     if (supportsSettlement && thread.settledOverride === "settled" && !hasQueuedMessages) {
       settled.push(thread);
     } else if (thread.pinnedAt != null) {
       pinned.push(thread);
     } else if (
       workingShelfEnabled &&
-      (hasQueuedMessages || (input.isWorking ?? isThreadWorking)(thread))
+      ((hasQueuedMessages && !hasAttentionRequest) || (input.isWorking ?? isThreadWorking)(thread))
     ) {
       working.push(thread);
     } else {
