@@ -71,6 +71,7 @@ import {
   type ComposerTrigger,
   type ComposerSubmissionIntent,
   collapseExpandedComposerCursor,
+  composerBuiltInSlashCommands,
   composerRequiresModifier,
   composerSubmissionIntentForKey,
   composerStateAtPromptEnd,
@@ -1145,6 +1146,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerTerminalContexts.length === 0 &&
     composerPreviewAnnotations.length === 0 &&
     composerReviewComments.length === 0;
+  const composerSlashCommands = [
+    ...composerBuiltInSlashCommands({
+      planModeUiEnabled,
+      sideChatAvailable: props.sideChatAvailable === true,
+      freshSessionAvailable: props.onFreshSession !== undefined,
+    }),
+    ...selectedProviderSlashCommands,
+  ];
   const linkedEnvironments = useLinkedEnvironments(environmentId);
   const {
     items: composerMenuItems,
@@ -3512,6 +3521,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     buildContextClipboardFragment={buildContextClipboardFragmentStable}
                     importContextFragment={importContextFragmentStable}
                     skills={selectedProviderSkills}
+                    slashCommands={composerSlashCommands}
                     className={cn(showMobilePendingAnswerActions && "max-sm:pb-12")}
                     onChange={onPromptChangeStable}
                     onCommandKeyDown={onComposerCommandKeyStable}

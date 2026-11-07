@@ -54,6 +54,7 @@ import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
   expandCollapsedComposerCursor,
+  type NamedSlashCommand,
   pastedPathQueryLength,
 } from "~/composer-logic";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -63,6 +64,10 @@ import {
   ComposerMarkdownSourceExtension,
 } from "~/composer-markdown-source";
 import { MARKDOWN_SOURCE_MARK } from "~/composer-rich-text";
+import {
+  ComposerSlashCommandExtension,
+  setComposerSlashCommands,
+} from "./composerSlashCommandDecoration";
 import {
   collectComposerPromptInlineTokens,
   selectionTouchesMentionBoundary,
@@ -159,6 +164,7 @@ export interface ComposerPromptEditorProps {
     | ((fragment: ComposerContextClipboardFragment) => ReadonlyMap<string, string>)
     | undefined;
   skills: ReadonlyArray<ServerProviderSkill>;
+  slashCommands?: ReadonlyArray<NamedSlashCommand> | undefined;
   disabled: boolean;
   placeholder: string;
   ariaLabel?: string | undefined;
@@ -772,6 +778,7 @@ function createComposerExtensions(richText: boolean) {
     ComposerCitationExtension,
     ComposerContextReferenceExtension,
     ComposerChipSelectionExtension,
+    ComposerSlashCommandExtension,
     ...(richText
       ? [
           ComposerMarkdownSourceExtension,
@@ -849,6 +856,7 @@ function createComposerExtensions(richText: boolean) {
   ];
 }
 
+const NO_SLASH_COMMANDS: ReadonlyArray<NamedSlashCommand> = [];
 const RICH_TEXT_EXTENSIONS = createComposerExtensions(true);
 const PLAIN_TEXT_EXTENSIONS = createComposerExtensions(false);
 
@@ -867,6 +875,7 @@ function ComposerPromptEditorTiptapInner(
     buildContextClipboardFragment,
     importContextFragment,
     skills,
+    slashCommands = NO_SLASH_COMMANDS,
     disabled,
     placeholder,
     ariaLabel,
@@ -1571,6 +1580,11 @@ function ComposerPromptEditorTiptapInner(
     );
     if (replacements.length > 0) replaceSkillChips(editor, replacements);
   }, [editor, literalText, skills]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands the recognized commands to the ProseMirror decoration plugin before the editor paints
+  useLayoutEffect(() => {
+    if (editor) setComposerSlashCommands(editor, literalText ? NO_SLASH_COMMANDS : slashCommands);
+  }, [editor, literalText, slashCommands]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores ProseMirror focus and caret scroll when the keyed editor remounts, capturing focus on teardown
   useLayoutEffect(() => {
