@@ -35,6 +35,7 @@ const state = vi.hoisted(() => ({
   localRefs: null as unknown as ResultAtom<VcsListRefsResult>,
   remoteRefs: null as unknown as ResultAtom<VcsListRefsResult>,
   commits: null as unknown as ResultAtom<ReviewBranchCommitsResult>,
+  viewerFiles: [] as Array<ReadonlyArray<{ fileDiff: object; collapsed: boolean }>>,
 }));
 
 vi.mock("~/state/server", () => ({
@@ -85,6 +86,16 @@ vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => {
 vi.mock("~/editorPreferences", () => ({ useOpenInPreferredEditor: () => async () => {} }));
 vi.mock("~/fileContextMenu", () => ({ useFileContextMenuHandler: () => () => {} }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => async () => {} }));
+vi.mock("./diffs/AnnotatableCodeView", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./diffs/AnnotatableCodeView")>();
+  return {
+    ...original,
+    AnnotatableCodeView: (props: Parameters<typeof original.AnnotatableCodeView>[0]) => {
+      state.viewerFiles.push(props.files);
+      return <original.AnnotatableCodeView {...props} />;
+    },
+  };
+});
 vi.mock("./diffs/DiffCommentAnnotation", () => ({ DiffCommentAnnotation: () => null }));
 vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
@@ -95,7 +106,20 @@ import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
 const cwd = "/project-worktree";
 const errorMessage = "Could not find a common commit between 'origin/orphan' and HEAD.";
 
-function preview(): ReviewDiffPreviewResult {
+const valuesPatch = [
+  "diff --git a/src/values.ts b/src/values.ts",
+  "index 1111111..2222222 100644",
+  "--- a/src/values.ts",
+  "+++ b/src/values.ts",
+  "@@ -40,3 +40,3 @@",
+  " export const line40 = 40;",
+  "-export const line41 = 41;",
+  "+export const line41 = 410;",
+  " export const line42 = 42;",
+  "",
+].join("\n");
+
+function preview(diff = ""): ReviewDiffPreviewResult {
   return {
     cwd,
     generatedAt: DateTime.makeUnsafe("2026-10-30T00:00:00Z"),
@@ -106,17 +130,17 @@ function preview(): ReviewDiffPreviewResult {
         title: "Changes",
         baseRef: "main",
         headRef: "dev",
-        diff: "",
-        diffHash: "empty",
+        diff,
+        diffHash: diff === "" ? "empty" : "values",
         truncated: false,
-        patchesDeferred: true,
+        patchesDeferred: diff === "",
         files: [],
       },
     ],
   };
 }
 
-function setup(failedBaseRef: string | null) {
+function setup({ failedBaseRef, diff = "" }: { failedBaseRef?: string | null; diff?: string }) {
   const reset = () => {
     useDiffPanelStore.setState({
       byThreadKey: {},
@@ -143,9 +167,18 @@ function setup(failedBaseRef: string | null) {
     worktreePath: cwd,
   });
   state.previews.clear();
-  state.previews.set(null, Atom.make(AsyncResult.success(preview())));
-  state.previews.set("main", Atom.make(AsyncResult.success(preview())));
-  state.previews.set(failedBaseRef, Atom.make(AsyncResult.fail(new Error(errorMessage))));
+  state.previews.set(
+    null,
+    Atom.make(() => AsyncResult.success(preview(diff))),
+  );
+  state.previews.set(
+    "main",
+    Atom.make(() => AsyncResult.success(preview(diff))),
+  );
+  if (failedBaseRef !== undefined) {
+    state.previews.set(failedBaseRef, Atom.make(AsyncResult.fail(new Error(errorMessage))));
+  }
+  state.viewerFiles = [];
   state.config = Atom.make(null);
   state.status = Atom.make(
     AsyncResult.success({
@@ -178,7 +211,7 @@ function setup(failedBaseRef: string | null) {
   state.localRefs = Atom.make(AsyncResult.success(refs(["dev", "main"], false)));
   state.remoteRefs = Atom.make(AsyncResult.success(refs(["origin/orphan"], true)));
   state.commits = Atom.make(AsyncResult.success({ commits: [], truncated: false }));
-  useDiffPanelStore.getState().selectBranchBaseRef(state.threadRef, failedBaseRef);
+  useDiffPanelStore.getState().selectBranchBaseRef(state.threadRef, failedBaseRef ?? null);
   const registry = AtomRegistry.make();
   return {
     registry,
@@ -207,7 +240,7 @@ it.each([
 ])(
   "recovers from $name without leaving the diff panel",
   async ({ failedBaseRef, recovery, baseRef }) => {
-    using context = setup(failedBaseRef);
+    using context = setup({ failedBaseRef });
     await using screen = await render(
       <RegistryContext.Provider value={context.registry}>
         <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
@@ -229,10 +262,29 @@ it.each([
   },
 );
 
+it("hands the viewer the same parsed file when it expands after a refetch", async () => {
+  using context = setup({ diff: valuesPatch });
+  state.diffFilesCollapsed = true;
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  await vi.waitFor(() => expect(state.viewerFiles.at(-1)?.[0]?.collapsed).toBe(true));
+  const collapsedFile = state.viewerFiles.at(-1)![0]!.fileDiff;
+  // A refetch returns the same patch in a new result.
+  context.registry.refresh(state.previews.get(null)!);
+  await userEvent.click(screen.getByRole("button", { name: "Expand all files" }));
+  await vi.waitFor(() => expect(state.viewerFiles.at(-1)?.[0]?.collapsed).toBe(false));
+  // Pierre loads unmodified lines into the parsed file it was given; a re-parse would drop them.
+  expect(state.viewerFiles.at(-1)![0]!.fileDiff).toBe(collapsedFile);
+});
 it.each([false, true])(
   "expands an unloaded file on the first click with default collapse %s",
   async (collapsed) => {
-    using context = setup("origin/orphan");
+    using context = setup({ failedBaseRef: "origin/orphan" });
     state.diffFilesCollapsed = collapsed;
     const path = `pending-${collapsed}.txt`;
     const metadata = preview();
@@ -264,6 +316,13 @@ it.each([false, true])(
     const loadedToggle = screen.getByRole("button", { name: `Collapse ${path}`, exact: true });
     await expect.element(loadedToggle).toHaveAttribute("aria-expanded", "true");
     await expect.element(screen.getByText("after", { exact: true })).toBeVisible();
+    const loadedFile = state.viewerFiles.at(-1)![0]!.fileDiff;
+    const loaded = context.registry.get(context.patch);
+    if (!AsyncResult.isSuccess(loaded)) throw new Error("Expected a loaded patch");
+    const renderCount = state.viewerFiles.length;
+    act(() => context.registry.set(context.patch, AsyncResult.success({ ...loaded.value })));
+    await vi.waitFor(() => expect(state.viewerFiles.length).toBeGreaterThan(renderCount));
+    await vi.waitFor(() => expect(state.viewerFiles.at(-1)![0]!.fileDiff).toBe(loadedFile));
     await userEvent.click(loadedToggle);
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
   },

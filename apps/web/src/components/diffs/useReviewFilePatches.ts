@@ -223,8 +223,14 @@ type ReviewPatchTarget = Parameters<typeof reviewEnvironment.diffFilePatch>[0];
 
 const parsedPatchAtom = Atom.family((key: string) => {
   const [theme, target] = JSON.parse(key) as ["light" | "dark", ReviewPatchTarget];
+  let cached: { key: string; patch: RenderablePatch | null } | undefined;
   return Atom.map(reviewEnvironment.diffFilePatch(target), (result) =>
     AsyncResult.map(result, (source) => {
+      const contentKey = JSON.stringify([
+        source.diff,
+        source.files?.map(({ path, previousPath }) => [path, previousPath]),
+      ]);
+      if (cached?.key === contentKey) return { source, patch: cached.patch };
       let patch = getRenderablePatch(source.diff, `diff-panel:${theme}`, {
         compactPartialHunkOffsets: true,
       });
@@ -235,6 +241,7 @@ const parsedPatchAtom = Atom.family((key: string) => {
         else delete file.prevName;
         patch = { ...patch, files: [file] };
       }
+      cached = { key: contentKey, patch };
       return { source, patch };
     }),
   );
