@@ -4,6 +4,11 @@ import * as Schema from "effect/Schema";
 import * as V1 from "./_generated/schema-v1.gen.ts";
 import * as V2 from "./schema.ts";
 
+const decodeElicitationSchemas = [
+  Schema.decodeUnknownSync(V2.ElicitationSchema),
+  Schema.decodeUnknownSync(V1.ElicitationSchema),
+];
+
 describe("pinned ACP wire schemas", () => {
   it("validates known content variants without accepting malformed ones as future content", () => {
     const accepts = Schema.is(V2.ContentBlock);
@@ -21,5 +26,21 @@ describe("pinned ACP wire schemas", () => {
     const isAvailableCommand2 = Schema.is(V2.AvailableCommand);
 
     expect(isAvailableCommand2({ ...command, input: { type: "text", hint: "Task" } })).toBe(true);
+  });
+
+  it("decodes titled multi-select elicitation properties", () => {
+    const options = [
+      { const: "Claude", title: "Claude" },
+      { const: "Codex", title: "Codex" },
+    ];
+    const requestedSchema = {
+      type: "object",
+      properties: { q1: { type: "array", title: "Which?", items: { anyOf: options } } },
+    };
+
+    for (const decodeElicitationSchema of decodeElicitationSchemas) {
+      const decoded = decodeElicitationSchema(requestedSchema);
+      expect(decoded.properties?.q1).toMatchObject({ items: { anyOf: options } });
+    }
   });
 });
