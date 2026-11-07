@@ -87,6 +87,13 @@ export function WorkspaceToolbar(props: {
     tab.searchMode === "resting"
       ? enterSearch()
       : workspace.dispatch({ type: "search", tab: selectedTab });
+  // List navigation can cancel Settings search without UIKit's cancel control.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the native search field when settings search becomes resting
+  useEffect(() => {
+    if (selectedTab !== "settings" || tab.searchMode !== "resting") return;
+    searchRef.current?.setText("");
+    if (NATIVE_LIQUID_GLASS_SUPPORTED) searchRef.current?.setActive(false);
+  }, [selectedTab, tab.searchMode]);
   useHardwareKeyboardCommand("focusSearch", focusSearch);
   // The sidebar remains visible while its detail owns navigation focus.
   const searchHostVisible = focused || primaryColumn?.presented === true;

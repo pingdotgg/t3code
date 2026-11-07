@@ -6,6 +6,7 @@ import { ListRow } from "../../../components/ui/ListRow";
 import { ListRowLayout } from "../../../components/ui/ListRowLayout";
 import { RowPressable } from "../../../components/ui/RowPressable";
 import { cn } from "../../../lib/cn";
+import { useWorkspaceTabs } from "../../layout/workspace/WorkspaceTabsContext";
 import type { SettingsLegalDocumentTarget, SettingsPageTarget } from "./settings-page-targets";
 import { SettingsSidebarContext } from "./SettingsSection";
 import { openSettings } from "../settings-navigation";
@@ -21,6 +22,7 @@ export function SettingsRow(props: {
   readonly onPress?: () => void;
 }) {
   const navigation = useNavigation();
+  const workspace = useWorkspaceTabs();
   const sidebar = use(SettingsSidebarContext);
   // The Settings list opens pages in place of the detail column; a page's own rows push below.
   const inList = ["Home", "Settings"].includes(useRoute().name);
@@ -34,11 +36,16 @@ export function SettingsRow(props: {
     detail: valueBelow ? undefined : props.value,
     disabled: props.disabled,
   };
+  const clearListSearch = () => workspace?.dispatch({ type: "cancel", tab: "settings" });
   const onPress = () => {
     if (props.target) {
-      if (inList) openSettings(navigation, props.target);
-      else navigation.navigate(props.target);
+      if (inList) {
+        // Leaving the list for a page; clear search so Back shows the full index.
+        clearListSearch();
+        openSettings(navigation, props.target);
+      } else navigation.navigate(props.target);
     } else if (props.fullScreenTarget) {
+      if (inList) clearListSearch();
       navigation.navigate(props.fullScreenTarget);
     } else {
       props.onPress?.();
