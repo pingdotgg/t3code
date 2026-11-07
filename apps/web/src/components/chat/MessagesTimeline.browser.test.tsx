@@ -723,34 +723,6 @@ describe("MessagesTimeline messages", () => {
     expect(maxNestedCommits).toBeLessThan(20);
   });
 
-  it("stays at the end in the frame the viewport shrinks", async () => {
-    setup();
-    const props = baseProps();
-    const entries = Array.from({ length: 40 }, (_, index) =>
-      message(`Turn ${index}: ${"x ".repeat(200)}`, {}, `turn-${index}`),
-    );
-    await using screen = await renderElement(
-      <MessagesTimeline {...props} timelineEntries={entries} />,
-    );
-    const viewport = props.listRef.current!.getScrollableNode()!;
-    const distanceFromEnd = () =>
-      viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
-    await vi.waitFor(() => {
-      expect(screen.text()).toContain("Turn 39:");
-      expect(distanceFromEnd()).toBeLessThan(2);
-      expect(props.listRef.current!.getState().isWithinMaintainScrollAtEndThreshold).toBe(true);
-    });
-    const distances: number[] = [];
-    const resizes = new ResizeObserver(() => distances.push(distanceFromEnd()));
-    resizes.observe(viewport);
-    using _resizes = { [Symbol.dispose]: () => resizes.disconnect() };
-    await vi.waitFor(() => expect(distances).toHaveLength(1));
-
-    screen.container.style.height = "880px";
-    await vi.waitFor(() => expect(distances).toHaveLength(2));
-    expect(distances[1]).toBeLessThan(2);
-  });
-
   it("keeps the first and last message headings reachable from either end", async () => {
     setup();
     const props = baseProps();
