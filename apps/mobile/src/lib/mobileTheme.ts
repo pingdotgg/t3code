@@ -323,6 +323,27 @@ export function themeColorWithAlpha(color: string, alpha: number): string {
   return rgb ? `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha})` : color;
 }
 
+/** Match the opaque color over its surface while leaving at least half the selection visible. */
+export function seeThroughThemeColor(color: string, surface: string): string {
+  if (color.length !== 7 || surface.length !== 7) return color;
+  const target = rgbChannels(color);
+  const behind = rgbChannels(surface);
+  if (!target || !behind) return color;
+  // The least opacity that still reaches each channel exactly from the surface behind it.
+  const exact = Math.max(
+    ...target.map((channel, index) => {
+      const base = behind[index]!;
+      if (channel === base) return 0;
+      return channel > base ? (channel - base) / (255 - base) : (base - channel) / base;
+    }),
+  );
+  const alpha = Number(Math.min(0.5, Math.max(0.25, exact)).toFixed(3));
+  const channels = target.map((channel, index) =>
+    Math.max(0, Math.min(255, Math.round((channel - behind[index]! * (1 - alpha)) / alpha))),
+  );
+  return `rgba(${channels[0]}, ${channels[1]}, ${channels[2]}, ${alpha})`;
+}
+
 export function createMobileThemeVariables(
   colors: ThemeColors,
   appearance: MobileThemeAppearance,

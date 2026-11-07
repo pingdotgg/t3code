@@ -21,6 +21,7 @@ import {
   flattenThemeColor,
   getMobileThemeVariables,
   resolveMobileThemeIds,
+  seeThroughThemeColor,
   themeColorWithAlpha,
   themeColorToNativeColor,
 } from "./mobileTheme";
@@ -57,6 +58,33 @@ function compositeOver(overlay: string, background: string): string {
 }
 
 describe("mobile themes", () => {
+  it.each(MOBILE_THEME_IDS)("preserves %s code colors with a translucent background", (themeId) => {
+    for (const appearance of ["light", "dark"] as const) {
+      const theme = getMobileThemeVariables(themeId, appearance);
+      const color = theme["--color-md-code-bg"];
+      const surface = theme["--color-screen"];
+      const translucent = seeThroughThemeColor(color, surface);
+      const alpha = Number(/, ([\d.]+)\)$/.exec(translucent)?.[1]);
+      expect(alpha).toBeGreaterThanOrEqual(0.25);
+      expect(alpha).toBeLessThanOrEqual(0.5);
+      const composite = compositeOver(translucent, surface);
+      for (const offset of [1, 3, 5]) {
+        const difference = Math.abs(
+          Number.parseInt(composite.slice(offset, offset + 2), 16) -
+            Number.parseInt(color.slice(offset, offset + 2), 16),
+        );
+        expect(difference).toBeLessThanOrEqual(2);
+      }
+    }
+  });
+
+  it("leaves unsupported color formats unchanged", () => {
+    expect(seeThroughThemeColor("#2020200f", "#fcfcfc")).toBe("#2020200f");
+    expect(seeThroughThemeColor("#202020", "#fcfcfc80")).toBe("#202020");
+    expect(seeThroughThemeColor("rgba(10, 20, 30, 0.5)", "#ffffff")).toBe("rgba(10, 20, 30, 0.5)");
+    expect(seeThroughThemeColor("#123456", "transparent")).toBe("#123456");
+  });
+
   it("declares every runtime theme variable in the static stylesheet", () => {
     const generatedVariables = createMobileThemeVariables(T3_CHAT_THEME.colors, "light");
     expect(Object.keys(readDefaultMobileThemeVariables("light")).sort()).toEqual(
