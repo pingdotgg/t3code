@@ -185,12 +185,13 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
         Effect.flatMap(decodeSchemaVersion),
         Effect.map(([row]) => row.value),
       );
+      // BLOB affinity still stores TEXT rows; cast in SQL so ciphertext bytes skip a UTF-8 decode.
       const raw =
         schemaVersion >= 15
-          ? yield* sql`select host_key, name, value, encrypted_value, path,
+          ? yield* sql`select host_key, name, value, cast(encrypted_value as blob) as encrypted_value, path,
                 expires_utc / 1000000 as expires_seconds, is_secure, is_httponly,
                 samesite, top_frame_site_key from cookies`
-          : yield* sql`select host_key, name, value, encrypted_value, path,
+          : yield* sql`select host_key, name, value, cast(encrypted_value as blob) as encrypted_value, path,
                 expires_utc / 1000000 as expires_seconds, is_secure, is_httponly,
                 samesite, '' as top_frame_site_key from cookies`;
       return { rows: yield* decodeCookieRows(raw), schemaVersion };
