@@ -23,6 +23,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -540,6 +541,8 @@ const makeLaptop = (
   >,
   /** The laptop's links from before a restart, which keep their sessions there. */
   kept?: Context.Context<Layer.Success<ReturnType<typeof layerLinkingEnvironment>>>,
+  /** Runs as each follow attempt here starts, on its follower's fiber. */
+  beforeFollow: Effect.Effect<void> = Effect.void,
 ) =>
   Effect.gen(function* () {
     const linking = kept ?? (yield* layerLinkingEnvironment(laptop).pipe(Layer.build));
@@ -568,6 +571,19 @@ const makeLaptop = (
       Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
       Layer.provideMerge(
         RemoteDelegation.layer.pipe(
+          Layer.provide(
+            Layer.effect(
+              ThreadManagement.ThreadManagementService,
+              Effect.gen(function* () {
+                const threads = yield* ThreadManagement.ThreadManagementService;
+                return {
+                  ...threads,
+                  getThreadEventSequence: (threadId: ThreadId) =>
+                    beforeFollow.pipe(Effect.andThen(threads.getThreadEventSequence(threadId))),
+                };
+              }),
+            ),
+          ),
           Layer.provideMerge(PeerForwarding.layer),
           Layer.provide(
             Layer.mock(ProjectService.ProjectService)({
@@ -1636,6 +1652,104 @@ const steppedRetries = Effect.gen(function* () {
   );
   return { failed, retry, schedule };
 });
+
+/**
+ * Fails each follow attempt here with a defect, `times` times. Returns, once
+ * the first has, whether its follower retried rather than ending.
+ */
+const defectiveFollows = (times: number) =>
+  Effect.gen(function* () {
+    const follower = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
+    const defects = yield* Ref.make(0);
+    const beforeFollow = Effect.withFiber((fiber) => Deferred.succeed(follower, fiber)).pipe(
+      Effect.andThen(Ref.getAndUpdate(defects, (count) => count + 1)),
+      Effect.flatMap((count) =>
+        count < times ? Effect.die(new Error("A follow attempt hit a bug.")) : Effect.void,
+      ),
+    );
+    const retriedOrEnded = (retries: Effect.Success<typeof steppedRetries>) =>
+      Queue.take(retries.failed).pipe(
+        Effect.as("retried" as const),
+        Effect.raceFirst(
+          Deferred.await(follower).pipe(
+            Effect.flatMap(Fiber.await),
+            Effect.as("follower ended" as const),
+          ),
+        ),
+      );
+    return { beforeFollow, retriedOrEnded };
+  });
+
+it.effect("a follower that hits a defect retries instead of dropping the task", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const retries = yield* steppedRetries;
+      const defects = yield* defectiveFollows(1);
+      const a = yield* makeLaptop(database, offers, undefined, defects.beforeFollow).pipe(
+        Effect.provideService(RemoteDelegation.FollowRetrySchedule, retries.schedule),
+      );
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+
+      const delegated = yield* delegateToBox(a);
+      expect(yield* defects.retriedOrEnded(retries)).toBe("retried");
+
+      yield* Ref.set(thread.reply, "All 412 tests pass on the box.");
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      yield* Queue.offer(retries.retry, undefined);
+      expect(yield* taskResult(a, delegated.taskId)).toMatchObject({
+        status: "completed",
+        result: "All 412 tests pass on the box.",
+      });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a follower that keeps hitting defects fails the task and wakes the parent", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const retries = yield* steppedRetries;
+      const defects = yield* defectiveFollows(Number.POSITIVE_INFINITY);
+      const a = yield* makeLaptop(database, offers, undefined, defects.beforeFollow).pipe(
+        Effect.provideService(RemoteDelegation.FollowRetrySchedule, retries.schedule),
+      );
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+
+      const delegated = yield* delegateToBox(a);
+      expect(yield* defects.retriedOrEnded(retries)).toBe("retried");
+      // Every later attempt hits it too; each is let through to retry.
+      yield* Queue.offer(retries.retry, undefined);
+      yield* Queue.take(retries.failed).pipe(
+        Effect.andThen(Queue.offer(retries.retry, undefined)),
+        Effect.forever,
+        Effect.forkScoped,
+      );
+
+      const task = yield* taskResult(a, delegated.taskId);
+      expect(task?.status).toBe("failed");
+      expect(task?.result).toContain(delegated.remoteChild.threadId);
+      const offered = yield* SubscriptionRef.changes(offers).pipe(
+        Stream.filter((seen) => seen.some((offer) => offer.threadId === parentThreadId)),
+        Stream.runHead,
+      );
+      expect(Option.isSome(offered)).toBe(true);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
 
 /** Waits until the task here records that the `stopCount`th Stop after its result reached there. */
 const stoppedThere = (
