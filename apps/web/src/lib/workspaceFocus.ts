@@ -65,7 +65,7 @@ function scrollingAncestors(target: HTMLElement) {
   return scrollers;
 }
 
-function isInScrollView(target: HTMLElement) {
+export function isInScrollView(target: HTMLElement) {
   const rect = target.getBoundingClientRect();
   return scrollingAncestors(target).every((scroller) => {
     const box = scroller.getBoundingClientRect();

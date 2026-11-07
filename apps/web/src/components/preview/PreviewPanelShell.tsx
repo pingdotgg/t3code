@@ -1,10 +1,17 @@
-import { type CSSProperties, type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  useInsertionEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   type PreviewPanelInlineSize,
   usePreviewPanelInlineSize,
 } from "~/hooks/usePreviewPanelInlineSize";
 import { RESIZABLE_WIDTH_PROPERTY } from "~/hooks/useResizableWidth";
-import { workspaceAreaProps } from "../../lib/workspaceFocus";
+import { isInScrollView, workspaceAreaProps } from "../../lib/workspaceFocus";
 import { cn } from "~/lib/utils";
 
 import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
@@ -48,11 +55,15 @@ function returnFocusFromPanel(host: HTMLElement, opener: Element | null): boolea
   // focus() is a no-op on a detached, inert or hidden element, so activeElement confirms it took.
   const takesFocus = (target: Element | null) => {
     if (!(target instanceof HTMLElement) || target === doc.body) return false;
-    target.focus();
+    target.focus({ preventScroll: true });
     return doc.activeElement === target;
   };
+  // Scrolling to an opener that left the view would also stop the timeline following a turn.
   return (
-    (!host.contains(opener) && takesFocus(opener)) ||
+    (opener instanceof HTMLElement &&
+      !host.contains(opener) &&
+      isInScrollView(opener) &&
+      takesFocus(opener)) ||
     takesFocus(doc.querySelector("[data-right-panel-toggle]"))
   );
 }
@@ -114,20 +125,21 @@ function PreviewPanelShellFrame(
       });
     };
   }, [collapsible, hostRef]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads DOM focus on open before a mounting surface's ref (the terminal's) moves it in; insertion effects run before any ref
+  useInsertionEffect(() => {
+    if (collapsible && open) opener.current = document.activeElement;
+  }, [collapsible, open]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- returns focus to the opener or toggle and sets inert on the host DOM node before a collapse paints
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     const doc = host.ownerDocument;
     const collapsed = collapsible && !open;
-    if (!collapsed) {
-      returnedFocus.current = false;
-      // Runs before requestWorkspaceFocus moves focus into the panel on a later frame.
-      opener.current = doc.activeElement;
-    }
+    if (!collapsed) returnedFocus.current = false;
     // Move focus before making its current owner inert, while the target is reachable.
     if (collapsed && host.contains(doc.activeElement)) {
       returnedFocus.current = returnFocusFromPanel(host, opener.current);
+      opener.current = null;
     }
     host.toggleAttribute("inert", collapsed);
   }, [collapsible, open, hostRef]);
