@@ -324,6 +324,17 @@ describe("ClientSettings quit confirmation", () => {
   });
 });
 
+it("keeps the low-power shimmer for older settings and preserves an explicit opt-in", () => {
+  expect(decodeClientSettings({}).smoothActivityShimmer).toBe(false);
+  expect(decodeClientSettingsPatch({})).not.toHaveProperty("smoothActivityShimmer");
+  for (const smoothActivityShimmer of [true, false]) {
+    const patch = decodeClientSettingsPatch({ smoothActivityShimmer });
+    const stored = encodeClientSettings(decodeClientSettings(patch));
+    expect(decodeClientSettings(stored).smoothActivityShimmer).toBe(smoothActivityShimmer);
+  }
+  expect(() => decodeClientSettingsPatch({ smoothActivityShimmer: "true" })).toThrow();
+});
+
 describe("provider enabled defaults", () => {
   it("resolves instance enabled state with explicit false winning", () => {
     const grok = ProviderDriverKind.make("grok");

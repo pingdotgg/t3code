@@ -364,6 +364,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "smooth-activity-shimmer",
+    title: "Smoother activity shimmer",
+    to: "/settings/appearance",
+    searchTerms: ["thinking animation motion smooth performance battery tool status"],
+  },
+  {
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",
