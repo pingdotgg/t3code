@@ -162,15 +162,6 @@ export function threadLinkRefs(
   return [...refs.values()];
 }
 
-export function unknownThreadLinkLabel(
-  link: ThreadLink,
-  messageEnvironmentId: EnvironmentId,
-): string {
-  return link.environmentId === null || link.environmentId === messageEnvironmentId
-    ? "Thread no longer available"
-    : "Thread on another machine";
-}
-
 /** Rewrites each link outside code `replace` answers for. `label` is a Markdown link's own text. */
 export function replaceThreadLinks(
   markdown: string,
@@ -185,11 +176,7 @@ export function replaceThreadLinks(
   });
 }
 
-/**
- * Writes each link with its thread's current title, a hosted link as a v2 link. A link `title`
- * cannot resolve becomes plain text, its written label or a neutral one, except a labeled v1
- * link, which may open elsewhere.
- */
+/** Shells can omit threads, so unknown titles keep their destinations and use a neutral label. */
 export function relabelThreadLinks(
   markdown: string,
   messageEnvironmentId: EnvironmentId,
@@ -205,13 +192,9 @@ export function relabelThreadLinks(
         ? decoded
         : written.threadId;
     const current = title({ environmentId, threadId });
-    if (current === undefined) {
-      if (label !== undefined && written.environmentId === null) return undefined;
-      return label?.trim() || unknownThreadLinkLabel(written, messageEnvironmentId);
-    }
     return formatThreadLink(
       { environmentId: written.environmentId, threadId },
-      current.trim() || label || threadId,
+      current?.trim() || label?.trim() || "Thread",
     );
   });
 }

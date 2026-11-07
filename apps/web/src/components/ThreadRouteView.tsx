@@ -3,13 +3,19 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import { visibilityParentKey } from "@t3tools/client-runtime/state/threads";
 import * as Option from "effect/Option";
-import { Navigate, useNavigate } from "@tanstack/react-router";
+import { Link, Navigate, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
 import ChatView from "./ChatView";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { SidebarInset } from "./ui/sidebar";
+import { Button } from "./ui/button";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { environmentCatalog } from "../connection/catalog";
+import { readEnvironment } from "../state/environments";
+import { useEnvironmentQuery } from "../state/query";
+import { useAtomCommand } from "../state/use-atom-command";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
   useEnvironmentThreadRefs,
@@ -17,7 +23,11 @@ import {
   useQuietThreadShell,
 } from "../state/entities";
 import { useEnvironmentShellStatus } from "../state/shell";
-import { environmentThreadShells, useEnvironmentThread } from "../state/threads";
+import {
+  environmentThreadShells,
+  retryEnvironmentThread,
+  useEnvironmentThread,
+} from "../state/threads";
 import {
   buildThreadRouteParams,
   isThreadRouteSnapshotAuthoritative,
@@ -39,6 +49,8 @@ export function ThreadRouteView({
   background?: boolean;
 }) {
   const navigate = useNavigate();
+  const retryConnection = useAtomCommand(environmentCatalog.retryNow);
+  const enableEnvironment = useAtomCommand(environmentCatalog.setEnabled);
   const draftId = target.kind === "draft" ? target.draftId : null;
   const draftSession = useComposerDraftStore((store) =>
     draftId === null ? null : store.getDraftSession(draftId),
@@ -88,6 +100,14 @@ export function ThreadRouteView({
     unlistedThreadRef?.environmentId ?? null,
     unlistedThreadRef?.threadId ?? null,
   );
+  const connection = useEnvironmentQuery(
+    unlistedThreadRef === null
+      ? null
+      : environmentCatalog.stateAtom(unlistedThreadRef.environmentId),
+  );
+  const connectionPhase = connection.error !== null ? "blocked" : (connection.data?.phase ?? null);
+  const connectionUnavailable =
+    connectionPhase !== null && connectionPhase !== "connected" && connectionPhase !== "connecting";
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
   const unlistedThread = Option.getOrNull(Option.map(unlistedThreadDetail.data, (p) => p.thread));
   const unlistedParentKey =
@@ -112,6 +132,7 @@ export function ThreadRouteView({
     );
   const renderState = resolveThreadRouteRenderState({
     bootstrapComplete,
+    connectionPhase,
     serverThreadExists: serverThreadShell !== null,
     serverThreadDeleted: serverThreadShell?.deletedAt != null,
     unlistedThreadDetail,
@@ -189,6 +210,44 @@ export function ThreadRouteView({
     }
   } else if (hiddenByTagFilter) {
     redirect = <Navigate to="/" replace />;
+  } else if (renderState === "error") {
+    view = (
+      <Empty role="alert">
+        <EmptyHeader>
+          <EmptyTitle>Could not load thread</EmptyTitle>
+          <EmptyDescription>
+            {Option.getOrNull(unlistedThreadDetail.error) ??
+              connection.data?.lastFailure?.message ??
+              connection.error ??
+              "This environment is not connected."}
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                retryEnvironmentThread(target.threadRef);
+                if (connectionUnavailable) {
+                  const environmentId = target.threadRef.environmentId;
+                  if (readEnvironment(environmentId)?.entry.enabled === false) {
+                    void enableEnvironment({ environmentId, enabled: true });
+                  } else {
+                    void retryConnection(environmentId);
+                  }
+                }
+              }}
+            >
+              Retry
+            </Button>
+            <Button variant="ghost" size="sm" render={<Link to="/" />}>
+              Back to threads
+            </Button>
+          </div>
+        </EmptyContent>
+      </Empty>
+    );
   } else if (offShellBlocked) {
     // Before the shell bootstraps, a listed visible thread can still look off-shell.
     if (bootstrapComplete && unlistedThread !== null) redirect = <Navigate to="/" replace />;

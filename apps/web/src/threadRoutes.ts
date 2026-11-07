@@ -1,4 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { SupervisorConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadState } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
@@ -21,7 +22,7 @@ type DraftThreadRouteState = {
   promotedTo?: ScopedThreadRef | null;
 };
 
-export type ThreadRouteRenderState = "loading" | "ready" | "missing";
+export type ThreadRouteRenderState = "loading" | "ready" | "missing" | "error";
 
 export function isThreadRouteSnapshotAuthoritative(
   status: EnvironmentShellStatus | null | undefined,
@@ -31,6 +32,7 @@ export function isThreadRouteSnapshotAuthoritative(
 
 export function resolveThreadRouteRenderState(input: {
   bootstrapComplete: boolean;
+  connectionPhase: SupervisorConnectionPhase | null;
   serverThreadExists: boolean;
   serverThreadDeleted: boolean;
   unlistedThreadDetail: EnvironmentThreadState;
@@ -39,14 +41,26 @@ export function resolveThreadRouteRenderState(input: {
   if (input.draftThreadExists || (input.serverThreadExists && !input.serverThreadDeleted)) {
     return "ready";
   }
+  const detail = input.unlistedThreadDetail;
+  const projection = Option.getOrNull(detail.data);
+  if (!input.serverThreadExists && projection === null && detail.status !== "deleted") {
+    if (input.connectionPhase === "connecting") {
+      return "loading";
+    }
+    if (
+      (input.connectionPhase !== null && input.connectionPhase !== "connected") ||
+      (detail.status !== "synchronizing" && Option.isSome(detail.error))
+    ) {
+      return "error";
+    }
+  }
   if (!input.bootstrapComplete) {
     return "loading";
   }
-  if (input.serverThreadExists || input.unlistedThreadDetail.status === "deleted") {
+  if (input.serverThreadExists || detail.status === "deleted") {
     return "missing";
   }
   // Shell membership can lag a new thread; its detail decides.
-  const projection = Option.getOrNull(input.unlistedThreadDetail.data);
   if (projection === null) {
     return "loading";
   }
