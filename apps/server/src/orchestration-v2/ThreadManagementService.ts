@@ -1472,64 +1472,69 @@ const make = Effect.gen(function* () {
       Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
     > = [];
     const stoppedChildThreadIds = new Set<ThreadId>();
-    for (const task of subagents) {
-      if (task.origin !== "app_owned") continue;
-      if (task.childThreadId === null) {
-        // A task in a linked environment ends here; its follower then stops it there.
-        // One with its result keeps it, but its thread there may run follow-up work.
-        if (task.remoteChild === undefined) continue;
-        const commandId = CommandId.make(`${input.commandId}:stop:${task.id}`);
-        yield* dispatch(
-          task.result === null
-            ? {
-                type: "delegated_task.remote.complete",
-                commandId,
-                parentThreadId: input.threadId,
-                taskId: task.id,
-                status: "interrupted",
-                result:
-                  input.reason === undefined
-                    ? "Stopped with its parent."
-                    : `Stopped with its parent: ${input.reason}`,
-              }
-            : {
-                type: "delegated_task.remote.stop",
-                commandId,
-                parentThreadId: input.threadId,
-                taskId: task.id,
-              },
-        ).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("Unable to stop a delegated task", {
-              parentThreadId: input.threadId,
-              taskId: task.id,
-              error,
-            }).pipe(Effect.andThen(Effect.sync(() => failures.push(error)))),
-          ),
-        );
-        continue;
-      }
-      const threadId = task.childThreadId;
-      // Follow-up tasks reuse a child thread; walk its subtree only once.
-      if (stoppedChildThreadIds.has(threadId)) continue;
-      stoppedChildThreadIds.add(threadId);
-      yield* dispatch({
-        type: "thread.stop",
-        commandId: CommandId.make(`${input.commandId}:stop:${threadId}`),
-        threadId,
-        stopDelegatedTasks: false,
-        ...(input.reason === undefined ? {} : { reason: input.reason }),
-      }).pipe(
-        Effect.andThen(stopDelegatedTasks({ ...input, threadId })),
-        Effect.catch((error) =>
-          Effect.logWarning("Unable to stop a delegated task", {
-            parentThreadId: input.threadId,
+    yield* Effect.forEach(
+      subagents,
+      (task) =>
+        Effect.gen(function* () {
+          if (task.origin !== "app_owned") return;
+          if (task.childThreadId === null) {
+            // A task in a linked environment ends here; its follower then stops it there.
+            // One with its result keeps it, but its thread there may run follow-up work.
+            if (task.remoteChild === undefined) return;
+            const commandId = CommandId.make(`${input.commandId}:stop:${task.id}`);
+            yield* dispatch(
+              task.result === null
+                ? {
+                    type: "delegated_task.remote.complete",
+                    commandId,
+                    parentThreadId: input.threadId,
+                    taskId: task.id,
+                    status: "interrupted",
+                    result:
+                      input.reason === undefined
+                        ? "Stopped with its parent."
+                        : `Stopped with its parent: ${input.reason}`,
+                  }
+                : {
+                    type: "delegated_task.remote.stop",
+                    commandId,
+                    parentThreadId: input.threadId,
+                    taskId: task.id,
+                  },
+            ).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Unable to stop a delegated task", {
+                  parentThreadId: input.threadId,
+                  taskId: task.id,
+                  error,
+                }).pipe(Effect.andThen(Effect.sync(() => failures.push(error)))),
+              ),
+            );
+            return;
+          }
+          const threadId = task.childThreadId;
+          // Follow-up tasks reuse a child thread; walk its subtree only once.
+          if (stoppedChildThreadIds.has(threadId)) return;
+          stoppedChildThreadIds.add(threadId);
+          yield* dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make(`${input.commandId}:stop:${threadId}`),
             threadId,
-            error,
-          }).pipe(Effect.andThen(Effect.sync(() => failures.push(error)))),
-        ),
-      );
-    }
+            stopDelegatedTasks: false,
+            ...(input.reason === undefined ? {} : { reason: input.reason }),
+          }).pipe(
+            Effect.andThen(stopDelegatedTasks({ ...input, threadId })),
+            Effect.catch((error) =>
+              Effect.logWarning("Unable to stop a delegated task", {
+                parentThreadId: input.threadId,
+                threadId,
+                error,
+              }).pipe(Effect.andThen(Effect.sync(() => failures.push(error)))),
+            ),
+          );
+        }),
+      { concurrency: 4, discard: true },
+    );
     if (failures[0] !== undefined) return yield* failures[0];
   });
 
