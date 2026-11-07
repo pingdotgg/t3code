@@ -28,6 +28,7 @@ export function createSpeechAudio(config: {
   let inSpeech = false;
   let onsetCount = 0;
   let hangover = 0;
+  let voicedUntil: number | undefined;
 
   const raw = (from: number, to: number) => {
     const output = new Float32Array(to - from);
@@ -102,6 +103,8 @@ export function createSpeechAudio(config: {
         const i = probs.length;
         probs.push(probability);
         keep.push(false);
+        // Matches the 0.5 speech threshold of pauses(), not the permissive capture filter.
+        if (probability >= 0.5) voicedUntil = (i + 1) * frame;
         const voiced = probability > 0.3;
         if (!inSpeech && voiced) {
           if (++onsetCount >= onset) {
@@ -124,6 +127,7 @@ export function createSpeechAudio(config: {
     },
     audio: () => raw(0, length),
     samples: () => length,
+    voicedUntil: () => voicedUntil,
     take(final = false): Float32Array[] {
       const samples = Math.min(length, probs.length * frame);
       // Preserve a very short utterance or syllable stopped before onset confirms.

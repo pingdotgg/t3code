@@ -56,8 +56,8 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
         if (data.byteLength > SPEECH_STREAM_MAX_CHUNK_BYTES)
           return yield* fail("Speech audio chunk is too large.");
         if (!stream) return yield* fail("Start speech transcription before sending audio.");
-        const update = yield* stream.feed(data);
-        yield* send({ type: "update", ...update });
+        const { revision, text } = yield* stream.feed(data);
+        yield* send({ type: "update", revision, text });
       }
     }).pipe(
       Effect.catch((cause) =>

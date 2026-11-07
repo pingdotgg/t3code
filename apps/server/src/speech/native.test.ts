@@ -238,6 +238,15 @@ it("filters silence and preserves partial speech through the production worker a
         if (cancel) await model.reset();
         else expect(await model.finish()).toBe("511:0.80:0.80");
       }
+      await model.begin({ timestamps: "none" }, false, "vad.gguf", true);
+      const speech = Float32Array.from({ length: 1536 }, (_, i) => (i < 1024 ? 0.8 : 0));
+      expect((await model.feed(speech)).voicedUntil).toBe(1024);
+      if (streaming) {
+        // A streaming model skips the detector unless events are requested.
+        await model.begin({ timestamps: "none" }, false, "vad.gguf");
+        expect(await model.feed(speech)).not.toHaveProperty("voicedUntil");
+      }
+      await model.reset();
     } finally {
       await model.dispose();
     }

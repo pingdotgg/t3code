@@ -123,11 +123,19 @@ type LoadedModel = Awaited<ReturnType<typeof loadNativeSpeechModel>>;
 type SpeechModels = { readonly models: ReadonlyArray<EnvironmentSpeechModel> };
 
 export type SpeechStream = {
-  readonly feed: (
-    pcm: Uint8Array,
-  ) => Effect.Effect<Awaited<ReturnType<LoadedModel["feed"]>>, SpeechError>;
+  readonly feed: (pcm: Uint8Array) => Effect.Effect<SpeechStreamUpdate, SpeechError>;
   readonly finish: Effect.Effect<string, SpeechError>;
+  /** Finishes the current utterance and starts the next one on the same model. */
+  readonly next: Effect.Effect<string, SpeechError>;
 };
+
+export type SpeechStreamUpdate = Awaited<ReturnType<LoadedModel["feed"]>> & {
+  /** Samples fed since the current utterance began. */
+  readonly samples: number;
+};
+
+/** Conversation streams always run the silence detector to report where speech ended. */
+export type SpeechStreamMode = "dictation" | "conversation";
 
 export class SpeechService extends Context.Service<
   SpeechService,
@@ -145,6 +153,7 @@ export class SpeechService extends Context.Service<
     ) => Effect.Effect<string, SpeechError>;
     readonly startStream: (
       options: SpeechTranscriptionOptions,
+      mode?: SpeechStreamMode,
     ) => Effect.Effect<SpeechStream, SpeechError, Scope.Scope>;
     readonly updateAcceleration: (
       acceleration: SpeechAcceleration,
@@ -678,7 +687,10 @@ const make = Effect.gen(function* () {
   );
 
   // Stream setup shares the public startStream span.
-  const openStream = Effect.fnUntraced(function* (options: SpeechTranscriptionOptions) {
+  const openStream = Effect.fnUntraced(function* (
+    options: SpeechTranscriptionOptions,
+    mode: SpeechStreamMode,
+  ) {
     const operation = "streaming transcription";
     yield* requireSupported;
     const released = Promise.withResolvers<void>();
@@ -739,7 +751,10 @@ const make = Effect.gen(function* () {
       loadModel(modelPath, definition, signal, settings.speechAcceleration),
     );
     loaded = streamModel;
-    const vadPath = yield* silenceModelPath(streamModel, options);
+    const vadPath =
+      mode === "conversation"
+        ? yield* acquireSilenceModel("recording")
+        : yield* silenceModelPath(streamModel, options);
     let translateToEnglish = false;
     const beginStream = async () => {
       translateToEnglish =
@@ -761,12 +776,13 @@ const make = Effect.gen(function* () {
         },
         options.speechSilenceFiltering,
         vadPath,
+        ...(mode === "conversation" ? ([true] as const) : []),
       );
       correct = makeSpeechTextCorrector(vocabulary ? [] : customWords, dictionary);
       started = true;
     };
-    // Audio already fed is kept so a CPU restart can replay it; the limit caps it at one recording.
-    const received: Float32Array[] = [];
+    // Audio already fed is kept so a CPU restart can replay it; the limit caps it at one utterance.
+    let received: Float32Array[] = [];
     let retriedOnCpu = false;
     const recoverOnCpu = async (cause: unknown) => {
       started = false;
@@ -795,10 +811,29 @@ const make = Effect.gen(function* () {
       }
     });
     let byteLength = 0;
+    let samples = 0;
     let busy = false;
     // Client revisions stay monotonic across a native restart, whose own counter resets.
     let revisionBase = 0;
     let lastNativeRevision = 0;
+    const finishUtterance = async () => {
+      let text: string;
+      try {
+        text = await streamModel.finish().catch(async (cause: unknown) => {
+          await recoverOnCpu(cause);
+          if (closed || signal.aborted) throw cause;
+          return streamModel.finish();
+        });
+      } catch (cause) {
+        started = false;
+        throw cause;
+      }
+      return finalizeTranscript(
+        correct(text),
+        options,
+        translateToEnglish ? "en" : language === "auto" ? undefined : language,
+      );
+    };
     const run = <A>(work: () => Promise<A>) =>
       attempt(operation, async () => {
         if (busy || finished || closed || !started || signal.aborted)
@@ -823,6 +858,7 @@ const make = Effect.gen(function* () {
             });
           const pcm = decodeSpeechPcm(bytes);
           byteLength += bytes.byteLength;
+          samples += pcm.length;
           received.push(pcm);
           let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
           try {
@@ -841,26 +877,23 @@ const make = Effect.gen(function* () {
                   tentative: correct(update.text.tentative),
                 }
               : null,
+            ...(update?.voicedUntil === undefined ? {} : { voicedUntil: update.voicedUntil }),
+            samples,
           };
         }),
       finish: run(async () => {
-        let text: string;
-        try {
-          text = await streamModel.finish().catch(async (cause: unknown) => {
-            await recoverOnCpu(cause);
-            if (closed || signal.aborted) throw cause;
-            return streamModel.finish();
-          });
-        } catch (cause) {
-          started = false;
-          throw cause;
-        }
+        const text = await finishUtterance();
         finished = true;
-        return finalizeTranscript(
-          correct(text),
-          options,
-          translateToEnglish ? "en" : language === "auto" ? undefined : language,
-        );
+        return text;
+      }),
+      next: run(async () => {
+        const text = await finishUtterance();
+        received = [];
+        byteLength = samples = 0;
+        revisionBase += lastNativeRevision;
+        lastNativeRevision = 0;
+        await beginStream();
+        return text;
       }),
     };
   });
@@ -870,9 +903,9 @@ const make = Effect.gen(function* () {
     models: readModels,
     prepareModel,
     transcribe,
-    startStream: Effect.fn("SpeechService.startStream")(function* (options) {
+    startStream: Effect.fn("SpeechService.startStream")(function* (options, mode = "dictation") {
       const session = yield* Scope.fork(yield* Effect.scope);
-      return yield* openStream(options).pipe(
+      return yield* openStream(options, mode).pipe(
         Scope.provide(session),
         Effect.onError((cause) => Scope.close(session, Exit.failCause(cause))),
       );

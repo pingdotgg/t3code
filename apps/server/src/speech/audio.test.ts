@@ -26,6 +26,7 @@ it("retains pre-roll, onset and offline/streaming tails without duplicating edge
       chunks.push(...audio.take());
     }
     chunks.push(...audio.take(true));
+    expect(audio.voicedUntil()).toBe(24 * frame);
     const retained = chunks.flatMap((chunk) => [...chunk]);
     expect(retained).toEqual([
       ...pcm.subarray(6 * frame, (24 + (nativeStreaming ? 52 : 15)) * frame),

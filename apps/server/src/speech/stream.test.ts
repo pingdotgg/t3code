@@ -70,12 +70,17 @@ it.live("acknowledges binary audio and returns the finalized transcript over a r
         received.push(
           new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getFloat32(0, true),
         );
-        return { revision: received.length, text: { committed: "hello ", tentative: "world" } };
+        return {
+          revision: received.length,
+          text: { committed: "hello ", tentative: "world" },
+          samples: received.length,
+        };
       }),
     finish: Effect.sync(() => {
       expect(received).toEqual([0.25, 0.5]);
       return "hello world";
     }),
+    next: Effect.die("unused"),
   };
   return withServer(
     () => Effect.acquireRelease(Effect.succeed(stream), () => Effect.sync(() => closed.resolve())),
@@ -106,6 +111,7 @@ it.live("releases in-flight inference after disconnect", () => {
   const stream: SpeechStream = {
     feed: () => Effect.sync(() => feeding.resolve()).pipe(Effect.andThen(Effect.never)),
     finish: Effect.succeed("unexpected"),
+    next: Effect.die("unused"),
   };
   return withServer(
     () => Effect.acquireRelease(Effect.succeed(stream), () => Effect.sync(() => closed.resolve())),
@@ -140,12 +146,13 @@ it.live("processes pipelined audio before the finish command", () => {
           firstFeed.resolve();
           await releaseFirst.promise;
         }
-        return { revision: received.length, text: null };
+        return { revision: received.length, text: null, samples: received.length };
       }),
     finish: Effect.sync(() => {
       expect(received).toEqual([0.25, 0.5]);
       return "done";
     }),
+    next: Effect.die("unused"),
   };
   return withServer(
     () => Effect.succeed(stream),

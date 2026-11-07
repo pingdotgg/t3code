@@ -491,6 +491,7 @@ it.effect("uses vocabulary only for supported transcription and always applies a
           expect(yield* stream.feed(pcm())).toEqual({
             revision: 1,
             text: { committed: vocabulary ? "git hub" : "GitHub", tentative: "Bob" },
+            samples: 1,
           });
           expect(yield* stream.finish).toBe(vocabulary ? "git hub and Bob" : "GitHub and Bob");
           expect(native.begin.mock.lastCall).toEqual([
@@ -502,6 +503,34 @@ it.effect("uses vocabulary only for supported transcription and always applies a
       }
     }
   }),
+);
+
+it.effect("starts each conversation utterance fresh on the loaded model", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    native.finish.mockResolvedValue("hello");
+    native.feed.mockResolvedValue({
+      revision: 1,
+      text: { committed: "", tentative: "hello" },
+      voicedUntil: 1,
+    } as Awaited<ReturnType<typeof native.feed>>);
+    const stream = yield* speech.startStream(
+      { ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, speechSilenceFiltering: false },
+      "conversation",
+    );
+    expect(native.begin.mock.lastCall).toEqual([
+      { timestamps: "none", language: "en" },
+      false,
+      "test.gguf",
+      true,
+    ]);
+    expect(yield* stream.feed(pcm())).toMatchObject({ revision: 1, samples: 1, voicedUntil: 1 });
+    expect(yield* stream.feed(pcm())).toMatchObject({ samples: 2 });
+    expect(yield* stream.next).toBe("hello");
+    expect(native.begin).toHaveBeenCalledTimes(2);
+    expect(yield* stream.feed(pcm())).toMatchObject({ revision: 2, samples: 1 });
+    expect(loadNative).toHaveBeenCalledTimes(1);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
 it.effect("unloads after the chosen idle period and reloads on the next recording", () =>
@@ -769,12 +798,12 @@ it.effect("replays streamed audio on CPU after an Auto-placed feed crashes, once
         }));
         const speech = yield* SpeechService.SpeechService;
         const stream = yield* speech.startStream(options);
-        expect(yield* stream.feed(pcm())).toEqual({ revision: 3, text: corrected });
+        expect(yield* stream.feed(pcm())).toEqual({ revision: 3, text: corrected, samples: 1 });
         const recovered = {
           committed: "",
           tentative: cpuSupportsVocabulary ? "git hub Bob" : "GitHub Bob",
         };
-        expect(yield* stream.feed(pcm())).toEqual({ revision: 5, text: recovered });
+        expect(yield* stream.feed(pcm())).toEqual({ revision: 5, text: recovered, samples: 2 });
         expect(loadNative.mock.calls.slice(-2).map((call) => call[3])).toEqual(["auto", "cpu"]);
         expect(native.begin.mock.calls.slice(-2).map(([options]) => options)).toEqual([
           { timestamps: "none", language: "en", vocabulary: ["GitHub", "Bob"] },
@@ -785,7 +814,7 @@ it.effect("replays streamed audio on CPU after an Auto-placed feed crashes, once
           },
         ]);
         expect(native.feed).toHaveBeenCalledTimes(feedCalls + 4);
-        expect(yield* stream.feed(pcm())).toEqual({ revision: 6, text: recovered });
+        expect(yield* stream.feed(pcm())).toEqual({ revision: 6, text: recovered, samples: 3 });
         const loads = loadNative.mock.calls.length;
         native.finish.mockRejectedValueOnce(new Error("CPU finish failed"));
         expect(Result.isFailure(yield* Effect.result(stream.finish))).toBe(true);

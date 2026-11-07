@@ -44,7 +44,7 @@ const begin = async (message, live) => {
   texts = [];
   scored = revision = 0;
   heardAudio = false;
-  useVad = Boolean(message.vadPath) && (message.filterSilence ||
+  useVad = Boolean(message.vadPath) && (message.filterSilence || message.events ||
     (!model.capabilities.supportsStreaming && !model.supports("long_form")));
   if (useVad) {
     try {
@@ -157,7 +157,8 @@ process.on("message", async (message) => {
       process.send({ type: "t3-speech-reply", ok: true });
     } else if (message.kind === "feed") {
       const preview = await feed(message.pcm);
-      process.send({ type: "t3-speech-reply", ok: true, revision: ++revision, preview });
+      process.send({ type: "t3-speech-reply", ok: true, revision: ++revision, preview,
+        voicedUntil: useVad ? audio.voicedUntil() : undefined });
     } else if (message.kind === "finish") {
       await feed(undefined, true);
       if (nativeStreaming && heardAudio) await stream.finalize();
@@ -198,6 +199,7 @@ type Reply = {
   readonly languages?: unknown;
   readonly revision?: number;
   readonly preview?: SpeechStreamText | null;
+  readonly voicedUntil?: number;
 };
 
 // transcribe-cpp has an import-only export. Load its disk entry with require so
@@ -400,14 +402,24 @@ async function loadNativeSpeechModelOnce(
     supportsLongForm: loaded.supportsLongForm === true,
     supportsTranslation: loaded.supportsTranslation === true,
     supportsVocabulary: loaded.supportsVocabulary === true,
-    begin: async (options: NativeSpeechOptions, filterSilence: boolean, vadPath?: string) => {
-      await send({ kind: "begin", options, filterSilence, vadPath });
+    /** `events` loads the silence detector so feeds report where speech last ended. */
+    begin: async (
+      options: NativeSpeechOptions,
+      filterSilence: boolean,
+      vadPath?: string,
+      events = false,
+    ) => {
+      await send({ kind: "begin", options, filterSilence, vadPath, events });
     },
     feed: async (pcm: Float32Array) => {
       const reply = await send({ kind: "feed", pcm });
       if (typeof reply.revision !== "number" || reply.preview === undefined)
         throw new Error("Invalid speech stream response.");
-      return { revision: reply.revision, text: reply.preview };
+      return {
+        revision: reply.revision,
+        text: reply.preview,
+        ...(typeof reply.voicedUntil === "number" ? { voicedUntil: reply.voicedUntil } : {}),
+      };
     },
     finish: async () => {
       const reply = await send({ kind: "finish" });

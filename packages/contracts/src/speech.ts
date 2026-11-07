@@ -280,3 +280,33 @@ export const SpeechStreamEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("error"), message: Schema.String }),
 ]);
 export type SpeechStreamEvent = typeof SpeechStreamEvent.Type;
+
+export const SPEECH_CONVERSATION_PATH = "/ws/voice/conversation";
+
+const TurnSilenceMs = Schema.Int.check(Schema.isBetween({ minimum: 300, maximum: 10_000 }));
+
+export const SpeechConversationCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("start"),
+    options: SpeechTranscriptionOptions,
+    endSilenceMs: Schema.optional(TurnSilenceMs),
+    endSilenceLongMs: Schema.optional(TurnSilenceMs),
+  }),
+  Schema.Struct({ type: Schema.Literal("stop") }),
+]);
+export type SpeechConversationCommand = typeof SpeechConversationCommand.Type;
+
+export const SpeechConversationEvent = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("ready") }),
+  // One per audio frame, in order; clients use it as the acknowledgement.
+  Schema.Struct({
+    type: Schema.Literal("update"),
+    revision: Schema.Int,
+    text: Schema.NullOr(SpeechStreamText),
+  }),
+  Schema.Struct({ type: Schema.Literal("speech-start") }),
+  Schema.Struct({ type: Schema.Literal("utterance"), text: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("idle") }),
+  Schema.Struct({ type: Schema.Literal("error"), message: Schema.String }),
+]);
+export type SpeechConversationEvent = typeof SpeechConversationEvent.Type;
