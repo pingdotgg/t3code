@@ -11775,6 +11775,50 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return found && !unreadable ? ("empty" as const) : ("missing" as const);
         });
 
+        // Claude Code answers `/goal clear` locally, without a model turn.
+        const clearForkedGoal = Effect.fn("ClaudeAdapterV2.clearForkedGoal")(
+          function* (
+            forkInput: ProviderAdapter.ProviderAdapterV2ForkThreadInput,
+            nativeId: string,
+          ) {
+            const query = yield* Effect.acquireRelease(
+              queryRunner.open({
+                threadId: forkInput.targetThreadId,
+                providerSessionId: input.providerSessionId,
+                options: makeClaudeQueryOptions({
+                  modelSelection: forkInput.modelSelection ?? input.modelSelection,
+                  modelCatalog,
+                  nativeThreadId: nativeId,
+                  resume: true,
+                  cwd: input.runtimePolicy.cwd,
+                  settings: adapterOptions.settings,
+                  environment: adapterOptions.environment,
+                }),
+              }),
+              (query) => query.close.pipe(Effect.ignore),
+            );
+            yield* query.offer(makeClaudeUserMessage({ text: "/goal clear" }));
+            const result = yield* query.messages.pipe(
+              Stream.filter((message) => message.type === "result"),
+              Stream.runHead,
+            );
+            if (Option.isNone(result) || result.value.is_error) {
+              return yield* Effect.fail(result);
+            }
+          },
+          Effect.scoped,
+          // The side chat still works with the goal; its turns just run into the goal's Stop hook.
+          (effect, forkInput) =>
+            effect.pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("orchestration-v2.claude-side-chat-goal-clear-failed", {
+                  threadId: forkInput.targetThreadId,
+                  cause,
+                }),
+              ),
+            ),
+        );
+
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
           driver: CLAUDE_PROVIDER,
@@ -12278,6 +12322,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 updated.add(forked.sessionId);
                 return updated;
               });
+              // A side chat keeps the parent's goal in its forked transcript, and the goal's Stop hook would block its turns.
+              if (forkInput.sideChat === true && forkInput.sourceProviderThread.goal != null) {
+                yield* clearForkedGoal(forkInput, forked.sessionId);
+              }
               const now = yield* DateTime.now;
               // Native forks retain document/image history. Inherit full current
               // usage even at an earlier fork point; this is conservative.
