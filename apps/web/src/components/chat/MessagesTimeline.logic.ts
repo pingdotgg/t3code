@@ -764,7 +764,7 @@ function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<Timeli
   return new Set(lastAssistantMessageIdByResponseKey.values());
 }
 
-export type TurnFoldEnding = "worked" | "stopped" | "failed" | "limited";
+export type TurnFoldEnding = "worked" | "stopped" | "failed" | "limited" | "waiting";
 
 interface TurnFold {
   runId: RunId;
@@ -1193,6 +1193,7 @@ function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestRun: TimelineLatestRun | null;
+  latestRunAwaitsBackgroundWork: boolean;
   unfoldedRunIds: ReadonlySet<RunId>;
   runlessWorkActive: boolean;
   failedRunIds: ReadonlySet<RunId>;
@@ -1415,7 +1416,9 @@ function deriveTurnFolds(input: {
         : "failed"
       : isLatestInterruptedTurn || interruptedRunIds.has(runId)
         ? "stopped"
-        : "worked";
+        : input.latestRunAwaitsBackgroundWork && input.latestRun?.runId === runId
+          ? "waiting"
+          : "worked";
     const label = turnFoldLabel(ending, elapsedMs);
     // The checkpoint diff is what the changed-files card shows; provider
     // counts are the fallback for turns without a checkpoint.
@@ -1453,6 +1456,8 @@ function turnFoldLabel(ending: TurnFoldEnding, elapsedMs: number | null): string
       return duration ? `Failed after ${duration}` : "Failed";
     case "limited":
       return duration ? `Limited at ${duration}` : "Limited";
+    case "waiting":
+      return duration ? `Progress after ${duration}` : "In progress";
     case "worked":
       return duration ? `Worked for ${duration}` : "Worked";
   }
@@ -1760,6 +1765,7 @@ function deriveTimelineTurnFolds(
     latestRun: input.latestRun ?? null,
     unfoldedRunIds: activeVisualResponseRunIds,
     failedRunIds,
+    latestRunAwaitsBackgroundWork: false,
     runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
     // Fold membership does not depend on the diff stat the fold header shows.
     turnDiffSummaries: [],
@@ -1773,6 +1779,8 @@ export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   pendingApprovalRequestIds?: ReadonlySet<RuntimeRequestId>;
   latestRun?: TimelineLatestRun | null;
+  /** The latest run's provider turn ended, but its agent still awaits background work. */
+  awaitingBackgroundWork?: boolean;
   runningRunId?: RunId | null;
   expandedRunIds?: ReadonlySet<RunId>;
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
@@ -1860,6 +1868,7 @@ export function deriveMessagesTimelineRows(input: {
           latestRun: input.latestRun ?? null,
           unfoldedRunIds: activeVisualResponseRunIds,
           failedRunIds,
+          latestRunAwaitsBackgroundWork: input.awaitingBackgroundWork === true,
           runlessWorkActive,
           turnDiffSummaries: input.turnDiffSummaries,
           liveSubagentEntryIds,
