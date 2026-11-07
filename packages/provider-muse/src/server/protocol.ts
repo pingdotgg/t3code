@@ -82,7 +82,10 @@ export const MuseSessionResult = Schema.Struct({
     }),
   ),
 });
-export const MuseTurnStartResult = Schema.Struct({ turnId: NonEmptyString });
+export const MuseTurnStartResult = Schema.Struct({
+  turnId: NonEmptyString,
+  disposition: Schema.optional(Schema.Literals(["started", "queued", "steered"])),
+});
 
 export const MuseApproval = Schema.Struct({
   approvalId: NonEmptyString,
@@ -148,6 +151,10 @@ export const MuseContextUsage = Schema.Struct({
 });
 export const MuseTodoList = Schema.Struct({
   items: Schema.Array(Schema.Struct({ text: Schema.String, status: Schema.String })),
+});
+export const MuseTurnForegroundCompleted = Schema.Struct({
+  turnId: NonEmptyString,
+  blockingAgents: Schema.Array(NonEmptyString),
 });
 export const MuseTurnCompleted = Schema.Struct({
   turnId: NonEmptyString,

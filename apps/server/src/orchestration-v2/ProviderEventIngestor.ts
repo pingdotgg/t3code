@@ -793,6 +793,7 @@ export const layer: Layer.Layer<
                   if (storedEvents.length === 0 || input.event.type !== "provider_turn.updated")
                     return;
                   const providerTurn = input.event.providerTurn;
+                  if (providerTurn.usagePending) return;
                   if (
                     providerTurn.status !== "completed" &&
                     providerTurn.status !== "failed" &&
