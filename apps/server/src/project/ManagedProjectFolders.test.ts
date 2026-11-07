@@ -129,6 +129,25 @@ it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+it.effect("names the data dir and its enclosing repository when Scratch is unavailable", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const checkout = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-scratch-repo-" });
+    yield* git(checkout, ["init", "--quiet"]);
+    const baseDir = path.join(checkout, ".t3");
+    yield* fileSystem.makeDirectory(baseDir);
+    const repositoryRoot = (yield* git(baseDir, ["rev-parse", "--show-toplevel"])).stdout.trim();
+    yield* Effect.gen(function* () {
+      const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const failure = yield* Effect.flip(scratch.ensureScratchProject);
+      assert.include(failure.message, baseDir);
+      // The root prefixes the data dir, so it must appear on its own.
+      assert.include(failure.message.replaceAll(baseDir, ""), repositoryRoot);
+    }).pipe(Effect.provide(layer(baseDir)));
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect("offers a Scratch folder when Git is not installed", () =>
   withScratch(
     ({ baseDir }) =>
