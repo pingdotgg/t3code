@@ -71,6 +71,8 @@ describe("Antigravity process environment", () => {
       browser: "another-real-browser",
       PYTHONUNBUFFERED: "0",
       ELECTRON_RUN_AS_NODE: "0",
+      CHROME_CRASHPAD_PIPE_NAME: "\\\\.\\pipe\\crashpad_50144_ZUJNJELFHHXPBIRT",
+      chrome_crashpad_pipe_name: "\\\\.\\pipe\\crashpad_stale_alias",
       CUSTOM_SETTING: "keep-this",
     };
     const original = { ...baseEnv };
