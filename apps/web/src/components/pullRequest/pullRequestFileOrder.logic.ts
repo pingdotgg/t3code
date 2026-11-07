@@ -56,6 +56,17 @@ function baseName(path: string): string {
   return stripExtension(path.split("/").at(-1) ?? "");
 }
 
+// Import specifiers omit module extensions but keep dotted names such as `b.logic`, so module-map
+// keys strip only the extensions an import could omit.
+function stripModuleExtension(path: string): string {
+  const extension = MODULE_EXTENSIONS.find((candidate) => path.endsWith(candidate));
+  return extension === undefined ? path : path.slice(0, -extension.length);
+}
+
+function moduleName(path: string): string {
+  return stripModuleExtension(path.split("/").at(-1) ?? "");
+}
+
 function resolveRelative(fromPath: string, specifier: string): string {
   const segments = fromPath.split("/").slice(0, -1);
   for (const part of specifier.split("/")) {
@@ -72,7 +83,7 @@ function importedPaths(
   path: string,
   lines: ReadonlyArray<string>,
   byModulePath: ReadonlyMap<string, string>,
-  byBaseName: ReadonlyMap<string, string>,
+  byModuleName: ReadonlyMap<string, string>,
 ): ReadonlySet<string> {
   const imported = new Set<string>();
   for (const line of lines) {
@@ -80,17 +91,13 @@ function importedPaths(
     let match = IMPORT_SPECIFIER.exec(line);
     while (match !== null) {
       const specifier = match[1] ?? "";
-      const withExtension = specifier.startsWith(".")
-        ? resolveRelative(path, specifier)
-        : specifier;
-      // Module-map keys omit extensions, which can differ from disk.
-      const extension = MODULE_EXTENSIONS.find((candidate) => withExtension.endsWith(candidate));
-      const resolved =
-        extension === undefined ? withExtension : withExtension.slice(0, -extension.length);
+      const resolved = stripModuleExtension(
+        specifier.startsWith(".") ? resolveRelative(path, specifier) : specifier,
+      );
       const target =
         byModulePath.get(resolved) ??
         byModulePath.get(`${resolved}/index`) ??
-        byBaseName.get(baseName(resolved));
+        byModuleName.get(moduleName(resolved));
       if (target !== undefined && target !== path) imported.add(target);
       match = IMPORT_SPECIFIER.exec(line);
     }
@@ -140,22 +147,27 @@ export function orderDiffFiles(
 
   const sourcePaths = [...byPath.keys()].filter((path) => tiers.get(path) === "source");
   const byModulePath = new Map<string, string>();
-  const ambiguousBaseNames = new Set<string>();
-  const byBaseName = new Map<string, string>();
+  const ambiguousModuleNames = new Set<string>();
+  const byModuleName = new Map<string, string>();
   for (const path of sourcePaths) {
-    byModulePath.set(stripExtension(path), path);
-    const base = baseName(path);
-    if (byBaseName.has(base)) ambiguousBaseNames.add(base);
-    byBaseName.set(base, path);
+    byModulePath.set(stripModuleExtension(path), path);
+    const name = moduleName(path);
+    if (byModuleName.has(name)) ambiguousModuleNames.add(name);
+    byModuleName.set(name, path);
   }
-  for (const base of ambiguousBaseNames) byBaseName.delete(base);
+  for (const name of ambiguousModuleNames) byModuleName.delete(name);
 
   const imports = new Map<string, ReadonlySet<string>>();
   for (const path of sourcePaths) {
     const file = byPath.get(path)!;
     imports.set(
       path,
-      importedPaths(path, [...file.additionLines, ...file.deletionLines], byModulePath, byBaseName),
+      importedPaths(
+        path,
+        [...file.additionLines, ...file.deletionLines],
+        byModulePath,
+        byModuleName,
+      ),
     );
   }
   const orderedSource = orderByImports(sourcePaths, imports);
