@@ -1,6 +1,6 @@
 import { memo, type MouseEventHandler, type PointerEventHandler } from "react";
-import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, Minimize2Icon, PlayIcon } from "lucide-react";
-import { CornerUpRight, ListPlus } from "lucide";
+import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, PlayIcon } from "lucide-react";
+import { CornerUpRight, ListPlus, Maximize2, Minimize2 } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { formatContextWindowTokens } from "~/lib/contextWindow";
@@ -377,7 +377,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             />
           }
         >
-          <Minimize2Icon aria-hidden="true" />
+          <MorphIcon icon={keepFullHistory ? Maximize2 : Minimize2} />
           <span className="@max-[480px]/composer-surface:hidden">
             {keepFullHistory ? "Keep" : "Compact"}
           </span>
