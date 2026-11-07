@@ -116,21 +116,23 @@ it("serializes rapid actions and retains confirmed settings while pending or aft
   await vi.waitFor(() => expect(controls.detail?.settings.appearance).toBe("light"));
   const response = deferred();
   action.mockReturnValueOnce(response.promise);
-  let pending!: Promise<void>;
+  let pending!: Promise<boolean>;
   await act(async () => {
     pending = controls.act({ type: "setAppearance", value: "dark" });
-    await controls.act({ type: "setAppearance", value: "light" });
+    expect(await controls.act({ type: "setAppearance", value: "light" })).toBe(false);
   });
   expect(action).toHaveBeenCalledOnce();
   expect(controls.disabled).toBe(true);
   expect(controls.detail?.settings.appearance).toBe("light");
   await act(async () => {
     response.resolve(snapshot("dark"));
-    await pending;
+    expect(await pending).toBe(true);
   });
   expect(controls.detail?.settings.appearance).toBe("dark");
   action.mockResolvedValueOnce({ _tag: "Failure", cause: offline });
-  await act(async () => controls.act({ type: "setAppearance", value: "light" }));
+  await act(async () => {
+    expect(await controls.act({ type: "setAppearance", value: "light" })).toBe(false);
+  });
   expect(controls.detail?.settings.appearance).toBe("dark");
   expect(controls.error).toBe("Device offline");
   expect(controls.disabled).toBe(false);
@@ -142,7 +144,7 @@ it("confirms settings again after a command sent before the panel reopened", asy
   await vi.waitFor(() => expect(controls.detail).not.toBeNull());
   const response = deferred();
   action.mockReturnValueOnce(response.promise);
-  let pending!: Promise<void>;
+  let pending!: Promise<boolean>;
   await act(async () => {
     pending = controls.act({ type: "setAppearance", value: "dark" });
   });
@@ -174,7 +176,7 @@ it("does not let a read sent before an action overwrite the action's answer", as
   await screen.rerender(view(true));
   await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   action.mockResolvedValueOnce(snapshot("dark"));
-  let pending!: Promise<void>;
+  let pending!: Promise<boolean>;
   await act(async () => {
     pending = controls.act({ type: "setAppearance", value: "dark" });
   });

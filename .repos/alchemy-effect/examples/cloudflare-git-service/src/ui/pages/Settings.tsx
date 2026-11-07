@@ -9,14 +9,7 @@ import {
   updateRepo,
   type ApiKey,
 } from "../client.ts";
-import {
-  Badge,
-  Button,
-  CopyButton,
-  ErrorBox,
-  Input,
-  Spinner,
-} from "../components.tsx";
+import { Badge, Button, CopyButton, ErrorBox, Input, Spinner } from "../components.tsx";
 import { formatBytes, timeAgo } from "../format.ts";
 import { useRouter } from "../router.tsx";
 import type { RepoContext } from "./Repo.tsx";
@@ -40,9 +33,8 @@ const StorageCard = ({ context }: { context: RepoContext }) => {
       </dl>
       {lastPush !== null && (
         <p className="mt-3 text-xs text-fg-muted">
-          Last push: {lastPush.objects} objects, {formatBytes(lastPush.bytes)} —
-          server ingest {lastPush.ingestMs}ms (sql {lastPush.stageMs}ms), total{" "}
-          {lastPush.totalMs}ms
+          Last push: {lastPush.objects} objects, {formatBytes(lastPush.bytes)} — server ingest{" "}
+          {lastPush.ingestMs}ms (sql {lastPush.stageMs}ms), total {lastPush.totalMs}ms
         </p>
       )}
       <div className="mt-3">
@@ -51,11 +43,7 @@ const StorageCard = ({ context }: { context: RepoContext }) => {
           onClick={() => {
             setCompacting(true);
             setError(null);
-            compactRepo(
-              context.connection,
-              context.repo.owner,
-              context.repo.name,
-            )
+            compactRepo(context.connection, context.repo.owner, context.repo.name)
               .then(() => setCompacting(false))
               .catch((cause) => {
                 setError(cause);
@@ -88,14 +76,9 @@ const VisibilityCard = ({ context }: { context: RepoContext }) => {
         onClick={() => {
           setBusy(true);
           setError(null);
-          updateRepo(
-            context.connection,
-            context.repo.owner,
-            context.repo.name,
-            {
-              public: !isPublic,
-            },
-          )
+          updateRepo(context.connection, context.repo.owner, context.repo.name, {
+            public: !isPublic,
+          })
             .then((updated) => {
               setIsPublic(updated.public);
               setBusy(false);
@@ -135,8 +118,8 @@ const ApiKeysCard = ({ context }: { context: RepoContext }) => {
     <section className="rounded-md border border-border-muted p-4">
       <h2 className="mb-1 font-semibold">API keys</h2>
       <p className="mb-3 text-sm text-fg-muted">
-        A key is the password of your git remote. Keys belong to your account
-        and work on every repository you own.
+        A key is the password of your git remote. Keys belong to your account and work on every
+        repository you own.
       </p>
       {minted !== null && (
         <div className="mb-3 space-y-2 rounded-md border border-success/40 bg-success/5 p-3 text-sm">
@@ -145,8 +128,7 @@ const ApiKeysCard = ({ context }: { context: RepoContext }) => {
           </p>
           <div className="flex items-center gap-2">
             <code className="grow overflow-x-auto rounded bg-canvas-subtle px-2 py-1 font-mono text-xs">
-              git remote add origin{" "}
-              {remote.replace("://", `://x:${minted.key}@`)}
+              git remote add origin {remote.replace("://", `://x:${minted.key}@`)}
             </code>
             <CopyButton
               text={`git remote add origin ${remote.replace("://", `://x:${minted.key}@`)}`}
@@ -170,11 +152,7 @@ const ApiKeysCard = ({ context }: { context: RepoContext }) => {
         <div className="w-48">
           <Input value={name} onChange={setName} placeholder="Key name" />
         </div>
-        <Button
-          kind="primary"
-          type="submit"
-          disabled={name.trim().length === 0}
-        >
+        <Button kind="primary" type="submit" disabled={name.trim().length === 0}>
           Generate key
         </Button>
       </form>
@@ -186,10 +164,7 @@ const ApiKeysCard = ({ context }: { context: RepoContext }) => {
       ) : (
         <ul className="divide-y divide-border-muted">
           {keys.map((key) => (
-            <li
-              key={key.id}
-              className="flex items-center justify-between gap-4 py-2 text-sm"
-            >
+            <li key={key.id} className="flex items-center justify-between gap-4 py-2 text-sm">
               <div className="flex items-center gap-2">
                 <span className="font-medium">{key.name ?? "unnamed"}</span>
                 {key.start !== null && <Badge>{key.start}…</Badge>}
@@ -230,23 +205,14 @@ const DangerCard = ({ context }: { context: RepoContext }) => {
       </p>
       <div className="flex items-center gap-2">
         <div className="w-64">
-          <Input
-            value={confirm}
-            onChange={setConfirm}
-            placeholder={full}
-            mono
-          />
+          <Input value={confirm} onChange={setConfirm} placeholder={full} mono />
         </div>
         <Button
           kind="danger"
           disabled={confirm !== full || busy}
           onClick={() => {
             setBusy(true);
-            deleteRepo(
-              context.connection,
-              context.repo.owner,
-              context.repo.name,
-            )
+            deleteRepo(context.connection, context.repo.owner, context.repo.name)
               .then(() => navigate("/"))
               .catch((cause) => {
                 setError(cause);
