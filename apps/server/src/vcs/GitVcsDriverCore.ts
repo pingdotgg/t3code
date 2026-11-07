@@ -3751,7 +3751,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   });
   // readReviewDiffPreview already provides the operation span.
   const getReviewDiffPreview = Effect.fnUntraced(function* (input: ReviewDiffPreviewInput) {
-    if (!input.file || input.commitSha !== undefined || input.file.sourceKind === "commit")
+    if (
+      !input.file ||
+      input.trackedOnly ||
+      input.commitSha !== undefined ||
+      input.file.sourceKind === "commit"
+    )
       return yield* readReviewDiffPreview(input);
     const released = yield* Deferred.make<void>();
     // Effect's resolver detaches running batches, so callers must signal when they stop waiting.
