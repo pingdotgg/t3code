@@ -1,4 +1,5 @@
 import * as NodeWorkerThreads from "node:worker_threads";
+import { ResourceTelemetryHistoryError } from "@t3tools/contracts";
 import type {
   DesktopHostTelemetrySnapshot,
   ResourceMonitorProcessSample,
@@ -14,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { readResourceTelemetryHistory } from "./ResourceTelemetryHistoryReader.ts";
 
@@ -22,6 +24,8 @@ import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./ResourceAttribution.ts";
 import * as ResourceTelemetry from "./ResourceTelemetry.ts";
 import { buildResourceTelemetryHistory } from "./ResourceTelemetryHistory.ts";
+
+const encodeHistoryError = Schema.encodeSync(Schema.toCodecJson(ResourceTelemetryHistoryError));
 
 // ResourceTelemetry classifies process.pid as the server, so fixture PIDs are
 // offsets from it. Fixed PIDs collide whenever the test worker is assigned one.
@@ -168,6 +172,10 @@ describe("ResourceTelemetry", () => {
       expect(result._tag).toBe("ResourceTelemetryHistoryError");
       expect(result.message).toBe("Resource telemetry history aggregation failed.");
       expect(result.cause).toMatchObject({ _tag: "HistoryAggregationError" });
+      expect(encodeHistoryError(result)).toEqual({
+        _tag: "ResourceTelemetryHistoryError",
+        cause: "HistoryAggregationError",
+      });
       const failedWorker = yield* Effect.flip(
         readResourceTelemetryHistory({
           readAt: DateTime.makeUnsafe(10_000),
