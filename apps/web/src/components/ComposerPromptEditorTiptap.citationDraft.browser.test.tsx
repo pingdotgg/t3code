@@ -146,11 +146,11 @@ it("moves a citation and its edited comment from inline to tray and back", async
   await page.getByRole("button", { name: "1 annotation", exact: true }).click();
   await screen.rerender(<TrayComposer question />);
   await expect
-    .element(page.getByRole("button", { name: "Insert inline", exact: true }))
+    .element(page.getByRole("button", { name: "Insert annotation 1 inline", exact: true }))
     .not.toBeInTheDocument();
   expect(state()?.trayCount).toBe("1");
   await screen.rerender(<TrayComposer />);
-  await page.getByRole("button", { name: "Insert inline", exact: true }).click();
+  await page.getByRole("button", { name: "Insert annotation 1 inline", exact: true }).click();
   expect(state()?.trayCount).toBe("0");
   expect(state()?.prompt).toContain(
     serializeAssistantCitation(withAssistantCitationComment(citation, "Keep this comment")),
