@@ -23,6 +23,7 @@ import { kiroClient } from "@t3tools/provider-kiro/client";
 import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
+import { zeroClawClient } from "@t3tools/provider-zeroclaw/client";
 import type { ProviderClientDefinition } from "@t3tools/provider-core/client";
 
 interface KnownDriver {
@@ -50,6 +51,7 @@ const PACKAGED_CLIENTS: ReadonlyArray<ProviderClientDefinition> = [
   museClient,
   openCodeClient,
   piClient,
+  zeroClawClient,
   acpRegistryClient,
 ];
 
@@ -65,6 +67,7 @@ const PIN_BYPASS_FIELDS: ReadonlyMap<
 > = new Map<ProviderDriverKind, Readonly<Record<string, unknown>>>([
   [ProviderDriverKind.make("codex"), { setupMode: "existing" }],
   [ProviderDriverKind.make("opencode"), { serverUrl: "" }],
+  [ProviderDriverKind.make("zeroclaw"), { socketPath: "" }],
 ]);
 
 /** Drivers this build knows, by the names users see; a policy naming any other is refused. */
@@ -97,6 +100,7 @@ const LAUNCH_CONFIG_FIELDS = [
   "commandPath",
   "commandArgs",
   "serverUrl",
+  "socketPath",
 ] as const;
 
 export type ProviderWriteVerdict =
