@@ -301,6 +301,8 @@ interface MessagesTimelineProps {
   /** The thread is catching up from a cached copy, whose working state may be stale. */
   syncing?: boolean;
   runlessWorkActive?: boolean;
+  /** The latest turn ended, but its agent still awaits background work. */
+  awaitingBackgroundWork?: boolean;
   activeTurnStartedAt?: string | null;
   /** Replaces "Thinking" while the active run's provider has not started a turn. */
   providerStartingLabel?: string | null;
@@ -440,6 +442,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   isWorking,
   syncing = false,
   runlessWorkActive = false,
+  awaitingBackgroundWork = false,
   activeTurnStartedAt = null,
   providerStartingLabel = null,
   providerStarting = null,
@@ -762,6 +765,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     childApprovalThreadIds,
     latestRun,
     usageLimitRunId,
+    awaitingBackgroundWork,
     runningRunId,
     expandedRunIds: visibleExpandedRunIds,
     expandedAttemptIds: visibleExpandedAttemptIds,
