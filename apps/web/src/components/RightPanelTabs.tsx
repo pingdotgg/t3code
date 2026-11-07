@@ -30,24 +30,11 @@ import {
 import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import {
-  Smartphone,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  FileDiff,
-  Files,
-  Globe2,
-  MessagesSquare,
-  Plus,
-  SquarePen,
-  TerminalSquare,
-} from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Files, Plus } from "lucide-react";
 import { Volume2, VolumeOff } from "lucide";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
-  type ReactElement,
   type ReactNode,
   type Ref,
   useRef,
@@ -63,16 +50,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import {
-  Menu,
-  MenuItem,
-  MenuPopup,
-  MenuShortcut,
-  MenuSub,
-  MenuSubPopup,
-  MenuSubTrigger,
-  MenuTrigger,
-} from "~/components/ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
@@ -92,7 +70,6 @@ import {
   PaneNotch,
 } from "./PaneNotch";
 import { previewBridge } from "./preview/previewBridge";
-import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 import {
   previewFaviconOf,
@@ -103,6 +80,8 @@ import {
 } from "./SurfaceTabIcon";
 import {
   SurfaceLauncherRows,
+  SurfaceMenuItems,
+  surfaceMenuActions,
   surfaceShortcutActionForKey,
   useLauncherElement,
   useSurfaceLauncherKeys,
@@ -176,10 +155,6 @@ export interface RightPanelTabsProps {
   /** The linked thread stays in the tab's tooltip when its surface moves elsewhere. */
   threadTitle?: string | null;
   children: ReactNode;
-}
-
-function shouldOpenDefaultBrowserProfileFromMenuClick(pointerType: string | undefined): boolean {
-  return pointerType !== "touch";
 }
 
 const SURFACE_DISABLED_REASONS = {
@@ -308,37 +283,6 @@ function PanelActionsNotch(props: { notched: boolean; hasActions: boolean; child
       {props.children}
     </PaneNotch>
   );
-}
-
-function DisabledReasonTooltip(props: { reason: string; trigger: ReactElement }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger render={props.trigger} />
-      <TooltipPopup side="top">{props.reason}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
-function SurfaceMenuItem(props: {
-  available: boolean;
-  disabledReason?: string | undefined;
-  shortcut: string;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  const item = (
-    <MenuItem
-      className={!props.available ? "data-disabled:pointer-events-auto" : undefined}
-      onClick={props.onClick}
-      disabled={!props.available}
-      aria-keyshortcuts={props.shortcut}
-    >
-      {props.children}
-      <MenuShortcut>{props.shortcut}</MenuShortcut>
-    </MenuItem>
-  );
-  if (props.available || !props.disabledReason) return item;
-  return <DisabledReasonTooltip reason={props.disabledReason} trigger={item} />;
 }
 
 /**
@@ -715,6 +659,11 @@ function RightPanelTab(
                       "cursor-pointer flex min-w-0 items-center",
                       active && surface.kind === "diff" && "shrink-0",
                     )}
+                    aria-label={
+                      surface.kind === "terminal" && threadTitle
+                        ? `${title}, ${threadTitle}`
+                        : undefined
+                    }
                     onClick={() => onActivate(surface)}
                   >
                     <span
@@ -832,89 +781,55 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     });
   };
 
-  const addSurfaceActions = [
-    // A surface tab in the layout offers a new thread first, as a chat's "+" does.
-    ...(props.onNewThread
-      ? [
-          {
-            label: "New thread",
-            icon: SquarePen,
-            shortcut: "N",
-            available: true,
-            disabledReason: undefined,
-            onClick: props.onNewThread,
-          },
-        ]
-      : []),
-    {
-      label: "Browser",
-      icon: Globe2,
-      shortcut: "B",
-      available: props.browserAvailable,
-      disabledReason: props.browserUnavailableReason ?? SURFACE_DISABLED_REASONS.browser,
-      onClick: props.onAddBrowser,
+  const addSurfaceActions = surfaceMenuActions({
+    onNewThread: props.onNewThread,
+    surfaces: {
+      browser: {
+        available: props.browserAvailable,
+        disabledReason: props.browserUnavailableReason ?? SURFACE_DISABLED_REASONS.browser,
+        onClick: props.onAddBrowser,
+      },
+      terminal: {
+        available: props.terminalAvailable,
+        disabledReason: SURFACE_DISABLED_REASONS.terminal,
+        onClick: props.onAddTerminal,
+      },
+      files: {
+        available: props.filesAvailable,
+        disabledReason: SURFACE_DISABLED_REASONS.files,
+        onClick: props.onAddFiles,
+      },
+      diff: {
+        available: props.diffAvailable,
+        disabledReason: SURFACE_DISABLED_REASONS.diff,
+        onClick: props.onAddDiff,
+      },
+      "pull-request": {
+        available: props.pullRequestAvailable,
+        disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
+        onClick: props.onAddPullRequest,
+      },
+      "pull-requests": {
+        available: props.pullRequestsAvailable,
+        disabledReason: SURFACE_DISABLED_REASONS.pullRequests,
+        onClick: props.onAddPullRequests,
+      },
+      device: {
+        available: props.deviceAvailable,
+        disabledReason: SURFACE_DISABLED_REASONS.device,
+        onClick: props.onAddDevice,
+      },
+      ...(props.onAddSideChat
+        ? {
+            "side-chat": {
+              available: props.sideChatAvailable === true && !props.sideChatDisabledReason,
+              disabledReason: props.sideChatDisabledReason ?? SURFACE_DISABLED_REASONS.sideChat,
+              onClick: props.onAddSideChat,
+            },
+          }
+        : {}),
     },
-    {
-      label: "Terminal",
-      icon: TerminalSquare,
-      shortcut: "T",
-      available: props.terminalAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.terminal,
-      onClick: props.onAddTerminal,
-    },
-    {
-      label: "Files",
-      icon: Files,
-      shortcut: "F",
-      available: props.filesAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.files,
-      onClick: props.onAddFiles,
-    },
-    {
-      label: "Diff",
-      icon: FileDiff,
-      shortcut: "D",
-      available: props.diffAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.diff,
-      onClick: props.onAddDiff,
-    },
-    {
-      label: "Pull request",
-      icon: PullRequestGlyph.pullRequest,
-      shortcut: "P",
-      available: props.pullRequestAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
-      onClick: props.onAddPullRequest,
-    },
-    {
-      label: "Linked pull requests",
-      icon: PullRequestGlyph.link,
-      shortcut: "L",
-      available: props.pullRequestsAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.pullRequests,
-      onClick: props.onAddPullRequests,
-    },
-    {
-      label: "Device",
-      icon: Smartphone,
-      shortcut: "M",
-      available: props.deviceAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.device,
-      onClick: props.onAddDevice,
-    },
-    ...(props.onAddSideChat
-      ? [
-          {
-            label: "Side chat",
-            icon: MessagesSquare,
-            shortcut: "S",
-            available: props.sideChatAvailable === true && !props.sideChatDisabledReason,
-            disabledReason: props.sideChatDisabledReason ?? SURFACE_DISABLED_REASONS.sideChat,
-            onClick: props.onAddSideChat,
-          },
-        ]
-      : []),
-  ] as const;
+  });
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const action = surfaceShortcutActionForKey(addSurfaceActions, event.nativeEvent);
@@ -1126,55 +1041,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           sideOffset={6}
           onKeyDownCapture={handleAddSurfaceMenuKeyDown}
         >
-          {addSurfaceActions.map((action) => {
-            const Icon = action.icon;
-            if (action.label === "Browser" && action.available) {
-              return (
-                <MenuSub key={action.label}>
-                  <MenuSubTrigger
-                    className="[&>svg:last-child]:ms-0"
-                    aria-keyshortcuts={action.shortcut}
-                    onClick={(event) => {
-                      const pointerType =
-                        "pointerType" in event.nativeEvent &&
-                        typeof event.nativeEvent.pointerType === "string"
-                          ? event.nativeEvent.pointerType
-                          : undefined;
-                      if (!shouldOpenDefaultBrowserProfileFromMenuClick(pointerType)) return;
-                      setAddSurfaceMenuOpen(false);
-                      action.onClick();
-                    }}
-                  >
-                    <Icon />
-                    {action.label}
-                    <MenuShortcut>{action.shortcut}</MenuShortcut>
-                  </MenuSubTrigger>
-                  <MenuSubPopup className="max-w-56">
-                    {browserProfiles.map((profile) => (
-                      <MenuItem
-                        key={profile.id}
-                        onClick={() => props.onAddBrowserInProfile(profile.id)}
-                      >
-                        <span className="min-w-0 truncate">{profile.name}</span>
-                      </MenuItem>
-                    ))}
-                  </MenuSubPopup>
-                </MenuSub>
-              );
-            }
-            return (
-              <SurfaceMenuItem
-                key={action.label}
-                available={action.available}
-                disabledReason={action.disabledReason}
-                shortcut={action.shortcut}
-                onClick={action.onClick}
-              >
-                <Icon />
-                {action.label}
-              </SurfaceMenuItem>
-            );
-          })}
+          <SurfaceMenuItems
+            actions={addSurfaceActions}
+            browserProfiles={browserProfiles}
+            onAddBrowserInProfile={props.onAddBrowserInProfile}
+            onClose={() => setAddSurfaceMenuOpen(false)}
+          />
         </MenuPopup>
       </Menu>
     ) : null;
