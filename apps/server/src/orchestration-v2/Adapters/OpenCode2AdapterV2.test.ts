@@ -4931,6 +4931,85 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
   );
 
+  it.effect("shows a question asked while OpenCode wakes for a background reply", () =>
+    Effect.gen(function* () {
+      const OTHER = "ses_other00000000000000000000";
+      const offered =
+        yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const { runtime, thread } = yield* resumed([
+        out("session.get", { sessionID: OTHER }),
+        replyData("session.get", sessionInfo({ id: OTHER })),
+        out("permission.list", { sessionID: OTHER }),
+        replyData("permission.list", []),
+        out("session.form.list", { sessionID: OTHER }),
+        replyData("session.form.list", []),
+        ...backgroundLaunch(CHILD),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport("msg_report", "CHILD_OK"),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report" }),
+        event("form.created", { form: colorForm }),
+        // Handled after the form, so its update proves the form reached the adapter.
+        event("session.model.selected", {
+          sessionID: OTHER,
+          model: { providerID: "opencode", id: "big-pickle", variant: "none" },
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) => Deferred.succeed(offered, request).pipe(Effect.asVoid),
+          take: Effect.never,
+        }),
+      );
+      yield* runtime.resumeThread({
+        providerThread: {
+          ...thread,
+          id: ProviderThreadId.make("provider-thread:opencode2-adapter:other"),
+          nativeThreadRef: { driver: OPENCODE_PROVIDER, nativeId: OTHER, strength: "strong" },
+        },
+        threadId,
+        modelSelection: bigPickle,
+        runtimePolicy: policy(),
+      });
+      const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      const formSeen = yield* Deferred.make<void>();
+      const ended = yield* Deferred.make<void>();
+      yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          Effect.gen(function* () {
+            collected.push(event);
+            if (
+              event.type === "provider_thread.updated" &&
+              event.providerThread.nativeThreadRef?.nativeId === OTHER &&
+              event.providerThread.nativeMetadata?.modelSelection?.options?.[0]?.value === "none"
+            ) {
+              yield* Deferred.succeed(formSeen, undefined);
+            }
+            if (collected.filter((entry) => entry.type === "turn.terminal").length === 2) {
+              yield* Deferred.succeed(ended, undefined);
+            }
+          }),
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      const offer = yield* Deferred.await(offered);
+      yield* Deferred.await(formSeen);
+      yield* runtime.startTurn(continuationTurn(thread, offer));
+      yield* Deferred.await(ended);
+      assert.deepEqual(
+        collected.flatMap((event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
+            ? [event.runtimeRequest.nativeRequestRef?.nativeId]
+            : [],
+        ),
+        [colorForm.id],
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("ends a follow-up turn a steer joined exactly once", () =>
     Effect.gen(function* () {
       const reportText = `<subagent sessionID="${CHILD}" state="completed" description="Sleep">\nCHILD_OK\n</subagent>`;
