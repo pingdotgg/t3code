@@ -12261,6 +12261,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const { nodes } = yield* projectionStore
         .getThreadRecords(command.threadId, ["nodes"])
         .pipe(mapDispatchError(command));
+      const allocateEventId = () =>
+        idAllocator.allocate.event({
+          threadId: command.threadId,
+          commandId: command.commandId,
+        });
       for (const subagent of staleNative) {
         const ended = yield* endOrphanedNativeSubagent({
           projection: { nodes, subagents: projection.subagents, turnItems: projection.turnItems },
@@ -12268,13 +12273,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           status: "interrupted",
           now,
           emitted: yield* Ref.get(events),
-          allocateEventId: () =>
-            idAllocator.allocate.event({
-              threadId: command.threadId,
-              commandId: command.commandId,
-            }),
+          allocateEventId,
         }).pipe(mapDispatchError(command));
         yield* Ref.update(events, (existing) => [...existing, ...ended]);
+        if (subagent.childThreadId === null) continue;
+        const child = yield* projectionStore
+          .getThreadRecords(subagent.childThreadId, ["nodes", "providerTurns", "turnItems"], {
+            turnItemRunIds: [null],
+            turnItemStatuses: ["pending", "running", "waiting"],
+          })
+          .pipe(
+            Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+            mapDispatchError(command),
+          );
+        if (child === null) continue;
+        const childEnded = yield* endRunlessRootTurns({
+          threadId: subagent.childThreadId,
+          providerInstanceId: subagent.providerInstanceId,
+          projection: child,
+          status: "interrupted",
+          now,
+          emitted: yield* Ref.get(events),
+          allocateEventId,
+        }).pipe(mapDispatchError(command));
+        yield* Ref.update(events, (existing) => [...existing, ...childEnded]);
       }
     }
     yield* holdStoppedThread({ command, events, projection, cohortRunIds: [], now });

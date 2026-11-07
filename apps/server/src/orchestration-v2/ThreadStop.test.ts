@@ -1756,6 +1756,46 @@ it.effect(
       const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
       const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
       const now = yield* DateTime.now;
+      const nativeThreadId = ThreadId.make("thread:held-row-native");
+      yield* createWatchingThread(nativeThreadId, 31);
+      const nativeRoot = {
+        ...(yield* orchestrator.getThreadProjection(childThreadId)).nodes.find(
+          (node) => node.id === childRun.rootNodeId,
+        )!,
+        id: NodeId.make("node:held-row-native-root"),
+        threadId: nativeThreadId,
+        runId: null,
+        parentNodeId: null,
+        status: "running" as const,
+        countsForRun: false,
+        completedAt: null,
+      };
+      yield* projections.apply({
+        id: EventId.make("event:held-row:native-root"),
+        type: "node.updated",
+        threadId: nativeThreadId,
+        nodeId: nativeRoot.id,
+        occurredAt: now,
+        payload: nativeRoot,
+      });
+      yield* projections.apply({
+        id: EventId.make("event:held-row:native-turn"),
+        type: "provider-turn.updated",
+        threadId: nativeThreadId,
+        nodeId: nativeRoot.id,
+        occurredAt: now,
+        payload: {
+          id: ProviderTurnId.make("turn:held-row-native"),
+          providerThreadId: ProviderThreadId.make("provider-thread:held-row-native"),
+          nodeId: nativeRoot.id,
+          runAttemptId: null,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+        },
+      });
       // A native subagent the provider never reported ending, with no open turn item.
       yield* projections.apply({
         id: EventId.make("event:held-row:native"),
@@ -1770,7 +1810,7 @@ it.effect(
           runId: childRun.id,
           parentNodeId: childRun.rootNodeId!,
           origin: "provider_native",
-          childThreadId: null,
+          childThreadId: nativeThreadId,
           status: "running",
           completionDelivery: undefined,
         },
@@ -1804,11 +1844,16 @@ it.effect(
       });
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       yield* worker.drain();
-      yield* orchestrator.recoverDelegatedTasks;
-      assert.notInclude(
-        ["pending", "running", "waiting"],
+      assert.equal(
         (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]?.status,
+        "completed",
         "Stop leaves the finished child's row working",
+      );
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(nativeThreadId)).nodes.find(
+          (node) => node.id === nativeRoot.id,
+        )?.status,
+        "interrupted",
       );
     }).pipe(Effect.provide(layerTest)),
 );
