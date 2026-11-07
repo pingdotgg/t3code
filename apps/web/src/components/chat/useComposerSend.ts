@@ -172,7 +172,6 @@ interface ComposerSendInput {
   readonly draftId: DraftId | null;
   readonly draftThread: DraftSessionState | null;
   readonly activeThread: EnvironmentThreadShell | undefined;
-  readonly activeLatestRun: EnvironmentThreadShell["latestRun"] | null;
   readonly activeThreadKey: string | null;
   readonly activeThreadBranch: string | null;
   readonly activeProject: EnvironmentProject | null;
@@ -273,7 +272,6 @@ export function useComposerSend(input: ComposerSendInput) {
     draftId,
     draftThread,
     activeThread,
-    activeLatestRun,
     activeThreadKey,
     activeThreadBranch,
     activeProject,
@@ -382,7 +380,6 @@ export function useComposerSend(input: ComposerSendInput) {
     environmentId,
     routeThreadKey,
     activeThread,
-    activeLatestRun,
     activeThreadBranch,
     activeProposedPlan,
     isServerThread,

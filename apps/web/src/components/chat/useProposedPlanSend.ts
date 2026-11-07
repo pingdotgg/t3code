@@ -45,22 +45,6 @@ import type { useTimelineFollow } from "./useTimelineFollow";
 
 type LocalDispatchState = ReturnType<typeof useLocalDispatchState>;
 
-/** The thread's interaction mode, or plan while a failed plan follow-up awaits a retry. */
-export function useThreadInteractionMode(
-  thread: EnvironmentThreadShell | null | undefined,
-): ProviderInteractionMode | undefined {
-  const failedRunId = useComposerDraftStore((store) =>
-    thread
-      ? store.getComposerDraft(scopeThreadRef(thread.environmentId, thread.id))
-          ?.failedPlanFollowUpRunId
-      : undefined,
-  );
-  if (!thread) return undefined;
-  return failedRunId !== undefined && failedRunId === thread.latestRun?.runId
-    ? "plan"
-    : thread.interactionMode;
-}
-
 interface PlanSendBase {
   readonly environmentId: EnvironmentId;
   readonly routeThreadKey: string;
@@ -75,7 +59,6 @@ interface PlanSendBase {
 }
 
 interface PlanFollowUpSendInput extends PlanSendBase {
-  readonly activeLatestRun: EnvironmentThreadShell["latestRun"] | null;
   readonly runtimeMode: RuntimeMode;
   readonly localCheckoutBranchMismatch: { readonly currentBranch: string } | null;
   readonly setOptimisticUserMessages: Dispatch<SetStateAction<ChatMessage[]>>;
@@ -100,7 +83,6 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
     routeThreadKey,
     activeThread,
     activeProposedPlan,
-    activeLatestRun,
     isServerThread,
     isSendBusy,
     composerRef,
@@ -150,18 +132,7 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
       return false;
     }
 
-    if (
-      nextInteractionMode === "default" &&
-      activeThread.latestRun?.runId !== activeLatestRun?.runId
-    ) {
-      return false;
-    }
-
     const threadIdForSend = activeThread.id;
-    const threadRefForSend = scopeThreadRef(activeThread.environmentId, threadIdForSend);
-    const previousDraftInteractionMode = useComposerDraftStore
-      .getState()
-      .getComposerDraft(threadRefForSend)?.interactionMode;
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const outgoingMessageText = formatOutgoingPrompt({
@@ -206,7 +177,10 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
       settingsResult._tag === "Failure" ? settingsResult : null;
 
     if (failure === null) {
-      setComposerDraftInteractionMode(threadRefForSend, nextInteractionMode);
+      setComposerDraftInteractionMode(
+        scopeThreadRef(activeThread.environmentId, threadIdForSend),
+        nextInteractionMode,
+      );
 
       const startResult = await startThreadTurn({
         environmentId,
@@ -235,9 +209,6 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
         },
       });
       failure = startResult._tag === "Failure" ? startResult : null;
-      if (failure !== null) {
-        setComposerDraftInteractionMode(threadRefForSend, previousDraftInteractionMode);
-      }
     }
 
     if (failure === null) {
@@ -246,10 +217,6 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
       return true;
     }
 
-    const failedRunId = activeThread.latestRun?.runId;
-    if (failedRunId !== undefined) {
-      useComposerDraftStore.getState().setFailedPlanFollowUpRunId(threadRefForSend, failedRunId);
-    }
     setOptimisticUserMessages((existing) =>
       existing.filter((message) => message.id !== messageIdForSend),
     );

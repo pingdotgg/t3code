@@ -19,7 +19,6 @@ import {
   PastedTextAttachmentSource,
   type PreviewAnnotationPayload,
   RuntimeMode,
-  RunId,
   ThreadContextRecord,
   EnvironmentContextRecord,
   type ServerProvider,
@@ -104,7 +103,6 @@ import { UnifiedSettings } from "@t3tools/contracts/settings";
 const isElementContextDetails = Schema.is(ElementContextDetails);
 import { ReviewCommentContextSchema, type ReviewCommentContext } from "./reviewCommentContext";
 const isRuntimeMode = Schema.is(RuntimeMode);
-const isRunId = Schema.is(RunId);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
 const isThreadContextRecord = Schema.is(ThreadContextRecord);
@@ -255,7 +253,6 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   modelSelectionExplicit: Schema.optionalKey(Schema.Boolean),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
-  failedPlanFollowUpRunId: Schema.optionalKey(RunId),
 });
 type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftState.Type;
 
@@ -380,7 +377,6 @@ export interface ComposerThreadDraftState {
   modelSelectionExplicit?: boolean;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
-  failedPlanFollowUpRunId?: RunId;
 }
 
 export function composerDraftHasUserContent(
@@ -542,7 +538,6 @@ interface ComposerDraftStoreState {
     threadRef: ComposerThreadTarget,
     interactionMode: ProviderInteractionMode | null | undefined,
   ) => void;
-  setFailedPlanFollowUpRunId: (threadRef: ScopedThreadRef, runId: RunId) => void;
   addImage: (threadRef: ComposerThreadTarget, image: ComposerImageAttachment) => boolean;
   addImages: (
     threadRef: ComposerThreadTarget,
@@ -887,8 +882,7 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
-    draft.interactionMode === null &&
-    draft.failedPlanFollowUpRunId === undefined
+    draft.interactionMode === null
   );
 }
 
@@ -1899,9 +1893,6 @@ function normalizePersistedDraftsByThreadId(
       draftCandidate.interactionMode === "plan" || draftCandidate.interactionMode === "default"
         ? draftCandidate.interactionMode
         : null;
-    const failedPlanFollowUpRunId = isRunId(draftCandidate.failedPlanFollowUpRunId)
-      ? draftCandidate.failedPlanFollowUpRunId
-      : undefined;
     const contextIds = new Map<string, string>();
     for (const [kind, entries] of [
       ["image", attachments],
@@ -1992,8 +1983,7 @@ function normalizePersistedDraftsByThreadId(
       environmentContexts.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
-      !interactionMode &&
-      failedPlanFollowUpRunId === undefined
+      !interactionMode
     ) {
       continue;
     }
@@ -2027,7 +2017,6 @@ function normalizePersistedDraftsByThreadId(
         : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
       ...(interactionMode ? { interactionMode } : {}),
-      ...(failedPlanFollowUpRunId ? { failedPlanFollowUpRunId } : {}),
     };
   }
 
@@ -2125,8 +2114,7 @@ export function partializeComposerDraftStoreState(
       draft.environmentContexts.length === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
-      draft.interactionMode === null &&
-      draft.failedPlanFollowUpRunId === undefined
+      draft.interactionMode === null
     ) {
       continue;
     }
@@ -2193,9 +2181,6 @@ export function partializeComposerDraftStoreState(
         : {}),
       ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
       ...(draft.interactionMode ? { interactionMode: draft.interactionMode } : {}),
-      ...(draft.failedPlanFollowUpRunId
-        ? { failedPlanFollowUpRunId: draft.failedPlanFollowUpRunId }
-        : {}),
     };
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
   }
@@ -2465,9 +2450,6 @@ function toHydratedThreadDraft(
     ...(persistedDraft.modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
     runtimeMode: persistedDraft.runtimeMode ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
-    ...(persistedDraft.failedPlanFollowUpRunId
-      ? { failedPlanFollowUpRunId: persistedDraft.failedPlanFollowUpRunId }
-      : {}),
   };
 }
 
@@ -3242,20 +3224,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftsByThreadKey[threadKey] = nextDraft;
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
-          });
-        },
-        setFailedPlanFollowUpRunId: (threadRef, runId) => {
-          const threadKey = resolveComposerDraftKey(get(), threadRef);
-          if (!threadKey) return;
-          set((state) => {
-            const base = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
-            if (base.failedPlanFollowUpRunId === runId) return state;
-            return {
-              draftsByThreadKey: {
-                ...state.draftsByThreadKey,
-                [threadKey]: { ...base, failedPlanFollowUpRunId: runId },
-              },
-            };
           });
         },
         addImage: (threadRef, image) => {

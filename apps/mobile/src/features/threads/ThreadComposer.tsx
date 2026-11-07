@@ -63,9 +63,7 @@ import {
   composerContextImportsAtom,
   countComposerDraftAttachmentsAfterSelection,
   useComposerDraft,
-  useComposerDraftSettings,
 } from "../../state/use-composer-drafts";
-import { resolvePlanThreadModeControl } from "../../state/legacy-plan-mode";
 import { appAtomRegistry } from "../../state/atom-registry";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useVisibleThreadShells } from "../../state/entities";
@@ -460,7 +458,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const composerDraftKey = props.draftKey ?? composerOwnerKey;
   const { text: draftMessage, attachments: draftAttachments } = useComposerDraft(composerDraftKey);
-  const draftInteractionMode = useComposerDraftSettings(composerOwnerKey).interactionMode;
   const queuedEdit = props.queuedEdit ?? null;
   const hasContent =
     draftMessage.trim().length > 0 ||
@@ -513,15 +510,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       ) ?? null
     );
   })();
-  const planThreadMode =
-    props.onUpdateInteractionMode && queuedEdit === null
-      ? resolvePlanThreadModeControl({
-          isDraft: props.isDraft === true,
-          persistedInteractionMode: props.persistedInteractionMode,
-          draftInteractionMode,
-          provider: selectedProviderStatus,
-        })
-      : null;
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
     Keyboard.dismiss();
     navigation.navigate("ThreadAttachment", {
@@ -556,6 +544,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     return report !== null;
   };
 
+  const onUpdateInteractionMode =
+    selectedProviderStatus?.showInteractionModeToggle === false
+      ? undefined
+      : props.onUpdateInteractionMode;
+
   const mentionableEnvironments = useMentionableEnvironments();
   const composerMenu = useComposerCommandMenu({
     draftMessage: draftMessage,
@@ -575,10 +568,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     hasThread: !props.isDraft,
     hasCompactableConversation: props.hasCompactableConversation,
     onChangeDraftMessage: props.onChangeDraftMessage,
-    onUpdateInteractionMode:
-      selectedProviderStatus?.showInteractionModeToggle === false
-        ? undefined
-        : props.onUpdateInteractionMode,
+    onUpdateInteractionMode,
     offersUsageLimits: usageLimitsOffered,
     onUsageLimits:
       usageLimitsOffered && draftAttachments.length === 0 ? openUsageLimits : undefined,
@@ -830,23 +820,27 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     </View>
   );
 
+  // A thread already in Plan keeps the control with the Plan Mode setting off, so it can leave Plan.
+  const interactionMode = props.selectedThread.interactionMode;
   const modeControl =
-    planThreadMode !== null ? (
+    !props.isDraft &&
+    props.persistedInteractionMode === "plan" &&
+    onUpdateInteractionMode &&
+    queuedEdit === null ? (
       <ComposerInlineControl
         size={usesLargeControls ? "large" : "regular"}
-        accessibilityHint={`Switches to ${planThreadMode === "plan" ? "Build" : "Plan"} mode`}
-        accessibilityLabel={`Interaction mode: ${planThreadMode === "plan" ? "Plan" : "Build"}`}
+        accessibilityHint={`Switches to ${interactionMode === "plan" ? "Build" : "Plan"} mode`}
+        accessibilityLabel={`Interaction mode: ${interactionMode === "plan" ? "Plan" : "Build"}`}
+        disabled={props.interactionLocked === true}
         emphasized
         icon={
-          planThreadMode === "plan"
+          interactionMode === "plan"
             ? { ios: "list.bullet.clipboard", android: "auto_awesome" }
             : { ios: "hammer", android: "construction" }
         }
-        label={planThreadMode === "plan" ? "Plan" : "Build"}
+        label={interactionMode === "plan" ? "Plan" : "Build"}
         iconOnly={!compactEditor.isExpanded}
-        onPress={() =>
-          props.onUpdateInteractionMode?.(planThreadMode === "plan" ? "default" : "plan")
-        }
+        onPress={() => onUpdateInteractionMode(interactionMode === "plan" ? "default" : "plan")}
         showChevron={false}
       />
     ) : null;

@@ -28,7 +28,7 @@ import { useRightPanelActions } from "./chat/useRightPanelActions";
 import { type TerminalLaunchContext, useChatTerminalActions } from "./chat/useChatTerminalActions";
 import { useComposerSend } from "./chat/useComposerSend";
 import { useComposerResume } from "./chat/useComposerResume";
-import { useImplementPlanInNewThread, useThreadInteractionMode } from "./chat/useProposedPlanSend";
+import { useImplementPlanInNewThread } from "./chat/useProposedPlanSend";
 import { ThreadFind, ThreadFindCanvas } from "./chat/ThreadFindProvider";
 import { closeThreadFind, openThreadFind, useThreadFindOpen } from "./chat/threadFindStore";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
@@ -797,7 +797,6 @@ export default function ChatView(props: ChatViewProps) {
       )
     : undefined;
   const isServerThread = serverThread !== null;
-  const serverThreadInteractionMode = useThreadInteractionMode(serverThread);
   const activeThread = isServerThread ? serverThread : localDraftThread;
   const serverLatestRun =
     serverProjection === null ? null : deriveLatestThreadRun(serverProjection);
@@ -1317,11 +1316,8 @@ export default function ChatView(props: ChatViewProps) {
     planModeEnabled: settings.planModeEnabled,
     provider: activeProviderStatus,
     interactionMode:
-      composerInteractionMode ??
-      serverThreadInteractionMode ??
-      activeThread?.interactionMode ??
-      DEFAULT_INTERACTION_MODE,
-    persistedInteractionMode: serverThreadInteractionMode,
+      composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE,
+    persistedInteractionMode: serverThread?.interactionMode,
   });
   const conversationProviderStatus =
     providerStatuses.find((status) => status.instanceId === activeRuntime?.providerInstanceId) ??
@@ -2931,7 +2927,6 @@ export default function ChatView(props: ChatViewProps) {
     draftId,
     draftThread,
     activeThread,
-    activeLatestRun,
     activeThreadKey,
     activeThreadBranch,
     activeProject,
