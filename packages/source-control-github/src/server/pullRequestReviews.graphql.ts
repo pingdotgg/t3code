@@ -239,11 +239,11 @@ export interface RequestedReviewerBot extends Schema.Struct.Type<typeof Requeste
 export const Team = Schema.Struct({
   __typename: Schema.Literal("Team"),
   /** The slug corresponding to the organization and team. */
-  combinedSlug: Schema.String,
+  combinedSlug: Schema.optionalKey(Schema.String),
   /** The name of the team. */
-  teamName: Schema.String,
+  teamName: Schema.optionalKey(Schema.String),
   /** A URL pointing to the team's avatar. */
-  teamAvatarUrl: Schema.NullOr(Shared.URI)
+  teamAvatarUrl: Schema.optionalKey(Schema.NullOr(Shared.URI))
 })
 export interface Team extends Schema.Struct.Type<typeof Team.fields> {}
 
@@ -412,11 +412,12 @@ export const ReviewThreads = GraphQL.query("ReviewThreads", {
       { name: "owner", body: "String!" },
       { name: "name", body: "String!" },
       { name: "number", body: "Int!" },
-      { name: "requestedReviewers", body: "Int!" }
+      { name: "requestedReviewers", body: "Int!" },
+      { name: "teamDetails", body: "Boolean!" }
     ],
     selections: [
       { name: "viewer", body: ["{login}"] },
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){reviewThreads(first:100){...ReviewThreadPage}viewerCanUpdate viewerDidAuthor author{__typename login avatarUrl}...Reactions comments(first:100){nodes{id lastEditedAt author{__typename login avatarUrl}...Reactions}}reviews(first:100){nodes{id lastEditedAt author{__typename login avatarUrl}...Reactions}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name avatarUrl}...on Bot{login avatarUrl}...on Team{combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}latestReviews(first:50){nodes{state author{__typename login avatarUrl}}}reviewDismissals:timelineItems(itemTypes:[REVIEW_DISMISSED_EVENT]first:100){pageInfo{hasNextPage endCursor}nodes{__typename...on ReviewDismissedEvent{dismissalMessage review{id}}}}commits(last:100){nodes{commit{oid messageHeadline committedDate authors(first:3){nodes{name avatarUrl user{login}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){reviewThreads(first:100){...ReviewThreadPage}viewerCanUpdate viewerDidAuthor author{__typename login avatarUrl}...Reactions comments(first:100){nodes{id lastEditedAt author{__typename login avatarUrl}...Reactions}}reviews(first:100){nodes{id lastEditedAt author{__typename login avatarUrl}...Reactions}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name avatarUrl}...on Bot{login avatarUrl}...on Team@include(if:$", "teamDetails", "){combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}latestReviews(first:50){nodes{state author{__typename login avatarUrl}}}reviewDismissals:timelineItems(itemTypes:[REVIEW_DISMISSED_EVENT]first:100){pageInfo{hasNextPage endCursor}nodes{__typename...on ReviewDismissedEvent{dismissalMessage review{id}}}}commits(last:100){nodes{commit{oid messageHeadline committedDate authors(first:3){nodes{name avatarUrl user{login}}}}}}}}"] }
     ],
     fragments: [
       { name: "ReviewThreadPage", body: ["on PullRequestReviewThreadConnection{totalCount pageInfo{hasNextPage endCursor}nodes{id isResolved isOutdated path line diffSide comments(first:10){totalCount pageInfo{hasNextPage endCursor}nodes{...ThreadComment}}}}"] },
@@ -428,7 +429,8 @@ export const ReviewThreads = GraphQL.query("ReviewThreads", {
     owner: Schema.String,
     name: Schema.String,
     number: Shared.Int,
-    requestedReviewers: Shared.Int
+    requestedReviewers: Shared.Int,
+    teamDetails: Schema.Boolean
   },
   result: Schema.Struct({
     /** The currently authenticated user. */

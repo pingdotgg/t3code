@@ -116,6 +116,7 @@ interface LabelFields {
 }
 
 interface ReviewRequestFields {
+  readonly __typename?: string | undefined;
   readonly login?: string | null | undefined;
   readonly slug?: string | null | undefined;
   readonly name?: string | null | undefined;
@@ -554,8 +555,9 @@ function toReviewRequestLogins(
 function hasTeamReviewRequest(raw: ReadonlyArray<ReviewRequestFields> | undefined): boolean {
   return (raw ?? []).some(
     (request) =>
-      trimmed(request.login) === null &&
-      (trimmed(request.slug) !== null || trimmed(request.name) !== null),
+      request.__typename === "Team" ||
+      (trimmed(request.login) === null &&
+        (trimmed(request.slug) !== null || trimmed(request.name) !== null)),
   );
 }
 
@@ -1041,6 +1043,7 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
             : [
                 {
                   login: "login" in requestedReviewer ? requestedReviewer.login : null,
+                  __typename: requestedReviewer.__typename,
                   slug: "slug" in requestedReviewer ? requestedReviewer.slug : null,
                   name:
                     "teamName" in requestedReviewer

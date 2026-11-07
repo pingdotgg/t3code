@@ -320,6 +320,13 @@ const isGraphQlClientError = (error: unknown): error is GraphQLClientError.Graph
 
 const { isNotFoundOnly } = GitHubGraphQlClient;
 
+const isInsufficientScopesOnly = (error: unknown): boolean =>
+  isGraphQlClientError(error) &&
+  error.reason._tag === "ResponseError" &&
+  error.reason.status === 200 &&
+  error.reason.errors.length > 0 &&
+  error.reason.errors.every(({ type }) => type === "INSUFFICIENT_SCOPES");
+
 const isRefusedRequestedReviewersOnly = (error: unknown): boolean =>
   isGraphQlClientError(error) &&
   error.reason._tag === "ResponseError" &&
@@ -1433,19 +1440,38 @@ export const make = Effect.gen(function* () {
     timeToLive: "10 minutes",
     lookup: (_key: string) => Effect.void,
   });
+  const refusedTeamDetails = yield* Cache.make({
+    capacity: 512,
+    timeToLive: "10 minutes",
+    lookup: (_key: string) => Effect.void,
+  });
   const readRequestedReviewers = Effect.fn("GitHubPullRequestApi.readRequestedReviewers")(
     function* <A, E, R>(
       input: { readonly host: string; readonly repository: string; readonly number: number },
       wanted: number,
-      read: (requestedReviewers: number) => Effect.Effect<A, E, R>,
+      read: (requestedReviewers: number, teamDetails: boolean) => Effect.Effect<A, E, R>,
     ) {
       const host = normalizeHost(input.host);
       const { fingerprint } = yield* api.credential(host);
       const key = `${fingerprint}\0${host}\0${input.repository.toLowerCase()}\0${input.number}`;
-      if (yield* Cache.has(refusedReviewers, key)) return yield* read(0);
-      return yield* read(wanted).pipe(
+      const teamKey = `${fingerprint}\0${host}`;
+      const withTeamDetails = Effect.fn("GitHubPullRequestApi.readTeamDetails")(function* (
+        requestedReviewers: number,
+      ) {
+        if (yield* Cache.has(refusedTeamDetails, teamKey))
+          return yield* read(requestedReviewers, false);
+        return yield* read(requestedReviewers, true).pipe(
+          Effect.catchIf(isInsufficientScopesOnly, () =>
+            read(requestedReviewers, false).pipe(
+              Effect.tap(() => Cache.set(refusedTeamDetails, teamKey, undefined)),
+            ),
+          ),
+        );
+      });
+      if (yield* Cache.has(refusedReviewers, key)) return yield* withTeamDetails(0);
+      return yield* withTeamDetails(wanted).pipe(
         Effect.catchIf(isRefusedRequestedReviewersOnly, () =>
-          Cache.set(refusedReviewers, key, undefined).pipe(Effect.andThen(read(0))),
+          Cache.set(refusedReviewers, key, undefined).pipe(Effect.andThen(withTeamDetails(0))),
         ),
       );
     },
@@ -1454,7 +1480,7 @@ export const make = Effect.gen(function* () {
   const getPullRequestDetail: GitHubPullRequestApi["Service"]["getPullRequestDetail"] = (input) => {
     const { owner, name } = parseRepositorySelector(input.repository);
     const operation = "getPullRequestDetail";
-    const read = (requestedReviewers: number) =>
+    const read = (requestedReviewers: number, teamDetails: boolean) =>
       client.PullRequestCore({
         owner,
         name,
@@ -1462,6 +1488,7 @@ export const make = Effect.gen(function* () {
         headRef: `refs/pull/${input.number}/head`,
         required: asksRequired(input.host),
         requestedReviewers,
+        teamDetails,
       });
     return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((allowReserve) =>
@@ -2219,8 +2246,14 @@ export const make = Effect.gen(function* () {
         const first: GitHubReviewThreadPage = yield* readRequestedReviewers(
           input,
           50,
-          (requestedReviewers) =>
-            client.ReviewThreads({ owner, name, number: input.number, requestedReviewers }),
+          (requestedReviewers, teamDetails) =>
+            client.ReviewThreads({
+              owner,
+              name,
+              number: input.number,
+              requestedReviewers,
+              teamDetails,
+            }),
         ).pipe(graphql(target), Effect.map(toReviewThreadPage), Effect.flatMap(found(target)));
         const entries: GitHubReviewThreadEntry[] = [...first.threads];
         const avatarsByLogin = new Map(first.avatarsByLogin);

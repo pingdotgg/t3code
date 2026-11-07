@@ -3562,6 +3562,73 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("reads PR truth when the credential cannot select Team fields", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((call) => {
+        if (call.kind !== "graphql") return Effect.die("Unexpected REST request");
+        return Effect.succeed(
+          output(
+            encodeJson(
+              call.variables?.["teamDetails"] === false
+                ? coreResponse({
+                    reviewDecision: "CHANGES_REQUESTED",
+                    commits: {
+                      nodes: [
+                        {
+                          commit: {
+                            statusCheckRollup: {
+                              contexts: {
+                                nodes: [checkRun({ name: "test", conclusion: "FAILURE" })],
+                                pageInfo: lastPage,
+                              },
+                            },
+                          },
+                        },
+                      ],
+                    },
+                    reviewRequests: {
+                      nodes: [
+                        {
+                          requestedReviewer: { __typename: "User", login: "reviewer", name: null },
+                        },
+                        { requestedReviewer: { __typename: "Team" } },
+                      ],
+                    },
+                  })
+                : {
+                    errors: [
+                      {
+                        type: "INSUFFICIENT_SCOPES",
+                        locations: [{ line: 1, column: 217 }],
+                        message:
+                          "Your token has not been granted the required scopes to execute this query. The 'slug' field requires one of the following scopes: ['read:org', 'read:discussion'], but your token has only been granted the: ['gist', 'repo', 'workflow'] scopes.",
+                      },
+                    ],
+                  },
+            ),
+          ),
+        );
+      });
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const input = { ...pullRequestInput, host: "github-team-scope.test" };
+      const detail = yield* cli.getPullRequestDetail(input);
+      expect(detail.reviewDecision).toBe("changes-requested");
+      expect(detail.reviewRequestLogins).toEqual(["reviewer"]);
+      expect(detail.hasTeamReviewRequest).toBe(true);
+      expect(detail.checksState).toBe("failing");
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+      yield* cli.getPullRequestDetail(input);
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
+      mockedExecute.mockReturnValue(Effect.succeed(output(reviewThreadsPage([], null))));
+      yield* cli.listReviewThreadComments(input);
+      expect(variablesOf("ReviewThreads").at(-1)).toMatchObject({ teamDetails: false });
+      mockedExecute.mockReturnValue(
+        Effect.succeed(output(encodeJson({ errors: [refusedReviewer] }))),
+      );
+      yield* Effect.flip(cli.getPullRequestDetail(input));
+    }),
+  );
+
   it.effect.each([false, true])(
     "continues after the core check page without reading it twice (reviewer refusal: %s)",
     (refused) =>
