@@ -2,6 +2,7 @@ import {
   boundAttachmentIds,
   buildExpiredTerminalContextToastCopy,
   mergeDirectPreviewAnnotation,
+  clearSentComposer,
   planComposerTurn,
   restorePlanFollowUpComposer,
   snapshotComposerSend,
@@ -1140,6 +1141,40 @@ describe("planComposerTurn", () => {
       turnDispatchMode: "queue",
       shouldQueueBehindActiveRun: true,
     });
+  });
+});
+
+describe("clearSentComposer", () => {
+  // The draft is the sent thread's; the prompt ref and cursor are whatever thread is on screen.
+  it.each([
+    {
+      name: "clears the composer while the sent thread is open",
+      routeIsCurrent: true,
+      before: { draft: "Ship it", promptRef: "Ship it", cursor: "Ship it" },
+      after: { draft: "", promptRef: "", cursor: null },
+    },
+    {
+      name: "leaves the open thread's prompt and cursor alone after navigating away",
+      routeIsCurrent: false,
+      before: { draft: "Ship it", promptRef: "Other thread", cursor: "Other thread" },
+      after: { draft: "", promptRef: "Other thread", cursor: "Other thread" },
+    },
+  ])("$name", ({ routeIsCurrent, before, after }) => {
+    const composer: { draft: string; promptRef: string; cursor: string | null } = { ...before };
+    clearSentComposer({
+      routeIsCurrent,
+      clearDraft: () => {
+        composer.draft = "";
+      },
+      clearComposerRefs: () => {
+        composer.promptRef = "";
+      },
+      resetCursor: () => {
+        composer.cursor = null;
+      },
+    });
+
+    expect(composer).toEqual(after);
   });
 });
 

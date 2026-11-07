@@ -1212,6 +1212,20 @@ export function restorePlanFollowUpComposer(input: {
   });
 }
 
+// The sent draft belongs to the thread that sent it. Composer refs and the cursor belong to the
+// thread on screen, so a send that finishes after the user left its thread leaves them alone.
+export function clearSentComposer(input: {
+  readonly routeIsCurrent: boolean;
+  readonly clearDraft: () => void;
+  readonly clearComposerRefs: () => void;
+  readonly resetCursor: () => void;
+}): void {
+  input.clearDraft();
+  if (!input.routeIsCurrent) return;
+  input.clearComposerRefs();
+  input.resetCursor();
+}
+
 /** Includes the annotation screenshot only within the attachment cap; exceeding it rejects the whole turn. */
 export function mergeDirectPreviewAnnotation(input: {
   readonly images: ReadonlyArray<ComposerImageAttachment>;
