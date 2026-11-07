@@ -5,6 +5,7 @@ import { AppBar } from "../../../components/ui/AppBar";
 import { appBarMenuItemsFromActions } from "../../../components/ui/menuActionItems";
 import { useHomeRouteVisible } from "../../home/home-route-visibility";
 import { useHardwareKeyboardCommand } from "../../keyboard/hardwareKeyboardCommands";
+import { useAdaptiveWorkspaceLayout } from "../adaptive-workspace-context";
 import { WorkspaceBrandTitle } from "./WorkspaceBrandTitle";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { PullRequestFilterMenu } from "../../pull-requests/PullRequestListFilters";
@@ -20,8 +21,12 @@ export function PullRequestToolbar(props: {
   const workspace = useWorkspaceTabs()!;
   const { dispatch, getScrollOffset, recordScrollOffset, isTabActive } = workspace;
   const { onRequestVisibility } = props;
+  const { panes } = useAdaptiveWorkspaceLayout();
   const tab = workspace.state.tabs.pullRequests;
   const homeVisible = useHomeRouteVisible();
+  // Compact Home uses route visibility; a split sidebar stays interactive while its detail is focused.
+  const listHostVisible =
+    onRequestVisibility !== undefined ? panes.primarySidebarVisible : homeVisible;
   const searching = tab.searchMode !== "resting";
   const openSearch = () => {
     onRequestVisibility?.();
@@ -39,13 +44,20 @@ export function PullRequestToolbar(props: {
     recordScrollOffset("pullRequests", tab.searchEntryOffset);
     dispatch({ type: "cancel", tab: "pullRequests" });
   };
-  // Home stays mounted under a thread; an empty active search would still show on return.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels empty Android PR search when a detail covers Home
+  // An empty active search would still show when its host returns; cancel only once that host is covered.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels empty Android PR search when its list host is covered
   useEffect(() => {
-    if (homeVisible || tab.query !== "" || tab.searchMode === "resting") return;
+    if (listHostVisible || tab.query !== "" || tab.searchMode === "resting") return;
     recordScrollOffset("pullRequests", tab.searchEntryOffset);
     dispatch({ type: "cancel", tab: "pullRequests" });
-  }, [homeVisible, tab.query, tab.searchMode, tab.searchEntryOffset, recordScrollOffset, dispatch]);
+  }, [
+    listHostVisible,
+    tab.query,
+    tab.searchMode,
+    tab.searchEntryOffset,
+    recordScrollOffset,
+    dispatch,
+  ]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to BackHandler while searching to close the PR search on Android back
   useEffect(() => {
     if (!searching) return;

@@ -25,8 +25,10 @@ export function WorkspaceListHeader(props: WorkspaceListHeaderProps) {
   const { search, sidebar } = props;
   const onSearchQueryChange = search.onChangeText;
   const [searchOpen, setSearchOpen] = useState(false);
-  // Home stays mounted under a thread; drop an empty open search before it can return still open.
-  if (!homeVisible && searchOpen && search.value.length === 0) setSearchOpen(false);
+  // Compact Home uses route visibility; a split sidebar stays interactive while its detail is focused.
+  const listHostVisible = sidebar?.visible ?? homeVisible;
+  // Drop an empty open search only when its host is covered, so returning Home cannot reopen it.
+  if (!listHostVisible && searchOpen && search.value.length === 0) setSearchOpen(false);
   const searching = searchOpen || search.value.length > 0;
   const openSearch = () => {
     sidebar?.onRequestVisibility();
