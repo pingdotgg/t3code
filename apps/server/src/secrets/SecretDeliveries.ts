@@ -298,7 +298,8 @@ const make = Effect.gen(function* () {
   // Only startup removes crash leftovers; hourly sweeps must not race a live store write.
   if (store.directory !== undefined) {
     for (const file of yield* fs.readDirectory(store.directory)) {
-      if (/^secret-delivery-[a-f0-9]{64}\.bin\.[a-f0-9-]{36}\.tmp$/.test(file)) {
+      const target = ServerSecretStore.temporarySecretTarget(file);
+      if (target !== undefined && STORE_NAME_PATTERN.test(target)) {
         yield* fs.remove(NodePath.join(store.directory, file));
       }
     }

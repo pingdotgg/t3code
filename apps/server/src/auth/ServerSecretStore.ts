@@ -11,6 +11,12 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
 
+export const temporarySecretPath = (secretPath: string, uuid: string) =>
+  `${secretPath}.${uuid}.tmp`;
+
+export const temporarySecretTarget = (fileName: string) =>
+  /^(.*\.bin)\.[a-f0-9-]{36}\.tmp$/.exec(fileName)?.[1];
+
 const secretStoreErrorContext = {
   resource: Schema.String,
   cause: Schema.Defect(),
@@ -197,7 +203,7 @@ export const make = Effect.gen(function* () {
           }),
       ),
       Effect.flatMap((uuid) => {
-        const tempPath = `${secretPath}.${uuid}.tmp`;
+        const tempPath = temporarySecretPath(secretPath, uuid);
         return Effect.gen(function* () {
           yield* fileSystem.writeFile(tempPath, value);
           yield* fileSystem.chmod(tempPath, 0o600);
@@ -236,7 +242,7 @@ export const make = Effect.gen(function* () {
           }),
       ),
       Effect.flatMap((uuid) => {
-        const tempPath = `${secretPath}.${uuid}.tmp`;
+        const tempPath = temporarySecretPath(secretPath, uuid);
         return Effect.gen(function* () {
           yield* Effect.scoped(
             Effect.gen(function* () {
