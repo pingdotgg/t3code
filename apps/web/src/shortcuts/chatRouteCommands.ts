@@ -7,11 +7,15 @@ import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { dispatchPreviewAction, type PreviewAction } from "../components/preview/previewActionBus";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
+import { shouldCreateNewThreadInCurrentProject } from "../components/Sidebar.logic";
 import { createNewThreadHandler, resolveDefaultProjectRef } from "../hooks/useHandleNewThread";
 import { createScratchProjectActions } from "../hooks/useScratchProject";
+import { getClientSettings } from "../hooks/useSettings";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { readProjects, readThreadShell } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
@@ -27,11 +31,9 @@ import {
   closeLayoutTabByUser,
   focusAdjacentLayoutTab,
   openLayoutNewTab,
-  openLayoutNewThreadTab,
-  registerLayoutNewThreadAction,
   toggleFocusedLayoutFill,
 } from "../layout/layoutActions";
-import { runInNewLayoutTab, useLayoutStore } from "../layout/layoutStore";
+import { useLayoutStore } from "../layout/layoutStore";
 import { selectFocusedTab } from "../layout/layoutModel";
 import { isModalDialogOpen } from "../lib/modalDialog";
 
@@ -97,6 +99,15 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       handleNewThread,
     };
   };
+  // Grouped like the sidebar, so the shortcut and the New thread button agree.
+  const readProjectGroups = () =>
+    buildSidebarProjectSnapshots({
+      projects: readProjects(),
+      groupScratchProjects: true,
+      settings: selectProjectGroupingSettings(getClientSettings()),
+      primaryEnvironmentId: appAtomRegistry.get(primaryEnvironmentIdAtom),
+      resolveEnvironmentLabel: () => null,
+    });
   const canOperatePreview = (environmentId: EnvironmentId) =>
     readEnvironmentScope(environmentId, AuthPreviewOperateScope);
 
@@ -121,9 +132,6 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       if (threadRef && canOperatePreview(threadRef.environmentId)) dispatchPreviewAction(action);
     };
 
-  const unregisterNewThread = registerLayoutNewThreadAction((placement) => {
-    void runInNewLayoutTab(() => startNewThreadFromContext(readThreadContext()), placement);
-  });
   const layoutShowing = () =>
     readRouteTarget() !== null ||
     router.state.location.pathname === "/pull-requests" ||
@@ -172,9 +180,21 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         claim(event);
         void scratch.startScratchThread(environmentId);
       },
+      // Like main: several open projects ask which one. The thread then replaces the
+      // focused tab; cmd+T is the shortcut that adds a tab.
       "chat.new": (event) => {
-        if (layoutShowing() && openLayoutNewThreadTab()) {
+        const { legacySidebarEnabled } = getClientSettings();
+        const groups = readProjectGroups();
+        if (
+          !legacySidebarEnabled &&
+          !shouldCreateNewThreadInCurrentProject(
+            false,
+            groups.filter((group) => !group.archived).length,
+            groups.length,
+          )
+        ) {
           claim(event);
+          openCommandPalette({ open: "new-thread-in" });
           return;
         }
         startNewLocal(event);
@@ -230,8 +250,5 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       },
     },
   );
-  return () => {
-    unregisterNewThread();
-    unregisterCommands();
-  };
+  return unregisterCommands;
 }
