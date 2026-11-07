@@ -42,6 +42,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as CodexUsageHistory from "./CodexUsageHistory.ts";
+import * as ZaiUsageHistory from "./ZaiUsageHistory.ts";
 import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -163,6 +164,7 @@ const layerService = (input: {
     Layer.provideMerge(MuseUsageHome.layer),
     Layer.provideMerge(ProviderHostLive.layer),
     Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
+    Layer.provideMerge(ZaiUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
     Layer.provideMerge(
       Layer.mock(ServerSecretStore.ServerSecretStore)({
@@ -381,6 +383,97 @@ const seedCodexHistory = (input: {
     }
   });
 
+interface SeedZaiGlmTurn {
+  readonly id: string;
+  readonly instanceId?: string;
+  readonly providerThreadId?: string;
+  readonly model?: string | null;
+  readonly driver?: string;
+  readonly completedAt?: string;
+  readonly turnUsage?: Record<string, unknown>;
+  readonly withoutAttempt?: boolean;
+}
+
+let seededZaiTurnOrdinal = 0;
+
+const seedZaiGlmTurn = (input: SeedZaiGlmTurn) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const instanceId = input.instanceId ?? "acpRegistry_glm_agent";
+    const providerThreadId = input.providerThreadId ?? "glm-thread-a";
+    const threadId = `thread-${input.id}`;
+    const runId = `run-${input.id}`;
+    const attemptId = `attempt-${input.id}`;
+    const model = input.model === undefined ? "glm-5.3" : input.model;
+    seededZaiTurnOrdinal += 1;
+    // The run row shows a later steer to Claude; the attempt and its running event keep GLM.
+    yield* sql`INSERT INTO orchestration_v2_projection_runs ${sql.insert({
+      run_id: runId,
+      thread_id: threadId,
+      ordinal: 1,
+      provider: "claudeAgent",
+      provider_instance_id: "claudeAgent",
+      provider_thread_id: "claude-thread",
+      status: "completed",
+      requested_at: "2026-08-01T09:00:00Z",
+      completed_at: input.completedAt ?? "2026-08-01T10:00:00Z",
+      payload_json: encodeUnknownJsonString({
+        id: runId,
+        providerInstanceId: "claudeAgent",
+        modelSelection: { instanceId: "claudeAgent", model: "claude-steered" },
+      }),
+    })}`;
+    yield* sql`INSERT INTO orchestration_events ${sql.insert({
+      event_id: `event-${input.id}`,
+      aggregate_kind: "thread",
+      stream_id: threadId,
+      stream_version: 1,
+      event_type: "run.updated",
+      occurred_at: "2026-08-01T09:59:00Z",
+      actor_kind: "system",
+      metadata_json: "{}",
+      application_event_version: 2,
+      payload_json: encodeUnknownJsonString({
+        id: runId,
+        status: "running",
+        activeAttemptId: attemptId,
+        ...(model === null ? {} : { modelSelection: { instanceId, model } }),
+      }),
+    })}`;
+    yield* sql`INSERT INTO orchestration_v2_projection_run_attempts ${sql.insert({
+      attempt_id: attemptId,
+      thread_id: threadId,
+      run_id: runId,
+      attempt_ordinal: 1,
+      root_node_id: `node-${input.id}`,
+      provider: instanceId,
+      provider_instance_id: instanceId,
+      provider_thread_id: providerThreadId,
+      provider_turn_id: `turn-${input.id}`,
+      status: "completed",
+      payload_json: encodeUnknownJsonString({}),
+    })}`;
+    yield* sql`INSERT INTO orchestration_v2_projection_provider_turns ${sql.insert({
+      provider_turn_id: `turn-${input.id}`,
+      thread_id: threadId,
+      provider_thread_id: providerThreadId,
+      node_id: `node-${input.id}`,
+      run_attempt_id: input.withoutAttempt === true ? null : attemptId,
+      ordinal: seededZaiTurnOrdinal,
+      status: "completed",
+      started_at: "2026-08-01T09:59:00Z",
+      completed_at: input.completedAt ?? "2026-08-01T10:00:00Z",
+      payload_json: encodeUnknownJsonString({
+        nativeTurnRef: {
+          driver: input.driver ?? "acpRegistry",
+          nativeId: input.id,
+          strength: "strong",
+        },
+        ...(input.turnUsage === undefined ? {} : { turnTokenUsage: input.turnUsage }),
+      }),
+    })}`;
+  });
+
 describe("Codex usage history", () => {
   const historyLayer = CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory));
   const request = (nativeTurnId: string) => ({
@@ -479,6 +572,177 @@ describe("Codex usage history", () => {
         yield* sql`ALTER TABLE unavailable_events RENAME TO orchestration_events`;
         assert.strictEqual((yield* history.resolve([input])).get(input), "fast");
       }).pipe(Effect.provide(historyLayer)),
+  );
+});
+
+describe("Z.ai usage history", () => {
+  const historyLayer = ZaiUsageHistory.layer.pipe(
+    Layer.provideMerge(Sqlite.layerMemory),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "zai-usage-history-" })),
+    Layer.provideMerge(NodeServices.layer),
+  );
+  const glmInstances = ["acpRegistry_glm_agent", "acpRegistry_glm_backup"].map((id) =>
+    ProviderInstanceId.make(id),
+  );
+  const sinceMs = Date.parse("2026-07-31T00:00:00Z");
+  const completeUsage = {
+    usageStatus: "complete",
+    usageScope: "main_agent",
+    hasSubagents: false,
+  };
+
+  it.effect("returns only recorded complete and partial GLM turns of those instances", () =>
+    Effect.gen(function* () {
+      yield* seedZaiGlmTurn({
+        id: "glm-a1",
+        providerThreadId: "glm-thread-a",
+        turnUsage: {
+          ...completeUsage,
+          inputTokens: 1200,
+          cachedInputTokens: 800,
+          cacheCreationTokens: 300,
+          outputTokens: 500,
+          reasoningTokens: 200,
+        },
+      });
+      yield* seedZaiGlmTurn({
+        id: "glm-b1",
+        providerThreadId: "glm-thread-b",
+        model: "glm-5.3-flash",
+        completedAt: "2026-08-01T11:00:00Z",
+        turnUsage: {
+          ...completeUsage,
+          inputTokens: 600,
+          cachedInputTokens: 100,
+          outputTokens: 200,
+          reasoningTokens: 50,
+        },
+      });
+      yield* seedZaiGlmTurn({
+        id: "glm-a2",
+        providerThreadId: "glm-thread-a",
+        completedAt: "2026-08-01T12:00:00Z",
+        turnUsage: { usageStatus: "partial", outputTokens: 40, reasoningTokens: 10 },
+      });
+      yield* seedZaiGlmTurn({
+        id: "glm-backup1",
+        instanceId: "acpRegistry_glm_backup",
+        providerThreadId: "glm-thread-b",
+        model: "glm-5.3-flash",
+        completedAt: "2026-08-01T13:00:00Z",
+        turnUsage: { ...completeUsage, inputTokens: 200, outputTokens: 80 },
+      });
+      // Excluded: unusable usage, foreign or local ACP instances, native-reader turns
+      // that also store turnTokenUsage, and turns outside the window or without a model.
+      yield* seedZaiGlmTurn({
+        id: "glm-unavailable",
+        turnUsage: {
+          usageStatus: "unavailable",
+          inputTokens: 999,
+          outputTokens: 999,
+        },
+      });
+      yield* seedZaiGlmTurn({ id: "glm-no-usage" });
+      yield* seedZaiGlmTurn({
+        id: "kimi-1",
+        instanceId: "acpRegistry_kimi",
+        turnUsage: { ...completeUsage, inputTokens: 50, outputTokens: 60 },
+      });
+      yield* seedZaiGlmTurn({
+        id: "codex-stored",
+        instanceId: "codex",
+        driver: "codex",
+        turnUsage: { ...completeUsage, inputTokens: 70, outputTokens: 80 },
+      });
+      yield* seedZaiGlmTurn({
+        id: "claude-stored",
+        instanceId: "claudeAgent",
+        driver: "claudeAgent",
+        turnUsage: { ...completeUsage, inputTokens: 90, outputTokens: 100 },
+      });
+      yield* seedZaiGlmTurn({
+        id: "glm-old",
+        completedAt: "2026-07-01T00:00:00Z",
+        turnUsage: { ...completeUsage, inputTokens: 10, outputTokens: 20 },
+      });
+      yield* seedZaiGlmTurn({
+        id: "glm-no-model",
+        model: null,
+        turnUsage: { ...completeUsage, inputTokens: 30, outputTokens: 40 },
+      });
+      yield* seedZaiGlmTurn({
+        id: "glm-no-attempt",
+        withoutAttempt: true,
+        turnUsage: { ...completeUsage, inputTokens: 50, outputTokens: 60 },
+      });
+      const history = yield* ZaiUsageHistory.ZaiUsageHistory;
+      const turns = yield* history.readGlmTurns({ instanceIds: glmInstances, sinceMs });
+      assert.deepStrictEqual(turns, [
+        {
+          providerTurnId: "turn-glm-a1",
+          providerThreadId: "glm-thread-a",
+          completedAtMs: Date.parse("2026-08-01T10:00:00Z"),
+          model: "glm-5.3",
+          inputTokens: 1200,
+          cachedInputTokens: 800,
+          cacheCreationTokens: 300,
+          outputTokens: 500,
+          reasoningTokens: 200,
+        },
+        {
+          providerTurnId: "turn-glm-b1",
+          providerThreadId: "glm-thread-b",
+          completedAtMs: Date.parse("2026-08-01T11:00:00Z"),
+          model: "glm-5.3-flash",
+          inputTokens: 600,
+          cachedInputTokens: 100,
+          cacheCreationTokens: 0,
+          outputTokens: 200,
+          reasoningTokens: 50,
+        },
+        {
+          providerTurnId: "turn-glm-a2",
+          providerThreadId: "glm-thread-a",
+          completedAtMs: Date.parse("2026-08-01T12:00:00Z"),
+          model: "glm-5.3",
+          inputTokens: 0,
+          cachedInputTokens: 0,
+          cacheCreationTokens: 0,
+          outputTokens: 40,
+          reasoningTokens: 10,
+        },
+        {
+          providerTurnId: "turn-glm-backup1",
+          providerThreadId: "glm-thread-b",
+          completedAtMs: Date.parse("2026-08-01T13:00:00Z"),
+          model: "glm-5.3-flash",
+          inputTokens: 200,
+          cachedInputTokens: 0,
+          cacheCreationTokens: 0,
+          outputTokens: 80,
+          reasoningTokens: 0,
+        },
+      ]);
+    }).pipe(Effect.provide(historyLayer)),
+  );
+
+  it.effect("reports SQL failures through the typed channel and reads again after repair", () =>
+    Effect.gen(function* () {
+      yield* seedZaiGlmTurn({
+        id: "retry",
+        turnUsage: { ...completeUsage, inputTokens: 1, outputTokens: 2 },
+      });
+      const history = yield* ZaiUsageHistory.ZaiUsageHistory;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`ALTER TABLE orchestration_events RENAME TO unavailable_events`;
+      const error = yield* Effect.flip(
+        history.readGlmTurns({ instanceIds: glmInstances, sinceMs }),
+      );
+      assert.instanceOf(error, ZaiUsageHistory.ZaiUsageHistoryReadError);
+      assert.strictEqual(error.requestedInstanceCount, 2);
+      yield* sql`ALTER TABLE unavailable_events RENAME TO orchestration_events`;
+      assert.lengthOf(yield* history.readGlmTurns({ instanceIds: glmInstances, sinceMs }), 1);
+    }).pipe(Effect.provide(historyLayer)),
   );
 });
 
@@ -2232,6 +2496,192 @@ describe("UsageService", () => {
           assert.isNull(healthy.sources[0]?.message);
         }).pipe(
           Effect.provide(layerService({ prefix: "usage-service-unreadable", home, settings })),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "shows Z.ai GLM tokens, cost, and sessions from recorded turns without recounting native-reader providers",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(transcript, claudeLine(1, 5, "claude-fable-5", "session-1")),
+        );
+        yield* Effect.gen(function* () {
+          const completeUsage = {
+            usageStatus: "complete",
+            usageScope: "main_agent",
+            hasSubagents: false,
+          };
+          // glm-5.3 on glm-thread-a: 400 uncached + 800 cache read + 300 cache write +
+          // 500 output, then a partial turn with 40 output.
+          yield* seedZaiGlmTurn({
+            id: "glm-a1",
+            turnUsage: {
+              ...completeUsage,
+              inputTokens: 1200,
+              cachedInputTokens: 800,
+              cacheCreationTokens: 300,
+              outputTokens: 500,
+              reasoningTokens: 200,
+            },
+          });
+          yield* seedZaiGlmTurn({
+            id: "glm-a2",
+            completedAt: "2026-08-01T12:00:00Z",
+            turnUsage: { usageStatus: "partial", outputTokens: 40, reasoningTokens: 10 },
+          });
+          // glm-5.3-flash on glm-thread-b, the second turn from a disabled instance.
+          yield* seedZaiGlmTurn({
+            id: "glm-b1",
+            providerThreadId: "glm-thread-b",
+            model: "glm-5.3-flash",
+            completedAt: "2026-08-01T11:00:00Z",
+            turnUsage: {
+              ...completeUsage,
+              inputTokens: 600,
+              cachedInputTokens: 100,
+              outputTokens: 200,
+              reasoningTokens: 50,
+            },
+          });
+          yield* seedZaiGlmTurn({
+            id: "glm-backup1",
+            instanceId: "acpRegistry_glm_backup",
+            providerThreadId: "glm-thread-b",
+            model: "glm-5.3-flash",
+            completedAt: "2026-08-01T13:00:00Z",
+            turnUsage: { ...completeUsage, inputTokens: 200, outputTokens: 80 },
+          });
+          // Stored turn usage of providers with native readers, and of other or local
+          // ACP instances, must not reach the Z.ai buckets.
+          yield* seedZaiGlmTurn({
+            id: "claude-stored",
+            instanceId: "claudeAgent",
+            driver: "claudeAgent",
+            turnUsage: { ...completeUsage, inputTokens: 900, outputTokens: 999 },
+          });
+          yield* seedZaiGlmTurn({
+            id: "codex-stored",
+            instanceId: "codex",
+            driver: "codex",
+            turnUsage: { ...completeUsage, inputTokens: 700, outputTokens: 888 },
+          });
+          yield* seedZaiGlmTurn({
+            id: "kimi-1",
+            instanceId: "acpRegistry_kimi",
+            turnUsage: { ...completeUsage, inputTokens: 50, outputTokens: 60 },
+          });
+          yield* seedZaiGlmTurn({
+            id: "local-glm-1",
+            instanceId: "acpRegistry_local_glm",
+            turnUsage: { ...completeUsage, inputTokens: 60, outputTokens: 70 },
+          });
+          const service = yield* UsageService.make;
+          const summary = yield* service.readSummary(WINDOW);
+          const zaiBuckets = summary.buckets.filter((bucket) => bucket.provider === "zai");
+          assert.deepStrictEqual(
+            zaiBuckets.map((bucket) => ({
+              model: bucket.model,
+              totals: bucket.totals,
+              costUsd: Math.round(bucket.costUsd * 1e6),
+              records: bucket.records,
+              sessions: bucket.sessions,
+            })),
+            [
+              {
+                model: "glm-5.3",
+                totals: {
+                  uncachedInputTokens: 100,
+                  cachedInputTokens: 800,
+                  cacheCreationTokens: 300,
+                  outputTokens: 540,
+                  reasoningTokens: 210,
+                },
+                costUsd: 3144,
+                records: 2,
+                sessions: 1,
+              },
+              {
+                model: "glm-5.3-flash",
+                totals: {
+                  uncachedInputTokens: 700,
+                  cachedInputTokens: 100,
+                  cacheCreationTokens: 0,
+                  outputTokens: 280,
+                  reasoningTokens: 50,
+                },
+                costUsd: 248,
+                records: 2,
+                sessions: 1,
+              },
+            ],
+          );
+          const zaiSource = summary.sources.find((source) => source.fingerprint.provider === "zai");
+          assert.strictEqual(zaiSource?.status, "ok");
+          assert.strictEqual(zaiSource?.distinctSessions, 2);
+          assert.strictEqual(
+            zaiSource?.fingerprint.resolvedHomePath,
+            NodePath.join(home, "usage-service-zai-glm", "userdata", "statev2.sqlite"),
+          );
+          // The Claude transcript stays the only source of Claude usage; the recorded
+          // claudeAgent turn with stored token usage adds nothing.
+          assert.deepStrictEqual(
+            summary.buckets
+              .filter((bucket) => bucket.provider === "claude")
+              .map((bucket) => bucket.totals),
+            [
+              {
+                uncachedInputTokens: 10,
+                cachedInputTokens: 0,
+                cacheCreationTokens: 0,
+                outputTokens: 5,
+                reasoningTokens: 0,
+              },
+            ],
+          );
+        }).pipe(
+          Effect.provide(
+            layerService({
+              prefix: "usage-service-zai-glm",
+              home,
+              ratesDocument: {
+                "zai/glm-5.3": {
+                  input_cost_per_token: 1.4e-6,
+                  cache_read_input_token_cost: 0.26e-6,
+                  output_cost_per_token: 4.4e-6,
+                },
+                "zai/glm-5.3-flash": {
+                  input_cost_per_token: 0.15e-6,
+                  cache_read_input_token_cost: 0.03e-6,
+                  output_cost_per_token: 0.5e-6,
+                },
+              },
+              settings: {
+                ...settings,
+                providerInstances: {
+                  ...settings.providerInstances,
+                  [ProviderInstanceId.make("acpRegistry_glm_agent")]: {
+                    driver: ProviderDriverKind.make("acpRegistry"),
+                    config: { source: "registry", agentId: "glm-acp-agent" },
+                  },
+                  [ProviderInstanceId.make("acpRegistry_glm_backup")]: {
+                    driver: ProviderDriverKind.make("acpRegistry"),
+                    config: { source: "registry", agentId: "glm-acp-agent", enabled: false },
+                  },
+                  [ProviderInstanceId.make("acpRegistry_local_glm")]: {
+                    driver: ProviderDriverKind.make("acpRegistry"),
+                    config: { source: "local", agentId: "glm-acp-agent", commandPath: "glm" },
+                  },
+                  [ProviderInstanceId.make("acpRegistry_kimi")]: {
+                    driver: ProviderDriverKind.make("acpRegistry"),
+                    config: { source: "registry", agentId: "kimi-agent" },
+                  },
+                },
+              },
+            }),
+          ),
         );
       }).pipe(Effect.scoped),
   );
