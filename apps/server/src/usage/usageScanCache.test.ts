@@ -249,15 +249,29 @@ describe("scan cache round trip", () => {
     },
   );
 
-  it("re-parses a Claude transcript cached before advisor usage was counted", () => {
+  it("re-parses Claude and Grok transcripts cached before their usage keys changed", () => {
     const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
-    const v9 = { ...JSON.parse(makeScanCacheWriter()(original, {})), version: 9 };
-
-    const restored = decodeScanCache(JSON.parse(JSON.stringify(v9)), TEST_FORMAT_MAP);
-    expect(restored.get("/claude.jsonl")).toEqual({
-      ...original.get("/claude.jsonl"),
+    original.set("/grok/updates.jsonl", {
+      ...original.get("/claude.jsonl")!,
+      provider: "grok",
+      records: [record({ provider: "grok", model: "grok-4.5", dedupeKey: "s:p:grok-4.5" })],
+    });
+    const encoded = JSON.parse(makeScanCacheWriter()(original, {}));
+    const reparse = {
       size: -1,
       position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+    };
+
+    const v9 = decodeScanCache({ ...encoded, version: 9 }, TEST_FORMAT_MAP);
+    expect(v9.get("/claude.jsonl")).toEqual({ ...original.get("/claude.jsonl"), ...reparse });
+    const v11 = decodeScanCache({ ...encoded, version: 11 }, TEST_FORMAT_MAP);
+    expect(v11.get("/claude.jsonl")).toEqual(original.get("/claude.jsonl"));
+    expect(v11.get("/grok/updates.jsonl")).toEqual({
+      ...original.get("/grok/updates.jsonl"),
+      ...reparse,
+      records: [
+        record({ provider: "grok", model: "grok-4.5", dedupeKey: "s:p:1786000000000:grok-4.5" }),
+      ],
     });
   });
 

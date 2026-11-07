@@ -92,6 +92,7 @@ function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
   const usageRecord = usage as Record<string, unknown>;
 
   const sessionId = typeof paramsRecord["sessionId"] === "string" ? paramsRecord["sessionId"] : "";
+  // T3's prompt ids restart with each Grok process, so a resumed session reuses them.
   const promptId = typeof updateRecord["prompt_id"] === "string" ? updateRecord["prompt_id"] : null;
 
   const meta = paramsRecord["_meta"];
@@ -136,7 +137,7 @@ function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
         reportedCostUsd: grokCostTicksToUsd(topLevel.costUsdTicks),
         speed: "standard",
         // No prompt id means we cannot tell two same-second updates apart.
-        dedupeKey: promptId === null ? null : `${sessionId}:${promptId}:grok`,
+        dedupeKey: promptId === null ? null : `${sessionId}:${promptId}:${timestampMs}:grok`,
       },
     ];
   }
@@ -174,7 +175,8 @@ function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
       totals,
       reportedCostUsd,
       speed: "standard",
-      dedupeKey: promptId === null ? null : `${sessionId}:${promptId}:${entry.model}`,
+      dedupeKey:
+        promptId === null ? null : `${sessionId}:${promptId}:${timestampMs}:${entry.model}`,
     });
   }
   return results;
