@@ -43,6 +43,10 @@
       "types": "./src/preview/serverBrowserStream.ts",
       "default": "./src/preview/serverBrowserStream.ts"
     },
+    "./preview/accessible-document": {
+      "types": "./src/preview/accessibleDocument.ts",
+      "default": "./src/preview/accessibleDocument.ts"
+    },
     "./worktree-setup": {
       "types": "./src/worktreeSetup.ts",
       "default": "./src/worktreeSetup.ts"

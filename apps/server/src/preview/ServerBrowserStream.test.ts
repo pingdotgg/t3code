@@ -25,6 +25,13 @@ import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import { routeLayer } from "./ServerBrowserStream.ts";
 
+const document = {
+  document: "1:loader",
+  version: 1,
+  truncated: false,
+  root: { id: "0.1", role: "document", children: [{ id: "0.2", role: "text", name: "Hi" }] },
+};
+
 const platformLayer = NodeHttpPlatform.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
 const makeAuth = (
@@ -62,6 +69,7 @@ const mutations = [
   { type: "releaseControl" },
   { type: "dialog", accept: true },
   { type: "viewport", setting: { _tag: "fill" } },
+  { type: "accessibilityAction", document: "1:loader", node: "0.7", action: "activate" },
 ];
 
 it.effect.each([
@@ -76,11 +84,14 @@ it.effect.each([
       : [AuthOrchestrationReadScope];
     const auth = makeAuth(scopes);
     const inputs: unknown[] = [];
+    const subscriptions: boolean[] = [];
     const attachments: Parameters<ServerBrowser.ServerBrowser["Service"]["attachViewer"]>[0][] = [];
     const acked = Promise.withResolvers<void>();
     const frame = new Uint8Array([255, 216, 255, 217]);
     const output = yield* Queue.make<ServerBrowser.ServerBrowserViewerOutput>();
     yield* Queue.offer(output, { _tag: "viewport", width: 1280, height: 800 });
+    yield* Queue.offer(output, { _tag: "accessibility", document });
+    yield* Queue.offer(output, { _tag: "accessibilityNotice", message: "The page changed." });
     yield* Queue.offer(output, {
       _tag: "frame",
       data: frame,
@@ -97,6 +108,7 @@ it.effect.each([
           return {
             output,
             input: (message) => Effect.sync(() => void inputs.push(message)),
+            accessibility: (enabled) => Effect.sync(() => void subscriptions.push(enabled)),
           };
         }),
     });
@@ -127,6 +139,8 @@ it.effect.each([
         return;
       }
       frames.push(new Uint8Array(event.data as ArrayBuffer));
+      socket.send(JSON.stringify({ type: "accessibility", enabled: true }));
+      socket.send(JSON.stringify({ type: "accessibility", enabled: "yes" }));
       for (const message of mutations) socket.send(JSON.stringify(message));
       socket.send("malformed input");
       socket.send(JSON.stringify({ type: "ack" }));
@@ -136,8 +150,17 @@ it.effect.each([
     // The socket ack follows every mutation, providing a barrier without sleeps.
     yield* Effect.promise(() => acked.promise);
     expect(frames).toEqual([frame]);
-    expect(viewports).toEqual([{ type: "viewport", width: 1280, height: 800 }]);
-    expect(inputs).toEqual(canOperate ? [...mutations, null] : []);
+    expect(viewports).toEqual([
+      { type: "viewport", width: 1280, height: 800 },
+      { type: "accessibility", document },
+      { type: "accessibilityNotice", message: "The page changed." },
+    ]);
+    // Reading the page is not a mutation, so every viewer may subscribe.
+    expect(subscriptions).toEqual([true]);
+    // A malformed subscription is just unknown page input, which the viewer ignores.
+    expect(inputs).toEqual(
+      canOperate ? [{ type: "accessibility", enabled: "yes" }, ...mutations, null] : [],
+    );
     expect(attachments).toEqual([
       {
         threadId: "thread",
@@ -166,7 +189,8 @@ it.effect("sends replies ahead of stale frames and only the newest frame after a
       profileReporter: Effect.succeed(() => Effect.void),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: () => Effect.succeed(false),
-      attachViewer: () => Effect.succeed({ output, input: () => Effect.void }),
+      attachViewer: () =>
+        Effect.succeed({ output, input: () => Effect.void, accessibility: () => Effect.void }),
     });
     const services = yield* Layer.build(
       HttpRouter.serve(

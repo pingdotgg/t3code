@@ -47,6 +47,12 @@ export function previewStreamDocument(configuration: string, script: string) {
   canvas, video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
   canvas { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   video { pointer-events: none; }
+  .accessible-view {
+    box-sizing: border-box;
+    position: fixed; inset: 0; z-index: 2; overflow: auto; -webkit-overflow-scrolling: touch;
+    background: inherit; font: -apple-system-body; font-family: system-ui, sans-serif;
+  }
+  .accessible-view[hidden] { display: none; }
   /* The agent's pointer, positioned over the letterboxed frame by the viewer script. */
   .agent-cursor {
     position: absolute; left: 0; top: 0; width: 20px; height: 20px; pointer-events: none;
@@ -63,7 +69,7 @@ export function previewStreamDocument(configuration: string, script: string) {
     .agent-cursor .ping { animation: none; opacity: 0; }
   }
   /* Pinned so focus never scrolls; 16px keeps iOS from zooming on focus. */
-  textarea {
+  body > textarea {
     position: fixed; left: 0; top: 0; width: 1px; height: 1px;
     padding: 0; margin: -1px; border: 0; overflow: hidden;
     clip: rect(0, 0, 0, 0); white-space: nowrap; font-size: 16px;
