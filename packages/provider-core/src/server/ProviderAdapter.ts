@@ -200,6 +200,7 @@ export class ProviderAdapterOpenSessionError extends Schema.TaggedError<Provider
     driver: ProviderDriverKind,
     providerSessionId: ProviderSessionId,
     requiresSignIn: Schema.optional(Schema.Literal(true)),
+    failure: Schema.optional(OrchestrationV2ProviderFailure),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

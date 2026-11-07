@@ -1673,14 +1673,40 @@ effectIt.effect("leaves the run starting when a session-open failure will be ret
   }),
 );
 
-effectIt.effect("fails the run without a retry when the provider needs sign-in", () =>
+effectIt.effect.each([
+  {
+    name: "needs sign-in",
+    sessionFailure: { requiresSignIn: true as const },
+    failure: {
+      class: "provider_error",
+      message: "Failed to open antigravity provider session new-provider-session.",
+    },
+  },
+  {
+    name: "is rate limited while opening the session",
+    sessionFailure: {
+      failure: {
+        class: "usage_limit" as const,
+        message: "Antigravity's Gemini Enterprise license check is rate limited.",
+        code: "RATE_LIMIT_EXCEEDED",
+        retryable: true,
+      },
+    },
+    failure: {
+      class: "usage_limit",
+      message: "Antigravity's Gemini Enterprise license check is rate limited.",
+      code: "RATE_LIMIT_EXCEEDED",
+      retryable: true,
+    },
+  },
+])("fails the run without a retry when the provider $name", ({ sessionFailure, failure }) =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
       text: "Continue",
       openFailure: new ProviderAdapter.ProviderAdapterOpenSessionError({
         driver: ProviderDriverKind.make("antigravity"),
         providerSessionId: ProviderSessionId.make("new-provider-session"),
-        requiresSignIn: true,
+        ...sessionFailure,
       }),
     });
 
@@ -1692,10 +1718,7 @@ effectIt.effect("fails the run without a retry when the provider needs sign-in",
       {
         type: "error",
         status: "failed",
-        failure: {
-          class: "provider_error",
-          message: "Failed to open antigravity provider session new-provider-session.",
-        },
+        failure,
       },
     ]);
   }),
