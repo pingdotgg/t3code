@@ -8366,7 +8366,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       if (stopBeforeArm) yield* orchestrator.dispatch(armCommand);
       else yield* orchestrator.autoArmLimitRecovery(automaticArm);
       if (scenario === "wake-after-arm") {
-        // #32286: a notification-only run after arming must not hide the failed source.
+        // A notification-only run after arming must not hide the failed source.
         const wakeRunId = RunId.make("recovery:armed-notification-wake:run");
         const wakeNodeId = NodeId.make("recovery:armed-notification-wake:root");
         yield* events.write({
