@@ -350,6 +350,18 @@ export class OtherSessionsRevocationError extends Schema.TaggedError<OtherSessio
   }
 }
 
+export class SessionRenameError extends Schema.TaggedError<SessionRenameError>()(
+  "SessionRenameError",
+  {
+    sessionId: AuthSessionId,
+    ...sessionCredentialInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to rename session.";
+  }
+}
+
 export const SessionCredentialInternalError = Schema.Union([
   SessionClaimsEncodingError,
   SessionCredentialIssueError,
@@ -359,6 +371,7 @@ export const SessionCredentialInternalError = Schema.Union([
   ActiveSessionsListError,
   SessionRevocationError,
   OtherSessionsRevocationError,
+  SessionRenameError,
 ]);
 export type SessionCredentialInternalError = typeof SessionCredentialInternalError.Type;
 
@@ -419,6 +432,10 @@ export class SessionStore extends Context.Service<
     readonly revokeAllExcept: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
+    readonly rename: (
+      sessionId: AuthSessionId,
+      label: string,
+    ) => Effect.Effect<boolean, SessionCredentialInternalError>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
   }
@@ -1005,6 +1022,27 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const rename: SessionStore["Service"]["rename"] = Effect.fn("SessionStore.rename")(
+    function* (sessionId, label) {
+      const session = yield* loadActiveSession(sessionId).pipe(
+        Effect.mapError((cause) => new SessionRenameError({ sessionId, cause })),
+      );
+      if (Option.isNone(session) || session.value.method === "dpop-access-token") return false;
+      if (session.value.client.label === label) return true;
+      const renamed = yield* authSessions
+        .setClientLabel({ sessionId, label })
+        .pipe(Effect.mapError((cause) => new SessionRenameError({ sessionId, cause })));
+      if (!renamed) return false;
+      // A disconnect between the check and the write may already have published its removal.
+      const renamedSession = yield* loadActiveSession(sessionId).pipe(
+        Effect.mapError((cause) => new SessionRenameError({ sessionId, cause })),
+      );
+      if (Option.isNone(renamedSession)) return false;
+      yield* emitUpsert(renamedSession.value);
+      return true;
+    },
+  );
+
   const revokeAllExcept: SessionStore["Service"]["revokeAllExcept"] = Effect.fn(
     "SessionStore.revokeAllExcept",
   )(function* (sessionId) {
@@ -1112,6 +1150,7 @@ const make = Effect.gen(function* () {
     },
     revoke,
     revokeAllExcept,
+    rename,
     markConnected,
     markDisconnected,
   });

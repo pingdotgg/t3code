@@ -3,6 +3,7 @@ import type {
   AuthAccessStreamEvent,
   AuthAccessStreamSnapshotEvent,
   AuthCreatePairingCredentialInput,
+  AuthRenameClientSessionInput,
   AuthRevokeClientSessionInput,
   AuthRevokePairingLinkInput,
 } from "@t3tools/contracts";
@@ -119,6 +120,17 @@ export function createAuthEnvironmentAtoms<R, E>(
           url: (urls) => urls.revokeClient(),
           timeoutMs: ACCESS_REQUEST_TIMEOUT_MS,
           request: ({ client, headers }) => client.revokeClient({ headers, payload: input }),
+        }),
+    }),
+    renameClient: createEnvironmentCommand(runtime, {
+      label: "environment-data:server:auth-rename-client",
+      execute: (input: AuthRenameClientSessionInput) =>
+        executeConnectedEnvironmentHttpRequest({
+          group: "auth",
+          method: "POST",
+          url: (urls) => urls.renameClient(),
+          timeoutMs: ACCESS_REQUEST_TIMEOUT_MS,
+          request: ({ client, headers }) => client.renameClient({ headers, payload: input }),
         }),
     }),
     revokeOtherClients: createEnvironmentCommand(runtime, {

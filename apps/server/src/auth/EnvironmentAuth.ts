@@ -219,6 +219,17 @@ export class ServerAuthOtherSessionsRevocationError extends Schema.TaggedError<S
   }
 }
 
+export class ServerAuthSessionRenameError extends Schema.TaggedError<ServerAuthSessionRenameError>()(
+  "ServerAuthSessionRenameError",
+  {
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to rename session.";
+  }
+}
+
 export class ServerAuthWebSocketTokenIssueError extends Schema.TaggedError<ServerAuthWebSocketTokenIssueError>()(
   "ServerAuthWebSocketTokenIssueError",
   {
@@ -346,6 +357,7 @@ export const ServerAuthInternalError = Schema.Union([
   ServerAuthSessionsListError,
   ServerAuthSessionRevocationError,
   ServerAuthOtherSessionsRevocationError,
+  ServerAuthSessionRenameError,
   ServerAuthWebSocketTokenIssueError,
   ServerAuthDpopReplayStateRecordError,
   ServerAuthDpopReplayKeyCalculationError,
@@ -529,6 +541,10 @@ export class EnvironmentAuth extends Context.Service<
     readonly revokeOtherClientSessions: (
       currentSessionId: AuthSessionId,
     ) => Effect.Effect<number, ServerAuthInternalError>;
+    readonly renameSession: (
+      sessionId: AuthSessionId,
+      label: string,
+    ) => Effect.Effect<boolean, ServerAuthInternalError>;
     readonly authenticateHttpRequest: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
@@ -1124,6 +1140,12 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.revokeSession"),
     );
 
+  const renameSession: EnvironmentAuth["Service"]["renameSession"] = (sessionId, label) =>
+    sessions.rename(sessionId, label).pipe(
+      Effect.mapError((cause) => new ServerAuthSessionRenameError({ cause })),
+      Effect.withSpan("EnvironmentAuth.renameSession"),
+    );
+
   const revokeOtherSessionsExcept = (sessionId: AuthSessionId) =>
     sessions.revokeAllExcept(sessionId).pipe(
       Effect.mapError((cause) => new ServerAuthOtherSessionsRevocationError({ cause })),
@@ -1398,6 +1420,7 @@ export const make = Effect.gen(function* () {
     revokeSession,
     listClientSessions,
     revokeClientSession,
+    renameSession,
     revokeOtherClientSessions,
     authenticateHttpRequest,
     authenticateWebSocketUpgrade,
