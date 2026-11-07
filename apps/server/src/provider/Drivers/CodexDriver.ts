@@ -136,6 +136,12 @@ function makeCodexMaintenanceResolver(
       isCommandPath: (commandPath) => codexStandaloneHome(commandPath) !== null,
       requiresCommandPath: true,
       env: (context) => ({
+        ...(env.CODEX_RELEASE === undefined ? {} : { CODEX_RELEASE: env.CODEX_RELEASE }),
+        ...(env.CODEX_INSTALLER_USE_RELEASES_OPENAI_COM === undefined
+          ? {}
+          : {
+              CODEX_INSTALLER_USE_RELEASES_OPENAI_COM: env.CODEX_INSTALLER_USE_RELEASES_OPENAI_COM,
+            }),
         CODEX_HOME:
           codexStandaloneHome(context.realCommandPath) ??
           codexStandaloneHome(context.resolvedCommandPath) ??

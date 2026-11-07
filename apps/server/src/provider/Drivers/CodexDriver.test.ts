@@ -587,6 +587,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
       tag: "rust-v0.164.0",
       status: 200,
       expected: null,
+      requestsChannel: false,
       env: { CODEX_RELEASE: "0.162.0" },
     },
     {
@@ -594,7 +595,40 @@ it.layer(layerTest)("CodexDriver", (it) => {
       tag: "rust-v0.164.0",
       status: 200,
       expected: null,
+      requestsChannel: false,
       env: { CODEX_INSTALLER_USE_RELEASES_OPENAI_COM: "false" },
+    },
+    {
+      name: "an inherited explicit release",
+      tag: "rust-v0.164.0",
+      status: 200,
+      expected: null,
+      requestsChannel: false,
+      hostEnv: { CODEX_RELEASE: "0.162.0" },
+    },
+    {
+      name: "an inherited alternative installer channel",
+      tag: "rust-v0.164.0",
+      status: 200,
+      expected: null,
+      requestsChannel: false,
+      hostEnv: { CODEX_INSTALLER_USE_RELEASES_OPENAI_COM: "false" },
+    },
+    {
+      name: "instance settings overriding the host's pinned alternative channel",
+      tag: "rust-v0.164.0",
+      status: 200,
+      expected: "0.164.0",
+      hostEnv: { CODEX_RELEASE: "0.162.0", CODEX_INSTALLER_USE_RELEASES_OPENAI_COM: "false" },
+      env: { CODEX_RELEASE: "latest", CODEX_INSTALLER_USE_RELEASES_OPENAI_COM: "true" },
+    },
+    {
+      name: "empty instance settings restoring the default channel",
+      tag: "rust-v0.164.0",
+      status: 200,
+      expected: "0.164.0",
+      hostEnv: { CODEX_RELEASE: "0.162.0", CODEX_INSTALLER_USE_RELEASES_OPENAI_COM: "false" },
+      env: { CODEX_RELEASE: "", CODEX_INSTALLER_USE_RELEASES_OPENAI_COM: "" },
     },
   ]) {
     it.effect.skipIf(windowsHost)(`checks the standalone channel for ${fixture.name}`, () =>
@@ -646,14 +680,22 @@ it.layer(layerTest)("CodexDriver", (it) => {
         }).pipe(Effect.provideService(HttpClient.HttpClient, http));
         const capabilities = yield* instance.snapshot.resolveMaintenance();
         expect(requests).toEqual([]);
-        if (fixture.env) {
+        expect(capabilities.update?.env).toEqual({
+          CODEX_HOME: home,
+          ...fixture.hostEnv,
+          ...fixture.env,
+        });
+        if (fixture.requestsChannel === false) {
           const stable = yield* CodexDriver.create({
             instanceId: ProviderInstanceId.make("codex-stable-channel"),
             displayName: "Codex stable channel",
             enabled: false,
             environment: [],
             config: { ...CodexDriver.defaultConfig(), binaryPath, homePath: home },
-          }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+          }).pipe(
+            Effect.provideService(HttpClient.HttpClient, http),
+            Effect.provideService(HostProcess.Environment, {}),
+          );
           const stableCapabilities = yield* stable.snapshot.resolveMaintenance();
           expect(
             yield* resolveLatestProviderVersion(stableCapabilities).pipe(
@@ -670,7 +712,9 @@ it.layer(layerTest)("CodexDriver", (it) => {
         );
         expect(latest).toBe(fixture.expected);
         expect(requests).toEqual(
-          fixture.env ? [] : ["https://releases.openai.com/codex/channels/latest"],
+          fixture.requestsChannel === false
+            ? []
+            : ["https://releases.openai.com/codex/channels/latest"],
         );
         expect(
           createProviderVersionAdvisory({
@@ -688,7 +732,10 @@ it.layer(layerTest)("CodexDriver", (it) => {
         );
       }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
-        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provideService(HostProcess.Environment, {
+          UNRELATED_HOST_SETTING: "not part of the update action",
+          ...fixture.hostEnv,
+        }),
         Effect.scoped,
       ),
     );
