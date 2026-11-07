@@ -1,5 +1,17 @@
 import type { ThreadStructureTurnItem } from "@t3tools/client-runtime/state/models";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import {
+  listThreadTurnTokenUsageByRun,
+  summarizeThreadTurnTokenUsage,
+  threadTurnTokenUsageTotals,
+  type ThreadTurnTokenUsageRow,
+  type ThreadTurnTokenUsageSummary,
+} from "@t3tools/client-runtime/state/thread-turn-token-usage";
+import type {
+  ScopedThreadRef,
+  UsageCostSource,
+  UsagePriceItemInput,
+  UsagePriceItemResult,
+} from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import {
   buildCompressedTimingAxis,
@@ -14,6 +26,7 @@ import {
   type ThreadTimingTurn,
   type TimingSpanKind,
 } from "@t3tools/shared/threadTimingTrace";
+import { formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
 import { ChartNoAxesGantt, Focus, Minus, Plus, Scan } from "lucide-react";
 import {
   useEffect,
@@ -26,10 +39,15 @@ import {
 
 import { useNowSecond } from "~/hooks/useNowSecond";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { formatContextWindowTokens } from "~/lib/contextWindow";
 import { cn } from "~/lib/utils";
 import { useQuietThreadProjection } from "~/state/entities";
+import { useEnvironmentQuery } from "~/state/query";
+import { serverEnvironment } from "~/state/server";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
+import { tokenTypeSegments } from "./usage/usageBreakdown";
+import { UsageShareBar, type ShareSegment } from "./usage/UsageShareBar";
 
 const SPAN_BAR_CLASS: Record<TimingSpanKind, string> = {
   queue: "bg-muted-foreground/45",
@@ -70,6 +88,50 @@ type ViewWindow = {
   readonly durationMs: number;
 };
 
+type TurnCostEstimate = {
+  readonly costUsd: number;
+  readonly costSource: UsageCostSource;
+};
+
+function priceItemsForRows(
+  rows: readonly ThreadTurnTokenUsageRow[],
+): readonly UsagePriceItemInput[] {
+  return rows.flatMap((row) => {
+    if (row.model === null) return [];
+    const totals = threadTurnTokenUsageTotals(row.usage);
+    if (totals === null) return [];
+    return [{ id: row.runId, model: row.model, totals }];
+  });
+}
+
+function costByRunId(
+  items: readonly UsagePriceItemResult[] | null,
+): ReadonlyMap<string, TurnCostEstimate> {
+  const map = new Map<string, TurnCostEstimate>();
+  for (const item of items ?? []) {
+    map.set(item.id, { costUsd: item.costUsd, costSource: item.costSource });
+  }
+  return map;
+}
+
+/** Sum priced turns only; all-unpriced stays unknown so we never show a fake $0. */
+function threadCostEstimate(costs: ReadonlyMap<string, TurnCostEstimate>): TurnCostEstimate | null {
+  let costUsd = 0;
+  let priced = 0;
+  for (const cost of costs.values()) {
+    if (cost.costSource === "unpriced") continue;
+    costUsd += cost.costUsd;
+    priced += 1;
+  }
+  if (priced === 0) return null;
+  return { costUsd, costSource: "modelPriced" };
+}
+
+function formatCostEstimate(cost: TurnCostEstimate | null | undefined): string | null {
+  if (cost === null || cost === undefined || cost.costSource === "unpriced") return null;
+  return formatUsd(cost.costUsd);
+}
+
 /** Right-panel Insights: zoomable flame-chart overview with turn boundaries and drill-down. */
 export function InsightsPanel({
   threadRef,
@@ -89,6 +151,36 @@ export function InsightsPanel({
           messages: projection.projection.messages,
           nowMs,
         });
+  const tokenUsage =
+    projection === null ? null : summarizeThreadTurnTokenUsage(projection.projection.providerTurns);
+  const turnRows =
+    projection === null
+      ? []
+      : listThreadTurnTokenUsageByRun({
+          runs: projection.projection.runs,
+          attempts: projection.projection.attempts,
+          providerTurns: projection.projection.providerTurns,
+        });
+  const priceItems = priceItemsForRows(turnRows);
+  const priced = useEnvironmentQuery(
+    !visible || priceItems.length === 0
+      ? null
+      : serverEnvironment.priceUsage({
+          environmentId: threadRef.environmentId,
+          input: { items: [...priceItems] },
+        }),
+  );
+  const costs = costByRunId(priced.data?.items ?? null);
+  const threadCost = threadCostEstimate(costs);
+  const costLabel = formatCostEstimate(threadCost);
+  const headerBits = [
+    trace !== null ? formatDuration(trace.totalMs) : null,
+    trace !== null ? `${trace.turns.length} ${trace.turns.length === 1 ? "turn" : "turns"}` : null,
+    tokenUsage?.totalTokens != null
+      ? `${formatContextWindowTokens(tokenUsage.totalTokens)} tokens`
+      : null,
+    costLabel,
+  ].filter((bit): bit is string => bit !== null);
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-background">
@@ -98,25 +190,45 @@ export function InsightsPanel({
       >
         <ChartNoAxesGantt className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
         <h2 className="min-w-0 truncate text-sm font-medium">Insights</h2>
-        {trace !== null ? (
+        {headerBits.length > 0 ? (
           <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
-            {formatDuration(trace.totalMs)} · {trace.turns.length}{" "}
-            {trace.turns.length === 1 ? "turn" : "turns"}
+            {headerBits.join(" · ")}
           </span>
         ) : null}
       </div>
 
-      {projection === null || trace === null ? (
+      {projection === null || (trace === null && tokenUsage?.usageStatus === "unavailable") ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
           <ChartNoAxesGantt className="size-8 text-muted-foreground/50" aria-hidden />
           <p className="text-sm text-muted-foreground">No timed turns in this thread yet.</p>
           <p className="text-xs text-muted-foreground/80">
             Send a message and Insights will chart a zoomable timeline of queue, model, tool, and
-            wait time.
+            wait time, plus this thread's token totals when the provider reports them.
+          </p>
+        </div>
+      ) : trace === null ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
+          <TokenUsageSummary usage={tokenUsage} cost={threadCost} />
+          <TurnTokenBreakdown
+            rows={turnRows}
+            costs={costs}
+            selectedRunId={null}
+            onSelect={() => undefined}
+          />
+          <p className="text-2xs text-muted-foreground">
+            Timing appears after the first turn starts. Token totals update as the provider reports
+            them.
           </p>
         </div>
       ) : (
-        <FlameChartPanel trace={trace} turnItems={projection.projection.turnItems} />
+        <FlameChartPanel
+          trace={trace}
+          turnItems={projection.projection.turnItems}
+          tokenUsage={tokenUsage}
+          turnRows={turnRows}
+          costs={costs}
+          threadCost={threadCost}
+        />
       )}
     </div>
   );
@@ -125,9 +237,17 @@ export function InsightsPanel({
 function FlameChartPanel({
   trace,
   turnItems,
+  tokenUsage,
+  turnRows,
+  costs,
+  threadCost,
 }: {
   readonly trace: ThreadTimingTrace;
   readonly turnItems: ReadonlyArray<ThreadStructureTurnItem>;
+  readonly tokenUsage: ThreadTurnTokenUsageSummary | null;
+  readonly turnRows: readonly ThreadTurnTokenUsageRow[];
+  readonly costs: ReadonlyMap<string, TurnCostEstimate>;
+  readonly threadCost: TurnCostEstimate | null;
 }) {
   const layout = layoutThreadFlameChart(trace);
   const axis = buildCompressedTimingAxis(trace.turns);
@@ -153,6 +273,10 @@ function FlameChartPanel({
       : null;
   const selectedItem =
     selectedSpan === null ? null : (turnItems.find((item) => item.id === selectedSpan.id) ?? null);
+  const selectedUsage =
+    selectedTurn === null
+      ? null
+      : (turnRows.find((row) => row.runId === selectedTurn.runId) ?? null);
 
   const zoomFactor = Math.max(1, Math.max(MIN_VIEW_MS, axis.displayTotalMs) / view.durationMs);
 
@@ -229,7 +353,18 @@ function FlameChartPanel({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
-        <Summary trace={trace} collapsedIdleMs={axis.collapsedIdleMs} />
+        <Summary
+          trace={trace}
+          collapsedIdleMs={axis.collapsedIdleMs}
+          tokenUsage={tokenUsage}
+          threadCost={threadCost}
+        />
+        <TurnTokenBreakdown
+          rows={turnRows}
+          costs={costs}
+          selectedRunId={selection?.runId ?? null}
+          onSelect={(runId) => setSelection({ type: "turn", runId })}
+        />
         <FlameViewport
           trace={trace}
           axis={axis}
@@ -246,6 +381,8 @@ function FlameChartPanel({
             turn={selectedTurn}
             span={selectedSpan}
             item={selectedItem}
+            usage={selectedUsage}
+            cost={costs.get(selectedTurn.runId) ?? null}
             onClear={() => setSelection(null)}
             onFocus={() => {
               if (selectedSpan !== null) focusRange(selectedSpan.startMs, selectedSpan.endMs);
@@ -263,58 +400,237 @@ function FlameChartPanel({
   );
 }
 
+const TIMING_SHARE_COLORS = {
+  work: "color-mix(in oklab, var(--foreground) 80%, var(--background))",
+  wait: "var(--warning)",
+  queue: "color-mix(in oklab, var(--muted-foreground) 55%, var(--background))",
+} as const;
+
+function timingPhaseSegments(trace: ThreadTimingTrace): readonly ShareSegment[] {
+  return [
+    { label: "Working", value: trace.workMs, color: TIMING_SHARE_COLORS.work },
+    { label: "Waiting on you", value: trace.waitMs, color: TIMING_SHARE_COLORS.wait },
+    { label: "Queued", value: trace.queueWaitMs, color: TIMING_SHARE_COLORS.queue },
+  ];
+}
+
 function Summary({
+  trace,
+  collapsedIdleMs,
+  tokenUsage,
+  threadCost,
+}: {
+  readonly trace: ThreadTimingTrace;
+  readonly collapsedIdleMs: number;
+  readonly tokenUsage: ThreadTurnTokenUsageSummary | null;
+  readonly threadCost: TurnCostEstimate | null;
+}) {
+  const showTokens =
+    tokenUsage !== null &&
+    tokenUsage.usageStatus !== "unavailable" &&
+    ((tokenUsage.totalTokens ?? 0) > 0 ||
+      (tokenUsage.uncachedInputTokens ?? 0) > 0 ||
+      (tokenUsage.outputTokens ?? 0) > 0);
+  return (
+    <div className={cn("grid shrink-0 gap-4", showTokens ? "lg:grid-cols-2" : "grid-cols-1")}>
+      <TimingSummary trace={trace} collapsedIdleMs={collapsedIdleMs} />
+      {showTokens ? <TokenUsageSummary usage={tokenUsage} cost={threadCost} /> : null}
+    </div>
+  );
+}
+
+function TimingSummary({
   trace,
   collapsedIdleMs,
 }: {
   readonly trace: ThreadTimingTrace;
   readonly collapsedIdleMs: number;
 }) {
-  const phaseTotal = trace.workMs + trace.waitMs + trace.queueWaitMs;
+  const segments = timingPhaseSegments(trace);
+  const phaseTotal = segments.reduce((sum, segment) => sum + segment.value, 0);
   return (
-    <section aria-label="Thread timing summary" className="flex shrink-0 flex-col gap-2">
-      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs sm:grid-cols-4">
-        <Metric label="Total" value={formatDuration(trace.totalMs)} />
-        {trace.workMs > 0 ? <Metric label="Working" value={formatDuration(trace.workMs)} /> : null}
-        {trace.waitMs > 0 ? (
-          <Metric label="Waiting on you" value={formatDuration(trace.waitMs)} />
-        ) : null}
-        {trace.queueWaitMs > 0 ? (
-          <Metric label="Queued" value={formatDuration(trace.queueWaitMs)} />
-        ) : null}
-        {collapsedIdleMs > 0 ? (
-          <Metric label="Idle (collapsed)" value={formatDuration(collapsedIdleMs)} />
-        ) : null}
-      </div>
+    <section aria-label="Thread timing summary" className="flex min-w-0 flex-col gap-2">
       {phaseTotal > 0 ? (
-        <div className="flex h-1.5 overflow-hidden rounded-full bg-muted-foreground/20" aria-hidden>
-          {(
-            [
-              { key: "work", ms: trace.workMs, className: "bg-foreground/80" },
-              { key: "wait", ms: trace.waitMs, className: "bg-warning" },
-              { key: "queue", ms: trace.queueWaitMs, className: "bg-muted-foreground/45" },
-            ] as const
-          )
-            .filter((segment) => segment.ms > 0)
-            .map((segment) => (
-              <span
-                key={segment.key}
-                className={cn("h-full min-w-px", segment.className)}
-                style={{ width: `${(segment.ms / phaseTotal) * 100}%` }}
-              />
-            ))}
-        </div>
+        <UsageShareBar
+          label="Time by phase"
+          segments={segments}
+          format={formatDuration}
+          aside={
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {formatDuration(trace.totalMs)} total
+            </span>
+          }
+        />
+      ) : (
+        <>
+          <div className="flex items-baseline justify-between gap-3">
+            <h3 className="text-sm font-medium text-foreground">Time by phase</h3>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {formatDuration(trace.totalMs)} total
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">No working, waiting, or queue time yet.</p>
+        </>
+      )}
+      {collapsedIdleMs > 0 ? (
+        <p className="text-2xs text-muted-foreground">
+          Idle between turns collapsed: {formatDuration(collapsedIdleMs)}
+        </p>
       ) : null}
     </section>
   );
 }
 
-function Metric({ label, value }: { readonly label: string; readonly value: string }) {
+function tokenUsageAside(
+  usage: ThreadTurnTokenUsageSummary,
+  cost: TurnCostEstimate | null,
+): string | null {
+  const total = usage.totalTokens;
+  const costLabel = formatCostEstimate(cost);
+  if (total === null && costLabel === null) return null;
+  const bits = [
+    total === null
+      ? null
+      : `${formatTokens(total)}${usage.usageStatus === "partial" ? " · partial" : ""}`,
+    costLabel,
+  ].filter((bit): bit is string => bit !== null);
+  return bits.length === 0 ? null : `${bits.join(" · ")} total`;
+}
+
+function TokenUsageSummary({
+  usage,
+  cost,
+}: {
+  readonly usage: ThreadTurnTokenUsageSummary | null;
+  readonly cost: TurnCostEstimate | null;
+}) {
+  if (usage === null || usage.usageStatus === "unavailable") {
+    return (
+      <section aria-label="Thread token usage" className="flex min-w-0 flex-col gap-2">
+        <h3 className="text-sm font-medium text-foreground">Tokens by type</h3>
+        <p className="text-xs text-muted-foreground">
+          Unavailable. Providers that report per-turn usage fill this in for the current thread.
+        </p>
+      </section>
+    );
+  }
+
+  const segments = tokenTypeSegments({
+    uncachedInputTokens: usage.uncachedInputTokens ?? 0,
+    cachedInputTokens: usage.cachedInputTokens ?? 0,
+    cacheCreationTokens: usage.cacheCreationTokens ?? 0,
+    outputTokens: usage.outputTokens ?? 0,
+  });
+  const otherTokens = (usage.otherInputTokens ?? 0) + (usage.otherOutputTokens ?? 0);
+  const withOther =
+    otherTokens > 0
+      ? [
+          ...segments,
+          {
+            label: "Other",
+            value: otherTokens,
+            color: "color-mix(in oklab, var(--foreground) 44%, var(--background))",
+          },
+        ]
+      : segments;
+  const aside = tokenUsageAside(usage, cost);
+  const bar = withOther.some((segment) => segment.value > 0) ? (
+    <UsageShareBar
+      label="Tokens by type"
+      segments={withOther}
+      format={formatTokens}
+      aside={
+        aside === null ? undefined : (
+          <span className="text-xs tabular-nums text-muted-foreground">{aside}</span>
+        )
+      }
+    />
+  ) : (
+    <>
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="text-sm font-medium text-foreground">Tokens by type</h3>
+        {aside !== null ? (
+          <span className="text-xs tabular-nums text-muted-foreground">{aside}</span>
+        ) : null}
+      </div>
+      <p className="text-xs text-muted-foreground">No token counts to chart yet.</p>
+    </>
+  );
+
   return (
-    <div className="flex min-w-0 flex-col gap-0.5 rounded-lg bg-muted/40 px-2.5 py-1.5">
-      <span className="truncate text-2xs text-muted-foreground">{label}</span>
-      <span className="truncate font-medium tabular-nums text-foreground/90">{value}</span>
-    </div>
+    <section aria-label="Thread token usage" className="flex min-w-0 flex-col gap-2">
+      {bar}
+      {usage.usageStatus === "partial" ? (
+        <p className="text-2xs text-muted-foreground">
+          Some turns are still running or missing counts; totals may grow.
+        </p>
+      ) : null}
+      {cost === null && ((usage.totalTokens ?? 0) > 0 || (usage.outputTokens ?? 0) > 0) ? (
+        <p className="text-2xs text-muted-foreground">
+          Estimated API cost appears when Usage has rates for the models in this thread.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function TurnTokenBreakdown({
+  rows,
+  costs,
+  selectedRunId,
+  onSelect,
+}: {
+  readonly rows: readonly ThreadTurnTokenUsageRow[];
+  readonly costs: ReadonlyMap<string, TurnCostEstimate>;
+  readonly selectedRunId: ThreadTimingTurn["runId"] | null;
+  readonly onSelect: (runId: ThreadTimingTurn["runId"]) => void;
+}) {
+  const visible = rows.filter(
+    (row) =>
+      row.usage.usageStatus !== "unavailable" ||
+      (row.usage.totalTokens ?? 0) > 0 ||
+      costs.has(row.runId),
+  );
+  if (visible.length === 0) return null;
+
+  return (
+    <section aria-label="Token usage by turn" className="flex min-w-0 shrink-0 flex-col gap-1.5">
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="text-sm font-medium text-foreground">By turn</h3>
+        <span className="text-2xs text-muted-foreground">Estimated API cost</span>
+      </div>
+      <ul className="divide-y divide-border/40 overflow-hidden rounded-md border border-border/50">
+        {visible.map((row) => {
+          const cost = formatCostEstimate(costs.get(row.runId) ?? null);
+          const tokens =
+            row.usage.totalTokens === null ? "Unknown" : formatTokens(row.usage.totalTokens);
+          const selected = selectedRunId === row.runId;
+          return (
+            <li key={row.runId}>
+              <button
+                type="button"
+                className={cn(
+                  "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors",
+                  selected ? "bg-muted/60" : "hover:bg-muted/35",
+                )}
+                onClick={() => onSelect(row.runId)}
+              >
+                <span className="min-w-14 shrink-0 font-medium text-foreground">
+                  Turn {row.ordinal}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                  {row.model ?? "Unknown model"}
+                </span>
+                <span className="shrink-0 tabular-nums text-muted-foreground">{tokens}</span>
+                <span className="w-14 shrink-0 text-right tabular-nums text-muted-foreground">
+                  {cost ?? "Unknown"}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
@@ -749,17 +1065,24 @@ function DetailCard({
   turn,
   span,
   item,
+  usage,
+  cost,
   onClear,
   onFocus,
 }: {
   readonly turn: ThreadTimingTurn;
   readonly span: ThreadTimingSpan | null;
   readonly item: ThreadStructureTurnItem | null;
+  readonly usage: ThreadTurnTokenUsageRow | null;
+  readonly cost: TurnCostEstimate | null;
   readonly onClear: () => void;
   readonly onFocus: () => void;
 }) {
   const facts = span === null ? null : spanDetailFacts(turn, span, item);
   const preview = item === null ? null : spanDetailPreview(item);
+  const costLabel = formatCostEstimate(cost);
+  const tokenLabel =
+    usage?.usage.totalTokens == null ? null : formatTokens(usage.usage.totalTokens);
 
   return (
     <section
@@ -794,7 +1117,7 @@ function DetailCard({
       </header>
 
       {span === null ? (
-        <div className="grid grid-cols-3 gap-2 text-2xs">
+        <div className="grid grid-cols-2 gap-2 text-2xs sm:grid-cols-3">
           <span className="text-muted-foreground">
             Duration{" "}
             <span className="tabular-nums text-foreground/80">
@@ -809,6 +1132,21 @@ function DetailCard({
             Wait{" "}
             <span className="tabular-nums text-foreground/80">{formatDuration(turn.waitMs)}</span>
           </span>
+          {tokenLabel !== null ? (
+            <span className="text-muted-foreground">
+              Tokens <span className="tabular-nums text-foreground/80">{tokenLabel}</span>
+            </span>
+          ) : null}
+          {costLabel !== null ? (
+            <span className="text-muted-foreground">
+              Est. cost <span className="tabular-nums text-foreground/80">{costLabel}</span>
+            </span>
+          ) : null}
+          {usage?.model != null ? (
+            <span className="min-w-0 truncate text-muted-foreground">
+              Model <span className="text-foreground/80">{usage.model}</span>
+            </span>
+          ) : null}
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-2xs sm:grid-cols-3">
