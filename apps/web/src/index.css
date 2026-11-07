@@ -2385,6 +2385,7 @@ code {
 .preview-loading-progress {
   opacity: 0;
   transform: scaleX(1);
+  box-shadow: 0 0 6px 1px var(--color-ring);
   transition:
     transform 150ms ease-out,
     opacity 150ms ease-out 220ms;
