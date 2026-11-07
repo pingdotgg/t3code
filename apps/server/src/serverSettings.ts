@@ -54,6 +54,10 @@ import {
   fallbackTextGenerationModelSelection,
   isModelSelectionProviderEnabled,
 } from "@t3tools/shared/serverSettings";
+import {
+  AcpRegistrySettings,
+  supportsGlmTextGeneration,
+} from "@t3tools/provider-acp-registry/settings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import { secretProviderDefinitions } from "./secrets/secretProviderDefinitions.ts";
@@ -496,12 +500,17 @@ function migrateLegacyProviderSettings(
 }
 
 const ACP_REGISTRY_DRIVER = ProviderDriverKind.make("acpRegistry");
+const decodeAcpRegistrySettings = Schema.decodeUnknownOption(AcpRegistrySettings);
 
 function selectionSupportsTextGeneration(
   settings: ServerSettings,
   selection: ModelSelection,
 ): boolean {
-  return settings.providerInstances[selection.instanceId]?.driver !== ACP_REGISTRY_DRIVER;
+  const instance = settings.providerInstances[selection.instanceId];
+  return (
+    instance?.driver !== ACP_REGISTRY_DRIVER ||
+    Option.exists(decodeAcpRegistrySettings(instance.config ?? {}), supportsGlmTextGeneration)
+  );
 }
 
 type DriverAllowed = (driver: ProviderDriverKind) => boolean;
