@@ -4,11 +4,15 @@ import ReactDOM from "react-dom/client";
 import "@fontsource-variable/inter";
 import "./index.css";
 
+import { trackKeyboardLayout } from "./keyboardLayout";
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { isElectron } from "./env";
 import { startAppServices } from "./appInit";
 import { AppRoot } from "./AppRoot";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
+
+const stopTrackingKeyboardLayout = trackKeyboardLayout();
+import.meta.hot?.dispose(stopTrackingKeyboardLayout);
 
 const router = startAppServices();
 

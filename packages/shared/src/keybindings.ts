@@ -20,6 +20,7 @@ export {
   shortcutKeyFromEvent,
   type ShortcutEventLike,
   type ShortcutModifierStateLike,
+  type ShortcutKeyboardLayoutMap,
 } from "./keybindingMatching.ts";
 
 export const US_SHIFTED_TO_UNSHIFTED_KEYS: ReadonlyMap<string, string> = new Map([

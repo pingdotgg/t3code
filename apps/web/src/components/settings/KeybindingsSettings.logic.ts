@@ -402,8 +402,9 @@ function titleCaseCommandSegment(segment: string): string {
 
 function recordedLayoutShortcutKey(
   event: Pick<KeyboardEvent, "key" | "code" | "shiftKey" | "altKey">,
+  platform: string,
 ): string {
-  const physicalKey = shortcutKeyFromEvent(event);
+  const physicalKey = shortcutKeyFromEvent(event, platform);
   const layoutKey = event.key.toLowerCase();
   if (event.altKey || layoutKey.length !== 1) return physicalKey;
   // Normalize only US shifted glyphs at their US position. Other layouts can
@@ -450,7 +451,9 @@ export function keybindingFromKeyboardEvent(
   },
 ): string | null {
   const keyToken = normalizeShortcutKeyToken(
-    options?.layoutCharacter ? recordedLayoutShortcutKey(event) : shortcutKeyFromEvent(event),
+    options?.layoutCharacter
+      ? recordedLayoutShortcutKey(event, platform)
+      : shortcutKeyFromEvent(event, platform),
   );
   if (!keyToken) return null;
 
