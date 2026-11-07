@@ -1,7 +1,4 @@
-import {
-  KvNamespace,
-  Text,
-} from "@alchemy.run/cloudflare-runtime/core/bindings";
+import { KvNamespace, Text } from "@alchemy.run/cloudflare-runtime/core/bindings";
 import * as Options from "@alchemy.run/cloudflare-test-tools/e2e/Options";
 import * as SvelteKit from "@alchemy.run/frontend-frameworks/sveltekit";
 
@@ -20,9 +17,7 @@ export default Options.make({
   // form) works identically when no framework-specific options are needed.
   // The deploy target defaults to `@alchemy.run/frontend-frameworks/sveltekit/cloudflare`.
   framework: (options) => {
-    const base = SvelteKit.fromHarnessOptions(
-      options as SvelteKit.HarnessOptions,
-    );
+    const base = SvelteKit.fromHarnessOptions(options as SvelteKit.HarnessOptions);
     return SvelteKit.layer({
       ...base,
       dev: {
