@@ -299,6 +299,7 @@ export const publishThemeContents = Effect.fn("EnvironmentTheme.publish")(functi
   yield* fs
     .makeDirectory(input.themesDir, { recursive: true })
     .pipe(Effect.mapError(publishFailure));
+  const previouslyPublished = yield* readPublishedThemes(input.themesDir);
   // The watcher reads entries in name order up to its limits, so a new id must not push others out.
   const others = (yield* fs.readDirectory(input.themesDir).pipe(Effect.mapError(publishFailure)))
     .filter((entry) => entry !== `${themeId}${THEME_FILE_SUFFIX}`)
@@ -425,7 +426,8 @@ export const publishThemeContents = Effect.fn("EnvironmentTheme.publish")(functi
 
   // A concurrent writer outside this process can still fill the directory after the check above.
   const visible = yield* readPublishedThemes(input.themesDir).pipe(Effect.onError(() => revert));
-  if (!visible.some((theme) => theme.id === themeId)) {
+  const visibleIds = new Set(visible.map((theme) => theme.id));
+  if (!visibleIds.has(themeId) || previouslyPublished.some((theme) => !visibleIds.has(theme.id))) {
     yield* revert;
     return yield* new ThemeLibraryError({
       reason: "limit",

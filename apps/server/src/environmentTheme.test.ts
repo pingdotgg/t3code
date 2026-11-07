@@ -462,6 +462,57 @@ it.layer(Layer.merge(NodeServices.layer, NodeCrypto.layer))("environment theme",
     ),
   );
 
+  it.effect("concurrent publishers cannot silently evict previously published IDs", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const themesDir = yield* fs.makeTempDirectoryScoped();
+      const raw = encodeThemeFile(NIGHTFALL_THEME);
+      const previousIds = Array.from({ length: 31 }, (_, i) => `z-${i}`);
+      for (const id of previousIds) {
+        yield* fs.writeFileString(path.join(themesDir, `${id}.json`), raw);
+      }
+      const initialEntries = yield* fs.readDirectory(themesDir);
+      const bothPublished = yield* Deferred.make<void>();
+      const linked = new Set<string>();
+      const realLink = (yield* Effect.promise(() => vi.importActual<typeof NodeFS>("node:fs")))
+        .linkSync;
+      using _link = vi.spyOn(NodeFS, "linkSync").mockImplementation((from, to) => {
+        realLink(from, to);
+        linked.add(String(to));
+      });
+      const publish = (id: string) =>
+        EnvironmentTheme.publishThemeContents({
+          themesDir,
+          themeId: id,
+          raw,
+          overwrite: false,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            readDirectory: (directory) =>
+              Effect.gen(function* () {
+                if (!linked.has(path.join(themesDir, `${id}.json`))) return initialEntries;
+                if (linked.size === 2) yield* Deferred.succeed(bothPublished, undefined);
+                yield* Deferred.await(bothPublished);
+                return yield* fs.readDirectory(directory);
+              }),
+          }),
+          Effect.result,
+        );
+      const results = yield* Effect.all([publish("aaa"), publish("aab")], {
+        concurrency: "unbounded",
+      });
+      for (const result of results) {
+        if (result._tag === "Success") yield* result.success.cleanup;
+        else assert.equal(result.failure._tag, "ThemeLibraryError");
+      }
+      const visible = yield* EnvironmentTheme.readPublishedThemes(themesDir);
+      assert.isTrue(previousIds.every((id) => visible.some((theme) => theme.id === id)));
+      assert.isTrue(results.some((result) => result._tag === "Failure"));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("follows the directory rather than the set read at start", () =>
     withEnvironmentThemes(
       { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
