@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  formatChatTimestampTooltip,
   formatDayAwareTimestamp,
   formatShortTimestamp,
   formatUpcomingTimestamp,
@@ -37,6 +38,22 @@ describe("timestamps in the system time zone", () => {
       process.env.TZ = "Asia/Bangkok";
       expect(formatShortTimestamp(instant, "12-hour")).toBe("11:45 AM");
       expect(formatDayAwareTimestamp(instant, "12-hour", now)).toBe("11/7 11:45 AM");
+    } finally {
+      if (originalTimeZone === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTimeZone;
+    }
+  });
+
+  it("names the month in the current system time zone", () => {
+    // Oct 31 in New York, Nov 1 in Bangkok.
+    const instant = "2026-10-31T23:45:00.000Z";
+    const originalTimeZone = process.env.TZ;
+    try {
+      process.env.TZ = "America/New_York";
+      expect(formatChatTimestampTooltip(instant, "12-hour")).toBe("7:45 PM, 31st October 2026");
+
+      process.env.TZ = "Asia/Bangkok";
+      expect(formatChatTimestampTooltip(instant, "12-hour")).toBe("6:45 AM, 1st November 2026");
     } finally {
       if (originalTimeZone === undefined) delete process.env.TZ;
       else process.env.TZ = originalTimeZone;
