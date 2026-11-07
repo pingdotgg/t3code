@@ -23,7 +23,7 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { AppText as Text, AppTextInput, type AppTextInputProps } from "../../components/ui/AppText";
 import { FrostedCutout } from "../../components/ui/FrostedCutout";
 import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
-import { pairAgainAddress } from "@t3tools/client-runtime/connection";
+import { pairedAddress } from "@t3tools/client-runtime/connection";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -51,10 +51,7 @@ export function ConnectionsNewRouteScreen({
   const { presentation } = useEnvironmentPresentation(
     params.pairAgain ? (params.routeFor ?? null) : null,
   );
-  // Keep the prefill while a successful pairing clears the connection error.
-  const [pairAgainHost, setPairAgainHost] = useState<string | null>(null);
-  const refusedHost = presentation === null ? null : pairAgainAddress(presentation);
-  if (pairAgainHost === null && refusedHost !== null) setPairAgainHost(refusedHost);
+  const pairAgainHost = presentation === null ? null : pairedAddress(presentation.entry);
   // A new prefill link replaces whatever the form held.
   return (
     <PairingForm
@@ -196,11 +193,7 @@ function PairingForm({
       title={pairAgainHost !== null ? "Pair again" : "Add environment"}
       actions={[
         {
-          accessibilityLabel: connecting
-            ? "Connecting"
-            : pairAgainHost !== null
-              ? "Pair again"
-              : "Add environment",
+          accessibilityLabel: connecting ? "Connecting" : "Add environment",
           loading: connecting,
           icon: "checkmark",
           tintColor: headerIconColor,

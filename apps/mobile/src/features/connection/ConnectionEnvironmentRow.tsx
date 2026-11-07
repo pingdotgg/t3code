@@ -79,7 +79,7 @@ export function ConnectionEnvironmentRow(props: {
     : null;
   const canPairAgain =
     enabled && props.onPairAgain !== undefined && presentation !== null
-      ? pairAgainAddress(presentation) !== null
+      ? pairAgainAddress(presentation.entry, connectionState) !== null
       : false;
   const isRetrying =
     enabled &&

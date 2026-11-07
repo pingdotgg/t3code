@@ -259,23 +259,17 @@ export function AddEnvironmentDialog({
 
     handleOpenChange(false);
     toastManager.add(
-      routeTarget && pairingAgain
+      routeTarget
         ? {
             type: "success",
-            title: "Paired again",
-            description: `${routeTarget.label} accepts this device again.`,
+            title: "Route added",
+            description: `${routeTarget.label} now has another way to connect.`,
           }
-        : routeTarget
-          ? {
-              type: "success",
-              title: "Route added",
-              description: `${routeTarget.label} now has another way to connect.`,
-            }
-          : {
-              type: "success",
-              title: "Backend added",
-              description: "The environment is saved and will reconnect on app startup.",
-            },
+        : {
+            type: "success",
+            title: "Backend added",
+            description: "The environment is saved and will reconnect on app startup.",
+          },
     );
     setIsAddingSavedBackend(false);
   };
@@ -493,13 +487,7 @@ export function AddEnvironmentDialog({
         onClick={() => void handleAddSavedBackend()}
       >
         <PlusIcon className="size-3.5" />
-        {isAddingSavedBackend
-          ? "Adding…"
-          : pairingAgain
-            ? "Pair again"
-            : routeTarget
-              ? "Add route"
-              : "Add environment"}
+        {isAddingSavedBackend ? "Adding…" : routeTarget ? "Add route" : "Add environment"}
       </Button>
     </div>
   );

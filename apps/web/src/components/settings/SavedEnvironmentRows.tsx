@@ -212,7 +212,7 @@ export function SavedBackendListRow({
       (lastDescriptor === undefined ? null : { environment: lastDescriptor }),
   );
   const routeCount = connectionRoutes(environment.entry).length;
-  const pairAgainHost = enabled ? pairAgainAddress(environment) : null;
+  const pairAgainHost = enabled ? pairAgainAddress(environment.entry, connectionState) : null;
   const subtitleText = [
     environmentTransportLabel(environment, connectedTarget),
     // The headline below names the failure in full.

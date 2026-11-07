@@ -18,8 +18,6 @@ export interface EnvironmentConnectionPresentation {
   readonly phase: EnvironmentConnectionPhase;
   readonly error: string | null;
   readonly traceId: string | null;
-  /** The environment refused this device's saved pairing, as when its session expired. */
-  readonly credentialRejected?: true;
 }
 
 /**
@@ -62,24 +60,29 @@ export function presentConnectionState(
         phase: state.lastFailure?.reason === "unsupported" ? "unsupported" : "error",
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
-        // T3 Connect sign-in refusals are also "authentication"; only a paired
-        // address refusing its saved credential is fixed by pairing again.
-        ...(state.lastFailure?.reason === "authentication" && state.lastFailure.via === "direct"
-          ? { credentialRejected: true }
-          : {}),
       };
   }
 }
 
 // Learned routes borrow a saved route's credential; pair its owner again.
-export function pairAgainAddress(
-  presentation: Pick<EnvironmentPresentation, "entry" | "connection">,
-): string | null {
-  if (presentation.connection.credentialRejected !== true) return null;
-  const route = connectionRoutes(presentation.entry).find(
+export function pairedAddress(entry: ConnectionCatalogEntry): string | null {
+  const route = connectionRoutes(entry).find(
     (candidate) => candidate.target._tag === "BearerConnectionTarget" && !isLearned(candidate),
   );
   return route === undefined ? null : routeHttpBaseUrl(route);
+}
+
+/** The paired address to pair again when the environment refused this device's saved credential. */
+export function pairAgainAddress(
+  entry: ConnectionCatalogEntry,
+  state: SupervisorConnectionState,
+): string | null {
+  // T3 Connect sign-in refusals are also "authentication"; a new pairing code doesn't fix those.
+  const refused =
+    state.phase === "blocked" &&
+    state.lastFailure?.reason === "authentication" &&
+    state.lastFailure.via === "direct";
+  return refused ? pairedAddress(entry) : null;
 }
 
 export function connectionStatusText(connection: EnvironmentConnectionPresentation): string {
