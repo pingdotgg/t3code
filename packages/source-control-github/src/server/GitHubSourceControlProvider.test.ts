@@ -479,6 +479,7 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
       yield* TestClock.adjust("500 millis");
       const error = yield* Fiber.join(limited);
       assert.include(error.detail, "rate limit exceeded");
+      assert.include(error.detail, "Requests resume at 1970-01-01T00:02:03.000Z.");
       assert.propertyVal(error.cause, "retryAt", 123_000);
     }).pipe(Effect.provide(layer));
   });

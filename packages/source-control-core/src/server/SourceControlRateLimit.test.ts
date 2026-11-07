@@ -32,6 +32,24 @@ it("parses Retry-After seconds and HTTP dates", () => {
   assert.isUndefined(SourceControlRateLimit.retryAtFromHeader("later", 1_000));
 });
 
+it("names the resume time in paused and rate-limit copy", () => {
+  assert.equal(
+    SourceControlRateLimit.rateLimitResumeSuffix(undefined),
+    " Requests resume when the limit resets.",
+  );
+  assert.equal(
+    SourceControlRateLimit.rateLimitResumeSuffix(Date.parse("2026-11-07T18:00:00.000Z")),
+    " Requests resume at 2026-11-07T18:00:00.000Z.",
+  );
+  const paused = new SourceControlRateLimit.SourceControlRateLimitPausedError({
+    provider: SourceControlProviderKind.make("github"),
+    host: "github.com",
+    retryAt: Date.parse("2026-11-07T18:00:00.000Z"),
+  }).detail;
+  assert.include(paused, "rate limit");
+  assert.include(paused, "Requests resume at 2026-11-07T18:00:00.000Z.");
+});
+
 it.effect("lets an interactive request through without clearing an active pause", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(1_000);

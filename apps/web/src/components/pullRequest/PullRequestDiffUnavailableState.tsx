@@ -3,6 +3,7 @@ import { ExternalLinkIcon, TriangleAlertIcon } from "lucide-react";
 
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 
+import { usePrimarySettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { RefreshIcon } from "../ui/refresh-icon";
@@ -19,12 +20,15 @@ export function PullRequestDiffUnavailableState({
   url: string;
   onRetry: () => void;
 }) {
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const { providerName, terminology } = getSourceControlPresentationForKind(provider);
   const { title, description } = describePullRequestDiffError(
     error,
     providerName,
     terminology.singular,
+    timestampFormat,
   );
+  const resumeOnly = description.startsWith("Resumes ");
 
   return (
     <Empty size="compact" className="min-h-full" role="status">
@@ -33,7 +37,11 @@ export function PullRequestDiffUnavailableState({
       </div>
       <EmptyHeader>
         <EmptyTitle>{title}</EmptyTitle>
-        <EmptyDescription>{description}</EmptyDescription>
+        {resumeOnly ? (
+          <p className="mt-1 text-sm text-foreground">{description}</p>
+        ) : (
+          <EmptyDescription>{description}</EmptyDescription>
+        )}
       </EmptyHeader>
       <div className="flex flex-wrap justify-center gap-2">
         <Button size="sm" variant="default" onClick={onRetry}>

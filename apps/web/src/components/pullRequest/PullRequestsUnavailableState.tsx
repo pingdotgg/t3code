@@ -1,8 +1,10 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ExternalLinkIcon } from "lucide-react";
 
+import { usePrimarySettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
+import { describeSourceControlRateLimitError } from "./pullRequestDiffError";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
 export function PullRequestsUnavailableState({
@@ -18,6 +20,13 @@ export function PullRequestsUnavailableState({
   refreshing?: boolean;
   host?: { readonly url: string; readonly openLabel: string };
 }) {
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const description = describeSourceControlRateLimitError(error, timestampFormat);
+  const resumeIndex = description.lastIndexOf("Resumes ");
+  const resumeOnly = resumeIndex >= 0 ? description.slice(resumeIndex) : null;
+  const preface =
+    resumeOnly !== null && resumeIndex > 0 ? description.slice(0, resumeIndex).trim() : null;
+
   return (
     <Empty className="scrollbar-gutter-both min-h-0 justify-center-safe overflow-y-auto [&>*]:shrink-0">
       <EmptyMedia variant="icon">
@@ -25,7 +34,14 @@ export function PullRequestsUnavailableState({
       </EmptyMedia>
       <EmptyHeader>
         <EmptyTitle>{title}</EmptyTitle>
-        <EmptyDescription>{error}</EmptyDescription>
+        {resumeOnly !== null ? (
+          <>
+            {preface ? <EmptyDescription>{preface}</EmptyDescription> : null}
+            <p className="mt-1 text-sm text-foreground">{resumeOnly.replace(/\.$/u, "")}</p>
+          </>
+        ) : (
+          <EmptyDescription>{description}</EmptyDescription>
+        )}
       </EmptyHeader>
       {onRetry || host ? (
         <div className="flex flex-wrap justify-center gap-2">

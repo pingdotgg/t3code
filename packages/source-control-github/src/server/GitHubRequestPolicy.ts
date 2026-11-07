@@ -60,7 +60,7 @@ export class GitHubApiRateLimitError extends Schema.TaggedError<GitHubApiRateLim
   },
 ) {
   override get message(): string {
-    return "GitHub API rate limit exceeded.";
+    return `GitHub API rate limit exceeded.${SourceControlRateLimit.rateLimitResumeSuffix(this.retryAt)}`;
   }
 }
 
