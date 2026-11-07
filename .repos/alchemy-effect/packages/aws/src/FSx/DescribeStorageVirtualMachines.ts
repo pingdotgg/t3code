@@ -1,0 +1,44 @@
+import type * as fsx from "@distilled.cloud/aws/fsx";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for the `DescribeStorageVirtualMachines` operation (IAM
+ * action `fsx:DescribeStorageVirtualMachines` on `*`).
+ *
+ * Lists FSx for ONTAP storage virtual machines (SVMs) — optionally filtered
+ * by `file-system-id` — from inside a function runtime, e.g. to resolve an
+ * SVM's endpoints before opening an iSCSI/NFS session. Provide the
+ * implementation with
+ * `Effect.provide(AWS.FSx.DescribeStorageVirtualMachinesHttp)`.
+ * ### Inspecting File Systems
+ * **Example:** List a file system's SVMs
+ * ```typescript
+ * const describeStorageVirtualMachines =
+ *   yield* AWS.FSx.DescribeStorageVirtualMachines();
+ *
+ * const response = yield* describeStorageVirtualMachines({
+ *   Filters: [{ Name: "file-system-id", Values: [fileSystemId] }],
+ * });
+ * yield* Effect.log(
+ *   `${response.StorageVirtualMachines?.length ?? 0} SVMs`,
+ * );
+ * ```
+ *
+ * @binding
+ */
+export interface DescribeStorageVirtualMachines extends Binding.Service<
+  DescribeStorageVirtualMachines,
+  "AWS.FSx.DescribeStorageVirtualMachines",
+  () => Effect.Effect<
+    (
+      request?: fsx.DescribeStorageVirtualMachinesRequest,
+    ) => Effect.Effect<
+      fsx.DescribeStorageVirtualMachinesResponse,
+      fsx.DescribeStorageVirtualMachinesError
+    >
+  >
+> {}
+export const DescribeStorageVirtualMachines = Binding.Service<DescribeStorageVirtualMachines>(
+  "AWS.FSx.DescribeStorageVirtualMachines",
+);
