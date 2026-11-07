@@ -488,10 +488,42 @@ describe("shown PR diff stats", () => {
   });
 });
 
+it("keeps same-number PR stats separate by host and invalidates only the changed host", () => {
+  const environmentId = EnvironmentId.make("cups");
+  const entries = [entry(1), entry(1, { host: "bitbucket.org" })];
+  const query = {
+    refs: entries.map(({ projectId, host, repository, number }) => ({
+      projectId,
+      host,
+      repository,
+      number,
+    })),
+  };
+  const stats = query.refs.map((ref) => ({
+    ...ref,
+    additions: ref.host === "github.com" ? 12 : 42,
+    deletions: 3,
+  }));
+  const listed = withListedPullRequests(EMPTY_PULL_REQUEST_STATS_CACHE, entries);
+  const answered = withAnsweredPullRequestStats(listed.cache, query, stats);
+  expect(answered.stats.size).toBe(2);
+  const shown = withShownPullRequestStats(
+    entries.map((row) => ({ ...row, environmentId })),
+    [{ environmentId, stats }],
+  );
+  expect(shown.map((row) => row.additions)).toEqual([12, 42]);
+  const pushed = withListedPullRequests(answered, [
+    entry(1, { updatedAt: "2026-10-20T00:00:00Z" }),
+    entries[1]!,
+  ]);
+  expect([...pushed.cache.stats.values()]).toEqual([stats[1]]);
+});
+
 describe("cached PR diff stats", () => {
   const stat = (number: number, additions: number) => ({
     projectId: "project" as PullRequestListEntry["projectId"],
     repository: "org/repo",
+    host: "github.com",
     number,
     additions,
     deletions: 0,
@@ -502,6 +534,7 @@ describe("cached PR diff stats", () => {
       refs: [1, 2].map((number) => ({
         projectId: stat(number, 0).projectId,
         repository: "org/repo",
+        host: "github.com",
         number,
       })),
     };

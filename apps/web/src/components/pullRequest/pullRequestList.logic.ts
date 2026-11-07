@@ -1,3 +1,4 @@
+import { pullRequestStatKey } from "@t3tools/client-runtime/pull-request-stats";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
 import { resolvePullRequestAuthorFilter } from "@t3tools/contracts";
@@ -307,6 +308,7 @@ export interface PullRequestStatsTarget {
   readonly input: {
     readonly refs: ReadonlyArray<{
       readonly projectId: ProjectId;
+      readonly host?: string | undefined;
       readonly repository: string;
       readonly number: number;
     }>;
@@ -366,6 +368,7 @@ export function pullRequestStatsBatches(
       key,
       ref: {
         projectId: entry.projectId,
+        host: entry.host,
         repository: entry.repository,
         number: entry.number,
       },
@@ -499,6 +502,8 @@ export function mergePullRequestDiffStats(
   stats: ReadonlyArray<{
     readonly environmentId: string;
     readonly projectId: string;
+    readonly host?: string | undefined;
+    readonly repository: string;
     readonly number: number;
     readonly additions: number;
     readonly deletions: number;
@@ -518,8 +523,10 @@ export function mergePullRequestDiffStats(
 export const pullRequestDiffStatKey = (row: {
   readonly environmentId: string;
   readonly projectId: string;
+  readonly host?: string | undefined;
+  readonly repository: string;
   readonly number: number;
-}) => `${row.environmentId} ${row.projectId} ${row.number}`;
+}) => JSON.stringify([row.environmentId, pullRequestStatKey(row)]);
 
 export interface MergedPullRequestList {
   readonly viewers: PullRequestViewers;
