@@ -21,7 +21,7 @@ export interface GitActionMenuItem {
 export interface GitQuickAction {
   label: string;
   disabled: boolean;
-  kind: "run_action" | "run_pull" | "open_pr" | "show_hint";
+  kind: "run_action" | "run_pull" | "open_pr" | "show_hint" | "cancel_queued";
   action?: GitStackedAction;
   hint?: string;
 }
@@ -38,9 +38,11 @@ export type DefaultBranchConfirmableAction =
   | "commit_push"
   | "commit_push_pr";
 
+export const REMOTE_STATUS_PENDING_HINT = "Waiting for remote status.";
+
 export type GitActionRequestInput = Pick<
   GitRunStackedActionInput,
-  "action" | "commitMessage" | "featureBranch" | "filePaths"
+  "action" | "commitMessage" | "expectedRefName" | "featureBranch" | "filePaths"
 >;
 
 export function changeRequestTerminologyFor(
@@ -138,6 +140,7 @@ export function resolveQuickAction(
   const hasChanges = gitStatus.hasWorkingTreeChanges;
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isAhead = gitStatus.aheadCount > 0;
+  const hasDefaultBranchDelta = (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0;
   const isBehind = gitStatus.behindCount > 0;
   const isDiverged = isAhead && isBehind;
   const terminology = changeRequestTerminologyFor(gitStatus);
@@ -149,6 +152,10 @@ export function resolveQuickAction(
       kind: "show_hint",
       hint: `Create and checkout a branch before pushing or opening ${terminology.shortLabelWithArticle}.`,
     };
+  }
+
+  if (gitStatus.isRemoteStatusPending && hasOriginRemote && !hasChanges) {
+    return { label: "Push", disabled: true, kind: "show_hint", hint: REMOTE_STATUS_PENDING_HINT };
   }
 
   if (hasChanges) {
@@ -243,6 +250,15 @@ export function resolveQuickAction(
     return { label: `View ${terminology.shortLabel}`, disabled: false, kind: "open_pr" };
   }
 
+  if (hasDefaultBranchDelta && !isDefaultBranch) {
+    return {
+      label: `Create ${terminology.shortLabel}`,
+      disabled: false,
+      kind: "run_action",
+      action: "create_pr",
+    };
+  }
+
   return {
     label: "Commit",
     disabled: true,
@@ -261,6 +277,9 @@ export function getGitActionDisabledReason(input: {
   if (!item.disabled) return null;
   if (isBusy) return "Git action in progress.";
   if (!gitStatus) return "Git status is unavailable.";
+  if (gitStatus.isRemoteStatusPending && hasOriginRemote && item.id !== "commit") {
+    return REMOTE_STATUS_PENDING_HINT;
+  }
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
@@ -311,6 +330,34 @@ export function getGitActionDisabledReason(input: {
     return `Branch is behind upstream. Pull/rebase before creating ${terminology.shortLabelWithArticle}.`;
   }
   return `Create ${terminology.shortLabel} is currently unavailable.`;
+}
+
+export const ACTIVE_RUN_COMMIT_COPY = {
+  title: "Commit while the agent is working?",
+  description: "The agent may be partway through a change, and this commits everything so far.",
+  continueLabel: "Commit anyway",
+  queueLabel: "Commit when done",
+};
+
+export const QUEUED_COMMIT_DROPPED_COPY = {
+  title: "Queued commit cancelled",
+  description: "The agent didn't finish in this checkout, so nothing was committed.",
+};
+
+export const CANCEL_QUEUED_QUICK_ACTION = {
+  label: "Cancel queued commit",
+  disabled: false,
+  kind: "cancel_queued",
+} as const;
+
+export function requiresActiveRunConfirmation(
+  action: GitStackedAction,
+  isThreadRunning: boolean,
+): boolean {
+  return (
+    isThreadRunning &&
+    (action === "commit" || action === "commit_push" || action === "commit_push_pr")
+  );
 }
 
 export function requiresDefaultBranchConfirmation(

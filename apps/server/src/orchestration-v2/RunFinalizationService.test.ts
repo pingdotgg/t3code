@@ -97,6 +97,7 @@ it.effect.each(
   ).map((scenario) => [scenario.label, scenario] as const),
 )("%s", ([, scenario]) => {
   const refreshed: string[] = [];
+  const divergenceRefreshed = Deferred.makeUnsafe<string>();
   const lookedUp = Deferred.makeUnsafe<void>();
   const threadId = ThreadId.make("thread-pr-refresh");
   const runId = RunId.make("completed-run");
@@ -119,6 +120,8 @@ it.effect.each(
             }),
           refreshStatus: () =>
             Effect.die("turn completion must preserve known PRs and lookup backoff"),
+          refreshDivergence: (cwd) =>
+            Deferred.succeed(divergenceRefreshed, cwd).pipe(Effect.as(null)),
           // Requested synchronously by refresh; the lookup itself runs in the background.
           refreshPullRequestStatus: (cwd) => {
             refreshed.push(cwd);
@@ -139,6 +142,7 @@ it.effect.each(
   return Effect.gen(function* () {
     const observer = yield* RunFinalization.RunFinalizationObserver;
     yield* observer.refresh({ cwd: "/repo", threadId, runId });
+    assert.strictEqual(yield* Deferred.await(divergenceRefreshed), "/repo");
     if (scenario.expected.length > 0) yield* Deferred.await(lookedUp);
     assert.deepEqual(refreshed, [...scenario.expected]);
   }).pipe(Effect.provide(layer));
@@ -164,6 +168,7 @@ it.effect("returns from the post-turn refresh without waiting for the PR lookup"
               hasWorkingTreeChanges: false,
               workingTree: { files: [], insertions: 0, deletions: 0 },
             }),
+          refreshDivergence: () => Effect.succeed(null),
           refreshPullRequestStatus: () => Effect.never,
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -191,6 +196,69 @@ it.effect("returns from the post-turn refresh without waiting for the PR lookup"
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("a divergence-only refresh does not cancel another turn's PR lookup", () => {
+  const threadId = ThreadId.make("thread-shared-checkout");
+  const runId = RunId.make("completed-run");
+  const lookupStarted = Deferred.makeUnsafe<void>();
+  const release = Deferred.makeUnsafe<void>();
+  const finished = Deferred.makeUnsafe<void>();
+  const divergedAgain = Deferred.makeUnsafe<void>();
+  let divergenceRefreshes = 0;
+  let checkedOutBranch = "feature";
+  const layer = RunFinalization.layerObserver.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+        Layer.mock(PullRequestService.PullRequestService)({
+          refreshAfterTurn: () => Effect.void,
+        }),
+        Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+          refreshLocalStatus: () =>
+            Effect.sync(() => ({
+              isRepo: true,
+              hasPrimaryRemote: true,
+              isDefaultRef: false,
+              refName: checkedOutBranch,
+              hasWorkingTreeChanges: false,
+              workingTree: { files: [], insertions: 0, deletions: 0 },
+            })),
+          refreshDivergence: () =>
+            Effect.suspend(() => {
+              divergenceRefreshes += 1;
+              return divergenceRefreshes === 2
+                ? Deferred.succeed(divergedAgain, undefined).pipe(Effect.as(null))
+                : Effect.succeed(null);
+            }),
+          refreshPullRequestStatus: () =>
+            Deferred.succeed(lookupStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.andThen(Deferred.succeed(finished, undefined)),
+              Effect.as(null),
+            ),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadShell: () =>
+            Effect.succeed({
+              id: threadId,
+              branch: "feature",
+              activeRunId: null,
+            } as OrchestrationV2ThreadShell),
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const observer = yield* RunFinalization.RunFinalizationObserver;
+    yield* observer.refresh({ cwd: "/repo", threadId, runId });
+    yield* Deferred.await(lookupStarted);
+    checkedOutBranch = "other";
+    yield* observer.refresh({ cwd: "/repo", threadId, runId });
+    yield* Deferred.await(divergedAgain);
+    yield* Deferred.succeed(release, undefined);
+    yield* Deferred.await(finished);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("replaces a still-running PR lookup when a newer turn finishes", () => {
   const threadId = ThreadId.make("thread-back-to-back");
   const runId = RunId.make("completed-run");
@@ -214,6 +282,7 @@ it.effect("replaces a still-running PR lookup when a newer turn finishes", () =>
               hasWorkingTreeChanges: false,
               workingTree: { files: [], insertions: 0, deletions: 0 },
             }),
+          refreshDivergence: () => Effect.succeed(null),
           refreshPullRequestStatus: () =>
             ++lookups === 1
               ? Effect.never.pipe(

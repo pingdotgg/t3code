@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import type { AppBarMenu } from "../../components/ui/AppBar.types";
@@ -10,6 +11,7 @@ import {
   type VcsStatusResult,
 } from "@t3tools/contracts";
 import {
+  CANCEL_QUEUED_QUICK_ACTION,
   type GitActionRequestInput,
   requiresDefaultBranchConfirmation,
   resolveQuickAction,
@@ -18,6 +20,8 @@ import { useNavigation } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
 import { useEnvironmentScope } from "../../state/session";
+import { gitActionQueue } from "../../state/vcs";
+import { confirmCommitDuringRun } from "./git/confirmCommitDuringRun";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import {
   basename,
@@ -119,7 +123,14 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus?.isDefaultRef ?? false;
 
+  const threadRef = {
+    environmentId: EnvironmentId.make(String(environmentId)),
+    threadId: ThreadId.make(String(threadId)),
+  };
+  const queuedGitAction = useAtomValue(gitActionQueue.queuedActionAtom(threadRef));
+
   const quickAction = (() => {
+    if (queuedGitAction !== null) return CANCEL_QUEUED_QUICK_ACTION;
     if (!isRepo) {
       return {
         label: "Git unavailable",
@@ -169,6 +180,16 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
 
   const runActionWithPrompt = async (input: GitActionRequestInput) => {
     if (!canWriteSourceControl) return;
+    const branchName = gitStatus?.refName;
+    const request = { ...input, ...(branchName ? { expectedRefName: branchName } : {}) };
+    const decision = await confirmCommitDuringRun({
+      thread: threadRef,
+      action: input.action,
+      queuedRun: requiresDefaultBranchConfirmation(input.action, isDefaultRef)
+        ? null
+        : () => void onRunAction(request),
+    });
+    if (decision !== "proceed") return;
     const confirmableAction =
       input.action === "push" ||
       input.action === "create_pr" ||
@@ -176,7 +197,6 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
       input.action === "commit_push_pr"
         ? input.action
         : null;
-    const branchName = gitStatus?.refName;
     if (
       branchName &&
       confirmableAction &&
@@ -200,11 +220,15 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
       return;
     }
 
-    await onRunAction(input);
+    await onRunAction(request);
   };
 
   const runQuickAction = async () => {
     if (quickAction.disabled) return;
+    if (quickAction.kind === "cancel_queued") {
+      gitActionQueue.cancel(threadRef);
+      return;
+    }
     if (quickAction.kind === "open_pr") {
       await openExistingPr();
       return;

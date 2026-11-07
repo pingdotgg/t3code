@@ -49,6 +49,7 @@ import {
   resolveProjectSettings,
 } from "@t3tools/shared/projectSettings";
 import {
+  isTemporaryWorktreeBranch,
   mergeGitStatusParts,
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
@@ -102,6 +103,8 @@ export interface GitRunStackedActionOptions {
 
 export interface GitRemoteStatusOptions extends GitVcsDriver.GitRemoteStatusOptions {
   readonly refreshMissingPullRequest?: boolean;
+  // Skips the forge lookup, which can take minutes, for callers that only need divergence.
+  readonly reuseKnownPullRequest?: boolean;
 }
 
 export type GitBranchPullRequest = NonNullable<VcsStatusResult["pr"]> & {
@@ -1313,6 +1316,23 @@ export const make = Effect.gen(function* () {
     }
     return lastKnown;
   };
+  const resolveKnownStatusPr = (
+    cwd: string,
+    branchKey: string,
+    details: { branch: string; upstreamRef: string | null; defaultBranch: string | null },
+  ) =>
+    lastKnownPrByBranchKey.get(branchKey)?.pr
+      ? resolveLookupHeadContext(cwd, details).pipe(
+          Effect.map(({ headContext }) =>
+            resolveLastKnownPr(branchKey, {
+              upstreamRef: details.upstreamRef,
+              headBranch: headContext.headBranch,
+              remoteName: headContext.remoteName,
+              headRemoteUrlKey: headContext.headRemoteUrlKey,
+            }),
+          ),
+        )
+      : Effect.succeed(null);
   const lookupStatusPr = Effect.fn("lookupStatusPr")(function* (
     cwd: string,
     details: {
@@ -1321,12 +1341,18 @@ export const make = Effect.gen(function* () {
       defaultBranch: string | null;
       isDefaultBranch: boolean;
     },
-    refreshMissingPullRequest = false,
+    options?: Pick<GitRemoteStatusOptions, "refreshMissingPullRequest" | "reuseKnownPullRequest">,
   ) {
     // Upstream changes must not orphan the same branch's fallback value.
     const branchKey = `${cwd}\u0000${details.branch}`;
+    if (options?.reuseKnownPullRequest) {
+      const known = yield* resolveKnownStatusPr(cwd, branchKey, details).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      return { pr: known?.pr ?? null, headSha: known?.headSha ?? null };
+    }
     const cacheKey = prLookupCacheKey(cwd, details);
-    if (refreshMissingPullRequest) {
+    if (options?.refreshMissingPullRequest) {
       const cached = yield* Cache.getOption(prLookupCache, cacheKey).pipe(
         Effect.orElseSucceed(() => Option.none()),
       );
@@ -1357,18 +1383,7 @@ export const make = Effect.gen(function* () {
       ),
       Effect.map(({ pr, headSha }) => ({ pr, headSha })),
       Effect.catch((error) => {
-        const fallback = lastKnownPrByBranchKey.get(branchKey)?.pr
-          ? resolveLookupHeadContext(cwd, details).pipe(
-              Effect.map(({ headContext }) =>
-                resolveLastKnownPr(branchKey, {
-                  upstreamRef: details.upstreamRef,
-                  headBranch: headContext.headBranch,
-                  remoteName: headContext.remoteName,
-                  headRemoteUrlKey: headContext.headRemoteUrlKey,
-                }),
-              ),
-            )
-          : Effect.succeed(null);
+        const fallback = resolveKnownStatusPr(cwd, branchKey, details);
         return Effect.logWarning("PR lookup failed.").pipe(
           Effect.annotateLogs({
             operation: "lookupStatusPr",
@@ -1416,7 +1431,7 @@ export const make = Effect.gen(function* () {
               defaultBranch: details.defaultBranch,
               isDefaultBranch: details.isDefaultBranch,
             },
-            options?.refreshMissingPullRequest,
+            options,
           )
         : { pr: null, headSha: null };
     // Squash and rebase merges land new commits, so HEAD never becomes reachable from the base.
@@ -2158,6 +2173,44 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // Agents share the checkout, and commit and push act on whatever HEAD is when they run.
+  const assertRefStillCheckedOut = Effect.fn("assertRefStillCheckedOut")(function* (
+    cwd: string,
+    branch: string | null,
+    nextStep: string,
+  ) {
+    const head = yield* gitCore.execute({
+      operation: "GitManager.assertRefStillCheckedOut",
+      cwd,
+      args: ["symbolic-ref", "--quiet", "HEAD"],
+      allowNonZeroExit: true,
+      timeoutMs: 5_000,
+    });
+    const current = head.exitCode === 0 ? head.stdout.trim().replace(/^refs\/heads\//, "") : null;
+    if (current === branch) return;
+    return yield* new GitManagerError({
+      operation: "runStackedAction",
+      cwd,
+      detail: `"${branch ?? "detached HEAD"}" is no longer checked out, so the action stopped before ${nextStep}.`,
+    });
+  });
+
+  const wasRenamedTo = Effect.fn("wasRenamedTo")(function* (
+    cwd: string,
+    oldBranch: string,
+    branch: string,
+  ) {
+    const rename = `Branch: renamed refs/heads/${oldBranch} to refs/heads/${branch}`;
+    const reflog = yield* gitCore.execute({
+      operation: "GitManager.wasRenamedTo",
+      cwd,
+      args: ["log", "-g", "--format=%gs", "--fixed-strings", `--grep-reflog=${rename}`, "HEAD"],
+      allowNonZeroExit: true,
+      timeoutMs: 5_000,
+    });
+    return reflog.exitCode === 0 && reflog.stdout.split("\n").includes(rename);
+  });
+
   const runCommitStep = Effect.fn("runCommitStep")(function* (
     settings: SourceControlTextGenerationSettings,
     cwd: string,
@@ -2201,6 +2254,7 @@ export const make = Effect.gen(function* () {
       return { status: "skipped_no_changes" as const };
     }
 
+    yield* assertRefStillCheckedOut(cwd, branch, "committing");
     yield* emit({
       kind: "phase_started",
       phase: "commit",
@@ -2417,7 +2471,11 @@ export const make = Effect.gen(function* () {
   const remoteStatus: GitManager["Service"]["remoteStatus"] = Effect.fn("remoteStatus")(
     function* (input, options) {
       const cacheKey = yield* normalizeStatusCacheKey(input.cwd);
-      if (options?.refreshUpstream === false || options?.refreshMissingPullRequest) {
+      if (
+        options?.refreshUpstream === false ||
+        options?.refreshMissingPullRequest ||
+        options?.reuseKnownPullRequest
+      ) {
         return yield* readRemoteStatus(cacheKey, options);
       }
       return yield* Cache.get(remoteStatusResultCache, cacheKey);
@@ -3157,6 +3215,27 @@ export const make = Effect.gen(function* () {
             detail: "Feature-branch checkout is only supported for commit actions.",
           });
         }
+        // A worktree's temporary branch is renamed once, which a client's status can trail.
+        const followsWorktreeRename =
+          input.expectedRefName !== undefined &&
+          isTemporaryWorktreeBranch(input.expectedRefName) &&
+          initialStatus.branch !== null &&
+          !initialStatus.isDefaultBranch &&
+          (yield* wasRenamedTo(input.cwd, input.expectedRefName, initialStatus.branch));
+        if (
+          input.expectedRefName !== undefined &&
+          input.expectedRefName !== initialStatus.branch &&
+          !followsWorktreeRename
+        ) {
+          const current = initialStatus.branch
+            ? `"${initialStatus.branch}" is checked out`
+            : "HEAD is detached";
+          return yield* new GitManagerError({
+            operation: "runStackedAction",
+            cwd: input.cwd,
+            detail: `This action was for "${input.expectedRefName}", but ${current}. Check the current branch and try again.`,
+          });
+        }
         const phases: GitActionProgressPhase[] = [
           ...(input.featureBranch ? (["branch"] as const) : []),
           ...(wantsCommit ? (["commit"] as const) : []),
@@ -3269,6 +3348,7 @@ export const make = Effect.gen(function* () {
               })
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("push"))),
+                Effect.tap(() => assertRefStillCheckedOut(input.cwd, currentBranch, "pushing")),
                 Effect.flatMap(() => pushCurrentBranch(input.cwd, currentBranch)),
               )
           : { status: "skipped_not_requested" as const };
@@ -3282,6 +3362,13 @@ export const make = Effect.gen(function* () {
               })
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
+                Effect.tap(() =>
+                  assertRefStillCheckedOut(
+                    input.cwd,
+                    currentBranch,
+                    `creating the ${changeRequestTerms?.shortLabel ?? "PR"}`,
+                  ),
+                ),
                 Effect.flatMap(() =>
                   runPrStep(
                     textGenerationSettings,

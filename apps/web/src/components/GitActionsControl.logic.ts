@@ -7,6 +7,7 @@ import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import {
   changeRequestTerminologyFor,
+  REMOTE_STATUS_PENDING_HINT,
   type DefaultBranchActionDialogCopy,
   type DefaultBranchConfirmableAction,
   type GitActionIconName,
@@ -14,6 +15,11 @@ import {
 } from "@t3tools/client-runtime/state/vcs";
 
 export {
+  ACTIVE_RUN_COMMIT_COPY,
+  CANCEL_QUEUED_QUICK_ACTION,
+  QUEUED_COMMIT_DROPPED_COPY,
+  REMOTE_STATUS_PENDING_HINT,
+  requiresActiveRunConfirmation,
   requiresDefaultBranchConfirmation,
   type DefaultBranchConfirmableAction,
   type GitActionIconName,
@@ -31,7 +37,7 @@ export interface GitActionMenuItem {
 export interface GitQuickAction {
   label: string;
   disabled: boolean;
-  kind: "run_action" | "run_pull" | "open_publish" | "show_hint";
+  kind: "run_action" | "run_pull" | "open_publish" | "show_hint" | "cancel_queued";
   action?: GitStackedAction;
   hint?: string;
 }
@@ -209,6 +215,10 @@ export function resolveQuickAction(
       kind: "show_hint",
       hint: `Create and checkout a ref before pushing or opening a ${terminology.singular}.`,
     };
+  }
+
+  if (gitStatus.isRemoteStatusPending && hasPrimaryRemote && !hasChanges) {
+    return { label: "Push", disabled: true, kind: "show_hint", hint: REMOTE_STATUS_PENDING_HINT };
   }
 
   if (hasChanges) {

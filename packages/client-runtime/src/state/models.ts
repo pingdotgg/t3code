@@ -124,6 +124,18 @@ export function threadRuntimeCanArchive(runtime: ThreadRuntimeSummary | null | u
   );
 }
 
+/** A run parks at `idle` while the agent waits on work that can still change the checkout. */
+export function threadWorkIsActive(
+  shell: Pick<EnvironmentThreadShell, "runtime" | "pendingBackgroundTasks"> | null | undefined,
+): boolean {
+  if (!shell) return false;
+  return (
+    threadRuntimeIsActive(shell.runtime) ||
+    (shell.runtime?.status === "idle" &&
+      backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks))
+  );
+}
+
 function threadRunStatusIsActive(status: ThreadRuntimeSummary["status"]): boolean {
   return (
     status === "preparing" ||

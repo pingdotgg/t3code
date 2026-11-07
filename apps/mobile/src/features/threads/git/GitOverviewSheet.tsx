@@ -32,6 +32,7 @@ import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
+import { confirmCommitDuringRun } from "./confirmCommitDuringRun";
 import { menuItemIconName, statusSummary } from "./gitSheetComponents";
 import {
   LinkedPullRequestRow,
@@ -137,8 +138,27 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     }
   };
 
+  const closeSheet = () => {
+    if (!isInspector) navigation.goBack();
+    else closeInspectorSheet?.();
+  };
+
   const runActionWithPrompt = async (input: GitActionRequestInput) => {
     if (!canWriteSourceControl) return;
+    const branchName = gitStatus.data?.refName;
+    const request = { ...input, ...(branchName ? { expectedRefName: branchName } : {}) };
+    const decision = await confirmCommitDuringRun({
+      thread: { environmentId, threadId },
+      action: input.action,
+      queuedRun: requiresDefaultBranchConfirmation(input.action, isDefaultRef)
+        ? null
+        : () => void gitActions.onRunSelectedThreadGitAction(request),
+    });
+    if (decision === "cancelled") return;
+    if (decision === "queued") {
+      closeSheet();
+      return;
+    }
     const confirmableAction =
       input.action === "push" ||
       input.action === "create_pr" ||
@@ -146,7 +166,6 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       input.action === "commit_push_pr"
         ? input.action
         : null;
-    const branchName = gitStatus.data?.refName;
     if (
       branchName &&
       confirmableAction &&
@@ -168,9 +187,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     }
 
     // Close a sheet so the thread shows the action's progress.
-    if (!isInspector) navigation.goBack();
-    else closeInspectorSheet?.();
-    await gitActions.onRunSelectedThreadGitAction(input);
+    closeSheet();
+    await gitActions.onRunSelectedThreadGitAction(request);
   };
 
   const onPressMenuItem = async (item: (typeof menuItems)[number]) => {

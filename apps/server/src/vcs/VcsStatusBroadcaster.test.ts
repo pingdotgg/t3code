@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import * as Scheduler from "effect/Scheduler";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
@@ -72,6 +73,7 @@ function layerTestFor(state: {
   localInvalidationCalls: number;
   remoteInvalidationCalls: number;
   remoteStatusRefreshUpstreamValues?: Array<boolean | undefined>;
+  remoteStatusReuseKnownPrValues?: Array<boolean | undefined>;
   remoteStatusError?: GitManagerError;
   backgroundWorkEnabled?: boolean;
   automaticFetchInterval?: Effect.Effect<Duration.Duration>;
@@ -110,6 +112,7 @@ function layerTestFor(state: {
                 Effect.sync(() => {
                   state.remoteStatusCalls += 1;
                   state.remoteStatusRefreshUpstreamValues?.push(options?.refreshUpstream);
+                  state.remoteStatusReuseKnownPrValues?.push(options?.reuseKnownPullRequest);
                   return state.currentRemoteStatus;
                 }),
               ),
@@ -164,6 +167,21 @@ function layerBackgroundPolicy(shouldRunScopeWork: (scope: BackgroundScope) => b
     shouldRunOpportunisticWork: Effect.succeed(true),
   });
 }
+
+// Resolves once the poller's first remote read lands, so later reads cannot race it.
+const watchRemoteUpdates = Effect.fn("watchRemoteUpdates")(function* (
+  broadcaster: VcsStatusBroadcaster.VcsStatusBroadcaster["Service"],
+) {
+  const remoteUpdates = yield* Queue.unbounded<VcsStatusRemoteResult | null>();
+  yield* broadcaster.streamStatus({ cwd: "/repo" }).pipe(
+    Stream.runForEach((event) =>
+      event._tag === "remoteUpdated" ? Queue.offer(remoteUpdates, event.remote) : Effect.void,
+    ),
+    Effect.forkScoped,
+  );
+  yield* Queue.take(remoteUpdates);
+  return remoteUpdates;
+});
 
 describe("VcsStatusBroadcaster", () => {
   it.effect("refreshes queued behind a running one share the next git status read", () => {
@@ -440,6 +458,159 @@ describe("VcsStatusBroadcaster", () => {
       assert.equal(state.remoteStatusCalls, 3);
       assert.equal(state.remoteInvalidationCalls, 3);
     }).pipe(Effect.provide(layerTestFor(state)));
+  });
+
+  it.effect("refreshes divergence from the known PR once the ref has a remote read", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: remoteStatusWithPr,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      remoteStatusRefreshUpstreamValues: [],
+      remoteStatusReuseKnownPrValues: [],
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+      assert.isNull(yield* broadcaster.refreshDivergence("/repo"));
+      assert.equal(state.remoteStatusCalls, 0);
+
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+      state.backgroundWorkEnabled = false;
+      state.currentRemoteStatus = { ...remoteStatusWithPr, aheadCount: 2 };
+
+      assert.deepStrictEqual(
+        yield* broadcaster.refreshDivergence("/repo"),
+        state.currentRemoteStatus,
+      );
+      assert.equal((yield* broadcaster.getStatus({ cwd: "/repo" })).aheadCount, 2);
+      assert.equal(state.remoteStatusRefreshUpstreamValues?.at(-1), false);
+      assert.equal(state.remoteStatusReuseKnownPrValues?.at(-1), true);
+    }).pipe(Effect.provide(layerTestFor(state)));
+  });
+
+  it.effect("refreshes turn activity only for a checkout a client is watching", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+      yield* broadcaster.refreshWatchedStatus("/repo", { includeDivergence: true });
+      assert.equal(state.localStatusCalls, 0);
+
+      const remoteUpdates = yield* watchRemoteUpdates(broadcaster);
+      state.currentLocalStatus = { ...baseLocalStatus, hasWorkingTreeChanges: true };
+      state.currentRemoteStatus = { ...baseRemoteStatus, aheadCount: 1 };
+
+      yield* broadcaster.refreshWatchedStatus("/repo", { includeDivergence: false });
+      const edited = yield* broadcaster.getStatus({ cwd: "/repo" });
+      assert.isTrue(edited.hasWorkingTreeChanges);
+      assert.equal(edited.aheadCount, 0);
+
+      yield* broadcaster.refreshWatchedStatus("/repo", { includeDivergence: true });
+      assert.equal((yield* Queue.take(remoteUpdates))?.aheadCount, 1);
+    }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+  });
+
+  it.effect(
+    "turn activity catches up on remote status when the tree cleans or the ref moves",
+    () => {
+      const state: Parameters<typeof layerTestFor>[0] = {
+        currentLocalStatus: { ...baseLocalStatus, hasWorkingTreeChanges: true },
+        currentRemoteStatus: baseRemoteStatus,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+      };
+
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const remoteUpdates = yield* watchRemoteUpdates(broadcaster);
+
+        state.currentLocalStatus = baseLocalStatus;
+        state.currentRemoteStatus = { ...baseRemoteStatus, aheadCount: 1 };
+        yield* broadcaster.refreshWatchedStatus("/repo", { includeDivergence: false });
+        assert.equal((yield* Queue.take(remoteUpdates))?.aheadCount, 1);
+
+        state.currentLocalStatus = { ...baseLocalStatus, refName: "feature/renamed" };
+        state.currentRemoteStatus = { ...baseRemoteStatus, aheadCount: 2 };
+        yield* broadcaster.refreshWatchedStatus("/repo", { includeDivergence: false });
+        assert.isNull(yield* Queue.take(remoteUpdates));
+        assert.equal((yield* Queue.take(remoteUpdates))?.aheadCount, 2);
+      }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+    },
+  );
+
+  it.effect("turn activity does not queue behind a slow remote read", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* watchRemoteUpdates(broadcaster);
+
+      const holdingLock = yield* Deferred.make<void>();
+      state.beforeRemoteStatus = Deferred.succeed(holdingLock, undefined).pipe(
+        Effect.andThen(Effect.never),
+      );
+      yield* broadcaster.refreshDivergence("/repo").pipe(Effect.forkScoped);
+      yield* Deferred.await(holdingLock);
+
+      state.currentLocalStatus = { ...baseLocalStatus, hasWorkingTreeChanges: true };
+      yield* broadcaster.refreshWatchedStatus("/repo", { includeDivergence: true });
+      assert.isTrue((yield* broadcaster.getStatus({ cwd: "/repo" })).hasWorkingTreeChanges);
+    }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+  });
+
+  it.effect("a watched refresh that lands during a remote read runs after it", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const remoteUpdates = yield* watchRemoteUpdates(broadcaster);
+
+      const reading = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      state.beforeRemoteStatus = Deferred.succeed(reading, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+      );
+      yield* broadcaster.refreshWatchedStatus("/repo", { includeDivergence: true });
+      yield* Deferred.await(reading);
+
+      yield* broadcaster.refreshWatchedStatus("/repo", { includeDivergence: true });
+      state.currentRemoteStatus = { ...baseRemoteStatus, aheadCount: 1 };
+      state.beforeRemoteStatus = Effect.sync(() => {
+        state.currentRemoteStatus = { ...baseRemoteStatus, aheadCount: 2 };
+      });
+      yield* Deferred.succeed(release, undefined);
+
+      assert.equal((yield* Queue.take(remoteUpdates))?.aheadCount, 1);
+      assert.equal((yield* Queue.take(remoteUpdates))?.aheadCount, 2);
+    }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 
   it.effect("a poll that started before the turn-end refresh cannot overwrite its PR", () => {

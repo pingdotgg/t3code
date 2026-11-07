@@ -1,3 +1,4 @@
+import { threadWorkIsActive } from "@t3tools/client-runtime/state/shell";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import {
@@ -51,6 +52,11 @@ import {
   type GitActionMenuItem,
   type GitQuickAction,
   type DefaultBranchConfirmableAction,
+  ACTIVE_RUN_COMMIT_COPY,
+  CANCEL_QUEUED_QUICK_ACTION,
+  QUEUED_COMMIT_DROPPED_COPY,
+  REMOTE_STATUS_PENDING_HINT,
+  requiresActiveRunConfirmation,
   requiresDefaultBranchConfirmation,
   resolveChangesTotals,
   resolveDefaultBranchActionDialogCopy,
@@ -97,7 +103,12 @@ import { serverEnvironment } from "~/state/server";
 import { sourceControlEnvironment } from "~/state/sourceControl";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { vcsActionManager, vcsEnvironment, vcsStatusRevalidation } from "~/state/vcs";
+import {
+  gitActionQueue,
+  vcsActionManager,
+  vcsEnvironment,
+  vcsStatusRevalidation,
+} from "~/state/vcs";
 import { randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -129,6 +140,7 @@ interface PendingDefaultBranchAction {
   includesCommit: boolean;
   commitMessage?: string;
   onConfirmed?: () => void;
+  skipActiveRunPrompt?: boolean;
   filePaths?: string[];
 }
 
@@ -136,8 +148,10 @@ interface RunGitActionWithToastInput {
   action: GitStackedAction;
   commitMessage?: string;
   onConfirmed?: () => void;
+  skipActiveRunPrompt?: boolean;
   skipDefaultBranchPrompt?: boolean;
   statusOverride?: VcsStatusResult | null;
+  expectedRefName?: string;
   featureBranch?: boolean;
   filePaths?: string[];
 }
@@ -225,6 +239,9 @@ function getMenuActionDisabledReason({
   if (!item.disabled) return null;
   if (isBusy) return "Git action in progress.";
   if (!gitStatus) return "Git status is unavailable.";
+  if (gitStatus.isRemoteStatusPending && hasPrimaryRemote && item.id !== "commit") {
+    return REMOTE_STATUS_PENDING_HINT;
+  }
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
@@ -952,6 +969,7 @@ export default function GitActionsControl({
   );
   const threadToastData = activeThreadRef ? { threadRef: activeThreadRef } : undefined;
   const activeServerThreadShell = useQuietThreadShell(activeThreadRef);
+  const isThreadRunning = threadWorkIsActive(activeServerThreadShell);
   const activeDraftThread = useComposerDraftStore((store) =>
     draftId
       ? store.getDraftSession(draftId)
@@ -975,6 +993,8 @@ export default function GitActionsControl({
   const [inlineSuccess, setInlineSuccess] = useState<InlineGitActionSuccess | null>(null);
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
     useState<PendingDefaultBranchAction | null>(null);
+  const [pendingActiveRunAction, setPendingActiveRunAction] =
+    useState<RunGitActionWithToastInput | null>(null);
   const sourceControlScope = { environmentId: activeEnvironmentId, cwd: gitCwd };
   const vcsActionState = useAtomValue(vcsActionManager.stateAtom(sourceControlScope));
   const inlineSuccessExpired = useDeadlinePassed(inlineSuccess?.expiresAtMs ?? null);
@@ -1107,12 +1127,11 @@ export default function GitActionsControl({
     isGitActionRunning,
     hasPrimaryRemote,
   );
-  const quickAction = resolveQuickAction(
-    gitStatusForActions,
-    isGitActionRunning,
-    isDefaultRef,
-    hasPrimaryRemote,
-  );
+  const queuedGitAction = useAtomValue(gitActionQueue.queuedActionAtom(activeThreadRef));
+  const quickAction: GitQuickAction =
+    queuedGitAction !== null
+      ? CANCEL_QUEUED_QUICK_ACTION
+      : resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultRef, hasPrimaryRemote);
   const quickActionDisabledReason = !canWriteSourceControl
     ? "This connection cannot change source control."
     : quickAction.disabled
@@ -1151,15 +1170,17 @@ export default function GitActionsControl({
     ),
   );
 
-  async function runGitActionWithToast({
-    action,
-    commitMessage,
-    onConfirmed,
-    skipDefaultBranchPrompt = false,
-    statusOverride,
-    featureBranch = false,
-    filePaths,
-  }: RunGitActionWithToastInput) {
+  async function runGitActionWithToast(input: RunGitActionWithToastInput) {
+    const {
+      action,
+      commitMessage,
+      onConfirmed,
+      skipDefaultBranchPrompt = false,
+      statusOverride,
+      expectedRefName,
+      featureBranch = false,
+      filePaths,
+    } = input;
     if (
       activeEnvironmentId === null ||
       !readEnvironmentScope(activeEnvironmentId, AuthSourceControlWriteScope) ||
@@ -1176,6 +1197,14 @@ export default function GitActionsControl({
     const includesCommit =
       actionCanCommit &&
       (action === "commit" || !!actionStatus?.hasWorkingTreeChanges || featureBranch);
+    if (!input.skipActiveRunPrompt && requiresActiveRunConfirmation(action, isThreadRunning)) {
+      const confirmingRefName = expectedRefName ?? actionBranch;
+      setPendingActiveRunAction({
+        ...input,
+        ...(confirmingRefName ? { expectedRefName: confirmingRefName } : {}),
+      });
+      return;
+    }
     if (
       !skipDefaultBranchPrompt &&
       requiresDefaultBranchConfirmation(action, actionIsDefaultBranch) &&
@@ -1195,6 +1224,7 @@ export default function GitActionsControl({
         includesCommit,
         ...(commitMessage ? { commitMessage } : {}),
         ...(onConfirmed ? { onConfirmed } : {}),
+        ...(input.skipActiveRunPrompt ? { skipActiveRunPrompt: true } : {}),
         ...(filePaths ? { filePaths } : {}),
       });
       return;
@@ -1204,11 +1234,13 @@ export default function GitActionsControl({
 
     const scopedToastData = threadToastData ? { ...threadToastData } : undefined;
     const actionId = randomUUID();
+    const confirmedRefName = expectedRefName ?? actionBranch;
 
     const result = await runImmediateGitAction.run({
       actionId,
       action,
       ...(commitMessage ? { commitMessage } : {}),
+      ...(confirmedRefName ? { expectedRefName: confirmedRefName } : {}),
       ...(featureBranch ? { featureBranch } : {}),
       ...(filePaths ? { filePaths } : {}),
       ...(activeServerThread ? { threadId: activeServerThread.id } : {}),
@@ -1247,17 +1279,44 @@ export default function GitActionsControl({
     });
   }
 
+  const canQueuePendingActiveRunAction =
+    pendingActiveRunAction !== null &&
+    activeThreadRef !== null &&
+    queuedGitAction === null &&
+    !requiresDefaultBranchConfirmation(pendingActiveRunAction.action, isDefaultRef);
+
+  const queuePendingActiveRunAction = () => {
+    if (!pendingActiveRunAction || !activeThreadRef) return;
+    const { onConfirmed, ...action } = pendingActiveRunAction;
+    setPendingActiveRunAction(null);
+    onConfirmed?.();
+    gitActionQueue.enqueue(activeThreadRef, {
+      action: action.action,
+      run: () => void runGitActionWithToast({ ...action, skipActiveRunPrompt: true }),
+      onDropped: () =>
+        toastManager.add({
+          type: "info",
+          title: QUEUED_COMMIT_DROPPED_COPY.title,
+          description: QUEUED_COMMIT_DROPPED_COPY.description,
+          data: threadToastData,
+        }),
+    });
+  };
+
   const continuePendingDefaultBranchAction = (featureBranch: boolean) => {
     if (!pendingDefaultBranchAction || !canWriteSourceControl) return;
     if (featureBranch && (!canChangeThreadBranch || featureBranchUnavailableReason !== null))
       return;
-    const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
+    const { action, branchName, commitMessage, onConfirmed, skipActiveRunPrompt, filePaths } =
+      pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     void runGitActionWithToast({
       action,
       ...(commitMessage ? { commitMessage } : {}),
       ...(onConfirmed ? { onConfirmed } : {}),
+      ...(skipActiveRunPrompt ? { skipActiveRunPrompt } : {}),
       ...(filePaths ? { filePaths } : {}),
+      expectedRefName: branchName,
       featureBranch,
       skipDefaultBranchPrompt: true,
     });
@@ -1266,14 +1325,14 @@ export default function GitActionsControl({
   const runDialogActionOnNewBranch = () => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
-
-    setIsCommitDialogOpen(false);
-    setDialogCommitMessage("");
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
-
     void runGitActionWithToast({
       action: "commit",
+      onConfirmed: () => {
+        setIsCommitDialogOpen(false);
+        setDialogCommitMessage("");
+        setExcludedFiles(new Set());
+        setIsEditingFiles(false);
+      },
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
       featureBranch: true,
@@ -1282,6 +1341,10 @@ export default function GitActionsControl({
   };
 
   const runQuickAction = () => {
+    if (quickAction.kind === "cancel_queued") {
+      if (activeThreadRef) gitActionQueue.cancel(activeThreadRef);
+      return;
+    }
     if (quickAction.kind === "open_publish") {
       setIsPublishDialogOpen(true);
       return;
@@ -1355,12 +1418,14 @@ export default function GitActionsControl({
   const runDialogAction = () => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
-    setIsCommitDialogOpen(false);
-    setDialogCommitMessage("");
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
     void runGitActionWithToast({
       action: "commit",
+      onConfirmed: () => {
+        setIsCommitDialogOpen(false);
+        setDialogCommitMessage("");
+        setExcludedFiles(new Set());
+        setIsEditingFiles(false);
+      },
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
     });
@@ -1865,6 +1930,44 @@ export default function GitActionsControl({
           gitCwd={gitCwd}
         />
       ) : null}
+
+      <Dialog
+        open={pendingActiveRunAction !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingActiveRunAction(null);
+        }}
+      >
+        <DialogPopup className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{ACTIVE_RUN_COMMIT_COPY.title}</DialogTitle>
+            <DialogDescription>{ACTIVE_RUN_COMMIT_COPY.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter variant="bare">
+            <Button variant="outline" size="sm" onClick={() => setPendingActiveRunAction(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant={canQueuePendingActiveRunAction ? "outline" : "default"}
+              size="sm"
+              onClick={() => {
+                if (!pendingActiveRunAction) return;
+                setPendingActiveRunAction(null);
+                void runGitActionWithToast({
+                  ...pendingActiveRunAction,
+                  skipActiveRunPrompt: true,
+                });
+              }}
+            >
+              {ACTIVE_RUN_COMMIT_COPY.continueLabel}
+            </Button>
+            {canQueuePendingActiveRunAction && (
+              <Button size="sm" onClick={queuePendingActiveRunAction}>
+                {ACTIVE_RUN_COMMIT_COPY.queueLabel}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
 
       <Dialog
         open={pendingDefaultBranchAction !== null}

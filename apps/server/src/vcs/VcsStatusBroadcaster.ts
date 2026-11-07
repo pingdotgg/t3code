@@ -4,6 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FiberMap from "effect/FiberMap";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -219,6 +220,13 @@ export class VcsStatusBroadcaster extends Context.Service<
       cwd: string,
       options?: { readonly localOnly?: boolean },
     ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
+    readonly refreshDivergence: (
+      cwd: string,
+    ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
+    readonly refreshWatchedStatus: (
+      cwd: string,
+      options: { readonly includeDivergence: boolean },
+    ) => Effect.Effect<void, GitManagerServiceError>;
     readonly refreshPullRequestStatus: (
       cwd: string,
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
@@ -264,6 +272,8 @@ export const make = Effect.gen(function* () {
   const withRemoteWriteLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
     remoteWriteLocks.withLock(cwd, effect);
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
+  const remoteRefreshes = yield* FiberMap.make<string>();
+  const remoteRefreshesWanted = new Set<string>();
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
     cwd: string,
@@ -549,6 +559,56 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const refreshDivergence: VcsStatusBroadcaster["Service"]["refreshDivergence"] = Effect.fn(
+    "VcsStatusBroadcaster.refreshDivergence",
+  )(function* (rawCwd) {
+    const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+    return yield* withRemoteWriteLock(
+      cwd,
+      Effect.gen(function* () {
+        // With no remote read for this ref there is no known PR to reuse, and a null would read
+        // as "no PR" instead of pending.
+        const cached = yield* getCachedStatus(cwd);
+        if (!cached?.remote?.value) return null;
+        const remoteRead = yield* readRemoteStatus(cwd, {
+          refreshUpstream: false,
+          reuseKnownPullRequest: true,
+        });
+        return yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
+      }),
+    );
+  });
+
+  const refreshWantedRemote = Effect.fn("VcsStatusBroadcaster.refreshWantedRemote")(function* (
+    cwd: string,
+  ) {
+    remoteRefreshesWanted.delete(cwd);
+    const remoteMissing = !(yield* getCachedStatus(cwd))?.remote?.value;
+    return yield* remoteMissing
+      ? refreshRemoteStatus(cwd, { refreshUpstream: false })
+      : refreshDivergence(cwd);
+  });
+
+  const refreshWatchedStatus: VcsStatusBroadcaster["Service"]["refreshWatchedStatus"] = Effect.fn(
+    "VcsStatusBroadcaster.refreshWatchedStatus",
+  )(function* (rawCwd, { includeDivergence }) {
+    const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+    if (!(yield* SynchronizedRef.get(pollersRef)).has(cwd)) return;
+    const wasDirty = (yield* getCachedStatus(cwd))?.local?.value.hasWorkingTreeChanges === true;
+    const local = yield* refreshLocalStatusCore(cwd);
+    const remoteMissing = !(yield* getCachedStatus(cwd))?.remote?.value;
+    // A clean tree reads as up to date until divergence catches up, and a new ref reads as pending.
+    if (!includeDivergence && !remoteMissing && !(wasDirty && !local.hasWorkingTreeChanges)) return;
+    // A forge lookup can hold the remote lock for minutes, and local refreshes must not wait on it.
+    // A read already running may discard its result for a ref that moved, so ask for another.
+    remoteRefreshesWanted.add(cwd);
+    yield* Effect.suspend(() => refreshWantedRemote(cwd)).pipe(
+      Effect.ignore({ log: true }),
+      Effect.repeat({ while: () => remoteRefreshesWanted.has(cwd) }),
+      FiberMap.run(remoteRefreshes, cwd, { onlyIfMissing: true }),
+    );
+  });
+
   const refreshPullRequestStatus: VcsStatusBroadcaster["Service"]["refreshPullRequestStatus"] =
     Effect.fn("VcsStatusBroadcaster.refreshPullRequestStatus")(function* (rawCwd) {
       const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
@@ -773,6 +833,8 @@ export const make = Effect.gen(function* () {
     getStatus,
     refreshLocalStatus,
     refreshStatus,
+    refreshDivergence,
+    refreshWatchedStatus,
     refreshPullRequestStatus,
     streamStatus,
   });

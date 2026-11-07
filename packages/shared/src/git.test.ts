@@ -1,5 +1,9 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import type { VcsStatusRemoteResult, VcsStatusResult } from "@t3tools/contracts";
+import type {
+  VcsStatusLocalResult,
+  VcsStatusRemoteResult,
+  VcsStatusResult,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -244,6 +248,39 @@ describe("isTemporaryWorktreeBranch", () => {
 });
 
 describe("applyGitStatusStreamEvent", () => {
+  it("keeps remote status pending until a remote read lands", () => {
+    const local: VcsStatusLocalResult = {
+      isRepo: true,
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature/demo",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+    };
+    const remote: VcsStatusRemoteResult = {
+      hasUpstream: true,
+      aheadCount: 2,
+      behindCount: 0,
+      pr: null,
+    };
+
+    const pending = applyGitStatusStreamEvent(null, { _tag: "snapshot", local, remote: null });
+    expect(pending.isRemoteStatusPending).toBe(true);
+    const stillPending = applyGitStatusStreamEvent(pending, { _tag: "localUpdated", local });
+    expect(stillPending.isRemoteStatusPending).toBe(true);
+    const loaded = applyGitStatusStreamEvent(stillPending, { _tag: "remoteUpdated", remote });
+    expect(loaded.isRemoteStatusPending).toBeUndefined();
+    expect(loaded.aheadCount).toBe(2);
+    const cleared = applyGitStatusStreamEvent(loaded, { _tag: "remoteUpdated", remote: null });
+    expect(cleared.isRemoteStatusPending).toBe(true);
+    const notRepo = applyGitStatusStreamEvent(null, {
+      _tag: "snapshot",
+      local: { ...local, isRepo: false },
+      remote: null,
+    });
+    expect(notRepo.isRemoteStatusPending).toBeUndefined();
+  });
+
   it("treats a remote-only update as a repository when local state is missing", () => {
     const remote: VcsStatusRemoteResult = {
       hasUpstream: true,

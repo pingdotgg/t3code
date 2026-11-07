@@ -575,6 +575,7 @@ function runStackedAction(
     action: "commit" | "push" | "create_pr" | "commit_push" | "commit_push_pr";
     actionId?: string;
     commitMessage?: string;
+    expectedRefName?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
   },
@@ -1079,6 +1080,41 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         { host: "github.com", repository: "pingdotgg/codething-mvp", number: 1 },
         { host: "github.com", repository: "pingdotgg/codething-mvp", number: 1 },
       ]);
+    }),
+  );
+
+  it.effect("a known-PR status read updates divergence without looking the PR up", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/known-pr"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/known-pr"]);
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          prListSequence: [
+            [
+              {
+                number: 16,
+                title: "Known PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/16",
+                baseRefName: "main",
+                headRefName: "feature/known-pr",
+              },
+            ],
+          ],
+        },
+      });
+      const knownRead = { refreshUpstream: false, reuseKnownPullRequest: true };
+
+      expect((yield* manager.remoteStatus({ cwd: repoDir }, knownRead))?.pr).toBeNull();
+      expect((yield* manager.status({ cwd: repoDir })).pr?.number).toBe(16);
+
+      yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Ahead"]);
+      const remote = yield* manager.remoteStatus({ cwd: repoDir }, knownRead);
+      expect(remote?.aheadCount).toBe(1);
+      expect(remote?.pr?.number).toBe(16);
     }),
   );
 
@@ -4352,6 +4388,131 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             call.baseRefName === "statemachine" && call.headSelector === "octocat:statemachine",
         ),
       ).toBe(false);
+    }),
+  );
+
+  it.effect("refuses an action confirmed for a ref that is no longer checked out", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/expected"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "expected.txt"), "expected\n");
+      const headBefore = yield* runGit(repoDir, ["rev-parse", "HEAD"]);
+
+      const { manager } = yield* makeManager();
+      const errorMessage = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        commitMessage: "Should not land",
+        expectedRefName: "feature/stale",
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
+      expect(errorMessage).toContain('"feature/expected" is checked out');
+      expect(yield* runGit(repoDir, ["rev-parse", "HEAD"])).toEqual(headBefore);
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        commitMessage: "Lands on the expected ref",
+        expectedRefName: "feature/expected",
+      });
+      expect(result.commit.status).toBe("created");
+
+      yield* runGit(repoDir, ["checkout", "-b", "t3/abcd1234"]);
+      yield* runGit(repoDir, ["branch", "-m", "feature/renamed"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "renamed.txt"), "renamed\n");
+      const renamed = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        commitMessage: "Follows the worktree rename",
+        expectedRefName: "t3/abcd1234",
+      });
+      expect(renamed.commit.status).toBe("created");
+
+      yield* runGit(repoDir, ["branch", "t3/deadbeef"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "unrelated.txt"), "unrelated\n");
+      const unrelatedMessage = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        commitMessage: "Should not land on an unrelated branch",
+        expectedRefName: "t3/deadbeef",
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
+      expect(unrelatedMessage).toContain('"feature/renamed" is checked out');
+
+      yield* runGit(repoDir, ["checkout", "main"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "default.txt"), "default\n");
+      const defaultRefMessage = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        commitMessage: "Should not land on main",
+        expectedRefName: "t3/abcd1234",
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
+      expect(defaultRefMessage).toContain('"main" is checked out');
+    }),
+  );
+
+  it.effect("stops before committing when the ref changes during message generation", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/moved"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "moved.txt"), "moved\n");
+      const headBefore = yield* runGit(repoDir, ["rev-parse", "HEAD"]);
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: () => {
+            runGitSyncForFakeCheckout(repoDir, ["checkout", "-q", "-b", "agent/other"]);
+            return Effect.succeed({ subject: "Should not land", body: "" });
+          },
+        },
+      });
+      const errorMessage = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
+      expect(errorMessage).toContain('"feature/moved" is no longer checked out');
+      expect(yield* runGit(repoDir, ["rev-parse", "HEAD"])).toEqual(headBefore);
+    }),
+  );
+
+  it.effect("stops before pushing when the ref changes after the commit", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/hooked"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "hooked.txt"), "hooked\n");
+      const hookPath = NodePath.join(repoDir, ".git", "hooks", "post-commit");
+      NodeFS.writeFileSync(hookPath, "#!/bin/sh\ngit checkout -q -b agent/other\n");
+      NodeFS.chmodSync(hookPath, 0o755);
+
+      const { manager } = yield* makeManager();
+      const errorMessage = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push",
+        commitMessage: "Lands locally only",
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
+      expect(errorMessage).toContain("stopped before pushing");
+      const remoteRefs = yield* runGit(repoDir, ["ls-remote", "origin"]);
+      expect(remoteRefs.stdout).not.toContain("agent/other");
+      expect(remoteRefs.stdout).not.toContain("feature/hooked");
     }),
   );
 

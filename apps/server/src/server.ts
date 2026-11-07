@@ -6,6 +6,7 @@ import * as AssetSigner from "./assets/AssetSigner.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
+import * as VcsStatusTurnReactor from "./orchestration-v2/VcsStatusTurnReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
 // Effect wraps this raw Node HTTP server after its startup and write-error guards attach.
@@ -644,6 +645,16 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ).pipe(
     Layer.provideMerge(PullRequestSyncReactor.layer),
     Layer.provide(layerPullRequestService),
+    Layer.provide(ProjectionStoreV2.layer),
+  ),
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const service = yield* VcsStatusTurnReactor.VcsStatusTurnReactor;
+      yield* service.start();
+    }),
+  ).pipe(
+    Layer.provide(VcsStatusTurnReactor.layer),
+    Layer.provide(ProjectStore.layer),
     Layer.provide(ProjectionStoreV2.layer),
   ),
   Layer.effectDiscard(

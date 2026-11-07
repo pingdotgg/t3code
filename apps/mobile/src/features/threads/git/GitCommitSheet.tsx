@@ -12,6 +12,7 @@ import { AppText as Text, AppTextInput as TextInput } from "../../../components/
 import { cn } from "../../../lib/cn";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
+import { confirmCommitDuringRun } from "./confirmCommitDuringRun";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
@@ -57,13 +58,26 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const runCommitAction = async (featureBranch: boolean) => {
     if (!canWriteSourceControl || (featureBranch && !canChangeThreadBranch)) return;
     const commitMessage = dialogCommitMessage.trim();
-    navigation.goBack();
-    await gitActions.onRunSelectedThreadGitAction({
-      action: "commit",
+    const refName = gitStatus.data?.refName;
+    const request = {
+      action: "commit" as const,
       featureBranch,
+      ...(refName ? { expectedRefName: refName } : {}),
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
+    };
+    const decision = await confirmCommitDuringRun({
+      thread:
+        selectedThread === null
+          ? null
+          : { environmentId: selectedThread.environmentId, threadId: selectedThread.id },
+      action: "commit",
+      queuedRun: () => void gitActions.onRunSelectedThreadGitAction(request),
     });
+    if (decision === "cancelled") return;
+    navigation.goBack();
+    if (decision === "queued") return;
+    await gitActions.onRunSelectedThreadGitAction(request);
   };
 
   const android = Platform.OS === "android";

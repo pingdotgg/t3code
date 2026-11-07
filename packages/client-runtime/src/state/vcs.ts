@@ -369,6 +369,7 @@ export function createVcsEnvironmentAtoms<R, E>(
   };
 }
 
+export * from "./gitActionQueue.ts";
 export * from "./gitActions.ts";
 export * from "./vcsAction.ts";
 export * from "./vcsRef.ts";
