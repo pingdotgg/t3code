@@ -501,17 +501,9 @@ describe("queued task operation access", () => {
 });
 
 describe("queued task whose launch reply is lost", () => {
-  it.each([
-    { edited: false, messageAccepted: true, composer: "Keep this draft separate" },
-    { edited: true, messageAccepted: true, composer: "Keep this draft separate\nEdited idea" },
-    {
-      edited: false,
-      messageAccepted: false,
-      composer: "Keep this draft separate\nMy dictated idea",
-    },
-  ])(
-    "hands back only text the thread lacks (edited: $edited, message accepted: $messageAccepted)",
-    async ({ edited, messageAccepted, composer }) => {
+  it.each([{ edited: false }, { edited: true }])(
+    "resends an unedited launch and hands back only an edit once the thread appears (edited: $edited)",
+    async ({ edited }) => {
       setOperateGrant("secondary", true);
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
       state.cleanups.push(() => vi.useRealTimers());
@@ -538,11 +530,7 @@ describe("queued task whose launch reply is lost", () => {
 
       appAtomRegistry.set(state.threadShells, [
         state.thread,
-        {
-          ...state.thread,
-          id: "new-thread",
-          latestUserMessageAt: messageAccepted ? "2026-09-05T00:00:01.000Z" : null,
-        },
+        { ...state.thread, id: "new-thread" },
       ]);
       const settled = Promise.withResolvers<void>();
       const release = appAtomRegistry.subscribe(dispatchingQueuedMessageIdAtom, (id) => {
@@ -551,8 +539,16 @@ describe("queued task whose launch reply is lost", () => {
       vi.advanceTimersByTime(threadOutboxRetryDelayMs(1));
       await settled.promise.finally(release);
 
-      expect(state.draftText).toBe(composer);
-      expect(state.start).toHaveBeenCalledOnce();
+      expect(state.draftText).toBe(
+        edited ? "Keep this draft separate\nEdited idea" : "Keep this draft separate",
+      );
+      expect(state.start).toHaveBeenCalledTimes(edited ? 1 : 2);
+      if (!edited) {
+        // The resend reuses the launch's command and message ids, so the server replays it.
+        const [first, resent] = state.start.mock.calls.map(([call]) => call.input);
+        expect(resent.commandId).toBe(first.commandId);
+        expect(resent.message.messageId).toBe(first.message.messageId);
+      }
       expect(remaining()).toEqual([]);
     },
   );

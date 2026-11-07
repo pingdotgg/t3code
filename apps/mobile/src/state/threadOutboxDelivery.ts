@@ -298,22 +298,6 @@ export async function completeQueuedMessageDelivery(
   }
 }
 
-async function finishDeliveredCreation(
-  persistedMessage: QueuedThreadMessage,
-  deliveryRevision: number,
-  sequence: number | undefined,
-): Promise<boolean> {
-  recordPendingThreadCreationOutcome({ kind: "delivered", message: persistedMessage });
-  const outcome = await completeQueuedMessageDelivery(persistedMessage, deliveryRevision, sequence);
-  if (outcome === "edited") {
-    if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[persistedMessage.messageId]) {
-      return true;
-    }
-    return recoverEditedCreationAfterDelivery(persistedMessage);
-  }
-  return outcome === "removed";
-}
-
 export async function removeAcknowledgedExistingThreadMessage(
   queuedMessage: QueuedThreadMessage,
   acknowledgedMessageIds: Set<MessageId>,
@@ -696,8 +680,8 @@ export function createThreadOutboxDelivery(): {
   // Existing-thread turns the server accepted but whose outbox removal has
   // not landed; the next pass retries only the removal, never the send.
   const acknowledgedExistingThreadMessageIds = new Set<MessageId>();
-  // Revision each creation's launch carried, so a lost reply can finish an unedited payload
-  // instead of handing it back to the composer.
+  // Revision each new task's launch carried. Launch replays by command id, so an unedited task
+  // whose reply was lost is resent rather than handed back to the composer.
   const launchedCreationRevisions = new Map<MessageId, number>();
   // Targets the shell may have left out hold their thread family until they leave the queue, so
   // the row stays readable through dispatch.
@@ -1133,11 +1117,19 @@ export function createThreadOutboxDelivery(): {
     if (failure?.action === "restore") {
       return restoreQueuedMessage(persistedMessage, failure.message);
     }
-    return finishDeliveredCreation(
+    recordPendingThreadCreationOutcome({ kind: "delivered", message: persistedMessage });
+    const outcome = await completeQueuedMessageDelivery(
       persistedMessage,
       deliveryRevision,
       deliveredSequence(deliveryResult),
     );
+    if (outcome === "edited") {
+      if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
+        return true;
+      }
+      return recoverEditedCreationAfterDelivery(persistedMessage);
+    }
+    return outcome === "removed";
   };
 
   // A pass writes atoms the pass reads (family mounts, the dispatch slot), and the registry
@@ -1296,8 +1288,6 @@ export function createThreadOutboxDelivery(): {
         environmentConnected: environment?.connectionState === "connected",
         ...(familyRead === undefined ? {} : { familyRead }),
       });
-      // Launch commits the thread before its first message, so a lost reply can leave it empty.
-      const initialMessageAccepted = thread !== undefined && thread.latestUserMessageAt !== null;
       if (
         deliveryAction === "wait" &&
         shellStatus === "live" &&
@@ -1396,14 +1386,13 @@ export function createThreadOutboxDelivery(): {
             return true;
           }
         }
-        const launchedRevision = launchedCreationRevisions.get(messageId);
-        return deliveryAction === "remove"
+        const resendLaunch =
+          creation !== undefined &&
+          launchedCreationRevisions.get(messageId) === threadOutboxRevision(messageId);
+        return deliveryAction === "remove" && !resendLaunch
           ? creation !== undefined
-            ? launchedRevision === threadOutboxRevision(messageId) && initialMessageAccepted
-              ? finishDeliveredCreation(nextQueuedMessage, launchedRevision, undefined)
-              : // Edited since launch, launched before a restart that lost the revision, or the
-                // launch created the thread without its message: hand it back.
-                recoverEditedCreationAfterDelivery(nextQueuedMessage)
+            ? // Edited since launch, or launched before a restart that lost the revision: hand it back.
+              recoverEditedCreationAfterDelivery(nextQueuedMessage)
             : removeQueuedMessage("[thread-outbox] failed to remove message for a missing thread")
           : creation !== undefined
             ? creationProjectCwd !== null
