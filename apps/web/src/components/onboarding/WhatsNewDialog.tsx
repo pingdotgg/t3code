@@ -124,7 +124,10 @@ function WhatsNewDialog({
     if (primaryEnvironmentId !== null) {
       void reportFeatureUsed({
         environmentId: primaryEnvironmentId,
-        input: { feature: "whats_new.action", variant: guide.id },
+        input: {
+          feature: "whats_new.action",
+          variant: guide.id === "answer-types" ? "question-cards" : guide.id,
+        },
       });
     }
     onClose();
@@ -132,7 +135,8 @@ function WhatsNewDialog({
       switch (guide.id) {
         case "new-lesson":
         case "quiz-cards":
-        case "question-cards": {
+        case "question-cards":
+        case "answer-types": {
           const button = document.querySelector<HTMLButtonElement>('[aria-label="New lesson"]');
           if (button) button.click();
           else openCommandPalette({ query: "New lesson" });

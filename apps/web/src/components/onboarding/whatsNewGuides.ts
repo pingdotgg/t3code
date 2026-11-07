@@ -5,6 +5,7 @@ export type WhatsNewGuide = {
     | "what-you-know"
     | "quiz-cards"
     | "question-cards"
+    | "answer-types"
     | "courses"
     | "chat-sync";
   readonly version: string;
@@ -53,6 +54,13 @@ export const whatsNewGuides: readonly WhatsNewGuide[] = [
     benefit:
       "Lesson questions pop up as cards you answer by typing or speaking, so you think it through.",
     actionLabel: "Try question cards",
+  },
+  {
+    id: "answer-types",
+    version: "0.1.7",
+    title: "More ways to answer",
+    benefit: "Answer in your own words, fill in blanks, or give a number.",
+    actionLabel: "Try a lesson",
   },
   {
     id: "courses",

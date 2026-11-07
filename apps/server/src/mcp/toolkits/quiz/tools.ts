@@ -37,6 +37,22 @@ const QuizCardTool = Tool.make(QUIZ_CARD_TOOL_NAME, {
 
 const QuestionCardInput = Schema.Struct({
   question: Schema.String.pipe(Schema.check(Schema.isMaxLength(2000))),
+  blanks: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        answers: Schema.Array(Schema.String.pipe(Schema.check(Schema.isMaxLength(100)))).pipe(
+          Schema.check(Schema.isBetween({ minimum: 1, maximum: 4 })),
+        ),
+      }),
+    ).pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 6 }))),
+  ),
+  number: Schema.optional(
+    Schema.Struct({
+      answer: Schema.Number.pipe(Schema.check(Schema.isFinite())),
+      tolerance: Schema.Number.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+      unit: Schema.optional(Schema.String.pipe(Schema.check(Schema.isMaxLength(40)))),
+    }),
+  ),
 });
 
 const QuestionCardTool = Tool.make(QUESTION_CARD_TOOL_NAME, {

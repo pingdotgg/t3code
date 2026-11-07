@@ -3,6 +3,8 @@ export const QUESTION_CARD_TOOL_NAME = "question_card" as const;
 
 export interface QuestionCard {
   readonly question: string;
+  readonly blanks?: ReadonlyArray<{ readonly answers: ReadonlyArray<string> }>;
+  readonly number?: { readonly answer: number; readonly tolerance: number; readonly unit?: string };
 }
 
 export type QuizLevel = "remember" | "understand" | "apply" | "analyse";
@@ -25,17 +27,109 @@ const MAX_EXPLANATION = 1500;
 const MAX_WRONG_OPTIONS = 4;
 const MIN_WRONG_OPTIONS = 2;
 const MAX_CARD_BYTES = 7_000;
+const MAX_BLANKS = 6;
+const MAX_BLANK_ANSWERS = 4;
+const MAX_BLANK_ANSWER = 100;
+const MAX_NUMBER_UNIT = 40;
 const LEVELS = new Set<QuizLevel>(["remember", "understand", "apply", "analyse"]);
 
 const boundedString = (value: unknown, max: number) =>
   typeof value === "string" && value.trim().length > 0 && value.length <= max
     ? value.trim()
     : undefined;
+const boundedTrimmedString = (value: unknown, max: number) =>
+  typeof value === "string" && value.trim().length > 0 && value.trim().length <= max
+    ? value.trim()
+    : undefined;
 
 export function readQuestionCard(value: unknown): QuestionCard | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  const question = boundedString((value as Record<string, unknown>).question, MAX_QUESTION);
-  return question === undefined ? undefined : { question };
+  const record = value as Record<string, unknown>;
+  const question = boundedString(record.question, MAX_QUESTION);
+  if (question === undefined) return undefined;
+  const hasBlanks = Object.hasOwn(record, "blanks");
+  const hasNumber = Object.hasOwn(record, "number");
+  if (hasBlanks && hasNumber) return undefined;
+  if (hasBlanks) {
+    if (
+      !Array.isArray(record.blanks) ||
+      record.blanks.length < 1 ||
+      record.blanks.length > MAX_BLANKS
+    ) {
+      return undefined;
+    }
+    const blanks = record.blanks.map((entry) => {
+      if (typeof entry !== "object" || entry === null) return undefined;
+      const answers = (entry as Record<string, unknown>).answers;
+      if (!Array.isArray(answers) || answers.length < 1 || answers.length > MAX_BLANK_ANSWERS) {
+        return undefined;
+      }
+      const parsed = answers.map((answer) => boundedTrimmedString(answer, MAX_BLANK_ANSWER));
+      return parsed.every((answer): answer is string => answer !== undefined)
+        ? { answers: parsed }
+        : undefined;
+    });
+    if (blanks.some((blank) => blank === undefined)) return undefined;
+    if ((question.match(/_{3,}/g) ?? []).length !== blanks.length) return undefined;
+    return {
+      question,
+      blanks: blanks.filter((blank): blank is { answers: string[] } => blank !== undefined),
+    };
+  }
+  if (hasNumber) {
+    if (typeof record.number !== "object" || record.number === null) return undefined;
+    const number = record.number as Record<string, unknown>;
+    if (
+      typeof number.answer !== "number" ||
+      !Number.isFinite(number.answer) ||
+      typeof number.tolerance !== "number" ||
+      !Number.isFinite(number.tolerance) ||
+      number.tolerance < 0
+    ) {
+      return undefined;
+    }
+    const parsedUnit =
+      number.unit === undefined ? undefined : boundedTrimmedString(number.unit, MAX_NUMBER_UNIT);
+    if (number.unit !== undefined && parsedUnit === undefined) return undefined;
+    return {
+      question,
+      number: {
+        answer: number.answer,
+        tolerance: number.tolerance,
+        ...(parsedUnit ? { unit: parsedUnit } : {}),
+      },
+    };
+  }
+  return { question };
+}
+
+const normalizedAnswer = (value: string) => value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
+
+export function blankAnswerRight(
+  blank: { readonly answers: ReadonlyArray<string> },
+  input: string,
+) {
+  const answer = normalizedAnswer(input);
+  return blank.answers.some((accepted) => normalizedAnswer(accepted) === answer);
+}
+
+export function parseNumberAnswer(input: string): number | undefined {
+  const trimmed = input.trim();
+  if (trimmed.length === 0) return undefined;
+  let parsed = Number(trimmed);
+  if (Number.isNaN(parsed) && (trimmed.match(/,/g) ?? []).length === 1 && !trimmed.includes(".")) {
+    parsed = Number(trimmed.replace(",", "."));
+  }
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export function numberAnswerRight(number: NonNullable<QuestionCard["number"]>, input: string) {
+  const parsed = parseNumberAnswer(input);
+  return (
+    parsed !== undefined &&
+    Math.abs(parsed - number.answer) <=
+      number.tolerance + 1e-9 * Math.max(1, Math.abs(number.answer))
+  );
 }
 
 export function readQuizCard(value: unknown): QuizCard | undefined {
@@ -134,6 +228,31 @@ export function quizAnswerMessage(input: {
   const result = `Quiz answer: "${input.answer}", ${input.correct ? "right" : "wrong"}.`;
   const confidence = input.confidence === undefined ? "" : ` Confidence: ${input.confidence}%.`;
   return `${result}${confidence}${thinking ? ` My thinking: ${thinking}` : ""}`;
+}
+
+export function blanksAnswerMessage(input: {
+  readonly answers: ReadonlyArray<string>;
+  readonly card: QuestionCard;
+  readonly thinking?: string;
+}) {
+  const thinking = input.thinking?.trim();
+  const results = input.answers.map((answer, index) => {
+    const blank = input.card.blanks?.[index];
+    return `${index + 1}. "${answer}", ${blank && blankAnswerRight(blank, answer) ? "right" : "wrong"}`;
+  });
+  return `Blanks answer: ${results.join("; ")}.${thinking ? ` My thinking: ${thinking}` : ""}`;
+}
+
+export function numberAnswerMessage(input: {
+  readonly answer: string;
+  readonly card: QuestionCard;
+  readonly thinking?: string;
+}) {
+  const thinking = input.thinking?.trim();
+  const number = input.card.number;
+  const suffix = number?.unit ? ` ${number.unit}` : "";
+  const result = `Number answer: "${input.answer}${suffix}", ${number && numberAnswerRight(number, input.answer) ? "right" : "wrong"}.`;
+  return `${result}${thinking ? ` My thinking: ${thinking}` : ""}`;
 }
 
 /** The grade in a `quizAnswerMessage`, so analytics can count answers without their text. */

@@ -11,7 +11,7 @@ const QUIZ_CARD_SHOWN = `Shown to the learner as a card. End your turn now, with
 - Two right in a row with high confidence means the items are too easy: go up.`;
 
 const QUESTION_CARD_SHOWN =
-  "Shown to the learner as a card. End your turn now without repeating the question; their answer arrives as their next message. Grade it strictly against the answer you wrote before asking: say plainly what holds and what is missing or wrong, never soften a wrong idea.";
+  "Shown to the learner as a card. End your turn now without repeating the question; their answer arrives as their next message. For blanks and numbers, the app already marked each answer right or wrong; confirm and explain. Grade open text strictly against the answer you wrote before asking: say plainly what holds and what is missing or wrong, never soften a wrong idea.";
 
 const handlers = {
   quiz_card: McpToolAccess.readsAsCaller((input) =>
@@ -37,7 +37,7 @@ const handlers = {
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message:
-            "Invalid question card: provide a non-empty question of at most 2000 characters.",
+            "Invalid question card: provide a non-empty question of at most 2000 characters; for blanks, provide one entry per ___ in the question and list every accepted answer; for number, provide answer and tolerance ≥ 0; do not provide both.",
         });
       }
       return { questionCard: card, message: QUESTION_CARD_SHOWN };
