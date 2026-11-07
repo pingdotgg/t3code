@@ -50,36 +50,51 @@ export const FX_EFFORT_OPTION_DESCRIPTOR: ProviderOptionDescriptor = {
   })),
 };
 
+/** Every fx offers these; the provider snapshot adds Full access where `fx status` lists `full-access`. */
 export const FX_SUPPORTED_RUNTIME_MODES = [
   "approval-required",
   "auto",
 ] as const satisfies ReadonlyArray<RuntimeMode>;
+/** fx 0.0.14+; fx 0.0.13 has no such mode. */
+export const FX_FULL_ACCESS_MODE_ID = "full-access";
 /** fx 0.0.13 answers a cancelled prompt with `stopReason: cancelled`. */
 export const FX_ACP_CANCEL_BEHAVIOR = "wait-for-prompt" as const;
 
 /**
- * Supervised runs fx's `ask` mode and Auto its automatic review. An explicit
- * approval or sandbox policy must not launch automatic review, which would
- * perform writes the policy meant to confine.
+ * Supervised runs fx's `ask` mode, Auto its automatic review and Full access
+ * its `full-access`. An explicit approval or sandbox policy runs `ask`, so it
+ * never launches a mode that performs writes the policy meant to confine.
  */
 export function fxSessionModeForPolicy(
   policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-): "ask" | "auto" {
-  return policy.runtimeMode === "auto" &&
-    policy.approvalPolicy === undefined &&
-    policy.sandboxPolicy === undefined
-    ? "auto"
-    : "ask";
+): "ask" | "auto" | typeof FX_FULL_ACCESS_MODE_ID {
+  if (policy.approvalPolicy !== undefined || policy.sandboxPolicy !== undefined) return "ask";
+  switch (policy.runtimeMode) {
+    case "auto":
+      return "auto";
+    case "full-access":
+      return FX_FULL_ACCESS_MODE_ID;
+    default:
+      return "ask";
+  }
 }
 
-/** In automatic review fx asks only about what it refused itself, so every prompt reaches the user. */
+/**
+ * In automatic review fx asks only about what it refused itself, so every
+ * prompt reaches the user. Full access answers by the shared ACP policy.
+ */
 export function fxPermissionDisposition(
   policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   request: EffectAcpSchema.RequestPermissionRequest,
 ): AcpPermissionDisposition {
-  return fxSessionModeForPolicy(policy) === "auto"
-    ? "ask"
-    : acpPermissionDisposition({ ...policy, runtimeMode: "approval-required" }, request);
+  switch (fxSessionModeForPolicy(policy)) {
+    case "auto":
+      return "ask";
+    case FX_FULL_ACCESS_MODE_ID:
+      return acpPermissionDisposition(policy, request);
+    case "ask":
+      return acpPermissionDisposition({ ...policy, runtimeMode: "approval-required" }, request);
+  }
 }
 
 /**
@@ -90,8 +105,8 @@ export function fxPermissionDisposition(
  */
 function fxModeId(requested: string, advertised: ReadonlyArray<string>): string | undefined {
   const candidates =
-    requested === "ask"
-      ? ["ask"]
+    requested === "ask" || requested === FX_FULL_ACCESS_MODE_ID
+      ? [requested]
       : requested === "auto" || requested === "code"
         ? ["auto", "code"]
         : [];
