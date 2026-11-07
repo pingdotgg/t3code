@@ -759,6 +759,11 @@ export function isProxied(provider: ServerProvider): boolean {
   );
 }
 
+/** Only an instance sent to a custom endpoint is known to reach the hub that routes its model. */
+export function hubRoutedModel(provider: ServerProvider, model: string | null): string | null {
+  return provider.auth.type === "customEndpoint" ? model : null;
+}
+
 /** The hub accounts that serve a model: those that list it, else every account of the driver. */
 export function hubRoutes(
   sources: UsageLimitSourceSnapshots,
@@ -787,8 +792,7 @@ export function collectProviderUsageLimits(
 ): UsageLimitsReport | null {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
   if (!selected) return null;
-  // Only a proxied instance spends what its hub routes the model to, maybe another driver's accounts.
-  const routes = hubRoutes(sources, selected.driver, isProxied(selected) ? model : null);
+  const routes = hubRoutes(sources, selected.driver, hubRoutedModel(selected, model));
   const drivers = new Set(
     sources.flatMap((source) => source.accounts.filter(routes).map((account) => account.driver)),
   );

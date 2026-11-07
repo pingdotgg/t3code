@@ -10,6 +10,7 @@ import {
   collectLimitPools,
   collectProviderUsageLimits,
   displayLimitWindows,
+  hubRoutedModel,
   hubRoutes,
   isProxied,
   type LimitPoolWindow,
@@ -42,7 +43,10 @@ export function resolveThreadDetailsLimits(
   if (limitsNotice(own) === null || !isProxied(provider)) return { kind: "instance", limits: own };
   // A proxied instance reads no limits of its own; its hub pools the accounts it spends.
   return (
-    hubPool(provider.driver, model, providers, sources, now) ?? { kind: "instance", limits: own }
+    hubPool(provider.driver, hubRoutedModel(provider, model), providers, sources, now) ?? {
+      kind: "instance",
+      limits: own,
+    }
   );
 }
 

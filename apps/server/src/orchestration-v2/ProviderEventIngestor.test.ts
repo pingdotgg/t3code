@@ -362,10 +362,10 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
           );
         }
         assert.deepEqual(lookups, Array(6).fill(instance.instanceId));
-        assert.deepEqual(
-          hubLookups,
-          Array(2).fill(`${instance.driverKind}:${modelSelection.model}`),
-        );
+        assert.deepEqual(hubLookups, [
+          `${instance.driverKind}:${modelSelection.model}`,
+          `${instance.driverKind}:null`,
+        ]);
         yield* Deferred.await(refreshed);
       }).pipe(
         Effect.provide(makeLayerTest(layerTestEventSink, instances)),

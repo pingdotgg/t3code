@@ -1275,6 +1275,20 @@ describe("/usage-limits", () => {
         model,
       )?.accounts.map((account) => account.id);
     expect(ids(proxy, "gpt-5.6-sol[1m]")).toEqual(["codex", "hub:oss"]);
+    const unread = provider({
+      instanceId: ProviderInstanceId.make("cursor"),
+      driver: ProviderDriverKind.make("cursor"),
+      usageLimits: { ...limits, windows: [], unavailable: { reason: "unsupported" } },
+    });
+    expect(
+      collectProviderUsageLimits(
+        unread.instanceId,
+        [unread],
+        routed,
+        now,
+        "gpt-5.6-sol",
+      )?.accounts.map((account) => account.id) ?? [],
+    ).toEqual(["cursor"]);
     const both = [
       {
         ...routed[0]!,
