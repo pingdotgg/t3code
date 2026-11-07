@@ -278,7 +278,9 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
                 label={label}
                 leading={
                   <ProviderIcon
-                    provider={provider === "openai" ? "codex" : provider === "xai" ? "grok" : null}
+                    provider={
+                      provider === "openai" ? "codex" : provider === "xai" ? "grok" : provider
+                    }
                     size={20}
                   />
                 }
