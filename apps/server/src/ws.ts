@@ -3185,8 +3185,10 @@ export const layerWsRpc = (
                       (Option.isSome(failure) && failure.value instanceof Error
                         ? failure.value.message
                         : "Source control action failed.");
+                    // Stacked actions only need source-control write; waking the agent needs operate.
                     return (
-                      input.threadId === undefined
+                      input.threadId === undefined ||
+                      !currentSession.scopes.includes(AuthOrchestrationOperateScope)
                         ? Effect.void
                         : sendGitActionFailureToAgent({
                             threadId: input.threadId,
