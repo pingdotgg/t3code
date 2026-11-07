@@ -10,9 +10,10 @@ import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navi
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { isDevice } from "expo-device";
 import * as Haptics from "expo-haptics";
 import { Accelerometer } from "expo-sensors";
-import { Pressable, StatusBar, View } from "react-native";
+import { Platform, Pressable, StatusBar, View } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -285,11 +286,12 @@ export function DevicePreviewScreen({
       ) : null}
       {preview && focused && foreground ? (
         <OpenDevicePreview
-          key={`${preview.key}:${streamAttempt}`}
+          key={`${environmentId}:${preview.key}:${streamAttempt}`}
           environmentId={environmentId}
           preview={preview}
           streamRef={streamRef}
           onInputConnected={onInputConnected}
+          onClose={onClose}
         />
       ) : (
         <View className="flex-1 items-center justify-center gap-4 px-6">
@@ -395,17 +397,43 @@ function DeviceOptionsMenu({ items }: { readonly items: ReadonlyArray<AppBarMenu
   );
 }
 
-function OpenDevicePreview({
-  environmentId,
-  preview,
-  streamRef,
-  onInputConnected,
-}: {
+type OpenDevicePreviewProps = {
   readonly environmentId: EnvironmentId;
   readonly preview: ThreadDevicePreview;
   readonly streamRef: RefObject<DeviceStreamRef | null>;
   readonly onInputConnected: (connected: boolean) => Promise<void>;
-}) {
+};
+
+/** Mirroring the device this app runs on loops input and video back into the app and freezes it. */
+function OpenDevicePreview({
+  onClose,
+  ...props
+}: OpenDevicePreviewProps & { readonly onClose: () => void }) {
+  const [confirmed, setConfirmed] = useState(false);
+  const mayBeThisDevice =
+    props.preview.session.platform === Platform.OS &&
+    (props.preview.physical !== false || !isDevice);
+  if (!mayBeThisDevice || confirmed) return <DeviceStream {...props} />;
+  return (
+    <View className="flex-1 items-center justify-center gap-4 px-6">
+      <AppText className="text-center text-sm text-foreground-muted">
+        If {props.preview.name} is the device you're using now, mirroring it here can freeze T3
+        Code.
+      </AppText>
+      <View className="flex-row gap-2">
+        <Button label="Cancel" tone="secondary" onPress={onClose} />
+        <Button label="Continue" tone="primary" onPress={() => setConfirmed(true)} />
+      </View>
+    </View>
+  );
+}
+
+function DeviceStream({
+  environmentId,
+  preview,
+  streamRef,
+  onInputConnected,
+}: OpenDevicePreviewProps) {
   const { session } = preview;
   const { themeVariables } = useAppearancePreferences();
   const [viewer] = useState(uuidv4);

@@ -43,6 +43,7 @@ const reactTests = [
   "src/features/layout/workspace/useSearchScrollRestoration.test.tsx",
   "src/features/connection/ConnectionsNewRouteScreen.test.tsx",
   "src/features/devices/device-stream.browser.test.ts",
+  "src/features/devices/DevicePreviewRouteScreen.test.tsx",
   "src/features/keyboard/keyboardControllerState.test.tsx",
 ];
 

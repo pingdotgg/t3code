@@ -15,6 +15,7 @@ export function threadDevicePreviews(state: DeviceServiceState | null, threadId:
         name: device?.name ?? (session.platform === "ios" ? "iOS Simulator" : "Android Emulator"),
         description: [device?.version, host?.label].filter(Boolean).join(" · "),
         serveSimOnly: host?.kind === "simlock",
+        physical: device?.physical,
       };
     });
 }

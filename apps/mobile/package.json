@@ -48,7 +48,7 @@
     "generate:highlights": "node scripts/generate-highlights.mts",
     "generate:nitro": "cd modules/t3-highlights && nitrogen",
     "eas-build-on-success": "node scripts/upload-sourcemaps.mts build",
-    "test": "vp test run --project unit --project react && T3_MOBILE_TEST_PLATFORM=android vp test run --project react src/components/FilePreviewModal.test.tsx",
+    "test": "vp test run --project unit --project react && T3_MOBILE_TEST_PLATFORM=android vp test run --project react src/components/FilePreviewModal.test.tsx src/features/devices/DevicePreviewRouteScreen.test.tsx",
     "typecheck": "effect-tsgo tsrs --noEmit"
   },
   "dependencies": {
