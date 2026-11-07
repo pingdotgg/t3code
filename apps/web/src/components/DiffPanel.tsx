@@ -32,6 +32,7 @@ import { useCheckpointDiff, useTurnItemDetail } from "~/state/queries";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import { cn } from "~/lib/utils";
 import {
+  type DiffPanelSelection,
   resolveToolCallDiffTarget,
   selectThreadBranchBaseRef,
   selectThreadDiffPanelSelection,
@@ -128,6 +129,12 @@ function getCachedFileEntry(fileDiff: FileDiffMetadata) {
   };
   fileEntryCache.set(fileDiff, entry);
   return entry;
+}
+
+function readDiffScrollPosition(scopeKey: string, selection: DiffPanelSelection) {
+  const position = useDiffPanelSessionStore.getState().scrollPositionByScopeKey[scopeKey];
+  // Turn reveal counters can repeat after another scope was selected.
+  return selection.kind === "turn" && position?.selection !== selection ? undefined : position;
 }
 
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
@@ -347,6 +354,29 @@ export default function DiffPanel({
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
     : null;
   const codeViewMountKey = `${collapseScopeKey ?? reviewSectionId}:${codeViewRevision}`;
+  const scrollScopeKey = JSON.stringify([
+    collapseScopeKey,
+    selectedBaseRef,
+    selectedFileRevealRequestId,
+  ]);
+  const savedScrollPosition = readDiffScrollPosition(scrollScopeKey, diffSelection);
+  const [scrollRestore, setScrollRestore] = useState(() => ({
+    scopeKey: scrollScopeKey,
+    position: savedScrollPosition,
+  }));
+  let initialScrollPosition = scrollRestore.position;
+  if (scrollRestore.scopeKey !== scrollScopeKey) {
+    initialScrollPosition = savedScrollPosition;
+    setScrollRestore({ scopeKey: scrollScopeKey, position: initialScrollPosition });
+  }
+  const initialScrollTarget = initialScrollPosition
+    ? {
+        type: "item" as const,
+        id: initialScrollPosition.fileKey,
+        align: "start" as const,
+        offset: initialScrollPosition.offset,
+      }
+    : undefined;
   const selectedCheckpointRange =
     typeof selectedCheckpointTurnCount === "number"
       ? {
@@ -600,6 +630,7 @@ export default function DiffPanel({
     requestFile,
     renderableFiles,
     remainingFileCount,
+    requestedFilePaths,
     loadNextFiles,
   } = useReviewFilePatches({
     environmentId: activeThread?.environmentId,
@@ -611,6 +642,8 @@ export default function DiffPanel({
     theme: resolvedTheme,
     previewInput: branchDiffPreviewInput,
     preview: renderablePatch,
+    restoredFilePath: initialScrollPosition?.filePath,
+    restoredFilePaths: initialScrollPosition?.requestedFilePaths,
   });
   const refreshBranchDiffPreview = refreshPreviewQuery;
   const diffRefreshKey = `diff:${activeThreadRefreshKey ?? ""}`;
@@ -689,7 +722,7 @@ export default function DiffPanel({
   const allDiffFilesCollapsed = areAllDiffFilesCollapsed(shownFileKeys, collapsedDiffFileKeys);
   const diffLineStat = sourceLineStat ?? getDiffLineStat(renderableFiles);
   const fileTreeEntries = diffFileTreeEntries(renderableFiles.filter(isFileShown));
-  const codeViewReveal = useCodeViewFileReveal();
+  const codeViewReveal = useCodeViewFileReveal(scrollScopeKey, initialScrollTarget);
   const revealDiffFile = (filePath: string) => {
     const index = renderableFileEntries.findIndex(
       (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
@@ -708,7 +741,11 @@ export default function DiffPanel({
 
   // A file another view asked to reveal (a chat diff link): retried as the diff loads until it
   // holds the file, then not again until a new request, so it does not undo what the user did since.
-  const externalRevealRef = useRef<string | null>(null);
+  const externalRevealRef = useRef<string | null>(
+    initialScrollPosition
+      ? JSON.stringify([collapseScopeKey, selectedFilePath, selectedFileRevealRequestId])
+      : null,
+  );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals an externally requested file in the diff viewer, retrying as the diff DOM loads
   useEffect(() => {
     if (!selectedFilePath) {
@@ -1433,6 +1470,21 @@ export default function DiffPanel({
                     files={codeViewFiles}
                     pendingFiles={pendingFiles}
                     renderCodeViewFooter={renderLoadingBoundary}
+                    onScroll={(scrollTop, viewer) => {
+                      for (let index = codeViewFiles.length - 1; index >= 0; index--) {
+                        const file = codeViewFiles[index]!;
+                        const top = viewer.getTopForItem(file.fileKey);
+                        if (top === undefined || top > scrollTop) continue;
+                        useDiffPanelSessionStore.getState().saveScrollPosition(scrollScopeKey, {
+                          selection: diffSelection,
+                          requestedFilePaths,
+                          fileKey: file.fileKey,
+                          filePath: file.filePath,
+                          offset: top - scrollTop,
+                        });
+                        break;
+                      }
+                    }}
                     sectionId={reviewSectionId}
                     sectionTitle={reviewSectionTitle}
                     composerDraftTarget={composerDraftTarget}
