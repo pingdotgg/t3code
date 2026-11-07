@@ -25,6 +25,7 @@ const native = vi.hoisted(() => ({
   supportsLongForm: false,
   supportsTranslation: true,
   supportsVocabulary: false,
+  languages: ["en", "fr"] as readonly string[],
   begin: vi.fn(async (_options?: unknown, _filterSilence?: boolean, _vadPath?: string) => {}),
   feed: vi.fn(async (_pcm: Float32Array) => ({
     revision: 1,
@@ -122,6 +123,7 @@ beforeEach(() => {
   native.backend = "Vulkan0";
   native.supportsVocabulary = false;
   native.supportsStreaming = true;
+  native.languages = ["en", "fr"];
   readyModels.clear();
   readyModels.add("test-model");
   readyModels.add("fallback-model");
@@ -181,6 +183,60 @@ it.effect.each(["CPU", "Vulkan0"])(
       expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
       expect(loadNative).toHaveBeenCalledTimes(1);
     }).pipe(Effect.provide(layer)),
+);
+
+it.effect("sends the chosen language in the spelling the loaded model advertises", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    // Nemotron Streaming 3.5 advertises regional tags while the catalog lists bare codes.
+    native.languages = ["en-US", "en-GB", "fr-FR"];
+    yield* Effect.gen(function* () {
+      const stream = yield* speech.startStream({
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechLanguage: "fr",
+      });
+      expect(native.begin).toHaveBeenLastCalledWith(
+        { timestamps: "none", language: "fr-FR" },
+        true,
+        "test.gguf",
+      );
+      expect(yield* stream.finish).toBe("hello");
+    }).pipe(Effect.scoped);
+    native.supportsStreaming = false;
+    expect(
+      yield* speech.transcribe(pcm(), {
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechLanguage: "fr",
+      }),
+    ).toBe("hello");
+    expect(native.transcribe).toHaveBeenLastCalledWith(
+      expect.any(Float32Array),
+      { timestamps: "none", language: "fr-FR" },
+      true,
+      "test.gguf",
+    );
+    // A language the model does not advertise reaches it unchanged, so the model reports it.
+    yield* speech.updateAcceleration("cpu");
+    native.languages = ["en-US"];
+    native.transcribe.mockRejectedValueOnce(new Error("transcribe_run: unsupported language"));
+    const rejected = yield* Effect.result(
+      speech.transcribe(pcm(), { ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, speechLanguage: "fr" }),
+    );
+    expect(Result.isFailure(rejected) && rejected.failure).toMatchObject({
+      _tag: "SpeechOperationError",
+      operation: "inference",
+    });
+    expect(native.transcribe).toHaveBeenLastCalledWith(
+      expect.any(Float32Array),
+      { timestamps: "none", language: "fr" },
+      true,
+      "test.gguf",
+    );
+    expect(loadNative.mock.calls.map(([path, , , acceleration]) => [path, acceleration])).toEqual([
+      ["test.gguf", "auto"],
+      ["test.gguf", "cpu"],
+    ]);
+  }).pipe(Effect.provide(layer)),
 );
 
 it.effect.each(["cancellation", "timeout"] as const)(
