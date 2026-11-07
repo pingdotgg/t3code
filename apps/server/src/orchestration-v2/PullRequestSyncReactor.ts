@@ -57,19 +57,19 @@ const isChangeRequestCloseCommand = (command: string) =>
 // A create command anywhere else, as in `echo "gh pr create"`, is text, not a command that runs.
 const COMMAND_START =
   "(?:^|[;&|({`\\n]|\\b(?:do|then|else)\\s)\\s*(?:(?:\\w+=\\S*|env|time|nohup|timeout\\s+\\S+)\\s+)*";
-const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap(
-  ({ kind, changeRequestCreateCommand: command }) =>
-    command === undefined
-      ? []
-      : // The subcommand must end its shell word: `gh pr create#x` runs another one.
-        [
-          {
-            kind,
-            command,
-            run: new RegExp(`${COMMAND_START}${command.source}(?=$|[\\s;&|)])`, "gu"),
-          },
-        ],
-);
+const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap((definition) => {
+  const command = definition.changeRequestCreateCommand;
+  return command === undefined
+    ? []
+    : // The subcommand must end its shell word: `gh pr create#x` runs another one.
+      [
+        {
+          definition,
+          command,
+          run: new RegExp(`${COMMAND_START}${command.source}(?=$|[\\s;&|)])`, "gu"),
+        },
+      ];
+});
 const createCommandCount = (code: string) =>
   CREATE_COMMANDS.reduce((count, { run }) => count + [...code.matchAll(run)].length, 0);
 
@@ -84,7 +84,7 @@ const QUOTED_OR_COMMENT = /'[^']*'|"(?:\\[\s\S]|[^"\\])*"|(?<=^|[\s;&|(])#[^\n]*
 const COMMAND_SEPARATOR = /&&|\|\||[;|\n]/u;
 // Commands that print other change requests' URLs, so output beside them proves nothing.
 const LISTS_CHANGE_REQUESTS =
-  /\b(?:gh\s+(?:pr\s+(?:list|status)|search\s+prs|api)|glab\s+(?:mr\s+list|api))\b/u;
+  /\b(?:gh\s+(?:pr\s+(?:list|status)|search\s+prs|api)|glab\s+(?:mr\s+list|api)|az\s+repos\s+pr\s+list)\b/u;
 const URL_LINE = /^[ \t]*(https?:\/\/\S+)[ \t]*$/gmu;
 
 /** The script a shell input runs, unwrapped from Codex's `sh -lc`. */
@@ -137,10 +137,10 @@ const shellCode = (script: string) =>
 type CommandExecution = Extract<OrchestrationV2TurnItem, { readonly type: "command_execution" }>;
 
 /**
- * The change requests a shell command opened: URLs on lines of their own in the output of a
- * command that runs a host's create command. One the command also names, as `gh pr view 12`
- * does, existed before it ran. More URLs than create commands means something else printed
- * some, such as `gh pr list`, so none are taken.
+ * The change requests a shell command opened: the URLs a host's create command printed, on lines
+ * of their own unless the host reads its output another way. One the command also names, as
+ * `gh pr view 12` does, existed before it ran. More URLs than create commands means something
+ * else printed some, such as `gh pr list`, so none are taken.
  */
 export function changeRequestsCreatedBy(input: string, output: string) {
   if (!CREATE_COMMANDS.some(({ command }) => command.test(input))) return [];
@@ -156,20 +156,23 @@ export function changeRequestsCreatedBy(input: string, output: string) {
   const otherScript = shellSegments(script)
     .filter((segment) => createCommandCount(shellCode(segment)) === 0)
     .join("\n");
-  const creators = new Set(
-    CREATE_COMMANDS.filter(({ run }) => code.match(run) !== null).map(({ kind }) => kind),
-  );
   const created = new Map<string, ThreadPullRequestKey & { readonly url: string }>();
-  for (const [, url = ""] of output.matchAll(URL_LINE)) {
-    const parsed = sourceControlDefinitions.parseChangeRequestUrl(url);
-    // Only the host whose create command ran can have printed a new change request.
-    if (parsed === null || !creators.has(parsed.definition.kind)) continue;
-    const { link } = parsed;
-    const named = new RegExp(`(?:^|(?<=[\\s#/=("']))${link.number}(?=$|[\\s);&|/"'])`, "u");
-    // Quoted text in the other commands counts, as in `printf '.../pull/12'`.
-    if (named.test(otherScript)) continue;
-    const key = normalizeThreadPullRequestKey(link);
-    created.set(threadPullRequestKeyOf(key), { ...key, url });
+  for (const { definition, run } of CREATE_COMMANDS) {
+    if (code.match(run) === null) continue;
+    const printed =
+      definition.changeRequestCreateOutputUrls?.(output) ??
+      Array.from(output.matchAll(URL_LINE), ([, url = ""]) => url);
+    for (const url of printed) {
+      const parsed = sourceControlDefinitions.parseChangeRequestUrl(url);
+      // Only the host whose create command ran can have printed a new change request.
+      if (parsed === null || parsed.definition.kind !== definition.kind) continue;
+      const { link } = parsed;
+      const named = new RegExp(`(?:^|(?<=[\\s#/=("']))${link.number}(?=$|[\\s);&|/"'])`, "u");
+      // Quoted text in the other commands counts, as in `printf '.../pull/12'`.
+      if (named.test(otherScript)) continue;
+      const key = normalizeThreadPullRequestKey(link);
+      created.set(threadPullRequestKeyOf(key), { ...key, url });
+    }
   }
   return created.size > creates ? [] : [...created.values()];
 }

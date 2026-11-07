@@ -474,6 +474,45 @@ const requestAndApply = Effect.fn("requestPullRequestSyncHarness")(function* (
   yield* applyRecordedSyncs(fixture);
 });
 
+// What `az repos pr create` prints: the REST GitPullRequest, whose `url` is an API URL, with
+// every model attribute the response left unset printed as null.
+const AZURE_PULL_REQUEST_CREATED = JSON.stringify(
+  {
+    artifactId:
+      "vstfs:///Git/PullRequestId/a7573007-bbb3-4341-b726-0c4148a07853%2f3411ebc1-d5aa-464f-9615-0b527bc66719%2f42",
+    autoCompleteSetBy: null,
+    closedDate: null,
+    codeReviewId: 42,
+    createdBy: { displayName: "Sam Example", uniqueName: "sam@example.com" },
+    creationDate: "2026-11-04T21:00:00.000000+00:00",
+    description: "Fixes the thing.",
+    isDraft: false,
+    mergeStatus: "queued",
+    pullRequestId: 42,
+    repository: {
+      id: "3411ebc1-d5aa-464f-9615-0b527bc66719",
+      name: "repository",
+      project: {
+        id: "a7573007-bbb3-4341-b726-0c4148a07853",
+        name: "project",
+        state: "wellFormed",
+        url: null,
+      },
+      remoteUrl: null,
+      sshUrl: null,
+      url: "https://dev.azure.com/organization/a7573007-bbb3-4341-b726-0c4148a07853/_apis/git/repositories/3411ebc1-d5aa-464f-9615-0b527bc66719",
+      webUrl: null,
+    },
+    sourceRefName: "refs/heads/feature",
+    status: "active",
+    targetRefName: "refs/heads/main",
+    title: "Fix the thing",
+    url: "https://dev.azure.com/organization/a7573007-bbb3-4341-b726-0c4148a07853/_apis/git/repositories/3411ebc1-d5aa-464f-9615-0b527bc66719/pullRequests/42",
+  },
+  null,
+  2,
+);
+
 /** A thread with an open pull request whose merge command marks the end of earlier events. */
 const MERGING_THREAD = ThreadId.make("merging");
 
@@ -1724,6 +1763,35 @@ describe("PullRequestSyncReactor", () => {
       output:
         "!3 Fix the thing (feature)\n https://gitlab.com/owner/repository/-/merge_requests/3\n",
       linked: [3],
+    },
+    {
+      name: "an Azure DevOps pull request",
+      input:
+        'az repos pr create --source-branch feature --target-branch main --title "Fix the thing"',
+      output: AZURE_PULL_REQUEST_CREATED,
+      linked: [42],
+    },
+    {
+      name: "an Azure DevOps pull request listed beside a create that printed nothing",
+      input:
+        "az repos pr list --top 1 --query '[0]' && az repos pr create --title test > /dev/null",
+      output: AZURE_PULL_REQUEST_CREATED,
+      linked: [],
+    },
+    {
+      name: "an Azure DevOps pull request after a push",
+      input:
+        'git push -u origin feature 2>&1 && az repos pr create --source-branch feature --target-branch main --title "Fix the thing"',
+      output: [
+        "remote: Analyzing objects... (3/3) (5 ms)",
+        "remote: Storing packfile... done (40 ms)",
+        "remote: Storing index... done (21 ms)",
+        "To https://dev.azure.com/organization/project/_git/repository",
+        " * [new branch]      feature -> feature",
+        "branch 'feature' set up to track 'origin/feature'.",
+        AZURE_PULL_REQUEST_CREATED,
+      ].join("\n"),
+      linked: [42],
     },
     {
       name: "a new pull request whose number appears in the create command",
