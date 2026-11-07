@@ -108,12 +108,23 @@ describe("evaluatePullRequestWatch", () => {
         .changes,
       [{ kind: "checks-awaiting-approval", checks: [later] }],
     );
-    const unnamed = { ...check("Docs", "action-required"), url: null };
-    const withUnnamed = detail({ checks: [bot, approval, unnamed] });
-    const omitted = evaluatePullRequestWatch(missing.next, withUnnamed, noRemarks);
-    assert.deepEqual(omitted.changes, []);
-    const dropped = evaluatePullRequestWatch(omitted.next, gated, noRemarks);
-    assert.deepEqual(evaluatePullRequestWatch(dropped.next, withUnnamed, noRemarks).changes, []);
+    for (const url of [null, "https://ci.example/docs"]) {
+      const named = { ...check("Docs", "action-required"), url };
+      const withNamed = detail({ checks: [bot, approval, named] });
+      const added = evaluatePullRequestWatch(missing.next, withNamed, noRemarks);
+      assert.deepEqual(added.changes, [{ kind: "checks-awaiting-approval", checks: [named] }]);
+      const unknown = {
+        ...check("Workflow approval status", "action-required"),
+        placeholder: true,
+      };
+      const unread = evaluatePullRequestWatch(
+        added.next,
+        detail({ checks: [bot, approval, unknown] }),
+        noRemarks,
+      );
+      assert.deepEqual(unread.changes, []);
+      assert.deepEqual(evaluatePullRequestWatch(unread.next, withNamed, noRemarks).changes, []);
+    }
     const pushed = detail({ headSha: "bbbbbbbbbb", checks: [bot] });
     assert.deepEqual(evaluatePullRequestWatch(missing.next, pushed, noRemarks).changes, [
       { kind: "checks-passed", count: 1, required: false },
