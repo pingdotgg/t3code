@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
@@ -127,6 +129,58 @@ describe("diagnoseLaunchFailure", () => {
         version: "Google Chrome for Testing 154.0.8037.92\n",
       });
       expect(error).toBeUndefined();
+    }),
+  );
+});
+
+const LOADED_PROFILES = "/sys/kernel/security/apparmor/policy/profiles";
+
+const restrictedHost = (host: {
+  readonly profileFile: boolean;
+  readonly loaded: ReadonlyArray<string> | undefined;
+}) => {
+  const notFound = (method: string) =>
+    Effect.fail(PlatformError.systemError({ _tag: "NotFound", module: "FileSystem", method }));
+  return PreviewBrowserHost.sandboxBlocked.pipe(
+    Effect.provideService(HostProcess.Platform, "linux"),
+    Effect.provide(
+      FileSystem.layerNoop({
+        readFileString: (path) =>
+          path === "/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
+            ? Effect.succeed("1\n")
+            : notFound("readFileString"),
+        exists: (path) =>
+          Effect.succeed(path === PreviewBrowserHost.APPARMOR_PROFILE_PATH && host.profileFile),
+        readDirectory: (path) =>
+          path === LOADED_PROFILES && host.loaded !== undefined
+            ? Effect.succeed([...host.loaded])
+            : notFound("readDirectory"),
+      }),
+    ),
+  );
+};
+
+describe("sandboxBlocked", () => {
+  it.effect("stays blocked while the kernel has not loaded a written profile", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* restrictedHost({ profileFile: true, loaded: ["chrome.0", "unconfined.1"] }),
+      ).toBe(true);
+    }),
+  );
+
+  it.effect("is allowed once the kernel has loaded the profile", () =>
+    Effect.gen(function* () {
+      const loaded = ["chrome.0", "t3-chrome-headless-shell.4"];
+      expect(yield* restrictedHost({ profileFile: true, loaded })).toBe(false);
+      expect(yield* restrictedHost({ profileFile: false, loaded })).toBe(false);
+    }),
+  );
+
+  it.effect("falls back to the profile file where the kernel's list is hidden", () =>
+    Effect.gen(function* () {
+      expect(yield* restrictedHost({ profileFile: true, loaded: undefined })).toBe(false);
+      expect(yield* restrictedHost({ profileFile: false, loaded: undefined })).toBe(true);
     }),
   );
 });
