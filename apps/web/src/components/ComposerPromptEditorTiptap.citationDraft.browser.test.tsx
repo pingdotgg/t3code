@@ -155,6 +155,10 @@ it("Delete citation removes a fresh citation and its inserted space, and undo re
   await userEvent.keyboard(
     isMacPlatform(navigator.platform) ? "{Meta>}z{/Meta}" : "{Control>}z{/Control}",
   );
+  await expect
+    .element(page.elementLocator(screen.container.querySelector("output")!))
+    .toHaveAttribute("data-prompt", promptBefore);
+  await expect.element(comment).not.toBeInTheDocument();
   await screen.rerender(<Composer question editorRef={editorRef} />);
   await screen.rerender(<Composer question={false} editorRef={editorRef} />);
   await expect
