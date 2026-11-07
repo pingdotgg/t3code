@@ -27,6 +27,7 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
@@ -363,6 +364,66 @@ it.live.each(["thread", "shell"] as const)(
       assert.deepEqual(
         items.flatMap((item) => (item.sequence === undefined ? [] : [item.sequence])),
         [after!.sequence, liveSequence],
+      );
+    }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+);
+
+it.effect.each([
+  { count: 260, padding: 0, unknownPrefix: 0 },
+  { count: 3, padding: 600_000, unknownPrefix: 0 },
+  { count: 3, padding: 0, unknownPrefix: 140 },
+])(
+  "resumes catch-up of $count events ($padding bytes, $unknownPrefix unknown rows) after interruption",
+  ({ count, padding, unknownPrefix }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread:incremental-replay");
+      const now = "2026-10-28T00:00:00.000Z";
+      const rows = Array.from({ length: count + unknownPrefix }, (_, version) => ({
+        event_id: `incremental-replay:${version}`,
+        aggregate_kind: "thread",
+        stream_id: threadId,
+        stream_version: version,
+        event_type: version < unknownPrefix ? "future.event" : "provider-session.detached",
+        occurred_at: now,
+        actor_kind: "server",
+        payload_json: JSON.stringify({
+          providerSessionId: `session:${version}:${"x".repeat(padding)}`,
+          detachedAt: now,
+        }),
+        metadata_json: "{}",
+        application_event_version: 2,
+      }));
+      assert(Arr.isArrayNonEmpty(rows));
+      const inserted = yield* sql<{ sequence: number }>`
+      INSERT INTO orchestration_events ${sql.insert(rows)} RETURNING sequence
+    `;
+      const subscribe = (afterSequence: number) =>
+        subscribeOrchestrationV2Thread({
+          threadId,
+          afterSequence,
+          requestCompletionMarker: true,
+        }).pipe(
+          Effect.provideService(ThreadManagement.ThreadManagementService, {
+            ensureLegacyTranscript: () => Effect.void,
+            getThreadSnapshot: () =>
+              Effect.die("Ordinary catch-up must not restart with a snapshot"),
+            streamStoredEventsFrom: () => Stream.empty,
+          } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+        );
+      const first = yield* subscribe(0).pipe(
+        Effect.flatMap((stream) =>
+          stream.pipe(Stream.take(Math.min(10, count - 1)), Stream.runCollect),
+        ),
+      );
+      const last = first.at(-1);
+      assert.equal(first.length, Math.min(10, count - 1));
+      assert.equal(last?.kind, "event");
+      if (last?.kind !== "event") return;
+      const resumed = yield* subscribe(last.sequence).pipe(Effect.flatMap(Stream.runCollect));
+      assert.deepEqual(
+        [...first, ...resumed].map((item) => (item.kind === "event" ? item.sequence : item.kind)),
+        [...inserted.slice(unknownPrefix).map((row) => row.sequence), "synchronized"],
       );
     }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
@@ -1519,7 +1580,11 @@ it.effect.each(["thread", "shell"] as const)(
       const gateReplayRead: Statement.Transformer = (statement) => {
         const [query] = statement.compile();
         // The paged replay read (readApplicationRows), not the stats or high-water queries.
-        if (!gated && /^\s*SELECT\s+sequence,\s+event_id,/.test(query)) {
+        if (
+          !gated &&
+          (/^\s*SELECT\s+sequence,\s+event_id,/.test(query) ||
+            /^\s*WITH RECURSIVE candidates AS MATERIALIZED/.test(query))
+        ) {
           gated = true;
           return Deferred.succeed(readStarted, undefined).pipe(
             Effect.andThen(Deferred.await(releaseRead)),
@@ -1529,15 +1594,20 @@ it.effect.each(["thread", "shell"] as const)(
         return Effect.succeed(statement);
       };
       const subscription = Effect.gen(function* () {
-        const stream =
-          scope === "thread"
-            ? yield* subscribeOrchestrationV2Thread({ threadId, afterSequence: first!.sequence })
-            : yield* subscribeOrchestrationV2Shell({ afterSequence: first!.sequence });
-        return stream;
+        if (scope === "thread") {
+          return yield* subscribeOrchestrationV2Thread({
+            threadId,
+            afterSequence: first!.sequence,
+          }).pipe(Effect.flatMap(Stream.runDrain));
+        }
+        return yield* subscribeOrchestrationV2Shell({ afterSequence: first!.sequence }).pipe(
+          Effect.flatMap(Stream.runDrain),
+        );
       }).pipe(
         Effect.provideService(Statement.CurrentTransformer, gateReplayRead),
         Effect.provideService(ThreadManagement.ThreadManagementService, {
           ensureLegacyTranscript: () => Effect.void,
+          streamStoredEventsFrom: () => Stream.empty,
           getThreadSnapshot: () => Effect.die("snapshot"),
           listActiveShellIndex: () => Effect.die("snapshot"),
           readShellSnapshot: () => Effect.die("snapshot"),
