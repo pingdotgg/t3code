@@ -71,6 +71,14 @@ vi.mock(import("~/state/query"), async (original) => ({
 }));
 
 const audioAsset = vi.hoisted(() => ({ url: "" }));
+const appAsset = vi.hoisted(() => ({ url: "" }));
+vi.mock(import("~/assets/longLivedAssetUrls"), () => ({
+  useLongLivedAssetUrl: () => ({
+    _tag: "Success",
+    url: appAsset.url,
+    expiresAt: Number.MAX_SAFE_INTEGER,
+  }),
+}));
 vi.mock(import("~/assets/assetUrls"), async (original) => {
   const actual = await original();
   return {
@@ -211,10 +219,119 @@ async function click(element: HTMLElement) {
 
 function setup({ scheduledTasks = [] as ReadonlyArray<{ id: string; title: string }> } = {}) {
   environmentQuery.data = { tasks: scheduledTasks };
+  appAsset.url = "";
 }
 
 const TASK_ID = ScheduledTaskId.make("task-1");
 const AUTOMATION_PROMPT = "Triage the inbox\n\nLabel every new issue and close duplicates.";
+
+describe("MCP app lifetime", () => {
+  it("preserves a reader session across equivalent metadata updates and renews it for policy changes", async () => {
+    setup();
+    appAsset.url = `data:text/html,${encodeURIComponent(`<!doctype html><title>Reader fixture</title><script>
+      let page = 1, initialized = false;
+      const state = () => parent.postMessage({type: 'reader-test-state', page}, '*');
+      addEventListener('message', event => {
+        if (event.source !== parent) return;
+        if (event.data?.id === 'reader-init' && event.data.result) {
+          initialized = true; parent.postMessage({jsonrpc: '2.0', method: 'ui/notifications/initialized', params: {}}, '*');
+        }
+        if (event.data?.method === 'ui/resource-teardown') {
+          page = 0; state(); parent.postMessage({jsonrpc: '2.0', id: event.data.id, result: {}}, '*');
+        }
+        if (event.data?.type === 'reader-test-next') { page++; state(); }
+        if (initialized && event.data?.type === 'reader-test-read') state();
+      });
+      parent.postMessage({jsonrpc: '2.0', id: 'reader-init', method: 'ui/initialize', params: {protocolVersion: '2026-01-26'}}, '*');
+    </script>`)}`;
+    const props = baseProps();
+    const app = (id: string): Extract<Entry, { kind: "mcp-app" }> => ({
+      id,
+      kind: "mcp-app",
+      createdAt: CREATED_AT,
+      runId: null,
+      sourceThreadId: ThreadId.make("reader-thread"),
+      itemId: TurnItemId.make(id),
+      revision: "1",
+      mcpApp: { attachmentId: id, server: id, tool: "view", resourceUri: "ui://reader.html" },
+    });
+    const first = app("first-reader");
+    const entries = [
+      ...Array.from({ length: 30 }, (_, index) =>
+        message(
+          `Earlier context ${index}\n\n${"More context. ".repeat(60)}`,
+          {},
+          `earlier-${index}`,
+        ),
+      ),
+      first,
+    ];
+    await using screen = await renderTimeline(entries, props);
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    await expect.element(screen.getByTitle("first-reader app")).toBeInTheDocument();
+    let frame = screen.getByTitle("first-reader app").element() as HTMLIFrameElement;
+    let selectedPage = 0;
+    const receive = (event: MessageEvent) => {
+      if (event.source === frame.contentWindow && event.data?.type === "reader-test-state") {
+        selectedPage = event.data.page;
+      }
+    };
+    window.addEventListener("message", receive);
+    onTestFinished(() => window.removeEventListener("message", receive));
+    await vi.waitFor(() => {
+      frame.contentWindow!.postMessage({ type: "reader-test-read" }, "*");
+      expect(selectedPage).toBe(1);
+    });
+    frame.contentWindow!.postMessage({ type: "reader-test-next" }, "*");
+    await vi.waitFor(() => expect(selectedPage).toBe(2));
+    const refreshed = { ...first, revision: "2", mcpApp: { ...first.mcpApp } };
+    await screen.rerender(
+      <MessagesTimeline {...props} timelineEntries={[...entries.slice(0, -1), refreshed]} />,
+    );
+    selectedPage = -1;
+    frame.contentWindow!.postMessage({ type: "reader-test-read" }, "*");
+    await vi.waitFor(() => expect(selectedPage).toBe(2));
+    const later = Array.from({ length: 60 }, (_, index) =>
+      message(
+        `Later conversation ${index}\n\n${"More context. ".repeat(60)}`,
+        {},
+        `later-${index}`,
+      ),
+    );
+    await screen.rerender(<MessagesTimeline {...props} timelineEntries={[...entries, ...later]} />);
+    await act(() => {
+      void props.listRef.current!.scrollToEnd({ animated: false });
+    });
+    await vi.waitFor(() =>
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2),
+    );
+    await expect.element(screen.getByText(/Later conversation 59/)).toBeInTheDocument();
+    expect(frame.isConnected).toBe(true);
+    selectedPage = 0;
+    frame.contentWindow!.postMessage({ type: "reader-test-read" }, "*");
+    await vi.waitFor(() => expect(selectedPage).toBe(2));
+    const restricted = {
+      ...refreshed,
+      revision: "3",
+      mcpApp: { ...refreshed.mcpApp, csp: { frameDomains: ["https://reader.example"] } },
+    };
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[...entries.slice(0, -1), restricted, ...later]}
+      />,
+    );
+    await vi.waitFor(() => expect(frame.isConnected).toBe(false));
+    frame = screen.getByTitle("first-reader app").element() as HTMLIFrameElement;
+    selectedPage = -1;
+    await vi.waitFor(() => {
+      frame.contentWindow!.postMessage({ type: "reader-test-read" }, "*");
+      expect(selectedPage).toBe(1);
+    });
+    await screen.unmount();
+    expect(frame.isConnected).toBe(false);
+  });
+});
 
 describe("MessagesTimeline work rows", () => {
   it("keeps the worked-for heading in place when expanded at the bottom", async () => {
