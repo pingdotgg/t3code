@@ -208,6 +208,7 @@ const layer = it.layer(
           ),
         saved: () => Effect.succeedNone,
         fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
+        unixSocket: () => Effect.succeedNone,
         invalidate: () => Effect.void,
       }),
     ),
@@ -660,6 +661,7 @@ it.effect(
             })),
           saved: () => Effect.succeedNone,
           fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
+          unixSocket: () => Effect.succeedNone,
           invalidate: () => Effect.void,
         }),
       );

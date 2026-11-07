@@ -103,6 +103,8 @@ export class GitHubCredentials extends Context.Service<
     >;
     readonly fingerprint: (host: string, token: string) => Effect.Effect<string>;
     readonly invalidate: (host: string) => Effect.Effect<void>;
+    /** The Unix socket gh sends `host`'s requests through (`http_unix_socket`), if it has one. */
+    readonly unixSocket: (host: string) => Effect.Effect<Option.Option<string>>;
   }
 >()("@t3tools/source-control-github/server/GitHubCredentials") {}
 
@@ -143,6 +145,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Digest.Digest;
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
+  const platform = yield* HostProcess.Platform;
 
   const fingerprintOf = (host: string, token: string) =>
     crypto.digest(Digest.sha256, new TextEncoder().encode(token)).pipe(
@@ -261,6 +264,37 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  const unixSockets = yield* Cache.make({
+    capacity: 32,
+    timeToLive: TOKEN_TTL,
+    lookup: (host: string) =>
+      process
+        .run({
+          operation: "GitHubCredentials.unixSocket",
+          command: "gh",
+          args: ["config", "get", "http_unix_socket", "--host", host],
+          cwd: workingDirectory,
+          env: { GH_PROMPT_DISABLED: "1" },
+          timeoutMs: 10_000,
+          concurrency: GH_PROCESS_CONCURRENCY,
+        })
+        .pipe(
+          Effect.map((output) => Option.liftPredicate(output.stdout.trim(), (path) => path !== "")),
+          // Without gh, or without the setting, requests go straight to the host.
+          Effect.orElseSucceed(() => Option.none<string>()),
+          // Node opens only named pipes on Windows, not the socket files gh uses there.
+          Effect.tap((socket) =>
+            platform === "win32" && Option.isSome(socket)
+              ? Effect.logWarning(
+                  "Sending GitHub requests straight to the host: Windows cannot use gh's http_unix_socket.",
+                  { host, socket: socket.value },
+                )
+              : Effect.void,
+          ),
+          Effect.map((socket) => (platform === "win32" ? Option.none<string>() : socket)),
+        ),
+  });
+
   return GitHubCredentials.of({
     get: Effect.fn("GitHubCredentials.get")(function* (rawHost) {
       const host = normalizeHost(rawHost);
@@ -276,6 +310,9 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((choice) => Cache.invalidate(cache, cacheKey(host, choice?.account))),
       );
     }),
+    unixSocket: Effect.fn("GitHubCredentials.unixSocket")((host: string) =>
+      Cache.get(unixSockets, normalizeHost(host)),
+    ),
   });
 });
 
