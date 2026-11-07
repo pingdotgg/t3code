@@ -69,6 +69,7 @@ import {
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("opencode");
+const OPENCODE_CONFIG_FILES = new Set(["opencode.json", "opencode.jsonc"]);
 
 function isOpenCodeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
@@ -204,6 +205,7 @@ export const OpenCodeDriver: ProviderDriver<
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const digest = yield* Digest.Digest;
     const host = yield* ProviderHost.ProviderHost;
+    const homeDirectory = yield* HostProcess.HomeDirectory;
     const processEnv = yield* mergeProviderInstanceEnvironment(environment);
     const continuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER_KIND,
@@ -219,7 +221,7 @@ export const OpenCodeDriver: ProviderDriver<
     const effectiveConfig = {
       ...config,
       enabled,
-      binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
+      binaryPath: expandHomePath(config.binaryPath, homeDirectory),
       // The instance registry has already read a referenced password from its secret provider.
       serverPassword: settingsSecretLiteral(config.serverPassword),
     } satisfies OpenCodeSettings;
@@ -486,6 +488,24 @@ export const OpenCodeDriver: ProviderDriver<
           }),
       ),
     );
+    // Ready catalogs are never re-probed on an interval, so edits to the global config
+    // would otherwise need a manual refresh. Mirrors OpenCode's global config resolution;
+    // a missing directory just skips watching.
+    if (effectiveConfig.enabled) {
+      const configDir =
+        processEnv.OPENCODE_CONFIG_DIR ||
+        pathService.join(
+          processEnv.XDG_CONFIG_HOME || pathService.join(homeDirectory, ".config"),
+          "opencode",
+        );
+      yield* fileSystem.watch(configDir).pipe(
+        Stream.filter((event) => OPENCODE_CONFIG_FILES.has(pathService.basename(event.path))),
+        Stream.debounce("200 millis"),
+        Stream.runForEach(() => snapshot.refresh.pipe(Effect.ignoreCause({ log: true }))),
+        Effect.ignore,
+        Effect.forkScoped,
+      );
+    }
 
     return {
       instanceId,
