@@ -69,9 +69,17 @@ describe("inline code that names a file", () => {
   });
 
   it("becomes a link to the same path", () => {
-    expect(rewrite("See `src/math.ts:2` and `./README.md`.")).toBe(
-      "See [src/math.ts:2](<src/math.ts:2>) and [./README.md](<./README.md>).",
+    const inlineCodeHrefs = new Set<string>();
+    expect(
+      markdownForNativeRendering(
+        "See `avatars/u1.webp`, `src/math.ts:2`, and [README](./README.md).",
+        ENRICHED_INLINE_FILE_LINK_REGEX,
+        inlineCodeHrefs,
+      ),
+    ).toBe(
+      "See [avatars/u1.webp](<avatars/u1.webp>), [src/math.ts:2](<src/math.ts:2>), and [README](./README.md).",
     );
+    expect([...inlineCodeHrefs]).toEqual(["avatars/u1.webp", "src/math.ts:2"]);
   });
 
   it("keeps commands, identifiers and URLs as code", () => {
@@ -81,14 +89,31 @@ describe("inline code that names a file", () => {
 
   it("leaves fenced code blocks and code already inside a link alone", () => {
     const markdown = "```\nsrc/math.ts:2\n```\n\n[`src/math.ts`](src/math.ts)";
-    expect(rewrite(markdown)).toBe(markdown);
+    const inlineCodeHrefs = new Set<string>();
+    expect(
+      markdownWithInlineFileLinks(markdown, ENRICHED_INLINE_FILE_LINK_REGEX, inlineCodeHrefs),
+    ).toBe(markdown);
+    expect([...inlineCodeHrefs]).toEqual([]);
   });
 
-  it("links to the exact path when it holds backslashes or ampersands", () => {
-    for (const path of ["C:\\repo\\_private\\file.ts", "./src/a&copy;.ts", "./src/[id].ts"]) {
-      const paragraph = parser.parse(rewrite(`\`${path}\``)).children[0];
+  it("preserves the exact path and label when they contain Markdown metacharacters", () => {
+    for (const path of [
+      "C:\\repo\\_private\\file.ts",
+      "./src/a&copy;.ts",
+      "./src/[id].ts",
+      "./src/__tests__/main.ts",
+    ]) {
+      const inlineCodeHrefs = new Set<string>();
+      const paragraph = parser.parse(
+        markdownWithInlineFileLinks(
+          `\`${path}\``,
+          ENRICHED_INLINE_FILE_LINK_REGEX,
+          inlineCodeHrefs,
+        ),
+      ).children[0];
       const link = paragraph?.type === "paragraph" ? paragraph.children[0] : undefined;
       expect(link?.type === "link" && link.url).toBe(path);
+      expect([...inlineCodeHrefs]).toEqual([path]);
       expect(
         link?.type === "link" && link.children[0]?.type === "text" && link.children[0].value,
       ).toBe(path);

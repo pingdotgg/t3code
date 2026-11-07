@@ -285,14 +285,19 @@ export function markdownWithHtml(markdown: string): string {
 // Start only at the beginning of a backtick run to avoid retrying every suffix.
 const INLINE_CODE_SPAN = /(?<!`)`+([^`\r\n]+)`+/g;
 
-export function markdownWithInlineFileLinks(markdown: string, fileLink: RegExp): string {
-  return transformNativeMarkdown(markdown, fileLink, false);
+export function markdownWithInlineFileLinks(
+  markdown: string,
+  fileLink: RegExp,
+  inlineCodeHrefs?: Set<string>,
+): string {
+  return transformNativeMarkdown(markdown, fileLink, false, inlineCodeHrefs);
 }
 
 function transformNativeMarkdown(
   markdown: string,
   fileLink: RegExp | undefined,
   tableBreaks: boolean,
+  inlineCodeHrefs?: Set<string>,
 ): string {
   const breakTables = tableBreaks && mayHaveTableUnderText(markdown);
   let linkFiles = false;
@@ -313,6 +318,7 @@ function transformNativeMarkdown(
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
       const escaped = node.value.replace(/[\\[\]&]/g, "\\$&");
+      const label = node.value.replace(/[\\[\]&*_`~]/g, "\\$&");
       if (
         start !== undefined &&
         end !== undefined &&
@@ -322,10 +328,11 @@ function transformNativeMarkdown(
         const edit = {
           start,
           end,
-          content: `[${escaped}](<${escaped}>)`,
+          content: `[${label}](<${escaped}>)`,
         };
         edits.push(edit);
         fileEdits.push(edit);
+        inlineCodeHrefs?.add(node.value);
         if (node.value.includes("|")) rewritesPipe = true;
       }
     } else if (node.type !== "link" && node.type !== "linkReference" && "children" in node)
@@ -438,8 +445,17 @@ export function parseMarkdownDocument(markdown: string): Root {
   return parser.parse(markdownForNativeParsing(markdown));
 }
 
-export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
-  return transformNativeMarkdown(markdownForNativeParsing(markdown), fileLink, true);
+export function markdownForNativeRendering(
+  markdown: string,
+  fileLink: RegExp,
+  inlineCodeHrefs?: Set<string>,
+): string {
+  return transformNativeMarkdown(
+    markdownForNativeParsing(markdown),
+    fileLink,
+    true,
+    inlineCodeHrefs,
+  );
 }
 
 /** Native media slots only cover standalone images; nested file embeds must become links. */
