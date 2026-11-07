@@ -3,17 +3,13 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import { beforeEach, vi } from "vite-plus/test";
 
-const { getPreferredSystemLanguagesMock, getSystemLocaleMock, getUserDefaultMock } = vi.hoisted(
-  () => ({
-    getPreferredSystemLanguagesMock: vi.fn(() => ["en-US"]),
-    getSystemLocaleMock: vi.fn(() => "en-GB"),
-    getUserDefaultMock: vi.fn((_key: string) => false),
-  }),
-);
+const { getSystemLocaleMock, getUserDefaultMock } = vi.hoisted(() => ({
+  getSystemLocaleMock: vi.fn(() => "en-GB"),
+  getUserDefaultMock: vi.fn((_key: string) => false),
+}));
 
 vi.mock("electron", () => ({
   app: {
-    getPreferredSystemLanguages: getPreferredSystemLanguagesMock,
     getSystemLocale: getSystemLocaleMock,
   },
   systemPreferences: {
@@ -25,18 +21,9 @@ import * as ElectronApp from "./ElectronApp.ts";
 
 describe("ElectronApp", () => {
   beforeEach(() => {
-    getPreferredSystemLanguagesMock.mockReset();
     getSystemLocaleMock.mockReset();
     getUserDefaultMock.mockReset();
   });
-
-  it.effect("reads the OS display languages in preference order", () =>
-    Effect.gen(function* () {
-      getPreferredSystemLanguagesMock.mockReturnValue(["zh-Hans-CN", "en-US"]);
-      const electronApp = yield* ElectronApp.ElectronApp;
-      assert.deepEqual(yield* electronApp.preferredSystemLanguages, ["zh-Hans-CN", "en-US"]);
-    }).pipe(Effect.provide(ElectronApp.layer)),
-  );
 
   it("keeps the macOS region override and hour cycle in the locale tag", () => {
     assert.strictEqual(ElectronApp.toSystemLocaleTag("en_GB"), "en-GB");

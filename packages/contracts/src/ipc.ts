@@ -1048,12 +1048,7 @@ export interface DesktopBridge {
    * regardless of OS settings.
    */
   getSystemLocale: () => string | null;
-  /**
-   * OS display languages in preference order, which the renderer cannot read
-   * for itself for the same reason as {@link getSystemLocale}. Unlike
-   * `getSystemLocale`, these are not tied to the regional format, so they are
-   * the source for the UI language.
-   */
+  /** The OS's preferred languages, most preferred first; `navigator.languages` is pinned like the locale. */
   getPreferredSystemLanguages: () => readonly string[];
   getLocalEnvironmentBootstraps: () => readonly DesktopEnvironmentBootstrap[];
   getLocalEnvironmentEnabled: () => boolean;
