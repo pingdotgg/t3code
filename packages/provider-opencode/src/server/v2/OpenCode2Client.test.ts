@@ -6,7 +6,9 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -78,6 +80,56 @@ describe("OpenCode2Client event subscription", () => {
       assert.strictEqual(error._tag, "HttpClientError");
       assert.strictEqual(error.reason._tag, "TransportError");
       assert.isTrue(Cause.isTimeoutError(error.cause));
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("OpenCode2Client execution failures", () => {
+  // The bundled 2.0.28 schema strips retryAfterMs, which carries a free-tier limit's reset.
+  it.effect("keeps retryAfterMs on a failed execution event", () =>
+    Effect.gen(function* () {
+      const frame = {
+        id: "evt_failed0000",
+        created: 1,
+        type: "session.execution.failed",
+        data: {
+          sessionID: "ses_repro",
+          error: {
+            type: "provider.free-limit",
+            message: "Free usage limit reached.",
+            status: 429,
+            retryAfterMs: 21_486_000,
+          },
+        },
+        durable: { aggregateID: "ses_repro", seq: 1, version: 1 },
+      };
+      const transport = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(`data: ${JSON.stringify(frame)}\n\n`, {
+                headers: { "content-type": "text/event-stream" },
+              }),
+            ),
+          ),
+        ),
+      );
+      const opencode = yield* OpenCode2Client.OpenCode2Client.pipe(
+        Effect.provide(OpenCode2Client.layer.pipe(Layer.provide(transport))),
+      );
+      const { events } = yield* opencode.connect({
+        baseUrl: "http://127.0.0.1:4096",
+        password: "test-password",
+      });
+      const first = yield* events.pipe(Effect.flatMap(Stream.runHead));
+      const event = Option.getOrThrow(first);
+      assert.strictEqual(event.type, "session.execution.failed");
+      assert.deepEqual(
+        event.type === "session.execution.failed" ? event.data.error : undefined,
+        frame.data.error,
+      );
     }).pipe(Effect.scoped),
   );
 });

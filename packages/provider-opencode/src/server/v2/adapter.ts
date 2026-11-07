@@ -45,6 +45,7 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
@@ -2166,20 +2167,33 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* endExecution(state, turn, { status: "interrupted" });
         case "session.execution.failed": {
           const { type, message, status, response } = event.data.error;
+          const retryAfterMs =
+            "retryAfterMs" in event.data.error && typeof event.data.error.retryAfterMs === "number"
+              ? event.data.error.retryAfterMs
+              : undefined;
           // OpenCode types an empty balance as provider.quota too, but it answers
           // that with HTTP 402 and it never resets. Usage windows and budgets are 429.
           const claudeLimit = claudeUsageLimit(message);
           const usageLimit =
             (type === "provider.quota" && status !== 402) ||
             type === "provider.rate-limit" ||
+            type === "provider.free-limit" ||
             claudeLimit !== undefined;
+          // A delay past the date range has no reset time; it must not fail the event.
+          const retryAt =
+            retryAfterMs === undefined
+              ? null
+              : Option.match(DateTime.make(event.created + retryAfterMs), {
+                  onNone: () => null,
+                  onSome: DateTime.formatIso,
+                });
           return yield* endExecution(state, turn, {
             status: "failed",
             failure: makeProviderFailure({
               message: readableProviderErrorMessage(message, status, response?.body),
               code: type,
               class: usageLimit ? "usage_limit" : "provider_error",
-              resetAt: claudeLimit?.resetAt ?? null,
+              resetAt: claudeLimit?.resetAt ?? retryAt,
             }),
           });
         }
