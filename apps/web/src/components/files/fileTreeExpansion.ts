@@ -28,6 +28,30 @@ function asDirectoryHandle(item: unknown): DirectoryHandle | null {
   return item as DirectoryHandle;
 }
 
+/**
+ * Calls `listener` once per task, however many events the model emitted in it. Expanding every
+ * folder emits one event per folder, and a listener that rescans the folders is quadratic otherwise.
+ */
+export function subscribeOncePerTask(
+  model: { subscribe(listener: () => void): () => void },
+  listener: () => void,
+): () => void {
+  let queued = false;
+  let subscribed = true;
+  const unsubscribe = model.subscribe(() => {
+    if (queued) return;
+    queued = true;
+    queueMicrotask(() => {
+      queued = false;
+      if (subscribed) listener();
+    });
+  });
+  return () => {
+    subscribed = false;
+    unsubscribe();
+  };
+}
+
 export function areAllDirectoriesExpanded(
   model: FileTreeExpansionModel,
   directoryPaths: readonly string[],
