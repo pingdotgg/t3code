@@ -139,6 +139,7 @@ import {
   deriveActiveWorkStartedAt,
   deriveCanInterruptRunningThread,
   findLatestProposedPlan,
+  findLatestTaskList,
   findRevertCheckpoint,
   hasActionableProposedPlan,
   isLatestRunSettled,
@@ -3954,6 +3955,7 @@ export default function ChatView(props: ChatViewProps) {
                     sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
                     contextWindow: activeContextWindow,
                   }}
+                  taskList={findLatestTaskList(serverProjection)}
                 />
 
                 <PullRequestThreadDialogHost
