@@ -4,12 +4,13 @@ import { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { AppRoot } from "~/AppRoot";
 // The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
 // takes 6-11s; importing it here keeps that out of the test's timeout.
 import "~/components/ChatView";
+import { startMainAppLocationTracking } from "~/components/sidebar/mainAppLocation";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { getRouter } from "~/router";
@@ -17,6 +18,7 @@ import {
   ENVIRONMENT_ID,
   PROJECT_ID,
   installFakeEnvironment,
+  threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { render } from "../../test/render";
@@ -64,4 +66,58 @@ it("a new draft does not load its reserved thread before the server lists it", a
     .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
+});
+
+it("preserves the current conversation and draft across Pull requests and Back", async () => {
+  const firstThread = threadWithHistory("return-first", 1);
+  const threads = [firstThread, threadWithHistory("return-second", 1)];
+  using _environment = installFakeEnvironment(threads);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${firstThread.id}`] }),
+  );
+  await router.load();
+  using _tracking = { [Symbol.dispose]: startMainAppLocationTracking(router) };
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+
+  for (const thread of threads) {
+    await router.navigate({ href: `/${ENVIRONMENT_ID}/${thread.id}` });
+    const editor = page.getByTestId("composer-editor");
+    const question = page.getByText(`${thread.id}: question 0`, { exact: true });
+    await expect.element(editor).toBeVisible();
+    await expect.element(question).toBeVisible();
+    const questionNode = question.element();
+    const editorNode = editor.element();
+    const conversationNode = page
+      .getByRole("region", { name: "Conversation", exact: true })
+      .element();
+    const draft = `Unsent draft for ${thread.id}`;
+    await userEvent.type(editor, draft);
+    await expect.element(editor).toHaveTextContent(draft);
+
+    await router.navigate({ href: "/pull-requests" });
+    await expect.element(page.getByRole("button", { name: "Back to threads" })).toBeVisible();
+    expect(conversationNode.isConnected).toBe(true);
+    expect(questionNode.isConnected).toBe(true);
+    await expect.element(editor).not.toBeVisible();
+    await expect.element(page.elementLocator(conversationNode)).not.toBeVisible();
+    await expect.element(page.elementLocator(questionNode)).not.toBeVisible();
+
+    await userEvent.click(page.getByRole("button", { name: "Back to threads" }));
+    await expect.element(editor).toBeVisible();
+    await expect.element(question).toBeVisible();
+    expect(router.state.location.pathname).toBe(`/${ENVIRONMENT_ID}/${thread.id}`);
+    expect(page.getByRole("region", { name: "Conversation", exact: true }).element()).toBe(
+      conversationNode,
+    );
+    expect(question.element()).toBe(questionNode);
+    expect(editor.element()).toBe(editorNode);
+    await expect.element(editor).toHaveTextContent(draft);
+  }
 });
