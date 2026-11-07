@@ -977,20 +977,11 @@ export type SidebarV2TopStatusKind =
   | "woke"
   | "working";
 
-export function firstValidTimestampMs(
-  ...candidates: ReadonlyArray<string | null | undefined>
-): number {
-  for (const candidate of candidates) {
-    if (candidate == null) continue;
-    const parsed = Date.parse(candidate);
-    if (!Number.isNaN(parsed)) return parsed;
-  }
-  return 0;
-}
-
 export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
 export {
   sortInboxThreadsByReturn,
+  sortSnoozedThreadsByWake,
+  sortWorkingThreadsByEnter,
   sortWorkingThreadsBySend,
 } from "@t3tools/client-runtime/state/thread-inbox";
 
