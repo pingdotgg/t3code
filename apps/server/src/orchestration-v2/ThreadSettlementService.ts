@@ -156,8 +156,9 @@ export function isAutoSettlementCandidate(
   if (thread.activityRunStatus != null) return false;
   if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return false;
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
-  // Interrupted runs must keep the same snooze protection the sidebar shows.
-  return !isSnoozed(thread, nowMs);
+  // Snoozed threads stay candidates so a merged or closed PR can still settle them.
+  // Inactivity waits for the wake inside resolveAutoSettlementAt.
+  return true;
 }
 
 /** Match client effectiveSnoozed so agents and sidebar agree. */
@@ -234,6 +235,8 @@ export function resolveAutoSettlementAt(input: {
   if (pullRequest !== null && pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) {
     return DateTime.makeUnsafe(activityAtMs);
   }
+  // Hide-until-later outranks inactivity: the wake restarts that clock.
+  if (isSnoozed(thread, input.nowMs)) return null;
   const hasPullRequest =
     hasOpenLink ||
     pullRequest !== null ||
