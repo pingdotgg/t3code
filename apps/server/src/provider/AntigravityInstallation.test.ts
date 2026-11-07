@@ -845,6 +845,60 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       }),
   );
 
+  it.effect("installs on Windows when the validation process exits before it is killed", () =>
+    Effect.gen(function* () {
+      const nodeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const initializeResult = {
+        protocolVersion: 1,
+        agentInfo: { name: "antigravity-acp", version: "fixture-new" },
+        agentCapabilities: {
+          loadSession: true,
+          sessionCapabilities: { resume: {} },
+          auth: { logout: {} },
+        },
+        authMethods: [{ id: "oauth-personal", name: "Google" }],
+      };
+      const agent = `
+        const result = ${JSON.stringify(initializeResult)};
+        require("node:readline")
+          .createInterface({ input: process.stdin })
+          .once("line", (line) => {
+            const { id } = JSON.parse(line);
+            const response = JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n";
+            process.stdout.write(response, () => process.exit(0));
+          });
+      `;
+      const archive = Buffer.from(zipFixtures.windows, "base64");
+      const { installation } = yield* makeHarness({
+        platform: "win32",
+        archive,
+        useDefaultValidation: true,
+        spawner: ChildProcessSpawner.make((command) => {
+          if (
+            !ChildProcess.isStandardCommand(command) ||
+            !command.command.endsWith("agy_acp_server.exe")
+          ) {
+            return nodeSpawner.spawn(command);
+          }
+          return nodeSpawner.spawn(ChildProcess.make(process.execPath, ["-e", agent])).pipe(
+            Effect.map((child) =>
+              ChildProcessSpawner.makeHandle({
+                ...child,
+                // The runtime exits on its own before cleanup; Node then refuses the kill.
+                kill: (options) => child.exitCode.pipe(Effect.andThen(child.kill(options))),
+              }),
+            ),
+          );
+        }),
+      });
+      yield* installation.start;
+      expect(yield* terminalState(installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "fixture-new",
+      });
+    }),
+  );
+
   it.effect("reports unsupported hosts without downloading or changing state", () =>
     Effect.gen(function* () {
       const { installation, requests } = yield* makeHarness({ asset: null, platform: "darwin" });
