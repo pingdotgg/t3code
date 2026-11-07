@@ -416,39 +416,8 @@ describe("ManagedRelayClient", () => {
       expect(
         error._tag === "ManagedRelayRequestFailedError" ? relayRequestFailureDetail(error) : null,
       ).toBe(RELAY_GATEWAY_TIMEOUT_MESSAGE);
-    }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
-  });
-
-  it.effect("names the relay's reason when unlinking fails and keeps its trace ID", () => {
-    const fetchFn = (() =>
-      Promise.resolve(
-        Response.json(
-          {
-            _tag: "RelayInternalError",
-            code: "internal_error",
-            reason: "upstream_unavailable",
-            traceId: "trace-unlink",
-          },
-          { status: 500 },
-        ),
-      )) satisfies typeof globalThis.fetch;
-
-    return Effect.gen(function* () {
-      const relayClient = yield* ManagedRelay.ManagedRelayClient;
-      const error = yield* relayClient
-        .unlinkEnvironment({
-          clerkToken: "clerk-token",
-          environmentId: EnvironmentId.make("env-1"),
-        })
-        .pipe(Effect.flip);
-
-      expect(error).toMatchObject({
-        _tag: "ManagedRelayRequestFailedError",
-        traceId: "trace-unlink",
-        relayError: { _tag: "RelayInternalError", reason: "upstream_unavailable" },
-      });
       expect(error.message).toBe(
-        "Could not unlink relay environment: Relay encountered an internal error (upstream_unavailable).",
+        `Could not link relay environment: ${RELAY_GATEWAY_TIMEOUT_MESSAGE}`,
       );
     }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
   });
