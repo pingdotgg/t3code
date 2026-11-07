@@ -67,3 +67,12 @@ it("checks revocation and regrant when a retained editor callback is invoked", a
   });
   expect(state.setPreference).toHaveBeenCalledTimes(1);
 });
+
+it("keeps the existing fallback when Sublime Text becomes available", async () => {
+  state.allowed.add(primary);
+  const open = useOpenInPreferredEditor(primary, ["sublime-text", "file-manager"]);
+  expect(await open("/work/readme.md:12:4")).toMatchObject({
+    _tag: "Success",
+    value: "file-manager",
+  });
+});

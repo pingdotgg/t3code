@@ -556,6 +556,56 @@ it.effect.each([
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect.each([
+  {
+    platform: "darwin",
+    installPath: "Applications/Sublime Text.app/Contents/SharedSupport/bin/subl",
+  },
+  { platform: "win32", installPath: "Program Files/Sublime Text/subl.exe" },
+] as const)(
+  "discovers and launches Sublime Text from its $platform installation",
+  ({ platform, installPath }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sublime-" });
+      const executable = path.join(home, installPath);
+      yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+      yield* fs.writeFileString(executable, "#!/bin/sh\n");
+      yield* fs.chmod(executable, 0o755);
+
+      const folder =
+        platform === "win32" ? String.raw`C:\workspace with spaces` : "/workspace with spaces";
+      const file = platform === "win32" ? String.raw`${folder}\file.ts` : `${folder}/file.ts`;
+      const targets = [folder, file, `${file}:12`, `${file}:12:4`];
+      const spawned: ChildProcess.StandardCommand[] = [];
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        assert.include(yield* launcher.resolveAvailableEditors(), "sublime-text");
+        for (const cwd of targets) {
+          yield* launcher.launchEditor({ editor: "sublime-text", cwd });
+        }
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform,
+            env: {
+              HOME: home,
+              PATH: path.join(home, "empty"),
+              ProgramFiles: path.join(home, "Program Files"),
+            },
+            onSpawn: (command) => spawned.push(command),
+          }),
+        ),
+      );
+
+      assert.deepEqual(
+        spawned.map(({ command, args, options }) => ({ command, args, shell: options.shell })),
+        targets.map((target) => ({ command: executable, args: [target], shell: false })),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("matches macOS bundles on the name boundary only", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

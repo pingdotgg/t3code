@@ -40,6 +40,7 @@ import {
   FinderIcon,
   Icon,
   KiroIcon,
+  SublimeTextIcon,
   TraeIcon,
   VisualStudioCode,
   VisualStudioCodeInsiders,
@@ -181,6 +182,11 @@ const resolveOpenInOptions = (platform: string, availableEditors: ReadonlyArray<
     {
       Icon: WebStormIcon,
       value: "webstorm",
+      kind: "brand",
+    },
+    {
+      Icon: SublimeTextIcon,
+      value: "sublime-text",
       kind: "brand",
     },
     {

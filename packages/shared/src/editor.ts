@@ -62,6 +62,10 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       }
       for (const bundle of bundles) {
         const contents = path.join(root, bundle, "Contents");
+        if (editor.id === "sublime-text") {
+          candidates.push(path.join(contents, "SharedSupport/bin", command));
+          continue;
+        }
         candidates.push(
           ...(jetbrains || editor.id === "zed"
             ? [path.join(contents, "MacOS", editor.id === "zed" ? "cli" : command)]
@@ -105,6 +109,10 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
             ? "Microsoft VS Code Insiders"
             : editor.label;
       for (const root of roots) {
+        if (editor.id === "sublime-text") {
+          candidates.push(path.join(root, name, `${command}.exe`));
+          continue;
+        }
         candidates.push(
           path.join(root, name, "resources/app/bin", `${command}.cmd`),
           path.join(root, name, "resources/app/bin/code.cmd"),
