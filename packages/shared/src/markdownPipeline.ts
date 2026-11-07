@@ -227,6 +227,16 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkNormalizeLinksAndTagInlineCode,
 ];
 
+export const ASSISTANT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
+  ...CHAT_MARKDOWN_REMARK_PLUGINS,
+  [remarkGfm, { singleTilde: false }],
+];
+
+export const ASSISTANT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
+  ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  [remarkGfm, { singleTilde: false }],
+];
+
 // Start tags an HTML parser closes an open `<p>` for.
 const CLOSES_PARAGRAPH = new Set(
   "address article aside blockquote center details dialog dir div dl fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6 header hgroup hr li listing main menu nav ol p plaintext pre search section summary table ul xmp dd dt".split(

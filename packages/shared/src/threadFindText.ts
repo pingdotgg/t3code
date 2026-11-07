@@ -36,6 +36,8 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  ASSISTANT_MARKDOWN_REMARK_PLUGINS,
+  ASSISTANT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
 } from "./markdownPipeline.ts";
 
 // Inline wrappers (including Shiki token spans) must not split a search phrase.
@@ -83,9 +85,14 @@ const assistantProcessor = unified()
   .use(CHAT_MARKDOWN_REMARK_PLUGINS)
   .use(remarkRehype, { allowDangerousHtml: true })
   .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
-const assistantBreaksProcessor = unified()
+const replyProcessor = unified()
   .use(remarkParse)
-  .use(CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS)
+  .use(ASSISTANT_MARKDOWN_REMARK_PLUGINS)
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+const replyBreaksProcessor = unified()
+  .use(remarkParse)
+  .use(ASSISTANT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS)
   .use(remarkRehype, { allowDangerousHtml: true })
   .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
 const userProcessor = unified()
@@ -111,12 +118,15 @@ function markdownThreadFindText(
   cwd?: string,
   skills: readonly InlineSkill[] = [],
   lineBreaks = false,
+  assistantReply = false,
 ): string[] {
   const processor = userMessage
     ? userProcessor
-    : lineBreaks
-      ? assistantBreaksProcessor
-      : assistantProcessor;
+    : !assistantReply
+      ? assistantProcessor
+      : lineBreaks
+        ? replyBreaksProcessor
+        : replyProcessor;
   const tree = processor.runSync(processor.parse(markdown));
   const paths = [
     ...extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(markdown)),
@@ -231,5 +241,6 @@ export function searchableMessageSegments(
     cwd,
     skills,
     shouldPreserveAssistantLineBreaks(message.text),
+    true,
   );
 }

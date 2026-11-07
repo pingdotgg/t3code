@@ -44,5 +44,13 @@ describe("resolveTimelineMinimapPreview", () => {
         "Started <t3-thread://v2/env-1/thread-1> and [Fix CI](t3-thread://v2/env-1/t2).",
     });
     expect(preview?.assistantText).toBe("Started a thread and Fix CI.");
+    expect(
+      resolveTimelineMinimapPreview({
+        id: "turn-2",
+        rowIndex: 0,
+        userText: null,
+        assistantText: "1~3月的数据不完整，建议使用4~9月的数据进行对比。 ~~删除~~",
+      })?.assistantText,
+    ).toBe("1~3月的数据不完整，建议使用4~9月的数据进行对比。 删除");
   });
 });

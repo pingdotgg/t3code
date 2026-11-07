@@ -54,7 +54,10 @@ function resolveFinalAssistantTextForTurn(
   return finalAssistantText;
 }
 
-const markdownPreviewParser = unified().use(remarkParse).use(remarkGfm).freeze();
+const markdownPreviewParser = unified()
+  .use(remarkParse)
+  .use(remarkGfm, { singleTilde: false })
+  .freeze();
 
 const INLINE_PARENT_TYPES = new Set<Nodes["type"]>([
   "paragraph",
