@@ -1,7 +1,7 @@
 import * as NodeBuffer from "node:buffer";
 
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -301,6 +301,11 @@ export interface GitRemoteStatusOptions {
   readonly refreshUpstream?: boolean;
 }
 
+/** Set by background discovery so its Git commands run in their own small lane, not the user's. */
+export const BackgroundGitWork = Context.Reference<boolean>("t3/vcs/BackgroundGitWork", {
+  defaultValue: () => false,
+});
+
 export class GitVcsDriver extends Context.Service<
   GitVcsDriver,
   {
@@ -444,6 +449,7 @@ export class GitVcsDriver extends Context.Service<
 >()("t3/vcs/GitVcsDriver") {}
 
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const FLAGGED_INDEX_ENTRIES_MAX_BYTES = 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
@@ -566,7 +572,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const vcsProcess = yield* VcsProcess.VcsProcess;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const hostPlatform = yield* HostProcess.Platform;
   const isInsideWorkTree: VcsDriver.VcsDriver["Service"]["isInsideWorkTree"] = (cwd) =>
     gitCommand(
@@ -910,10 +916,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "splitIndex.sharedIndexExpire=never",
       ];
       const { gitCommonDir, indexPath, headExists } = yield* resolveCaptureRepository(input.cwd);
-      const indexId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+      const indexId = yield* random.uuidV4();
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
+      const hostEnv = yield* HostProcess.Environment;
       const commitEnv: NodeJS.ProcessEnv = {
-        ...process.env,
+        ...hostEnv,
         GIT_INDEX_FILE: tempIndexPath,
         GIT_AUTHOR_NAME: "T3 Code",
         GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
@@ -967,43 +974,60 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             });
             // read-tree can rewrite the index, so restore its racy timestamp afterward.
             yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
-            let specialFlags = false;
+            // Manually flagged entries hide edits from add -A, so they are re-added below
+            // with no stat cache. Every other entry keeps its stat data and is not rehashed.
+            let fallback = false;
+            let flaggedBytes = 0;
             let recordStart = true;
-            let skipped = false;
-            let skippedRecord: Uint8Array[] = [];
-            const skippedPaths: string[] = [];
+            let collect: "flagged" | "skipped" | undefined;
+            let record: Uint8Array[] = [];
+            const flagged: string[] = [];
+            const skipped: string[] = [];
             yield* vcsProcess.run({
               operation,
               command: "git",
               cwd: input.cwd,
-              args: [...indexConfig, "ls-files", "--full-name", "--sparse", "-v", "-z"],
+              args: [...indexConfig, "ls-files", "--full-name", "--sparse", "--stage", "-v", "-z"],
               env: commitEnv,
               maxOutputBytes: 4_096,
               outputMode: "truncate",
-              // Only tags and sparse skip-worktree paths matter; scan NUL-delimited records.
+              // Only tags and flagged or skip-worktree records matter; scan NUL-delimited records.
               onStdoutChunk: (chunk) => {
                 let start = 0;
-                while (start < chunk.length) {
+                while (start < chunk.length && !fallback) {
                   const end = chunk.indexOf(0, start);
                   if (recordStart) {
                     const tag = chunk[start]!;
-                    skipped = tag === 83;
-                    if ((tag >= 97 && tag <= 122) || (!sparseCheckout && tag === 83)) {
-                      specialFlags = true;
-                    }
+                    record = [];
+                    // Sparse skip-worktree bits are expected; only in-cone ones are manual.
+                    collect =
+                      tag === 83 && sparseCheckout
+                        ? "skipped"
+                        : (tag >= 97 && tag <= 122) || tag === 83
+                          ? "flagged"
+                          : undefined;
+                    // index-info cannot keep skip-worktree while dropping assume-unchanged.
+                    if (tag === 115 && sparseCheckout) fallback = true;
                   }
-                  if (skipped && sparseCheckout) {
-                    skippedRecord.push(
-                      Buffer.from(chunk.subarray(start, end === -1 ? undefined : end)),
-                    );
-                    if (end !== -1) {
-                      const record = Buffer.concat(skippedRecord);
-                      if (record.at(-1) !== 47) {
-                        const name = record.subarray(2);
-                        if (!NodeBuffer.isUtf8(name)) specialFlags = true;
-                        else skippedPaths.push(name.toString("utf8"));
+                  if (collect !== undefined && !fallback) {
+                    const piece = chunk.subarray(start, end === -1 ? undefined : end);
+                    record.push(Buffer.from(piece));
+                    if (
+                      collect === "flagged" &&
+                      (flaggedBytes += piece.length) > FLAGGED_INDEX_ENTRIES_MAX_BYTES
+                    )
+                      fallback = true;
+                    if (end !== -1 && !fallback) {
+                      const full = Buffer.concat(record);
+                      record = [];
+                      // Sparse directory entries stay collapsed.
+                      if (collect === "flagged" || full.at(-1) !== 47) {
+                        // Drop the "<tag> " prefix, leaving index-info's "<mode> <oid> <stage>\t<path>".
+                        const entry = full.subarray(2);
+                        if (!NodeBuffer.isUtf8(entry)) fallback = true;
+                        else
+                          (collect === "flagged" ? flagged : skipped).push(entry.toString("utf8"));
                       }
-                      skippedRecord = [];
                     }
                   }
                   recordStart = end !== -1;
@@ -1012,20 +1036,46 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 }
               },
             });
-            if (skippedPaths.length > 0 && !specialFlags) {
-              const selected = yield* execute({
+            if (fallback) return false;
+            if (skipped.length > 0) {
+              const paths = skipped.map((entry) => entry.slice(entry.indexOf("\t") + 1));
+              const stdin = paths.join("\0") + "\0";
+              // check-rules echoes a subset of its input, so the input size bounds its output.
+              const rules = yield* execute({
                 operation,
                 cwd: input.cwd,
                 args: [...indexConfig, "sparse-checkout", "check-rules", "-z"],
-                stdin: skippedPaths.join("\0") + "\0",
+                stdin,
                 env: commitEnv,
-                maxOutputBytes: 1,
-                outputMode: "truncate",
+                maxOutputBytes: Buffer.byteLength(stdin),
+                outputMode: "error",
               });
-              specialFlags = selected.stdout.length > 0 || selected.stdoutTruncated;
+              const selected = new Set(rules.stdout.split("\0"));
+              skipped.forEach((entry, index) => {
+                if (selected.has(paths[index]!)) flagged.push(entry);
+              });
             }
-            // Sparse Git clears skip-worktree for present files. Manual flags still need a reset.
-            return !specialFlags;
+            if (flagged.length > 0) {
+              // Flagged gitlinks keep the fresh-index behaviour rather than a guessed one.
+              if (flagged.some((entry) => entry.startsWith("160000 "))) return false;
+              yield* execute({
+                operation,
+                cwd: input.cwd,
+                // core.ignorestat would mark these assume-unchanged, hiding edits from add -A.
+                args: [
+                  ...indexConfig,
+                  "-c",
+                  "core.ignorestat=false",
+                  "update-index",
+                  "-z",
+                  "--index-info",
+                ],
+                stdin: flagged.join("\0") + "\0",
+                env: commitEnv,
+              });
+              yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
+            }
+            return true;
           }).pipe(Effect.orElseSucceed(() => false));
           if (!reusedIndex) {
             if (sparseCheckout) {
@@ -1124,6 +1174,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ...indexConfig,
               ...durableWrite,
               ...longPaths,
+              // safecrlf=true refuses LF files under CRLF conversion; capture them as Git's default does.
+              "-c",
+              "core.safecrlf=false",
               "add",
               ...(sparseCheckout ? ["--sparse"] : []),
               // add -A rejects ignored directories even when they contain tracked files.
@@ -1160,7 +1213,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 );
                 if (candidates.length > CHECKPOINT_RECOVERY_MAX_CANDIDATES) return yield* error;
                 const nestedRepoEnv: NodeJS.ProcessEnv = {
-                  ...process.env,
+                  ...hostEnv,
                   GIT_DIR: undefined,
                   GIT_WORK_TREE: undefined,
                   GIT_COMMON_DIR: undefined,
@@ -1295,13 +1348,52 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             }),
         ),
       );
+      const resetIndex = Effect.gen(function* () {
+        // On Windows clean can remove './' and exit 0.
+        yield* recreateWorkspace;
+        yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [...longPaths, "reset", "--quiet", "--", "."],
+        });
+      });
       yield* recreateWorkspace;
-      const cleaned = yield* execute({
+      const clean = execute({
         operation,
         cwd: input.cwd,
         args: [...longPaths, "clean", "-fd", "--", "."],
+        env: { LC_ALL: "C" },
         allowNonZeroExit: true,
       });
+      let cleaned = yield* clean;
+      // Removing a new .gitignore exposes the files it hid; clean again until nothing is left.
+      for (
+        let pass = 1;
+        pass < 4 && cleaned.exitCode === 0 && /^Removing /m.test(cleaned.stdout);
+        pass++
+      ) {
+        yield* recreateWorkspace;
+        cleaned = yield* clean;
+      }
+      if (cleaned.exitCode === 0 && /^Removing /m.test(cleaned.stdout)) {
+        yield* recreateWorkspace;
+        const remaining = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [...longPaths, "clean", "-dn", "--", "."],
+          env: { LC_ALL: "C" },
+        });
+        if (/^Would remove /m.test(remaining.stdout)) {
+          yield* resetIndex;
+          return yield* new VcsProcessExitError({
+            operation,
+            command: "git clean",
+            cwd: input.cwd,
+            exitCode: 0,
+            detail: "Could not clean the checkpoint workspace: untracked files remain.",
+          });
+        }
+      }
       if (cleaned.exitCode !== 0) {
         // Git can remove every child, then fail trying to remove './' itself.
         const emptiedWorkspace =
@@ -1311,7 +1403,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             Effect.map((entries) => entries.length === 0),
             Effect.orElseSucceed(() => false),
           ));
-        if (!emptiedWorkspace)
+        if (!emptiedWorkspace) {
+          yield* resetIndex;
           return yield* new VcsProcessExitError({
             operation,
             command: "git clean",
@@ -1319,18 +1412,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             exitCode: cleaned.exitCode,
             detail: cleaned.stderr.trim() || "Could not clean the checkpoint workspace.",
           });
+        }
       }
-      // On Windows the same clean can remove './' and exit 0.
-      yield* recreateWorkspace;
-
-      const headExists = yield* hasHeadCommit(input.cwd);
-      if (headExists) {
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: [...longPaths, "reset", "--quiet", "--", "."],
-        });
-      }
+      yield* resetIndex;
 
       return true;
     }),
@@ -1377,11 +1461,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           // Not --no-relative, which Git before 2.28 rejects.
           "-c",
           "diff.relative=false",
+          "-c",
+          "diff.suppressBlankEmpty=false",
           "diff",
           ...(input.format === "numstat" ? ["--numstat", "-z"] : ["--patch"]),
           "--no-color",
           "--no-ext-diff",
           "--no-textconv",
+          "--submodule=short",
           ...PATCH_RENDER_PREFIX_ARGS,
           ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
           `${fromRevision}^{commit}`,
@@ -1436,6 +1523,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           args: [
             "-c",
             "diff.relative=false",
+            // log.showSignature prints verification text into the path list.
+            "-c",
+            "log.showSignature=false",
             ...args,
             "--name-only",
             "-z",

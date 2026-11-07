@@ -1,7 +1,8 @@
 import type { ToolActivityNativeAppReference } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -174,10 +175,11 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
   const appVersion =
     (yield* plistValue(infoPlistPath, "CFBundleVersion")) ||
     (yield* plistValue(infoPlistPath, "CFBundleShortVersionString"));
-  const crypto = yield* Crypto.Crypto;
-  const cacheKey = yield* crypto
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
+  const cacheKey = yield* digest
     .digest(
-      "SHA-256",
+      Digest.sha256,
       new TextEncoder().encode(`${canonicalAppPath}\0${appVersion}\0${sourceIconPath}`),
     )
     .pipe(Effect.map(Hex.encode), Effect.orDie);
@@ -188,7 +190,7 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
   yield* fileSystem.makeDirectory(cacheDirectory, { recursive: true });
   const temporaryPath = path.join(
     cacheDirectory,
-    `.${cacheKey}-${process.pid}-${(yield* Clock.currentTimeMillis).toString(36)}-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}.png`,
+    `.${cacheKey}-${process.pid}-${(yield* Clock.currentTimeMillis).toString(36)}-${yield* random.uuidV4()}.png`,
   );
   yield* commandOutput("/usr/bin/sips", [
     "-z",
