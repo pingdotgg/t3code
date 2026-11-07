@@ -71,9 +71,13 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as MacPermissions from "../permissions/MacPermissions.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 
-it.effect.each([false, true])(
-  "stops backends together before flushing history and cancels Linux registration, stop defect=%s",
-  (stopDefect) =>
+it.effect.each([
+  { localEnvironmentEnabled: true, stopDefect: false },
+  { localEnvironmentEnabled: true, stopDefect: true },
+  { localEnvironmentEnabled: false, stopDefect: false },
+])(
+  "owns controls through shutdown; local=$localEnvironmentEnabled, stop defect=$stopDefect",
+  ({ localEnvironmentEnabled, stopDefect }) =>
     Effect.gen(function* () {
       const registrationStarted = yield* Deferred.make<void>();
       const releaseRegistration = yield* Deferred.make<void>();
@@ -85,6 +89,8 @@ it.effect.each([false, true])(
       const historyStarted = yield* Deferred.make<void>();
       const releaseHistory = yield* Deferred.make<void>();
       const quitting = yield* Ref.make(false);
+      const bootstrapped = yield* Deferred.make<void>();
+      const shutdown = yield* DesktopShutdown.DesktopShutdown;
       const events: string[] = [];
       const record = (event: string) =>
         Effect.sync(() => {
@@ -93,6 +99,12 @@ it.effect.each([false, true])(
       const runApp = DesktopApp.program
         .pipe(
           Effect.provide(NodeCrypto.layer),
+          Effect.provideService(DesktopShutdown.DesktopShutdown, {
+            ...shutdown,
+            awaitRequest: Deferred.succeed(bootstrapped, undefined).pipe(
+              Effect.andThen(shutdown.awaitRequest),
+            ),
+          }),
           Effect.provideService(DesktopAppIdentity.DesktopAppIdentity, {
             resolveUserDataPath: Effect.succeed("/isolated/userdata"),
             configure: record("identity"),
@@ -123,7 +135,7 @@ it.effect.each([false, true])(
           Effect.provideService(DesktopAppSettings.DesktopAppSettings, {
             load: Effect.void,
             get: Effect.succeed({
-              localEnvironmentEnabled: true,
+              localEnvironmentEnabled,
               serverExposureMode: "local-only",
             }),
           } as unknown as DesktopAppSettings.DesktopAppSettings["Service"]),
@@ -167,40 +179,52 @@ it.effect.each([false, true])(
             quitting,
           } as DesktopState.DesktopState["Service"]),
           Effect.provideService(DesktopWindow.DesktopWindow, {
-            ensureMain: record("window").pipe(
-              Effect.andThen(Deferred.succeed(windowStarted, undefined)),
-            ),
+            ensureMain: localEnvironmentEnabled
+              ? record("window").pipe(Effect.andThen(Deferred.succeed(windowStarted, undefined)))
+              : Effect.die("disabled local backend must not ensure a backend window"),
+            createMainIfBackendReady: !localEnvironmentEnabled
+              ? record("window").pipe(Effect.andThen(Deferred.succeed(windowStarted, undefined)))
+              : Effect.die("enabled startup must retain its backend-first ordering"),
           } as unknown as DesktopWindow.DesktopWindow["Service"]),
           Effect.provideService(DesktopBackendPool.DesktopBackendPool, {
-            primary: Effect.succeed({
-              start: record("backend"),
-              currentConfig: Effect.succeedSome({ preflightFailure: Option.none() }),
-            }),
-            list: Effect.succeed([
-              {
-                stop: () =>
-                  Deferred.succeed(firstStopStarted, undefined).pipe(
-                    Effect.andThen(Deferred.await(releaseStops)),
-                    Effect.andThen(stopDefect ? Effect.die("stop defect") : Effect.void),
-                  ),
-              },
-              {
-                stop: () =>
-                  Deferred.succeed(secondStopStarted, undefined).pipe(
-                    Effect.andThen(Deferred.await(releaseStops)),
-                  ),
-              },
-            ]),
+            primary: localEnvironmentEnabled
+              ? Effect.succeed({
+                  start: record("backend"),
+                  currentConfig: Effect.succeedSome({ preflightFailure: Option.none() }),
+                })
+              : Effect.die("disabled local environment must not access the primary backend"),
+            list: Effect.succeed(
+              !localEnvironmentEnabled
+                ? []
+                : [
+                    {
+                      stop: () =>
+                        Deferred.succeed(firstStopStarted, undefined).pipe(
+                          Effect.andThen(Deferred.await(releaseStops)),
+                          Effect.andThen(stopDefect ? Effect.die("stop defect") : Effect.void),
+                        ),
+                    },
+                    {
+                      stop: () =>
+                        Deferred.succeed(secondStopStarted, undefined).pipe(
+                          Effect.andThen(Deferred.await(releaseStops)),
+                        ),
+                    },
+                  ],
+            ),
           } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]),
           Effect.provideService(DesktopServerExposure.DesktopServerExposure, {
-            configureFromSettings: () => Effect.succeed({ mode: "local-only" }),
+            configureFromSettings: () =>
+              localEnvironmentEnabled
+                ? Effect.succeed({ mode: "local-only" })
+                : Effect.die("disabled local environment must not configure a server"),
             backendConfig: Effect.succeed({ httpBaseUrl: new URL("http://127.0.0.1:3773") }),
           } as unknown as DesktopServerExposure.DesktopServerExposure["Service"]),
           Effect.provideService(DesktopWslBackend.DesktopWslBackend, {
             reconcile: Effect.void,
           } as DesktopWslBackend.DesktopWslBackend["Service"]),
           Effect.provideService(DesktopAppActivation.DesktopAppActivation, {
-            start: Effect.void,
+            start: Effect.acquireRelease(record("control"), () => record("control-closed")),
           } as unknown as DesktopAppActivation.DesktopAppActivation["Service"]),
           Effect.provideService(DesktopRendererHistory.DesktopRendererHistory, {
             shutdown: Deferred.succeed(historyStarted, undefined).pipe(
@@ -249,13 +273,16 @@ it.effect.each([false, true])(
       );
       yield* Deferred.await(registrationStarted);
       yield* Deferred.await(windowStarted);
-      assert.deepEqual(events, ["identity", "ready", "identity", "backend", "window"]);
+      yield* Deferred.await(bootstrapped);
+      const startupEvents = [...events];
+
       assert.isFalse(yield* Deferred.isDone(registrationStopped));
-      const shutdown = yield* DesktopShutdown.DesktopShutdown;
       yield* shutdown.request;
-      yield* Deferred.await(firstStopStarted);
-      yield* Deferred.await(secondStopStarted);
-      assert.isFalse(yield* Deferred.isDone(historyStarted));
+      if (localEnvironmentEnabled) {
+        yield* Deferred.await(firstStopStarted);
+        yield* Deferred.await(secondStopStarted);
+        assert.isFalse(yield* Deferred.isDone(historyStarted));
+      }
       assert.isFalse(yield* shutdown.isComplete);
       yield* Deferred.succeed(releaseStops, undefined);
       yield* Deferred.await(historyStarted);
@@ -265,5 +292,13 @@ it.effect.each([false, true])(
       assert.equal(Exit.isFailure(result), stopDefect);
       assert.isTrue(yield* shutdown.isComplete);
       assert.isTrue(yield* Deferred.isDone(registrationStopped));
+      assert.deepEqual(
+        startupEvents,
+        localEnvironmentEnabled
+          ? ["identity", "ready", "identity", "backend", "window", "control"]
+          : ["identity", "ready", "identity", "window", "control"],
+      );
+
+      assert.equal(events.filter((event) => event === "control-closed").length, 1);
     }).pipe(Effect.provide(DesktopShutdown.layer)),
 );
