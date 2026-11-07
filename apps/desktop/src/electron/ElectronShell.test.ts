@@ -54,6 +54,18 @@ describe("ElectronShell", () => {
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
+  it.effect("opens mailto links in the system mail client", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const result = yield* electronShell.openExternal("mailto:someone@example.com");
+
+      assert.equal(result, true);
+      assert.deepEqual(openExternalMock.mock.calls, [["mailto:someone@example.com"]]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
   it.effect("does not open editor URLs that mix up link shapes", () =>
     Effect.gen(function* () {
       openExternalMock.mockResolvedValue(undefined);
