@@ -4038,9 +4038,62 @@ describe("AcpAdapterV2", () => {
       );
       const runtimeInputs: AcpAdapterV2RuntimeInput[] = [];
       let runtimeOrdinalSeen = 0;
+      const handlers: Array<
+        Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]>[0]
+      > = [];
+      const routing = makeCopilotSubagentRouting();
+      const runtimes: Array<AcpSessionRuntime.AcpSessionRuntime["Service"]> = [];
+      const rawHandlers: Array<(event: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>> =
+        [];
       const baseMakeRuntime = makeMockRuntime({
         childProcessSpawner,
         mockAgentPath,
+        wrapRuntime: (runtime) => {
+          const wrapped: AcpSessionRuntime.AcpSessionRuntime["Service"] = {
+            ...runtime,
+            handleSessionUpdate: (handler) =>
+              Effect.sync(() => {
+                handlers.push(handler);
+              }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+            handleExtNotification: (method, schema, handler) =>
+              Effect.sync(() => {
+                if (method === "github.com/copilot/sessionEvent")
+                  rawHandlers.push(handler as (typeof rawHandlers)[number]);
+              }).pipe(Effect.andThen(runtime.handleExtNotification(method, schema, handler))),
+            prompt: () =>
+              Effect.gen(function* () {
+                if (runtimeOrdinalSeen === 1) {
+                  yield* handlers[0]!({
+                    sessionId: "mock-session-1",
+                    update: {
+                      sessionUpdate: "tool_call",
+                      toolCallId: "task-bg",
+                      title: "Background task",
+                      kind: "other",
+                      status: "pending",
+                      rawInput: {
+                        description: "Background task",
+                        prompt: "Do work",
+                        agent_type: "explore",
+                        mode: "background",
+                      },
+                    },
+                  });
+                  yield* handlers[0]!({
+                    sessionId: "mock-session-1",
+                    update: {
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "task-bg",
+                      status: "completed",
+                    },
+                  });
+                }
+                return { stopReason: "end_turn" as const };
+              }),
+          };
+          runtimes.push(wrapped);
+          return wrapped;
+        },
         environment: (runtimeOrdinal) => {
           runtimeOrdinalSeen = runtimeOrdinal;
           return {};
@@ -4052,6 +4105,10 @@ describe("AcpAdapterV2", () => {
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
+          registerExtensions: routing.registerExtensions,
+          normalizeSessionUpdate: routing.normalizeSessionUpdate,
+          extractSubagentUpdate: extractCopilotSubagentUpdate,
+          subagentsOwnedByRuntime: true,
           makeRuntime: (runtimeInput) =>
             Effect.sync(() => {
               runtimeInputs.push(runtimeInput);
@@ -4077,6 +4134,34 @@ describe("AcpAdapterV2", () => {
         modelSelection,
         runtimePolicy,
       });
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const initialEvents: ProviderAdapter.ProviderAdapterV2Event[] = [];
+      while (true) {
+        const event = yield* Queue.take(events);
+        initialEvents.push(event);
+        if (event.type === "turn.terminal") break;
+      }
+      assert.isTrue(
+        initialEvents.some(
+          (event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.nativeTaskRef?.nativeId === "task-bg" &&
+            event.subagent.status === "running",
+        ),
+      );
       assert.equal(runtimeOrdinalSeen, 1);
       yield* runtimeInputs[0]!.onTermination!(
         new EffectAcpErrors.AcpTransportError({
@@ -4094,10 +4179,47 @@ describe("AcpAdapterV2", () => {
           now: yield* DateTime.now,
         }),
       );
-      yield* runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
+      const observed: ProviderAdapter.ProviderAdapterV2Event[] = [];
+      while (true) {
+        const event = yield* Queue.take(events);
+        observed.push(event);
+        if (event.type === "turn.terminal") break;
+      }
+      const statuses = observed.flatMap((event) =>
+        event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === "task-bg"
+          ? [event.subagent.status]
+          : [],
       );
+      assert.deepEqual(statuses, ["interrupted"]);
+      yield* handlers[0]!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "task-bg",
+          status: "completed",
+        },
+      });
+      assert.isTrue(Option.isNone(yield* Queue.poll(events)));
+      yield* rawHandlers[0]!({
+        sessionId: "mock-session-1",
+        type: "subagent.started",
+        agentId: "stale-agent",
+        data: { toolCallId: "task-bg" },
+      });
+      const update = {
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call" as const,
+          toolCallId: "new-tool",
+          title: "New",
+          _meta: { "github.com/copilot": { agentId: "stale-agent" } },
+        },
+      };
+      assert.equal(
+        routing.normalizeSessionUpdate(update, runtimes[1]!).sessionId,
+        "mock-session-1",
+      );
+
       assert.equal(runtimeOrdinalSeen, 2);
       assert.lengthOf(runtimeInputs, 2);
     }).pipe(Effect.provide(layerTest), Effect.scoped),

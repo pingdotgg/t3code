@@ -335,6 +335,7 @@ export interface AcpAdapterV2Flavor {
   readonly mcpOverHttp?: boolean;
   readonly normalizeSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
   ) => EffectAcpSchema.SessionNotification;
   /**
    * Agent updates that belong to no turn (Kiro's own cloud-config fetch). They
@@ -483,6 +484,7 @@ export interface AcpAdapterV2Flavor {
   readonly extractSubagentSessionEvent?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => AcpSubagentSessionEvent | undefined;
+  readonly subagentsOwnedByRuntime?: boolean;
   readonly extractSubagentUpdate?: (
     toolCall: AcpToolCallState,
   ) => AcpAdapterV2SubagentUpdate | undefined;
@@ -6288,7 +6290,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const projectAcpRuntimeSessionUpdateEffect =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(
-            function* (rawNotification: EffectAcpSchema.SessionNotification) {
+            function* (
+              rawNotification: EffectAcpSchema.SessionNotification,
+              sourceRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+            ) {
               if (flavor.ignoreSessionUpdate?.(rawNotification) === true) return;
               yield* notePromptProgress(rawNotification);
               const nativePromptId = flavor.forkFromTurn?.nativeTurnId(rawNotification);
@@ -6336,7 +6341,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 );
               }
               yield* handleSessionUpdate(
-                flavor.normalizeSessionUpdate?.(notification) ?? notification,
+                flavor.normalizeSessionUpdate?.(notification, sourceRuntime) ?? notification,
               );
             },
             Effect.mapError(
@@ -6350,10 +6355,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const projectAcpRuntimeSessionUpdate = (
           handlerGeneration: number,
           rawNotification: EffectAcpSchema.SessionNotification,
+          sourceRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"],
         ) =>
           runRuntimeCallbackAtGeneration(
             handlerGeneration,
-            projectAcpRuntimeSessionUpdateEffect(rawNotification),
+            projectAcpRuntimeSessionUpdateEffect(rawNotification, sourceRuntime),
           ).pipe(Effect.asVoid);
 
         // Post-settle background work retains the latest turn policy.
@@ -6486,7 +6492,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           if (handlerOptions.sessionUpdates !== false) {
             yield* targetRuntime.handleSessionUpdate((rawNotification) =>
-              projectAcpRuntimeSessionUpdate(handlerGeneration, rawNotification),
+              projectAcpRuntimeSessionUpdate(handlerGeneration, rawNotification, targetRuntime),
             );
           }
           yield* targetRuntime.handleRequestPermission((nativeParams, requestContext) =>
@@ -7044,13 +7050,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     const buffered = stagedSessionUpdates.splice(0, stagedSessionUpdates.length);
                     if (buffered.length === 0) {
                       handleCandidateSessionUpdate = (notification) =>
-                        projectAcpRuntimeSessionUpdate(replacementGeneration, notification);
+                        projectAcpRuntimeSessionUpdate(
+                          replacementGeneration,
+                          notification,
+                          replacementExit.value.replacementRuntime,
+                        );
                       break;
                     }
                     yield* Effect.forEach(
                       buffered,
                       (notification) =>
-                        projectAcpRuntimeSessionUpdateEffect(notification).pipe(
+                        projectAcpRuntimeSessionUpdateEffect(
+                          notification,
+                          replacementExit.value.replacementRuntime,
+                        ).pipe(
                           Effect.catchCause((cause) =>
                             Effect.logError("failed to replay staged ACP session update", {
                               driver,
@@ -8043,6 +8056,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           const restartRequired = yield* Ref.get(runtimeRestartRequired);
           if (!restartRequired) return false;
+          yield* runtimeCallbackPermit.withPermit(advanceRuntimeCallbackGeneration);
+          if (flavor.subagentsOwnedByRuntime === true) {
+            const carryover = yield* Ref.getAndSet(carryoverSubagents, null);
+            yield* terminalizeCarryoverSubagents(carryover);
+          }
           yield* restartAcpRuntime(threadId);
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
