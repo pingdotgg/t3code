@@ -7,18 +7,22 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { describePullRequestDiffError } from "./pullRequestDiffError";
+import { useRetryButtonBusy } from "./useRetryButtonBusy";
 
 export function PullRequestDiffUnavailableState({
   error,
   provider,
   url,
   onRetry,
+  refreshing = false,
 }: {
   error: string;
   provider: SourceControlProviderKind;
   url: string;
   onRetry: () => void;
+  refreshing?: boolean;
 }) {
+  const retry = useRetryButtonBusy(refreshing);
   const { providerName, terminology } = getSourceControlPresentationForKind(provider);
   const { title, description } = describePullRequestDiffError(
     error,
@@ -36,9 +40,18 @@ export function PullRequestDiffUnavailableState({
         <EmptyDescription>{description}</EmptyDescription>
       </EmptyHeader>
       <div className="flex flex-wrap justify-center gap-2">
-        <Button size="sm" variant="default" onClick={onRetry}>
-          <RefreshIcon />
-          Try again
+        <Button
+          size="sm"
+          variant="default"
+          onClick={() => {
+            if (!retry.start()) return;
+            onRetry();
+          }}
+          disabled={retry.busy}
+          aria-busy={retry.busy}
+        >
+          <RefreshIcon refreshing={retry.busy} />
+          {retry.busy ? "Trying…" : "Try again"}
         </Button>
         <Button
           size="sm"

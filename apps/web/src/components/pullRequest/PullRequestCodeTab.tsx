@@ -1435,19 +1435,22 @@ function PullRequestCodeTab({
   );
 
   const term = sourceControlClients.get(detail.provider).changeRequest.singular;
-  if (diffQuery.isPending && loadedSlices.length === 0) {
-    return withToolbar(<DiffPanelLoadingState label={`Loading ${term} diff...`} />);
-  }
-
+  // Keep a settled failure on screen while retry is in flight; a paused rate limit
+  // fails again immediately and must not flash the loading skeleton.
   if (diffQuery.error && loadedSlices.length === 0) {
     return withToolbar(
       <PullRequestDiffUnavailableState
         error={diffQuery.error}
         provider={detail.provider}
         url={detail.url}
+        refreshing={diffQuery.isPending}
         onRetry={() => diffQuery.refresh()}
       />,
     );
+  }
+
+  if (diffQuery.isPending && loadedSlices.length === 0) {
+    return withToolbar(<DiffPanelLoadingState label={`Loading ${term} diff...`} />);
   }
 
   if (rawSlicesView !== null) {

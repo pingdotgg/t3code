@@ -1011,7 +1011,8 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   };
   const title = commit ? "Commit changes" : "Changes";
   const seekingFile = !targetFile && result.nextCursor !== null;
-  const loadingDiff = (result.isPending && !data.rows.length) || (seekingFile && !result.error);
+  const loadingDiff =
+    (result.isPending && !data.rows.length && !result.error) || (seekingFile && !result.error);
   return (
     <View className="flex-1 android:bg-header ios:bg-screen">
       <AppBar

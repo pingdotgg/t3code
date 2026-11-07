@@ -555,7 +555,7 @@ export function PullRequestsPage() {
   const listData = answered ?? carried;
   const showingCarried = answered === null && carried !== null;
   const loadingMore = listQuery.isPending && listData !== null;
-  const firstLoad = listQuery.isPending && listData === null;
+  const firstLoad = listQuery.isPending && listData === null && listQuery.error === null;
 
   if (
     answered !== null &&
