@@ -75,7 +75,8 @@ instead.
 
 A step that waits on checks, reviews or a merge watches its pull request and ends its turn; the run
 then shows **Waiting on pull request** instead of **No handoff**. The watch ends when the step
-hands off or stops being the run's current step, and when the pull request merges.
+hands off or stops being the run's current step, and when the pull request merges; the merge wakes the
+step, so a repository that merges through a queue needs no one to confirm it.
 
 If a step's turn fails or you stop it, the run pauses and the step shows **Failed** or **Stopped**.
 Fix the cause and ask the agent to go on in the step's thread; when it hands off, the run continues
