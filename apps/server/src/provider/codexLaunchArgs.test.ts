@@ -2,7 +2,11 @@ import * as NodeAssert from "node:assert/strict";
 
 import { describe, it } from "vite-plus/test";
 
-import { codexAppServerArgs, codexExecLaunchArgs } from "./codexLaunchArgs.ts";
+import {
+  codexAppServerArgs,
+  codexExecLaunchArgs,
+  codexMcpListLaunchArgs,
+} from "./codexLaunchArgs.ts";
 
 describe("codexAppServerArgs", () => {
   it("preserves escaped TOML quotes in config values", () => {
@@ -25,5 +29,28 @@ describe("codexExecLaunchArgs", () => {
     NodeAssert.deepStrictEqual(codexExecLaunchArgs("--config --strict-config --enable --disable"), [
       "--strict-config",
     ]);
+  });
+});
+
+describe("codex exec and mcp list launch args", () => {
+  const launchArgs =
+    "--strict-config --oss --local-provider ollama --profile local -p=work --listen off --enable foo";
+
+  it("keeps the local model provider flags for codex exec", () => {
+    NodeAssert.deepStrictEqual(codexExecLaunchArgs(launchArgs), [
+      "--strict-config",
+      "--oss",
+      "--local-provider",
+      "ollama",
+      "--profile",
+      "local",
+      "-p=work",
+      "--enable",
+      "foo",
+    ]);
+  });
+
+  it("drops exec-only flags for codex mcp list", () => {
+    NodeAssert.deepStrictEqual(codexMcpListLaunchArgs(launchArgs), ["--enable", "foo"]);
   });
 });
