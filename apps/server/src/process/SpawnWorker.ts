@@ -388,9 +388,12 @@ class SpawnWorker {
         continue;
       }
       // The worker owned the only handle, so end the whole tree before reporting the exit.
-      if (child.pid !== undefined) this.pool.killTree(child.pid);
-      child.exit(null, "SIGKILL");
-      child.abandon();
+      const finish = () => {
+        child.exit(null, "SIGKILL");
+        child.abandon();
+      };
+      if (child.pid === undefined) finish();
+      else this.pool.killTree(child.pid, finish);
     }
     this.children.clear();
   }
@@ -429,17 +432,31 @@ class SpawnWorkerPool {
     return worker.spawn(++this.#nextId, command, args, options);
   };
 
-  killTree(pid: number): void {
-    if (this.platform === "win32") {
-      this.spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
-        stdio: "ignore",
-        windowsHide: true,
-      }).on("error", () => {});
+  killTree(pid: number, done: () => void): void {
+    const killPid = () => {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
+    };
+    if (this.platform !== "win32") {
+      killPid();
+      done();
       return;
     }
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
+    let settled = false;
+    const finish = (killed: boolean) => {
+      if (settled) return;
+      settled = true;
+      // taskkill could not end the tree, so at least end the direct child.
+      if (!killed) killPid();
+      done();
+    };
+    this.spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    })
+      .on("error", () => finish(false))
+      .on("exit", (code) => finish(code === 0));
   }
 
   #add(): SpawnWorker {
