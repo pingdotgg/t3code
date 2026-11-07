@@ -15,6 +15,8 @@ import {
   type ComposerPromptEditorHandle,
 } from "./ComposerPromptEditorTiptap";
 
+import { AssistantCitationMarkers } from "./chat/AssistantCitationMarkers";
+
 const citation = {
   version: 1 as const,
   environmentId: EnvironmentId.make("environment"),
@@ -35,11 +37,12 @@ function Composer({
   question: boolean;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }) {
+  const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
   const [prompt, setPrompt] = useState(promptBefore);
   const [answer, setAnswer] = useState("");
   return (
     <>
-      <div data-assistant-citation-viewport="">
+      <div ref={setViewport} className="relative" data-assistant-citation-viewport="">
         <p
           data-assistant-citation-source={citation.messageId}
           data-assistant-citation-environment={citation.environmentId}
@@ -47,6 +50,11 @@ function Composer({
         >
           hello world
         </p>
+        <AssistantCitationMarkers
+          viewport={viewport}
+          prompt={question ? answer : prompt}
+          onOpen={(index, anchor) => editorRef.current?.openCitation(index, anchor)}
+        />
       </div>
       <output data-prompt={prompt} data-answer={answer} />
       <ComposerPromptEditor
@@ -96,4 +104,12 @@ it("keeps an unsaved citation comment when a question takes the composer", async
     `See ${serializeAssistantCitation(withAssistantCitationComment(citation, "check this"))} `,
   );
   await expect.element(page.getByLabelText("Edit citation comment")).toBeInTheDocument();
+});
+
+it("opens the existing comment at its source from a draft marker", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  await using screen = await render(<Composer question={false} editorRef={editorRef} />);
+  await userEvent.click(screen.getByRole("button", { name: "Edit citation 1 comment" }));
+  await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
+  expect(screen.container.querySelector("output")?.dataset.prompt).toBe(promptBefore);
 });

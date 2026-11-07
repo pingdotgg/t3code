@@ -579,6 +579,10 @@ export default function ChatView(props: ChatViewProps) {
       : null;
   })() as AssistantCitationRequest | null;
   const citationHistory = useCitedHistory(citationRequest);
+  const openDraftCitation = useStableCallback(
+    (index: number, anchor: AssistantCitationSourceAnchor) =>
+      composerRef.current?.openCitation(index, anchor),
+  );
   const { resolvedTheme } = useTheme();
   const composerRuntimeMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.runtimeMode ?? null,
@@ -3440,6 +3444,8 @@ export default function ChatView(props: ChatViewProps) {
                   citationRequest={citationRequest}
                   citationHistory={citationHistory}
                   onCiteAssistantText={citeAssistantTextStable}
+                  citationDraftTarget={composerDraftTarget}
+                  onOpenDraftCitation={openDraftCitation}
                   {...(activeProject
                     ? { onRunShellCommand: parentPanel?.runShellCommand ?? runShellCommandStable }
                     : {})}

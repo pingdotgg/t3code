@@ -135,6 +135,7 @@ export interface ComposerPromptEditorHandle {
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
   readSelectionRange: () => { start: number; end: number };
+  openCitation: (index: number, sourceAnchor: AssistantCitationSourceAnchor) => void;
   requestCitationComment: (request: ComposerCitationCommentRequest) => void;
   readSnapshot: () => {
     value: string;
@@ -1638,6 +1639,14 @@ function ComposerPromptEditorTiptapInner(
       readSelectionRange: () => {
         readSnapshot();
         return selectionRangeRef.current;
+      },
+      openCitation: (index, sourceAnchor) => {
+        if (!editor) return;
+        const node = findChildren(
+          editor.state.doc,
+          (node) => node.type.name === "composer-citation",
+        )[index]?.node;
+        if (node) setOpenCitation({ key: node.attrs.citeKey, sourceAnchor });
       },
       requestCitationComment: (request) => {
         citationRequestRef.current = request;
