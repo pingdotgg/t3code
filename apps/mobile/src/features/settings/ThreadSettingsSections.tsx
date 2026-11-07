@@ -115,26 +115,28 @@ export function AutoSettleSettingsRows(props: {
 
   return (
     <View className="gap-6">
-      {!projectSelected ? (
-        <SettingsSection title="Usage limits">
-          <SettingsSwitchRow
-            icon="clock"
-            label="Resume after usage limits"
-            subtitle="Automatically resume threads when their usage limits reset. You can cancel auto-resume in each thread."
-            value={uniformMobileSetting(displayTargets, "autoResumeLimitedThreads")}
-            disabled={disabledFor("autoResumeLimitedThreads")}
-            onValueChange={(value) => writeToAll({ autoResumeLimitedThreads: value })}
-          />
-          <SettingsSwitchRow
-            icon="clock"
-            label="Snooze until limits reset"
-            subtitle="Snooze threads until their usage limits reset. Enable auto-resume to continue the agent after the reset."
-            value={uniformMobileSetting(displayTargets, "snoozeLimitedThreads")}
-            disabled={disabledFor("snoozeLimitedThreads")}
-            onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
-          />
-        </SettingsSection>
-      ) : null}
+      <SettingsSection title="Usage limits">
+        <SettingsSwitchRow
+          icon="clock"
+          label="Resume after usage limits"
+          subtitle="Automatically resume threads when their usage limits reset. You can cancel auto-resume in each thread."
+          value={uniformMobileSetting(displayTargets, "autoResumeLimitedThreads")}
+          disabled={disabledFor("autoResumeLimitedThreads")}
+          onValueChange={(value) => writeToAll({ autoResumeLimitedThreads: value })}
+        />
+        <SettingsSwitchRow
+          icon="clock"
+          label="Snooze until limits reset"
+          subtitle={
+            projectSelected
+              ? "Environment-wide setting. Select All projects to change it."
+              : "Snooze threads until their usage limits reset. Enable auto-resume to continue the agent after the reset."
+          }
+          value={uniformMobileSetting(displayTargets, "snoozeLimitedThreads")}
+          disabled={disabledFor("snoozeLimitedThreads") || projectSelected}
+          onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
+        />
+      </SettingsSection>
       <SettingsSection title="Auto-settle">
         <SettingsSwitchRow
           icon="arrow.triangle.branch"
