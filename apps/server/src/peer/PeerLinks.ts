@@ -16,6 +16,7 @@ import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -43,6 +44,7 @@ const PeerHttpApi = HttpApi.make(EnvironmentHttpApi.identifier)
 
 /** The redirect registered for a link. Nothing ever listens there: the code comes back in the response. */
 const LINK_REDIRECT_URI = "http://127.0.0.1/t3code-peer-link";
+const STATUS_FALLBACK_DELAY = Duration.millis(100);
 /**
  * How long a peer's descriptor may take before a route counts as unreachable.
  * A tailnet or relayed route to a machine that is waking up takes longer.
@@ -175,6 +177,14 @@ const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  // Prefer a recently working fallback, without caching its identity or credentials.
+  // Retry the configured order after a minute so a recovered direct route wins again.
+  let preferredRoutes:
+    | Map<
+        EnvironmentId,
+        { readonly url: string; readonly secretName: string; readonly until: number }
+      >
+    | undefined;
   const enabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
@@ -485,6 +495,7 @@ const make = Effect.gen(function* () {
     if (Option.isSome(previous) && previous.value.secret_name !== secretName) {
       yield* secrets.remove(previous.value.secret_name).pipe(Effect.ignore);
     }
+    preferredRoutes?.delete(peer.environmentId);
     return linked;
   });
 
@@ -504,31 +515,88 @@ const make = Effect.gen(function* () {
           WHERE environment_id = ${link.environmentId}
         `.pipe(Effect.ignoreCause({ log: true }), Effect.as({ ...link, label }));
 
-  const statusOf = Effect.fn("PeerLinks.statusOf")(function* (
-    link: PeerLink,
-    now: DateTime.Utc,
-  ): Effect.fn.Return<PeerLinkSummary> {
-    if (DateTime.isLessThanOrEqualTo(link.expiresAt, now)) return { ...link, status: "expired" };
-    let label = link.label;
-    const answered = yield* Effect.findFirst(link.urls, (url) =>
+  const findStatusRoute = Effect.fn("PeerLinks.findStatusRoute")(function* (
+    urls: ReadonlyArray<string>,
+    environmentId: EnvironmentId,
+  ) {
+    let label = "";
+    const answered = yield* Effect.findFirst(urls, (url) =>
       describe(url).pipe(
         Effect.map((found) => {
-          if (Option.isNone(found) || found.value.environmentId !== link.environmentId) {
-            return false;
-          }
+          if (Option.isNone(found) || found.value.environmentId !== environmentId) return false;
           label = found.value.label;
           return true;
         }),
       ),
     );
-    if (Option.isNone(answered)) return { ...link, status: "unreachable" };
-    return { ...(yield* withLabel(link, label)), status: "reachable" };
+    return Option.map(answered, (url) => ({ url, label }));
+  });
+
+  const statusOf = Effect.fn("PeerLinks.statusOf")((
+    link: PeerLink,
+    secretName: string,
+    now: DateTime.Utc,
+  ) => {
+    if (DateTime.isLessThanOrEqualTo(link.expiresAt, now)) {
+      return Effect.succeed<PeerLinkSummary>({ ...link, status: "expired" });
+    }
+    const preferred = link.urls.length > 1 ? preferredRoutes?.get(link.environmentId) : undefined;
+    const active =
+      preferred !== undefined &&
+      preferred.secretName === secretName &&
+      preferred.until > DateTime.toEpochMillis(now) &&
+      link.urls.includes(preferred.url)
+        ? preferred
+        : undefined;
+    const answering =
+      active === undefined
+        ? findStatusRoute(link.urls, link.environmentId)
+        : Effect.gen(function* () {
+            const failed = yield* Deferred.make<void>();
+            const check = (urls: ReadonlyArray<string>) =>
+              findStatusRoute(urls, link.environmentId).pipe(
+                Effect.filterOrFail(Option.isSome),
+                Effect.map((found) => found.value),
+              );
+            const preferredProbe = check([active.url]).pipe(
+              Effect.tapError(() => Deferred.succeed(failed, undefined)),
+            );
+            // Fast preferred routes still need one request. Slow ones must not
+            // add their entire timeout before the configured routes can start.
+            const otherProbes = Deferred.await(failed).pipe(
+              Effect.timeoutOrElse({
+                duration: STATUS_FALLBACK_DELAY,
+                orElse: () => Effect.void,
+              }),
+              Effect.andThen(check(link.urls.filter((url) => url !== active.url))),
+            );
+            return yield* Effect.race(preferredProbe, otherProbes).pipe(Effect.option);
+          });
+    return answering.pipe(
+      Effect.flatMap((answered) => {
+        if (
+          preferred !== undefined &&
+          Option.isSome(answered) &&
+          answered.value.url !== preferred.url &&
+          preferredRoutes?.get(link.environmentId) === preferred
+        ) {
+          preferredRoutes.delete(link.environmentId);
+        }
+        return Option.isSome(answered)
+          ? withLabel(link, answered.value.label).pipe(
+              Effect.map((updated): PeerLinkSummary => ({ ...updated, status: "reachable" })),
+            )
+          : Effect.succeed<PeerLinkSummary>({ ...link, status: "unreachable" });
+      }),
+    );
   });
 
   const list: PeerLinks["Service"]["list"] = Effect.gen(function* () {
-    const links = yield* Effect.forEach(yield* readRows, toLink);
+    const links = yield* Effect.forEach(yield* readRows, (row) =>
+      toLink(row).pipe(Effect.map((link) => ({ link, secretName: row.secret_name }))),
+    );
     const now = yield* DateTime.now;
-    return yield* Effect.forEach(links, (link) => statusOf(link, now), {
+    return yield* Effect.forEach(links, ({ link, secretName }) => statusOf(link, secretName, now), {
       concurrency: "unbounded",
     });
   });
@@ -552,6 +620,7 @@ const make = Effect.gen(function* () {
       for (const row of deleted) {
         yield* secrets.remove(row.secret_name).pipe(Effect.catch(failStorage));
       }
+      preferredRoutes?.delete(environmentId);
       return deleted.length > 0;
     },
   );
@@ -566,7 +635,8 @@ const make = Effect.gen(function* () {
         });
       }
       const link = yield* toLink(row.value);
-      if (DateTime.isLessThanOrEqualTo(link.expiresAt, yield* DateTime.now)) {
+      const now = yield* DateTime.now;
+      if (DateTime.isLessThanOrEqualTo(link.expiresAt, now)) {
         return yield* new PeerLinkError({
           reason: "expired",
           message: `The link to ${link.label} expired. Link it again with a new pairing code from ${link.label}.`,
@@ -581,9 +651,18 @@ const make = Effect.gen(function* () {
       }
       // The token goes only to an address that proves it is this peer, so a
       // reused LAN address or a moved hostname never receives it.
+      const preferred = link.urls.length > 1 ? preferredRoutes?.get(environmentId) : undefined;
+      const reuse =
+        preferred !== undefined &&
+        preferred.secretName === row.value.secret_name &&
+        preferred.until > DateTime.toEpochMillis(now) &&
+        link.urls.includes(preferred.url);
+      const urls = reuse
+        ? [preferred.url, ...link.urls.filter((candidate) => candidate !== preferred.url)]
+        : link.urls;
       let fenced = true;
       let label = link.label;
-      const url = yield* Effect.findFirst(link.urls, (candidate) =>
+      const url = yield* Effect.findFirst(urls, (candidate) =>
         describe(candidate).pipe(
           Effect.map((found) => {
             if (Option.isNone(found) || found.value.environmentId !== environmentId) return false;
@@ -605,6 +684,24 @@ const make = Effect.gen(function* () {
         return yield* new PeerLinkError({
           reason: "incompatible",
           message: `${link.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
+        });
+      }
+      if (url.value === link.urls[0]) {
+        preferredRoutes?.delete(environmentId);
+      } else if (!reuse || preferred.url !== url.value) {
+        const verifiedAt = yield* DateTime.now;
+        // Healthy primary routes need no preference state.
+        const routes = (preferredRoutes ??= new Map());
+        routes.delete(environmentId);
+        // Bound retained state even if links are changed outside this service.
+        if (routes.size >= 256) {
+          const oldest = routes.keys().next();
+          if (!oldest.done) routes.delete(oldest.value);
+        }
+        routes.set(environmentId, {
+          url: url.value,
+          secretName: row.value.secret_name,
+          until: DateTime.toEpochMillis(verifiedAt) + 60_000,
         });
       }
       return {
