@@ -1,4 +1,4 @@
-import type { DesktopPreviewColorScheme } from "@t3tools/contracts";
+import type { BrowserImportSource, DesktopPreviewColorScheme } from "@t3tools/contracts";
 import { Minus, MoreVertical, Plus as PlusIcon, RotateCcw } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
@@ -39,6 +39,16 @@ export interface PreviewMoreMenuActions {
   readonly toggleNativePictureInPicture?: () => void;
 }
 
+export interface PreviewMoreMenuCookieImport {
+  readonly sources: ReadonlyArray<BrowserImportSource> | null;
+  readonly importableSources: ReadonlyArray<BrowserImportSource>;
+  readonly denial?: string | undefined;
+  readonly canImport: boolean;
+  readonly environmentConnected: boolean;
+  readonly onLoadSources: () => void;
+  readonly onSelectSource: (source: BrowserImportSource) => void;
+}
+
 interface Props {
   enabled: boolean;
   actions: PreviewMoreMenuActions;
@@ -49,6 +59,7 @@ interface Props {
   nativePictureInPicture: boolean;
   profileName: string | undefined;
   move?: { readonly label: string; readonly onMove: () => void };
+  cookieImport?: PreviewMoreMenuCookieImport;
 }
 
 const MenuTriggerButton = () => (
@@ -76,11 +87,12 @@ export function PreviewMoreMenu({
   nativePictureInPicture,
   profileName,
   move,
+  cookieImport,
 }: Props) {
   const zoomLabel = `${Math.round(zoomFactor * 100)}%`;
   const disabled = !enabled;
   return (
-    <Menu>
+    <Menu onOpenChange={(open) => open && cookieImport?.onLoadSources()}>
       <MenuTriggerButton />
       <MenuPopup align="end" sideOffset={6}>
         <MenuItem onClick={actions.hardReload} disabled={disabled}>
@@ -167,6 +179,35 @@ export function PreviewMoreMenu({
             <MenuGroupLabel className="max-w-64">
               <span className="block truncate">Profile: {profileName}</span>
             </MenuGroupLabel>
+          ) : null}
+          {cookieImport ? (
+            <MenuSub>
+              <MenuSubTrigger>Import cookies from</MenuSubTrigger>
+              <MenuSubPopup>
+                {cookieImport.denial !== undefined ? (
+                  <MenuItem disabled>{cookieImport.denial}</MenuItem>
+                ) : cookieImport.sources === null ? (
+                  <MenuItem disabled>Looking for browsers…</MenuItem>
+                ) : cookieImport.importableSources.length === 0 ? (
+                  <MenuItem disabled>No supported browsers found</MenuItem>
+                ) : (
+                  <>
+                    {cookieImport.importableSources.map((source) => (
+                      <MenuItem
+                        key={source.id}
+                        disabled={!cookieImport.canImport}
+                        onClick={() => cookieImport.onSelectSource(source)}
+                      >
+                        {source.name}
+                      </MenuItem>
+                    ))}
+                    {!cookieImport.environmentConnected ? (
+                      <MenuItem disabled>Connect to an environment to import cookies</MenuItem>
+                    ) : null}
+                  </>
+                )}
+              </MenuSubPopup>
+            </MenuSub>
           ) : null}
           <MenuItem onClick={actions.clearCookies}>Clear cookies</MenuItem>
           <MenuItem onClick={actions.clearCache}>Clear cache</MenuItem>
