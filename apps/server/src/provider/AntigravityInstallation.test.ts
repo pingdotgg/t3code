@@ -577,56 +577,61 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       }),
   );
 
-  it.effect("re-signs the Intel Mac runtime ad hoc and records the signed sizes", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const signed: Array<ReadonlyArray<string>> = [];
-      const spawner = ChildProcessSpawner.make((command) =>
-        Effect.gen(function* () {
-          if (!ChildProcess.isStandardCommand(command))
-            return yield* Effect.die("Unexpected spawn.");
-          const args = command.args.map(String);
-          signed.push([String(command.command), ...args]);
-          // codesign rewrites the signature, which changes each file's size.
-          for (const file of args.slice(3)) {
-            yield* fs.writeFileString(file, "signature", { flag: "a" });
-          }
-          return ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(900_000_301),
-            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-            isRunning: Effect.succeed(false),
-            kill: () => Effect.void,
-            unref: Effect.succeed(Effect.void),
-            stdin: Sink.drain,
-            stdout: Stream.empty,
-            stderr: Stream.empty,
-            all: Stream.empty,
-            getInputFd: () => Sink.drain,
-            getOutputFd: () => Stream.empty,
-          });
-        }).pipe(Effect.orDie),
-      );
-      const { installation, validations } = yield* makeHarness({
-        platform: "darwin",
-        arch: "x64",
-        spawner,
-      });
-      yield* installation.start;
-      expect((yield* terminalState(installation)).phase).toBe("succeeded");
-      const validated = validations[0]?.executable;
-      expect(signed).toEqual([
-        [
-          "/usr/bin/codesign",
-          "--force",
-          "--sign",
-          "-",
-          validated?.executablePath,
-          validated?.harnessPath,
-        ],
-      ]);
-      const selected = yield* installation.resolve();
-      expect(yield* fs.readFileString(selected.executablePath)).toBe(`${serverContents}signature`);
-    }),
+  // A simulated Mac install needs POSIX execute bits, which Windows files lack.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "re-signs the Intel Mac runtime ad hoc and records the signed sizes",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const signed: Array<ReadonlyArray<string>> = [];
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (!ChildProcess.isStandardCommand(command))
+              return yield* Effect.die("Unexpected spawn.");
+            const args = command.args.map(String);
+            signed.push([String(command.command), ...args]);
+            // codesign rewrites the signature, which changes each file's size.
+            for (const file of args.slice(3)) {
+              yield* fs.writeFileString(file, "signature", { flag: "a" });
+            }
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(900_000_301),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+          }).pipe(Effect.orDie),
+        );
+        const { installation, validations } = yield* makeHarness({
+          platform: "darwin",
+          arch: "x64",
+          spawner,
+        });
+        yield* installation.start;
+        expect((yield* terminalState(installation)).phase).toBe("succeeded");
+        const validated = validations[0]?.executable;
+        expect(signed).toEqual([
+          [
+            "/usr/bin/codesign",
+            "--force",
+            "--sign",
+            "-",
+            validated?.executablePath,
+            validated?.harnessPath,
+          ],
+        ]);
+        const selected = yield* installation.resolve();
+        expect(yield* fs.readFileString(selected.executablePath)).toBe(
+          `${serverContents}signature`,
+        );
+      }),
   );
 
   // The mocked Linux PATH walk needs POSIX paths; Windows temp paths contain colons.
