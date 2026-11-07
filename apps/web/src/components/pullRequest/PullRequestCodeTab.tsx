@@ -242,6 +242,7 @@ function reviewThreadsByPath(threads: ReadonlyArray<PullRequestReviewThread>) {
   if (byPath === undefined) {
     const grouped = new Map<string, PullRequestReviewThread[]>();
     for (const thread of threads) {
+      if (thread.path === null) continue;
       const list = grouped.get(thread.path);
       if (list) list.push(thread);
       else grouped.set(thread.path, [thread]);
@@ -1462,7 +1463,11 @@ function PullRequestCodeTab({
     );
   }
 
-  const orphanThreads = detail.reviewThreads.filter((thread) => !placedThreadIds.has(thread.id));
+  // Threads on the change request as a whole belong to Summary and Timeline, not to a file.
+  const orphanThreads = detail.reviewThreads.filter(
+    (thread): thread is PullRequestReviewThread & { path: string } =>
+      thread.path !== null && !placedThreadIds.has(thread.id),
+  );
   const orphanFiles = new Map<string, PullRequestReviewThread[]>();
   for (const thread of orphanThreads) {
     const existing = orphanFiles.get(thread.path);

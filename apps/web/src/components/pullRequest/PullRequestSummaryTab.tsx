@@ -91,6 +91,7 @@ import {
   pullRequestCompletionScope,
 } from "./PullRequestMarkdownTextarea";
 import { PullRequestReactionBar } from "./PullRequestReactions";
+import { PullRequestResolveThreadButton } from "./PullRequestResolveThreadButton";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
 
@@ -254,6 +255,7 @@ function CollapsedComment({
   label,
   body,
   reactionBar,
+  resolveButton,
   detail,
   thread,
   replyCount = 0,
@@ -266,6 +268,7 @@ function CollapsedComment({
   label: string;
   body: string | null;
   reactionBar: ReactNode;
+  resolveButton: ReactNode;
   detail: PullRequestDetailView;
   thread: PullRequestReviewThread | undefined;
   replyCount?: number;
@@ -296,6 +299,8 @@ function CollapsedComment({
                 className={cn("size-3.5 transition-transform", open && "rotate-180")}
               />
             </CollapsibleTrigger>
+            {/* Collapsed, the status label already says "Resolved". */}
+            {open ? resolveButton : null}
             {onAddToChat ? <AddToChatButton onClick={onAddToChat} /> : null}
             {reactionBar}
           </div>
@@ -624,6 +629,17 @@ export function PullRequestSummaryTab({
     />
   );
 
+  const resolveButtonFor = (thread: PullRequestReviewThread | undefined) =>
+    thread === undefined ? null : (
+      <PullRequestResolveThreadButton
+        environmentId={environmentId}
+        reference={reference}
+        detail={detail}
+        thread={thread}
+        onRefresh={onRefresh}
+      />
+    );
+
   const renderCommentCard = (
     comment: PullRequestComment,
     thread: PullRequestReviewThread | undefined,
@@ -675,6 +691,7 @@ export function PullRequestSummaryTab({
               </span>
             </Button>
           ) : null}
+          {resolveButtonFor(thread)}
           {onAddToChat && chat !== null ? (
             <AddToChatButton onClick={() => onAddToChat(chat)} />
           ) : null}
@@ -719,6 +736,7 @@ export function PullRequestSummaryTab({
           moreReplies={moreReplies}
           onAddToChat={onAddToChat && chat !== null ? () => onAddToChat(chat) : undefined}
           reactionBar={reactionBarFor(comment)}
+          resolveButton={resolveButtonFor(thread)}
         />
       );
     }

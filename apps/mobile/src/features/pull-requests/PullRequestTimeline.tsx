@@ -234,18 +234,24 @@ export function pullRequestTimelineRows(
           </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Open ${thread.isResolved ? "resolved" : "unresolved"} discussion in ${thread.path}`}
+            accessibilityLabel={`Open ${thread.isResolved ? "resolved" : "unresolved"} discussion in ${thread.path ?? "the overview"}`}
             onPress={() =>
               navigation.navigate("PullRequestDiscussion", { ...params, discussionId: thread.id })
             }
             className="gap-2 rounded-2xl bg-grouped-card p-3 active:opacity-70"
           >
             <View className="flex-row items-center gap-2">
-              <SymbolView name="doc.text" size={14} tintColorClassName="accent-icon-muted" />
-              <Text className="flex-1 font-mono text-xs" numberOfLines={2}>
-                {thread.path}
-                {thread.line ? `:${thread.line}` : ""}
-              </Text>
+              {thread.path === null ? (
+                <Text className="flex-1 text-xs">Overview</Text>
+              ) : (
+                <>
+                  <SymbolView name="doc.text" size={14} tintColorClassName="accent-icon-muted" />
+                  <Text className="flex-1 font-mono text-xs" numberOfLines={2}>
+                    {thread.path}
+                    {thread.line ? `:${thread.line}` : ""}
+                  </Text>
+                </>
+              )}
               <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
             </View>
             <Text className="text-xs text-foreground-muted">

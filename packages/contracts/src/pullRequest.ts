@@ -175,7 +175,8 @@ export type PullRequestThreadComment = typeof PullRequestThreadComment.Type;
 
 export const PullRequestReviewThread = Schema.Struct({
   id: TrimmedNonEmptyString,
-  path: TrimmedNonEmptyString,
+  /** Null for a thread on the change request as a whole, such as a GitLab overview thread. */
+  path: Schema.NullOr(TrimmedNonEmptyString),
   line: Schema.NullOr(PositiveInt),
   side: PullRequestDiffSide,
   isResolved: Schema.Boolean,
