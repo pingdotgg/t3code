@@ -41,6 +41,7 @@ describe("buildThreadActionMenuItems", () => {
             "unpin",
             "unsettle",
             "unsnooze",
+            "snooze",
             "rename",
             "regenerate-title",
             "auto-settle",
@@ -64,6 +65,21 @@ describe("buildThreadActionMenuItems", () => {
       ).toBe(true);
     },
   );
+
+  it("keeps Snooze presets available while a thread is snoozed", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      isSnoozed: true,
+    });
+    expect(items.map((item) => item.id)).toEqual(expect.arrayContaining(["unsnooze", "snooze"]));
+    expect(items.find((item) => item.id === "snooze")).toMatchObject({
+      disabled: false,
+      children: [
+        { id: "snooze:hour", label: "In 1 hour (3:00 PM)" },
+        { id: "snooze:custom", label: "Custom…" },
+      ],
+    });
+  });
 
   it("disables archive and turning into a project while the thread is running", () => {
     const items = buildThreadActionMenuItems({

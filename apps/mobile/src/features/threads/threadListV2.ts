@@ -544,7 +544,6 @@ export function buildThreadListV2ListItems(input: {
         : undefined;
     // Put the clock on items so recycler equality limits ticks to rows displaying snooze preset times.
     const snoozePresetMinute =
-      !item.snoozed &&
       input.snoozeLabelNow !== undefined &&
       (input.snoozeEnvironmentIds?.has(item.thread.environmentId) ?? true) &&
       canSnooze(item.thread, { now: input.snoozeLabelNow })

@@ -38,9 +38,9 @@ import {
   getThreadListV2OrderedSection,
   layoutThreadListV2RowMenuActions,
   resolveThreadListV2SnoozeMenuSelection,
-  resolveThreadListV2SwipeActions,
   resolveThreadListV2SnoozePresets,
   resolveThreadListV2Status,
+  resolveThreadListV2SwipeActions,
   resolveThreadListV2WokeAt,
   sortThreadsForListV2,
   threadListV2ListItemsAreEqual,
@@ -212,6 +212,18 @@ describe("resolveThreadListV2Status", () => {
 });
 
 describe("resolveThreadListV2SwipeActions", () => {
+  it("keeps snoozed-row reschedule in the context menu, not as a swipe secondary", () => {
+    expect(
+      resolveThreadListV2SwipeActions({
+        variant: "card",
+        settlementSupported: true,
+        snoozeSupported: true,
+        snoozable: true,
+        snoozed: true,
+      }),
+    ).toEqual({ primary: "unsnooze", secondary: null });
+  });
+
   it("offers snooze for a presented input request and moves it onto the snoozed shelf", () => {
     const raw = makeRawThreadShell({
       pendingRuntimeRequest: {
@@ -1412,6 +1424,7 @@ describe("threadListV2ListItemsAreEqual", () => {
     };
     expect(rows(earlier).snoozeWakeLabelText).toBe("2h");
     expect(rows(later).snoozeWakeLabelText).toBe("1h");
+    expect(rows(later).snoozePresetMinute).toBe(isoAt(BASE_MS + MINUTE_MS));
     expect(threadListV2ListItemsAreEqual(rows(earlier), rows(later))).toBe(false);
   });
 

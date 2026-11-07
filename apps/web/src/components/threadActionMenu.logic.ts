@@ -145,25 +145,26 @@ export function buildThreadActionMenuItems(
       : []),
     ...(state.supports.snooze
       ? [
-          state.isSnoozed
-            ? { id: "unsnooze" as const, label: "Wake thread", icon: "clock" }
-            : {
-                id: "snooze" as const,
-                label: "Snooze",
-                icon: "clock",
-                disabled: !state.canSnoozeNow,
-                children: [
-                  ...state.snoozePresets.map((preset) => ({
-                    id: `snooze:${preset.id}` as const,
-                    label: `${preset.label} (${preset.whenLabel})`,
-                  })),
-                  {
-                    id: "snooze:custom" as const,
-                    label: "Custom…",
-                    separatorBefore: state.snoozePresets.length > 0,
-                  },
-                ],
+          ...(state.isSnoozed
+            ? [{ id: "unsnooze" as const, label: "Wake thread", icon: "clock" }]
+            : []),
+          {
+            id: "snooze" as const,
+            label: "Snooze",
+            icon: "clock",
+            disabled: !state.canSnoozeNow,
+            children: [
+              ...state.snoozePresets.map((preset) => ({
+                id: `snooze:${preset.id}` as const,
+                label: `${preset.label} (${preset.whenLabel})`,
+              })),
+              {
+                id: "snooze:custom" as const,
+                label: "Custom…",
+                separatorBefore: state.snoozePresets.length > 0,
               },
+            ],
+          },
         ]
       : []),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
