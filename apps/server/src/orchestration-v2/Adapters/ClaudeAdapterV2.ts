@@ -48,6 +48,7 @@ import {
   getSubagentMessages,
   type HookCallback,
   type McpServerStatus as ClaudeMcpServerStatus,
+  type ModelInfo,
   query,
   resolveSettings as resolveClaudeSettings,
   type Options as ClaudeQueryOptions,
@@ -3232,8 +3233,14 @@ function isClaudeBackgroundTasksChangedMessage(message: SDKMessage): boolean {
   return message.type === "system" && (message.subtype as string) === "background_tasks_changed";
 }
 
+// A wake can stream its root message before its init frame.
 function isClaudeTurnStartMessage(message: SDKMessage): boolean {
-  return message.type === "system" && message.subtype === "init";
+  return (
+    (message.type === "system" && message.subtype === "init") ||
+    (message.type === "stream_event" &&
+      message.event.type === "message_start" &&
+      message.parent_tool_use_id == null)
+  );
 }
 
 function isClaudeRootTurnFrame(message: SDKMessage): boolean {
@@ -4324,6 +4331,8 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
 }
 
 interface ActiveClaudeTurnContext {
+  readonly modelCatalog: ClaudeModelCatalog;
+  readonly reportedModels: ReadonlyArray<ModelInfo>;
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly autoCompactWindow: string;
@@ -4395,6 +4404,8 @@ interface ActiveClaudeTurnContext {
   nativeWakeStarted: boolean;
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
+  // Claude can run another model than requested, such as when an organization disallows it.
+  executedModel: { readonly model: string; readonly modelSubstituted: boolean } | undefined;
 }
 
 interface ActiveClaudeProviderRetry {
@@ -4437,6 +4448,8 @@ interface ClaudeLiveQueryContext {
   // The CLI may fall back from the requested mode on its first init frame.
   openedPermissionMode: PermissionMode;
   receivedInit: boolean;
+  // Init can arrive before the turn that opened this process attaches; that turn reports it.
+  initModelBeforeFirstTurn: string | undefined;
   // From system/init; feature-detects control requests such as MCP Apps.
   capabilities: ReadonlySet<string>;
   permissionMode: PermissionMode;
@@ -4496,6 +4509,13 @@ interface PendingClaudeSubagentLaunch {
   readonly model?: string;
   readonly effort?: string;
   readonly ownerToolUseId?: string;
+}
+
+function executedModelField(context: ActiveClaudeTurnContext): {
+  readonly model?: string;
+  readonly modelSubstituted?: boolean;
+} {
+  return context.executedModel ?? {};
 }
 
 function canonicalClaudeSubagentModel(catalog: ClaudeModelCatalog, model: string): string {
@@ -4851,6 +4871,8 @@ export interface ClaudeAdapterV2Options {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
+  /** Models this instance's Claude Code reported, with the model each alias resolves to. */
+  readonly reportedModels?: Ref.Ref<ReadonlyArray<ModelInfo>>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   readonly continuationRequests?: {
     readonly offer: (
@@ -5494,6 +5516,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               startedAt: context.startedAt,
               completedAt: null,
               tokenUsage,
+              ...executedModelField(context),
             },
           });
         });
@@ -6004,7 +6027,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           status: input.status,
           startedAt: input.context.startedAt,
           completedAt: input.completedAt,
+          ...executedModelField(input.context),
         });
+
+        const recordExecutedModel = (context: ActiveClaudeTurnContext, model: unknown) => {
+          const reported = typeof model === "string" ? model.trim() : "";
+          // "<synthetic>" identifies CLI notices, not a model.
+          if (reported.length > 0 && reported !== "<synthetic>") {
+            const discovered = context.reportedModels;
+            const executed = resolveClaudeModelSlug(context.modelCatalog, reported, discovered);
+            // An alias such as `opus` requests the model its canonical slug names.
+            const requested = resolveClaudeModelSlug(
+              context.modelCatalog,
+              context.input.modelSelection.model,
+              discovered,
+            );
+            context.executedModel = { model: executed, modelSubstituted: requested !== executed };
+          }
+        };
 
         const buildToolCallArtifacts = (input: {
           readonly context: ActiveClaudeTurnContext | null;
@@ -8591,7 +8631,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message.task_id,
             );
           }
-          // Open continuations only after root init, user, assistant, or result frames prove a wake began.
+          // Open continuations only after root init, message start, user, assistant, or result frames prove a wake began.
           // Background child frames can stream while the root is idle.
           const buffered = (yield* Ref.get(wakeBuffers)).get(wakeInput.nativeThreadId);
           const hasBufferedNotification =
@@ -8974,6 +9014,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return;
           }
+          if (
+            message.type === "system" &&
+            message.subtype === "init" &&
+            context === (yield* Ref.get(activeTurn))
+          ) {
+            recordExecutedModel(context, message.model);
+          }
           const focusedPlugin = claudeFocusRequestedPanePlugin(message);
           if (focusedPlugin !== null && context === (yield* Ref.get(activeTurn))) {
             yield* Effect.logWarning("orchestration-v2.claude-mod-pane-focus-unsupported", {
@@ -9002,6 +9049,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const event = message.event;
             const reasoning = context.reasoning;
             if (event.type === "message_start") {
+              recordExecutedModel(context, event.message.model);
               reasoning.messageId = event.message.id;
               reasoning.streamBlocks.clear();
               const usage: ClaudeMessageUsage | undefined = event.message.usage;
@@ -9110,6 +9158,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (message.message.model && message.message.model !== "<synthetic>") {
                 context.rootModels.add(message.message.model);
               }
+              recordExecutedModel(context, message.message.model);
               // Subagent uuids exist only in the sidechain transcript, so resume and fork cannot target them.
               context.nativeMessageCursor = message.uuid;
               context.latestAssistantRateLimit =
@@ -9290,7 +9339,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
                 threadId: context.input.threadId,
                 runId: context.input.runId,
-                nodeId: context.input.rootNodeId,
+                nodeId:
+                  message.subtype === "model_refusal_fallback" && message.scope === "local"
+                    ? null
+                    : context.input.rootNodeId,
                 providerThreadId: context.input.providerThread.id,
                 providerTurnId: context.providerTurnId,
                 nativeItemRef: {
@@ -10786,6 +10838,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
+          turnModelCatalog: ClaudeModelCatalog,
         ) {
           const queryPolicy = yield* queryPolicyForTurn(turnInput);
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
@@ -10800,7 +10853,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
           const compiledSelection = compileClaudeModelSelection(
             turnInput.modelSelection,
-            modelCatalog,
+            turnModelCatalog,
           );
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
@@ -10916,7 +10969,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
-            modelCatalog,
+            modelCatalog: turnModelCatalog,
             nativeThreadId,
             title: turnInput.appThread.title,
             resume: shouldResume,
@@ -11002,6 +11055,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             promptEchoMode: "unknown",
             openedPermissionMode: queryOptions.permissionMode,
             receivedInit: false,
+            initModelBeforeFirstTurn: undefined,
             capabilities: new Set(),
             permissionMode: queryOptions.permissionMode,
             stopping: false,
@@ -11042,6 +11096,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     context.openedPermissionMode =
                       message.permissionMode ?? context.openedPermissionMode;
                     context.receivedInit = true;
+                    if (context.lastTurn === null) context.initModelBeforeFirstTurn = message.model;
                     context.capabilities = new Set(message.capabilities ?? []);
                   }
                   if (
@@ -11108,7 +11163,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
-            modelCatalog = yield* loadModelCatalog;
+            const turnModelCatalog = yield* loadModelCatalog;
+            modelCatalog = turnModelCatalog;
             const startedAt = yield* DateTime.now;
             const nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
             const nativeTurnId = `turn:${turnInput.attemptId}`;
@@ -11167,7 +11223,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : yield* makeClaudeUserMessageWithAttachments({
                     text: applyClaudePromptEffortPrefix(
                       turnInput.message.text,
-                      compileClaudeModelSelection(turnInput.modelSelection, modelCatalog)
+                      compileClaudeModelSelection(turnInput.modelSelection, turnModelCatalog)
                         .promptEffort,
                     ),
                     attachments: turnInput.message.attachments,
@@ -11180,13 +11236,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                     Effect.provideService(Path.Path, path),
                   );
-            const querySession = yield* openQuery(turnInput, nativeThreadId);
+            const reportedModels = adapterOptions.reportedModels
+              ? yield* Ref.get(adapterOptions.reportedModels)
+              : [];
+            const querySession = yield* openQuery(turnInput, nativeThreadId, turnModelCatalog);
             const autoCompactWindow = yield* resolveAutoCompactWindow(
               querySession.settingsCwd,
               turnInput.modelSelection,
               querySession.launchArgSettings,
             );
             const context: ActiveClaudeTurnContext = {
+              // Continuations consume the existing query's output, including its model identity.
+              modelCatalog: isClaudeProviderContinuationTurn(turnInput)
+                ? (querySession.lastTurn?.modelCatalog ?? turnModelCatalog)
+                : turnModelCatalog,
+              reportedModels: isClaudeProviderContinuationTurn(turnInput)
+                ? (querySession.lastTurn?.reportedModels ?? reportedModels)
+                : reportedModels,
               input: turnInput,
               autoCompactWindow,
               queryPolicy: querySession.queryPolicy,
@@ -11234,8 +11300,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeWakeStarted: false,
               gatedFramesBeforeEcho: 0,
               heldRootFrames: [],
+              executedModel: undefined,
             };
             const attachTurn = Effect.gen(function* () {
+              if (querySession.lastTurn === null && querySession.initModelBeforeFirstTurn) {
+                recordExecutedModel(context, querySession.initModelBeforeFirstTurn);
+              }
               querySession.lastTurn = context;
               yield* Ref.set(activeTurn, context);
               if (
@@ -12353,7 +12423,10 @@ export type ClaudeAdapterV2DriverEnv =
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
-    hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "onUsageLimits" | "modelCatalog"> = {},
+    hooks: Pick<
+      ClaudeAdapterV2Options,
+      "scopedLimitNames" | "reportedModels" | "onUsageLimits" | "modelCatalog"
+    > = {},
   ) {
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;

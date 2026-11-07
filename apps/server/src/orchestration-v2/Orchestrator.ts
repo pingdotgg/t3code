@@ -8588,7 +8588,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const now = yield* DateTime.now;
     const updatedTask: OrchestrationV2Subagent = {
       ...task,
-      remoteChild,
+      remoteChild:
+        command.resultModel === undefined
+          ? remoteChild
+          : { ...remoteChild!, resultModel: command.resultModel },
       status: command.status,
       result: command.result,
       completedAt: now,
@@ -12803,7 +12806,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           messageRoles: ["assistant"],
           messageRunIds: [childRun.id],
           turnItemRunId: childRun.id,
-          turnItemTypes: ["assistant_message", "error"],
+          turnItemTypes: ["assistant_message", "error", "system_notice"],
         },
       );
       const childProjection = {
