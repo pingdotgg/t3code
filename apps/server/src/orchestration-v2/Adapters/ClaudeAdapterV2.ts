@@ -96,6 +96,7 @@ import {
   TrimmedNonEmptyString,
   defaultInstanceIdForDriver,
   isCompactionCommandMessage,
+  parseGoalCommand,
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
@@ -2383,8 +2384,11 @@ export function makeClaudeUserMessage(input: {
 }): SDKUserMessage {
   // Claude expands a skill only when `/name` starts the last text block.
   // Keep the whole request before that block; see ClaudeSkillDispatch.
+  // Keep /goal on the native command path instead of dispatching a skill in its objective.
   const dispatch =
-    input.skills === undefined ? undefined : planClaudeSkillDispatch(input.text, input.skills);
+    input.skills === undefined || parseGoalCommand(input) !== null
+      ? undefined
+      : planClaudeSkillDispatch(input.text, input.skills);
   return {
     type: "user",
     message: {
