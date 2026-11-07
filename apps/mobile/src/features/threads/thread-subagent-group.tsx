@@ -151,7 +151,10 @@ export function ThreadSubagentGroup(props: {
         >
           <View className="flex-row items-center">
             {agents.slice(0, 3).map((agent, index) => (
-              <View key={agent.item.id} style={{ marginLeft: index === 0 ? 0 : -7 }}>
+              <View
+                key={agent.item.id}
+                style={{ marginLeft: index === 0 ? 0 : -7, zIndex: 3 - index }}
+              >
                 <SubagentAvatar item={agent.item} config={configOf(agent.item)} />
               </View>
             ))}
