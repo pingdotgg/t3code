@@ -76,3 +76,16 @@ it("drops input strings outside the schema's literals, since rejected calls are 
     handoffSettings("t3_thread_launch", { workspaceStrategy: { type: "/home/me/secret" } }, {}),
   ).toEqual({ targetChosen: false, workspace: "root" });
 });
+
+it("records the binding the saved scheduled task resolved to, and none for failures", () => {
+  expect(handoffSettings("schedule_task", {}, { boundThreadId: null })).toEqual({
+    bindToCurrentThread: false,
+  });
+  expect(
+    handoffSettings(
+      "schedule_task",
+      { bindToCurrentThread: true },
+      { _tag: "OrchestratorMcpFailure", code: "invalid_request", message: "Different project." },
+    ),
+  ).toEqual({});
+});
