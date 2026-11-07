@@ -3625,7 +3625,15 @@ layer("GitHubPullRequestApi.layer", (it) => {
       mockedExecute.mockReturnValue(
         Effect.succeed(output(encodeJson({ errors: [refusedReviewer] }))),
       );
-      yield* Effect.flip(cli.getPullRequestDetail(input));
+      const callsBeforeRefusal = mockedExecute.mock.calls.length;
+      const failure = yield* Effect.flip(cli.getPullRequestDetail(input));
+      expect(failure).toMatchObject({
+        _tag: "GitHubApiResponseError",
+        status: 200,
+        githubErrors: [refusedReviewer.message],
+        githubErrorTypes: [refusedReviewer.type],
+      });
+      expect(mockedExecute).toHaveBeenCalledTimes(callsBeforeRefusal + 2);
     }),
   );
 
