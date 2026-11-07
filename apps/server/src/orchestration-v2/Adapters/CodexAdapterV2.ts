@@ -670,21 +670,24 @@ function compactStrings(values: ReadonlyArray<string | null | undefined>): Reado
   });
 }
 
-function webSearchPatterns(item: CodexWebSearchItem): ReadonlyArray<string> {
-  if (item.action === null || item.action === undefined) {
-    return compactStrings([item.query]);
-  }
-
-  switch (item.action.type) {
+function webSearchActionPatterns(action: CodexWebSearchItem["action"]): ReadonlyArray<string> {
+  switch (action?.type) {
     case "search":
-      return compactStrings([...(item.action.queries ?? []), item.action.query, item.query]);
+      return [...new Set(compactStrings([...(action.queries ?? []), action.query]))];
     case "openPage":
-      return compactStrings([item.action.url, item.query]);
+      return compactStrings([action.url]);
     case "findInPage":
-      return compactStrings([item.action.pattern, item.action.url, item.query]);
+      return compactStrings([action.pattern, action.url]);
     case "other":
-      return compactStrings([item.query]);
+    case undefined:
+      return [];
   }
+}
+
+function webSearchPatterns(item: CodexWebSearchItem): ReadonlyArray<string> {
+  const actionPatterns = webSearchActionPatterns(item.action);
+  // Codex derives `query` from the action, so it adds nothing when the action has values.
+  return actionPatterns.length > 0 ? actionPatterns : compactStrings([item.query]);
 }
 
 const decodeTurnApprovalPolicy = Schema.decodeUnknownEffect(
