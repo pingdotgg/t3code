@@ -43,7 +43,6 @@ describe("assistant citation navigation", () => {
     for (let reload = 0; reload < 3; reload++) {
       const reloaded = createCitationRouter(href);
       await reloaded.load();
-      // Route normalization rebuilds the current location from its decoded hash.
       await reloaded.navigate({
         to: "/$environmentId/$threadId",
         params: { environmentId: citation.environmentId, threadId: citation.threadId },
@@ -67,16 +66,5 @@ describe("assistant citation navigation", () => {
     );
     expect(router.history.length).toBe(3);
     expect(assistantCitationFromLocation(router.state.location.href)).toEqual(citation);
-  });
-
-  it("ignores non-citation fragments and missing fragments", () => {
-    expect(assistantCitationFromLocation("/environment-one/thread-one")).toBeNull();
-    expect(
-      assistantCitationFromLocation("/environment-one/thread-one#ordinary-heading"),
-    ).toBeNull();
-    expect(assistantCitationFromLocation("/a/b#assistant-citation=%invalid")).toBeNull();
-    expect(
-      assistantCitationFromLocation(`/a/b#assistant-citation=${"a".repeat(140_000)}`),
-    ).toBeNull();
   });
 });

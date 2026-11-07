@@ -18,17 +18,6 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-interface TraceRecordLike {
-  readonly name?: unknown;
-  readonly traceId?: unknown;
-  readonly spanId?: unknown;
-  readonly startTimeUnixNano?: unknown;
-  readonly endTimeUnixNano?: unknown;
-  readonly durationMs?: unknown;
-  readonly exit?: unknown;
-  readonly events?: unknown;
-}
-
 interface TraceEventLike {
   readonly name?: unknown;
   readonly timeUnixNano?: unknown;
@@ -73,7 +62,6 @@ const DEFAULT_SLOW_SPAN_THRESHOLD_MS = 1_000;
 const TOP_LIMIT = 10;
 const RECENT_LIMIT = 20;
 
-/** The trace file and its rotated backups, oldest first. */
 export function toRotatedTracePaths(
   traceFilePath: string,
   maxFiles: number,
@@ -86,7 +74,7 @@ export function toRotatedTracePaths(
   return [...backups, traceFilePath];
 }
 
-function isRecordObject(value: unknown): value is TraceRecordLike {
+function isRecordObject(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null;
 }
 
@@ -164,11 +152,6 @@ function isNotFoundError(error: PlatformError.PlatformError): boolean {
   return error.reason._tag === "NotFound";
 }
 
-/**
- * Adds `item` to `items`, which stays sorted by `order` and holds at most
- * `limit` entries. Same result as a stable sort and slice over every item, but
- * memory stays bounded however many items stream in.
- */
 function insertBounded<A>(
   items: A[],
   item: A,
@@ -201,10 +184,6 @@ const latestSeenFirst = (
   right: ServerTraceDiagnosticsLogEvent,
 ) => DateTime.toEpochMillis(right.seenAt) - DateTime.toEpochMillis(left.seenAt);
 
-/**
- * Folds trace NDJSON into diagnostics. Call `addLine` once per line as the
- * rotated files stream in, then `finish` for the result.
- */
 export function makeTraceDiagnosticsAggregator(
   slowSpanThresholdMs = DEFAULT_SLOW_SPAN_THRESHOLD_MS,
 ) {
@@ -263,8 +242,13 @@ export function makeTraceDiagnosticsAggregator(
       lastSpanAt === null || DateTime.isGreaterThan(endedAt, lastSpanAt) ? endedAt : lastSpanAt;
 
     const exitTag = readExitTag(parsed.exit);
-    const isFailure = exitTag === "Failure";
-    const isInterrupted = exitTag === "Interrupted";
+    const status = isRecordObject(parsed.status) ? parsed.status : {};
+    const attributes = isRecordObject(parsed.attributes) ? parsed.attributes : {};
+    const isFailure = exitTag === "Failure" || status.code === "2";
+    const isInterrupted =
+      exitTag === "Interrupted" ||
+      attributes["effect.fiber.interrupted"] === true ||
+      status.message === "Interrupted";
     if (isFailure) failureCount += 1;
     if (isInterrupted) interruptionCount += 1;
 
@@ -287,7 +271,10 @@ export function makeTraceDiagnosticsAggregator(
     insertBounded(slowestSpans, spanItem, TOP_LIMIT, slowestFirst);
 
     if (isFailure) {
-      const cause = readExitCause(parsed.exit);
+      const cause =
+        exitTag === "Failure"
+          ? readExitCause(parsed.exit)
+          : (toStringValue(status.message)?.trim() ?? "Failure");
       insertBounded(latestFailures, { ...spanItem, cause }, RECENT_LIMIT, latestEndedFirst);
 
       const failureKey = `${name}\0${cause}`;
@@ -386,10 +373,7 @@ export function makeTraceDiagnosticsAggregator(
   return { addLine, finish };
 }
 
-/**
- * Feeds each line of one trace file to `onLine`, streaming so only one chunk of
- * text is in memory at a time. Succeeds with false when the file does not exist.
- */
+/** Succeeds with false if the file is absent. */
 export function streamTraceFileLines(
   fileSystem: FileSystem.FileSystem,
   path: string,
@@ -415,7 +399,7 @@ export function streamTraceFileLines(
   );
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
 
@@ -440,7 +424,6 @@ export const make = Effect.gen(function* () {
             ),
             Effect.result,
           ),
-        // Every file feeds one aggregator, so read them one at a time, oldest first.
         { concurrency: 1 },
       );
       const foundFile = results.some((result) => Result.isSuccess(result) && result.success);
@@ -481,11 +464,9 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(TraceDiagnostics, make);
 
-export function readTraceDiagnostics(
+export const readTraceDiagnostics = Effect.fn("TraceDiagnostics.readTraceDiagnostics")(function* (
   options: TraceDiagnosticsOptions,
-): Effect.Effect<ServerTraceDiagnosticsResult, never, TraceDiagnostics> {
-  return Effect.gen(function* () {
-    const diagnostics = yield* TraceDiagnostics;
-    return yield* diagnostics.read(options);
-  });
-}
+): Effect.fn.Return<ServerTraceDiagnosticsResult, never, TraceDiagnostics> {
+  const diagnostics = yield* TraceDiagnostics;
+  return yield* diagnostics.read(options);
+});

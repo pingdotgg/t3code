@@ -1,32 +1,26 @@
-/**
- * Guide runs this tab is waiting on, so the reader can leave and hear when one is done, and where
- * the reader is in each guide.
- *
- * A run takes minutes and finishes on the server. `PullRequestGuideRunCoordinator` watches every
- * run listed here, wherever the reader is in the app, and says when it ends. Progress is shared so
- * a guide opened beside a new thread picks up at the same stop. Not persisted: a reload forgets
- * both, and the guide is still there when the reader comes back.
- */
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
 import { create } from "zustand";
+
+import type { PullRequestDetailTab } from "~/rightPanelStore";
 
 import { pullRequestReviewKey } from "../pullRequestReviewStore";
 
 export interface GuideRunWatch {
   readonly environmentId: EnvironmentId;
   readonly reference: PullRequestRef;
-  /** The pull request's title, for the notice. */
   readonly title: string | null;
-  /** The guide and failure on record when the wait began; a different one means the run ended. */
   readonly previousGuideAt: string | null;
   readonly previousFailedAt: string | null;
   readonly since: number;
+  /**
+   * Registered from a server answer that reports the run as Running. The guide atom still holds
+   * the previous answer then, and its outcome belongs to an earlier run.
+   */
+  readonly answeredRunning?: boolean;
 }
 
-/** Where a reader is in one guide, kept per guide head so any panel showing it agrees. */
 export interface GuideProgress {
   readonly position: number;
-  /** Stops the reader has moved on from, which the rail checks off. */
   readonly seen: ReadonlySet<number>;
 }
 
@@ -34,17 +28,13 @@ const NO_PROGRESS: GuideProgress = { position: 0, seen: new Set() };
 
 interface GuideRunStoreState {
   readonly watches: Readonly<Record<string, GuideRunWatch>>;
-  /** The guide on screen right now, which needs no notice when it lands. */
-  readonly shownKey: string | null;
-  /** A guide a notice asked to open; its panel switches to the Guide tab and clears this. */
-  readonly openRequestKey: string | null;
-  /** Reading progress by guide, keyed by `guideProgressKey`. */
+  /** The tab the pull requests page shows, for the pull request (run key) it was chosen on. */
+  readonly pageDetailTab: { readonly key: string; readonly tab: PullRequestDetailTab } | null;
   readonly progress: Readonly<Record<string, GuideProgress>>;
   readonly setProgress: (key: string, change: (current: GuideProgress) => GuideProgress) => void;
   readonly watch: (watch: GuideRunWatch) => void;
   readonly settle: (key: string) => void;
-  readonly setShown: (key: string | null) => void;
-  readonly requestOpen: (key: string | null) => void;
+  readonly showPageDetailTab: (key: string, tab: PullRequestDetailTab) => void;
 }
 
 export function guideRunKey(environmentId: EnvironmentId, reference: PullRequestRef): string {
@@ -53,8 +43,7 @@ export function guideRunKey(environmentId: EnvironmentId, reference: PullRequest
 
 export const useGuideRunStore = create<GuideRunStoreState>()((set) => ({
   watches: {},
-  shownKey: null,
-  openRequestKey: null,
+  pageDetailTab: null,
   progress: {},
   setProgress: (key, change) =>
     set((state) => ({
@@ -72,11 +61,9 @@ export const useGuideRunStore = create<GuideRunStoreState>()((set) => ({
       const { [key]: _settled, ...watches } = state.watches;
       return { watches };
     }),
-  setShown: (shownKey) => set({ shownKey }),
-  requestOpen: (openRequestKey) => set({ openRequestKey }),
+  showPageDetailTab: (key, tab) => set({ pageDetailTab: { key, tab } }),
 }));
 
-/** One guide's progress: a new head is a new tour, since its stops are not the ones read. */
 export function guideProgressKey(runKey: string, headSha: string): string {
   return `${runKey}:${headSha}`;
 }

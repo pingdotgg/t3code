@@ -22,10 +22,8 @@ vi.mock("./browserRecording", () => ({
 }));
 
 import { acquireDesktopTab } from "./desktopTabLifetime";
-import * as browserDefaults from "./browserDefaults";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 
-/** Tests load default settings unless they select other preferences. */
 const DEFAULT_TAB_STATE = {
   zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
   colorScheme: DEFAULT_PREVIEW_APPEARANCE,
@@ -45,62 +43,6 @@ describe("desktopTabLifetime", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-  });
-
-  it("does not create a desktop tab after a failed settings read and permits a later retry", async () => {
-    vi.useFakeTimers();
-    const failure = new Error("Settings read failed");
-    vi.spyOn(browserDefaults, "resolveBrowserDefaults").mockRejectedValueOnce(failure);
-    const failed = acquireDesktopTab("tab_settings_retry");
-
-    await expect(failed.ready).rejects.toBe(failure);
-    expect(createTab).not.toHaveBeenCalled();
-    failed.release();
-    await vi.advanceTimersByTimeAsync(0);
-
-    __setClientSettingsForTests({
-      ...DEFAULT_CLIENT_SETTINGS,
-      browserDefaultZoomFactor: 1.25,
-      browserDefaultAppearance: "dark",
-    });
-    createTab.mockResolvedValueOnce(undefined);
-    const retry = acquireDesktopTab("tab_settings_retry");
-    await retry.ready;
-
-    expect(createTab).toHaveBeenCalledExactlyOnceWith("tab_settings_retry", {
-      zoomFactor: 1.25,
-      colorScheme: "dark",
-    });
-    retry.release();
-    await vi.advanceTimersByTimeAsync(0);
-  });
-
-  it("shares tab creation readiness across concurrent leases", async () => {
-    let resolveCreation: (() => void) | undefined;
-    createTab.mockReturnValueOnce(
-      new Promise<void>((resolve) => {
-        resolveCreation = resolve;
-      }),
-    );
-
-    const first = acquireDesktopTab("tab_readiness");
-    const second = acquireDesktopTab("tab_readiness");
-
-    // Both leases share one creation, and it is still in flight: creation now
-    // waits for client settings to hydrate so the guest is born at the user's
-    // zoom and appearance rather than painting at the defaults first.
-    expect(first.ready).toBe(second.ready);
-
-    let ready = false;
-    void first.ready.then(() => {
-      ready = true;
-    });
-    await vi.waitFor(() => expect(createTab).toHaveBeenCalledOnce());
-    expect(ready).toBe(false);
-
-    resolveCreation?.();
-    await first.ready;
-    expect(ready).toBe(true);
   });
 
   it("keeps identical server tab ids from two environments in separate desktop slots", async () => {

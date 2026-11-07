@@ -7,6 +7,7 @@ for (const stream of [process.stdout, process.stderr]) {
 
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Version output must flush before Electron exits, without acquiring the runtime.
 import * as NodeFS from "node:fs";
@@ -47,6 +48,7 @@ import * as DesktopBackendPool from "./backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "./backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopNetworkInterfaces from "./backend/DesktopNetworkInterfaces.ts";
 import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
+import * as DesktopManagedPolicy from "./app/DesktopManagedPolicy.ts";
 import * as DesktopLifecycle from "./app/DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./app/DesktopLinuxUrlHandler.ts";
 import * as DesktopShutdown from "./app/DesktopShutdown.ts";
@@ -65,6 +67,7 @@ import * as DesktopState from "./app/DesktopState.ts";
 import * as DesktopLegacyLocalStorage from "./app/DesktopLegacyLocalStorage.ts";
 import * as DesktopTelemetryPublisher from "./telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopRendererHistory from "./telemetry/DesktopRendererHistory.ts";
+import * as DesktopUpdatePolicy from "./updates/DesktopUpdatePolicy.ts";
 import * as DesktopUpdates from "./updates/DesktopUpdates.ts";
 import * as BrowserImport from "./preview/BrowserImport/BrowserImport.ts";
 import * as LinuxBrowserSecret from "./preview/BrowserImport/LinuxBrowserSecret.ts";
@@ -103,9 +106,6 @@ const layerDesktopEnvironment = Layer.unwrap(
   }),
 );
 
-// The remote runs the exact release this app is on, from its self-contained
-// archive, so it needs neither Node nor npm. Development points the remote at
-// a source checkout instead so the two sides can be iterated together.
 const resolveDesktopSshCliRunner = (
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
 ): RemoteT3RunnerOptions => {
@@ -144,6 +144,7 @@ const layerElectron = Layer.mergeAll(
 
 const layerDesktopFoundation = Layer.mergeAll(
   MacPermissions.layer,
+  DesktopManagedPolicy.layer,
   DesktopState.layer,
   DesktopShutdown.layer,
   DesktopLegacyLocalStorage.layer,
@@ -166,8 +167,7 @@ const layerDesktopServerExposure = DesktopServerExposure.layer.pipe(
 
 const layerDesktopPreview = PreviewManager.layer.pipe(
   Layer.provideMerge(DesktopBrowserHost.layer),
-  // Merged rather than provided so the IPC handlers can reach the import
-  // service alongside the manager; both sit on the same BrowserSession.
+  // IPC needs both services on the same BrowserSession.
   Layer.provideMerge(BrowserImport.layer.pipe(Layer.provide(LinuxBrowserSecret.layer))),
   Layer.provideMerge(BrowserSession.layer),
   Layer.provideMerge(PreviewPasskeys.layer),
@@ -187,23 +187,16 @@ const layerDesktopAppActivation = DesktopAppActivation.layer.pipe(
   Layer.provide(layerDesktopWindow),
 );
 
-// Pool layer instantiates the backend factory once for the Windows
-// primary instance and exposes it via pool.primary. Consumers go through
-// the pool now; the legacy DesktopBackendManager service is gone. The
-// WSL second instance gets registered later in the migration. See
-// DesktopBackendPool.ts header for the full rollout plan.
 const layerDesktopBackend = DesktopBackendPool.layer.pipe(
   Layer.provideMerge(DesktopAppIdentity.layer),
   Layer.provideMerge(DesktopBackendConfiguration.layer),
   Layer.provideMerge(DesktopWslEnvironment.layer),
   Layer.provideMerge(DesktopWslServerTree.layer),
   Layer.provideMerge(DesktopTelemetryPublisher.layer),
+  Layer.provideMerge(DesktopShellEnvironment.layer),
   Layer.provideMerge(layerDesktopWindow),
 );
 
-// WSL orchestrator hangs off the backend layer because it needs the
-// pool + configuration + serverExposure; it pulls NetService and the
-// foundation services through the same provideMerge chain.
 const layerDesktopWslBackend = DesktopWslBackend.layer.pipe(
   Layer.provideMerge(layerDesktopBackend),
 );
@@ -219,11 +212,16 @@ const layerDesktopApplication = Layer.mergeAll(
   DesktopApplicationMenu.layer,
   DesktopLinuxUrlHandler.layer,
   DesktopCliCommand.layer,
-  DesktopShellEnvironment.layer,
   layerDesktopSsh,
 ).pipe(
   Layer.provideMerge(layerDesktopSnapShot),
-  Layer.provideMerge(DesktopUpdates.layer),
+  Layer.provideMerge(
+    DesktopUpdates.layer.pipe(
+      Layer.provide(DesktopUpdatePolicy.layer),
+      // The same layer as the foundation's, so the policy is still read once.
+      Layer.provide(DesktopManagedPolicy.layer),
+    ),
+  ),
   Layer.provideMerge(layerDesktopWslBackend),
   Layer.provideMerge(layerDesktopLocalEnvironmentAuth),
 );
@@ -233,19 +231,18 @@ const layerDesktopClerk = DesktopClerk.layer.pipe(
   Layer.provide(DesktopPreReadyFileSystem.layer),
   Layer.provideMerge(ElectronShell.layer),
   Layer.provideMerge(layerDesktopEnvironment),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   Layer.provideMerge(ElectronApp.layer),
 );
 
 const layerDesktopApplicationRuntime = layerDesktopApplication.pipe(
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   Layer.provideMerge(NodeHttpClient.layerUndici),
   Layer.provideMerge(NetService.layer),
   Layer.provideMerge(layerElectron),
 );
 
-// Acquire strict pre-ready setup before Clerk. Nothing before the Clerk bridge
-// may yield, or Electron can emit ready before Clerk registers its scheme.
+// Pre-ready setup and Clerk must not yield before Clerk registers its scheme.
 const layerDesktopRuntime = layerDesktopClerk.pipe(
   Layer.flatMap((clerkContext) =>
     layerDesktopApplicationRuntime.pipe(Layer.provideMerge(Layer.succeedContext(clerkContext))),

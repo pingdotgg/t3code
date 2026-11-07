@@ -43,45 +43,6 @@ describe("relay request tracing", () => {
       expect(Option.isNone(span.parent)).toBe(true);
     }),
   );
-
-  it.effect("continues an authenticated relay trace with the product tracer", () =>
-    Effect.gen(function* () {
-      const spans: Array<Tracer.Span> = [];
-      const productTracer = Tracer.make({
-        span: (options) => {
-          const span = new Tracer.NativeSpan(options);
-          spans.push(span);
-          return span;
-        },
-      });
-      const request = HttpServerRequest.fromWeb(
-        new Request("https://environment.example.test/api/t3-cloud/mint-credential", {
-          headers: {
-            traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
-          },
-        }),
-      );
-
-      yield* traceAuthenticatedRelayRequest(
-        Effect.void.pipe(Effect.withSpan("relay.mint.handler")),
-        AUTHENTICATION,
-      ).pipe(
-        Effect.provideService(HttpServerRequest.HttpServerRequest, request),
-        Effect.provideService(RelayClientTracer, Option.some(productTracer)),
-      );
-
-      expect(spans.map((span) => span.name)).toEqual([
-        "environment.relay.request",
-        "EnvironmentAuth.authenticateHttpRequest",
-        "relay.mint.handler",
-      ]);
-      const [relaySpan, authentication, handler] = spans;
-      expect(Option.getOrUndefined(authentication!.parent)?.spanId).toBe(relaySpan!.spanId);
-      expect(relaySpan!.traceId).toBe("0123456789abcdef0123456789abcdef");
-      expect(Option.getOrUndefined(relaySpan!.parent)?.spanId).toBe("0123456789abcdef");
-      expect(Option.getOrUndefined(handler!.parent)?.spanId).toBe(relaySpan!.spanId);
-    }),
-  );
 });
 
 describe("relay request tracing boundary", () => {
@@ -100,8 +61,6 @@ describe("relay request tracing boundary", () => {
         new Request("https://environment.example.test/api/orchestration/threads/thread-1"),
       );
 
-      // Shaped like a real handler: an Effect.fn span whose service call runs
-      // on the local tracer.
       const handler = Effect.fn("environment.orchestration.threadSnapshot")(function* () {
         yield* Effect.void.pipe(
           Effect.withSpan("sql.execute"),

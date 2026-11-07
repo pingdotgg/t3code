@@ -14,11 +14,6 @@ export class HookInboxError extends Schema.TaggedError<HookInboxError>()("HookIn
   }
 }
 
-/**
- * Webhook requests held for environments that opted in, while they are
- * offline. Each managed endpoint's requests live in its own `HookInboxObject`,
- * named by endpoint key, which delivers them itself once the environment is back.
- */
 export class HookInbox extends Context.Service<
   HookInbox,
   {
@@ -28,7 +23,6 @@ export class HookInbox extends Context.Service<
       readonly baseUrl: string;
       readonly hook: HeldHook;
     }) => Effect.Effect<boolean, HookInboxError>;
-    /** Delivers what is waiting now; true when anything was waiting. */
     readonly wake: (input: {
       readonly endpointKey: string;
       readonly baseUrl: string;

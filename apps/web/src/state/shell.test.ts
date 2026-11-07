@@ -3,19 +3,20 @@ import {
   PrimaryConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import type { EnvironmentCatalogState } from "@t3tools/client-runtime/state/connections";
-import type { EnvironmentShellState } from "@t3tools/client-runtime/state/shell";
+import { EMPTY_SHELL_STATE, type EnvironmentShellState } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { createAllEnvironmentProjectSnapshotsReadyAtom } from "./shell";
+import { createAllEnvironmentProjectSnapshotsReadyAtom, expectsPrimaryEnvironment } from "./shell";
 
 const LOCAL = EnvironmentId.make("local");
 const REMOTE = EnvironmentId.make("remote");
 
 function shellState(status: EnvironmentShellState["status"]): EnvironmentShellState {
   return {
+    ...EMPTY_SHELL_STATE,
     status,
     snapshot:
       status === "empty"
@@ -110,7 +111,6 @@ describe("project snapshot readiness", () => {
     registry.set(shells(LOCAL), shellState("live"));
     expect(registry.get(ready)).toBe(false);
 
-    // An old cache and a reconnect in progress can both omit a real project.
     registry.set(shells(REMOTE), shellState("cached"));
     expect(registry.get(ready)).toBe(false);
     registry.set(shells(REMOTE), shellState("synchronizing"));
@@ -134,4 +134,17 @@ describe("project snapshot readiness", () => {
     expect(registry.get(ready)).toBe(true);
     registry.dispose();
   });
+});
+
+it("expects a primary environment only on desktops with the local environment enabled", () => {
+  const desktop = (enabled: boolean) => {
+    vi.stubGlobal("window", { desktopBridge: { getLocalEnvironmentEnabled: () => enabled } });
+    try {
+      return expectsPrimaryEnvironment();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  };
+  expect(desktop(true)).toBe(true);
+  expect(desktop(false)).toBe(false);
 });

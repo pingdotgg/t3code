@@ -7,37 +7,34 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
 
-/**
- * Writes one V8 heap snapshot into `logsDir` and logs its path. A failed write
- * logs a warning and removes any partial file, because that file can hold
- * secrets and the failure is often a full disk.
- */
-export const writeHeapSnapshot = Effect.fn("server.heapSnapshot", { root: true })(
+class HeapSnapshotWriteError extends Schema.TaggedError<HeapSnapshotWriteError>()(
+  "HeapSnapshotWriteError",
+  { path: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not write a heap snapshot to ${this.path}.`;
+  }
+}
+
+const writeHeapSnapshot = Effect.fn("server.heapSnapshot", { root: true })(
   function* (logsDir: string) {
     const fs = yield* FileSystem.FileSystem;
     const timestamp = DateTime.formatIso(yield* DateTime.now).replaceAll(":", "-");
     const path = NodePath.join(logsDir, `server-${process.pid}-${timestamp}.heapsnapshot`);
     yield* Effect.annotateCurrentSpan({ path });
-    yield* Effect.try(() => NodeV8.writeHeapSnapshot(path)).pipe(
-      Effect.tapError(() => fs.remove(path, { force: true }).pipe(Effect.ignore)),
-    );
+    yield* Effect.try({
+      try: () => NodeV8.writeHeapSnapshot(path),
+      catch: (cause) => new HeapSnapshotWriteError({ path, cause }),
+    }).pipe(Effect.tapError(() => fs.remove(path, { force: true }).pipe(Effect.ignore)));
     yield* Effect.logInfo("Wrote heap snapshot.", { path });
   },
   Effect.catch((cause) => Effect.logWarning("Failed to write heap snapshot.", { cause })),
 );
 
-/**
- * Writes a heap snapshot when the process gets SIGUSR2 (`kill -USR2 <pid>`),
- * so a maintainer can see what a long-running server holds. See "Heap
- * Snapshots" in docs/operations/observability.md.
- *
- * The write blocks the event loop, so two snapshots never overlap: a signal
- * sent during a write waits until it finishes. Windows has no SIGUSR2, so the
- * layer does nothing there.
- */
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     if ((yield* HostProcess.Platform) === "win32") return;

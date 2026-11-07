@@ -1,11 +1,3 @@
-// Read-only count of Cloudflare tunnels in the managed-endpoint account,
-// grouped by relay stage, status, and how long they have been idle. The reaper
-// only sees its own stage's prefix, so this shows how much of the backlog
-// belongs to other stages.
-//
-//   CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... node scripts/tunnel-census.ts
-//
-// The token needs Cloudflare Tunnel read access. Nothing is modified.
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -22,8 +14,7 @@ const PREFIX = "t3coderelay-managedendpoint-";
 const PAGE_SIZE = 1_000;
 const DAY_MS = 86_400_000;
 
-// Cloudflare documents every field here as optional, so a tunnel missing one
-// must not fail the whole page.
+// Cloudflare permits every field to be absent.
 const Tunnel = Schema.Struct({
   name: Schema.optional(Schema.NullOr(Schema.String)),
   status: Schema.optional(Schema.NullOr(Schema.String)),
@@ -33,12 +24,9 @@ const Tunnel = Schema.Struct({
 type Tunnel = typeof Tunnel.Type;
 const TunnelPage = Schema.Struct({ result: Schema.Array(Tunnel) });
 
-// "t3coderelay-managedendpoint-<stage>-<16 hex>"; stages may contain hyphens.
 const stageOf = (name: string | null | undefined) =>
   name ? name.slice(PREFIX.length).replace(/-[a-f0-9]{16}$/u, "") : "unknown";
 
-// Like the reaper: a down tunnel is aged from when it lost its connector, and a
-// never-connected (inactive) one from when it was created.
 const ageBucket = (tunnel: Tunnel, now: number) => {
   const since = Date.parse(
     (tunnel.status === "down" ? tunnel.conns_inactive_at : tunnel.created_at) ?? "",

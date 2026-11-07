@@ -51,9 +51,7 @@ const color = (family: TailwindColorFamily, shade?: TailwindColorShade, opacity 
   return `color-mix(in srgb, ${value} ${percentage}%, transparent)`;
 };
 
-// These replace the remaining dark:* utility pairs. A registered palette theme is
-// neither literally `light` nor `dark`, so appearance-sensitive values must also be
-// represented as semantic variables for custom themes.
+// Named palette themes need semantic appearance variables because their names are neither light nor dark.
 const ADAPTIVE_COLORS: Readonly<Record<string, readonly [light: string, dark: string]>> = {
   "--color-adaptive-amber-50-950-a40": [color("amber", 50), color("amber", 950, 0.4)],
   "--color-adaptive-amber-200-900-a60": [color("amber", 200), color("amber", 900, 0.6)],
@@ -86,6 +84,11 @@ const ADAPTIVE_COLORS: Readonly<Record<string, readonly [light: string, dark: st
   ],
   "--color-adaptive-emerald-600-400": [color("emerald", 600), color("emerald", 400)],
   "--color-adaptive-emerald-700-300": [color("emerald", 700), color("emerald", 300)],
+  "--color-adaptive-fuchsia-500-a50-300-a40": [
+    color("fuchsia", 500, 0.5),
+    color("fuchsia", 300, 0.4),
+  ],
+  "--color-adaptive-fuchsia-600-300": [color("fuchsia", 600), color("fuchsia", 300)],
   "--color-adaptive-indigo-500-a12-a16": [color("indigo", 500, 0.12), color("indigo", 500, 0.16)],
   "--color-adaptive-indigo-600-300": [color("indigo", 600), color("indigo", 300)],
   "--color-adaptive-indigo-700-300": [color("indigo", 700), color("indigo", 300)],
@@ -172,10 +175,8 @@ const variablesFor = (themeId: BuiltInThemeId, appearance: MobileThemeAppearance
   ...clerkVariablesFor(appearance),
 });
 
-// Clerk's native screens use one build-time palette per appearance. Custom
-// profile pages must match it even when the rest of the app uses a named theme.
+// Profile pages must match Clerk's build-time palette even with a named app theme.
 const clerkColorsFor = (appearance: MobileThemeAppearance) => {
-  // Native authentication uses plain cards, rather than tonal settings groups.
   const variables = createMobileThemeVariables(
     getMobileThemeColors(DEFAULT_MOBILE_THEME_ID, appearance),
     appearance,
@@ -293,8 +294,7 @@ if (import.meta.main) {
       }
       continue;
     }
-    // Metro watches the generated CSS. Replacing a complete temporary file keeps
-    // Tailwind from compiling a partially rewritten theme file.
+    // Atomic replacement prevents Metro from compiling partial CSS.
     writeFileAtomically(filename, contents);
   }
 }

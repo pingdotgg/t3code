@@ -1,0 +1,98 @@
+plugins { id 'java' }
+
+repositories {
+  mavenCentral()
+  google()
+}
+
+configurations {
+  compiler
+  androidTestAars
+}
+
+dependencies {
+  compiler 'org.jetbrains.kotlin:kotlin-compiler-embeddable:2.2.21'
+  testImplementation 'org.jetbrains.kotlin:kotlin-stdlib:2.2.21'
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation('org.robolectric:robolectric:4.16.1') {
+    exclude group: 'androidx.test', module: 'monitor'
+    exclude group: 'androidx.test.espresso', module: 'espresso-idling-resource'
+  }
+  // Compile against the same API used by @Config(sdk = [35]), without a local Android SDK.
+  testImplementation 'org.robolectric:android-all:15-robolectric-12650502'
+  androidTestAars 'androidx.test:monitor:1.8.0@aar'
+  androidTestAars 'androidx.test.espresso:espresso-idling-resource:3.7.0@aar'
+  testImplementation files(layout.buildDirectory.dir('android-test-jars').map {
+    fileTree(it) { include '**/*.jar' }
+  })
+}
+
+// The JVM plugin cannot load classes.jar inside AndroidX AAR dependencies.
+tasks.register('extractAndroidTestJars') {
+  inputs.files configurations.androidTestAars
+  outputs.dir layout.buildDirectory.dir('android-test-jars')
+  doLast {
+    configurations.androidTestAars.each { aar ->
+      copy {
+        from zipTree(aar)
+        include 'classes.jar'
+        filePermissions { unix('644') }
+        into layout.buildDirectory.dir("android-test-jars/${aar.name}")
+      }
+    }
+  }
+}
+
+def moduleRoot = file('../..')
+// Count decoder entry without replacing the production executor, parser, or lifecycle.
+def instrumentedView = layout.buildDirectory.file('token-fixture/T3ReviewDiffView.kt')
+tasks.register('instrumentTokenFixture') {
+  def original = file("${moduleRoot}/android/src/main/java/expo/modules/t3reviewdiff/T3ReviewDiffView.kt")
+  inputs.file original
+  outputs.file instrumentedView
+  doLast {
+    def source = original.text
+    def decode = '      val decodedTokens = parseTokensObject(value)'
+    def publish = '        canvasView.tokensByRowId = decodedTokens'
+    assert source.count(decode) == 1
+    assert source.count(publish) == 1
+    source = source.replace(decode, '      TokenDecodeProbe.enter()\n' + decode)
+    source = source.replace(publish, publish + '\n        TokenDecodeProbe.publish()')
+    def destination = instrumentedView.get().asFile
+    destination.parentFile.mkdirs()
+    destination.text = source
+  }
+}
+
+def sources = files(
+  instrumentedView,
+  fileTree('stubs') { include '**/*.kt' },
+  fileTree('src/test/kotlin') { include '**/*.kt' },
+  fileTree("${moduleRoot}/android/src/test/java") { include '**/*.kt' },
+  fileTree("${moduleRoot}/android/src/main/java/expo/modules/t3reviewdiff") {
+    include '**/*.kt'
+    exclude '**/T3ReviewDiffModule.kt', '**/T3ReviewDiffView.kt'
+  },
+)
+
+tasks.register('compileRegression', JavaExec) {
+  dependsOn 'extractAndroidTestJars', 'instrumentTokenFixture'
+  classpath = configurations.compiler
+  mainClass = 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler'
+  inputs.files sources, configurations.testCompileClasspath
+  outputs.dir layout.buildDirectory.dir('regression')
+  doFirst {
+    args = [
+      '-no-stdlib', '-no-reflect', '-jvm-target', '17',
+      '-classpath', configurations.testCompileClasspath.asPath,
+      '-d', layout.buildDirectory.dir('regression').get().asFile.absolutePath,
+    ] + sources.files.collect { it.absolutePath }
+  }
+}
+
+test {
+  dependsOn 'compileRegression'
+  testClassesDirs = files(layout.buildDirectory.dir('regression'))
+  classpath = files(testClassesDirs, configurations.testRuntimeClasspath)
+  testLogging { events 'passed', 'failed'; exceptionFormat 'full' }
+}

@@ -6,24 +6,22 @@ import { cn } from "~/lib/utils";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { useSettingsSearchTarget, useSettingsSearchTargetId } from "./settingsLayout";
 
-/**
- * A grouped settings section that starts closed. The header carries the title,
- * a one line summary of what is set inside, and an optional control such as
- * the section's own switch. A settings search that targets the section opens it.
- */
 export function FoldedSettingsSection({
   id,
   title,
   summary,
   control,
   headerPlacement = "inside",
+  collapsedContent,
   children,
 }: {
   readonly id: string;
-  readonly title: string;
+  readonly title: ReactNode;
   readonly summary?: string | null;
   readonly control?: ReactNode;
   readonly headerPlacement?: "inside" | "outside";
+  /** Shown under the header only while folded. */
+  readonly collapsedContent?: ReactNode;
   readonly children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -87,6 +85,9 @@ export function FoldedSettingsSection({
           </CollapsibleTrigger>
           {control ? <div className="flex shrink-0 items-center">{control}</div> : null}
         </div>
+        {!open && collapsedContent ? (
+          <div className="border-t border-border/50 empty:hidden">{collapsedContent}</div>
+        ) : null}
         <CollapsiblePanel>
           <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">
             {children}

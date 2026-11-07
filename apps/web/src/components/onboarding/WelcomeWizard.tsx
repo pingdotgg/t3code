@@ -15,10 +15,12 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  AgentSessionSource,
   AuthTerminalOperateScope,
   CommandId,
   defaultInstanceIdForDriver,
   AuthOrchestrationOperateScope,
+  isManagedDriverAllowed,
   ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
@@ -32,14 +34,14 @@ import {
   MonitorIcon,
   TerminalIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
-import { useCompleteOnboarding } from "../../onboarding/firstRun";
+import { completeOnboarding } from "../../onboarding/firstRun";
 import {
   groupOnboardingProjects,
   partitionOnboardingProjects,
@@ -57,8 +59,13 @@ import {
 } from "../../onboarding/providerReadiness.logic";
 import { newProjectId, randomUUID } from "../../lib/utils";
 import { agentSessionImport } from "../../state/agentSessions";
-import { readProjects, useProjects } from "../../state/entities";
+import { readProjects, waitForProject } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
+import {
+  managedInstanceLocks,
+  managedTelemetryOffMessage,
+  usePrimaryManagedPolicy,
+} from "../../state/managedPolicy";
 import {
   isOnboardingRelayEnvironment,
   resolveOnboardingSetup,
@@ -100,15 +107,6 @@ import { toastManager } from "../ui/toast";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
 
-/**
- * First-run welcome wizard. Rendered over the workspace at `/welcome` on a
- * fresh install (no completed-onboarding flag, empty workspace). Flow per the
- * onboarding overhaul spec: connection choice → sign-in/pair (remote paths) →
- * managed Codex setup or an inline CLI terminal → project import → main screen.
- * Every step past the connection gate is skippable; the whole wizard is
- * re-runnable by clearing the flag.
- */
-
 type WizardStep = "connection" | "agents" | "import";
 const NO_ENVIRONMENTS: readonly EnvironmentId[] = [];
 
@@ -121,34 +119,35 @@ export function WelcomeWizard({
   onDone,
   resumeEnvironmentId,
 }: {
-  /** Whether this client is authenticated to the server serving the app. */
   readonly localAvailable: boolean;
   readonly resumeEnvironmentId?: EnvironmentId | undefined;
   readonly onDone: (projectRef?: ScopedProjectRef) => void | Promise<void>;
 }) {
-  const completeOnboarding = useCompleteOnboarding();
   const [step, setStep] = useState<WizardStep>(resumeEnvironmentId ? "agents" : "connection");
   const { environments } = useEnvironments();
   const [selection, setSelection] = useState<ReadonlySet<EnvironmentId> | null>(null);
-  const autoSelectedComputers = useRef(new Set<EnvironmentId>());
+  // Share the registry for the wizard's lifetime so unchecked computers are not auto-selected again.
+  const [autoSelectedComputers] = useState(() => new Set<EnvironmentId>());
   const [setupIds, setSetupIds] = useState<readonly EnvironmentId[]>(
     resumeEnvironmentId ? [resumeEnvironmentId] : [],
   );
+  const [importSelection, setImportSelection] = useState<ImportSelection | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const finishingPromiseRef = useRef<Promise<boolean> | null>(null);
   const completionErrorToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
   const primaryEnvironment = usePrimaryEnvironment();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- marks newly listed computers in the shared auto-select registry once and selects the enabled ones
   useEffect(() => {
     const newComputers = environments.filter(
-      (environment) => !autoSelectedComputers.current.has(environment.environmentId),
+      (environment) => !autoSelectedComputers.has(environment.environmentId),
     );
     if (newComputers.length === 0) return;
     for (const environment of newComputers) {
-      autoSelectedComputers.current.add(environment.environmentId);
+      autoSelectedComputers.add(environment.environmentId);
     }
-    // A computer the user switched off stays unselected until they pick it.
     const enabledComputers = newComputers.filter((environment) => environment.entry.enabled);
     if (enabledComputers.length === 0) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- The registry marks each computer once, and only after commit; render must not mutate it.
     setSelection(
       (current) =>
         new Set([
@@ -156,7 +155,7 @@ export function WelcomeWizard({
           ...enabledComputers.map((environment) => environment.environmentId),
         ]),
     );
-  }, [environments]);
+  }, [autoSelectedComputers, environments]);
   const selectedIds =
     selection ?? new Set(primaryEnvironment ? [primaryEnvironment.environmentId] : []);
   const scans = useProjectScans(step === "import" ? setupIds : NO_ENVIRONMENTS);
@@ -170,66 +169,73 @@ export function WelcomeWizard({
     setStep("agents");
   };
   const stageIndex = step === "agents" ? 1 : step === "import" ? 2 : 0;
-  const finish = useCallback(
-    (projectRef?: ScopedProjectRef, importWarning?: string, importedThreadCount = 0) => {
-      if (finishingPromiseRef.current !== null) return finishingPromiseRef.current;
-      if (completionErrorToastIdRef.current !== null) {
-        toastManager.close(completionErrorToastIdRef.current);
-        completionErrorToastIdRef.current = null;
-      }
+  const finish = (
+    projectRef?: ScopedProjectRef,
+    importWarning?: string,
+    importedThreadCount = 0,
+  ) => {
+    if (finishingPromiseRef.current !== null) return finishingPromiseRef.current;
+    if (completionErrorToastIdRef.current !== null) {
+      toastManager.close(completionErrorToastIdRef.current);
+      completionErrorToastIdRef.current = null;
+    }
 
-      const completion = completeOnboarding()
-        .then(async () => {
-          if (completionErrorToastIdRef.current !== null) {
-            toastManager.close(completionErrorToastIdRef.current);
-            completionErrorToastIdRef.current = null;
-          }
-          await onDone(projectRef);
-          if (importWarning) {
-            toastManager.add({
-              type: "warning",
-              title: "Some history was not imported",
-              description: importWarning,
-              timeout: 0,
-            });
-          } else if (importedThreadCount > 0) {
-            toastManager.add({
-              type: "success",
-              title: `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}`,
-            });
-          }
-          return true;
-        })
-        .catch(() => {
-          const errorToast = {
-            type: "error",
-            title: "Could not finish setup",
-            description: "Your settings could not be saved. Try again.",
-          } as const;
-          if (completionErrorToastIdRef.current === null) {
-            completionErrorToastIdRef.current = toastManager.add(errorToast);
-          } else {
-            toastManager.update(completionErrorToastIdRef.current, errorToast);
-          }
-          return false;
-        })
-        .finally(() => {
-          if (finishingPromiseRef.current === completion) {
-            finishingPromiseRef.current = null;
-          }
-        });
-      finishingPromiseRef.current = completion;
-      return completion;
-    },
-    [completeOnboarding, onDone],
-  );
+    const completion = completeOnboarding()
+      .then(async () => {
+        if (completionErrorToastIdRef.current !== null) {
+          toastManager.close(completionErrorToastIdRef.current);
+          completionErrorToastIdRef.current = null;
+        }
+        await onDone(projectRef);
+        if (importWarning) {
+          toastManager.add({
+            type: "warning",
+            title: "Some history was not imported",
+            description: importWarning,
+            timeout: 0,
+          });
+        } else if (importedThreadCount > 0) {
+          toastManager.add({
+            type: "success",
+            title: `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}`,
+          });
+        }
+        return true;
+      })
+      .catch(() => {
+        const errorToast = {
+          type: "error",
+          title: "Could not finish setup",
+          description: "Your settings could not be saved. Try again.",
+        } as const;
+        if (completionErrorToastIdRef.current === null) {
+          completionErrorToastIdRef.current = toastManager.add(errorToast);
+        } else {
+          toastManager.update(completionErrorToastIdRef.current, errorToast);
+        }
+        return false;
+      })
+      .finally(() => {
+        if (finishingPromiseRef.current === completion) {
+          finishingPromiseRef.current = null;
+        }
+      });
+    finishingPromiseRef.current = completion;
+    return completion;
+  };
 
   return (
-    <Dialog open disablePointerDismissal onOpenChange={(_, event) => event.cancel()}>
+    <Dialog
+      open
+      disablePointerDismissal
+      onOpenChange={(_, event) => {
+        event.cancel();
+        if (event.reason === "close-press" && !isImporting) void finish();
+      }}
+    >
       <WizardPopup
         size="wide"
         bottomStickOnMobile={false}
-        showCloseButton={false}
         initialFocus={() => document.getElementById("onboarding-pairing-url") ?? true}
       >
         <WizardHeader
@@ -259,7 +265,7 @@ export function WelcomeWizard({
             <ConnectionStep
               expandPairingInitially={!localAvailable && !hasCloudPublicConfig()}
               selectedIds={selectedIds}
-              autoSelectedComputers={autoSelectedComputers.current}
+              autoSelectedComputers={autoSelectedComputers}
               onSelectionChange={setSelection}
               onToggleEnvironment={(environmentId, checked) =>
                 setSelection((current) => {
@@ -281,6 +287,8 @@ export function WelcomeWizard({
           ) : (
             <ImportStep
               scans={scans}
+              importSelection={importSelection}
+              onImportSelectionChange={setImportSelection}
               isImporting={isImporting}
               setIsImporting={setIsImporting}
               onDone={finish}
@@ -292,8 +300,6 @@ export function WelcomeWizard({
     </Dialog>
   );
 }
-
-// ── Step 1: connection choice ────────────────────────────────
 
 function ConnectionStep({
   autoSelectedComputers,
@@ -313,6 +319,7 @@ function ConnectionStep({
   readonly onPaired: (environmentId: EnvironmentId) => void;
 }) {
   const { environments } = useEnvironments();
+  const telemetryOff = managedTelemetryOffMessage(usePrimaryManagedPolicy());
   const cloudEnabled = hasCloudPublicConfig();
   const directEnvironments = environments.filter(
     (environment) => !cloudEnabled || !isOnboardingRelayEnvironment(environment),
@@ -324,6 +331,7 @@ function ConnectionStep({
     .filter((environment) => skippedIds.includes(environment.environmentId))
     .map((environment) => environment.label);
   const continueRef = useRef<HTMLButtonElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves DOM focus to the Continue button once setup is ready and nothing else holds focus
   useEffect(() => {
     if (
       ready &&
@@ -365,7 +373,6 @@ function ConnectionStep({
                     {environment.label}
                   </span>
                   <span className="shrink-0 text-xs text-muted-foreground">
-                    {/* Same rule as Settings: a switched-off computer reads Off, not Not connected. */}
                     {!environment.entry.enabled && environment.connection.phase !== "unsupported"
                       ? "Off"
                       : presentSavedCloudEnvironmentConnection(environment.connection).buttonLabel}
@@ -374,6 +381,11 @@ function ConnectionStep({
                 {environment.displayUrl ? (
                   <span className="mt-0.5 block text-xs break-all text-muted-foreground">
                     {environment.displayUrl}
+                  </span>
+                ) : null}
+                {environment.connection.phase === "unsupported" && environment.connection.error ? (
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    {environment.connection.error}
                   </span>
                 ) : null}
               </span>
@@ -432,8 +444,9 @@ function ConnectionStep({
       ) : null}
       <div className="mt-6 flex flex-col-reverse gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-          T3 Code collects anonymous usage data to help us improve it. To read more about how your
-          data is used and how to opt out, see our{" "}
+          {telemetryOff ?? "T3 Code collects anonymous usage data to help us improve it."} To read
+          more about how your data is used{telemetryOff === undefined ? " and how to opt out" : ""},
+          see our{" "}
           <a
             className="underline underline-offset-2 hover:text-foreground"
             href={PRIVACY_POLICY_URL}
@@ -475,7 +488,7 @@ function ConnectAccountOption({
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   const [expanded, setExpanded] = useState(true);
   const [discoveryReady, setDiscoveryReady] = useState(false);
-  const onDiscoveryReady = useCallback(() => setDiscoveryReady(true), []);
+  const onDiscoveryReady = () => setDiscoveryReady(true);
 
   return (
     <div className="rounded-lg border border-border bg-background">
@@ -539,11 +552,6 @@ function ConnectAccountOption({
   );
 }
 
-// ── Step 2′: Direct pairing ──────────────────────────────────
-
-/**
- * Register a computer in this browser using a server-minted pairing link.
- */
 function PairingForm({
   isPairing,
   setIsPairing,
@@ -558,6 +566,7 @@ function PairingForm({
   const [errorMessage, setErrorMessage] = useState("");
   const mountedRef = useRef(true);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks mount so a pairing request that settles after unmount does not set state
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -640,12 +649,12 @@ function PairingForm({
           </div>
           <CollapsiblePanel>
             <p className="pt-3 text-sm text-muted-foreground">
-              Run this on the computer with your code.
+              On the computer with your code, start T3 Code or run{" "}
+              <code className="font-mono">npx t3 serve</code>, then run:
             </p>
             <CommandBlock command="npx t3 pair" className="mt-2" />
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              Start T3 Code first, or run <code className="font-mono">npx t3 serve</code>. Add{" "}
-              <code className="font-mono">--tailscale</code> to use your tailnet.
+              On a tailnet, run <code className="font-mono">npx t3 pair --tailscale</code> instead.
             </p>
           </CollapsiblePanel>
         </Collapsible>
@@ -654,12 +663,9 @@ function PairingForm({
   );
 }
 
-// ── Step 3: agents ───────────────────────────────────────────
-
 const PRIMARY_AGENT_DRIVERS = ["codex", "claudeAgent"] as const;
 type OnboardingAgentDriver = (typeof PRIMARY_AGENT_DRIVERS)[number];
 
-/** Setup values stay fixed while provider probes refresh the surrounding cards. */
 interface AgentTerminalSession {
   readonly environmentId: EnvironmentId;
   readonly driver: OnboardingAgentDriver;
@@ -669,7 +675,6 @@ interface AgentTerminalSession {
   readonly keybindings: ServerConfig["keybindings"];
 }
 
-/** Codex uses managed setup; existing CLI installs retain the terminal path. */
 function AgentsStep({
   environmentIds,
   onContinue,
@@ -728,22 +733,28 @@ function ConnectedAgentsStep({
   } | null>(null);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
 
-  // Re-probe on entry so freshly installed CLIs show up without a manual
-  // refresh; harmless when nothing changed (single-flighted per environment).
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the environment to refresh its provider list when the environment changes
   useEffect(() => {
     void refreshProviders({ environmentId, input: {} });
   }, [environmentId, refreshProviders]);
 
-  const byDriver = useMemo(() => selectOnboardingProvidersByDriver(providers), [providers]);
+  const byDriver = selectOnboardingProvidersByDriver(providers);
+  const managedPolicy = serverConfig?.managedPolicy;
+  // A policy that owns Codex's launch settings also rules out ChatGPT's own runtime.
+  const chatGptAllowed =
+    managedInstanceLocks(managedPolicy, ProviderDriverKind.make("codex"))?.configKeys.has(
+      "setupMode",
+    ) !== true;
 
-  const primaryAgents = PRIMARY_AGENT_DRIVERS.flatMap((driver) => {
+  const primaryAgents = PRIMARY_AGENT_DRIVERS.filter((driver) =>
+    isManagedDriverAllowed(managedPolicy, ProviderDriverKind.make(driver)),
+  ).flatMap((driver) => {
     const instances =
       driver === "codex" ? providers?.filter((provider) => provider.driver === driver) : undefined;
     return instances?.length
       ? instances.map((provider) => ({ driver, provider, instanceId: provider.instanceId }))
       : [{ driver, provider: byDriver.get(driver), instanceId: byDriver.get(driver)?.instanceId }];
   });
-  // Keep the newly created row mounted while settings and provider snapshots catch up.
   if (createdAccount) {
     const index = primaryAgents.findIndex(
       (agent) => agent.instanceId === createdAccount.instanceId,
@@ -839,7 +850,8 @@ function ConnectedAgentsStep({
           ),
         )}
       </div>
-      {providers?.some(
+      {chatGptAllowed &&
+      providers?.some(
         (provider) =>
           provider.driver === "codex" && getOnboardingProviderState(provider) === "ready",
       ) ? (
@@ -1018,12 +1030,6 @@ function AgentCard({
   );
 }
 
-/**
- * Inline install terminal. Opens a PTY on the connected environment under a
- * synthetic onboarding thread id (terminals are keyed by free-form thread id;
- * the server validates only the cwd) and pre-types the install or login
- * command without submitting, so the user reviews and presses Enter.
- */
 function AgentInstallTerminal({
   session,
   onClose,
@@ -1033,7 +1039,6 @@ function AgentInstallTerminal({
 }) {
   const { command, cwd, driver, environmentId, keybindings, providerInstanceId } = session;
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
-  // Same terminal typography preference the thread drawer honors.
   const [advancedTypography] = useLocalStorage(
     TYPOGRAPHY_ADVANCED_STORAGE_KEY,
     false,
@@ -1046,23 +1051,21 @@ function AgentInstallTerminal({
   const setupGenerationRef = useRef(0);
   const activeSetupGenerationRef = useRef<number | null>(null);
   const [terminalId] = useState(() => `onboarding-${driver}-${randomUUID()}`);
-  const threadRef = useMemo(
-    () => scopeThreadRef(environmentId, AGENT_ONBOARDING_THREAD_ID),
-    [environmentId],
-  );
+  const threadRef = scopeThreadRef(environmentId, AGENT_ONBOARDING_THREAD_ID);
   const [setupAttempt, setSetupAttempt] = useState(0);
   const [setupState, setSetupState] = useState<
     "preparing" | "ready" | "openFailed" | "writeFailed"
   >("preparing");
   const terminalReady = setupState === "ready" || setupState === "writeFailed";
 
-  // Keep each setup generation distinct. In Strict Mode, a canceled open can
-  // finish after the replacement setup starts; it must not close or pre-type
-  // into the replacement session that shares this terminal id.
+  // StrictMode can finish a cancelled open after replacement setup; it must not close or pre-type into that
+  // session.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the setup PTY, types the command into it, and closes it on cleanup
   useEffect(() => {
     const generation = setupGenerationRef.current + 1;
     setupGenerationRef.current = generation;
     activeSetupGenerationRef.current = generation;
+    // oxlint-disable-next-line react/set-state-in-effect -- A retry or a new command reopens the terminal, which shows as preparing until the open settles.
     setSetupState("preparing");
 
     setupQueueRef.current = setupQueueRef.current.then(async () => {
@@ -1099,8 +1102,7 @@ function AgentInstallTerminal({
       setSetupState(wrote._tag === "Success" ? "ready" : "writeFailed");
     });
 
-    // Every exit path unmounts the drawer. Close the PTY only while this
-    // connection still has terminal access; revocation leaves it running.
+    // Revocation leaves the PTY running; close only while terminal access remains.
     return () => {
       if (activeSetupGenerationRef.current === generation) {
         activeSetupGenerationRef.current = null;
@@ -1120,6 +1122,7 @@ function AgentInstallTerminal({
     environmentId,
     openTerminal,
     providerInstanceId,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Retry bumps setupAttempt to open the terminal again.
     setupAttempt,
     terminalId,
     writeTerminal,
@@ -1178,11 +1181,8 @@ function AgentInstallTerminal({
             providerInstanceId={providerInstanceId}
             advancedTypography={advancedTypography}
             onSessionExited={onClose}
-            focusRequestId={1}
             autoFocus
             visible
-            resizeEpoch={0}
-            drawerHeight={256}
             keybindings={keybindings}
           />
         ) : null}
@@ -1191,17 +1191,25 @@ function AgentInstallTerminal({
   );
 }
 
-// ── Step 4: import ───────────────────────────────────────────
-
 const IMPORT_PERMISSION_MESSAGE = "This connection cannot import projects or thread history.";
+
+interface ImportSelection {
+  // Computers whose projects were listed when the selection changed; later ones get the defaults.
+  readonly environmentIds: ReadonlySet<EnvironmentId>;
+  readonly keys: ReadonlySet<string>;
+}
 
 function ImportStep({
   scans,
+  importSelection,
+  onImportSelectionChange,
   isImporting,
   setIsImporting,
   onDone,
 }: {
   readonly scans: ReturnType<typeof useProjectScans>;
+  readonly importSelection: ImportSelection | null;
+  readonly onImportSelectionChange: (next: ImportSelection) => void;
   readonly isImporting: boolean;
   readonly setIsImporting: (value: boolean) => void;
   readonly onDone: (
@@ -1214,12 +1222,8 @@ function ImportStep({
   const writableEnvironments = useEnvironmentsWithScope(scans, AuthOrchestrationOperateScope);
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
-  const projects = useProjects();
-  const [selectedPaths, setSelectedPaths] = useState<ReadonlySet<string> | null>(null);
   const importWarningRef = useRef("");
   const importedThreadCountRef = useRef(0);
-  const [landingProject, setLandingProject] = useState<ScopedProjectRef | null>(null);
-  // Keep project creation attempts separate from completed history imports so both can retry.
   const importedProjectsRef = useRef(new Map<string, ScopedProjectRef>());
   const projectsWithImportedHistoryRef = useRef(new Map<string, ScopedProjectRef>());
   const lastImportSelectionRef = useRef<ReadonlyArray<string>>([]);
@@ -1228,7 +1232,7 @@ function ImportStep({
   );
   const importGenerationRef = useRef(0);
 
-  // Ignore command completions after leaving the import step.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- bumps the import generation on mount and unmount so in-flight imports drop stale results
   useEffect(() => {
     importGenerationRef.current += 1;
     return () => {
@@ -1236,42 +1240,29 @@ function ImportStep({
     };
   }, []);
 
-  useEffect(() => {
-    if (
-      landingProject !== null &&
-      projects.some(
-        (project) =>
-          project.id === landingProject.projectId &&
-          project.environmentId === landingProject.environmentId,
-      )
-    ) {
-      setLandingProject(null);
-      void onDone(landingProject, importWarningRef.current, importedThreadCountRef.current).then(
-        (completed) => {
-          if (!completed) setIsImporting(false);
-        },
-      );
-    }
-  }, [landingProject, onDone, projects, setIsImporting]);
-
-  const { available: candidates, recent } = useMemo(
-    () =>
-      partitionOnboardingProjects(
-        scans.flatMap((scan) =>
-          (scan.data?.candidates ?? []).map((candidate) => ({
-            ...candidate,
-            environmentId: scan.environmentId,
-            key: onboardingProjectKey(scan.environmentId, candidate.path),
-          })),
-        ),
+  const { available: candidates, recent } = partitionOnboardingProjects(
+    scans.flatMap((scan) =>
+      (scan.data?.candidates ?? []).map((candidate) => ({
+        ...candidate,
+        environmentId: scan.environmentId,
+        key: onboardingProjectKey(scan.environmentId, candidate.path),
+      })),
+    ),
+  );
+  const recentKeys = new Set(recent.map((candidate) => candidate.key));
+  const selected = candidates.filter((candidate) =>
+    importSelection?.environmentIds.has(candidate.environmentId)
+      ? importSelection.keys.has(candidate.key)
+      : recentKeys.has(candidate.key),
+  );
+  const selectedKeys = new Set(selected.map((candidate) => candidate.key));
+  const setSelectedKeys = (keys: ReadonlySet<string>) =>
+    onImportSelectionChange({
+      environmentIds: new Set(
+        scans.flatMap((scan) => (scan.data === null ? [] : [scan.environmentId])),
       ),
-    [scans],
-  );
-  const selectedKeys = useMemo(
-    () => selectedPaths ?? new Set(recent.map((candidate) => candidate.key)),
-    [selectedPaths, recent],
-  );
-  const selected = candidates.filter((candidate) => selectedKeys.has(candidate.key));
+      keys,
+    });
 
   const canImport = selected.every((candidate) =>
     writableEnvironments.has(candidate.environmentId),
@@ -1294,7 +1285,23 @@ function ImportStep({
       return;
     }
     setIsImporting(true);
-    setLandingProject(projectRef);
+    const importGeneration = importGenerationRef.current;
+    // waitForProject gives up after its timeout, so a project that never reaches the client
+    // still finishes setup, just without landing in it.
+    void waitForProject(projectRef)
+      .then(
+        () => projectRef,
+        () => undefined,
+      )
+      .then(async (landing) => {
+        if (importGeneration !== importGenerationRef.current) return;
+        const completed = await onDone(
+          landing,
+          importWarningRef.current,
+          importedThreadCountRef.current,
+        );
+        if (!completed) setIsImporting(false);
+      });
   };
 
   const runImport = async (selection: typeof candidates) => {
@@ -1322,11 +1329,6 @@ function ImportStep({
     const importGeneration = importGenerationRef.current;
     const importedProjects = importedProjectsRef.current;
     const projectAttempts = projectAttemptsRef.current;
-    // Interrupted imports are neither failures nor successes — the command was
-    // superseded or the environment dropped — but they still didn't land, so
-    // they must not read as "imported everything". Retries skip paths that
-    // already landed this session (re-creating them would only trip the
-    // duplicate-root invariant and read as a failure).
     let importedProjectsCount =
       importedProjects.size > 0
         ? selection.filter((candidate) => importedProjects.has(candidate.key)).length
@@ -1470,7 +1472,7 @@ function ImportStep({
               variant="ghost"
               size="xs"
               disabled={isImporting || selected.length === candidates.length}
-              onClick={() => setSelectedPaths(new Set(candidates.map((item) => item.key)))}
+              onClick={() => setSelectedKeys(new Set(candidates.map((item) => item.key)))}
             >
               Select all
             </Button>
@@ -1478,7 +1480,7 @@ function ImportStep({
               variant="ghost"
               size="xs"
               disabled={isImporting || selected.length === 0}
-              onClick={() => setSelectedPaths(new Set())}
+              onClick={() => setSelectedKeys(new Set())}
             >
               Select none
             </Button>
@@ -1531,7 +1533,7 @@ function ImportStep({
                 <ImportCandidateList
                   candidates={scanCandidates}
                   selectedKeys={selectedKeys}
-                  onSelectionChange={setSelectedPaths}
+                  onSelectionChange={setSelectedKeys}
                 />
               </fieldset>
             );
@@ -1564,12 +1566,6 @@ type ImportCandidate = AgentSessionProjectCandidate & {
   readonly key: string;
 };
 
-/**
- * Repositories first, newest activity on top. Clones of one repository share
- * a group with a tri-state checkbox. Folders that are not git repositories
- * sit collapsed at the bottom so they stay reachable without adding noise.
- * Source icons appear only on repository rows so the columns stay still.
- */
 function ImportCandidateList({
   candidates,
   selectedKeys,
@@ -1579,7 +1575,7 @@ function ImportCandidateList({
   readonly selectedKeys: ReadonlySet<string>;
   readonly onSelectionChange: (next: ReadonlySet<string>) => void;
 }) {
-  const { repositories, other } = useMemo(() => groupOnboardingProjects(candidates), [candidates]);
+  const { repositories, other } = groupOnboardingProjects(candidates);
   const setKeys = (keys: ReadonlyArray<string>, checked: boolean) => {
     const next = new Set(selectedKeys);
     for (const key of keys) {
@@ -1697,10 +1693,6 @@ function ImportRepositoryGroup({
   );
 }
 
-/**
- * Clones of one repository and plain folders differ only by folder name, so
- * the name stays visible and the shared parent path truncates first.
- */
 function ProjectPathText({
   path,
   className,
@@ -1726,9 +1718,7 @@ function ImportCandidateRow({
   onCheckedChange,
 }: {
   readonly candidate: ImportCandidate;
-  /** Text primary label. Nested rows omit it and are labelled by their path. */
   readonly label?: string;
-  /** Shown with the folder name kept visible while the parent path truncates. */
   readonly path?: string;
   readonly nested?: boolean;
   readonly checked: boolean;
@@ -1767,54 +1757,43 @@ function ImportCandidateRow({
   );
 }
 
-/**
- * Trailing columns shared by every import row: source icons, thread count,
- * last activity. Each column has a fixed width and each icon has its own slot
- * so nothing shifts between rows that differ in sources or digit count.
- */
+const IMPORT_SOURCE_NAMES: Record<AgentSessionSource, string> = {
+  claudeAgent: "Claude Code",
+  codex: "Codex",
+  pi: "Pi",
+};
+
 function ImportRowMeta({
   sources,
   threadCount,
   lastActiveAt,
 }: {
-  readonly sources: ReadonlyArray<"claudeAgent" | "codex"> | null;
+  readonly sources: ReadonlyArray<AgentSessionSource> | null;
   readonly threadCount: number;
   readonly lastActiveAt: string | null;
 }) {
   const relative = lastActiveAt === null ? null : formatRelativeTime(lastActiveAt);
-  // "just now" does not fit the fixed column, so collapse it.
   const age = relative === null ? "" : relative.suffix === null ? "now" : relative.value;
   return (
-    <span className="ml-auto grid shrink-0 grid-cols-[1rem_1rem_2.5rem_2.25rem] items-center gap-x-1 text-xs text-muted-foreground tabular-nums">
-      <span className="flex size-4 items-center justify-center">
-        {sources?.includes("claudeAgent") ? (
-          <span role="img" aria-label="Claude Code">
-            <ProviderInstanceIcon
-              driverKind={ProviderDriverKind.make("claudeAgent")}
-              displayName="Claude Code"
-              iconClassName="size-3"
-            />
-          </span>
-        ) : null}
-      </span>
-      <span className="flex size-4 items-center justify-center">
-        {sources?.includes("codex") ? (
-          <span role="img" aria-label="Codex">
-            <ProviderInstanceIcon
-              driverKind={ProviderDriverKind.make("codex")}
-              displayName="Codex"
-              iconClassName="size-3"
-            />
-          </span>
-        ) : null}
-      </span>
+    <span className="ml-auto grid shrink-0 grid-cols-[1rem_1rem_1rem_2.5rem_2.25rem] items-center gap-x-1 text-xs text-muted-foreground tabular-nums">
+      {AgentSessionSource.literals.map((source) => (
+        <span key={source} className="flex size-4 items-center justify-center">
+          {sources?.includes(source) ? (
+            <span role="img" aria-label={IMPORT_SOURCE_NAMES[source]}>
+              <ProviderInstanceIcon
+                driverKind={ProviderDriverKind.make(source)}
+                displayName={IMPORT_SOURCE_NAMES[source]}
+                iconClassName="size-3"
+              />
+            </span>
+          ) : null}
+        </span>
+      ))}
       <span className="text-right">{threadCount}</span>
       <span className="text-right whitespace-nowrap">{age}</span>
     </span>
   );
 }
-
-// ── Shared bits ──────────────────────────────────────────────
 
 function StepShell({
   title,

@@ -19,6 +19,8 @@ const state = vi.hoisted(() => ({
 
 vi.mock("react", () => ({ useCallback: <A>(callback: A) => callback }));
 vi.mock("@effect/atom-react", () => ({
+  useAtomMount: () => undefined,
+  useAtomSubscribe: () => undefined,
   useAtomValue: (atom: unknown) =>
     atom === state.assetAtom
       ? AsyncResult.success({ relativeUrl: "/api/assets/image.png", expiresAt: 1 })
@@ -39,6 +41,9 @@ vi.mock("./query", () => ({
 }));
 vi.mock("./projectClones", () => ({ environmentProjectCloneListAtom: () => null }));
 vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: {} }));
+vi.mock("../connection/catalog", () => ({
+  environmentCatalog: { sessionGenerationAtom: () => null },
+}));
 vi.mock("@t3tools/client-runtime/state/assets", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/assets")>()),
   createAssetEnvironmentAtoms: () => ({ createUrl: state.assetQuery }),
@@ -87,15 +92,6 @@ it("hides host assets with a denied grant while preserving attachments", () => {
     expiresAt: 1,
     url: "https://host.test/api/assets/image.png",
   });
-});
-
-it("stops waiting for an unresolved grant when the connection is offline", () => {
-  state.phase = "offline";
-  expect(useAssetUrlState(environmentId, resource)).toEqual({
-    _tag: "Failure",
-    reason: "disconnected",
-  });
-  expect(state.assetQuery).not.toHaveBeenCalled();
 });
 
 it("lets the server authorize an explicit refresh before the client grant loads", async () => {

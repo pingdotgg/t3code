@@ -7,7 +7,6 @@ import type { MuseItem } from "./protocol.ts";
 const decodeToolArgs = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
-/** Muse's `web_search` tool output: the query and its hits, as JSON. */
 const decodeWebSearchOutput = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
@@ -36,7 +35,6 @@ type MuseToolPresentation = {
   | Fields<"dynamic_tool", "type" | "toolName" | "input" | "output">
 );
 
-/** Unrecognized native terminal states must not appear as successful work. */
 export function museItemStatus(item: MuseItem): OrchestrationV2TurnItemStatus {
   if (item.status === "inProgress") return "running";
   if (item.status === "cancelled") return "cancelled";
@@ -48,7 +46,6 @@ export function museItemStatus(item: MuseItem): OrchestrationV2TurnItemStatus {
   return "failed";
 }
 
-/** Converts native tool details into the shared timeline fields used by every client. */
 export function museToolPresentation(
   item: MuseItem,
   status = museItemStatus(item),
@@ -117,7 +114,6 @@ export function museToolPresentation(
   if (item.kind === "toolCall" && /web|browse|fetch/i.test(toolName)) {
     const query = stringArg("query", "url", "pattern")?.trim();
     const pageUrl = stringArg("url")?.trim();
-    // A search lists its hits; a page fetch (or a failure) shows its text under the page's link.
     const hits =
       item.tool === "web_search" && !detail
         ? Option.getOrUndefined(decodeWebSearchOutput(text))?.results.map(

@@ -25,7 +25,6 @@ export function readPngDimensions(contents: Buffer): {
   };
 }
 
-/** Encodes PNG renditions directly into a modern, multi-resolution ICO file. */
 export function encodePngIco(images: ReadonlyArray<PngIconImage>): Buffer {
   if (images.length === 0) {
     throw new Error("An ICO file requires at least one PNG rendition.");

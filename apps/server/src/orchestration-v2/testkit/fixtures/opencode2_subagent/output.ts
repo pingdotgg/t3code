@@ -15,11 +15,6 @@ import {
 
 const CHILD_PROMPT = "List the files in the current directory and report their names.";
 
-/**
- * A foreground `subagent` call: the child session is a subagent thread with
- * its own runless turn, its tools and answer stay there, and the parent's
- * turn waits for it before summarizing.
- */
 export function assertOpenCode2SubagentOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -43,7 +38,6 @@ export function assertOpenCode2SubagentOutput(
   });
   assert.include(subagent.result ?? "", "hello.txt");
   assert.notInclude(subagent.result ?? "", "<subagent", "the result is the answer, not the tag");
-  // The parent shows the call as its subagent item, not as a tool.
   assert.deepEqual(
     projection.turnItems.flatMap((item) => (item.type === "subagent" ? [item.status] : [])),
     ["completed"],
@@ -69,6 +63,5 @@ export function assertOpenCode2SubagentOutput(
     2,
   );
   assertAssistantTextIncludes(child, "hello.txt");
-  // The parent's usage is its own session's; it notes that a subagent ran.
   assert.equal(projection.providerTurns[0]?.turnTokenUsage?.hasSubagents, true);
 }

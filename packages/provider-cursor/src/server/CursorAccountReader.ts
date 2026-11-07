@@ -1,11 +1,5 @@
-/**
- * CursorAccountReader - reads one range of Cursor account usage from its
- * dashboard API. A service so tests can stand in for Cursor's API.
- *
- * @module provider-cursor/server/CursorAccountReader
- */
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as HttpClient from "effect/http/HttpClient";
@@ -26,21 +20,22 @@ export class CursorAccountReader extends Context.Service<
   }
 >()("@t3tools/provider-cursor/server/CursorAccountReader") {}
 
-/** Reads Cursor's dashboard API with the saved CLI or Keychain login. */
 export const layer = Layer.effect(
   CursorAccountReader,
   Effect.gen(function* () {
     const keychain = yield* CursorKeychain.CursorKeychain;
     const context = yield* Effect.context<
-      FileSystem.FileSystem | Crypto.Crypto | HttpClient.HttpClient
+      FileSystem.FileSystem | Digest.Digest | HttpClient.HttpClient
     >();
     return CursorAccountReader.of({
-      // Only a Keychain login asks the Keychain. The dashboard reader turns
-      // its outcome, a failure included, into the source's message.
-      read: (credentialSource, sinceMs, untilMs) =>
-        readCursorAccountUsage(credentialSource, sinceMs, untilMs, keychain.accessToken).pipe(
-          Effect.provideContext(context),
-        ),
+      read: Effect.fn("CursorAccountReader.read")(function (credentialSource, sinceMs, untilMs) {
+        return readCursorAccountUsage(
+          credentialSource,
+          sinceMs,
+          untilMs,
+          keychain.accessToken,
+        ).pipe(Effect.provideContext(context));
+      }),
     });
   }),
 );

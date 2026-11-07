@@ -9,11 +9,7 @@ const POSITION_SUFFIX_CAPTURE_PATTERN = /:(\d+)(?::(\d+))?$/;
 
 const POSITION_HASH_PATTERN = /^#L(\d+)(?:C(\d+))?$/i;
 
-/**
- * Turns a `file:` URL into a host path, still percent-encoded so callers that
- * decode every destination in one place do not decode file URLs twice. A
- * non-localhost authority becomes a UNC share.
- */
+/** Keeps paths percent-encoded to avoid double decoding; non-localhost authorities become UNC shares. */
 export function parseFileUrlHref(
   href: string,
 ): { readonly path: string; readonly hash: string } | null {
@@ -61,7 +57,7 @@ function isWindowsPathStyle(value: string): boolean {
   return isWindowsAbsolutePath(value) || /[A-Za-z]:\\/.test(value);
 }
 
-function joinPath(base: string, next: string, separator: "/" | "\\"): string {
+export function joinPath(base: string, next: string, separator: "/" | "\\"): string {
   const cleanBase = base.replace(/[\\/]+$/, "");
   if (separator === "\\") {
     return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
@@ -80,7 +76,7 @@ function inferHomeFromCwd(cwd: string): string | undefined {
     return `/home/${posixHome[1]}`;
   }
 
-  const windowsUser = cwd.match(/^([A-Za-z]:[\\/]Users[\\/][^\\/]+)/);
+  const windowsUser = cwd.match(/^([A-Za-z]:[\\/]Users[\\/][^\\/]+)/i);
   if (windowsUser?.[1]) {
     return windowsUser[1];
   }
@@ -93,7 +89,7 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
   const { path } = position;
 
   let resolvedPath = path;
-  if (path.startsWith("~/")) {
+  if (path.startsWith("~/") || (isWindowsPathStyle(cwd) && path.startsWith("~\\"))) {
     const home = inferHomeFromCwd(cwd);
     if (home) {
       const separator: "/" | "\\" = isWindowsPathStyle(home) ? "\\" : "/";
@@ -167,7 +163,6 @@ export function buildFileLinkParentSuffixByPath(
   return suffixByPath;
 }
 
-/** Visible text of a file chip, shared by Markdown rendering and thread search. */
 export function fileLinkLabel(
   file: FilePathPosition,
   parentSuffixByPath: ReadonlyMap<string, string>,

@@ -1,3 +1,8 @@
+import {
+  requireSettingsSecretLiteral,
+  type SettingsSecretUnresolvedError,
+} from "@t3tools/contracts";
+import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -10,13 +15,11 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
-import { readSourceControlHostSettings } from "@t3tools/source-control-core/client/definition";
+import { readSourceControlHostSettings } from "@t3tools/source-control-core/shared/definition";
 
-import * as GitCafeClient from "../client/definition.ts";
+import * as GitCafeClient from "../shared/definition.ts";
 
-/** How long a token is reused before `cafe` is asked again, so a re-login applies soon. */
 const TOKEN_TTL = Duration.minutes(5);
-/** No credential is retried sooner, so a fresh `cafe auth login` takes effect on the next read. */
 const MISSING_TTL = Duration.seconds(10);
 
 export interface GitCafeCredential {
@@ -25,7 +28,6 @@ export interface GitCafeCredential {
   readonly source: "settings" | "env" | "cafe";
 }
 
-/** No `CAFE_TOKEN` for the host, and no `cafe` on PATH to ask. */
 export class GitCafeCliMissingError extends Schema.TaggedError<GitCafeCliMissingError>()(
   "GitCafeCliMissingError",
   { host: Schema.String },
@@ -35,7 +37,6 @@ export class GitCafeCliMissingError extends Schema.TaggedError<GitCafeCliMissing
   }
 }
 
-/** `cafe` is installed but holds no login for the host. */
 export class GitCafeNotSignedInError extends Schema.TaggedError<GitCafeNotSignedInError>()(
   "GitCafeNotSignedInError",
   { host: Schema.String },
@@ -45,7 +46,6 @@ export class GitCafeNotSignedInError extends Schema.TaggedError<GitCafeNotSigned
   }
 }
 
-/** `cafe` timed out or failed for a reason other than having no login. */
 export class GitCafeCliFailedError extends Schema.TaggedError<GitCafeCliFailedError>()(
   "GitCafeCliFailedError",
   { host: Schema.String, cause: Schema.Defect() },
@@ -58,33 +58,25 @@ export class GitCafeCliFailedError extends Schema.TaggedError<GitCafeCliFailedEr
 export type GitCafeCredentialUnavailableError =
   | GitCafeCliMissingError
   | GitCafeNotSignedInError
-  | GitCafeCliFailedError;
+  | GitCafeCliFailedError
+  | SettingsSecretUnresolvedError;
 
-/** Where GitCafe tokens come from. Callers ask per host and never see how the token was found. */
 export class GitCafeCredentials extends Context.Service<
   GitCafeCredentials,
   {
     readonly get: (
       host: string,
     ) => Effect.Effect<GitCafeCredential, GitCafeCredentialUnavailableError>;
-    /** Drops the held token after GitCafe refused it, so the next read asks its source again. */
     readonly invalidate: (host: string) => Effect.Effect<void>;
-    /**
-     * Environment for a `cafe` run against the host: the token saved in Settings as `CAFE_TOKEN`,
-     * which `cafe` uses before its own login, or nothing when none is saved.
-     */
-    readonly cliEnv: (host: string) => Effect.Effect<Readonly<Record<string, string>>>;
+    readonly cliEnv: (
+      host: string,
+    ) => Effect.Effect<Readonly<Record<string, string>>, SettingsSecretUnresolvedError>;
   }
 >()("@t3tools/source-control-gitcafe/server/GitCafeCredentials") {}
 
-const normalizeHost = (host: string) => host.trim().toLowerCase();
-/** The host `cafe` and a token saved in Settings target unless told otherwise. */
 const DEFAULT_HOST = "git.cafe";
 
-/**
- * `CAFE_TOKEN`, but only for the host `cafe` itself would send it to (`CAFE_HOST`, git.cafe by
- * default): a remote URL picks the host, and must not steer a production token to staging.
- */
+/** Restrict CAFE_TOKEN to CAFE_HOST (default git.cafe), including for staging remotes. */
 export function environmentToken(
   host: string,
   env: Readonly<Record<string, string | undefined>>,
@@ -97,7 +89,6 @@ export function environmentToken(
   return env.CAFE_TOKEN?.trim() || null;
 }
 
-/** A Git credential `get` answer: `key=value` lines, of which only `password` matters here. */
 function credentialPassword(output: string): string | null {
   for (const line of output.split(/\r?\n/u)) {
     if (line.startsWith("password=")) return line.slice("password=".length).trim() || null;
@@ -105,18 +96,14 @@ function credentialPassword(output: string): string | null {
   return null;
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const { process } = sourceControlHost;
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
 
-  /**
-   * `cafe` has no `auth token` command; its Git credential helper is the supported way to hand
-   * the stored login to another program, and answers over stdin/stdout so the token never
-   * reaches an argument list or a log.
-   */
+  /** cafe has no auth-token command; its credential helper keeps tokens out of argv/logs. */
   const fromCafe = (host: string) =>
     process
       .run({
@@ -145,19 +132,22 @@ export const make = Effect.gen(function* () {
         ),
       );
 
-  /** A token saved in Settings, for production git.cafe only; read fresh on every lookup. */
   const fromSettings = (host: string) =>
     normalizeHost(host) !== DEFAULT_HOST
       ? Effect.succeed(null)
-      : sourceControlHost.settings.get.pipe(
-          Effect.map(
-            (settings) =>
-              readSourceControlHostSettings(
-                GitCafeClient.settings,
-                settings.sourceControlHosts[GitCafeClient.definition.kind],
-              ).token || null,
+      : sourceControlHost.settings.getWithSecrets(GitCafeClient.definition.kind).pipe(
+          Effect.map((settings) => ({
+            token: readSourceControlHostSettings(
+              GitCafeClient.settings,
+              settings.sourceControlHosts[GitCafeClient.definition.kind],
+            ).token,
+            secretProviders: settings.secretProviders,
+          })),
+          Effect.orElseSucceed(() => ({ token: undefined, secretProviders: {} })),
+          Effect.flatMap(({ token, secretProviders }) =>
+            requireSettingsSecretLiteral(token, secretProviders),
           ),
-          Effect.orElseSucceed(() => null),
+          Effect.map((token) => token || null),
         );
 
   const lookup = Effect.fn("GitCafeCredentials.lookup")(function* (
@@ -170,7 +160,6 @@ export const make = Effect.gen(function* () {
 
   const cache = yield* Cache.makeWith(lookup, {
     capacity: 4,
-    // A transient failure (a timeout, a locked keyring) is asked again on the next read.
     timeToLive: (exit) =>
       Exit.isSuccess(exit)
         ? TOKEN_TTL
@@ -182,10 +171,8 @@ export const make = Effect.gen(function* () {
   });
 
   return GitCafeCredentials.of({
-    // A saved token is read fresh, so saving or removing one applies at once; the cache only
-    // spares asking `cafe` again.
-    get: (host) =>
-      fromSettings(host).pipe(
+    get: Effect.fn("GitCafeCredentials.get")(function (host) {
+      return fromSettings(host).pipe(
         Effect.flatMap(
           (saved): Effect.Effect<GitCafeCredential, GitCafeCredentialUnavailableError> =>
             saved === null
@@ -196,10 +183,16 @@ export const make = Effect.gen(function* () {
                   source: "settings",
                 }),
         ),
-      ),
-    invalidate: (host) => Cache.invalidate(cache, normalizeHost(host)),
-    cliEnv: (host) =>
-      fromSettings(host).pipe(Effect.map((saved) => (saved === null ? {} : { CAFE_TOKEN: saved }))),
+      );
+    }),
+    invalidate: Effect.fn("GitCafeCredentials.invalidate")(function (host) {
+      return Cache.invalidate(cache, normalizeHost(host));
+    }),
+    cliEnv: Effect.fn("GitCafeCredentials.cliEnv")(function (host) {
+      return fromSettings(host).pipe(
+        Effect.map((saved) => (saved === null ? {} : { CAFE_TOKEN: saved })),
+      );
+    }),
   });
 });
 

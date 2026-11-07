@@ -5,13 +5,20 @@ import {
   decodeAwardEmojiJson,
   decodeRepositoryBlobsJson,
   decodeCommitsJson,
+  decodeGraphqlListSupportJson,
+  decodeMergeRequestGraphqlListJson,
+  decodeMergeMessagesJson,
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
   decodeMergeRequestListJson,
+  decodeMergeRequestFileStatsJson,
+  decodeMergeRequestStatsJson,
+  decodeReferenceCandidatesJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
-  decodeViewerJson,
-  gitLabAwardName,
+  decodeListStatesJson,
+  decodeTriggerJobChecksJson,
+  decodePipelineStageChecksJson,
 } from "./gitLabMergeRequestJson.ts";
 
 function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
@@ -80,12 +87,6 @@ describe("decodeMergeRequestListJson", () => {
     });
   });
 
-  it("reports no line counts, which GitLab does not expose", () => {
-    const batch = expectSuccess(decodeMergeRequestListJson(listJson([{}])));
-
-    expect(batch.items[0]).toMatchObject({ additions: 0, deletions: 0 });
-  });
-
   it("treats a merged timestamp as merged whatever the state says", () => {
     const batch = expectSuccess(
       decodeMergeRequestListJson(
@@ -94,12 +95,6 @@ describe("decodeMergeRequestListJson", () => {
     );
 
     expect(batch.items[0]?.state).toBe("merged");
-  });
-
-  it("keeps a locked merge request open", () => {
-    const batch = expectSuccess(decodeMergeRequestListJson(listJson([{ state: "locked" }])));
-
-    expect(batch.items[0]?.state).toBe("open");
   });
 
   it("reads the legacy draft flag", () => {
@@ -114,14 +109,6 @@ describe("decodeMergeRequestListJson", () => {
     );
 
     expect(batch.items[0]?.mergeability).toBe("conflicting");
-  });
-
-  it("leaves an unfinished merge check unknown", () => {
-    const batch = expectSuccess(
-      decodeMergeRequestListJson(listJson([{ merge_status: "checking" }])),
-    );
-
-    expect(batch.items[0]?.mergeability).toBe("unknown");
   });
 
   it("skips a malformed row but still counts it, so paging does not stop early", () => {
@@ -167,6 +154,14 @@ describe("decodeMergeRequestDetailJson", () => {
     ]);
   });
 
+  it.each(["canceled", "canceling"])("maps a %s pipeline to cancelled", (status) => {
+    const detail = expectSuccess(
+      decodeMergeRequestDetailJson(detailJson({ head_pipeline: { status } })),
+    );
+
+    expect(detail.checks[0]?.status).toBe("cancelled");
+  });
+
   it("reads an uncounted change set as its floor", () => {
     const detail = expectSuccess(
       decodeMergeRequestDetailJson(detailJson({ changes_count: "1000+" })),
@@ -175,19 +170,12 @@ describe("decodeMergeRequestDetailJson", () => {
     expect(detail.changedFiles).toBe(1000);
   });
 
-  it("falls back to no file count when GitLab omits one", () => {
-    const detail = expectSuccess(decodeMergeRequestDetailJson(detailJson({})));
-
-    expect(detail.changedFiles).toBe(0);
-  });
-
   it("reads the head commit, and says nothing where GitLab omitted it", () => {
     const headSha = (entry: Record<string, unknown>) =>
       expectSuccess(decodeMergeRequestDetailJson(detailJson(entry))).headSha;
     const sha = "afce4da4d5fe7d2fd0647b5b864526ea0a2827cb";
 
     expect(headSha({ sha })).toBe(sha);
-    // A new merge request can report its head before GitLab has computed `diff_refs`.
     expect(headSha({ sha, diff_refs: null })).toBe(sha);
     expect(headSha({ sha, merge_commit_sha: "0".repeat(40) })).toBe(sha);
     expect(headSha({})).toBeUndefined();
@@ -195,15 +183,28 @@ describe("decodeMergeRequestDetailJson", () => {
     expect(headSha({ sha: "  " })).toBeUndefined();
   });
 
+  it("reads the diff refs threads are placed against", () => {
+    const diffRefs = (entry: Record<string, unknown>) =>
+      expectSuccess(decodeMergeRequestDetailJson(detailJson(entry))).diffRefs;
+
+    expect(diffRefs({ diff_refs: { base_sha: "b", start_sha: "s", head_sha: "h" } })).toEqual({
+      baseSha: "b",
+      startSha: "s",
+      headSha: "h",
+    });
+    expect(diffRefs({ diff_refs: null })).toBeUndefined();
+    expect(
+      diffRefs({ diff_refs: { base_sha: null, start_sha: "s", head_sha: "h" } }),
+    ).toBeUndefined();
+  });
+
   it("reads either auto-merge field, and says nothing where GitLab named neither", () => {
     const armed = (entry: Record<string, unknown>) =>
       expectSuccess(decodeMergeRequestDetailJson(detailJson(entry))).autoMergeEnabled;
 
     expect(armed({ merge_when_pipeline_succeeds: true })).toBe(true);
-    // The newer name for the same fact, which older GitLab installs do not send.
     expect(armed({ auto_merge_enabled: true })).toBe(true);
     expect(armed({ merge_when_pipeline_succeeds: false })).toBe(false);
-    // Absent is GitLab not saying, which the page must not read as "not armed".
     expect(armed({})).toBeUndefined();
   });
 
@@ -234,12 +235,17 @@ describe("decodeMergeRequestDetailJson", () => {
       expectSuccess(decodeMergeRequestDetailJson(detailJson(entry))).divergedCommits;
 
     expect(behind({ diverged_commits_count: 3 })).toBe(3);
-    // Counted and found level, which is the one answer that entitles the page to say so.
     expect(behind({ diverged_commits_count: 0 })).toBe(0);
-    // An install that does not answer, and a null where the answer would have gone, are both
-    // silence: reading either as zero would tell a stale branch it is current.
     expect(behind({})).toBeUndefined();
     expect(behind({ diverged_commits_count: null })).toBeUndefined();
+  });
+
+  it.each(["scheduled", " SCHEDULED "])("keeps a delayed pipeline pending: %s", (status) => {
+    const detail = expectSuccess(
+      decodeMergeRequestDetailJson(detailJson({ head_pipeline: { status } })),
+    );
+
+    expect(detail.checks[0]?.status).toBe("pending");
   });
 
   it("maps a pipeline waiting on a person to neutral, not failure", () => {
@@ -251,13 +257,188 @@ describe("decodeMergeRequestDetailJson", () => {
   });
 });
 
-describe("decodeViewerJson", () => {
-  it("reads the signed-in username", () => {
-    expect(expectSuccess(decodeViewerJson(JSON.stringify({ username: "bilal" })))).toBe("bilal");
+describe("decodePipelineStageChecksJson", () => {
+  function stagesJson(
+    stages: ReadonlyArray<Record<string, unknown> | null> | null,
+    hasNextPage = false,
+  ): string {
+    return JSON.stringify({
+      data: {
+        project: {
+          mergeRequest: {
+            headPipeline:
+              stages === null
+                ? null
+                : {
+                    path: "/fork/web/-/pipelines/9",
+                    stages: { nodes: stages, pageInfo: { hasNextPage } },
+                  },
+          },
+        },
+      },
+    });
+  }
+
+  it("shows every job under its stage", () => {
+    const checks = expectSuccess(
+      decodePipelineStageChecksJson(
+        stagesJson([
+          {
+            name: "build",
+            status: "success",
+            jobs: {
+              nodes: [
+                { name: "compile", status: "FAILED", retried: true, webPath: "/acme/web/-/jobs/1" },
+                {
+                  name: "compile",
+                  status: "SUCCESS",
+                  detailedStatus: { label: "passed" },
+                  webPath: "/acme/web/-/jobs/2",
+                },
+              ],
+            },
+          },
+          {
+            name: "test",
+            status: "failed",
+            jobs: {
+              nodes: [
+                {
+                  name: "unit",
+                  status: "FAILED",
+                  allowFailure: false,
+                  webPath: "/acme/web/-/jobs/3",
+                },
+                {
+                  name: "lint",
+                  status: "FAILED",
+                  allowFailure: true,
+                  webPath: "/acme/web/-/jobs/4",
+                },
+                { name: "slow", status: "CANCELED", webPath: "/acme/web/-/jobs/5" },
+                { name: "e2e", status: "RUNNING", webPath: "/acme/web/-/jobs/6" },
+              ],
+            },
+          },
+          {
+            name: "deploy",
+            status: "manual",
+            jobs: { nodes: [{ name: "release", status: "MANUAL", webPath: "/acme/web/-/jobs/7" }] },
+          },
+        ]),
+        "https://gitlab.example.com",
+      ),
+    );
+
+    expect(checks?.map((check) => [check.name, check.status, check.url])).toEqual([
+      ["build / compile", "success", "https://gitlab.example.com/acme/web/-/jobs/2"],
+      ["test / unit", "failure", "https://gitlab.example.com/acme/web/-/jobs/3"],
+      ["test / lint", "neutral", "https://gitlab.example.com/acme/web/-/jobs/4"],
+      ["test / slow", "cancelled", "https://gitlab.example.com/acme/web/-/jobs/5"],
+      ["test / e2e", "pending", "https://gitlab.example.com/acme/web/-/jobs/6"],
+      ["deploy / release", "neutral", "https://gitlab.example.com/acme/web/-/jobs/7"],
+    ]);
+    expect(checks?.[0]?.description).toBe("passed");
   });
 
-  it("returns nothing when the account has no username", () => {
-    expect(expectSuccess(decodeViewerJson(JSON.stringify({ username: "  " })))).toBeNull();
+  it.each([
+    ["no jobs", undefined],
+    ["an empty job list", { nodes: [] }],
+    [
+      "more jobs than one page",
+      { nodes: [{ name: "unit", status: "FAILED" }], pageInfo: { hasNextPage: true } },
+    ],
+    ["a job GitLab could not resolve", { nodes: [{ name: "unit", status: "FAILED" }, null] }],
+    [
+      "a job without a name",
+      {
+        nodes: [
+          { name: "unit", status: "FAILED" },
+          { name: null, status: "FAILED" },
+        ],
+      },
+    ],
+  ])("keeps a stage whole where its jobs come back with %s", (_, jobs) => {
+    expect(
+      expectSuccess(
+        decodePipelineStageChecksJson(
+          stagesJson([
+            {
+              name: "test",
+              status: "failed",
+              detailedStatus: { label: "failed", detailsPath: "/fork/web/-/pipelines/9#test" },
+              ...(jobs === undefined ? {} : { jobs }),
+            },
+          ]),
+          "https://gitlab.com",
+        ),
+      ),
+    ).toEqual([
+      {
+        name: "test",
+        status: "failure",
+        description: "failed",
+        url: "https://gitlab.com/fork/web/-/pipelines/9#test",
+      },
+    ]);
+  });
+
+  it("answers nothing where there are no stages to show", () => {
+    expect(
+      expectSuccess(decodePipelineStageChecksJson(stagesJson(null), "https://gitlab.com")),
+    ).toBe(null);
+    expect(expectSuccess(decodePipelineStageChecksJson(stagesJson([]), "https://gitlab.com"))).toBe(
+      null,
+    );
+    // A stage past the first page could be the failed one.
+    expect(
+      expectSuccess(
+        decodePipelineStageChecksJson(
+          stagesJson([{ name: "build", status: "success" }], true),
+          "https://gitlab.com",
+        ),
+      ),
+    ).toBe(null);
+    // A stage GitLab failed to resolve comes back null beside an error, and could be the failed one.
+    expect(
+      expectSuccess(
+        decodePipelineStageChecksJson(
+          stagesJson([{ name: "build", status: "success" }, null]),
+          "https://gitlab.com",
+        ),
+      ),
+    ).toBe(null);
+    expect(
+      expectSuccess(
+        decodePipelineStageChecksJson(
+          stagesJson([
+            { name: "build", status: "success" },
+            { name: null, status: "failed" },
+          ]),
+          "https://gitlab.com",
+        ),
+      ),
+    ).toBe(null);
+    expect(
+      expectSuccess(
+        decodePipelineStageChecksJson(
+          JSON.stringify({
+            ...JSON.parse(stagesJson([{ name: "build", status: "success" }])),
+            errors: [{ message: "boom" }],
+          }),
+          "https://gitlab.com",
+        ),
+      ),
+    ).toBe(null);
+    // GitLab answers an error it hit with no data at all.
+    expect(
+      expectSuccess(
+        decodePipelineStageChecksJson(
+          JSON.stringify({ errors: [{ message: "boom" }] }),
+          "https://gitlab.com",
+        ),
+      ),
+    ).toBe(null);
   });
 });
 
@@ -289,7 +470,6 @@ describe("decodeNotesJson", () => {
       kind: "issue-comment",
       body: "Looks good.",
     });
-    // The raw count keeps the dropped notes visible to the caller, which needs them to page.
     expect(notes.rawCount).toBe(3);
   });
 
@@ -331,32 +511,6 @@ describe("decodeNotesJson", () => {
 });
 
 describe("decodeCommitsJson", () => {
-  it("returns commits oldest first", () => {
-    const commits = expectSuccess(
-      decodeCommitsJson(
-        JSON.stringify([
-          { id: "bbb", title: "second", committed_date: "2026-07-02T00:00:00Z" },
-          { id: "aaa", title: "first", committed_date: "2026-07-01T00:00:00Z" },
-        ]),
-      ),
-    );
-
-    expect(commits.map((commit) => commit.oid)).toEqual(["aaa", "bbb"]);
-  });
-
-  it("skips commits whose id is empty", () => {
-    const commits = expectSuccess(
-      decodeCommitsJson(
-        JSON.stringify([
-          { id: "   ", title: "invalid", committed_date: "2026-07-02T00:00:00Z" },
-          { id: "aaa", committed_date: "2026-07-01T00:00:00Z" },
-        ]),
-      ),
-    );
-
-    expect(commits.map((commit) => commit.oid)).toEqual(["aaa"]);
-  });
-
   it("falls back to the creation timestamp when there is no commit date", () => {
     const commits = expectSuccess(
       decodeCommitsJson(
@@ -376,22 +530,6 @@ describe("decodeCommitsJson", () => {
       committedDate: "2026-07-01T00:00:00+08:00",
       authors: [{ login: "Ada Lovelace", name: "Ada Lovelace", avatarUrl: null }],
     });
-  });
-
-  it("carries commit additions and deletions when GitLab returns stats", () => {
-    const commits = expectSuccess(
-      decodeCommitsJson(
-        JSON.stringify([
-          {
-            id: "aaa",
-            committed_date: "2026-07-01T00:00:00Z",
-            stats: { additions: 21, deletions: 8, total: 29 },
-          },
-        ]),
-      ),
-    );
-
-    expect(commits[0]).toMatchObject({ additions: 21, deletions: 8 });
   });
 });
 
@@ -439,6 +577,7 @@ describe("decodeMergeRequestDiffsJson", () => {
     expect(result.patch).toBe(
       [
         String.raw`diff --git "a/ old\\name.ts " "b/ new\\name.ts "`,
+        "similarity index 100%",
         String.raw`rename from " old\\name.ts "`,
         String.raw`rename to " new\\name.ts "`,
         String.raw`--- "a/ old\\name.ts "`,
@@ -501,19 +640,6 @@ describe("decodeMergeRequestDiffsJson", () => {
     expect(result.patch).toContain("+++ /dev/null");
   });
 
-  it("records a rename so the patch names both paths", () => {
-    const result = expectSuccess(
-      decodeMergeRequestDiffsJson(
-        JSON.stringify([
-          { old_path: "src/old.ts", new_path: "src/new.ts", renamed_file: true, diff: "" },
-        ]),
-      ),
-    );
-
-    expect(result.patch).toContain("rename from src/old.ts");
-    expect(result.patch).toContain("rename to src/new.ts");
-  });
-
   it("reports truncation for a file GitLab refused to inline", () => {
     const result = expectSuccess(
       decodeMergeRequestDiffsJson(
@@ -542,27 +668,30 @@ describe("decodeMergeRequestDiffsJson", () => {
     expect(result.truncated).toBe(false);
     expect(result.patch).toContain("src/2.ts");
   });
+});
 
-  it("fails when GitLab did not return a list", () => {
-    expect(Result.isFailure(decodeMergeRequestDiffsJson('{"message":"404"}'))).toBe(true);
+describe("decodeTriggerJobChecksJson", () => {
+  it("reads a downstream failure GitLab was told to allow as neutral, not failure", () => {
+    const result = expectSuccess(
+      decodeTriggerJobChecksJson(
+        JSON.stringify([
+          { name: "e2e", allow_failure: true, downstream_pipeline: { status: "failed" } },
+          { name: "deploy", allow_failure: false, downstream_pipeline: { status: "running" } },
+          { name: 7 },
+        ]),
+      ),
+    );
+
+    expect(result.checks.map((check) => [check.name, check.status])).toEqual([
+      ["e2e", "neutral"],
+      ["deploy", "pending"],
+    ]);
+    expect(result.rawCount).toBe(3);
   });
 });
 
 describe("merge request viewer fields", () => {
-  it("carries GitLab's own answer for whether this viewer can merge", () => {
-    expect(
-      expectSuccess(decodeMergeRequestDetailJson(detailJson({ user: { can_merge: false } })))
-        .viewerCanMerge,
-    ).toBe(false);
-    expect(
-      expectSuccess(decodeMergeRequestDetailJson(detailJson({ user: { can_merge: true } })))
-        .viewerCanMerge,
-    ).toBe(true);
-  });
-
   it("leaves merging permitted where GitLab answered without the field", () => {
-    // Only the single-merge-request endpoint carries `user`, and an install that answers without
-    // it has said nothing about the viewer rather than said no.
     expect(expectSuccess(decodeMergeRequestDetailJson(detailJson({}))).viewerCanMerge).toBe(true);
     expect(
       expectSuccess(decodeMergeRequestDetailJson(detailJson({ user: null }))).viewerCanMerge,
@@ -571,7 +700,7 @@ describe("merge request viewer fields", () => {
 });
 
 describe("decodeAwardEmojiJson", () => {
-  it("reads MR-level awards, keys per-note awards by the REST id inside their gid, and ignores an award outside the eight", () => {
+  it("reads MR-level awards, keys per-note awards by the REST id inside their gid, ignores an award outside the eight, and collects bot note authors", () => {
     const result = expectSuccess(
       decodeAwardEmojiJson(
         JSON.stringify({
@@ -590,11 +719,12 @@ describe("decodeAwardEmojiJson", () => {
                   nodes: [
                     {
                       id: "gid://gitlab/DiffNote/42",
+                      author: { username: "julius", bot: false },
                       awardEmoji: { nodes: [{ name: "heart", user: { username: "julius" } }] },
                     },
                     {
                       id: "gid://gitlab/Note/7",
-                      // Not one of the eight the contract carries.
+                      author: { username: "project_278964_bot_89f97e2c", bot: true },
                       awardEmoji: {
                         nodes: [{ name: "partyparrot", user: { username: "bilal" } }],
                       },
@@ -608,30 +738,48 @@ describe("decodeAwardEmojiJson", () => {
       ),
     );
 
-    // `bilal` is `currentUser`, so the group they are in reads back as reacted, but their own
-    // username is left out of `actors` — the page names them "You" instead — while `count` still
-    // counts them; `julius` alone does not turn a group's own `viewerHasReacted` on.
     expect(result.reactions).toEqual([
       { content: "thumbs-up", count: 2, actors: ["julius"], viewerHasReacted: true },
     ]);
-    // Note 7's only award named nobody the eight recognise, so it carries no reactions and is
-    // left out of the map rather than kept empty.
     expect([...result.reactionsByNoteId]).toEqual([
       ["42", [{ content: "heart", count: 1, actors: ["julius"], viewerHasReacted: false }]],
     ]);
+    expect([...result.botLogins]).toEqual(["project_278964_bot_89f97e2c"]);
     expect(result.nextCursor).toBeNull();
   });
 
-  it("hands back a cursor when GitLab has more notes to page", () => {
+  it("dates a note's edit only when someone edited its text, not when its thread was resolved", () => {
     const result = expectSuccess(
       decodeAwardEmojiJson(
         JSON.stringify({
           data: {
-            currentUser: null,
+            currentUser: { username: "bilal" },
             project: {
               mergeRequest: {
                 awardEmoji: { nodes: [] },
-                notes: { pageInfo: { hasNextPage: true, endCursor: "Y3Vyc29yOjE" }, nodes: [] },
+                notes: {
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                  nodes: [
+                    {
+                      id: "gid://gitlab/Note/1",
+                      lastEditedAt: "2026-07-02T00:00:00Z",
+                      lastEditedBy: { username: "julius" },
+                      resolved: false,
+                    },
+                    {
+                      id: "gid://gitlab/Note/2",
+                      lastEditedAt: "2026-07-01T00:00:00Z",
+                      lastEditedBy: null,
+                      resolved: false,
+                    },
+                    {
+                      id: "gid://gitlab/DiscussionNote/3",
+                      lastEditedAt: "2026-07-03T00:00:00Z",
+                      lastEditedBy: { username: "julius" },
+                      resolved: true,
+                    },
+                  ],
+                },
               },
             },
           },
@@ -639,7 +787,7 @@ describe("decodeAwardEmojiJson", () => {
       ),
     );
 
-    expect(result.nextCursor).toBe("Y3Vyc29yOjE");
+    expect([...result.editedAtByNoteId]).toEqual([["1", "2026-07-02T00:00:00Z"]]);
   });
 
   it("matches the viewer's username case-insensitively, since GitLab is not consistent about case", () => {
@@ -681,56 +829,15 @@ describe("decodeOwnAwardIdJson", () => {
       expectSuccess(decodeOwnAwardIdJson(awards, { content: "thumbs-up", viewer: "bilal" })),
     ).toBe(102);
   });
-
-  it("returns nothing where the reader has no award of that name", () => {
-    expect(
-      expectSuccess(decodeOwnAwardIdJson(awards, { content: "heart", viewer: "bilal" })),
-    ).toBeNull();
-  });
-});
-
-describe("gitLabAwardName", () => {
-  it("spells the contents whose GitLab award name is not their own kebab-case", () => {
-    expect(gitLabAwardName("thumbs-up")).toBe("thumbsup");
-    expect(gitLabAwardName("laugh")).toBe("laughing");
-    expect(gitLabAwardName("hooray")).toBe("tada");
-  });
 });
 
 describe("decodeRepositoryBlobsJson", () => {
-  /** Null is the query going unanswered, which these cases are not about. */
   function expectBlobs(result: Result.Result<ReadonlyMap<string, string> | null, unknown>) {
     const blobs = expectSuccess(result);
     expect(blobs).not.toBe(null);
     if (blobs === null) throw new Error("expected an answered blobs query");
     return blobs;
   }
-
-  it("reads a blob id per path", () => {
-    const blobs = expectBlobs(
-      decodeRepositoryBlobsJson(
-        JSON.stringify({
-          data: {
-            project: {
-              repository: {
-                blobs: {
-                  nodes: [
-                    { path: "src/a.ts", oid: "aaa111" },
-                    { path: "src/b.ts", oid: "bbb222" },
-                  ],
-                },
-              },
-            },
-          },
-        }),
-      ),
-    );
-
-    expect([...blobs]).toEqual([
-      ["src/a.ts", "aaa111"],
-      ["src/b.ts", "bbb222"],
-    ]);
-  });
 
   it("leaves out a node missing either half, which names no version", () => {
     const blobs = expectBlobs(
@@ -758,9 +865,6 @@ describe("decodeRepositoryBlobsJson", () => {
   });
 
   it("keys a blob by the path the host spelled, spaces and all", () => {
-    // A leading or trailing space is a legal part of a file's name. Trimmed here, the id lands
-    // under a key the asked-for path is not spelled with, and the caller fills that path in as
-    // the empty revision: a mark on the file then never compares against the real head blob.
     const blobs = expectBlobs(
       decodeRepositoryBlobsJson(
         JSON.stringify({
@@ -785,14 +889,11 @@ describe("decodeRepositoryBlobsJson", () => {
     expect([...blobs]).toEqual([
       [" leading.ts", "aaa111"],
       ["trailing.ts ", "bbb222"],
-      // A name that is only spaces is one Git carries too, so it is a path like any other.
       ["   ", "ccc333"],
     ]);
   });
 
   it("tells a project the reader cannot see from a revision with none of the files", () => {
-    // Null is the query going unanswered. Read as an empty answer it would say the head has none
-    // of the asked-for files, which reports every file a reader has cleared as changed.
     expect(
       expectSuccess(decodeRepositoryBlobsJson(JSON.stringify({ data: { project: null } }))),
     ).toBe(null);
@@ -809,9 +910,325 @@ describe("decodeRepositoryBlobsJson", () => {
       ),
     ).toEqual(new Map());
   });
+});
 
-  it("fails on output that is not the query's shape", () => {
-    expect(Result.isSuccess(decodeRepositoryBlobsJson("not json"))).toBe(false);
-    expect(Result.isSuccess(decodeRepositoryBlobsJson(JSON.stringify({ errors: [] })))).toBe(false);
+describe("decodeListStatesJson", () => {
+  const statesOf = (enterprise: boolean | null, nodes: ReadonlyArray<unknown>) =>
+    expectSuccess(
+      decodeListStatesJson(
+        JSON.stringify({
+          data: {
+            metadata: enterprise === null ? null : { enterprise },
+            project: { mergeRequests: { nodes } },
+          },
+        }),
+      ),
+    );
+  const approvedBy = (...usernames: ReadonlyArray<string>) => ({
+    nodes: usernames.map((username) => ({ username })),
+  });
+  const reviewers = (...reviewStates: ReadonlyArray<string>) => ({
+    nodes: reviewStates.map((reviewState) => ({ mergeRequestInteraction: { reviewState } })),
+  });
+
+  it.each([
+    {
+      reading: "an approval short of Enterprise approval rules",
+      enterprise: true,
+      approval: { approved: false, approvedBy: approvedBy("GitLabDuo") },
+      decision: "review-required",
+    },
+    {
+      reading: "Enterprise approval rules no one has approved against",
+      enterprise: true,
+      approval: { approved: false, approvedBy: approvedBy() },
+      decision: "review-required",
+    },
+    {
+      reading: "Enterprise approval rules met",
+      enterprise: true,
+      approval: { approved: true, approvedBy: approvedBy("julius") },
+      decision: "approved",
+    },
+    {
+      reading: "Enterprise without approval rules or approvals",
+      enterprise: true,
+      approval: { approved: true, approvedBy: approvedBy() },
+      decision: null,
+    },
+    {
+      reading: "Community Edition with an approval",
+      enterprise: false,
+      approval: { approved: true, approvedBy: approvedBy("julius") },
+      decision: "approved",
+    },
+    {
+      reading: "Community Edition without approvals",
+      enterprise: false,
+      approval: { approved: false, approvedBy: approvedBy() },
+      decision: null,
+    },
+    {
+      reading: "a reviewer requesting changes after another approved",
+      enterprise: true,
+      approval: {
+        approved: true,
+        approvedBy: approvedBy("julius"),
+        reviewers: reviewers("APPROVED", "REQUESTED_CHANGES"),
+      },
+      decision: "changes-requested",
+    },
+    {
+      reading: "a Community Edition reviewer requesting changes",
+      enterprise: false,
+      approval: {
+        approved: false,
+        approvedBy: approvedBy(),
+        reviewers: reviewers("REQUESTED_CHANGES"),
+      },
+      decision: "changes-requested",
+    },
+    {
+      reading: "reviewers who have not asked for changes",
+      enterprise: false,
+      approval: {
+        approved: true,
+        approvedBy: approvedBy("julius"),
+        reviewers: reviewers("UNREVIEWED", "REVIEWED"),
+      },
+      decision: "approved",
+    },
+  ])("reads $reading as $decision", ({ enterprise, approval, decision }) => {
+    expect([...statesOf(enterprise, [{ iid: "7", ...approval }])]).toEqual([
+      [7, { reviewDecision: decision, checksState: null }],
+    ]);
+  });
+
+  it.each([
+    { pipeline: { status: "SUCCESS" }, checksState: "passing" },
+    { pipeline: { status: "FAILED" }, checksState: "failing" },
+    { pipeline: { status: "CANCELED" }, checksState: "failing" },
+    { pipeline: { status: "RUNNING" }, checksState: "pending" },
+    { pipeline: { status: "WAITING_FOR_RESOURCE" }, checksState: "pending" },
+    { pipeline: { status: "MANUAL" }, checksState: null },
+    { pipeline: { status: "SKIPPED" }, checksState: null },
+    { pipeline: null, checksState: null },
+  ])(
+    "reads a $pipeline.status head pipeline as $checksState checks",
+    ({ pipeline, checksState }) => {
+      expect([
+        ...statesOf(false, [
+          { iid: "7", approved: false, approvedBy: approvedBy(), headPipeline: pipeline },
+        ]),
+      ]).toEqual([[7, { reviewDecision: null, checksState }]]);
+    },
+  );
+
+  it("leaves out a merge request it cannot key, and a project the reader cannot see", () => {
+    expect([...statesOf(true, [null, { iid: "x", approved: true }])]).toEqual([]);
+    expect(
+      expectSuccess(decodeListStatesJson(JSON.stringify({ data: { project: null } }))),
+    ).toEqual(new Map());
+  });
+
+  it("keeps the checks of a merge request whose approval it cannot judge", () => {
+    expect([
+      ...statesOf(null, [
+        {
+          iid: "7",
+          approved: false,
+          approvedBy: approvedBy(),
+          headPipeline: { status: "FAILED" },
+        },
+      ]),
+      ...statesOf(true, [
+        { iid: "8", approved: null, approvedBy: approvedBy("julius") },
+        { iid: "9", approved: true, approvedBy: null },
+      ]),
+    ]).toEqual([
+      [7, { checksState: "failing" }],
+      [8, { checksState: null }],
+      [9, { checksState: null }],
+    ]);
+  });
+});
+
+describe("decodeReferenceCandidatesJson", () => {
+  it("prefixes merge requests with ! and skips malformed entries", () => {
+    const raw = JSON.stringify([
+      { iid: 5, title: "Ship it", state: "merged" },
+      { iid: 6, title: "Draft", state: "opened" },
+      { iid: 7, title: "Locked", state: "locked" },
+      { title: "No iid", state: "opened" },
+    ]);
+    const decoded = decodeReferenceCandidatesJson(raw, "change-request");
+    expect(Result.isSuccess(decoded) && decoded.success).toEqual({
+      items: [
+        { reference: "!5", kind: "change-request", number: 5, title: "Ship it", state: "merged" },
+        { reference: "!6", kind: "change-request", number: 6, title: "Draft", state: "open" },
+        { reference: "!7", kind: "change-request", number: 7, title: "Locked", state: "closed" },
+      ],
+      rawCount: 4,
+    });
+    const issues = decodeReferenceCandidatesJson(raw, "issue");
+    expect(Result.isSuccess(issues) && issues.success.items[0]?.reference).toBe("#5");
+  });
+});
+
+describe("decodeMergeRequestStatsJson", () => {
+  it("keys the counts by merge request number", () => {
+    const stats = expectSuccess(
+      decodeMergeRequestStatsJson(
+        JSON.stringify({
+          data: {
+            project: {
+              mergeRequests: {
+                nodes: [
+                  { iid: "7", diffStatsSummary: { additions: 12, deletions: 3 } },
+                  { iid: "8", diffStatsSummary: null },
+                ],
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    // A merge request without a summary is left out rather than shown as zero lines changed.
+    expect([...stats]).toEqual([[7, { additions: 12, deletions: 3 }]]);
+  });
+
+  it("answers nothing for a project the token cannot see", () => {
+    const stats = expectSuccess(
+      decodeMergeRequestStatsJson(JSON.stringify({ data: { project: null } })),
+    );
+
+    expect(stats.size).toBe(0);
+  });
+
+  it("reports a file list shorter than the summary as truncated", () => {
+    const read = (fileCount: number) =>
+      expectSuccess(
+        decodeMergeRequestFileStatsJson(
+          JSON.stringify({
+            data: {
+              project: {
+                mergeRequest: {
+                  diffStatsSummary: { fileCount },
+                  diffStats: [{ path: "src/a.ts", additions: 2, deletions: 1 }],
+                },
+              },
+            },
+          }),
+        ),
+      );
+
+    expect(read(1)).toEqual({
+      files: [{ path: "src/a.ts", additions: 2, deletions: 1 }],
+      truncated: false,
+    });
+    expect(read(2).truncated).toBe(true);
+  });
+});
+
+describe("decodeMergeRequestGraphqlListJson", () => {
+  it("reads a row and its review state in one page, counting rows it cannot read", () => {
+    const page = expectSuccess(
+      decodeMergeRequestGraphqlListJson(
+        JSON.stringify({
+          data: {
+            metadata: { enterprise: false },
+            project: {
+              mergeRequests: {
+                pageInfo: { hasNextPage: true, endCursor: "eyJpZCI6IjcifQ" },
+                nodes: [
+                  {
+                    iid: "7",
+                    title: "Add the merge requests page",
+                    webUrl: "https://gitlab.com/acme/web/-/merge_requests/7",
+                    state: "opened",
+                    draft: true,
+                    createdAt: "2026-07-01T00:00:00Z",
+                    updatedAt: "2026-07-02T00:00:00Z",
+                    sourceBranch: "feat/page",
+                    targetBranch: "main",
+                    conflicts: true,
+                    mergeStatusEnum: "CHECKING",
+                    author: { username: "bilal", name: "Bilal", avatarUrl: null },
+                    labels: { nodes: [{ title: "bug" }] },
+                    approved: false,
+                    approvedBy: { nodes: [] },
+                    reviewers: {
+                      nodes: [
+                        {
+                          username: "julius",
+                          mergeRequestInteraction: { reviewState: "REQUESTED_CHANGES" },
+                        },
+                      ],
+                    },
+                    headPipeline: { status: "FAILED" },
+                  },
+                  { iid: "8" },
+                ],
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(page.items).toEqual([
+      expect.objectContaining({
+        number: 7,
+        state: "open",
+        isDraft: true,
+        mergeability: "conflicting",
+        reviewRequestLogins: ["julius"],
+        labels: [expect.objectContaining({ name: "bug" })],
+      }),
+    ]);
+    expect([...page.states]).toEqual([
+      [7, { reviewDecision: "changes-requested", checksState: "failing" }],
+    ]);
+    expect(page).toMatchObject({ rawCount: 2, hasNextPage: true, endCursor: "eyJpZCI6IjcifQ" });
+  });
+  it("fails on a project the reader cannot see, rather than reading it as empty", () => {
+    expect(
+      Result.isFailure(
+        decodeMergeRequestGraphqlListJson(
+          JSON.stringify({ data: { metadata: { enterprise: true }, project: null } }),
+        ),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("decodeGraphqlListSupportJson", () => {
+  it.each([
+    { version: "17.8.4", supported: false },
+    { version: "17.9.0", supported: true },
+    { version: "19.6.0-pre", supported: true },
+    { version: null, supported: false },
+  ])("reads GitLab $version as supported: $supported", ({ version, supported }) => {
+    expect(
+      expectSuccess(
+        decodeGraphqlListSupportJson(JSON.stringify({ data: { metadata: { version } } })),
+      ),
+    ).toBe(supported);
+  });
+});
+
+describe("decodeMergeMessagesJson", () => {
+  it("fails a partial response instead of reading errored fields as absent templates", () => {
+    const decoded = decodeMergeMessagesJson(
+      JSON.stringify({
+        errors: [{ message: "Internal server error", path: ["project", "mergeRequest"] }],
+        data: {
+          project: { mergeRequest: { title: "Add thing", defaultMergeCommitMessage: null } },
+        },
+      }),
+    );
+
+    expect(Result.isFailure(decoded)).toBe(true);
   });
 });

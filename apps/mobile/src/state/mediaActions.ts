@@ -1,6 +1,11 @@
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import * as Dialog from "../components/ui/Dialog";
 import type { MediaActionsSource } from "../lib/mediaActionsSource";
 import { useNavigation } from "@react-navigation/native";
-import type { MediaActionId } from "@t3tools/client-runtime/media-actions";
+import {
+  formatFilePathForClipboard,
+  type MediaActionId,
+} from "@t3tools/client-runtime/media-actions";
 import {
   AuthFilesystemReadScope,
   type EnvironmentId,
@@ -8,10 +13,8 @@ import {
   type SessionGrantInput,
 } from "@t3tools/contracts";
 import { normalizeNativeMarkdownUrl } from "../lib/markdownLinks";
-import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
-import { Alert } from "react-native";
 
 import { useRefreshAssetUrl } from "./assets";
 import { appAtomRegistry } from "./atom-registry";
@@ -21,7 +24,6 @@ import { downloadAndShareAttachment, shareLocalAttachment } from "../lib/attachm
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
 
-/** An explicit action may ask the server while its grant is still unresolved. */
 function allowsHostMedia(session: SessionGrantInput | null) {
   return session === null || sessionGrantsScope(session, AuthFilesystemReadScope);
 }
@@ -29,7 +31,7 @@ function allowsHostMedia(session: SessionGrantInput | null) {
 function canReadHostMedia(environmentId: EnvironmentId | null): boolean {
   if (environmentId === null) return true;
   const result = appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId));
-  return result._tag !== "Failure" && allowsHostMedia(Option.getOrNull(AsyncResult.value(result)));
+  return result._tag !== "Failure" && allowsHostMedia(AsyncResult.getOrElse(result, () => null));
 }
 
 export function useMediaActions(source: MediaActionsSource | undefined, onOpenFile?: () => void) {
@@ -52,6 +54,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
   );
   const controller = useRef<AbortController | null>(null);
   const [sharing, setSharing] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the in-flight media share when the component unmounts
   useEffect(() => () => controller.current?.abort(), []);
 
   const share = () => {
@@ -63,11 +66,11 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
       if ("attachment" in source) {
         const preview = await loadLocalAttachmentPreview(source.attachment, request.signal);
         if (!preview) return;
-        try {
-          await preview.share(request.signal, source.sourceIdentifier);
-        } finally {
-          preview.dispose();
-        }
+        const shared = await settlePromise(() =>
+          preview.share(request.signal, source.sourceIdentifier),
+        );
+        preview.dispose();
+        if (AsyncResult.isFailure(shared)) throw squashAtomCommandFailure(shared);
         return;
       }
       const uri = "uri" in source ? normalizeNativeMarkdownUrl(source.uri) : await refresh();
@@ -83,7 +86,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
     })()
       .catch((error: unknown) => {
         if (!request.signal.aborted) {
-          Alert.alert(
+          Dialog.alert(
             "Could not share file",
             error instanceof Error ? error.message : "Try again.",
           );
@@ -108,16 +111,17 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
                 {
                   id: "copy-full-path" as const,
                   title: "Copy full path",
-                  run: () => copyTextWithHaptic(reference.path),
+                  run: () => copyTextWithHaptic(formatFilePathForClipboard(reference.path)),
                 },
               ]
             : []),
-          ...(relativePath
+          ...(relativePath && reference?.kind === "file"
             ? [
                 {
                   id: "copy-relative-path" as const,
                   title: "Copy relative path",
-                  run: () => copyTextWithHaptic(relativePath),
+                  run: () =>
+                    copyTextWithHaptic(formatFilePathForClipboard(relativePath, reference.path)),
                 },
               ]
             : []),

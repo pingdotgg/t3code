@@ -26,9 +26,6 @@ function runAssistantTexts(
   );
 }
 
-// A background Bash task outlives its root turn. Its completion wakes Claude
-// on the idle stream; that wake turn becomes exactly one continuation run,
-// and a later user message runs as its own turn without the wake output.
 export function assertClaudeBackgroundTaskWakeOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -51,17 +48,14 @@ export function assertClaudeBackgroundTaskWakeOutput(
   assert.deepEqual(runAssistantTexts(projection, wakeRun?.id), ["WAKE_DONE"]);
   assert.deepEqual(runAssistantTexts(projection, userRun?.id), ["USER_REPLY"]);
 
-  // Only the wake turn became a provider continuation.
   const creators = projection.runs.map((run) => {
     const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
     return `${message?.createdBy}:${message?.creationSource}`;
   });
   assert.deepEqual(creators, ["user:web", "agent:provider", "user:web"]);
-  // The continuation carries the notification summary as its detail.
   const wakeMessage = projection.messages.find((message) => message.id === wakeRun?.userMessageId);
   assert.equal(wakeMessage?.text, WAKE_SUMMARY);
 
-  // The roster listed the task while it ran and cleared on completion.
   const rosterIndex = result.domainEvents.findIndex(
     (event) =>
       event.type === "provider-thread.updated" &&
@@ -77,7 +71,6 @@ export function assertClaudeBackgroundTaskWakeOutput(
   assert.isAbove(clearedIndex, rosterIndex, "the completed task must leave the roster");
   assert.deepEqual(projection.providerThreads[0]?.pendingBackgroundTasks ?? [], []);
 
-  // The roster names the command, and the timeline says it finished.
   const rosterTask = result.domainEvents
     .flatMap((event) =>
       event.type === "provider-thread.updated" ? (event.payload.pendingBackgroundTasks ?? []) : [],
@@ -96,7 +89,6 @@ export function assertClaudeBackgroundTaskWakeOutput(
     },
   ]);
 
-  // Background Bash is roster-only: it never renders as a subagent.
   assert.lengthOf(projection.subagents, 0);
   assert.isFalse(projection.nodes.some((node) => node.kind === "subagent"));
 }

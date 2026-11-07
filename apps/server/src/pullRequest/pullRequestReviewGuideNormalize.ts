@@ -1,7 +1,7 @@
 import type { PullRequestReviewGuideExcerpt, PullRequestReviewGuideStop } from "@t3tools/contracts";
 import type { ReviewGuideGenerationResult } from "@t3tools/provider-core/server/textGeneration";
+import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 
-/** Longest excerpt kept. The reader wants the lines that carry the idea, not the whole hunk. */
 const MAX_EXCERPT_LINES = 25;
 
 interface LineRange {
@@ -9,15 +9,12 @@ interface LineRange {
   readonly end: number;
 }
 
-/** The lines a change touched in one file, on each side of the diff. */
 interface FileHunks {
   readonly new: Array<LineRange>;
   readonly old: Array<LineRange>;
 }
 
-/** What a guide is held to: the changed paths, and the lines each touched. */
 export interface ReviewGuideChange {
-  /** Every changed path, in diff order, named as `git diff --name-only` names it. */
   readonly files: ReadonlyArray<string>;
   readonly hunks: ReadonlyMap<string, FileHunks>;
 }
@@ -30,10 +27,17 @@ const hunkRange = (start: string, count: string | undefined): LineRange | null =
 };
 
 /**
- * Reads `git diff --name-only -z` and `git diff --unified=0` of the same range. Hunks are keyed
- * by the new path, or the old one for a deleted file, so both sides of a renamed file sit under
- * the name the model sees in `--stat`.
+ * Git quotes a name holding a tab, quote or backslash, and ends an unquoted name holding a space
+ * with a tab, so the first literal tab is never part of what the file is called.
  */
+function headerPath(line: string, prefix: string): string | null {
+  const rest = line.slice(4);
+  const tab = rest.indexOf("\t");
+  const token = tab === -1 ? rest : rest.slice(0, tab);
+  const path = token.startsWith('"') ? unquoteGitPatchPath(token) : token;
+  return path.startsWith(prefix) ? path.slice(prefix.length) : null;
+}
+
 export function parseReviewGuideChange(nameOnly: string, patch: string): ReviewGuideChange {
   const hunks = new Map<string, FileHunks>();
   let oldPath: string | null = null;
@@ -46,9 +50,9 @@ export function parseReviewGuideChange(nameOnly: string, patch: string): ReviewG
       current = null;
       inHunks = false;
     } else if (!inHunks && line.startsWith("--- ")) {
-      oldPath = line.startsWith("--- a/") ? line.slice(6) : null;
+      oldPath = headerPath(line, "a/");
     } else if (!inHunks && line.startsWith("+++ ")) {
-      const path = line.startsWith("+++ b/") ? line.slice(6) : oldPath;
+      const path = headerPath(line, "b/") ?? oldPath;
       if (path === null) continue;
       current = hunks.get(path) ?? { new: [], old: [] };
       hunks.set(path, current);
@@ -65,10 +69,6 @@ export function parseReviewGuideChange(nameOnly: string, patch: string): ReviewG
   return { files: nameOnly.split("\0").filter((path) => path !== ""), hunks };
 }
 
-/**
- * Narrows an excerpt to the changed lines it covers: from the first changed line it overlaps to
- * the last. Null when it covers none, which means the model pointed somewhere the change is not.
- */
 function clampExcerpt(
   excerpt: PullRequestReviewGuideExcerpt,
   change: ReviewGuideChange,
@@ -84,30 +84,32 @@ function clampExcerpt(
   return { ...excerpt, start: Math.max(start, first.start), end: Math.min(end, last.end) };
 }
 
-/** Joins a stop's excerpts that overlap or touch in one file, then caps each one's length. */
 function mergeExcerpts(
   excerpts: ReadonlyArray<PullRequestReviewGuideExcerpt>,
 ): Array<PullRequestReviewGuideExcerpt> {
-  const merged: Array<PullRequestReviewGuideExcerpt> = [];
+  let merged: Array<PullRequestReviewGuideExcerpt> = [];
   for (const excerpt of excerpts) {
-    const index = merged.findIndex(
-      (other) =>
-        other.path === excerpt.path &&
-        other.side === excerpt.side &&
-        other.start <= excerpt.end + 1 &&
-        excerpt.start <= other.end + 1,
-    );
-    const other = merged[index];
-    if (other === undefined) {
+    const touches = (other: PullRequestReviewGuideExcerpt) =>
+      other.path === excerpt.path &&
+      other.side === excerpt.side &&
+      other.start <= excerpt.end + 1 &&
+      excerpt.start <= other.end + 1;
+    // An excerpt can bridge several earlier ones; fold them all into the first.
+    const group = merged.filter(touches);
+    const first = group[0];
+    if (first === undefined) {
       merged.push(excerpt);
       continue;
     }
-    merged[index] = {
-      ...other,
-      start: Math.min(other.start, excerpt.start),
-      end: Math.max(other.end, excerpt.end),
-      caption: other.caption || excerpt.caption,
+    const combined = {
+      ...first,
+      start: Math.min(excerpt.start, ...group.map((other) => other.start)),
+      end: Math.max(excerpt.end, ...group.map((other) => other.end)),
+      caption: group.find((other) => other.caption)?.caption ?? excerpt.caption,
     };
+    merged = merged.flatMap((other) =>
+      other === first ? [combined] : touches(other) ? [] : [other],
+    );
   }
   return merged.map((excerpt) => ({
     ...excerpt,
@@ -117,11 +119,6 @@ function mergeExcerpts(
 
 const nonEmpty = (value: string) => value.trim() !== "";
 
-/**
- * Holds a generated guide to the change it describes. A model's line numbers and ids are
- * suggestions: excerpts are clamped to changed lines, notes must sit inside what is left, and any
- * changed file the tour skipped lands in a closing skim stop.
- */
 export function normalizeReviewGuide(
   guide: ReviewGuideGenerationResult,
   change: ReviewGuideChange,
@@ -159,8 +156,6 @@ export function normalizeReviewGuide(
       };
     });
 
-  // A file can be excerpted in several stops, its shape in one and its implementation in another.
-  // A files entry is for a file the tour never shows, so it is listed once and only then.
   const placed = new Set(shaped.flatMap((stop) => stop.excerpts.map((excerpt) => excerpt.path)));
   const stops = shaped.map((stop) => {
     const files = stop.files.filter((file) => !placed.has(file.path));

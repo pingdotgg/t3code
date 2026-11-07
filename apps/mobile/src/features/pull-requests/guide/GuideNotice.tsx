@@ -1,14 +1,14 @@
-import { Pressable, View } from "react-native";
+import { Button } from "../../../components/ui/Button";
+import { View } from "react-native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
-import { AppText as Text } from "../../../components/AppText";
-import { SymbolView } from "../../../components/AppSymbol";
+import { AppText as Text } from "../../../components/ui/AppText";
+import { SymbolView } from "../../../components/ui/AppSymbol";
 import { PR_ROW_EXIT, PR_ROW_LAYOUT } from "../pullRequestAnimations";
 import { guideNoticeState } from "./reviewGuideState";
 import type { useReviewGuide } from "./useReviewGuide";
 
 const NOTICE_ENTER = FadeIn.delay(180).duration(120).reduceMotion(ReduceMotion.System);
 
-/** Keep the action in one place as loading, writing, and retry states change. */
 export function GuideNotice({ state }: { readonly state: ReturnType<typeof useReviewGuide> }) {
   const notice = guideNoticeState(state);
   if (notice.kind === "ready") return null;
@@ -39,30 +39,15 @@ export function GuideNotice({ state }: { readonly state: ReturnType<typeof useRe
       <View style={compact ? undefined : { minHeight: 100 }} className="pt-3 pb-4">
         <Text className="text-sm leading-6 text-foreground-muted">{notice.description}</Text>
       </View>
-      <View className="min-h-12 flex-row items-center justify-between gap-3">
+      <View className="min-h-12 flex-row flex-wrap items-center justify-between gap-3">
         {state.canWrite || busy || notice.kind === "unavailable" ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ disabled: busy, busy }}
+          <Button
+            label={notice.action}
+            tone={compact ? "secondary" : "contrast"}
             disabled={busy}
-            style={{ width: 152 }}
-            className={
-              compact
-                ? "min-h-12 items-center justify-center rounded-full bg-secondary px-4 active:opacity-70"
-                : "min-h-12 items-center justify-center rounded-full bg-foreground px-4 active:opacity-70"
-            }
             onPress={() => (notice.kind === "unavailable" ? state.refresh() : void state.write())}
-          >
-            <Text
-              className={
-                compact
-                  ? "text-center font-t3-medium text-secondary-foreground"
-                  : "text-center font-t3-medium text-screen"
-              }
-            >
-              {notice.action}
-            </Text>
-          </Pressable>
+            loading={busy}
+          />
         ) : (
           <Text className="text-xs text-foreground-muted">
             {notice.kind === "failed"

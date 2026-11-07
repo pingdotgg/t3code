@@ -8,7 +8,6 @@ import type { PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { usePullRequestThreads } from "./usePullRequestThreads";
 
-/** Shared destinations for toolbar helpers and actions beside PR readiness rows. */
 export function usePullRequestAgentActions(
   params: PullRequestParams,
   pr: PullRequestDetail | null,

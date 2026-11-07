@@ -14,7 +14,6 @@ function clamp(value: number) {
   return Math.min(1, Math.max(0, value));
 }
 
-/** Keep pointer capture and drag completion consistent across color controls. */
 function useColorDrag(
   update: (event: PointerEvent<HTMLDivElement>) => void,
   onInteractionEnd?: () => void,
@@ -29,8 +28,6 @@ function useColorDrag(
     onInteractionEnd?.();
   };
   return {
-    // The thumb stays inside the control at its extremes, and only animates
-    // keyboard adjustments, never continuous pointer movement.
     thumbTransition: isDragging
       ? undefined
       : "left 80ms linear, top 80ms linear, background-color 80ms linear",
@@ -57,7 +54,6 @@ type ColorControlProps<T> = {
   label: string;
   value: T;
   onChange: (value: T) => void;
-  /** Flush pending consumer updates when pointer interaction finishes. */
   onInteractionEnd?: () => void;
   className?: string;
 };
@@ -186,6 +182,11 @@ export function ColorHueSlider({
   }, onInteractionEnd);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      onChange(event.key === "Home" ? 0 : 360);
+      return;
+    }
     if (!["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"].includes(event.key)) return;
     event.preventDefault();
     const step = event.shiftKey ? 10 : 1;

@@ -1,12 +1,5 @@
-/**
- * Cursor account usage from its dashboard API, read with the saved CLI or
- * Keychain login. The dashboard covers CLI, desktop and headless usage from
- * every machine on the account.
- *
- * @module provider-cursor/server/accountUsage
- */
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -20,6 +13,8 @@ import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import type { CursorCredentialSource } from "./accountCache.ts";
+import { DEFAULT_CURSOR_API_ENDPOINT, exchangeCursorApiKey } from "./apiKey.ts";
 import * as CursorKeychain from "./CursorKeychain.ts";
 
 function object(value: unknown): Record<string, unknown> {
@@ -32,11 +27,7 @@ function tokens(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
 }
 
-/**
- * Maps Cursor's tiered names (`cursor-grok-4.6-high-fast`,
- * `claude-fable-5-1-thinking-high`) to the base model's rate-table key.
- * Grok resolves through xAI's first-party entry, which has no bare alias.
- */
+// Grok's xAI first-party rate entry has no bare alias.
 export function cursorRateModel(model: string): string {
   const base = model
     .replace(/^cursor-/, "")
@@ -51,7 +42,6 @@ export interface CursorAccountUsageReadResult {
   readonly error: string | null;
 }
 
-/** Why a dashboard read was abandoned; the caller only sees the generic message. */
 class CursorAccountUsageInvalidError extends Schema.TaggedError<CursorAccountUsageInvalidError>()(
   "CursorAccountUsageInvalidError",
   { reason: Schema.String },
@@ -68,9 +58,10 @@ const billedEventIdentity = (...fields: readonly unknown[]) => JSON.stringify(fi
 
 const textEncoder = new TextEncoder();
 
-const accountHash = Effect.fn("accountHash")(function* (value: string) {
-  const crypto = yield* Crypto.Crypto;
-  return Hex.encode(yield* crypto.digest("SHA-256", textEncoder.encode(value)));
+// Untraced: each usage scan hashes every billed event.
+const accountHash = Effect.fnUntraced(function* (value: string) {
+  const digest = yield* Digest.Digest;
+  return Hex.encode(yield* digest.digest(Digest.sha256, textEncoder.encode(value)));
 });
 
 function canonicalJson(value: unknown): string {
@@ -84,7 +75,6 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
-/** Find the longest exact suffix/prefix overlap in linear time. */
 function boundaryOverlap(previous: readonly string[], current: readonly string[]): number {
   const sequence = [...current, "", ...previous];
   const lengths = Array.from({ length: sequence.length }, () => 0);
@@ -102,12 +92,8 @@ const DASHBOARD_USAGE_URL = "https://cursor.com/api/dashboard/get-filtered-usage
 /** The session cookie must never follow a redirect off cursor.com. */
 const NO_REDIRECT: RequestInit = { redirect: "error" };
 
-/**
- * Dashboard usage includes headless agents and reports fresh input separately
- * from cache reads. `keychainToken` is only run for a Keychain login.
- */
 export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(function* (
-  credentialSource: string | { readonly kind: "keychain" },
+  credentialSource: CursorCredentialSource,
   sinceMs: number,
   endDate: number,
   keychainToken: Effect.Effect<
@@ -119,7 +105,7 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
 ): Effect.fn.Return<
   CursorAccountUsageReadResult,
   never,
-  FileSystem.FileSystem | Crypto.Crypto | HttpClient.HttpClient
+  FileSystem.FileSystem | Digest.Digest | HttpClient.HttpClient
 > {
   const fileSystem = yield* FileSystem.FileSystem;
   const httpClient = yield* HttpClient.HttpClient;
@@ -137,7 +123,14 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
           Effect.flatMap(decodeJson),
           Effect.map((credentials) => object(credentials).accessToken),
         )
-      : keychainToken,
+      : credentialSource.kind === "apiKey"
+        ? exchangeCursorApiKey(credentialSource.apiKey).pipe(
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.mapError(
+              () => new CursorAccountUsageInvalidError({ reason: "Invalid API key" }),
+            ),
+          )
+        : keychainToken,
   );
   if (Result.isFailure(credential)) {
     const cause = credential.failure;
@@ -153,9 +146,11 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
         ? null
         : typeof credentialSource === "string"
           ? "Cursor credentials could not be read."
-          : CursorKeychain.isCursorKeychainTimeoutError(cause)
-            ? "Allow Keychain access on the Mac running T3 Code, then refresh."
-            : "Cursor Keychain credentials could not be read.",
+          : credentialSource.kind === "apiKey"
+            ? "Cursor account usage could not be read."
+            : CursorKeychain.isCursorKeychainTimeoutError(cause)
+              ? "Allow Keychain access on the Mac running T3 Code, then refresh."
+              : "Cursor Keychain credentials could not be read.",
     };
   }
   const accessToken = credential.success;
@@ -185,14 +180,29 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
     accountKey = yield* accountHash(subject);
     if (!Number.isFinite(sinceMs) || !Number.isFinite(endDate) || sinceMs < 0 || sinceMs > endDate)
       return yield* invalid("Invalid date window");
+    // The web dashboard rejects API-key tokens; Cursor's RPC API accepts them.
+    const pageRequest =
+      typeof credentialSource !== "string" && credentialSource.kind === "apiKey"
+        ? HttpClientRequest.post(
+            `${DEFAULT_CURSOR_API_ENDPOINT}/aiserver.v1.DashboardService/GetFilteredUsageEvents`,
+          ).pipe(
+            HttpClientRequest.bearerToken(accessToken),
+            HttpClientRequest.setHeader("connect-protocol-version", "1"),
+          )
+        : HttpClientRequest.post(DASHBOARD_USAGE_URL).pipe(
+            HttpClientRequest.setHeaders({
+              Origin: "https://cursor.com",
+              Cookie: `WorkosCursorSessionToken=${encodeURIComponent(`${userId}::${accessToken}`)}`,
+            }),
+          );
     const records: UsageRecord[] = [];
     const occurrences = new Map<string, number>();
     const pages: unknown[][] = [];
     let completed = false;
     const pageSize = 1000;
     let total: number | undefined;
-    const readPage = (page: number) =>
-      Effect.gen(function* () {
+    const readPage = Effect.fn("CursorAccountUsage.readPage")(
+      function* (page: number) {
         // A count can include overlapping page boundaries. Allow room to
         // reconcile them without imposing a fixed account-size limit.
         if (page > (total === undefined ? 1000 : Math.ceil(total / pageSize) * 2 + 1)) {
@@ -200,11 +210,7 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
         }
         const response = yield* httpClient
           .execute(
-            HttpClientRequest.post(DASHBOARD_USAGE_URL).pipe(
-              HttpClientRequest.setHeaders({
-                Origin: "https://cursor.com",
-                Cookie: `WorkosCursorSessionToken=${encodeURIComponent(`${userId}::${accessToken}`)}`,
-              }),
+            pageRequest.pipe(
               HttpClientRequest.bodyText(
                 pageRequestBody(page, pageSize, sinceMs, endDate),
                 "application/json",
@@ -258,15 +264,14 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
         }
         if (typeof count === "number") total = count;
         return events as unknown[];
-      }).pipe(
-        Effect.timeoutOrElse({
-          duration: Duration.seconds(10),
-          orElse: () => invalid("Account usage request timed out"),
-        }),
-      );
+      },
+      Effect.timeoutOrElse({
+        duration: Duration.seconds(10),
+        orElse: () => invalid("Account usage request timed out"),
+      }),
+    );
     // Cursor caps a page at 1,000 events and takes about a second to answer one, so the pages
     // the first one's count implies are requested up to six ahead and consumed in page order.
-    // Pages still in flight when the read ends are interrupted with its scope.
     const ahead: Fiber.Fiber<
       Effect.Success<ReturnType<typeof readPage>>,
       CursorAccountUsageInvalidError
@@ -277,7 +282,6 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
       }
       const next = ahead.shift();
       const events = yield* next === undefined ? readPage(page) : Fiber.join(next);
-      // A rejected login comes back as the finished result instead of a page.
       if (!Array.isArray(events)) return events;
       pages.push(events);
       if (events.length < pageSize) {
@@ -374,13 +378,14 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
       duration: Duration.seconds(60),
       orElse: () => invalid("Account usage read timed out"),
     }),
-    Effect.catch(() =>
-      Effect.succeed({
-        accountKey,
-        records: [],
-        missing: false,
-        error: "Cursor account usage could not be read.",
-      } satisfies CursorAccountUsageReadResult),
+    Effect.orElseSucceed(
+      () =>
+        ({
+          accountKey,
+          records: [],
+          missing: false,
+          error: "Cursor account usage could not be read.",
+        }) satisfies CursorAccountUsageReadResult,
     ),
   );
 });

@@ -1,3 +1,4 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import Animated from "react-native-reanimated";
 import { PR_ROW_LAYOUT } from "./pullRequestAnimations";
 import { useNavigation } from "@react-navigation/native";
@@ -5,13 +6,13 @@ import type { PullRequestDetail } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
-import { MaterialButton } from "../../components/MaterialButton";
-import { MaterialIconButton } from "../../components/MaterialIconButton";
-import { MaterialFloatingToolbar } from "./MaterialFloatingToolbar";
-import { ControlPillMenu } from "../../components/ControlPillMenu";
-import { NativeHeaderToolbar } from "../../native/StackHeader";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { Button } from "../../components/ui/Button";
+import { IconButton } from "../../components/ui/IconButton";
+import { Toolbar } from "../../components/ui/Toolbar";
+import { Menu } from "../../components/ui/Menu";
+
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
@@ -122,7 +123,10 @@ export function PullRequestActionToolbar(props: {
   const pendingReview = canReview && draft.comments.length > 0;
   const showAgentControls = agent.canAsk || !permissions.connected;
   const canOpenThread = agent.threads.length > 0 || showAgentControls;
-  const threadLabel = agent.threads.length ? "Continue thread" : "Work on PR";
+  const { shortLabel } = sourceControlClients.get(
+    (props.pr ?? props.params.initialSummary)?.provider,
+  ).changeRequest;
+  const threadLabel = agent.threads.length ? "Continue thread" : `Work on ${shortLabel}`;
   const primaryLabel = pendingReview ? `Submit review · ${draft.comments.length}` : threadLabel;
   const chooseThread = agent.threads.length > 1;
   const agentActions = agent.actions.filter((action) => action.task !== "ask");
@@ -137,7 +141,7 @@ export function PullRequestActionToolbar(props: {
   const showPrimary = pendingReview || canOpenThread;
   if (Platform.OS === "android") {
     const primary = (
-      <MaterialButton
+      <Button
         label={primaryLabel}
         tone="primary"
         disabled={primaryDisabled}
@@ -151,62 +155,58 @@ export function PullRequestActionToolbar(props: {
         style={{ paddingBottom: insets.bottom + 16 }}
         onLayout={(event) => props.onHeightChange?.(event.nativeEvent.layout.height)}
       >
-        <MaterialFloatingToolbar>
+        <Toolbar>
           <View className="flex-row items-center gap-2">
             {showAgentControls ? (
-              <ControlPillMenu
+              <Menu
                 title="AI helpers"
                 actions={agentActions.map((action) => agent.menuAction(action.task))}
                 onPressAction={({ nativeEvent }) => agent.select(nativeEvent.event)}
               >
                 <View pointerEvents="none">
-                  <MaterialIconButton
+                  <IconButton
                     icon="sparkles"
-                    accessibilityLabel="PR agent actions"
+                    accessibilityLabel={`${shortLabel} agent actions`}
                     disabled={agent.disabled}
                   />
                 </View>
-              </ControlPillMenu>
+              </Menu>
             ) : null}
             {showPrimary ? (
               <View className="min-w-0 shrink">
                 {!pendingReview && chooseThread ? (
-                  <ControlPillMenu
+                  <Menu
                     title="Open thread"
                     actions={threadMenuItems}
                     onPressAction={({ nativeEvent }) => agent.select(nativeEvent.event)}
                   >
                     <View pointerEvents="none">{primary}</View>
-                  </ControlPillMenu>
+                  </Menu>
                 ) : (
                   primary
                 )}
               </View>
             ) : null}
-            <MaterialIconButton
-              icon="file.diff"
-              accessibilityLabel="Changed files"
-              onPress={openFiles}
-            />
+            <IconButton icon="file.diff" accessibilityLabel="Changed files" onPress={openFiles} />
           </View>
-        </MaterialFloatingToolbar>
+        </Toolbar>
       </View>
     );
   }
   const nativeThreadItems = threadMenuItems.map((item) => (
-    <NativeHeaderToolbar.MenuAction
+    <Toolbar.MenuAction
       key={item.id}
       icon={item.image}
       subtitle={"subtitle" in item ? item.subtitle : undefined}
       disabled={"attributes" in item && item.attributes.disabled}
       onPress={() => agent.select(item.id)}
     >
-      <NativeHeaderToolbar.Label>{item.title}</NativeHeaderToolbar.Label>
-    </NativeHeaderToolbar.MenuAction>
+      <Toolbar.Label>{item.title}</Toolbar.Label>
+    </Toolbar.MenuAction>
   ));
   const primaryControl = showPrimary ? (
     !pendingReview && chooseThread ? (
-      <NativeHeaderToolbar.Menu
+      <Toolbar.Menu
         identifier="pull-request-primary-action"
         title={primaryLabel}
         accessibilityLabel={primaryLabel}
@@ -223,9 +223,9 @@ export function PullRequestActionToolbar(props: {
         separateBackground
       >
         {nativeThreadItems}
-      </NativeHeaderToolbar.Menu>
+      </Toolbar.Menu>
     ) : (
-      <NativeHeaderToolbar.Button
+      <Toolbar.Button
         identifier="pull-request-primary-action"
         label={primaryLabel}
         accessibilityLabel={primaryLabel}
@@ -245,45 +245,44 @@ export function PullRequestActionToolbar(props: {
     )
   ) : null;
   const agentControl = showAgentControls ? (
-    <NativeHeaderToolbar.Menu
+    <Toolbar.Menu
       identifier="pull-request-agent"
       icon="sparkles"
       title="AI helpers"
-      accessibilityLabel="PR agent actions"
+      accessibilityLabel={`${shortLabel} agent actions`}
       disabled={agent.disabled}
       separateBackground
     >
       {agentActions.map((action) =>
         chooseThread && !action.disabled ? (
-          <NativeHeaderToolbar.Menu key={action.task} title={action.title} icon={action.icon}>
+          <Toolbar.Menu key={action.task} title={action.title} icon={action.icon}>
             {agent.threadActions(action.task).map((item) => (
-              <NativeHeaderToolbar.MenuAction
+              <Toolbar.MenuAction
                 key={item.id}
                 icon={item.image}
                 subtitle={"subtitle" in item ? item.subtitle : undefined}
                 disabled={"attributes" in item && item.attributes.disabled}
                 onPress={() => agent.select(item.id)}
               >
-                <NativeHeaderToolbar.Label>{item.title}</NativeHeaderToolbar.Label>
-              </NativeHeaderToolbar.MenuAction>
+                <Toolbar.Label>{item.title}</Toolbar.Label>
+              </Toolbar.MenuAction>
             ))}
-          </NativeHeaderToolbar.Menu>
+          </Toolbar.Menu>
         ) : (
-          <NativeHeaderToolbar.MenuAction
+          <Toolbar.MenuAction
             key={action.task}
             icon={action.icon}
             disabled={action.disabled}
             onPress={() => agent.start(action.task)}
           >
-            <NativeHeaderToolbar.Label>{action.title}</NativeHeaderToolbar.Label>
-          </NativeHeaderToolbar.MenuAction>
+            <Toolbar.Label>{action.title}</Toolbar.Label>
+          </Toolbar.MenuAction>
         ),
       )}
-    </NativeHeaderToolbar.Menu>
+    </Toolbar.Menu>
   ) : null;
-  // Tabler file-diff geometry, rasterized at 1x/2x/3x for UIKit template images.
   const filesControl = (
-    <NativeHeaderToolbar.Button
+    <Toolbar.Button
       identifier="workspace-trailing-action"
       icon={{ type: "image", source: require("../../../assets/icons/file-diff.png") }}
       accessibilityLabel="Changed files"
@@ -293,19 +292,19 @@ export function PullRequestActionToolbar(props: {
   );
   if (verticalControls)
     return (
-      <NativeHeaderToolbar placement="bottom">
+      <Toolbar placement="bottom">
         {filesControl}
         {agentControl}
         {primaryControl}
-      </NativeHeaderToolbar>
+      </Toolbar>
     );
   return (
-    <NativeHeaderToolbar placement="bottom">
+    <Toolbar placement="bottom">
       {agentControl}
-      <NativeHeaderToolbar.Spacer flexible />
+      <Toolbar.Spacer flexible />
       {primaryControl}
-      <NativeHeaderToolbar.Spacer flexible />
+      <Toolbar.Spacer flexible />
       {filesControl}
-    </NativeHeaderToolbar>
+    </Toolbar>
   );
 }

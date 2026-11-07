@@ -72,7 +72,6 @@ interface TrackedRenderer {
 const nonnegative = (value: number): number | null =>
   Number.isFinite(value) && value >= 0 ? Math.round(value) : null;
 
-/** Small restart-surviving PID history; never reads URLs or page content. */
 const make = Effect.fn("DesktopRendererHistory.make")(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const path = yield* Path.Path;
@@ -274,7 +273,11 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
     accepting = false;
     for (const renderer of active.values()) renderer.removeListeners();
     active.clear();
-  }).pipe(Effect.andThen(Fiber.interrupt(writerFiber)), Effect.asVoid);
+  }).pipe(
+    Effect.andThen(Fiber.interrupt(writerFiber)),
+    Effect.asVoid,
+    Effect.withSpan("desktop.rendererHistory.shutdown"),
+  );
   yield* Effect.addFinalizer(() => shutdown);
 
   return DesktopRendererHistory.of({ register, recordMetrics, shutdown });

@@ -1,10 +1,11 @@
-import type {
-  EnvironmentId,
-  OrchestrationV2DomainEvent,
-  OrchestrationV2ThreadShell,
-  OrchestrationV2TurnItem,
-  Project,
-  ThreadId,
+import type { AgentAwarenessThread } from "../orchestration-v2/ProjectionStore.ts";
+import {
+  isListedThreadLineage,
+  type EnvironmentId,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2TurnItem,
+  type Project,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   RelayApi,
@@ -15,14 +16,10 @@ import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
-import {
-  normalizeRelayIssuer,
-  RELAY_ACTIVITY_PUBLISH_TYP,
-  signRelayJwt,
-} from "@t3tools/shared/relayJwt";
+import { normalizeRelayIssuer, RELAY_ACTIVITY_PUBLISH_TYP } from "@t3tools/shared/relayJwt";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -45,7 +42,7 @@ import {
   RELAY_ISSUER_SECRET,
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
-import { getOrCreateEnvironmentKeyPairFromSecretStore } from "../cloud/environmentKeys.ts";
+import { EnvironmentSigningKey } from "../cloud/environmentKeys.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -56,7 +53,6 @@ export class AgentAwarenessRelay extends Context.Service<
   {
     readonly publishThread: (threadId: ThreadId) => Effect.Effect<void>;
     readonly drain: Effect.Effect<void>;
-    /** Retries a pending catch-up publish now. Call after this process links or enables publishing. */
     readonly requestCatchUp: () => Effect.Effect<void>;
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
@@ -66,7 +62,6 @@ function eventThreadId(event: OrchestrationV2DomainEvent): ThreadId {
   return event.threadId;
 }
 
-// The filter takes loosely typed events; a turn-item payload carries both fields.
 function isTurnItemPayload(
   payload: unknown,
 ): payload is Pick<OrchestrationV2TurnItem, "type" | "status"> {
@@ -75,7 +70,7 @@ function isTurnItemPayload(
   );
 }
 
-export function shouldPublishAgentAwarenessEvent(
+function shouldPublishAgentAwarenessEvent(
   event: Pick<OrchestrationV2DomainEvent, "type"> & { readonly payload?: unknown },
 ): boolean {
   if (
@@ -87,10 +82,6 @@ export function shouldPublishAgentAwarenessEvent(
   ) {
     return false;
   }
-  // projectThreadAwarenessV2 reads thread metadata, run status, pending requests,
-  // and pending background work (a finished subagent, a cleared roster, or an
-  // ended background item can release a held completion). Message bodies and
-  // tool progress cannot change the published activity.
   switch (event.type) {
     case "thread.created":
     case "thread.archived":
@@ -99,6 +90,7 @@ export function shouldPublishAgentAwarenessEvent(
     case "thread.metadata-updated":
     case "thread.pull-request-link-updated":
     case "thread.pull-request-synced":
+    case "thread.settled":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
     case "run.created":
@@ -107,8 +99,9 @@ export function shouldPublishAgentAwarenessEvent(
     case "subagent.updated":
     case "provider-thread.updated":
       return true;
-    case "thread.settled":
+    // Unsettling must not re-alert a dismissed result.
     case "thread.unsettled":
+    case "thread.guest-share-updated":
     case "thread.snoozed":
     case "thread.unsnoozed":
     case "thread.auto-settle-set":
@@ -116,6 +109,7 @@ export function shouldPublishAgentAwarenessEvent(
     case "thread.unpinned":
     case "thread.pin-reordered":
     case "thread.active-reordered":
+    case "thread.tags-updated":
     case "thread.visited":
     case "thread.marked-unread":
     case "thread.runtime-mode-updated":
@@ -152,8 +146,7 @@ export const makeAgentAwarenessPublishWorker = Effect.fnUntraced(function* <R>(
   const enqueue = (threadId: ThreadId) =>
     Effect.suspend(() => {
       if (queued.has(threadId)) return Effect.void;
-      // Removing the ID when processing starts allows one new queue entry
-      // for updates received while the current snapshot is being published.
+      // Remove queued IDs when processing starts so publication can queue one later update.
       queued.add(threadId);
       return worker.enqueue(threadId);
     }).pipe(Effect.uninterruptible);
@@ -166,6 +159,17 @@ function agentAwarenessPublishIdentity(state: RelayAgentActivityState | null): s
   }
   const { updatedAt: _updatedAt, ...meaningfulState } = state;
   return JSON.stringify(meaningfulState);
+}
+
+const CLEARED_PUBLISH_IDENTITY = agentAwarenessPublishIdentity(null);
+
+// A published tombstone stays recorded so repeats are skipped, but it is not live state.
+function hasLivePublishedState(
+  publishedStateByThread: ReadonlyMap<ThreadId, string>,
+  threadId: ThreadId,
+): boolean {
+  const identity = publishedStateByThread.get(threadId);
+  return identity !== undefined && identity !== CLEARED_PUBLISH_IDENTITY;
 }
 
 function resolveAgentActivityPublishingStartupState(input: {
@@ -239,19 +243,7 @@ function deliveryStats(
   };
 }
 
-function signRelayAgentActivityPublishProof(input: {
-  readonly privateKey: string;
-  readonly payload: RelayAgentActivityPublishProofPayload;
-}) {
-  return signRelayJwt({
-    privateKey: input.privateKey,
-    typ: RELAY_ACTIVITY_PUBLISH_TYP,
-    payload: input.payload,
-  });
-}
-
 const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
-  readonly privateKey: string;
   readonly relayIssuer: string;
   readonly environmentId: string;
   readonly threadId: ThreadId;
@@ -271,12 +263,12 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
     threadId: input.threadId,
     state: input.state,
   } satisfies RelayAgentActivityPublishProofPayload;
-  return yield* signRelayAgentActivityPublishProof({ privateKey: input.privateKey, payload });
+  const signingKey = yield* EnvironmentSigningKey;
+  return yield* signingKey.sign({ typ: RELAY_ACTIVITY_PUBLISH_TYP, payload });
 });
 
-// Compact, log-safe view of the fields the awareness phase ladder reads.
 function describeThreadShellForAwareness(
-  thread: Option.Option<OrchestrationV2ThreadShell>,
+  thread: Option.Option<AgentAwarenessThread>,
 ): Record<string, unknown> {
   if (Option.isNone(thread)) {
     return { found: false };
@@ -295,8 +287,7 @@ function describeThreadShellForAwareness(
 
 function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
-  readonly thread: Option.Option<OrchestrationV2ThreadShell>;
+  readonly thread: Option.Option<AgentAwarenessThread>;
   readonly project: Option.Option<Project>;
 }): {
   readonly projectId: string | null;
@@ -330,7 +321,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
   };
 }
 
-function terminalWorkSinceStart(thread: OrchestrationV2ThreadShell, startedAt: number): boolean {
+function terminalWorkSinceStart(thread: AgentAwarenessThread, startedAt: number): boolean {
   return (
     thread.latestRunCompletedAt != null &&
     DateTime.toEpochMillis(thread.latestRunCompletedAt) > startedAt
@@ -341,7 +332,7 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   readonly environmentId: EnvironmentId;
   readonly startedAt: number;
   readonly projects: ReadonlyArray<Pick<Project, "id" | "title">>;
-  readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
+  readonly threads: ReadonlyArray<AgentAwarenessThread>;
 }): ReadonlyArray<ThreadId> {
   const projectById = new Map(input.projects.map((project) => [project.id, project]));
   return input.threads
@@ -365,18 +356,16 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
     .map((thread) => thread.id);
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const signingKey = yield* EnvironmentSigningKey;
   const scope = yield* Effect.scope;
-  const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
   const startedAt = (yield* DateTime.now).epochMilliseconds;
-  const activeSnapshotPublishedRef = yield* Ref.make(false);
-  // Holds at most one pending wake, so a burst of requests costs one retry.
   const catchUpRequests = yield* Queue.dropping<void>(1);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
 
@@ -416,12 +405,10 @@ export const make = Effect.gen(function* () {
   let cachedRelayClient: Effect.Success<ReturnType<typeof makeRelayClient>> | undefined;
   let publishedRelayConfig: NonNullable<Effect.Success<typeof readRelayConfig>> | undefined;
 
-  // Deadlines for publishes that need confirmation (tombstones and
-  // first-state completions). The confirming publish is re-enqueued through
-  // the same drainable worker as every other publish, so a confirmed
-  // tombstone can never race an in-flight live update; a recovered state
-  // clears the deadline. Assigned after the worker exists.
+  // Confirm through the same worker so tombstones cannot race live updates; recovery clears the deadline.
   const publishConfirmDeadlines = new Map<ThreadId, number>();
+  // Threads whose confirmation holds a completion, so a thread that settles during the hold still alerts.
+  const heldCompletions = new Set<ThreadId>();
   let schedulePublishConfirm: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const publishRetries = new Map<
     ThreadId,
@@ -440,6 +427,7 @@ export const make = Effect.gen(function* () {
     publishedRelayConfig = undefined;
     cachedRelayClient = undefined;
     publishConfirmDeadlines.clear();
+    heldCompletions.clear();
     yield* Ref.set(publishedStateByThreadRef, new Map());
   });
 
@@ -472,81 +460,72 @@ export const make = Effect.gen(function* () {
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
 
-    // Only the relay interaction (signing the proof and the call) is exported;
-    // the reads that decide what to publish are the user's local work.
-    const publishState = (input: {
+    const publishState = Effect.fn("relay.agent_activity.publish")(function* (input: {
       readonly projectId: string | null;
       readonly state: RelayAgentActivityState | null;
       readonly reason: string;
-    }) =>
-      Effect.gen(function* () {
-        if (cachedRelayClient === undefined) {
-          cachedRelayClient = yield* makeRelayClient(relayConfig);
-        }
-        const relayClient = cachedRelayClient;
-        const proof = yield* makePublishProof({
-          privateKey: cloudLinkKeyPair.privateKey,
-          relayIssuer: relayConfig.issuer,
-          environmentId,
-          threadId,
-          state: input.state,
-          jti: yield* crypto.randomUUIDv4(),
-        });
+    }) {
+      if (cachedRelayClient === undefined) {
+        cachedRelayClient = yield* makeRelayClient(relayConfig);
+      }
+      const relayClient = cachedRelayClient;
+      const proof = yield* makePublishProof({
+        relayIssuer: relayConfig.issuer,
+        environmentId,
+        threadId,
+        state: input.state,
+        jti: yield* random.uuidV4(),
+      }).pipe(Effect.provideService(EnvironmentSigningKey, signingKey));
 
-        yield* Effect.logInfo("publishing agent activity for thread", {
-          environmentId,
-          threadId,
-          projectId: input.projectId,
-          statePhase: input.state?.phase ?? null,
-          hasState: input.state !== null,
-          reason: input.reason,
-        });
+      yield* Effect.logInfo("publishing agent activity for thread", {
+        environmentId,
+        threadId,
+        projectId: input.projectId,
+        statePhase: input.state?.phase ?? null,
+        hasState: input.state !== null,
+        reason: input.reason,
+      });
 
-        const response = yield* relayClient.server
-          .publishAgentActivity({
-            params: {
-              environmentId,
-              threadId,
-            },
-            payload: {
-              state: input.state,
-              proof,
-            },
-          })
-          .pipe(Effect.timeout("10 seconds"));
+      const response = yield* relayClient.server
+        .publishAgentActivity({
+          params: {
+            environmentId,
+            threadId,
+          },
+          payload: {
+            state: input.state,
+            proof,
+          },
+        })
+        .pipe(Effect.timeout("10 seconds"));
 
-        yield* Effect.logInfo("agent activity publish completed", {
-          environmentId,
-          threadId,
-          ok: response.ok,
-          deliveries: deliveryStats(response.deliveries),
-        });
-      }).pipe(Effect.withSpan("relay.agent_activity.publish"), withRelayClientTracing);
+      yield* Effect.logInfo("agent activity publish completed", {
+        environmentId,
+        threadId,
+        ok: response.ok,
+        deliveries: deliveryStats(response.deliveries),
+      });
+    });
 
-    // Per-thread shell read: this publish runs for every activity-relevant
-    // domain event, so materializing the full shell here would make the cost
-    // of one thread's activity proportional to how many threads exist.
-    const threadShell = yield* threads.getThreadShell(threadId);
+    // Read only this thread; full shell reads would make each activity event scale with all threads.
+    const threadShell = (yield* threads.getAgentAwarenessSnapshot(threadId)).threads[0] ?? null;
     if (
-      threadShell?.lineage.relationshipToParent === "subagent" &&
-      !(yield* Ref.get(publishedStateByThreadRef)).has(threadId)
+      threadShell !== null &&
+      !isListedThreadLineage(threadShell.lineage) &&
+      !hasLivePublishedState(yield* Ref.get(publishedStateByThreadRef), threadId)
     ) {
-      // Subagents never project activity, so the relay holds no row to clear.
-      // Their events would otherwise publish a tombstone each, and every
-      // publish re-delivers the user's aggregate. Checked before the archive
-      // filter so archiving one stays quiet too.
+      // Subagents and side chats have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
       return;
     }
     const thread =
       threadShell === null || threadShell.archivedAt !== null
-        ? Option.none<OrchestrationV2ThreadShell>()
+        ? Option.none<AgentAwarenessThread>()
         : Option.some(threadShell);
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
       : Option.none<Project>();
     const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
-      threadId,
       thread,
       project,
     });
@@ -554,18 +533,18 @@ export const make = Effect.gen(function* () {
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
-      !publishedStateByThread.has(threadId)
+      !hasLivePublishedState(publishedStateByThread, threadId)
     ) {
-      // Startup has no publish history. Only work from this server process may
-      // produce an initial terminal alert; historical threads remain quiet.
       if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
     }
-    if (publishedStateByThread.get(threadId) === publishIdentity) {
-      // The projection is back at (or never left) the last published state, so
-      // any pending deferred confirmation is moot. Leaving the deadline in
-      // place would let a much later transient null find it already expired
-      // and publish a tombstone immediately, skipping the deferral window.
+    if (
+      publishedStateByThread.get(threadId) === publishIdentity &&
+      // A held completion settled after an earlier clear still has to alert.
+      !(snapshot.state === null && heldCompletions.has(threadId))
+    ) {
+      // Clear moot deadlines so later transient nulls cannot skip their deferral window.
       publishConfirmDeadlines.delete(threadId);
+      heldCompletions.delete(threadId);
       yield* Effect.logDebug("agent activity publish skipped; projected state unchanged", {
         environmentId,
         threadId,
@@ -574,21 +553,12 @@ export const make = Effect.gen(function* () {
       return;
     }
 
-    // Two projections need confirmation before publishing, because both can
-    // appear transiently while the projector is mid-write and publishing them
-    // immediately is destructive or noisy:
-    // - null (tombstone) while the previous published state was live: deletes
-    //   the thread from every armed card mid-conversation.
-    // - completed as the thread's FIRST published state: sessions boot at
-    //   "ready" before their first turn, which projects as completed for an
-    //   instant and sends a spurious Done notification at thread birth.
-    // Defer, schedule a re-publish through the ordinary worker queue, and
-    // only publish if the projection still holds when it drains.
-    const requiresConfirmation =
-      (snapshot.state === null &&
-        publishedStateByThread.get(threadId) !== agentAwarenessPublishIdentity(null)) ||
-      (snapshot.state?.phase === "completed" && !publishedStateByThread.has(threadId));
+    // Confirm tombstones over live state to avoid removing active cards.
+    // Confirm completion: a run can end moments before its continuation starts, and the relay
+    // alerts on every move into completed.
+    const requiresConfirmation = snapshot.state === null || snapshot.state?.phase === "completed";
     if (requiresConfirmation) {
+      if (snapshot.state?.phase === "completed") heldCompletions.add(threadId);
       const nowMs = (yield* DateTime.now).epochMilliseconds;
       const deadline = publishConfirmDeadlines.get(threadId);
       if (deadline === undefined) {
@@ -613,8 +583,37 @@ export const make = Effect.gen(function* () {
         statePhase: snapshot.state?.phase ?? null,
         shell: describeThreadShellForAwareness(thread),
       });
+      // Settled during the hold, not resumed: alert the current completion, then clear the card
+      // on a new window. Only settlement may hide it; queued or silent runs also project to null.
+      const unsettled =
+        snapshot.state === null &&
+        heldCompletions.has(threadId) &&
+        Option.isSome(thread) &&
+        thread.value.settledOverride === "settled"
+          ? resolveAgentAwarenessRelayPublishSnapshot({
+              environmentId,
+              thread: Option.some({ ...thread.value, settledOverride: null }),
+              project,
+            })
+          : null;
+      if (unsettled?.state?.phase === "completed") {
+        const completion = unsettled.state;
+        yield* publishState({
+          projectId: unsettled.projectId,
+          state: completion,
+          reason: unsettled.reason,
+        }).pipe(withRelayClientTracing);
+        heldCompletions.delete(threadId);
+        publishConfirmDeadlines.set(threadId, nowMs + 5_000);
+        yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
+          new Map(publishedStates).set(threadId, agentAwarenessPublishIdentity(completion)),
+        );
+        yield* schedulePublishConfirm(threadId);
+        return;
+      }
     } else {
       publishConfirmDeadlines.delete(threadId);
+      heldCompletions.delete(threadId);
     }
 
     if (snapshot.reason === "thread-not-found") {
@@ -634,17 +633,12 @@ export const make = Effect.gen(function* () {
       projectId: snapshot.projectId,
       state: snapshot.state,
       reason: snapshot.reason,
-    });
+    }).pipe(withRelayClientTracing);
     publishConfirmDeadlines.delete(threadId);
-    yield* Ref.update(publishedStateByThreadRef, (publishedStates) => {
-      const nextPublishedStates = new Map(publishedStates);
-      if (snapshot.state === null) {
-        nextPublishedStates.delete(threadId);
-      } else {
-        nextPublishedStates.set(threadId, publishIdentity);
-      }
-      return nextPublishedStates;
-    });
+    heldCompletions.delete(threadId);
+    yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
+      new Map(publishedStates).set(threadId, publishIdentity),
+    );
   });
 
   const processThreadPublish = Effect.fnUntraced(function* (threadId: ThreadId) {
@@ -677,8 +671,7 @@ export const make = Effect.gen(function* () {
     const attempts = publishRetries.get(threadId)?.attempts ?? 0;
     const delayMs = RELAY_AGENT_ACTIVITY_RETRY_DELAYS_MS[attempts];
     if (delayMs === undefined) {
-      // Keep the exhausted budget until fresh activity or a successful publish
-      // clears it; an old confirmation timer must not start another retry series.
+      // Retain exhausted budgets until activity or success resets them; old timers must not restart retries.
       yield* Effect.logWarning("agent activity publish retry budget exhausted", { threadId });
       return;
     }
@@ -704,11 +697,7 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  // Publishes the active threads once. Returns why it did not, so the retry
-  // knows whether it is waiting on a link or on the publish setting.
   const publishActiveThreadsUnsafe = Effect.gen(function* () {
-    // One secret read settles the common never-linked case; the full link
-    // config is read only once publishing is on.
     const relayUrl = yield* readSecretString(RELAY_URL_SECRET).pipe(
       Effect.orElseSucceed(() => null),
     );
@@ -729,15 +718,13 @@ export const make = Effect.gen(function* () {
       return "unlinked" as const;
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
-    const [projectSnapshot, shellSnapshot] = yield* Effect.all([
-      projects.snapshot,
-      threads.getShellSnapshot(),
-    ]);
+    const projectSnapshot = yield* projects.snapshot;
+    const activitySnapshot = yield* threads.getAgentAwarenessSnapshot();
     const activeThreadIds = resolveAgentAwarenessRelayActiveThreadIds({
       environmentId,
       startedAt,
       projects: projectSnapshot.projects,
-      threads: shellSnapshot.threads,
+      threads: activitySnapshot.threads,
     });
     if (activeThreadIds.length === 0) {
       yield* Effect.logDebug("agent activity snapshot has no publishable threads");
@@ -751,36 +738,37 @@ export const make = Effect.gen(function* () {
     return "published" as const;
   });
 
-  // Publishes the catch-up snapshot of active threads once the environment is
-  // linked and publishing is enabled. Many environments never link, so while
-  // unlinked the retry backs off from 5 s to 60 s. Only this process writes
-  // the link, and it calls `requestCatchUp`, which ends the wait early. A
-  // linked environment keeps the 5 s retry, because `t3 connect publish` can
-  // turn publishing on from another process.
-  const publishActiveThreadsOnceWhenConfigured = (logEnabledWhenReady: boolean) =>
-    Effect.gen(function* () {
-      let unlinkedRetryDelayMs = 5_000;
-      while (!(yield* Ref.get(activeSnapshotPublishedRef))) {
-        const result = yield* publishActiveThreadsUnsafe.pipe(
-          Effect.orElseSucceed(() => "failed" as const),
-        );
-        if (result === "published") {
-          yield* Ref.set(activeSnapshotPublishedRef, true);
-          if (logEnabledWhenReady) {
-            const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
-            yield* Effect.logInfo("agent activity publishing enabled after link reconciliation", {
-              relayUrl: relayConfig?.url,
-            });
-          }
-          return;
+  // Many environments never link, so while unlinked the retry backs off from 5
+  // s to 60 s. A linked environment keeps the 5 s retry, because `t3 connect
+  // publish` can turn publishing on from another process. Keep this untraced:
+  // an unlinked environment can retry for the lifetime of the process.
+  const publishActiveThreadsWhenConfigured = Effect.fnUntraced(function* (
+    logEnabledWhenReady: boolean,
+  ) {
+    let unlinkedRetryDelayMs = 5_000;
+    while (true) {
+      const result = yield* publishActiveThreadsUnsafe.pipe(
+        Effect.orElseSucceed(() => "failed" as const),
+      );
+      if (result === "published") {
+        if (logEnabledWhenReady) {
+          const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
+          yield* Effect.logInfo("agent activity publishing enabled after link reconciliation", {
+            relayUrl: relayConfig?.url,
+          });
         }
-        const retryDelayMs = result === "unlinked" ? unlinkedRetryDelayMs : 5_000;
-        yield* Effect.race(Effect.sleep(retryDelayMs), Queue.take(catchUpRequests));
-        if (result === "unlinked") {
-          unlinkedRetryDelayMs = Math.min(unlinkedRetryDelayMs * 2, 60_000);
-        }
+        logEnabledWhenReady = false;
+        unlinkedRetryDelayMs = 5_000;
+        yield* Queue.take(catchUpRequests);
+        continue;
       }
-    });
+      const retryDelayMs = result === "unlinked" ? unlinkedRetryDelayMs : 5_000;
+      yield* Effect.race(Effect.sleep(retryDelayMs), Queue.take(catchUpRequests));
+      if (result === "unlinked") {
+        unlinkedRetryDelayMs = Math.min(unlinkedRetryDelayMs * 2, 60_000);
+      }
+    }
+  });
 
   schedulePublishConfirm = (threadId) =>
     Effect.forkIn(
@@ -823,7 +811,7 @@ export const make = Effect.gen(function* () {
       }
       yield* forkParked(
         Effect.sleep("1 second").pipe(
-          Effect.andThen(publishActiveThreadsOnceWhenConfigured(startupState !== "enabled")),
+          Effect.andThen(publishActiveThreadsWhenConfigured(startupState !== "enabled")),
         ),
       );
       yield* forkParked(
@@ -844,7 +832,9 @@ export const make = Effect.gen(function* () {
   return AgentAwarenessRelay.of({
     publishThread,
     drain: worker.drain,
-    requestCatchUp: () => Queue.offer(catchUpRequests, undefined).pipe(Effect.asVoid),
+    requestCatchUp: Effect.fn("AgentAwarenessRelay.requestCatchUp")(function () {
+      return Queue.offer(catchUpRequests, undefined).pipe(Effect.asVoid);
+    }),
     start,
   });
 });

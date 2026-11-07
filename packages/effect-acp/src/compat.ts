@@ -8,7 +8,6 @@ type KnownContentBlock<T extends V2.ContentBlock["type"]> = Extract<
   { readonly type: T }
 >;
 
-/** Provider-neutral content accepted by T3 after ACP v1 or v2 negotiation. */
 export type ContentBlock =
   | KnownContentBlock<"text">
   | KnownContentBlock<"image">
@@ -63,7 +62,7 @@ export type ToolKind = V2.ToolKind;
 export type ClientCapabilities = {
   readonly fs?: { readonly readTextFile?: boolean; readonly writeTextFile?: boolean };
   readonly terminal?: boolean;
-  readonly session?: { readonly list?: Meta } | null;
+  readonly session?: { readonly list?: Meta; readonly notices?: Meta } | null;
   readonly plan?: Meta;
   readonly auth?: { readonly terminal?: boolean };
   readonly elicitation?: V2.ElicitationCapabilities | null;
@@ -243,6 +242,7 @@ export type PromptRequest = Omit<V2.PromptRequest, "prompt"> & {
 export interface PromptResponse {
   readonly stopReason: StopReason;
   readonly usage?: V2.Usage | null;
+  readonly error?: V2.Error | null;
   readonly _meta?: Meta;
 }
 
@@ -318,6 +318,7 @@ export type SessionUpdate =
       readonly state: "idle";
       readonly stopReason?: StopReason | null;
       readonly usage?: Usage | null;
+      readonly error?: V2.Error | null;
       readonly _meta?: Meta;
     }
   | {
@@ -358,6 +359,13 @@ export type SessionUpdate =
   | { readonly sessionUpdate: "plan"; readonly entries: ReadonlyArray<V2.PlanEntry> }
   | { readonly sessionUpdate: "current_mode_update"; readonly currentModeId: string }
   | {
+      readonly sessionUpdate: "notice";
+      readonly severity: string;
+      readonly title: string;
+      readonly description?: string | null;
+      readonly _meta?: Meta;
+    }
+  | {
       readonly sessionUpdate: "_t3_unknown";
       readonly originalSessionUpdate: string;
       readonly raw: unknown;
@@ -380,8 +388,6 @@ export type RequestPermissionRequest = {
 };
 export type RequestPermissionResponse = V2.RequestPermissionResponse;
 
-// ACP v1 client-mediated filesystem and terminal shapes remain as internal
-// types for the legacy policy helpers. ACP v2 never advertises or wires them.
 export interface ReadTextFileRequest {
   readonly sessionId: string;
   readonly path: string;

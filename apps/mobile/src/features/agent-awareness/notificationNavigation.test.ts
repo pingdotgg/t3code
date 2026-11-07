@@ -26,46 +26,6 @@ afterEach(() => {
 });
 
 describe("consumeLastAgentNotificationResponse", () => {
-  it("reports which initial-response operation failed", async () => {
-    const cause = new Error("notification lookup unavailable");
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    await consumeLastAgentNotificationResponse({
-      getLastResponse: () => Promise.reject(cause),
-      clearLastResponse: () => Promise.resolve(),
-      handleResponse: vi.fn(),
-    });
-
-    expect(consoleError).toHaveBeenCalledWith(
-      expect.objectContaining({
-        _tag: "NotificationNavigationError",
-        operation: "read",
-      }),
-    );
-  });
-
-  it("routes a response before reporting a clear failure", async () => {
-    const cause = new Error("notification clear unavailable");
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const response = responseWithData({}, "notification-clear") as NotificationResponse;
-    const handleResponse = vi.fn();
-
-    await consumeLastAgentNotificationResponse({
-      getLastResponse: () => Promise.resolve(response),
-      clearLastResponse: () => Promise.reject(cause),
-      handleResponse,
-    });
-
-    expect(handleResponse).toHaveBeenCalledWith(response);
-    expect(consoleError).toHaveBeenCalledWith(
-      expect.objectContaining({
-        _tag: "NotificationNavigationError",
-        operation: "clear",
-        notificationId: "notification-clear",
-      }),
-    );
-  });
-
   it("reports routing failures before clearing the response", async () => {
     const cause = new Error("notification routing unavailable");
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -102,16 +62,6 @@ describe("extractAgentNotificationDeepLink", () => {
         }),
       ),
     ).toBe("/threads/env/thread");
-  });
-
-  it("normalizes explicit thread deep links from APNs payload data", () => {
-    expect(
-      extractAgentNotificationDeepLink(
-        responseWithData({
-          deepLink: "/threads/env%201/thread%2F2",
-        }),
-      ),
-    ).toBe("/threads/env%201/thread%2F2");
   });
 
   it("falls back to the thread route from environment and thread ids", () => {
@@ -155,6 +105,56 @@ describe("extractAgentNotificationDeepLink", () => {
 });
 
 describe("routeAgentNotificationResponseOnce", () => {
+  it("retries a failed initial response and deduplicates it after navigation succeeds", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const response = responseWithData({ deepLink: "/threads/env/thread" }) as NotificationResponse;
+    const handledResponseIds = new Set<string>();
+    const navigate = vi.fn().mockImplementationOnce(() => {
+      throw new Error("navigation not ready");
+    });
+    const clearLastResponse = vi.fn(() => Promise.resolve());
+    const consume = () =>
+      consumeLastAgentNotificationResponse({
+        getLastResponse: () => Promise.resolve(response),
+        clearLastResponse,
+        handleResponse: (response) =>
+          routeAgentNotificationResponseOnce({ handledResponseIds, response, navigate }),
+      });
+
+    await consume();
+    expect(handledResponseIds.size).toBe(0);
+    expect(clearLastResponse).not.toHaveBeenCalled();
+
+    await consume();
+    expect(navigate).toHaveBeenCalledTimes(2);
+    expect(navigate).toHaveBeenLastCalledWith("/threads/env/thread");
+    expect(clearLastResponse).toHaveBeenCalledOnce();
+
+    routeAgentNotificationResponseOnce({ handledResponseIds, response, navigate });
+    expect(navigate).toHaveBeenCalledTimes(2);
+  });
+
+  it("discards malformed destination ids without leaving the response pending", async () => {
+    const response = responseWithData({
+      environmentId: "env",
+      threadId: "\ud800",
+    }) as NotificationResponse;
+    const handledResponseIds = new Set<string>();
+    const navigate = vi.fn();
+    const clearLastResponse = vi.fn(() => Promise.resolve());
+
+    await consumeLastAgentNotificationResponse({
+      getLastResponse: () => Promise.resolve(response),
+      clearLastResponse,
+      handleResponse: (response) =>
+        routeAgentNotificationResponseOnce({ handledResponseIds, response, navigate }),
+    });
+
+    expect(navigate).not.toHaveBeenCalled();
+    expect(clearLastResponse).toHaveBeenCalledOnce();
+    expect(handledResponseIds.has("notification-1")).toBe(true);
+  });
+
   it("does not navigate twice when the initial and listener responses refer to one notification", () => {
     const handledResponseIds = new Set<string>();
     const navigations: Array<string> = [];

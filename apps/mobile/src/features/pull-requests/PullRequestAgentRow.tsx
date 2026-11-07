@@ -1,5 +1,5 @@
 import type { PullRequestDetail } from "@t3tools/contracts";
-import { ControlPillMenu } from "../../components/ControlPillMenu";
+import { Menu } from "../../components/ui/Menu";
 import { PullRequestCardRow } from "./PullRequestControls";
 import type { PullRequestAgentTask } from "./pullRequestAgentTasks";
 import { usePullRequestAgentActions } from "./usePullRequestAgentActions";
@@ -29,12 +29,12 @@ export function PullRequestAgentRow(props: {
   );
   if (agent.threads.length <= 1 || action.attributes.disabled) return row;
   return (
-    <ControlPillMenu
+    <Menu
       title={props.title ?? action.title}
       actions={agent.threadActions(props.task)}
       onPressAction={({ nativeEvent }) => agent.select(nativeEvent.event)}
     >
       {row}
-    </ControlPillMenu>
+    </Menu>
   );
 }

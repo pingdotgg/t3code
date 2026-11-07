@@ -1,11 +1,12 @@
+import type { ThreadStructure, ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   type AssetResource,
+  type OrchestrationV2Checkpoint,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2RunAttempt,
-  type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   type PlanId,
   type RunId,
@@ -97,17 +98,6 @@ export interface WorkLogEntry {
 export type PendingApproval = ThreadPendingApproval;
 export type PendingUserInput = ThreadPendingUserInput;
 
-export interface ActivePlanState {
-  readonly createdAt: string;
-  readonly runId: RunId | null;
-  readonly explanation?: string | null;
-  readonly steps: Array<{
-    readonly step: string;
-    readonly status: "pending" | "inProgress" | "completed";
-    readonly durationMs?: number;
-  }>;
-}
-
 export interface LatestProposedPlanState {
   readonly id: PlanId;
   readonly createdAt: string;
@@ -137,7 +127,6 @@ export type TimelineEntry = (
       readonly proposedPlan: ProposedPlan;
     }
   | {
-      /** A page a completed `html_render` call published, shown where the call happened. */
       readonly id: string;
       readonly kind: "html-render";
       readonly createdAt: string;
@@ -145,12 +134,10 @@ export type TimelineEntry = (
       readonly htmlRender: HtmlRenderReference;
     }
   | {
-      /** An MCP App a completed tool call captured, hosted where the call happened. */
       readonly id: string;
       readonly kind: "mcp-app";
       readonly createdAt: string;
       readonly runId: RunId | null;
-      /** The thread and item that own the app; a fork's inherited app is its source's. */
       readonly sourceThreadId: ThreadId;
       readonly itemId: TurnItemId;
       readonly revision: string;
@@ -169,7 +156,6 @@ export type TimelineEntry = (
       readonly projectedItem: OrchestrationV2ProjectedTurnItem;
     }
 ) & {
-  /** V2 identity resolved from the item's execution node, when locally available. */
   readonly attempt?: TimelineAttempt;
 };
 
@@ -183,9 +169,6 @@ export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
   );
 }
 
-/** Severe failures keep the red treatment ordinary tool failures lost: provider
- *  runtime errors mean the turn or a core side effect broke, not that a
- *  command exited nonzero. */
 export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
   return entry.itemType === "error";
 }
@@ -208,7 +191,6 @@ export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
   );
 }
 
-/** Tool-like row with neither clear success nor failure (empty, incomplete, in progress, etc.). */
 export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolean {
   return (
     workLogEntryIsToolLike(entry) &&
@@ -242,7 +224,6 @@ export function deriveActiveWorkStartedAt(
   sendStartedAt: string | null,
 ): string | null {
   const startedAt = resolveThreadWorkingStartedAt({ latestRun, runtime });
-  // Local dispatch has a clock only until the server supplies the owning run.
   return startedAt ?? (runtime?.activeRunId == null ? sendStartedAt : null);
 }
 
@@ -258,43 +239,30 @@ export function derivePendingUserInputs(
   return [...inputs].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
-export function deriveActivePlanState(
-  projection: OrchestrationV2ThreadProjection | null,
-  latestRunId: RunId | undefined,
-): ActivePlanState | null {
-  if (projection === null) return null;
-  const plans = projection.plans.filter((plan) => plan.kind === "todo_list");
-  const plan =
-    [...plans].toReversed().find((candidate) => candidate.runId === latestRunId) ??
-    plans.at(-1) ??
-    null;
-  if (plan === null || plan.steps.length === 0) return null;
-  return {
-    createdAt: planItemTime(projection, plan.id),
-    runId: plan.runId,
-    explanation: plan.explanation ?? null,
-    steps: plan.steps.map(({ text, status, durationMs }) => ({
-      step: text,
-      status: status === "running" ? "inProgress" : status,
-      ...(durationMs === undefined ? {} : { durationMs }),
-    })),
-  };
-}
-
-function planItemTime(projection: OrchestrationV2ThreadProjection, planId: PlanId): string {
+function planItemTime(
+  projection: ThreadStructure,
+  plan: Pick<OrchestrationV2PlanArtifact, "id" | "runId">,
+): string {
   const item = projection.turnItems.findLast(
     (candidate) =>
       (candidate.type === "proposed_plan" || candidate.type === "todo_list") &&
-      candidate.planId === planId,
+      candidate.planId === plan.id,
   );
-  return DateTime.formatIso(item?.updatedAt ?? projection.updatedAt);
+  if (item?.type === "proposed_plan" || item?.type === "todo_list") {
+    return DateTime.formatIso(item.updatedAt);
+  }
+  // Without a plan item, the plan's run dates it; the thread's own timestamps move while a reply streams.
+  const run = projection.runs.find((candidate) => candidate.id === plan.runId);
+  return DateTime.formatIso(
+    run?.completedAt ?? run?.startedAt ?? run?.requestedAt ?? projection.thread.createdAt,
+  );
 }
 
 function toLatestProposedPlanState(
-  projection: OrchestrationV2ThreadProjection,
+  projection: ThreadStructure,
   plan: Extract<OrchestrationV2PlanArtifact, { readonly kind: "proposed_plan" }>,
 ): LatestProposedPlanState {
-  const updatedAt = planItemTime(projection, plan.id);
+  const updatedAt = planItemTime(projection, plan);
   return {
     id: plan.id,
     createdAt: updatedAt,
@@ -306,7 +274,7 @@ function toLatestProposedPlanState(
 }
 
 export function findLatestProposedPlan(
-  projection: OrchestrationV2ThreadProjection | null,
+  projection: ThreadStructure | null,
   latestRunId: RunId | string | null | undefined,
 ): LatestProposedPlanState | null {
   if (projection === null) return null;
@@ -315,7 +283,7 @@ export function findLatestProposedPlan(
   const plan = [...(candidates.length > 0 ? candidates : plans)]
     .toSorted(
       (left, right) =>
-        planItemTime(projection, left.id).localeCompare(planItemTime(projection, right.id)) ||
+        planItemTime(projection, left).localeCompare(planItemTime(projection, right)) ||
         left.id.localeCompare(right.id),
     )
     .at(-1);
@@ -332,6 +300,7 @@ const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"
   "run_interrupt_request",
   "run_interrupt_result",
   "secret_request",
+  "link_request",
   "subagent",
 ]);
 
@@ -340,6 +309,7 @@ const PERSISTENT_RESOURCE_V2_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"
   "thread_created",
   // Still answerable after a steer supersedes the attempt that asked.
   "secret_request",
+  "link_request",
 ]);
 
 export function timelineEntryIsPersistentResourceCard(entry: TimelineEntry): boolean {
@@ -544,6 +514,17 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
         toolData: { input: item.input, output: item.output },
       };
     }
+    case "todo_list": {
+      // Each todo update is a quiet row where the agent wrote it; it opens to every step.
+      const done = item.steps.filter((step) => step.status === "completed").length;
+      const current =
+        item.steps.find((step) => step.status === "running") ??
+        item.steps.find((step) => step.status === "pending");
+      return {
+        ...common,
+        label: `Tasks ${done}/${item.steps.length}${current ? ` · ${current.text}` : ""}`,
+      };
+    }
     case "approval_request":
       return {
         ...common,
@@ -567,13 +548,7 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
   }
 }
 
-/**
- * Builds the web timeline in the exact order committed by `visibleTurnItems`.
- * Committed rows are presented directly from their projected item. Queued
- * input is absent by construction until dispatch creates its user turn item.
- * Persistent client-owned messages are inserted by timestamp without sorting
- * the canonical sequence. True optimistic sends remain appended afterward.
- */
+/** Preserve visibleTurnItems' committed order; interleave client messages by timestamp. */
 export interface TimelineEntriesInput {
   readonly visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
   readonly optimisticMessages: ReadonlyArray<ChatMessage>;
@@ -626,9 +601,14 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
   );
   for (const row of input.visibleTurnItems) {
     const { item } = row;
-    if (turnItemIsWorkspacePreparation(item)) continue;
-    // Task progress belongs in the composer, not between conversation entries.
-    if (item.type === "todo_list" || item.type === "checkpoint") continue;
+    if (turnItemIsWorkspacePreparation(item) && !item.deferredWork) continue;
+    if (item.type === "checkpoint") continue;
+    if (
+      item.type === "user_message" &&
+      item.inputIntent === "queued_turn" &&
+      item.status === "pending"
+    )
+      continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
     const createdAt = projectedItemCreatedAt(row);
     const attempt = resolveAttempt(item);
@@ -673,6 +653,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
               createdBy: item.createdBy,
               creationSource: item.creationSource,
               ...(item.senderThreadId !== undefined ? { senderThreadId: item.senderThreadId } : {}),
+              ...(item.idleCompaction !== undefined ? { idleCompaction: item.idleCompaction } : {}),
               ...(item.scheduledTaskId !== undefined
                 ? { scheduledTaskId: item.scheduledTaskId }
                 : {}),
@@ -730,10 +711,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       continue;
     }
 
-    const mcpApp =
-      item.type === "dynamic_tool" && item.status === "completed"
-        ? mcpAppFromToolItem(item)
-        : undefined;
+    const mcpApp = item.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
     if (mcpApp !== undefined) {
       entries.push({
         id: item.id,
@@ -807,7 +785,6 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
 type AttachmentResource = Extract<AssetResource, { readonly _tag: "attachment" }>;
 const EMPTY_IMAGE_RESOURCES = Object.freeze<ReadonlyArray<AttachmentResource>>([]);
 
-/** A mounted row requests its stored images. Local previews keep their existing URLs. */
 export function selectMessageImageResources(
   attachments: ChatMessage["attachments"],
 ): ReadonlyArray<AttachmentResource> {
@@ -823,7 +800,6 @@ export function selectMessageImageResources(
     : Array.from(attachmentIds, (attachmentId) => ({ _tag: "attachment", attachmentId }));
 }
 
-/** Handoffs need server URLs even while their message rows are unmounted. */
 export function selectHandoffImageResources(
   messages: ReadonlyArray<Pick<ChatMessage, "id" | "role" | "attachments">> | undefined,
   handoffs: Readonly<Record<string, ReadonlyArray<string>>>,
@@ -841,7 +817,6 @@ export function selectHandoffImageResources(
     : Array.from(attachmentIds, (attachmentId) => ({ _tag: "attachment", attachmentId }));
 }
 
-/** Own one mapper per preview stage. Immutable messages retain unchanged preview objects. */
 export function createMessageAttachmentPreviewProjector() {
   const attachmentsBySource = new WeakMap<
     ReadonlyArray<ChatAttachment>,
@@ -889,7 +864,6 @@ export function createMessageAttachmentPreviewProjector() {
   };
 }
 
-/** Text and update time do not change a streaming assistant message's row structure. */
 export function isStreamingMessageTextUpdate(previous: ChatMessage, next: ChatMessage): boolean {
   if (
     previous.role !== "assistant" ||
@@ -904,7 +878,6 @@ export function isStreamingMessageTextUpdate(previous: ChatMessage, next: ChatMe
   return shallow(previousMetadata, nextMetadata);
 }
 
-/** Keep provenance and execution metadata in the rebuild boundary, including inspector data. */
 export function isStreamingTurnItemTextUpdate(
   previous: OrchestrationV2ProjectedTurnItem,
   next: OrchestrationV2ProjectedTurnItem,
@@ -923,9 +896,29 @@ export function isStreamingTurnItemTextUpdate(
   }
   const { text: _previousText, updatedAt: _previousUpdatedAt, ...previousMetadata } = previousItem;
   const { text: _nextText, updatedAt: _nextUpdatedAt, ...nextMetadata } = nextItem;
-  // Wire decoding can recreate timestamps and attachments on each update.
-  // Compare only the changed item's metadata, never the entire transcript.
+  // Wire decoding recreates timestamps and attachments; compare only the changed item's metadata.
   return Equal.equals(previousMetadata, nextMetadata);
+}
+
+/**
+ * A changed tool or work item maps to exactly one entry with the item's id.
+ * Messages and question answers take part in cross-entry dedupe, and anchored
+ * messages are placed by createdAt, so those changes rebuild.
+ */
+function canRederiveInPlace(
+  input: TimelineEntriesInput,
+  previousItem: OrchestrationV2ProjectedTurnItem,
+  item: OrchestrationV2ProjectedTurnItem,
+): boolean {
+  return (
+    item.item.id === previousItem.item.id &&
+    item.item.type === previousItem.item.type &&
+    item.item.type !== "user_message" &&
+    item.item.type !== "assistant_message" &&
+    item.item.type !== "user_input_request" &&
+    ((input.anchoredMessages?.length ?? 0) === 0 ||
+      projectedItemCreatedAt(item) === projectedItemCreatedAt(previousItem))
+  );
 }
 
 function reuseTimelineEntries(
@@ -945,8 +938,7 @@ function reuseTimelineEntries(
     return null;
   }
   const appended = input.visibleTurnItems.length > before.visibleTurnItems.length;
-  // Anchored and optimistic messages need to be interleaved/deduplicated when
-  // committed items arrive. Keep the full projection for that transition.
+  // Keep full projection until committed items interleave and deduplicate anchored/optimistic messages.
   if (
     appended &&
     (input.optimisticMessages.length > 0 || (input.anchoredMessages?.length ?? 0) > 0)
@@ -969,14 +961,45 @@ function reuseTimelineEntries(
     OrchestrationV2ProjectedTurnItem,
     OrchestrationV2ProjectedTurnItem
   >();
-  for (const [index, previousItem] of before.visibleTurnItems.entries()) {
+  const changedItems: OrchestrationV2ProjectedTurnItem[] = [];
+  for (let index = 0; index < before.visibleTurnItems.length; index += 1) {
+    const previousItem = before.visibleTurnItems[index]!;
     const item = input.visibleTurnItems[index]!;
     if (item === previousItem) continue;
-    if (!isStreamingTurnItemTextUpdate(previousItem, item)) return null;
-    replacements.set(previousItem, item);
+    if (isStreamingTurnItemTextUpdate(previousItem, item)) {
+      replacements.set(previousItem, item);
+      continue;
+    }
+    if (!canRederiveInPlace(input, previousItem, item)) return null;
+    changedItems.push(item);
   }
-  if (replacements.size === 0 && !appended) return previous.entries;
+  // One batch keeps the attempt/node/plan lookups to a single build.
+  const rederived =
+    changedItems.length === 0
+      ? []
+      : deriveTimelineEntriesFromVisibleTurnItems({
+          ...input,
+          visibleTurnItems: changedItems,
+          optimisticMessages: [],
+          anchoredMessages: [],
+        });
+  if (
+    rederived.length !== changedItems.length ||
+    rederived.some((entry, index) => entry.id !== changedItems[index]!.item.id)
+  ) {
+    return null;
+  }
+  const rederivedEntries = new Map(rederived.map((entry) => [entry.id, entry]));
+  if (replacements.size === 0 && rederivedEntries.size === 0 && !appended) {
+    return previous.entries;
+  }
+  let rederivedCount = 0;
   const entries = previous.entries.map((entry): TimelineEntry => {
+    const rederivedEntry = rederivedEntries.get(entry.id);
+    if (rederivedEntry !== undefined) {
+      rederivedCount += 1;
+      return rederivedEntry;
+    }
     const row =
       entry.kind === "message" && entry.projectedItem !== undefined
         ? replacements.get(entry.projectedItem)
@@ -992,6 +1015,7 @@ function reuseTimelineEntries(
       },
     };
   });
+  if (rederivedCount !== rederivedEntries.size) return null;
   if (appended) {
     entries.push(
       ...deriveTimelineEntriesFromVisibleTurnItems({
@@ -1003,7 +1027,6 @@ function reuseTimelineEntries(
   return entries;
 }
 
-/** Reuse immutable entries during streaming without reordering the canonical v2 sequence. */
 export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
   input: TimelineEntriesInput,
   previous: TimelineEntriesProjection | null = null,
@@ -1014,8 +1037,6 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
   if (previous === null || !shallow(input.attachmentUrlById, previous.input.attachmentUrlById)) {
     return { input, entries };
   }
-  // Tool output and lifecycle changes rebuild grouping, but unchanged message
-  // objects and previews still let memoized history rows stay mounted.
   const previousMessages = new Map(
     previous.entries.flatMap((entry) =>
       entry.kind === "message" ? [[entry.id, entry] as const] : [],
@@ -1032,41 +1053,75 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
   };
 }
 
-export function inferCheckpointTurnCountByRunId(
-  summaries: ReadonlyArray<ThreadCheckpointSummary>,
-): Record<string, number> {
-  return Object.fromEntries(
-    summaries.flatMap((summary) =>
-      summary.runId === null ? [] : [[summary.runId, summary.checkpointTurnCount] as const],
-    ),
-  );
-}
-
+// Run ordinals keep increasing after a rewind; only visible local runs define predecessors.
 export function deriveRevertTurnCountByUserMessageId(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
+  readonly threadStartCheckpointReady: boolean;
+  readonly availableRevertTurnCounts?: ReadonlySet<number> | undefined;
+  readonly unsettledRunId?: RunId | null;
 }): Map<ChatMessage["id"], number> {
-  const readyCheckpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
+  const readyTurnCountByRunId = new Map<RunId, number>();
   for (const checkpoint of input.checkpoints) {
     if (checkpoint.status === "ready") {
-      readyCheckpointByRunId.set(checkpoint.runId, checkpoint);
+      readyTurnCountByRunId.set(checkpoint.runId, checkpoint.checkpointTurnCount);
     }
   }
+  const targetByRunId = new Map<RunId, number | undefined>();
   const byUserMessageId = new Map<ChatMessage["id"], number>();
+  let previousRunId: RunId | null = null;
   for (const entry of input.timelineEntries) {
-    if (entry.kind !== "message" || entry.message.role !== "user") continue;
-    if (entry.message.inputIntent !== "turn_start" && entry.message.inputIntent !== "queued_turn") {
-      continue;
+    // Inherited history belongs to the source thread, not our checkpoint scope.
+    if (entry.kind !== "message" && entry.kind !== "work") continue;
+    const projectedItem =
+      entry.kind === "message" ? entry.projectedItem : entry.entry.projectedItem;
+    if (projectedItem?.visibility === "inherited") continue;
+    const runId =
+      entry.kind === "message"
+        ? entry.message.runId
+        : entry.entry.itemType === "notification"
+          ? entry.entry.runId
+          : null;
+    if (runId == null) continue;
+    if (!targetByRunId.has(runId)) {
+      targetByRunId.set(
+        runId,
+        previousRunId === null
+          ? input.threadStartCheckpointReady
+            ? 0
+            : undefined
+          : readyTurnCountByRunId.get(previousRunId),
+      );
+      previousRunId = runId;
     }
-    if (entry.message.runId === null) continue;
-    const checkpoint = readyCheckpointByRunId.get(entry.message.runId);
-    if (checkpoint === undefined) continue;
-    byUserMessageId.set(entry.message.id, Math.max(0, checkpoint.checkpointTurnCount - 1));
+    if (entry.kind !== "message") continue;
+    const { message } = entry;
+    if (message.role !== "user" || message.runId === input.unsettledRunId) continue;
+    if (message.inputIntent !== "turn_start" && message.inputIntent !== "queued_turn") continue;
+    const target = targetByRunId.get(runId);
+    if (
+      target !== undefined &&
+      (input.availableRevertTurnCounts === undefined || input.availableRevertTurnCounts.has(target))
+    )
+      byUserMessageId.set(message.id, target);
   }
   return byUserMessageId;
 }
 
-export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase {
+export function findRevertCheckpoint(
+  checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>,
+  turnCount: number,
+): OrchestrationV2Checkpoint | undefined {
+  return checkpoints.findLast(
+    (checkpoint) =>
+      checkpoint.status === "ready" &&
+      (turnCount === 0
+        ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
+        : checkpoint.appRunOrdinal === turnCount),
+  );
+}
+
+export function derivePhase(runtime: ThreadStructureRuntime | null): SessionPhase {
   if (runtime === null) return "disconnected";
   if (
     runtime.status === "preparing" ||
@@ -1078,15 +1133,10 @@ export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase 
   return "ready";
 }
 
-/**
- * Whether web and desktop offer Stop for the active thread. The server settles
- * a preparing or starting run on `run.interrupt` (Orchestrator.dispatchRunInterrupt),
- * so Stop must not wait for the phase to reach "running". A queued thread offers
- * Stop only while an earlier run is still interruptible; Stop targets that run.
- */
+/** Preparing and starting runs can be interrupted; Stop need not wait for running. */
 export function deriveCanInterruptRunningThread(
   hasActiveThread: boolean,
-  runtime: ThreadRuntimeSummary | null,
+  runtime: ThreadStructureRuntime | null,
 ): boolean {
   return (
     hasActiveThread &&

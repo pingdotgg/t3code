@@ -91,7 +91,6 @@ object AgentNotifications {
       .forEach { manager.cancel(it.tag, it.id) }
   }
 
-  /** Records the thread route the app is showing, or null when none is open. */
   @Volatile private var threadOnScreen: String? = null
 
   fun setThreadOnScreen(path: String?) {
@@ -128,8 +127,8 @@ object AgentNotifications {
     if (registered && fresh && NotificationManagerCompat.from(context).areNotificationsEnabled()) {
       channels(context)
       val scheme = prefs.getString("scheme", "t3code") ?: "t3code"
-      showAlert(context, prefs, scheme, data)
-      updateActivity(context, prefs, scheme, data, updatedAt)
+      val alerted = showAlert(context, prefs, scheme, data)
+      updateActivity(context, prefs, data, updatedAt, alerted)
     }
   }
 
@@ -138,7 +137,7 @@ object AgentNotifications {
     prefs: SharedPreferences,
     scheme: String,
     data: Map<String, String>
-  ) {
+  ): Boolean {
     // Queue retries carry the same alert id. Keep a bounded history even when
     // notification A is retried after notification B has already arrived.
     val alertId = data["alert_id"]
@@ -158,7 +157,14 @@ object AgentNotifications {
         "seenAlertsOrdered",
         (seen.takeLast(63) + alertId).joinToString("\n")
       ).apply()
+      // Android drops posts to a blocked channel, so that alert shows nothing.
+      return !onScreen && (
+        Build.VERSION.SDK_INT < 26 ||
+          manager(context).getNotificationChannel(ALERT_CHANNEL)?.importance !=
+          NotificationManager.IMPORTANCE_NONE
+        )
     }
+    return false
   }
 
   private fun postAlert(
@@ -216,13 +222,21 @@ object AgentNotifications {
   private fun updateActivity(
     context: Context,
     prefs: SharedPreferences,
-    scheme: String,
     data: Map<String, String>,
-    updatedAt: Long
+    updatedAt: Long,
+    alerted: Boolean
   ) {
-    // Ignore reordered status updates without dropping an unrelated alert.
-    if (updatedAt < prefs.getLong("lastUpdate", 0)) return
-    prefs.edit().putLong("lastUpdate", updatedAt).apply()
+    val terminal = singleTerminal(data)
+    // Only a one-row card on the alert's own thread is known to show nothing more
+    // than the alert. Grouped alerts and cards with other rows stay visible.
+    val covered = terminal?.takeIf { alerted && data["alert_path"] == data["activity_path"] }
+    if (covered != null) coverTerminal(prefs, covered, updatedAt)
+    if (updatedAt < prefs.getLong("lastUpdate", 0)) {
+      // A newer replay of this same finish may already show the card.
+      if (isCovered(prefs, prefs.getString("lastTerminal", null))) cancelActivity(context)
+      return
+    }
+    prefs.edit().putLong("lastUpdate", updatedAt).putString("lastTerminal", terminal).apply()
     val active = data["active"] == "true"
     // Use absolute state expiry: a replay must not extend a finished card or
     // make an abandoned host look active indefinitely. Older relays omit it.
@@ -239,8 +253,32 @@ object AgentNotifications {
     // Dismissing a run includes its finished card. A new run, or toggling
     // activity off/on, arms it again; terminal replays stay dismissed.
     if (active && !wasActive) prefs.edit().putBoolean("dismissed", false).apply()
-    if (!prefs.getBoolean("dismissed", false)) {
+    if (prefs.getBoolean("dismissed", false) || isCovered(prefs, terminal)) {
+      cancelActivity(context)
+    } else {
+      val scheme = prefs.getString("scheme", "t3code") ?: "t3code"
       showActivity(context, scheme, data, active, remainingMs)
+    }
+  }
+
+  /** Identifies a finished one-thread card by its path, phase and absolute expiry. */
+  private fun singleTerminal(data: Map<String, String>): String? {
+    val phase = data["activity_phase"]
+    val finished = phase == "completed" || phase == "failed"
+    val single = data.containsKey("activity_line_0") && !data.containsKey("activity_line_1")
+    val expiresAt = data["activity_expires_at"]
+    return "${data["activity_path"]}\n$phase\n$expiresAt"
+      .takeIf { finished && single && expiresAt != null }
+  }
+
+  private fun isCovered(prefs: SharedPreferences, terminal: String?) =
+    terminal != null && terminal == prefs.getString("coveredTerminal", null)
+
+  private fun coverTerminal(prefs: SharedPreferences, terminal: String?, updatedAt: Long) {
+    if (updatedAt >= prefs.getLong("lastUpdate", 0) ||
+      prefs.getString("lastTerminal", null) == terminal
+    ) {
+      prefs.edit().putString("coveredTerminal", terminal).apply()
     }
   }
 
@@ -269,8 +307,6 @@ object AgentNotifications {
       .setContentIntent(openThread)
       .setDeleteIntent(dismissIntent)
     presentation.applyTo(builder, context)
-    // A finished card is no longer ongoing, so it swipes away and a tap opens
-    // the thread; buttons would only repeat that.
     val action = presentation.action
     if (action != null) {
       if (openThread != null) builder.addAction(0, action, openThread)
@@ -322,9 +358,8 @@ object AgentNotifications {
     }
   }
 
-  private fun base(context: Context, channel: String): NotificationCompat.Builder {
-    val icon = context.resources.getIdentifier("notification_icon", "drawable", context.packageName)
-    return NotificationCompat.Builder(context, channel)
+  private fun base(context: Context, channel: String): NotificationCompat.Builder =
+    NotificationCompat.Builder(context, channel)
       .setPriority(
         if (channel ==
           ALERT_CHANNEL
@@ -335,10 +370,9 @@ object AgentNotifications {
         }
       )
       .setDefaults(if (channel == ALERT_CHANNEL) Notification.DEFAULT_ALL else 0)
-      .setSmallIcon(if (icon != 0) icon else android.R.drawable.ic_dialog_info)
+      .setSmallIcon(R.drawable.agent_activity_mark)
       .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
       .setShowWhen(false)
-  }
 
   private fun contentIntent(
     context: Context,

@@ -13,11 +13,10 @@ Where `packages/frontend-frameworks/fixtures/sveltekit` is SSR-first, this fixtu
   in-memory adapter's fallback generation (`builder.generateFallback` →
   `index.html`) and must flow through to the deployed assets'
   `not_found_handling` (mirrored in the miniflare preview's `assetConfig`).
-- A **real user `vite.config.ts`** registers `sveltekit()` with a user alias
-  (`$spa` → `src/lib`) the widgets page imports through and a user
+- A **real user `vite.config.ts`** registers `sveltekit()` with a user
   `preprocess` that rewrites a marker rendered by the home page — the file
   must be loaded natively per the user-config principle. There is
-  deliberately NO `svelte.config.js`: kit v3 (`3.0.0-next.9`) hard-errors on
+  deliberately NO `svelte.config.js`: kit v3 hard-errors on
   its presence ("svelte.config.js is no longer used") — ALL configuration,
   including Svelte `preprocess`/`compilerOptions`, lives in the
   `sveltekit(...)` call.
@@ -72,9 +71,10 @@ non-navigation request (no `Accept: text/html`) still gets kit's 404.
   (`/definitely/not/a/route`) serves the shell and hydrates into kit's
   client-side 404 error view (`+error.svelte`).
 - **Direct static asset** serve (`static/robots.txt`).
-- **User config honored**: the `$spa` kit alias and the marker preprocessor
-  (both declared in the user's `vite.config.ts` `sveltekit(...)` call) are
-  observable in the rendered app.
+- **User config honored**: the marker preprocessor (declared in the user's
+  `vite.config.ts` `sveltekit(...)` call) is observable in the rendered app.
+- **Subpath imports**: the widgets page imports `#lib/widgets.js` through
+  `package.json` `imports` (kit v3's replacement for `$lib`).
 
 ## Commands
 

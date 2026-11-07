@@ -22,6 +22,8 @@ export interface ComposerEditorHandle {
   focus: () => void;
   blur: () => void;
   setSelection: (selection: ComposerEditorSelection) => void;
+  /** iOS: resolves once a native edit still in flight has reached `onChangeText`. */
+  flushPendingInput: () => Promise<void>;
 }
 
 export interface ComposerEditorProps {
@@ -36,7 +38,10 @@ export interface ComposerEditorProps {
     },
   ) => void;
   readonly skills?: ReadonlyArray<
-    Pick<ServerProviderSkill, "name" | "displayName" | "shortDescription" | "description"> &
+    Pick<
+      ServerProviderSkill,
+      "name" | "displayName" | "shortDescription" | "description" | "enabled" | "userInvocable"
+    > &
       Partial<Pick<ServerProviderSkill, "path">>
   >;
   readonly selection?: ComposerEditorSelection;
@@ -55,6 +60,11 @@ export interface ComposerEditorProps {
   readonly style?: StyleProp<ViewStyle>;
   readonly textStyle?: StyleProp<TextStyle>;
   readonly onChangeText: (value: string) => void;
+  /**
+   * iOS: the owner's reset generation, raised synchronously when it replaces the text outright
+   * (send, discard). Native edits the editor made before applying that reset are dropped.
+   */
+  readonly readResetGeneration?: () => number;
   readonly onSelectionChange?: (selection: ComposerEditorSelection) => void;
   readonly onPasteImages?: (uris: ReadonlyArray<string>) => void;
   readonly onContextPress?: (reference: {
@@ -66,18 +76,20 @@ export interface ComposerEditorProps {
   readonly onFocus?: () => void;
   readonly onBlur?: () => void;
   /**
+   * Size of the laid-out text in dp, without insets. Width is the widest line, so a
+   * one-line draft reports its natural width; only fires when the size changes.
+   */
+  readonly onContentSizeChange?: (size: {
+    readonly width: number;
+    readonly height: number;
+  }) => void;
+  /**
    * Hardware-keyboard Return behavior on iOS. No-op on Android, which has no
    * hardware Return handling.
    */
   readonly enterBehavior?: ComposerEnterBehavior;
-  /** Shortcut-HUD title for the primary send chord. iOS only. */
   readonly submitTitle?: string;
-  /** Shortcut-HUD title for the Command-modified send chord. iOS only. */
   readonly alternateSubmitTitle?: string;
-  /**
-   * Hardware keyboard submission. `alternate` is true for the Command-modified
-   * chord, which sends using the opposite of the configured follow-up
-   * behavior. Always false on Android, which has no hardware Return handling.
-   */
+  /** Command chords set alternate to reverse follow-up behavior; Android always passes false. */
   readonly onSubmit?: (alternate: boolean) => void;
 }

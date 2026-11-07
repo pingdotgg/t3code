@@ -1,3 +1,4 @@
+import { resolveQueuedEditExit } from "@t3tools/client-runtime/queued-run-edit";
 import type { ChatAttachment } from "@t3tools/contracts";
 import {
   composerDraftHasUserContent,
@@ -7,7 +8,6 @@ import {
   type ComposerThreadTarget,
 } from "../../composerDraftStore";
 
-/** Keep an unsaved edit when its queued run starts or is removed remotely. */
 export function recoverQueuedMessageEdit(input: {
   readonly editTarget: ComposerThreadTarget;
   readonly threadTarget: ComposerThreadTarget;
@@ -15,18 +15,20 @@ export function recoverQueuedMessageEdit(input: {
 }): "kept" | "discarded" | "clean" {
   const store = useComposerDraftStore.getState();
   const draft = store.getComposerDraft(input.editTarget);
-  const dirty =
-    draft !== null &&
-    (draft.prompt !== input.originalText || draft.images.length > 0 || draft.files.length > 0);
-  if (dirty && !composerDraftHasUserContent(store.getComposerDraft(input.threadTarget))) {
+  const recovery = resolveQueuedEditExit({
+    editChanged:
+      draft !== null &&
+      (draft.prompt !== input.originalText || draft.images.length > 0 || draft.files.length > 0),
+    threadDraftEmpty: !composerDraftHasUserContent(store.getComposerDraft(input.threadTarget)),
+  });
+  if (recovery === "kept") {
     store.moveComposerPromptAndImages(input.editTarget, input.threadTarget);
-    return "kept";
+  } else {
+    store.clearComposerContent(input.editTarget);
   }
-  store.clearComposerContent(input.editTarget);
-  return dirty ? "discarded" : "clean";
+  return recovery;
 }
 
-/** Generic files need upload references; images also support the inline transport. */
 export async function prepareQueuedEditAttachments(input: {
   readonly existingAttachments: ReadonlyArray<ChatAttachment>;
   readonly images: ReadonlyArray<ComposerImageAttachment>;

@@ -1,4 +1,5 @@
-import { memo, useCallback, useEffect, useRef } from "react";
+import type { TerminalGrid, TerminalOutputState } from "@t3tools/client-runtime/state/terminal";
+import { memo, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import {
   Pressable,
   ScrollView,
@@ -10,20 +11,21 @@ import {
   type ViewProps,
 } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
-  getNativeTerminalHardwareKeyRevision,
   resolveNativeTerminalSurfaceView,
+  supportsNativeTerminalOutput,
+  type NativeTerminalSurfaceHandle,
 } from "./nativeTerminalModule";
 import {
   buildGhosttyThemeConfig,
   getMobileTerminalTheme,
   type TerminalTheme,
 } from "./terminalTheme";
-import { terminalDebugLog } from "./terminalDebugLog";
 import { useTerminalSurfaceBuffer } from "./useTerminalSurfaceBuffer";
+import { createTerminalOutputWriter } from "./terminalOutputWriter";
 
 interface TerminalInputEvent {
   readonly data: string;
@@ -34,10 +36,20 @@ interface TerminalResizeEvent {
   readonly rows: number;
 }
 
+export interface TerminalSurfaceHandle {
+  /** The text fallback focuses its input; the native view follows `keyboardFocusRequest`. */
+  readonly focusKeyboard: () => void;
+  /** Drops the native field's IME context after input that bypassed it. */
+  readonly resetInput: () => void;
+}
+
 interface TerminalSurfaceProps extends ViewProps {
+  readonly ref?: Ref<TerminalSurfaceHandle>;
   readonly terminalKey: string;
   readonly buffer: string | null;
+  readonly output: TerminalOutputState | null;
   readonly fontSize?: number;
+  readonly grid?: TerminalGrid | null;
   readonly isRunning: boolean;
   readonly readOnly?: boolean;
   readonly autoFocus?: boolean;
@@ -66,9 +78,10 @@ function estimateGridSize(input: {
   };
 }
 
-const FallbackTerminalSurface = memo(function FallbackTerminalSurface(
-  props: ReadyTerminalSurfaceProps,
-) {
+const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
+  ref,
+  ...props
+}: ReadyTerminalSurfaceProps) {
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
   const inputRef = useRef<TextInputInstance>(null);
   const { themeAppearance, themeId } = useAppearancePreferences();
@@ -84,15 +97,15 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(
     props.onResize(estimateGridSize({ width, height, fontSize }));
   };
 
-  useEffect(() => {
-    if (!props.readOnly && (props.keyboardFocusRequest ?? 0) > 0) {
+  useImperativeHandle(ref, () => ({
+    focusKeyboard: () => {
+      if (props.readOnly) return;
+      // Blur first so a focused input still raises the keyboard; focus lands after the blur commits.
       inputRef.current?.blur();
-      const focusFrame = requestAnimationFrame(() => inputRef.current?.focus());
-      return () => cancelAnimationFrame(focusFrame);
-    }
-
-    return undefined;
-  }, [props.keyboardFocusRequest, props.readOnly]);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    },
+    resetInput: () => {},
+  }));
 
   return (
     <View
@@ -186,53 +199,81 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(
 
 export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurfaceProps) {
   const buffer = useTerminalSurfaceBuffer(props);
-  return <ReadyTerminalSurface {...props} buffer={buffer} />;
+  return <ReadyTerminalSurface key={props.terminalKey} {...props} buffer={buffer} />;
 });
 
-const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerminalSurfaceProps) {
+const ReadyTerminalSurface = memo(function ReadyTerminalSurface({
+  ref,
+  grid,
+  ...props
+}: ReadyTerminalSurfaceProps) {
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
   const { themeAppearance, themeId } = useAppearancePreferences();
   const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
   const { onInput, onResize } = props;
   const NativeTerminalSurfaceView = resolveNativeTerminalSurfaceView();
-  const hasNativeSurface = Boolean(NativeTerminalSurfaceView);
+  const gridCols = grid?.cols;
+  const gridRows = grid?.rows;
+  const sharedGrid = useMemo(
+    () => (gridCols !== undefined && gridRows !== undefined ? [gridCols, gridRows] : []),
+    [gridCols, gridRows],
+  );
+  const streaming = supportsNativeTerminalOutput();
+  const nativeRef = useRef<NativeTerminalSurfaceHandle>(null);
+  const writerRef = useRef<ReturnType<typeof createTerminalOutputWriter> | null>(null);
+  const [nativeReady, setNativeReady] = useState(false);
 
+  // The fallback surface binds the same ref itself.
+  useImperativeHandle(NativeTerminalSurfaceView ? ref : undefined, () => ({
+    focusKeyboard: () => {},
+    resetInput: () => {
+      void nativeRef.current?.resetInput?.().catch((error: unknown) => {
+        console.error("Terminal input reset failed", error);
+      });
+    },
+  }));
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- creates the output writer for the native terminal view once it is ready and disposes it on cleanup
   useEffect(() => {
-    terminalDebugLog("native:surface", {
-      terminalKey: props.terminalKey,
-      native: hasNativeSurface,
-      // null = installed binary predates native hardware-key handling (rebuild needed).
-      hardwareKeyRevision: getNativeTerminalHardwareKeyRevision(),
-      bufferLen: props.buffer.length,
-      isRunning: props.isRunning,
+    const view = nativeRef.current;
+    if (!streaming || !nativeReady || view === null) return;
+    const writer = createTerminalOutputWriter((data, reset) => view.writeOutput(data, reset));
+    writerRef.current = writer;
+    return () => {
+      writerRef.current = null;
+      writer.dispose();
+    };
+  }, [nativeReady, streaming]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- streams new terminal output into the native terminal view through its writer
+  useEffect(() => {
+    if (!streaming || !nativeReady || props.output === null) return;
+    void writerRef.current?.write(props.output).catch((error: unknown) => {
+      console.error("Terminal output delivery failed", error);
     });
-  }, [hasNativeSurface, props.buffer.length, props.isRunning, props.terminalKey]);
-  const handleNativeInput = useCallback(
-    (event: NativeSyntheticEvent<TerminalInputEvent>) => {
-      if (!props.isRunning || props.readOnly) {
-        return;
-      }
-      terminalDebugLog("native:onInput", {
-        codes: Array.from(event.nativeEvent.data, (char) => char.codePointAt(0)),
-      });
-      onInput(event.nativeEvent.data);
-    },
-    [onInput, props.isRunning, props.readOnly],
-  );
-  const handleNativeResize = useCallback(
-    (event: NativeSyntheticEvent<TerminalResizeEvent>) => {
-      onResize({
-        cols: event.nativeEvent.cols,
-        rows: event.nativeEvent.rows,
-      });
-    },
-    [onResize],
-  );
+  }, [nativeReady, props.output, streaming]);
+
+  const handleNativeInput = (event: NativeSyntheticEvent<TerminalInputEvent>) => {
+    if (!props.isRunning || props.readOnly) {
+      return;
+    }
+    onInput(event.nativeEvent.data);
+  };
+  const handleNativeResize = (event: NativeSyntheticEvent<TerminalResizeEvent>) => {
+    // The first grid event comes from the mounted native surface, after registration.
+    setNativeReady(true);
+    onResize({
+      cols: event.nativeEvent.cols,
+      rows: event.nativeEvent.rows,
+    });
+  };
 
   if (NativeTerminalSurfaceView) {
     return (
       <View style={props.style}>
+        {/* oxlint-disable-next-line react/static-components -- The resolver returns a cached native component with stable identity. */}
         <NativeTerminalSurfaceView
+          ref={nativeRef}
           appearanceScheme={themeAppearance}
           autoFocus={!props.readOnly && (props.autoFocus ?? true)}
           readOnly={props.readOnly ?? false}
@@ -241,8 +282,9 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
           foregroundColor={theme.foreground}
           mutedForegroundColor={theme.mutedForeground}
           terminalKey={props.terminalKey}
-          initialBuffer={props.buffer}
+          initialBuffer={streaming ? "" : props.buffer}
           fontSize={fontSize}
+          sharedGrid={sharedGrid}
           style={{ flex: 1 }}
           themeConfig={buildGhosttyThemeConfig(theme)}
           onInput={handleNativeInput}
@@ -254,5 +296,5 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
     );
   }
 
-  return <FallbackTerminalSurface {...props} fontSize={fontSize} theme={theme} />;
+  return <FallbackTerminalSurface {...props} ref={ref} fontSize={fontSize} theme={theme} />;
 });

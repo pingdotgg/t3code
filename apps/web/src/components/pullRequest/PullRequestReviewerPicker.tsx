@@ -1,21 +1,20 @@
 import { useAtomCommand } from "~/state/use-atom-command";
-/**
- * Asking someone to review, from the row that says who is already reviewing.
- *
- * The people who may be asked are read only once this menu opens: on a large repository that is
- * a list of everyone with access, which is worth a request when somebody wants it and worth
- * nothing on every pull request they merely open.
- */
 import type {
   EnvironmentId,
   PullRequestRef,
   PullRequestReviewerCandidate,
 } from "@t3tools/contracts";
+import {
+  hostReviewerQuery,
+  reviewerCandidateView,
+  type ReviewerTruncation,
+} from "@t3tools/client-runtime/pull-request-reviewers";
 import { CheckIcon, UserPlusIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
+import { useDebouncedValue } from "~/state/queries";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { toastManager } from "../ui/toast";
@@ -23,44 +22,55 @@ import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
 import { readableFailure } from "./pullRequestDetail.logic";
 
-/** Long lists are common — an organisation repository lists everyone — so what arrived can be
- * narrowed here. It narrows only what arrived: the host is asked once, when the menu opens. */
-function matches(candidate: PullRequestReviewerCandidate, query: string): boolean {
-  if (query.length === 0) return true;
-  const needle = query.toLowerCase();
-  return (
-    candidate.login.toLowerCase().includes(needle) ||
-    (candidate.name ?? "").toLowerCase().includes(needle)
-  );
-}
+const TRUNCATED_LABELS: Record<ReviewerTruncation, (error: string | null) => string> = {
+  unsearchable: () =>
+    "This repository has more people with access than are listed here. Ask for the rest on the host.",
+  searchable: () =>
+    "This repository has more people with access than are listed here. Search to find them.",
+  "search-failed": (error) =>
+    `Only the people already listed are matched: the host search failed. ${error ?? ""}`,
+  "search-truncated": () =>
+    "More people match than the host returned. Keep typing to narrow it down.",
+};
 
 export function PullRequestReviewerPicker({
   environmentId,
   reference,
   allowed,
+  searchable,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
-  /** False where the host would refuse this account's request, which is worth saying rather than
-   * hiding: the control disabled with a reason answers the question its absence would raise. */
   allowed: boolean;
+  searchable: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState<string | null>(null);
 
-  // Mounted with the menu closed, so nothing is asked of the host until it opens.
   const candidatesQuery = useEnvironmentQuery(
     open ? pullRequestEnvironment.reviewerCandidates({ environmentId, input: reference }) : null,
+  );
+  // Past the first page the host is asked, since what was loaded cannot answer for the rest.
+  const debouncedQuery = useDebouncedValue(query.trim(), 250);
+  const searchInput = { loaded: candidatesQuery.data, searchable, query, debouncedQuery };
+  const hostQuery = hostReviewerQuery(searchInput);
+  const searchResult = useEnvironmentQuery(
+    open && hostQuery !== null
+      ? pullRequestEnvironment.reviewerSearch({
+          environmentId,
+          input: { ...reference, query: hostQuery },
+        })
+      : null,
   );
   const requestReviewers = useAtomCommand(pullRequestEnvironment.requestReviewers, {
     reportFailure: false,
   });
 
-  const candidates = useMemo(
-    () => (candidatesQuery.data?.candidates ?? []).filter((entry) => matches(entry, query)),
-    [candidatesQuery.data, query],
-  );
+  const { candidates, searchPending, searchError, truncation } = reviewerCandidateView({
+    ...searchInput,
+    search: searchResult,
+  });
 
   const toggle = async (candidate: PullRequestReviewerCandidate) => {
     if (pending !== null) return;
@@ -87,6 +97,9 @@ export function PullRequestReviewerPicker({
       });
       return;
     }
+    // The command reads the loaded list again only for somebody it lacked, and a search result
+    // is keyed by what was typed, so the one on screen is read here or it keeps the old request.
+    if (hostQuery !== null) searchResult.refresh();
     toastManager.add({
       type: "success",
       title: candidate.isRequested
@@ -106,14 +119,20 @@ export function PullRequestReviewerPicker({
       query={query}
       onQueryChange={setQuery}
       searchLabel="Search people with access"
-      isPending={candidatesQuery.isPending && candidatesQuery.data === null}
-      error={candidatesQuery.data === null ? candidatesQuery.error : null}
+      isPending={(candidatesQuery.isPending && candidatesQuery.data === null) || searchPending}
+      error={
+        candidatesQuery.data === null
+          ? candidatesQuery.error
+          : candidates.length === 0
+            ? searchError
+            : null
+      }
       candidates={candidates}
       emptyLabel="Nobody else has access to this repository."
       noMatchLabel="Nobody with access matches that."
       errorLabel="The people with access could not be read."
-      truncated={candidatesQuery.data?.truncated === true}
-      truncatedLabel="This repository has more people with access than are listed here. Ask for the rest on the host."
+      truncated={truncation !== null}
+      truncatedLabel={truncation === null ? "" : TRUNCATED_LABELS[truncation](searchError)}
       candidateKey={(candidate) => `${candidate.kind}:${candidate.id}`}
       disabled={pending !== null}
       onSelect={(candidate) => void toggle(candidate)}

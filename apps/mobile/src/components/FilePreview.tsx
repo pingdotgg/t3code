@@ -1,14 +1,49 @@
+import { Button } from "./ui/Button";
+import * as Dialog from "./ui/Dialog";
 import { useEffect, useEffectEvent } from "react";
-import { Alert, Modal, Pressable, View } from "react-native";
+import { Modal, View } from "react-native";
 import ImageViewing from "react-native-image-viewing";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { openAttachmentInViewer } from "../lib/attachmentDownload";
-import type { ResolvedFilePreviewSource } from "./FilePreviewModal.types";
-import { MediaImagePreview } from "./MediaImagePreview";
-import { AppText as Text } from "./AppText";
+import type {
+  ResolvedFilePreviewDocument,
+  ResolvedFilePreviewSource,
+} from "./FilePreviewModal.types";
+import { imageViewingProps, MediaImagePreview } from "./MediaImagePreview";
+import { PdfPreview } from "./PdfPreview";
+import { SheetHeader } from "./ui/SheetHeader";
+import { AppText as Text } from "./ui/AppText";
+
+function PdfDocumentPreview(props: {
+  readonly source: ResolvedFilePreviewDocument;
+  readonly onRequestClose: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+  return (
+    <Modal
+      animationType="slide"
+      onRequestClose={props.onRequestClose}
+      statusBarTranslucent
+      navigationBarTranslucent
+    >
+      <View
+        className="flex-1 bg-card"
+        style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
+      >
+        <SheetHeader
+          presentation="inline"
+          title={props.source.name ?? "PDF"}
+          onClose={props.onRequestClose}
+        />
+        <PdfPreview uri={props.source.uri} />
+      </View>
+    </Modal>
+  );
+}
 
 function DocumentPreview(props: {
-  readonly source: ResolvedFilePreviewSource;
+  readonly source: ResolvedFilePreviewDocument;
   readonly onRequestClose: () => void;
   readonly onOpenError?: (error: unknown) => void;
 }) {
@@ -17,11 +52,12 @@ function DocumentPreview(props: {
   const onOpenError = useEffectEvent((error: unknown) => {
     if (props.onOpenError) props.onOpenError(error);
     else
-      Alert.alert(
+      Dialog.alert(
         "Could not open document",
         "A compatible viewer must be installed. Check your connection and try again.",
       );
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the attachment in an external viewer and aborts the open on cleanup
   useEffect(() => {
     const controller = new AbortController();
     const input = {
@@ -52,13 +88,9 @@ function DocumentPreview(props: {
           <Text className="text-foreground-muted" numberOfLines={2}>
             {name ?? "Document"}
           </Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={props.onRequestClose}
-            className="self-end p-3"
-          >
-            <Text className="text-foreground">Cancel</Text>
-          </Pressable>
+          <View className="items-end">
+            <Button label="Cancel" tone="text" onPress={props.onRequestClose} />
+          </View>
         </View>
       </View>
     </Modal>
@@ -70,17 +102,14 @@ export function FilePreview(props: {
   readonly onRequestClose: () => void;
   readonly onOpenError?: (error: unknown) => void;
 }) {
-  if (props.source.kind !== "image") return <DocumentPreview {...props} />;
-  if (props.source.actionsSource) return <MediaImagePreview {...props} />;
+  const { source } = props;
+  if (source.kind === "pdf") return <PdfDocumentPreview {...props} source={source} />;
+  if (source.kind !== "image") return <DocumentPreview {...props} source={source} />;
+  if (source.images[source.selectedIndex]?.actionsSource)
+    return <MediaImagePreview source={source} onRequestClose={props.onRequestClose} />;
   return (
     <ImageViewing
-      images={
-        props.source.gallery?.map((item) => ({ uri: item.uri })) ?? [{ uri: props.source.uri }]
-      }
-      imageIndex={Math.max(
-        0,
-        props.source.gallery?.findIndex((item) => item.uri === props.source.uri) ?? 0,
-      )}
+      {...imageViewingProps(source)}
       visible
       onRequestClose={props.onRequestClose}
       swipeToCloseEnabled={false}

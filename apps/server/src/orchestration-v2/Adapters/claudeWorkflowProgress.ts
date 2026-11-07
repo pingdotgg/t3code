@@ -52,8 +52,6 @@ function parseAgent(entry: unknown): OrchestrationV2WorkflowAgent | null {
   const index = count(field(entry, "index"));
   const label = text(field(entry, "label"));
   if (index === undefined || label === undefined) return null;
-  // An unknown state is in-flight, not settled: guessing "completed" would
-  // freeze a live row, while guessing "running" self-corrects on the next frame.
   const reportedState = text(field(entry, "state")) ?? "";
   const state = Object.hasOwn(AGENT_STATES, reportedState)
     ? (AGENT_STATES[reportedState] ?? "running")
@@ -72,17 +70,19 @@ function parseAgent(entry: unknown): OrchestrationV2WorkflowAgent | null {
     ...optional("durationMs", count(field(entry, "durationMs"))),
     ...optional("queuedAt", timestamp(field(entry, "queuedAt"))),
     ...optional("startedAt", timestamp(field(entry, "startedAt"))),
+    // Execution duration excludes startup waits; terminal progress carries the end instant.
+    ...optional(
+      "completedAt",
+      state === "completed" || state === "failed"
+        ? timestamp(field(entry, "lastProgressAt"))
+        : undefined,
+    ),
     ...optional("prompt", preview(field(entry, "promptPreview"))),
     ...optional("result", preview(field(entry, "resultPreview"))),
   };
 }
 
-/**
- * Reads the Workflow tool's structured result. A background launch answers the
- * model with an acknowledgement rather than the run's output, and that
- * acknowledgement is the only place the run's filesystem handles appear —
- * nothing later on the event stream repeats them.
- */
+/** The background-launch ACK is the only frame carrying the run's filesystem handles. */
 export function parseClaudeWorkflowRunHandles(
   toolUseResult: unknown,
 ): OrchestrationV2WorkflowRunHandles | undefined {
@@ -115,18 +115,7 @@ function parseClaudeWorkflowProgress(message: unknown): {
   return phases.length === 0 && agents.length === 0 ? null : { phases, agents };
 }
 
-/**
- * Folds one frame into the coordinator's workflow state. A frame without a
- * snapshot still carries usage, so totals keep climbing between snapshots.
- * A phase only ever joins the plan — the provider re-sends the full plan on
- * every snapshot, but a late frame that omits an already-seen phase must not
- * shorten the arc the user is looking at.
- *
- * Returns undefined when nothing identifies the task as a workflow. Progress
- * frames do not repeat `task_type`, so this is the single place that decides
- * whether a task is a coordinator; without it every ordinary subagent's usage
- * frame would mint an empty workflow and render as a coordinator.
- */
+/** Returns undefined without workflow evidence; progress frames omit task_type and ordinary subagents also emit usage. */
 export function mergeClaudeWorkflowProgress(input: {
   readonly previous: OrchestrationV2SubagentWorkflow | undefined;
   readonly name?: string | undefined;

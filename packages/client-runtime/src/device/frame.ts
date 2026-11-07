@@ -3,7 +3,6 @@ export interface DeviceFrameSink {
   readonly present: (source: CanvasImageSource, width: number, height: number) => boolean;
 }
 
-/** Retains the latest frame in a canvas; consumers can invalidate textures after each draw. */
 export function createCanvasFrameSink(
   canvas: HTMLCanvasElement,
   onFrame?: (width: number, height: number) => void,

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
+import * as NodeReadline from "node:readline";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -28,32 +29,82 @@ const groupExists = (pgid: number) => {
   }
 };
 
+// A group of zombies can be reaped between a check and the kill, so ESRCH just means it is gone.
 const killGroup = (pgid: number) =>
   Effect.sync(() => {
-    if (groupExists(pgid)) process.kill(-pgid, "SIGKILL");
+    try {
+      process.kill(-pgid, "SIGKILL");
+    } catch (cause) {
+      if (!(cause instanceof Error && "code" in cause && cause.code === "ESRCH")) throw cause;
+    }
   });
 
-/**
- * Spawns a throwaway process group shaped like `opencode serve`: by default a
- * shell leader whose argv ends in the serve arguments, plus a `sleep` member.
- */
+// libuv ignores a failed setsid(), which happens when the new pid equals the id of a group
+// that still has members (such as a sleep orphaned by an earlier test). The child would then
+// share the test worker's group, so the script first confirms it leads its own group and exits
+// with 97 before starting anything if it does not.
+const groupLeaderGuard = `pgid="$(ps -o pgid= -p $$ 2>&1 | tr -d ' ')"; [ "$pgid" = "$$" ] || { echo "ungrouped:$pgid"; exit 97; }; echo grouped; `;
+
+// Yields the group, or a description of why this shell cannot be used as one.
+const spawnGroupLeader = (args: ReadonlyArray<string>, script: string) =>
+  Effect.gen(function* () {
+    const child = NodeChildProcess.spawn("/bin/sh", ["-c", groupLeaderGuard + script, ...args], {
+      detached: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const pid = child.pid;
+    if (pid === undefined) return yield* Effect.die("spawn failed");
+    const grouped = yield* Deferred.make<true | string>();
+    const exited = yield* Deferred.make<NodeJS.Signals | null>();
+    const printed = yield* Deferred.make<void>();
+    child.once("exit", (_code, signal) => Deferred.doneUnsafe(exited, Effect.succeed(signal)));
+    // "close" fires after stdout drains, so a guard line always lands first. It only fires before
+    // "grouped" when the shell died without starting the script, such as from a signal.
+    child.once("close", (code, signal) =>
+      Deferred.doneUnsafe(
+        grouped,
+        Effect.succeed(
+          `shell ${pid} exited (code ${code}, signal ${signal}) before its group check`,
+        ),
+      ),
+    );
+    NodeReadline.createInterface({ input: child.stdout }).on("line", (line) => {
+      if (line === "grouped") Deferred.doneUnsafe(grouped, Effect.succeed(true));
+      if (line.startsWith("ungrouped:")) {
+        const output = line.slice("ungrouped:".length);
+        Deferred.doneUnsafe(
+          grouped,
+          Effect.succeed(`\`ps -o pgid= -p ${pid}\` printed ${JSON.stringify(output)}`),
+        );
+      }
+      if (line === "ready") Deferred.doneUnsafe(printed, Effect.void);
+    });
+    const result = yield* Deferred.await(grouped);
+    return result === true
+      ? { pid, exited: Deferred.await(exited), printed: Deferred.await(printed) }
+      : result;
+  });
+
+// A pid colliding with a live group id is rare, so a few retries clear it. Repeated failures
+// mean the guard itself is broken (for example a missing or BusyBox `ps`).
+const GROUP_LEADER_ATTEMPTS = 5;
+
 const spawnGroup = (args: ReadonlyArray<string>, script = "sleep 600 & wait") =>
   Effect.acquireRelease(
     Effect.gen(function* () {
-      const child = NodeChildProcess.spawn("/bin/sh", ["-c", script, ...args], {
-        detached: true,
-        stdio: "ignore",
-      });
-      const exited = yield* Deferred.make<NodeJS.Signals | null>();
-      child.once("exit", (_code, signal) => Deferred.doneUnsafe(exited, Effect.succeed(signal)));
-      const pid = child.pid;
-      if (pid === undefined) return yield* Effect.die("spawn failed");
-      return { pid, exited: Deferred.await(exited) };
+      let failure = "";
+      for (let attempt = 0; attempt < GROUP_LEADER_ATTEMPTS; attempt++) {
+        const group = yield* spawnGroupLeader(args, script);
+        if (typeof group !== "string") return group;
+        failure = group;
+      }
+      return yield* Effect.die(
+        `no shell led its own process group after ${GROUP_LEADER_ATTEMPTS} attempts; last: ${failure}`,
+      );
     }),
     ({ pid }) => killGroup(pid),
   );
 
-/** A T3 server that recorded its OpenCode server and then died without cleanup. */
 const recordFromDeadServer = (stateDir: string, server: { readonly pid: number }) =>
   Effect.gen(function* () {
     const previousServer = yield* spawnGroup([]);
@@ -61,9 +112,8 @@ const recordFromDeadServer = (stateDir: string, server: { readonly pid: number }
       stateDir,
       ownerPid: previousServer.pid,
     });
-    // The previous server never gets to forget its entry.
     yield* Effect.asVoid(previousLedger.track({ pid: server.pid, port: 4096, args: SERVE_ARGS }));
-    process.kill(-previousServer.pid, "SIGKILL");
+    yield* killGroup(previousServer.pid);
     yield* previousServer.exited;
   });
 
@@ -102,12 +152,14 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-ledger-" });
-      // The wrapper starts the serve process in its group and exits.
+      // The inner shell prints once it has exec'd. Until then it still carries the wrapper's
+      // command line, and recording that would make the reaper skip the group as recycled.
       const wrapper = yield* spawnGroup(
         SERVE_ARGS,
-        '/bin/sh -c "sleep 600 & wait" "$0" "$@" & exit 0',
+        '/bin/sh -c "echo ready; sleep 600 & wait" "$0" "$@" & exit 0',
       );
       yield* wrapper.exited;
+      yield* wrapper.printed;
       expect(groupExists(wrapper.pid)).toBe(true);
 
       yield* recordFromDeadServer(stateDir, wrapper);
@@ -129,7 +181,6 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       const unrelated = yield* spawnGroup(SERVE_ARGS);
       yield* recordFromDeadServer(stateDir, unrelated);
       const entryPath = path.join(stateDir, "opencode-servers", `${unrelated.pid}.json`);
-      // Same pid, a different process: what a recycled pid looks like.
       const entry = yield* fs.readFileString(entryPath);
       yield* fs.writeFileString(entryPath, entry.replace(/"startTime":"[^"]+"/, '"startTime":"1"'));
 
@@ -149,7 +200,6 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       const unrelated = yield* spawnGroup(SERVE_ARGS);
       yield* recordFromDeadServer(stateDir, unrelated);
       const entryPath = path.join(stateDir, "opencode-servers", `${unrelated.pid}.json`);
-      // Same pid and start second, but not the server T3 started.
       const entry = yield* fs.readFileString(entryPath);
       yield* fs.writeFileString(entryPath, entry.replace("--port=4096", "--port=4097"));
 
@@ -186,8 +236,6 @@ describe.skipIf(observedPlatforms.length === 0)("OpenCode server startup", () =>
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-startup-" });
-      // A wrapper that leaves the serve process running in its group and exits 0,
-      // which the spawner's own cleanup does not stop.
       const binaryPath = path.join(tempDir, "opencode");
       yield* fs.writeFileString(binaryPath, "#!/bin/sh\nsleep 600 &\nexit 0\n");
       yield* fs.chmod(binaryPath, 0o755);
@@ -210,7 +258,6 @@ describe.skipIf(observedPlatforms.length === 0)("OpenCode server startup", () =>
           Layer.succeed(
             OpenCodeServerLedger.OpenCodeServerLedger,
             OpenCodeServerLedger.OpenCodeServerLedger.of({
-              // Recording stalls until the scope is interrupted, after the wrapper exited.
               track: (server) =>
                 Effect.gen(function* () {
                   yield* (yield* Deferred.await(spawned)).exitCode.pipe(Effect.ignore);

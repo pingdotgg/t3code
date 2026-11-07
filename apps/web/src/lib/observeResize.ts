@@ -9,7 +9,6 @@ interface Subscription {
 
 interface Target {
   readonly subscriptions: Set<Subscription>;
-  /** Subscribers that joined after the first delivery and still await their initial entry. */
   waiting: Set<Subscription> | null;
   last: ResizeObserverEntry | null;
 }
@@ -56,14 +55,7 @@ function deliver(entries: readonly ResizeObserverEntry[]) {
   });
 }
 
-/**
- * Observes element sizes on one shared ResizeObserver. Its callbacks run after
- * layout and before paint, but React commits state set there after the paint,
- * so layout derived from an observed size would land one frame late. Every
- * resize delivered in a frame runs inside one flushSync, so all size-derived
- * state commits in a single render before that paint. A callback gets one call
- * with the entries for all of its targets, starting with an initial one each.
- */
+/** Flushes callbacks together before paint; ordinary React updates would leave a stale frame. */
 export function observeResize(
   elements: Element | readonly Element[],
   callback: ResizeCallback,
@@ -80,8 +72,6 @@ export function observeResize(
       continue;
     }
     target.subscriptions.add(subscription);
-    // An initial entry still pending reaches every subscriber; after it, only
-    // observing afresh makes the browser report the current size again.
     if (!target.last) continue;
     (target.waiting ??= new Set()).add(subscription);
     shared.unobserve(element);
@@ -99,7 +89,6 @@ export function observeResize(
     if (targets.size > 0) {
       for (const element of unobserved) shared.unobserve(element);
     } else {
-      // A fresh observer next time also picks up a ResizeObserver a test stubbed since.
       observer?.disconnect();
       observer = null;
     }

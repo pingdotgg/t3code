@@ -1,7 +1,7 @@
-import { splitThreadSearchText } from "@t3tools/shared/threadSearch";
+import { findSearchTokenRanges, splitSearchText } from "@t3tools/shared/paletteSearch";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 
 export function ThreadSearchMatchExcerpt(props: {
@@ -12,7 +12,10 @@ export function ThreadSearchMatchExcerpt(props: {
   readonly sidebar?: boolean;
 }) {
   const isUser = props.match.source === "user";
-  const parts = splitThreadSearchText(props.match.snippet, props.query);
+  const parts = splitSearchText(
+    props.match.snippet,
+    findSearchTokenRanges(props.match.snippet, props.query),
+  );
   return (
     <Text
       className={cn(

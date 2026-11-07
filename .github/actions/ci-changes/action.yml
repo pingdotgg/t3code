@@ -1,0 +1,63 @@
+name: CI changes
+description: Decide which CI jobs a change needs. See .github/scripts/ci-changes.cjs.
+outputs:
+  typecheck:
+    value: ${{ steps.detect.outputs.typecheck }}
+  build:
+    value: ${{ steps.detect.outputs.build }}
+  test:
+    value: ${{ steps.detect.outputs.test }}
+  test_packages:
+    value: ${{ steps.detect.outputs.test_packages }}
+  test_web:
+    value: ${{ steps.detect.outputs.test_web }}
+  test_server:
+    value: ${{ steps.detect.outputs.test_server }}
+  rust:
+    value: ${{ steps.detect.outputs.rust }}
+  release_smoke:
+    value: ${{ steps.detect.outputs.release_smoke }}
+  mobile_native:
+    value: ${{ steps.detect.outputs.mobile_native }}
+runs:
+  using: composite
+  steps:
+    - id: detect
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        BEFORE_SHA: ${{ github.event.before }}
+      run: |
+        set -uo pipefail
+
+        decide() {
+          node .github/scripts/ci-changes.cjs "$@" | tee -a "$GITHUB_OUTPUT"
+          exit "${PIPESTATUS[0]}"
+        }
+
+        fail_open() {
+          echo "$* Running every job."
+          decide
+        }
+
+        # Reads the change from git rather than the REST API: every job that
+        # runs this shares the repository's 1,000 requests/hour GITHUB_TOKEN quota.
+        if [[ "$EVENT_NAME" == pull_request ]]; then
+          # A pull request checks out GitHub's merge commit with fetch-depth: 2,
+          # so its first parent is the base branch and the diff is the PR's change.
+          base=HEAD^1
+          mode=()
+        else
+          base=$BEFORE_SHA
+          git fetch --quiet --no-tags --depth=1 --filter=blob:none origin "$base" \
+            || fail_open "Could not fetch ${base}."
+          # main keeps a full run as the backstop for anything the gate misses.
+          mode=(--full)
+        fi
+
+        # --no-renames lists a rename as its old and new path: renaming a file out
+        # of a package changes that package just like editing it. It also keeps
+        # git from fetching file contents to score renames.
+        git diff --name-only --no-renames "$base" HEAD > "$RUNNER_TEMP/changed-paths" \
+          || fail_open "Could not diff against ${base}."
+        decide --paths "$RUNNER_TEMP/changed-paths" "${mode[@]}"

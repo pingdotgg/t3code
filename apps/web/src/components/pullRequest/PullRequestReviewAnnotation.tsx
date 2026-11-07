@@ -1,7 +1,3 @@
-/**
- * Pull-request-specific annotations: conversations already on the host and comments queued for
- * the review being written. New comment composition uses the shared diff annotation.
- */
 import type {
   EnvironmentId,
   PullRequestDiffSide,
@@ -11,35 +7,41 @@ import type {
   PullRequestThreadCommentsResult,
   PullRequestThreadComment,
 } from "@t3tools/contracts";
-import { HammerIcon, MessageSquareIcon, Trash2Icon } from "lucide-react";
+import { HammerIcon, MessageSquareIcon, MessageSquarePlusIcon, Trash2Icon } from "lucide-react";
 import { Circle, CircleCheck } from "lucide";
 import { useRef, useState } from "react";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
-import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { RelativeTime } from "~/components/RelativeTime";
 import { cn } from "~/lib/utils";
+import { SpeechTextField, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
 
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { PullRequestEditButton } from "./PullRequestEditButton";
-import { Textarea } from "../ui/textarea";
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import {
   editPullRequestThreadComment,
   mergePullRequestThreadComments,
+  visibleBody,
 } from "./pullRequestDetail.logic";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import type { PendingReviewComment } from "./pullRequestReviewStore";
+import {
+  PullRequestMarkdownTextarea,
+  type PullRequestCompletionScope,
+} from "./PullRequestMarkdownTextarea";
 
 const CARD_CLASS =
   "mx-3 my-2 rounded-xl border border-border/70 bg-background p-3 text-sm shadow-sm";
 
-/** Sends a reply on ⌘/Ctrl+Enter and abandons it on Escape. */
 function submitKeys(input: {
   readonly value: string;
   readonly pending: boolean;
+  readonly allowEmpty?: boolean;
   readonly onSubmit: () => void;
   readonly onCancel?: (() => void) | undefined;
 }) {
@@ -48,14 +50,13 @@ function submitKeys(input: {
       event.preventDefault();
       input.onCancel();
     }
-    if (isCommentSubmitShortcut(event, input.value, input.pending)) {
+    if (isCommentSubmitShortcut(event, input.value, input.pending, input.allowEmpty)) {
       event.preventDefault();
       input.onSubmit();
     }
   };
 }
 
-/** The contract's sides named the way the diff viewer names them, and back again. */
 export function toViewerSide(side: PullRequestDiffSide) {
   return side === "left" ? ("deletions" as const) : ("additions" as const);
 }
@@ -77,7 +78,6 @@ export function getReviewPositionAnchor(position: PullRequestReviewPosition): {
   }
 }
 
-/** A comment waiting to be sent with the rest of the review. */
 export function PendingReviewCommentCard({
   comment,
   onRemove,
@@ -93,7 +93,7 @@ export function PendingReviewCommentCard({
     >
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <MessageSquareIcon className="size-3.5" />
-        <span>Pending — sent when you submit the review</span>
+        <span>Pending. Sent when you submit the review</span>
         <Button
           size="icon-xs"
           variant="ghost"
@@ -109,7 +109,6 @@ export function PendingReviewCommentCard({
   );
 }
 
-/** A conversation already on the host, with whatever this host lets the reader do to it. */
 export function ReviewThreadCard({
   thread,
   workspaceRoot,
@@ -118,10 +117,12 @@ export function ReviewThreadCard({
   canReact,
   environmentId,
   reference,
+  completionScope,
   pending,
   fixPending,
   fixLabel = "Fix in a thread",
   onFix,
+  onAddToChat,
   onReply,
   onLoadMore,
   canEditComment,
@@ -136,30 +137,30 @@ export function ReviewThreadCard({
   canReact: boolean;
   environmentId: EnvironmentId;
   reference: PullRequestRef;
+  completionScope: PullRequestCompletionScope | null;
   pending: boolean;
-  /** True while this thread's own hand-off is preparing, so only its button says so. */
   fixPending?: boolean;
   fixLabel?: string;
-  /** Absent where a thread is shown outside the pull request page's reach. */
   onFix?: () => void;
-  /** Resolves to whether the host took it, so a reply that failed keeps the words it was given. */
+  /**
+   * Absent where there is no composer beside the panel to add the conversation to. Handed the
+   * thread with every comment the reader has loaded, not only the first page.
+   */
+  onAddToChat?: (thread: PullRequestReviewThread) => void;
   onReply: (body: string) => Promise<boolean>;
-  /** Reads one more page only after the reader asks for it. */
   onLoadMore: (cursor: string) => Promise<PullRequestThreadCommentsResult | null>;
-  /** Whether this reader wrote this remark, which is what rewriting one takes. */
   canEditComment: (comment: PullRequestThreadComment) => boolean;
-  /** Resolves to whether the host took it, like `onReply`. */
   onEditComment: (commentId: string, body: string) => Promise<boolean>;
   onToggleResolved: () => void;
   onReacted: () => void;
 }) {
-  // A resolved thread is finished work, so it opens collapsed and stays one line until asked for.
   const [expanded, setExpanded] = useState(!thread.isResolved);
   const [replying, setReplying] = useState(false);
   const [reply, setReply] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const sendingRef = useRef(false);
+  const replyRef = useRef<HTMLTextAreaElement>(null);
   const [loadedPage, setLoadedPage] = useState<
     (PullRequestThreadCommentsResult & { readonly threadId: string }) | null
   >(null);
@@ -188,48 +189,42 @@ export function ReviewThreadCard({
     }
   };
 
-  const send = async () => {
-    const trimmed = reply.trim();
+  const send = async (text: string) => {
+    const trimmed = text.trim();
     if (trimmed.length === 0 || pending || sendingRef.current) return;
     sendingRef.current = true;
-    // Cleared only once the host has it. Otherwise a failed reply leaves an error toast and an
-    // empty box, and the words have to be written again.
-    try {
-      if (await onReply(trimmed)) {
-        // The mutation returns no comment. Keep what the reader loaded and reopen its cursor so
-        // the new reply remains reachable without spending requests until they ask to load it.
-        setLoadedPage((previous) =>
-          previous?.threadId === thread.id
-            ? {
-                ...previous,
-                nextCursor: previous.nextCursor ?? thread.nextCommentsCursor ?? null,
-              }
-            : previous,
-        );
-        setReply("");
-        setReplying(false);
-      }
-    } finally {
-      sendingRef.current = false;
-    }
+    const result = await settlePromise(() => onReply(trimmed));
+    sendingRef.current = false;
+    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    if (!result.value) return;
+    // Replies return no comment; retain loaded data and reopen pagination for a later read.
+    setLoadedPage((previous) =>
+      previous?.threadId === thread.id
+        ? {
+            ...previous,
+            nextCursor: previous.nextCursor ?? thread.nextCommentsCursor ?? null,
+          }
+        : previous,
+    );
+    setReply("");
+    setReplying(false);
   };
   const loadMore = async () => {
     if (nextCommentsCursor === null || loadingMore) return;
     setLoadingMore(true);
-    try {
-      const page = await onLoadMore(nextCommentsCursor);
-      if (page === null) return;
-      setLoadedPage((previous) => ({
-        threadId: thread.id,
-        comments: mergePullRequestThreadComments(
-          previous?.threadId === thread.id ? previous.comments : [],
-          page.comments,
-        ),
-        nextCursor: page.nextCursor,
-      }));
-    } finally {
-      setLoadingMore(false);
-    }
+    const result = await settlePromise(() => onLoadMore(nextCommentsCursor));
+    setLoadingMore(false);
+    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    const page = result.value;
+    if (page === null) return;
+    setLoadedPage((previous) => ({
+      threadId: thread.id,
+      comments: mergePullRequestThreadComments(
+        previous?.threadId === thread.id ? previous.comments : [],
+        page.comments,
+      ),
+      nextCursor: page.nextCursor,
+    }));
   };
 
   return (
@@ -265,11 +260,22 @@ export function ReviewThreadCard({
             {fixPending ? "Preparing..." : fixLabel}
           </Button>
         ) : null}
-        {canResolve ? (
+        {onAddToChat && comments.some((comment) => visibleBody(comment.body) !== null) ? (
           <Button
             size="xs"
             variant="ghost"
             className={onFix ? undefined : "ml-auto"}
+            onClick={() => onAddToChat({ ...thread, comments })}
+          >
+            <MessageSquarePlusIcon className="size-3" />
+            Add to chat
+          </Button>
+        ) : null}
+        {canResolve ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            className={onFix || onAddToChat ? undefined : "ml-auto"}
             disabled={pending}
             onClick={onToggleResolved}
           >
@@ -285,7 +291,9 @@ export function ReviewThreadCard({
               <article key={comment.id} className="group min-w-0">
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <PullRequestActorLabel actor={comment.author} />
-                  <span>{formatRelativeTimeLabel(comment.createdAt)}</span>
+                  <span>
+                    <RelativeTime timestamp={comment.createdAt} />
+                  </span>
                   <PullRequestReactionBar
                     className="ml-auto justify-end"
                     reactions={comment.reactions ?? []}
@@ -302,6 +310,7 @@ export function ReviewThreadCard({
                     value={comment.body}
                     cwd={workspaceRoot}
                     environmentId={environmentId}
+                    completionScope={completionScope}
                     label="Edit comment"
                     saving={savingEdit}
                     onSave={(body) => void saveEdit(comment.id, body)}
@@ -341,34 +350,56 @@ export function ReviewThreadCard({
 
           {canReply ? (
             replying ? (
-              <div className="mt-2">
-                <Textarea
-                  autoFocus
-                  size="sm"
-                  value={reply}
-                  placeholder="Reply"
-                  aria-label="Reply to this conversation"
-                  onChange={(event) => setReply(event.target.value)}
-                  onKeyDown={submitKeys({
-                    value: reply,
-                    pending,
-                    onSubmit: () => void send(),
-                    onCancel: () => setReplying(false),
-                  })}
-                />
-                <div className="mt-2 flex justify-end gap-2">
-                  <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
-                    Cancel
-                  </Button>
-                  <Button
-                    size="xs"
-                    disabled={pending || reply.trim().length === 0}
-                    onClick={() => void send()}
-                  >
-                    Reply
-                  </Button>
-                </div>
-              </div>
+              <SpeechTextField
+                environmentId={environmentId}
+                projectId={reference.projectId}
+                ownerKey={JSON.stringify(["pr-reply", environmentId, reference, thread.id])}
+                text={reply}
+                textareaRef={replyRef}
+                onTextChange={setReply}
+                disabled={pending}
+              >
+                {(speech) => (
+                  <div className="mt-2">
+                    <PullRequestMarkdownTextarea
+                      ref={replyRef}
+                      readOnly={speech.freezesEditor}
+                      autoFocus
+                      size="sm"
+                      completionScope={completionScope}
+                      value={reply}
+                      placeholder="Reply"
+                      aria-label="Reply to this conversation"
+                      onValueChange={setReply}
+                      onKeyDown={submitKeys({
+                        value: reply,
+                        pending,
+                        allowEmpty: speech.blocksSubmission,
+                        onSubmit: () => speech.submitAfterDictation((text) => void send(text)),
+                        onCancel: () =>
+                          speech.state.phase === "idle" ? setReplying(false) : speech.cancel(),
+                      })}
+                    />
+                    <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+                      <TextFieldSpeechControls speech={speech} disabled={pending} />
+                      <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
+                        Cancel
+                      </Button>
+                      <Button
+                        size="xs"
+                        disabled={
+                          speech.preparing ||
+                          pending ||
+                          (!speech.blocksSubmission && reply.trim().length === 0)
+                        }
+                        onClick={() => speech.submitAfterDictation((text) => void send(text))}
+                      >
+                        Reply
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </SpeechTextField>
             ) : (
               <Button size="xs" variant="ghost" className="mt-2" onClick={() => setReplying(true)}>
                 Reply

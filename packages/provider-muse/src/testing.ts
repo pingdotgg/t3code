@@ -1,10 +1,3 @@
-/**
- * Muse Code internals for replay tests and the fixture recorder: how Muse is
- * started, the MSP launch arguments, initialize parameters, environment, the
- * workspace root `turn/start` sends, and version parser.
- *
- * @module provider-muse/testing
- */
 export {
   makeMuseEnvironment,
   museInitializeParams,

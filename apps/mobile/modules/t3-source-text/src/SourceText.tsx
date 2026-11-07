@@ -13,7 +13,6 @@ export type SourceTextProps = Omit<TextProps, "onTextLayout" | "onPress" | "onLo
   }) => void;
 };
 
-/** One selectable document on iOS, with nested runs carrying syntax colors. */
 export function SourceText({ style, children, nativeTextRef, ...props }: SourceTextProps) {
   const [isAncestor, rootStyle] = React.useContext(TextAncestorContext);
   const flattenedStyle = React.useMemo(() => flattenStyles(rootStyle, style), [rootStyle, style]);
@@ -29,18 +28,23 @@ export function SourceText({ style, children, nativeTextRef, ...props }: SourceT
       </Text>
     );
   }
-  const runs = React.Children.toArray(children).map((child, index) => {
-    if (React.isValidElement(child)) return child;
-    if (typeof child !== "string" && typeof child !== "number") return null;
-    return (
-      <T3SourceTextRunNativeComponent
-        key={index}
-        style={flattenedStyle}
-        {...flattenedStyle}
-        text={String(child)}
-      />
-    );
-  });
+  const runs = React.Children.toArray(children).map(
+    (
+      child,
+      index,
+    ) => /* oxlint-disable react/no-array-index-key -- Native text runs are stateless positions within the supplied text. */ {
+        if (React.isValidElement(child)) return child;
+        if (typeof child !== "string" && typeof child !== "number") return null;
+        return (
+          <T3SourceTextRunNativeComponent
+            key={index}
+            style={flattenedStyle}
+            {...flattenedStyle}
+            text={String(child)}
+          />
+        );
+      } /* oxlint-enable react/no-array-index-key */,
+  );
   if (isAncestor) {
     return <TextAncestorContext.Provider value={contextValue}>{runs}</TextAncestorContext.Provider>;
   }

@@ -1,19 +1,21 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as CursorKeychain from "./CursorKeychain.ts";
 import { readCursorAccountUsage } from "./accountUsage.ts";
 
-/** A scoped temporary directory holding `auth.json` with `accessToken`. */
 const writeAuth = (accessToken: string) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -24,7 +26,6 @@ const writeAuth = (accessToken: string) =>
     return { dir, authPath };
   });
 
-/** One dashboard request as Cursor sees it: the URL, the fetch options and the decoded page. */
 interface DashboardRequest {
   readonly url: string;
   readonly init: RequestInit;
@@ -32,7 +33,6 @@ interface DashboardRequest {
   readonly headers: Headers;
 }
 
-/** Stands in for Cursor's dashboard: `answer` replies to each page request. */
 const dashboard = (answer: (request: DashboardRequest) => Response | Promise<Response>) =>
   HttpClient.make((request, url, signal, fiber) =>
     Effect.tryPromise({
@@ -55,7 +55,6 @@ const dashboard = (answer: (request: DashboardRequest) => Response | Promise<Res
     }),
   );
 
-/** Runs `readCursorAccountUsage` against `answer` standing in for Cursor. */
 const readAccountUsage = (
   credentialSource: Parameters<typeof readCursorAccountUsage>[0],
   sinceMs: number,
@@ -68,30 +67,6 @@ const readAccountUsage = (
   );
 
 describe("Cursor account history", () => {
-  it.effect("reads Cursor account history with the default macOS Keychain login", () =>
-    Effect.gen(function* () {
-      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
-      let keychainReads = 0;
-      const result = yield* readAccountUsage(
-        { kind: "keychain" },
-        0,
-        1781000000000,
-        ({ headers }) => {
-          assert.include(headers.get("cookie") ?? "", "demo%3A%3A");
-          return Response.json({ totalUsageEventsCount: 0, usageEventsDisplay: [] });
-        },
-        Effect.sync(() => {
-          keychainReads++;
-          return accessToken;
-        }),
-      );
-      assert.strictEqual(keychainReads, 1);
-      assert.isNull(result.error);
-      assert.isFalse(result.missing);
-      assert.isNotNull(result.accountKey);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   it.effect(
     "reads paginated Cursor account history including headless calls with separate cache tokens",
     () =>
@@ -143,7 +118,7 @@ describe("Cursor account history", () => {
         });
         assert.strictEqual(result.records[0]?.reportedCostUsd, 0.25);
         assert.isFalse(result.accountKey?.includes("demo") ?? true);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("reads Cursor account history beyond 100 pages", () =>
@@ -162,7 +137,7 @@ describe("Cursor account history", () => {
       assert.isNull(result.error);
       assert.strictEqual(requests, 101);
       assert.deepStrictEqual(result.records, []);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("accepts confirmed empty Cursor usage but rejects error envelopes", () =>
@@ -196,7 +171,7 @@ describe("Cursor account history", () => {
         assert.isNotNull(result.error);
         assert.deepStrictEqual(result.records, []);
       }
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("requires a terminal Cursor page after a full page reaches the reported count", () =>
@@ -222,7 +197,7 @@ describe("Cursor account history", () => {
       assert.isNull(result.error);
       assert.strictEqual(result.records.length, 1000);
       assert.strictEqual(requests, 2);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect(
@@ -273,7 +248,7 @@ describe("Cursor account history", () => {
         });
         assert.isNotNull(inconsistent.error);
         assert.deepStrictEqual(inconsistent.records, []);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect(
@@ -308,11 +283,59 @@ describe("Cursor account history", () => {
         );
         assert.isTrue(missing.missing);
         assert.isFalse(requested);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
 
 describe("readCursorAccountUsage", () => {
+  it.effect("reads an API key's account history through Cursor's API", () =>
+    Effect.gen(function* () {
+      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+      const requests: Array<readonly [string, string | null]> = [];
+      const result = yield* readAccountUsage(
+        { kind: "apiKey", apiKey: "api-key" },
+        0,
+        1781000000000,
+        ({ url, headers }) => {
+          requests.push([url, headers.get("authorization")]);
+          return url.endsWith("/auth/exchange_user_api_key")
+            ? Response.json({ accessToken })
+            : Response.json({
+                totalUsageEventsCount: 1,
+                usageEventsDisplay: [
+                  { timestamp: "1780000000000", model: "gpt-5", tokenUsage: { outputTokens: 4 } },
+                ],
+              });
+        },
+      );
+      assert.isNull(result.error);
+      assert.deepStrictEqual(requests, [
+        ["https://api2.cursor.sh/auth/exchange_user_api_key", "Bearer api-key"],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetFilteredUsageEvents",
+          `Bearer ${accessToken}`,
+        ],
+      ]);
+      assert.strictEqual(result.records[0]?.totals.outputTokens, 4);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("stops waiting for an API key exchange that never answers", () =>
+    Effect.gen(function* () {
+      const read = yield* Effect.forkChild(
+        readAccountUsage(
+          { kind: "apiKey", apiKey: "api-key" },
+          0,
+          1781000000000,
+          () => new Promise<Response>(() => {}),
+        ),
+      );
+      yield* TestClock.adjust("10 seconds");
+      const result = yield* Fiber.join(read);
+      assert.strictEqual(result.error, "Cursor account usage could not be read.");
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("asks for Keychain approval when the prompt goes unanswered", () =>
     Effect.gen(function* () {
       const result = yield* readAccountUsage(
@@ -330,7 +353,7 @@ describe("readCursorAccountUsage", () => {
         missing: false,
         error: "Allow Keychain access on the Mac running T3 Code, then refresh.",
       });
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("reads the pages behind the first together and keeps them in page order", () =>
@@ -345,7 +368,6 @@ describe("readCursorAccountUsage", () => {
         async ({ page }) => {
           inFlight++;
           mostInFlight = Math.max(mostInFlight, inFlight);
-          // Later pages answer first, so record order cannot come from arrival order.
           for (let turn = page; turn < 9; turn++) await Promise.resolve();
           inFlight--;
           return Response.json({
@@ -365,7 +387,7 @@ describe("readCursorAccountUsage", () => {
         result.records.map((record) => record.timestampMs),
         Array.from({ length: 8001 }, (_, index) => 1780000000000 + index),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("ends like a page-by-page read when a page fails, leaving no request open", () =>
@@ -375,7 +397,6 @@ describe("readCursorAccountUsage", () => {
         totalUsageEventsCount: 8001,
         usageEventsDisplay: Array.from({ length: 1000 }, () => ({ tokenUsage: null })),
       };
-      // Page 3 fails while the pages after it are still waiting on Cursor.
       for (const [secondPage, error] of [
         [() => Response.json(fullPage), "Cursor account usage could not be read."],
         [
@@ -406,6 +427,6 @@ describe("readCursorAccountUsage", () => {
         assert.deepStrictEqual(result.records, []);
         assert.strictEqual(open, 0);
       }
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });

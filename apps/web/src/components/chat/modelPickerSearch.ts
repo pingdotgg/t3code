@@ -1,13 +1,7 @@
 import { normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRanking";
 
 type ModelPickerSearchableModel = {
-  /** Driver kind — indexed so "codex" still matches a Codex Personal instance. */
   driverKind: string;
-  /**
-   * Instance display name (e.g. "Codex Personal"). Indexed as a search
-   * field so typing the custom instance's user-authored name matches its
-   * models directly instead of just the driver kind.
-   */
   providerDisplayName: string;
   name: string;
   shortName?: string;
@@ -16,6 +10,7 @@ type ModelPickerSearchableModel = {
 };
 
 const MODEL_PICKER_FAVORITE_SCORE_BOOST = 24;
+const MODEL_PICKER_EXACT_NAME_SCORE = -1000;
 
 function getModelPickerSearchFields(model: ModelPickerSearchableModel): string[] {
   return [
@@ -41,10 +36,15 @@ function scoreModelPickerSearchToken(
     boundaryBase: fieldBase + 4,
     includesBase: fieldBase + 6,
     ...(token.length >= 3 ? { fuzzyBase: fieldBase + 100 } : {}),
+    ignorePosition: true,
   });
 }
 
-export function buildModelPickerSearchText(model: ModelPickerSearchableModel): string {
+function normalizeModelName(name: string): string {
+  return normalizeSearchQuery(name).replace(/\s+/gu, " ");
+}
+
+function buildModelPickerSearchText(model: ModelPickerSearchableModel): string {
   return normalizeSearchQuery(
     [model.name, model.shortName, model.subProvider, model.driverKind, model.providerDisplayName]
       .filter((value): value is string => typeof value === "string" && value.length > 0)
@@ -62,6 +62,14 @@ export function scoreModelPickerSearch(
 
   if (tokens.length === 0) {
     return 0;
+  }
+
+  const normalizedQuery = tokens.join(" ");
+  if (
+    normalizedQuery === normalizeModelName(model.name) ||
+    normalizedQuery === normalizeModelName(model.shortName ?? "")
+  ) {
+    return MODEL_PICKER_EXACT_NAME_SCORE;
   }
 
   const fields = getModelPickerSearchFields(model);
@@ -84,4 +92,35 @@ export function scoreModelPickerSearch(
   }
 
   return model.isFavorite ? score - MODEL_PICKER_FAVORITE_SCORE_BOOST : score;
+}
+
+export function rankModelPickerSearch<T>(
+  items: ReadonlyArray<T>,
+  query: string,
+  toSearchable: (item: T) => ModelPickerSearchableModel,
+): T[] {
+  const ranked: Array<{
+    item: T;
+    score: number;
+    isFavorite: boolean;
+    order: number;
+  }> = [];
+  items.forEach((item, order) => {
+    const searchable = toSearchable(item);
+    const score = scoreModelPickerSearch(searchable, query);
+    if (score !== null) {
+      ranked.push({
+        item,
+        score,
+        isFavorite: searchable.isFavorite === true,
+        order,
+      });
+    }
+  });
+  return ranked
+    .toSorted(
+      (a, b) =>
+        a.score - b.score || Number(b.isFavorite) - Number(a.isFavorite) || a.order - b.order,
+    )
+    .map((entry) => entry.item);
 }

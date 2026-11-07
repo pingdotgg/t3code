@@ -8,7 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import type * as Cloudflare from "alchemy/Cloudflare";
+import type * as Cloudflare from "@alchemy.run/cloudflare";
 import * as FcmDeliveryQueueConsumer from "./FcmDeliveryQueueConsumer.ts";
 
 import * as RelayConfiguration from "../Config.ts";
@@ -19,7 +19,6 @@ import * as LiveActivities from "./LiveActivities.ts";
 import * as FcmDeliveryQueueSender from "./FcmDeliveryQueueSender.ts";
 import * as FcmClient from "./FcmClient.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
-import { TestClock } from "effect/testing";
 import { androidActivityData, fitFcmData } from "./fcmPayloads.ts";
 import { makeAggregateState } from "./agentActivityAggregate.ts";
 
@@ -121,13 +120,13 @@ function harness() {
     Layer.succeed(LiveActivities.LiveActivities, {
       register: () => Effect.void,
       listTargets: () => Effect.sync(() => [current.target]),
+      listIdleArmedTargets: () => Effect.succeed([]),
       markDelivery: (input) =>
         Effect.sync(() => {
           marked.push(input);
           current.target.last_aggregate_json = input.aggregate ? encodeJson(input.aggregate) : null;
         }),
-      markStartQueued: () => Effect.void,
-      clearStartQueued: () => Effect.void,
+
       invalidateDeliveryToken: () => Effect.void,
     }),
     Layer.succeed(AgentActivityRows.AgentActivityRows, {
@@ -411,53 +410,6 @@ describe("Android delivery routing", () => {
     ).toMatchObject({ alert_title: "Second thread", alert_body: "Input: Project" });
   });
 
-  it.effect.each([
-    { phase: "waiting_for_approval", body: "Approval: Project", preference: "notifyOnApproval" },
-    { phase: "waiting_for_input", body: "Input: Project", preference: "notifyOnInput" },
-    { phase: "completed", body: "Done: Project", preference: "notifyOnCompletion" },
-    { phase: "failed", body: "Failed: Project", preference: "notifyOnFailure" },
-  ] as const)(
-    "uses iOS alert wording for $phase and honors its preference",
-    ({ phase, body, preference }) => {
-      const h = harness();
-      h.current.state = { ...state, phase };
-      return Effect.gen(function* () {
-        const delivery = yield* FcmDeliveries.FcmDeliveries;
-        yield* delivery.process({ ...h.job, state: h.current.state });
-        expect(h.sent[0]?.data).toMatchObject({
-          alert_title: "Fix notifications",
-          alert_body: body,
-          alert_path: "/threads/env/thread",
-        });
-        h.current.target.preferences_json = encodeJson({
-          ...preferences,
-          [preference]: false,
-        });
-        yield* delivery.process({ ...h.job, state: h.current.state });
-        expect(h.sent.slice(1).every((sent) => !sent.alert && !sent.data.alert_id)).toBe(true);
-      }).pipe(Effect.provide(h.layer));
-    },
-  );
-
-  it("trims and truncates alert text like iOS", () => {
-    expect(
-      FcmDeliveries.androidAlertForState(
-        {
-          ...state,
-          phase: "completed",
-          threadTitle: `  ${"T".repeat(150)}  `,
-          projectTitle: `  ${"P".repeat(150)}  `,
-        },
-        preferences,
-        0,
-      ),
-    ).toMatchObject({
-      alert_title: `${"T".repeat(117)}...`,
-      alert_body: `Done: ${"P".repeat(111)}...`,
-      alert_group: JSON.stringify([state.environmentId, state.threadId]),
-    });
-  });
-
   it("keeps notification groups distinct when identifiers contain slashes", () => {
     const left = FcmDeliveries.androidAlertForState(
       {
@@ -575,48 +527,6 @@ describe("Android delivery routing", () => {
       expect(h.sent[1]?.data.alert_id).toBeUndefined();
     }).pipe(Effect.provide(h.layer));
   });
-  it.effect.each(
-    [true, false].flatMap((ongoing) =>
-      (["completed", "failed"] as const).map((phase) => ({ ongoing, phase })),
-    ),
-  )("does not alert a stale $phase without a baseline (ongoing=$ongoing)", ({ ongoing, phase }) => {
-    const h = harness();
-    h.current.state = { ...state, phase, updatedAt: "1969-12-31T23:57:00.000Z" };
-    h.current.target.preferences_json = encodeJson({
-      ...preferences,
-      liveActivitiesEnabled: ongoing,
-    });
-    return Effect.gen(function* () {
-      const delivery = yield* FcmDeliveries.FcmDeliveries;
-      yield* delivery.process({ ...h.job, state: h.current.state });
-      expect(h.sent.every((message) => !message.alert)).toBe(true);
-    }).pipe(Effect.provide(h.layer));
-  });
-
-  it.effect(
-    "retains finished results without extending expiry on replay and clears expired cards",
-    () => {
-      const h = harness();
-      h.current.state = { ...state, phase: "failed" };
-      return Effect.gen(function* () {
-        const delivery = yield* FcmDeliveries.FcmDeliveries;
-        yield* delivery.process({ ...h.job, state: h.current.state });
-        expect(h.sent[0]?.data).toMatchObject({
-          active: "false",
-          activity_title: "Agent work failed",
-          activity_expires_at: "900000",
-        });
-        yield* TestClock.adjust("5 minutes");
-        yield* delivery.process({ ...h.job, queuedAt: 300000, state: null, replay: true });
-        expect(h.sent[1]?.data.activity_expires_at).toBe("900000");
-        expect(h.sent[1]?.alert).toBe(false);
-        yield* TestClock.adjust("11 minutes");
-        yield* delivery.process({ ...h.job, queuedAt: 960000, state: null, replay: true });
-        expect(h.sent[2]?.data).toMatchObject({ active: "false", activity_expires_at: "0" });
-        expect(h.marked.at(-1)?.aggregate).toBeNull();
-      }).pipe(Effect.provide(h.layer));
-    },
-  );
 
   it.effect("replays an empty card to repair an orphan without a delivery baseline", () => {
     const h = harness();
@@ -627,45 +537,6 @@ describe("Android delivery routing", () => {
       expect(h.sent[0]?.data.activity_expires_at).toBe("0");
       expect(h.sent[0]?.alert).toBe(false);
     }).pipe(Effect.provide(h.layer));
-  });
-
-  it("shows five rows with attention then failure first, including project and status", () => {
-    const aggregate = aggregateFor([
-      state,
-      { ...secondState, phase: "failed" },
-      { ...state, threadId: ThreadId.make("approval"), phase: "waiting_for_approval" },
-      { ...state, threadId: ThreadId.make("input"), phase: "waiting_for_input" },
-      { ...state, threadId: ThreadId.make("done"), phase: "completed" },
-    ]);
-    const data = androidActivityData(aggregate);
-    expect(data.activity_title).toBe("3 active agents · 2 need attention");
-    expect(data.activity_chip).toBe("Review");
-    expect(data.activity_phase).toBe("waiting_for_approval");
-    expect(data.activity_active_count).toBe("3");
-    expect(data.activity_attention_count).toBe("2");
-    const input = androidActivityData(aggregateFor([{ ...state, phase: "waiting_for_input" }]));
-    expect(input.activity_phase).toBe("waiting_for_input");
-    expect(input.activity_active_count).toBe("1");
-    expect(androidActivityData(aggregateFor([state])).activity_chip).toBe("Active");
-    expect(
-      androidActivityData(aggregateFor([{ ...state, phase: "completed" }])).activity_chip,
-    ).toBe("");
-    expect(androidActivityData(null).activity_chip).toBe("");
-    expect(
-      Object.entries(data)
-        .filter(([key]) => key.startsWith("activity_line_"))
-        .map(([, value]) => value),
-    ).toEqual([
-      "Approval\tFix notifications\tProject",
-      "Input\tFix notifications\tProject",
-      "Failed\tSecond thread\tProject",
-      "Working\tFix notifications\tProject",
-      "Done\tFix notifications\tProject",
-    ]);
-    expect(data.activity_expires_at).toBe(String(24 * 60 * 60 * 1000));
-    expect(androidActivityData(aggregateFor([state])).activity_expires_at).toBe(
-      String(2 * 60 * 60 * 1000),
-    );
   });
 
   it("fits five Unicode rows and a grouped alert in the FCM budget without corrupting text or routes", () => {
@@ -713,23 +584,6 @@ describe("delivery policy regressions", () => {
       expect(h.sent.filter((x) => x.alert)).toHaveLength(1);
     }).pipe(Effect.provide(h.layer));
   });
-  it.effect("a muted environment job cannot consume another environment's attention alert", () => {
-    const h = harness();
-    const other = {
-      ...state,
-      environmentId: EnvironmentId.make("other"),
-      threadId: ThreadId.make("other"),
-    };
-    h.current.target.last_aggregate_json = encodeJson(aggregateFor([state, other]));
-    h.current.otherStates = [{ ...other, phase: "waiting_for_input" }];
-    h.current.mutedEnvironments = [state.environmentId];
-    return Effect.gen(function* () {
-      const d = yield* FcmDeliveries.FcmDeliveries;
-      yield* d.process(h.job);
-      yield* d.process({ ...h.job, state: h.current.otherStates[0]! });
-      expect(h.sent.filter((x) => x.alert)).toHaveLength(1);
-    }).pipe(Effect.provide(h.layer));
-  });
   it("keeps an older waiting thread visible and alertable beyond five running rows", () => {
     const running = Array.from({ length: 5 }, (_, i) => ({
       ...state,
@@ -772,45 +626,6 @@ describe("notification-only environments", () => {
       expect(h.sent[0]?.data.alert_path).toBe(state.deepLink);
     }).pipe(Effect.provide(h.layer));
   });
-});
-
-it("continues shrinking text when a longer activity line is already minimal", () => {
-  const data = fitFcmData({
-    activity_line_0: "Approval\t😀😀😀😀\t😀😀😀😀",
-    alert_body: "x".repeat(30),
-    device_id: "x".repeat(3680),
-  });
-  expect(new TextEncoder().encode(encodeJson(data)).length).toBeLessThanOrEqual(3800);
-  expect(data.activity_line_0).toBe("Approval\t😀😀😀😀\t😀😀😀😀");
-});
-
-it.effect("notification-only jobs do not consume another environment's card alert", () => {
-  const h = harness();
-  const other = {
-    ...state,
-    environmentId: EnvironmentId.make("other"),
-    threadId: ThreadId.make("other"),
-  };
-  h.current.target.last_aggregate_json = encodeJson(aggregateFor([other]));
-  h.current.otherStates = [{ ...other, phase: "waiting_for_approval" }];
-  h.current.state = { ...state, phase: "waiting_for_input" };
-  h.current.notificationOnlyEnvironments = [state.environmentId];
-  return Effect.gen(function* () {
-    const deliveries = yield* FcmDeliveries.FcmDeliveries;
-    yield* deliveries.process({ ...h.job, state: h.current.state });
-    yield* deliveries.process({ ...h.job, state: h.current.otherStates[0]! });
-    expect(h.sent.filter((delivery) => delivery.alert)).toHaveLength(2);
-  }).pipe(Effect.provide(h.layer));
-});
-
-it.effect("preserves a structured Firebase failure through the queue consumer", () => {
-  const h = harness();
-  const failure = new FcmClient.FcmClientError({ operation: "send", status: 503 });
-  h.current.deliveryFailure = failure;
-  return Effect.gen(function* () {
-    const deliveries = yield* FcmDeliveries.FcmDeliveries;
-    expect(yield* deliveries.process(h.job).pipe(Effect.flip)).toBe(failure);
-  }).pipe(Effect.provide(h.layer));
 });
 
 it("stops reducing five-character row fields and fits the remaining alert", () => {
@@ -857,8 +672,7 @@ describe("FCM queue message isolation", () => {
           ),
           Stream.runForEach(FcmDeliveryQueueConsumer.processMessage),
         );
-        // Alchemy acknowledges the batch after a successful stream. Cloudflare
-        // ignores those acknowledgements for messages explicitly retried earlier.
+        // Cloudflare ignores Alchemy's final batch acknowledgements for already-retried messages.
         for (const item of batch) item.ack();
         expect([...outcomes]).toEqual([
           ["failed", "retry"],

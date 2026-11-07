@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Local developer verification reads private credential files.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
-import * as NodeSocket from "@effect/platform-node/NodeSocket";
+import * as NodeWS from "@effect/platform-node/NodeWS";
 import {
   ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
@@ -42,7 +42,19 @@ const Connection = Schema.Struct({
   wsUrl: Schema.NonEmptyString,
   bearerToken: Schema.NonEmptyString,
 });
-const readFile = (path: string) => Effect.tryPromise(() => NodeFSP.readFile(path, "utf8"));
+class WatchReadFileError extends Schema.TaggedError<WatchReadFileError>()("WatchReadFileError", {
+  path: Schema.String,
+  cause: Schema.Defect(),
+}) {
+  override get message() {
+    return `Could not read ${this.path}`;
+  }
+}
+const readFile = (path: string) =>
+  Effect.tryPromise({
+    try: () => NodeFSP.readFile(path, "utf8"),
+    catch: (cause) => new WatchReadFileError({ path, cause }),
+  });
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 class WatchUnregisteredDeviceError extends Schema.TaggedError<WatchUnregisteredDeviceError>()(
   "WatchUnregisteredDeviceError",
@@ -88,9 +100,8 @@ const main = Effect.gen(function* () {
   );
   const layerSocketConstructor = Layer.succeed(
     Socket.WebSocketConstructor,
-    // Socket.makeWebSocket only ever passes its `protocols` option here.
     (url, protocols) =>
-      new NodeSocket.NodeWS.WebSocket(url, protocols as string | string[] | undefined, {
+      new NodeWS.WebSocket(url, protocols as string | string[] | undefined, {
         headers: { authorization: `Bearer ${connection.bearerToken}` },
       }) as unknown as globalThis.WebSocket,
   );
@@ -172,7 +183,6 @@ const main = Effect.gen(function* () {
           }
           const state = item.kind === "thread.updated" ? next.get(item.thread.id) : undefined;
           const previous = state ? states.get(state.threadId) : undefined;
-          // A fresh subscription restores ongoing work without announcing old completions.
           const now = yield* Clock.currentTimeMillis;
           const alert =
             state && state.phase !== previous?.phase && item.kind !== "snapshot"
@@ -222,8 +232,7 @@ NodeRuntime.runMain(
           : new WatchStoppedError({ cause }),
       );
     }),
-    // Socket failures may contain credential-bearing request headers. Keep the
-    // cause on the error, but print only the fixed message at the CLI boundary.
+    // Socket errors can expose credential headers; retain the cause but print only the fixed message.
     Effect.tapError((error) => Effect.logError(error.message)),
   ),
   { disableErrorReporting: true },

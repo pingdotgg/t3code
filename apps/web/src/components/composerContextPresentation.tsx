@@ -1,11 +1,16 @@
 import ChatMarkdown from "./ChatMarkdown";
+import { isSvgAttachment } from "@t3tools/shared/image";
 import { ReadOnlySourcePreview } from "./files/AttachmentFilePreview";
-import type { PreviewAnnotationPayload, ThreadContextRecord } from "@t3tools/contracts";
+import type {
+  EnvironmentContextRecord,
+  PreviewAnnotationPayload,
+  ThreadContextRecord,
+} from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
 import { MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
-import { createContext, type MouseEvent, type ReactElement, type ReactNode, use } from "react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { createContext, type ReactElement, type ReactNode, use } from "react";
+import { ComposerContextActionsContext } from "./composerContextActions";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "~/composerDraftStore";
 import { composerFileNeedsReattach } from "~/composerDraftStore";
@@ -31,7 +36,9 @@ import {
 import type { TerminalContextDraft } from "~/lib/terminalContext";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
+import { EnvironmentContextChip } from "./EnvironmentContextChip";
 import { ThreadContextChip } from "./ThreadContextChip";
+import { useLinkedEnvironments } from "~/state/peerLinks";
 import {
   createContextPresentationRegistry,
   type ContextPresentationCapability,
@@ -48,42 +55,23 @@ import {
   UnresolvedChip,
 } from "./contextChipParts";
 
-/**
- * Draft-side payload behind a context reference chip. Each kind keeps its existing draft
- * shape; the editor only needs a way to look one up by id.
- */
 export type ComposerDraftContextRecord =
   | { kind: "terminal"; record: TerminalContextDraft }
   | { kind: "review-comment"; record: ReviewCommentContext }
   | {
       kind: "preview-annotation";
       record: PreviewAnnotationPayload;
-      /** The crop, which the draft stores as an image sharing the annotation's id. */
       screenshot?: ComposerImageAttachment | undefined;
     }
   | { kind: "image"; record: ComposerImageAttachment; upload?: AttachmentUploadState | undefined }
   | { kind: "file"; record: ComposerFileAttachment; upload?: AttachmentUploadState | undefined }
-  | { kind: "thread"; record: ThreadContextRecord };
+  | { kind: "thread"; record: ThreadContextRecord }
+  | { kind: "environment"; record: EnvironmentContextRecord };
 
-/** What a chip can do beyond showing itself; the composer supplies the handlers. */
-export interface ComposerContextActions {
-  environmentId: EnvironmentId | null;
-  cwd?: string | undefined;
-  expandImage: (imageId: string) => void;
-  expandVideo: (fileId: string) => void;
-  openFile: (fileId: string) => void;
-  openMention: (path: string) => void;
-  openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
-}
-
-export const ComposerContextActionsContext = createContext<ComposerContextActions>({
-  environmentId: null,
-  expandImage: () => {},
-  expandVideo: () => {},
-  openFile: () => {},
-  openMention: () => {},
-  openPullRequest: () => {},
-});
+export {
+  ComposerContextActionsContext,
+  type ComposerContextActions,
+} from "./composerContextActions";
 
 export type ComposerDraftContextRecords = ReadonlyMap<string, ComposerDraftContextRecord>;
 
@@ -103,6 +91,7 @@ export function composerContextRecordsFromDraft(input: {
   reviewComments?: ReadonlyArray<ReviewCommentContext>;
   previewAnnotations?: ReadonlyArray<PreviewAnnotationPayload>;
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
+  environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
   images?: ReadonlyArray<ComposerImageAttachment>;
   files?: ReadonlyArray<ComposerFileAttachment>;
   uploadsByImageId?: Readonly<Record<string, AttachmentUploadState>>;
@@ -138,6 +127,9 @@ export function composerContextRecordsFromDraft(input: {
   }
   for (const record of input.threadContexts ?? []) {
     records.set(record.contextId, { kind: "thread", record });
+  }
+  for (const record of input.environmentContexts ?? []) {
+    records.set(record.contextId, { kind: "environment", record });
   }
   return records;
 }
@@ -228,6 +220,15 @@ function FileContextChip(props: {
   return (
     <FileChip
       name={props.record.name}
+      svgPreview={
+        isSvgAttachment(props.record)
+          ? {
+              file: props.record.file,
+              environmentId: props.record.uploadEnvironmentId,
+              attachmentId: props.record.uploadedAttachmentId,
+            }
+          : undefined
+      }
       size={size}
       isVideo={isVideo}
       theme={resolvedTheme}
@@ -308,7 +309,6 @@ function ComposerPreviewAnnotationDetails({
   screenshot: ComposerImageAttachment | undefined;
 }) {
   const summary = previewAnnotationTooltip(annotation);
-  // The draft drops the annotation's own data URL and keeps the crop as an image.
   const screenshotUrl = annotation.screenshot?.dataUrl || screenshot?.previewUrl;
   return (
     <div className="overflow-hidden rounded-lg border border-border/70 bg-background/70">
@@ -330,6 +330,21 @@ function ComposerPreviewAnnotationDetails({
   );
 }
 
+function ComposerThreadContextChip(props: { record: ThreadContextRecord }) {
+  const { environmentId } = use(ComposerContextActionsContext);
+  const linkedEnvironments = useLinkedEnvironments(environmentId);
+  return (
+    <ThreadContextChip
+      record={props.record}
+      unreadable={
+        environmentId !== null &&
+        props.record.environmentId !== environmentId &&
+        !linkedEnvironments.has(props.record.environmentId)
+      }
+    />
+  );
+}
+
 function UnresolvedContextChip(props: { label: string }) {
   return (
     <UnresolvedChip
@@ -348,7 +363,15 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
   ComposerContextRenderContext,
   ReactElement
 >({
-  requiredKinds: ["image", "file", "terminal", "review-comment", "preview-annotation", "thread"],
+  requiredKinds: [
+    "image",
+    "file",
+    "terminal",
+    "review-comment",
+    "preview-annotation",
+    "thread",
+    "environment",
+  ],
   handlers: [
     {
       kind: "terminal",
@@ -439,7 +462,17 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
       canRender: (entry) => entry.kind === "thread",
       render: (entry, context) =>
         entry.kind === "thread" ? (
-          <ThreadContextChip record={entry.record} />
+          <ComposerThreadContextChip record={entry.record} />
+        ) : (
+          <UnresolvedContextChip label={context.label} />
+        ),
+    },
+    {
+      kind: "environment",
+      canRender: (entry) => entry.kind === "environment",
+      render: (entry, context) =>
+        entry.kind === "environment" ? (
+          <EnvironmentContextChip record={entry.record} />
         ) : (
           <UnresolvedContextChip label={context.label} />
         ),
@@ -448,7 +481,6 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
   fallback: (_kind, _entry, context) => <UnresolvedContextChip label={context.label} />,
 });
 
-/** Compact chip for one reference. Unknown kinds and missing records use the registry fallback. */
 export function ComposerContextReferenceChip(props: {
   kind: string;
   contextId: string;

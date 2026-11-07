@@ -1,8 +1,9 @@
-import type {
-  EnvironmentId,
-  OrchestrationV2ThreadShell,
-  Project,
-  ThreadId,
+import {
+  isListedThreadLineage,
+  type EnvironmentId,
+  type OrchestrationV2ThreadShell,
+  type Project,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
@@ -45,23 +46,33 @@ export interface ProjectThreadAwarenessV2Input {
     | "activityRunStatus"
     | "id"
     | "lineage"
+    | "latestRunStopRequested"
     | "modelSelection"
     | "pendingBackgroundTasks"
     | "pendingRuntimeRequest"
+    | "settledOverride"
     | "status"
     | "title"
     | "updatedAt"
   >;
 }
 
-/** Build relay activity directly from the V2 shell projection. */
 export function projectThreadAwarenessV2(
   input: ProjectThreadAwarenessV2Input,
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
-  if (thread.lineage.relationshipToParent === "subagent") return null;
+  if (!isListedThreadLineage(thread.lineage)) return null;
   const phase = resolveThreadAwarenessPhaseV2(thread);
   if (phase === null) {
+    return null;
+  }
+  if (phase === "completed" && thread.latestRunStopRequested === true) return null;
+  // Resolve the phase first so live or waiting work stays visible after settlement.
+  if (
+    thread.settledOverride === "settled" &&
+    (phase === "completed" || phase === "failed") &&
+    !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+  ) {
     return null;
   }
   const detail =
@@ -87,9 +98,7 @@ export function projectThreadAwarenessV2(
 function resolveThreadAwarenessPhaseV2(
   thread: ProjectThreadAwarenessV2Input["thread"],
 ): AgentAwarenessPhase | null {
-  if (thread.pendingRuntimeRequest?.kind === "user_input") {
-    return "waiting_for_input";
-  }
+  if (thread.pendingRuntimeRequest?.kind === "user_input") return "waiting_for_input";
   if (
     thread.pendingRuntimeRequest !== null &&
     thread.pendingRuntimeRequest.kind !== "auth_refresh"
@@ -104,7 +113,6 @@ function resolveThreadAwarenessPhaseV2(
     case "waiting":
       return "running";
     case "completed":
-      // Work that will wake the agent keeps the run going; a dev server does not.
       return backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
         ? "running"
         : "completed";

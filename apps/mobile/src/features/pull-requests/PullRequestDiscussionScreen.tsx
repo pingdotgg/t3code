@@ -1,26 +1,33 @@
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useAtomRefresh } from "@effect/atom-react";
-import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import {
+  type AtomCommandResult,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { AsyncResult } from "effect/reactivity";
 import type { PullRequestThreadComment } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { ActivityIndicator, Platform, ScrollView, View } from "react-native";
+import { ScrollView, View } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { MaterialButton } from "../../components/MaterialButton";
-import { GlassSurface } from "../../components/GlassSurface";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { AppBar } from "../../components/ui/AppBar";
+import { Button } from "../../components/ui/Button";
+import { GlassSurface } from "../../components/ui/GlassSurface";
 import { relativeTime } from "../../lib/time";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../state/query";
 import { PullRequestMarkdown, PullRequestMarkdownRepository } from "./PullRequestMarkdown";
 import { PullRequestAvatar } from "./PullRequestPresentation";
+import { PullRequestCommentFooter } from "./PullRequestReactions";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
+import { PullRequestCompletionSuggestions } from "./PullRequestCompletionSuggestions";
+import { usePullRequestCompletions } from "./usePullRequestCompletions";
 
 export function PullRequestDiscussionScreen({
   route,
@@ -50,6 +57,13 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   const loadMore = useAtomCommand(composerPullRequests.threadComments, { reportFailure: false });
   const thread = activity.data?.reviewThreads.find((thread) => thread.id === params.discussionId);
   const [body, setBody] = useState("");
+  const completions = usePullRequestCompletions({
+    environmentId: params.environmentId,
+    projectId: params.projectId,
+    value: body,
+    onChangeValue: setBody,
+    support: detail.data?.capabilities ?? null,
+  });
   const [extra, setExtra] = useState<readonly PullRequestThreadComment[]>([]);
   const [cursor, setCursor] = useState<string | null | undefined>();
   const [busy, setBusy] = useState(false);
@@ -57,57 +71,67 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [composerHeight, setComposerHeight] = useState(64);
-  const operation = async (run: () => Promise<void>) => {
+  // Replies from "Load more" live only here, outside the activity an edit refreshes. After one
+  // is edited, drop the loaded pages so the next load reads the new body instead of the old one.
+  const extraEdited = useRef(false);
+  useFocusEffect(() => {
+    if (!extraEdited.current) return;
+    extraEdited.current = false;
+    setExtra([]);
+    setCursor(undefined);
+  });
+  const operation = async (run: () => Promise<AtomCommandResult<unknown, unknown> | undefined>) => {
     if (pending.current) return;
     pending.current = true;
     setBusy(true);
     setError(null);
     setNotice(null);
-    try {
-      await run();
-    } catch (cause) {
+    const result = await run();
+    pending.current = false;
+    setBusy(false);
+    if (result && AsyncResult.isFailure(result)) {
+      const cause = squashAtomCommandFailure(result);
       setError(
         cause instanceof Error ? cause.message : "The provider could not complete this action.",
       );
-    } finally {
-      pending.current = false;
-      setBusy(false);
     }
   };
   const post = () =>
     operation(async () => {
-      if (!permissions.canReply || !body.trim() || !thread) return;
+      if (!permissions.canReply || !body.trim() || !thread) return undefined;
       const submitted = body;
       const response = await reply({
         ...target,
         input: { ...target.input, threadId: thread.id, body: submitted },
       });
-      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+      if (AsyncResult.isFailure(response)) return response;
       setBody((current) => (current === submitted ? "" : current));
       setNotice("Reply posted.");
       refresh();
+      return response;
     });
   const toggleResolved = () =>
     operation(async () => {
-      if (!thread || !permissions.canResolve) return;
+      if (!thread || !permissions.canResolve) return undefined;
       const response = await resolve({
         ...target,
         input: { ...target.input, threadId: thread.id, resolved: !thread.isResolved },
       });
-      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-      refresh();
+      if (AsyncResult.isSuccess(response)) refresh();
+      return response;
     });
   const nextCursor = cursor === undefined ? thread?.nextCommentsCursor : cursor;
   const more = () =>
     operation(async () => {
-      if (!thread || !nextCursor) return;
+      if (!thread || !nextCursor) return undefined;
       const response = await loadMore({
         ...target,
         input: { ...target.input, threadId: thread.id, cursor: nextCursor },
       });
-      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+      if (AsyncResult.isFailure(response)) return response;
       setExtra((comments) => [...comments, ...response.value.comments]);
       setCursor(response.value.nextCursor);
+      return response;
     });
   const comments = [
     ...new Map(
@@ -117,42 +141,25 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   const canReply = permissions.canReply && Boolean(thread);
   const resolveLabel = thread?.isResolved ? "Unresolve" : "Resolve";
   return (
-    <PullRequestMarkdownRepository
-      params={params}
-      value={detail.data?.provider === "github" ? detail.data.url : null}
-    >
+    <PullRequestMarkdownRepository params={params} changeRequest={detail.data}>
       <KeyboardAvoidingView automaticOffset behavior="height" className="flex-1 bg-screen">
-        <NativeStackScreenOptions
-          options={{ title: "Discussion", unstable_headerSubtitle: `#${params.number}` }}
+        <AppBar
+          title="Discussion"
+          subtitle={`#${params.number}`}
+          onBack={() => navigation.goBack()}
+          actions={
+            permissions.canResolve && thread
+              ? [
+                  {
+                    accessibilityLabel: resolveLabel,
+                    icon: thread.isResolved ? "arrow.uturn.backward" : "checkmark",
+                    disabled: busy || activity.isPending,
+                    onPress: () => void toggleResolved(),
+                  },
+                ]
+              : []
+          }
         />
-        {Platform.OS === "android" ? (
-          <AndroidScreenHeader
-            title="Discussion"
-            subtitle={`#${params.number}`}
-            onBack={() => navigation.goBack()}
-            actions={
-              permissions.canResolve && thread
-                ? [
-                    {
-                      accessibilityLabel: resolveLabel,
-                      icon: thread.isResolved ? "arrow.uturn.backward" : "checkmark",
-                      disabled: busy || activity.isPending,
-                      onPress: () => void toggleResolved(),
-                    },
-                  ]
-                : []
-            }
-          />
-        ) : null}
-        {permissions.canResolve && thread ? (
-          <NativeHeaderToolbar placement="right">
-            <NativeHeaderToolbar.Button
-              label={resolveLabel}
-              disabled={busy || activity.isPending}
-              onPress={() => void toggleResolved()}
-            />
-          </NativeHeaderToolbar>
-        ) : null}
         <ScrollViewMarker style={{ flex: 1 }}>
           <ScrollView
             className="flex-1"
@@ -163,7 +170,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
               paddingBottom: canReply ? composerHeight + bottomInset + 24 : 24,
             }}
           >
-            {activity.isPending && !thread ? <ActivityIndicator /> : null}
+            {activity.isPending && !thread ? <AppActivityIndicator /> : null}
             {thread ? (
               <View className="gap-2 pb-4">
                 <Text selectable className="font-mono text-xs text-foreground-muted">
@@ -174,7 +181,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                   {thread.isResolved ? "Resolved" : "Unresolved"}
                   {thread.isOutdated ? " · Outdated" : ""}
                 </Text>
-                <MaterialButton
+                <Button
                   label="View file diff"
                   onPress={() =>
                     navigation.navigate("PullRequestFile", { ...params, path: thread.path })
@@ -196,10 +203,20 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                   </Text>
                 </View>
                 <PullRequestMarkdown markdown={comment.body} />
+                <PullRequestCommentFooter
+                  params={params}
+                  comment={{ ...comment, kind: "review-comment" }}
+                  permissions={permissions}
+                  onChanged={refresh}
+                  onEdit={() => {
+                    if (extra.some((loaded) => loaded.id === comment.id))
+                      extraEdited.current = true;
+                  }}
+                />
               </View>
             ))}
             {nextCursor ? (
-              <MaterialButton
+              <Button
                 label={busy ? "Loading…" : "Load more replies"}
                 disabled={busy}
                 onPress={() => void more()}
@@ -214,7 +231,11 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
           </ScrollView>
         </ScrollViewMarker>
         {canReply ? (
-          <View className="absolute inset-x-4 bottom-0" style={{ paddingBottom: bottomInset }}>
+          <View
+            className="absolute inset-x-4 bottom-0 gap-2"
+            style={{ paddingBottom: bottomInset }}
+          >
+            <PullRequestCompletionSuggestions completions={completions} />
             <GlassSurface
               chrome="none"
               onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}
@@ -222,6 +243,9 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
             >
               <TextInput
                 accessibilityLabel="Discussion reply"
+                selection={completions.selection}
+                onSelectionChange={completions.onSelectionChange}
+                onBlur={completions.onBlur}
                 multiline
                 maxLength={65536}
                 placeholder="Reply…"
@@ -232,7 +256,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                 className="max-h-36 min-h-12 min-w-0 flex-1 rounded-[24px] border-0 bg-transparent px-4 py-3 text-base text-foreground"
               />
               <View>
-                <MaterialButton
+                <Button
                   label={busy ? "Posting…" : "Reply"}
                   tone="contrast"
                   disabled={busy || !body.trim()}

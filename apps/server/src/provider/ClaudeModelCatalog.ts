@@ -6,6 +6,7 @@ import {
   type ServerProviderModel,
   type ServerProviderUpdateRequiredModel,
 } from "@t3tools/contracts";
+import type { ModelInfo as ClaudeModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import * as Option from "effect/Option";
 import {
   getModelSelectionStringOptionValue,
@@ -47,8 +48,9 @@ function tryResolveClaudeModelCatalog(
     const profile = decodeClaudeProfileAdapter(entry.profileAdapter ?? {});
     const adapter = decodeClaudeModelAdapter(entry.adapter ?? {});
     if (Option.isNone(profile) || Option.isNone(adapter)) return null;
+    const model = ModelCatalog.catalogServerModel(resolved, entry);
     models.push({
-      model: ModelCatalog.catalogServerModel(resolved, entry),
+      model: { ...model, capabilities: withUltracodeToggle(model.capabilities) },
       runtime: profile.value.claudeCode ?? {},
       compatibility: adapter.value.claudeCode ?? {},
     });
@@ -59,36 +61,67 @@ function tryResolveClaudeModelCatalog(
   };
 }
 
-const BUNDLED_CLAUDE_PROVIDER_CATALOG =
-  resolveProviderCatalog(BUNDLED_MODEL_MANIFEST, CLAUDE) ?? undefined;
+// The manifest keeps Ultracode as an effort level because released servers read it from main.
+export function withUltracodeToggle(
+  capabilities: ModelCapabilities | null,
+): ModelCapabilities | null {
+  const descriptors = capabilities?.optionDescriptors ?? [];
+  const effortIndex = descriptors.findIndex(
+    (descriptor) =>
+      descriptor.id === "effort" &&
+      descriptor.type === "select" &&
+      descriptor.options.some((option) => option.id === "ultracode"),
+  );
+  const effort = descriptors[effortIndex];
+  if (effort?.type !== "select") return capabilities;
+  const ultracodeByDefault =
+    (effort.currentValue ?? effort.options.find((option) => option.isDefault)?.id) === "ultracode";
+  const hasXhigh = effort.options.some((option) => option.id === "xhigh");
+  // Ultracode ran at xhigh, so a model that offered it keeps xhigh, and its default moves there.
+  const options = effort.options.flatMap(({ isDefault, ...option }) => {
+    if (option.id === "ultracode") {
+      return hasXhigh
+        ? []
+        : [{ id: "xhigh", label: "Extra High", ...(isDefault ? { isDefault } : {}) }];
+    }
+    if (ultracodeByDefault && option.id === "xhigh") return [{ ...option, isDefault: true }];
+    return [isDefault && !ultracodeByDefault ? { ...option, isDefault } : option];
+  });
+  return {
+    optionDescriptors: descriptors.toSpliced(
+      effortIndex,
+      1,
+      {
+        ...effort,
+        ...(effort.currentValue === "ultracode" ? { currentValue: "xhigh" } : {}),
+        options,
+      },
+      {
+        id: "ultracode",
+        label: "Ultracode",
+        type: "boolean",
+        ...(ultracodeByDefault ? { currentValue: true } : {}),
+      },
+    ),
+  };
+}
 
-/**
- * Claude's built-in catalog from its manifest entry, falling back to the
- * bundled entry when the current one is missing or has invalid adapters.
- */
+/** Resolve the fallback on each read so its new-model badges can expire. */
 export function resolveClaudeModelCatalog(
   catalog: ModelCatalog.ProviderCatalog | undefined,
 ): ClaudeModelCatalog {
   return (
     tryResolveClaudeModelCatalog(catalog) ??
-    tryResolveClaudeModelCatalog(BUNDLED_CLAUDE_PROVIDER_CATALOG) ?? {
+    tryResolveClaudeModelCatalog(
+      resolveProviderCatalog(BUNDLED_MODEL_MANIFEST, CLAUDE) ?? undefined,
+    ) ?? {
       models: [],
     }
   );
 }
 
-export const BUNDLED_CLAUDE_MODEL_CATALOG = resolveClaudeModelCatalog(
-  BUNDLED_CLAUDE_PROVIDER_CATALOG,
-);
+export const BUNDLED_CLAUDE_MODEL_CATALOG = resolveClaudeModelCatalog(undefined);
 
-/**
- * Scope the catalog to one instance's settings: custom model slugs stay opaque
- * (a built-in alias they shadow is dropped, canonical slugs and capabilities
- * are preserved), and custom entries that declare their own capabilities are
- * appended so the adapter resolves effort / fast mode / thinking against the
- * user's descriptors instead of the empty default. Custom entries carry no
- * runtime profile, so option values pass through to Claude Code verbatim.
- */
 export function scopeClaudeModelCatalog(
   catalog: ClaudeModelCatalog,
   customModels: ReadonlyArray<CustomModelSetting>,
@@ -118,7 +151,7 @@ export function scopeClaudeModelCatalog(
         slug: entry.slug,
         name: entry.name,
         isCustom: true,
-        capabilities: entry.capabilities,
+        capabilities: withUltracodeToggle(entry.capabilities),
       },
       runtime: {},
       compatibility: {},
@@ -126,6 +159,66 @@ export function scopeClaudeModelCatalog(
   }
 
   return { models: [...builtInModels, ...customCatalogModels] };
+}
+
+const CLAUDE_EFFORT_LABELS: Readonly<Record<string, string>> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+  max: "Max",
+};
+
+function stripClaudeContextWindowSuffix(value: string): string {
+  return value.replace(/\[[^\]]*\]$/, "").trim();
+}
+
+export function claudeReportedModels(
+  catalog: ClaudeModelCatalog,
+  customModels: ReadonlyArray<CustomModelSetting>,
+  reported: ReadonlyArray<ClaudeModelInfo> | undefined,
+): ReadonlyArray<ServerProviderModel> {
+  if (!reported?.length) return [];
+  const known = new Set(
+    [
+      ...catalog.models.flatMap(({ model }) => [model.slug, ...(model.aliases ?? [])]),
+      ...readCustomModelEntries(customModels).map((entry) => entry.slug),
+    ].map((id) => stripClaudeContextWindowSuffix(id).toLowerCase()),
+  );
+  const models: Array<ServerProviderModel> = [];
+  for (const info of reported) {
+    const slug = info.value.trim();
+    // `default` is Claude Code's pointer at its own default model, not a model.
+    if (!slug || slug === "default") continue;
+    const ids = [slug, info.resolvedModel ?? ""]
+      .map((id) => stripClaudeContextWindowSuffix(id).toLowerCase())
+      .filter((id) => id.length > 0);
+    if (ids.some((id) => known.has(id))) continue;
+    for (const id of ids) known.add(id);
+    const efforts = info.supportsEffort ? (info.supportedEffortLevels ?? []) : [];
+    models.push({
+      slug,
+      name: info.displayName.trim() || slug,
+      isCustom: false,
+      capabilities: {
+        optionDescriptors: efforts.length
+          ? [
+              {
+                id: "effort",
+                label: "Reasoning",
+                type: "select",
+                // `default` is not an effort, so choosing it sends none and Claude Code picks.
+                options: [
+                  { id: "default", label: "Default", isDefault: true },
+                  ...efforts.map((id) => ({ id, label: CLAUDE_EFFORT_LABELS[id] ?? id })),
+                ],
+              },
+            ]
+          : [],
+      },
+    });
+  }
+  return models;
 }
 
 function resolveClaudeCatalogModel(
@@ -177,10 +270,6 @@ export function resolveClaudeModelsForVersion(
     .map((entry) => entry.model);
 }
 
-/**
- * Current catalog models the installed Claude Code is too old to run, so the
- * picker can show them as "update to use" instead of hiding them.
- */
 export function resolveClaudeUpdateRequiredModels(
   catalog: ClaudeModelCatalog,
   version: string | null | undefined,
@@ -225,6 +314,13 @@ export function resolveClaudeCatalogEffort(
   model: string | null | undefined,
   raw: string | null | undefined,
 ): string | undefined {
+  if (!resolveClaudeCatalogModel(catalog, model)) {
+    const effort = raw?.trim();
+    return effort && ["low", "medium", "high", "xhigh", "max"].includes(effort)
+      ? effort
+      : undefined;
+  }
+
   const caps = getClaudeCatalogModelCapabilities(catalog, model);
   const descriptors = getProviderOptionDescriptors({
     caps,
@@ -244,10 +340,6 @@ export function normalizeClaudeCatalogEffort(
   const effortMap = resolveClaudeCatalogModel(catalog, model)?.runtime.effortMap;
   if (!effortMap || !Object.prototype.hasOwnProperty.call(effortMap, effort)) return effort;
   return effortMap[effort] ?? undefined;
-}
-
-export function isClaudeCatalogUltracodeEffort(effort: string | null | undefined): boolean {
-  return effort === "ultracode";
 }
 
 function resolveClaudeCatalogContextWindow(

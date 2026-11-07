@@ -20,11 +20,7 @@ export const CredentialScope = Context.Reference<string>(
   },
 );
 
-/**
- * Set by interactive callers (a user's read or write, not a background sweep). A host may let
- * requests made under it spend a reserved quota and go through a rate-limit pause: a user acting
- * on a change request should not be refused because a background read exhausted the quota.
- */
+/** Interactive requests may use reserved quota and bypass pauses caused by background reads. */
 export const Interactive = Context.Reference<boolean>(
   "@t3tools/source-control-core/server/SourceControlRateLimit/Interactive",
   { defaultValue: () => false },
@@ -99,7 +95,7 @@ export function retryAtFromHeader(value: string | undefined, now: number): numbe
   return Number.isFinite(retryAt) && retryAt > now ? retryAt : undefined;
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const entries = yield* Ref.make<ReadonlyMap<string, RateLimitEntry>>(new Map());
 

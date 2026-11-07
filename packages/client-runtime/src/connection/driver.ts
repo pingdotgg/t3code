@@ -4,6 +4,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 
 import type { ConnectionCatalogEntry, ConnectionRoute } from "./catalog.ts";
@@ -14,7 +15,14 @@ import type {
 } from "./model.ts";
 import { ConnectionTransientError } from "./model.ts";
 import * as ConnectionResolver from "./resolver.ts";
-import { connectionRoutes, routeEntry, routeHttpBaseUrl } from "./routes.ts";
+import {
+  connectionRoutes,
+  routeEntry,
+  routeHttpBaseUrl,
+  sendsTokenInClear,
+  usableRoutes,
+} from "./routes.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 
@@ -32,14 +40,15 @@ export interface EnvironmentConnectionLease {
   readonly session: RpcSession.RpcSession;
 }
 
-/**
- * The result of an unauthenticated reachability check. T3 Connect and SSH
- * routes have no cheap check, so they are "unchecked".
- */
 export type RouteCheck = "answered" | "silent" | "unchecked";
+/** "unprepared" means the route answered its check but could not be prepared. */
+export type RoutePreflight = "ready" | "unprepared" | "silent" | "unchecked";
 
-/** How long a direct route has to answer before it counts as unreachable from here. */
 const ROUTE_CHECK_TIMEOUT_MS = 2_500;
+// Preferred direct routes share one head start, so a relay connection does not
+// wait the full probe timeout for a LAN the device has already left. A route
+// that misses it connects over relay, then upgrades with a second reconnect.
+const ROUTE_CHECK_HEAD_START_MS = 500;
 
 export class ConnectionDriver extends Context.Service<
   ConnectionDriver,
@@ -48,37 +57,15 @@ export class ConnectionDriver extends Context.Service<
       entry: ConnectionCatalogEntry,
       reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
     ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, Scope.Scope>;
-    /** Whether a direct route answers as the entry's environment, without credentials. */
-    readonly checkRoute: (
-      entry: ConnectionCatalogEntry,
-      route: ConnectionRoute,
-    ) => Effect.Effect<RouteCheck>;
-    /**
-     * Whether a direct route answers and accepts this client's credential,
-     * without opening a socket. Switching to a route that fails this would
-     * drop a working connection for nothing.
-     */
     readonly preflight: (
       entry: ConnectionCatalogEntry,
       route: ConnectionRoute,
-    ) => Effect.Effect<boolean>;
+    ) => Effect.Effect<RoutePreflight>;
+    /** Asks the host behind a live session to answer a fresh request on the session's own origin. */
+    readonly checkHost: (prepared: PreparedConnection) => Effect.Effect<RouteCheck>;
   }
 >()("@t3tools/client-runtime/connection/driver/ConnectionDriver") {}
 
-/**
- * Connects over the first route, in preference order, that is worth trying.
- * Every route is checked at once, but a route only waits for its own check,
- * so a reachable LAN address connects without waiting on a silent tailnet
- * one. A silent route is skipped on the first pass so a LAN address from
- * another network costs one short check, not a connection timeout. A route
- * that fails to connect moves on to the next: a signed-out T3 Connect must
- * not hide a working LAN. Silent routes are tried last, since a check is not
- * proof.
- *
- * The reported error is a transient one when any route failed transiently,
- * so the supervisor keeps retrying a route that may come back; a blocked
- * error is reported only when every attempted route was blocked.
- */
 export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")(function* <R>(
   entry: ConnectionCatalogEntry,
   checkRoute: (route: ConnectionRoute) => Effect.Effect<RouteCheck>,
@@ -86,11 +73,12 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     route: ConnectionRoute,
   ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, R | Scope.Scope>,
 ) {
-  const routes = connectionRoutes(entry);
+  const routes = usableRoutes(entry);
   const checks =
     routes.length === 1
       ? []
       : yield* Effect.forEach(routes, (route) => Effect.forkChild(checkRoute(route)));
+  const headStart = yield* Effect.forkChild(Effect.sleep(ROUTE_CHECK_HEAD_START_MS));
   const attemptScope = yield* Scope.Scope;
   let transient: ConnectionAttemptError | undefined;
   let blocked: ConnectionAttemptError | undefined;
@@ -108,11 +96,17 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     }
     return result;
   });
-  const silent: Array<ConnectionRoute> = [];
+  const silent: Array<{ readonly route: ConnectionRoute; readonly index: number }> = [];
   for (const [index, route] of routes.entries()) {
-    const check = checks.length === 0 ? "unchecked" : yield* Fiber.join(checks[index]!);
+    const check =
+      checks.length === 0
+        ? "unchecked"
+        : yield* Effect.raceFirst(
+            Fiber.join(checks[index]!),
+            Fiber.join(headStart).pipe(Effect.as<RouteCheck>("silent")),
+          );
     if (check === "silent") {
-      silent.push(route);
+      silent.push({ route, index });
       continue;
     }
     const result = yield* attempt(route);
@@ -120,7 +114,16 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     // An incompatible server is the same server on every route.
     if (result.failure.reason === "unsupported") return yield* result.failure;
   }
-  for (const route of silent) {
+  // A slow route that answered after the head start goes before one that is
+  // still dead, which can hold an attempt open far longer than its probe.
+  const late = yield* Effect.forEach(silent, ({ index }) => Fiber.join(checks[index]!), {
+    concurrency: "unbounded",
+  });
+  const retry = [
+    ...silent.filter((_, position) => late[position] !== "silent"),
+    ...silent.filter((_, position) => late[position] === "silent"),
+  ];
+  for (const { route } of retry) {
     const result = yield* attempt(route);
     if (result._tag === "Success") return result.success;
     if (result.failure.reason === "unsupported") return yield* result.failure;
@@ -135,31 +138,45 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   );
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const resolver = yield* ConnectionResolver.ConnectionResolver;
   const sessions = yield* RpcSession.RpcSessionFactory;
+  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
   const httpClient = yield* HttpClient.HttpClient;
 
-  const checkRoute = (entry: ConnectionCatalogEntry, route: ConnectionRoute) => {
-    const httpBaseUrl = routeHttpBaseUrl(route);
-    if (httpBaseUrl === null) return Effect.succeed<RouteCheck>("unchecked");
-    // The descriptor is public, so this sends no credential to whatever
-    // answers at a saved LAN address on a different network.
-    return fetchRemoteEnvironmentDescriptor({
+  // The descriptor is public, so this sends no credential to whatever
+  // answers at a saved LAN address on a different network.
+  const checkDescriptor = (httpBaseUrl: string, environmentId: string) =>
+    fetchRemoteEnvironmentDescriptor({
       httpBaseUrl,
       timeoutMs: ROUTE_CHECK_TIMEOUT_MS,
     }).pipe(
       Effect.map((descriptor): RouteCheck =>
-        descriptor.environmentId === entry.target.environmentId ? "answered" : "silent",
+        descriptor.environmentId === environmentId ? "answered" : "silent",
       ),
       Effect.orElseSucceed((): RouteCheck => "silent"),
+      // A cached descriptor would answer for a host that cannot be reached.
+      Effect.provideService(FetchHttpClient.RequestInit, { cache: "no-store" }),
       Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
+
+  const checkRoute = (entry: ConnectionCatalogEntry, route: ConnectionRoute) => {
+    const httpBaseUrl = routeHttpBaseUrl(route);
+    if (httpBaseUrl === null) return Effect.succeed<RouteCheck>("unchecked");
+    return checkDescriptor(httpBaseUrl, entry.target.environmentId).pipe(
       Effect.withSpan("ConnectionDriver.checkRoute", {
         attributes: { "connection.target.kind": route.target._tag },
       }),
     );
   };
+
+  const checkHost = (prepared: PreparedConnection) =>
+    checkDescriptor(prepared.httpBaseUrl, prepared.environmentId).pipe(
+      Effect.withSpan("ConnectionDriver.checkHost", {
+        attributes: { "connection.target.kind": prepared.target._tag },
+      }),
+    );
 
   const connect = Effect.fn("ConnectionDriver.connect")(function* (
     entry: ConnectionCatalogEntry,
@@ -181,25 +198,42 @@ export const make = Effect.gen(function* () {
         const session = yield* sessions.connect(prepared);
         yield* reportProgress({ stage: "synchronizing", prepared });
         yield* session.ready;
+        // The server closes a socket when its session expires, unless the same key renewed it.
+        if (prepared.httpAuthorization?._tag === "Dpop") {
+          yield* remote
+            .renewDpopBeforeExpiry({
+              expectedEnvironmentId: prepared.environmentId,
+              expiresAtEpochMs: prepared.httpAuthorization.expiresAtEpochMs,
+            })
+            .pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Could not renew the connection's credential.", { error }),
+              ),
+              Effect.forkScoped,
+            );
+        }
         return { prepared, session } satisfies EnvironmentConnectionLease;
       }),
     );
   });
 
   const preflight = (entry: ConnectionCatalogEntry, route: ConnectionRoute) =>
-    checkRoute(entry, route).pipe(
-      Effect.flatMap((check) =>
-        check === "answered"
-          ? resolver.prepare(routeEntry(entry, route)).pipe(
-              Effect.as(true),
-              Effect.orElseSucceed(() => false),
-            )
-          : Effect.succeed(false),
+    (sendsTokenInClear(connectionRoutes(entry), route)
+      ? Effect.succeed("silent" as const)
+      : checkRoute(entry, route)
+    ).pipe(
+      Effect.filterOrElse(
+        (check): check is Exclude<RouteCheck, "answered"> => check !== "answered",
+        () =>
+          resolver.prepare(routeEntry(entry, route)).pipe(
+            Effect.as<RoutePreflight>("ready"),
+            Effect.orElseSucceed((): RoutePreflight => "unprepared"),
+          ),
       ),
       Effect.withSpan("ConnectionDriver.preflight"),
     );
 
-  return ConnectionDriver.of({ connect, checkRoute, preflight });
+  return ConnectionDriver.of({ connect, preflight, checkHost });
 });
 
 export const layer = Layer.effect(ConnectionDriver, make);
