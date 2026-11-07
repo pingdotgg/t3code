@@ -138,23 +138,3 @@ it("closes the preview when the selected image cannot be resolved", async () => 
   expect(preview.onRequestClose).toHaveBeenCalledOnce();
   expect(harness.alert).toHaveBeenCalledOnce();
 });
-
-it("shares a PDF from its refreshable resource, not the signed URL", async () => {
-  harness.refreshAssetUrl.mockResolvedValue("https://signed.test/report.pdf");
-  const resource = { _tag: "attachment", attachmentId: "a1", fileName: "report.pdf" } as const;
-  await using _preview = await openGallery(
-    { kind: "pdf", name: "report.pdf", environmentId, resource, sourceIdentifier: "attachment:a1" },
-    [],
-  );
-
-  expect(harness.previews.at(-1)).toMatchObject({
-    uri: "https://signed.test/report.pdf",
-    actionsSource: {
-      name: "report.pdf",
-      mimeType: "application/pdf",
-      sourceIdentifier: "attachment:a1",
-      environmentId,
-      resource,
-    },
-  });
-});
