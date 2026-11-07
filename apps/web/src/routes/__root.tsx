@@ -20,6 +20,7 @@ import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
 import { WelcomeWizardCoordinator } from "../components/onboarding/WelcomeWizardCoordinator";
+import { ClientSettingsRecoveryGate } from "../components/ClientSettingsRecoveryGate";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { DevReplayHost } from "../components/DevReplayHost";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
@@ -173,7 +174,7 @@ function RootRouteBranch() {
   );
 
   return (
-    <>
+    <ClientSettingsRecoveryGate>
       {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
       {primaryEnvironmentAuthenticated || localEnvironmentDisabled ? (
         <DesktopWebLinkCoordinator />
@@ -196,7 +197,7 @@ function RootRouteBranch() {
       <WelcomeWizardCoordinator />
       {/* Keep the theme editor above the router so drafts survive navigation. */}
       <ThemeEditorHost />
-    </>
+    </ClientSettingsRecoveryGate>
   );
 }
 
