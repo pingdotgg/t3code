@@ -593,6 +593,46 @@ function nestedGrepWorkspaceResults(success: Record<string, unknown>): Record<st
   return Object.fromEntries(
     Object.entries(workspaces).map(([workspace, rawWorkspaceResult]) => {
       const workspaceResult = unknownRecord(rawWorkspaceResult);
+      // GrepUnionResult is a oneof; files and count modes carry no `content`.
+      const filesResult = unknownRecord(workspaceResult?.files);
+      if (filesResult !== undefined) {
+        const files = nestedArray(filesResult.files).filter(
+          (file): file is string => typeof file === "string",
+        );
+        return [
+          workspace,
+          {
+            type: "files",
+            output: {
+              files,
+              count:
+                typeof filesResult.totalFiles === "number" ? filesResult.totalFiles : files.length,
+            },
+          },
+        ];
+      }
+      const countResult = unknownRecord(workspaceResult?.count);
+      if (countResult !== undefined) {
+        const counts = nestedArray(countResult.counts).flatMap((rawCount) => {
+          const entry = unknownRecord(rawCount);
+          return typeof entry?.file === "string" && typeof entry.count === "number"
+            ? [{ file: entry.file, count: entry.count }]
+            : [];
+        });
+        return [
+          workspace,
+          {
+            type: "count",
+            output: {
+              counts,
+              total:
+                typeof countResult.totalMatches === "number"
+                  ? countResult.totalMatches
+                  : counts.reduce((total, entry) => total + entry.count, 0),
+            },
+          },
+        ];
+      }
       const content = unknownRecord(workspaceResult?.content);
       const rawMatches = Array.isArray(content?.matches) ? content.matches : [];
       const matches = rawMatches.flatMap((rawFileMatch) => {

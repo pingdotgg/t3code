@@ -1262,11 +1262,13 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
-  it.effect("projects subagent directory trees Cursor serialized without empty lists", () =>
+  it.effect("projects subagent search results Cursor serialized with protobuf toJson", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-task-ls-" });
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "cursor-v2-task-ls-",
+      });
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-task-ls-thread");
       const modelSelection = { instanceId, model: "composer-2.5" };
@@ -1322,6 +1324,49 @@ describe("CursorAdapterV2", () => {
             mcpToolCall: {
               args: { providerIdentifier: "docs", toolName: "lookup", args: { query: "ls" } },
               result: { success: {} },
+            },
+          },
+        },
+        {
+          toolCall: {
+            toolCallId: "tool:grep-files",
+            grepToolCall: {
+              args: { pattern: "TODO", outputMode: "files_with_matches" },
+              result: {
+                success: {
+                  pattern: "TODO",
+                  outputMode: "files_with_matches",
+                  workspaceResults: {
+                    [workspace]: { files: { files: ["src/a.ts", "src/b.ts"], totalFiles: 2 } },
+                  },
+                },
+              },
+            },
+          },
+        },
+        {
+          toolCall: {
+            toolCallId: "tool:grep-count",
+            grepToolCall: {
+              args: { pattern: "TODO", outputMode: "count" },
+              result: {
+                success: {
+                  pattern: "TODO",
+                  outputMode: "count",
+                  workspaceResults: {
+                    [workspace]: {
+                      count: {
+                        counts: [
+                          { file: "src/a.ts", count: 1 },
+                          { file: "src/b.ts", count: 3 },
+                        ],
+                        totalFiles: 2,
+                        totalMatches: 4,
+                      },
+                    },
+                  },
+                },
+              },
             },
           },
         },
@@ -1472,6 +1517,19 @@ describe("CursorAdapterV2", () => {
             status: "completed",
             toolName: "mcp__docs__lookup",
             output: { content: [], isError: false },
+          },
+          {
+            status: "completed",
+            pattern: "TODO",
+            results: [{ fileName: "src/a.ts" }, { fileName: "src/b.ts" }],
+          },
+          {
+            status: "completed",
+            pattern: "TODO",
+            results: [
+              { fileName: "src/a.ts", preview: "1 match" },
+              { fileName: "src/b.ts", preview: "3 matches" },
+            ],
           },
         ],
       );
