@@ -1,3 +1,5 @@
+import { asciiControl, markdownSpace, unicodeWhitespace } from "micromark-util-character";
+import type { Tokenizer } from "micromark-util-types";
 import type { Paragraph, PhrasingContent, Root, RootContent } from "mdast";
 import { remarkKeepWindowsPaths } from "./markdownWindowsPaths.ts";
 import { type PluggableList, type Processor, type Transformer, unified } from "unified";
@@ -15,7 +17,7 @@ import {
   remarkCodexDirectives,
 } from "./codexMarkdownDirectives.ts";
 import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
-import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
+import { parseThreadLinkHref, THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 
 type MarkdownImageHastNode = {
   type?: string;
@@ -204,6 +206,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
+  remarkSpacedThreadAutolinks,
   remarkKeepAutolinkSuffixes,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
@@ -216,6 +219,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkGfm,
+  remarkSpacedThreadAutolinks,
   remarkKeepAutolinkSuffixes,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
@@ -358,6 +362,63 @@ function remarkBreakAroundImageLines() {
     };
     visit(tree);
   };
+}
+
+// Tokenize before escape information is lost: an escaped `<` must remain literal text.
+const tokenizeSpacedThreadAutolink: Tokenizer = (effects, ok, nok) => {
+  let href = "";
+  return start;
+
+  function start(code: number | null) {
+    effects.enter("autolink");
+    effects.enter("autolinkMarker");
+    effects.consume(code);
+    return beforeUrl;
+  }
+
+  function beforeUrl(code: number | null) {
+    if (markdownSpace(code)) {
+      effects.consume(code);
+      return beforeUrl;
+    }
+    if (code !== 116) return nok(code);
+    effects.exit("autolinkMarker");
+    effects.enter("autolinkProtocol");
+    return url(code);
+  }
+
+  function url(code: number | null) {
+    if (code === 62 || markdownSpace(code)) {
+      if (!parseThreadLinkHref(href)) return nok(code);
+      effects.exit("autolinkProtocol");
+      effects.enter("autolinkMarker");
+      return afterUrl(code);
+    }
+    if (code === null || code < 0 || code === 60 || asciiControl(code) || unicodeWhitespace(code)) {
+      return nok(code);
+    }
+    href += String.fromCharCode(code);
+    effects.consume(code);
+    return url;
+  }
+
+  function afterUrl(code: number | null) {
+    if (markdownSpace(code)) {
+      effects.consume(code);
+      return afterUrl;
+    }
+    if (code !== 62) return nok(code);
+    effects.consume(code);
+    effects.exit("autolinkMarker");
+    effects.exit("autolink");
+    return ok;
+  }
+};
+
+function remarkSpacedThreadAutolinks(this: Processor) {
+  (this.data().micromarkExtensions ??= []).push({
+    text: { 60: { tokenize: tokenizeSpacedThreadAutolink } },
+  });
 }
 
 type MarkdownAstNode = {
