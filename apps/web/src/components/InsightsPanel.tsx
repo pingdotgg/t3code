@@ -136,13 +136,14 @@ function FlameChartPanel({
     durationMs: Math.max(MIN_VIEW_MS, axis.displayTotalMs),
   };
   // Keep zoom/pan across live totalMs updates; only reset when the turn set changes.
+  // null view = Fit mode, re-derived each render so live runs stay in frame.
   const traceKey = `${trace.originMs}:${trace.turns.map((turn) => turn.runId).join("\0")}`;
-  const [viewByKey, setViewByKey] = useState<{ key: string; view: ViewWindow }>(() => ({
+  const [viewByKey, setViewByKey] = useState<{ key: string; view: ViewWindow | null }>(() => ({
     key: traceKey,
-    view: fitView,
+    view: null,
   }));
   const view =
-    viewByKey.key === traceKey
+    viewByKey.key === traceKey && viewByKey.view !== null
       ? clampTimingViewWindow(
           viewByKey.view.startMs,
           viewByKey.view.durationMs,
@@ -166,7 +167,7 @@ function FlameChartPanel({
 
   const zoomFactor = Math.max(1, Math.max(MIN_VIEW_MS, axis.displayTotalMs) / view.durationMs);
 
-  function commitView(next: ViewWindow) {
+  function commitView(next: ViewWindow | null) {
     setViewByKey({ key: traceKey, view: next });
   }
 
@@ -232,7 +233,7 @@ function FlameChartPanel({
           variant="ghost-muted"
           size="icon-xs"
           aria-label="Fit timeline"
-          onClick={() => commitView(fitView)}
+          onClick={() => commitView(null)}
         >
           <Scan />
         </Button>
