@@ -14,11 +14,13 @@ import type {
   ConnectionAttemptStage,
   PreparedConnection,
 } from "./model.ts";
-import { ConnectionTransientError } from "./model.ts";
+import * as GatewayHop from "./gatewayHop.ts";
+import { ConnectionTransientError, ticketedHttpBaseUrl } from "./model.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import {
   connectionRoutes,
   routeEntry,
+  routeGatewayEnvironmentId,
   routeHttpBaseUrl,
   sendsTokenInClear,
   usableRoutes,
@@ -26,6 +28,7 @@ import {
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
+import { withGatewayTicket } from "../environment/endpoint.ts";
 
 export type ConnectionDriverProgress =
   | {
@@ -144,6 +147,7 @@ export const make = Effect.gen(function* () {
   const resolver = yield* ConnectionResolver.ConnectionResolver;
   const sessions = yield* RpcSession.RpcSessionFactory;
   const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+  const gatewayHop = yield* GatewayHop.GatewayHopAuthorization;
   const httpClient = yield* HttpClient.HttpClient;
 
   // The descriptor is public, so this sends no credential to whatever
@@ -170,7 +174,16 @@ export const make = Effect.gen(function* () {
   const checkRoute = (entry: ConnectionCatalogEntry, route: ConnectionRoute) => {
     const httpBaseUrl = routeHttpBaseUrl(route);
     if (httpBaseUrl === null) return Effect.succeed<RouteCheck>("unchecked");
-    return checkDescriptor(httpBaseUrl, entry.target.environmentId).pipe(
+    const gatewayEnvironmentId = routeGatewayEnvironmentId(route);
+    const ticketed =
+      gatewayEnvironmentId === undefined
+        ? Effect.succeed(httpBaseUrl)
+        : gatewayHop
+            .issueTicket(gatewayEnvironmentId)
+            .pipe(Effect.map((ticket) => withGatewayTicket(httpBaseUrl, ticket)));
+    return ticketed.pipe(
+      Effect.flatMap((url) => checkDescriptor(url, entry.target.environmentId)),
+      Effect.orElseSucceed((): RouteCheck => "silent"),
       Effect.withSpan("ConnectionDriver.checkRoute", {
         attributes: { "connection.target.kind": route.target._tag },
       }),
@@ -178,7 +191,9 @@ export const make = Effect.gen(function* () {
   };
 
   const checkHost = (prepared: PreparedConnection) =>
-    checkDescriptor(prepared.httpBaseUrl, prepared.environmentId).pipe(
+    ticketedHttpBaseUrl(prepared).pipe(
+      Effect.flatMap((httpBaseUrl) => checkDescriptor(httpBaseUrl, prepared.environmentId)),
+      Effect.orElseSucceed((): RouteCheck => "silent"),
       Effect.withSpan("ConnectionDriver.checkHost", {
         attributes: { "connection.target.kind": prepared.target._tag },
       }),

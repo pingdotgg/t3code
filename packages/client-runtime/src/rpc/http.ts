@@ -14,8 +14,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
+
+import { gatewayPathPrefix } from "../environment/endpoint.ts";
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 
@@ -83,20 +85,24 @@ export const layerRemoteHttpClient = (
 
 const remoteApiBaseUrl = (httpBaseUrl: string): string => {
   const url = new URL(httpBaseUrl);
-  const gatewayTicket = url.searchParams.get("gatewayTicket");
-  url.pathname = "/";
+  url.pathname = gatewayPathPrefix(url) || "/";
   url.search = "";
   url.hash = "";
-  // Peer calls through a LAN gateway need the hop ticket on every request.
-  if (gatewayTicket !== null && gatewayTicket.length > 0) {
-    url.searchParams.set("gatewayTicket", gatewayTicket);
-  }
   return url.toString();
+};
+
+// The API client joins paths onto the base URL as strings, so a query there would swallow them.
+const withBaseUrlGatewayTicket = (httpClient: HttpClient.HttpClient, httpBaseUrl: string) => {
+  const ticket = new URL(httpBaseUrl).searchParams.get("gatewayTicket");
+  return ticket === null
+    ? httpClient
+    : HttpClient.mapRequest(httpClient, HttpClientRequest.setUrlParam("gatewayTicket", ticket));
 };
 
 export const makeEnvironmentHttpApiClient = (httpBaseUrl: string) =>
   HttpApiClient.make(EnvironmentHttpApi, {
     baseUrl: remoteApiBaseUrl(httpBaseUrl),
+    transformClient: (httpClient) => withBaseUrlGatewayTicket(httpClient, httpBaseUrl),
   });
 
 export const makeEnvironmentHttpApiGroupClient = <
@@ -107,7 +113,7 @@ export const makeEnvironmentHttpApiGroupClient = <
 ) =>
   Effect.flatMap(HttpClient.HttpClient, (httpClient) =>
     HttpApiClient.group(EnvironmentHttpApi, {
-      httpClient,
+      httpClient: withBaseUrlGatewayTicket(httpClient, httpBaseUrl),
       group,
       baseUrl: remoteApiBaseUrl(httpBaseUrl),
     }),

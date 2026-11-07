@@ -1,10 +1,11 @@
+import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  appendGatewayTicket,
   deriveWsBaseUrl,
   environmentEndpointUrl,
   normalizeHttpBaseUrl,
+  withGatewayTicket,
 } from "./endpoint.ts";
 
 describe("advertised endpoint helpers", () => {
@@ -15,14 +16,17 @@ describe("advertised endpoint helpers", () => {
     expect(deriveWsBaseUrl("http://127.0.0.1:3773")).toBe("ws://127.0.0.1:3773/");
   });
 
-  it("keeps gatewayTicket when rewriting peer paths through a LAN gateway", () => {
-    const base = appendGatewayTicket(
+  it("keeps a LAN gateway's peer prefix but never its ticket when rewriting paths", () => {
+    const base = withGatewayTicket(
       "https://gateway.example/__t3_gateway/env_peer/",
-      "hop-ticket",
+      Option.some("hop-ticket"),
     );
     expect(base).toContain("gatewayTicket=hop-ticket");
     expect(environmentEndpointUrl(base, "/api/auth/session")).toBe(
-      "https://gateway.example/api/auth/session?gatewayTicket=hop-ticket",
+      "https://gateway.example/__t3_gateway/env_peer/api/auth/session",
+    );
+    expect(environmentEndpointUrl("https://example.com/other/", "/api/auth/session")).toBe(
+      "https://example.com/api/auth/session",
     );
   });
 });

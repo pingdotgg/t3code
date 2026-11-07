@@ -23,6 +23,7 @@ import * as LanGateway from "./LanGateway.ts";
 
 const DROPPED_REQUEST_HEADERS = new Set([
   "host",
+  "cookie",
   "connection",
   "upgrade",
   "sec-websocket-key",
@@ -135,14 +136,20 @@ const parseGatewayPath = (pathname: string) => {
   return Option.some({ environmentId, upstreamPath });
 };
 
-/** Peer sockets carry their own `wsTicket`; the gateway hop authenticates with `gatewayTicket`. */
+/**
+ * A `wsTicket` belongs to the peer and would fail here, so the gateway hop authenticates with
+ * `gatewayTicket`, or with its session cookie when there is none.
+ */
 const withGatewayHopTicket = (request: HttpServerRequest.HttpServerRequest) => {
   const url = requestUrl(request);
   if (Option.isNone(url)) return request;
-  const gatewayTicket = url.value.searchParams.get("gatewayTicket");
-  if (gatewayTicket === null || gatewayTicket.length === 0) return request;
   const rewritten = new URL(url.value.toString());
-  rewritten.searchParams.set("wsTicket", gatewayTicket);
+  const gatewayTicket = rewritten.searchParams.get("gatewayTicket");
+  if (gatewayTicket === null || gatewayTicket.length === 0) {
+    rewritten.searchParams.delete("wsTicket");
+  } else {
+    rewritten.searchParams.set("wsTicket", gatewayTicket);
+  }
   rewritten.searchParams.delete("gatewayTicket");
   return request.modify({ url: `${rewritten.pathname}${rewritten.search}` });
 };

@@ -3344,6 +3344,7 @@ export const layerWsRpc = (
               // Buffer changes through discovery and the initial snapshot's send.
               const keybindingsChanges = yield* keybindings.subscribeChanges;
               const settingsChanges = yield* serverSettings.subscribeChanges;
+              const lanGatewayChanges = yield* lanGateway.subscribeAdvertisementChanges;
               const remoteTargets = yield* Effect.forkScoped(remoteOpenTargets.resolveTargets(), {
                 startImmediately: true,
               });
@@ -3466,7 +3467,7 @@ export const layerWsRpc = (
                     resolveTargets: () => Fiber.join(remoteTargets),
                   },
                   { resolve: () => Fiber.join(directResult) },
-                  lanGateway.advertisementChanges,
+                  lanGatewayChanges,
                 ),
               );
             }),

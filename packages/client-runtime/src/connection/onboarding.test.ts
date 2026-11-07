@@ -191,7 +191,7 @@ function layerPairingOnboarding(
       ConnectionWakeups.ConnectionWakeups,
       ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.never }),
     ),
-    GatewayHop.layer,
+    Layer.mock(GatewayHop.GatewayHopAuthorization)({ remember: () => Effect.void }),
   );
   return Onboarding.layer.pipe(
     Layer.provideMerge(EnvironmentRegistry.layer.pipe(Layer.provideMerge(dependencies))),

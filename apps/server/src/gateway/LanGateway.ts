@@ -19,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -104,8 +105,15 @@ export class LanGateway extends Context.Service<
     ) => Effect.Effect<LanGatewayPeerSummary, LanGatewayError>;
     readonly remove: (environmentId: EnvironmentId) => Effect.Effect<boolean, LanGatewayError>;
     readonly advertise: Effect.Effect<ReadonlyArray<LanGatewayPeerAdvertisement>>;
-    /** Emits whenever the advertised peer set may have changed (add/remove/settings). */
-    readonly advertisementChanges: Stream.Stream<ReadonlyArray<LanGatewayPeerAdvertisement>>;
+    /**
+     * Emits whenever the advertised peer set may have changed (add/remove/settings).
+     * Subscribe before reading a snapshot to retain changes before lazy stream startup.
+     */
+    readonly subscribeAdvertisementChanges: Effect.Effect<
+      Stream.Stream<ReadonlyArray<LanGatewayPeerAdvertisement>>,
+      never,
+      Scope.Scope
+    >;
     readonly resolveUpstream: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<Option.Option<string>>;
@@ -258,11 +266,15 @@ const make = Effect.gen(function* () {
     add: addAndPublish,
     remove: removeAndPublish,
     advertise,
-    advertisementChanges: Stream.merge(
-      Stream.fromPubSub(changesPubSub),
-      // Settings toggles change whether peers are advertised without touching the table.
-      serverSettings.streamChanges.pipe(Stream.mapEffect(() => advertise)),
-    ),
+    subscribeAdvertisementChanges: Effect.gen(function* () {
+      const peerChanges = yield* PubSub.subscribe(changesPubSub);
+      const settingsChanges = yield* serverSettings.subscribeChanges;
+      return Stream.merge(
+        Stream.fromSubscription(peerChanges),
+        // Settings toggles change whether peers are advertised without touching the table.
+        settingsChanges.pipe(Stream.mapEffect(() => advertise)),
+      );
+    }),
     resolveUpstream,
   });
 });

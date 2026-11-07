@@ -144,6 +144,8 @@ function exitUnlessInterrupted<A, E, R>(
 
 export interface EnvironmentSupervisorOptions {
   readonly initiallyDesired?: boolean;
+  /** Lets the registry hand over routes learned outside this supervisor's own session. */
+  readonly currentEntry?: Ref.Ref<ConnectionCatalogEntry>;
   readonly learnRoutes?: (input: {
     readonly activeRoute: ConnectionRoute;
     readonly reported: ReadonlyArray<ReportedEndpoint>;
@@ -324,7 +326,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none());
   // Learned routes arrive while a session is live, so the route list is read
   // fresh by each attempt and check instead of being fixed at creation.
-  const currentEntry = yield* Ref.make(entry);
+  const currentEntry = options?.currentEntry ?? (yield* Ref.make(entry));
   const currentRoutes = Ref.get(currentEntry).pipe(Effect.map(connectionRoutes));
   const preferredRouteId = yield* Ref.make(Option.none<string>());
   const routeCooldowns = yield* Ref.make<ReadonlyMap<string, bigint>>(new Map());

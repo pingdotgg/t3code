@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse, HttpRouter } from "effect/http";
+import { HttpClient, HttpClientResponse, HttpRouter, type HttpServerRequest } from "effect/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as LanGateway from "./LanGateway.ts";
 import * as LanGatewayProxy from "./LanGatewayProxy.ts";
@@ -29,6 +29,7 @@ const fixture = (
   },
 ) => {
   const requests: string[] = [];
+  const authenticatedUrls: string[] = [];
   const headers: Array<Readonly<Record<string, string>>> = [];
   const client = HttpClient.make((request, _url, _signal) =>
     Effect.sync(() => {
@@ -41,12 +42,15 @@ const fixture = (
     LanGatewayProxy.layer.pipe(
       Layer.provideMerge(
         Layer.succeed(EnvironmentAuth.EnvironmentAuth, {
-          authenticateWebSocketUpgrade: () =>
-            Effect.succeed({
-              sessionId: AuthSessionId.make("test"),
-              subject: "test",
-              method: "bearer-access-token",
-              scopes,
+          authenticateWebSocketUpgrade: (request: HttpServerRequest.HttpServerRequest) =>
+            Effect.sync(() => {
+              authenticatedUrls.push(request.url);
+              return {
+                sessionId: AuthSessionId.make("test"),
+                subject: "test",
+                method: "bearer-access-token",
+                scopes,
+              };
             }),
         } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
       ),
@@ -56,7 +60,7 @@ const fixture = (
           add: () => Effect.die("unused"),
           remove: () => Effect.die("unused"),
           advertise: Effect.succeed([]),
-          advertisementChanges: Stream.empty,
+          subscribeAdvertisementChanges: Effect.succeed(Stream.empty),
           resolveUpstream: (environmentId) =>
             Effect.succeed(
               environmentId === peerId
@@ -70,7 +74,7 @@ const fixture = (
     { disableLogger: true },
   );
   disposers.push(dispose);
-  return { handler, requests, headers };
+  return { handler, requests, authenticatedUrls, headers };
 };
 
 describe("LAN gateway proxy", () => {
@@ -88,7 +92,7 @@ describe("LAN gateway proxy", () => {
   });
 
   it("forwards authenticated requests to the resolved peer", async () => {
-    const { handler, requests, headers } = fixture([AuthOrchestrationReadScope]);
+    const { handler, requests, authenticatedUrls, headers } = fixture([AuthOrchestrationReadScope]);
     const response = await handler(
       new Request(
         `http://t3.test/__t3_gateway/${peerId}/api/auth/session?gatewayTicket=hop&wsTicket=peer`,
@@ -100,9 +104,23 @@ describe("LAN gateway proxy", () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("ok");
     expect(requests).toEqual([`${upstreamOrigin}/api/auth/session?wsTicket=peer`]);
+    expect(authenticatedUrls).toEqual([`/__t3_gateway/${peerId}/api/auth/session?wsTicket=hop`]);
     expect(headers[0]?.authorization).toBe("Bearer peer-token");
-    expect(headers[0]?.cookie).toBe("session=1");
+    expect(headers[0]?.cookie).toBeUndefined();
     expect(headers[0]?.dpop).toBe("proof");
+  });
+
+  it("authenticates a ticketless hop without the peer's wsTicket, which still reaches the peer", async () => {
+    const { handler, requests, authenticatedUrls, headers } = fixture([AuthOrchestrationReadScope]);
+    const response = await handler(
+      new Request(`http://t3.test/__t3_gateway/${peerId}/ws?wsTicket=peer`, {
+        headers: { cookie: "session=1" },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(authenticatedUrls).toEqual([`/__t3_gateway/${peerId}/ws`]);
+    expect(requests).toEqual([`${upstreamOrigin}/ws?wsTicket=peer`]);
+    expect(headers[0]?.cookie).toBeUndefined();
   });
 
   it("returns 404 when the peer is unknown or the gateway is disabled", async () => {

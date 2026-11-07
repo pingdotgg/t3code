@@ -76,7 +76,7 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
   const layerGatewayHop = GatewayHop.layer;
   const layerResolver = ConnectionResolver.layer.pipe(Layer.provide(layerGatewayHop));
   const layerDriver = ConnectionDriver.layer.pipe(
-    Layer.provide(Layer.mergeAll(layerResolver, RpcSession.layer(options))),
+    Layer.provide(Layer.mergeAll(layerResolver, layerGatewayHop, RpcSession.layer(options))),
   );
   const layerRegistry = EnvironmentRegistry.layer.pipe(
     Layer.provide(Layer.mergeAll(layerDriver, layerGatewayHop)),

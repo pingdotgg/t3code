@@ -266,7 +266,7 @@ const prepareDirectBearer = Effect.fn("TestRemoteAuthorization.prepareDirectBear
     Layer.provide(
       Layer.mergeAll(
         harness.layer,
-        GatewayHop.layer,
+        Layer.mock(GatewayHop.GatewayHopAuthorization)({}),
         Layer.succeed(ConnectionProfileStore.ConnectionProfileStore, {
           get: unused,
           put: unused,

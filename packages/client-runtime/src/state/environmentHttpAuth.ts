@@ -10,7 +10,11 @@ import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import { FetchHttpClient, type HttpMethod } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
-import type { PreparedConnection, PreparedHttpAuthorization } from "../connection/model.ts";
+import {
+  ticketedHttpBaseUrl,
+  type PreparedConnection,
+  type PreparedHttpAuthorization,
+} from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
@@ -209,7 +213,20 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
       }
 
       const requestUrl = requestUrlFor(httpBaseUrl);
-      const client = yield* makeEnvironmentHttpApiGroupClient(httpBaseUrl, input.group);
+      const client = yield* makeEnvironmentHttpApiGroupClient(
+        input.prepared.gatewayTicket === undefined
+          ? httpBaseUrl
+          : yield* ticketedHttpBaseUrl(input.prepared).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new RemoteEnvironmentAuthFetchError({
+                    message: "Could not authorize the LAN gateway request.",
+                    cause,
+                  }),
+              ),
+            ),
+        input.group,
+      );
       const headers = yield* buildEnvironmentAuthHeaders(
         authorization,
         input.method,

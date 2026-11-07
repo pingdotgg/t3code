@@ -3,6 +3,7 @@ import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/con
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -85,6 +86,16 @@ it.effect("adds a private peer after probing its descriptor", () =>
       Option.some(peer.httpBaseUrl),
     );
   }).pipe(Effect.provide(gatewayLayer())),
+);
+
+it.effect("keeps an add that lands between subscribing and reading the stream", () =>
+  Effect.gen(function* () {
+    const gateway = yield* LanGateway.LanGateway;
+    const changes = yield* gateway.subscribeAdvertisementChanges;
+    const peer = yield* gateway.add({ url: "http://192.168.1.20:13773" });
+    const [advertised] = yield* changes.pipe(Stream.take(1), Stream.runCollect);
+    expect(advertised).toEqual([{ environmentId: peer.environmentId, label: peer.label }]);
+  }).pipe(Effect.scoped, Effect.provide(gatewayLayer())),
 );
 
 it.effect("refuses add and list when the gateway is disabled", () =>
