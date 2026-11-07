@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import { ManagedRelayAuthProvider } from "../../cloud/managedAuth";
 import { clerkAppearance } from "./clerkAppearance";
+import { useOtpPasteNormalizer } from "./otpPaste";
 
 /** Load only lazily inside desktop; clerk-js is statically bundled and would otherwise enter every
  * client's startup graph. */
@@ -14,6 +15,7 @@ export default function ElectronManagedAuthShell({
   readonly publishableKey: string;
   readonly children: ReactNode;
 }) {
+  useOtpPasteNormalizer();
   return (
     <ClerkProvider appearance={clerkAppearance} publishableKey={publishableKey} passkeys={passkeys}>
       <ManagedRelayAuthProvider>{children}</ManagedRelayAuthProvider>
