@@ -35,13 +35,18 @@ function bundleThemeStorage(): Promise<string> {
         formats: ["iife"],
       },
     },
-  }).then((result) => {
-    const bundle = Array.isArray(result) ? result[0] : result;
-    if (!bundle || !("output" in bundle)) throw new Error("Expected the theme storage bundle.");
-    const chunk = bundle.output.find((output) => output.type === "chunk");
-    if (!chunk) throw new Error("Missing theme storage bundle.");
-    return chunk.code;
-  }));
+  })
+    .then((result) => {
+      const bundle = Array.isArray(result) ? result[0] : result;
+      if (!bundle || !("output" in bundle)) throw new Error("Expected the theme storage bundle.");
+      const chunk = bundle.output.find((output) => output.type === "chunk");
+      if (!chunk) throw new Error("Missing theme storage bundle.");
+      return chunk.code;
+    })
+    .catch((cause) => {
+      storageBundle = undefined;
+      throw cause;
+    }));
 }
 export async function renderThemeBootHtml(html: string): Promise<string> {
   const storage = await bundleThemeStorage();

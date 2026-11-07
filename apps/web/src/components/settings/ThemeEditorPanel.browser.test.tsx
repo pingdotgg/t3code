@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
+import {
+  createVividThemeColors,
+  resolveThemeSource,
+  setThemeSourceRole,
+  toCanonicalThemeColor,
+} from "@t3tools/shared/themeResolution";
 
 import { act, render } from "../../../test/render";
 import {
@@ -83,9 +89,14 @@ async function renderPanel() {
 }
 
 describe("ThemeEditorPanel", () => {
-  it.each(["create", "rename"] as const)(
-    "merges a %s draft into a legacy collection theme",
-    async (operation) => {
+  it.each([
+    { operation: "create", managed: false },
+    { operation: "rename", managed: false },
+    { operation: "create", managed: true },
+    { operation: "rename", managed: true },
+  ] as const)(
+    "merges a $operation draft into a legacy collection theme (managed: $managed)",
+    async ({ operation, managed }) => {
       const previous = localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY);
       localStorage.removeItem(CUSTOM_THEMES_STORAGE_KEY);
       invalidateCustomThemes();
@@ -101,8 +112,11 @@ describe("ThemeEditorPanel", () => {
           version: 1,
           name: "Legacy",
           appearance: "light",
-          colors: { canvas: "#fafafa", accent: "#123456", terminalBackground: "#abcdef" },
+          colors: managed
+            ? createVividThemeColors("light", "#fafafa", "#123456")
+            : { canvas: "#fafafa", accent: "#123456", terminalBackground: "#abcdef" },
         }),
+        ...(managed ? { managed: true } : {}),
         collection: { id: "open-vsx:demo.theme", label: "Demo" },
       });
       const draft =
@@ -136,9 +150,19 @@ describe("ThemeEditorPanel", () => {
       const saved = getCustomThemes().find((theme) => theme.id === target.id)!;
       expect(getThemeModes(saved)).toEqual(["light", "dark"]);
       expect(saved.colors).toEqual(target.colors);
-      expect(saved.sources?.light?.overrides).toEqual(target.colors);
+      if (managed) {
+        const edited = resolveThemeSource(
+          setThemeSourceRole(saved.sources!.light!, "accent", "#ff0055"),
+          "light",
+        );
+        expect(edited.focus).toBe(toCanonicalThemeColor("#ff0055"));
+        expect(edited.terminalCursor).toBe(edited.focus);
+      } else {
+        expect(saved.sources?.light?.overrides).toEqual(target.colors);
+      }
       expect(saved.collection).toEqual(target.collection);
       expect(saved.sources?.dark).toBeDefined();
+      if (draft) expect(saved.variants?.dark?.canvas).toBe(draft.colors.canvas);
       expect(getCustomThemes()).toHaveLength(1);
     },
   );

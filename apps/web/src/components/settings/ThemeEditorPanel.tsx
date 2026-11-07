@@ -1,7 +1,6 @@
 import {
   resolveThemeSource,
   themeSourceForEditing,
-  themeSourceFromColors,
   setThemeSourceRole,
 } from "@t3tools/shared/themeResolution";
 import type { ThemeSource } from "@t3tools/shared/themePalettes";
@@ -704,8 +703,7 @@ export function ThemeEditorPanel({
           mergeTarget
             ? getThemeModes(mergeTarget).map((mode) => [
                 mode,
-                mergeTarget.sources?.[mode] ??
-                  themeSourceFromColors(getThemeColorsForMode(mergeTarget, mode)!),
+                themeSourceForEditing(mergeTarget, mode),
               ])
             : [],
         ),

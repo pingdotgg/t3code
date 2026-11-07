@@ -7,6 +7,8 @@ import {
   lenientThemeColorOverrides,
   parseStoredTheme,
   parseThemeColorOverrides,
+  type ThemeCollection,
+  type ThemeColorOverrides,
 } from "./themeStorage";
 import { resolveThemeSelectionAppearance } from "@t3tools/shared/themeSelection";
 import {
@@ -87,7 +89,6 @@ const LEGACY_T3_CHAT_DARK_THEME_ID = "t3-chat-dark";
 export const ThemePreference = Schema.String;
 export type ThemePreference = typeof ThemePreference.Type;
 
-import type { ThemeCollection, ThemeColorOverrides } from "./themeStorage";
 export type { ThemeCollection, ThemeColorOverrides } from "./themeStorage";
 export type ThemeVariantOverrides = Readonly<Partial<Record<ThemeAppearance, ThemeColorOverrides>>>;
 export type ThemePreferenceMode = ThemeAppearance | "system";
