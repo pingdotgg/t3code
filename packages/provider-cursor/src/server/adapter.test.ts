@@ -667,6 +667,7 @@ describe("CursorAdapterV2", () => {
       const sentMessages: Array<string> = [];
       const sentMcpOverrides: Array<boolean> = [];
       let opens = 0;
+      let openedMcpServers: ReturnType<typeof cursorMcpServers>;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-device-thread");
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -693,8 +694,9 @@ describe("CursorAdapterV2", () => {
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
           assertComplete: Effect.void,
-          open: () => {
+          open: (input) => {
             opens += 1;
+            openedMcpServers = input.options.mcpServers;
             return Effect.succeed({
               agentId: "native-cursor-device",
               listMessages: Effect.succeed([]),
@@ -811,9 +813,11 @@ describe("CursorAdapterV2", () => {
       assert.deepEqual(yield* send(), told(false, false));
       const opensBeforeRotation = opens;
       yield* setDeviceAccess(true, "rotated-cursor-token");
+      const rotated = yield* mcpSessions.read(threadId);
       yield* send();
       yield* send();
       assert.equal(opens, opensBeforeRotation + 1, "a rotated MCP token reopens the agent once");
+      assert.deepEqual(openedMcpServers, cursorMcpServers(rotated));
       assert.notInclude(sentMcpOverrides, true);
     }).pipe(
       Effect.scoped,
