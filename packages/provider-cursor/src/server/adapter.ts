@@ -68,7 +68,7 @@ import {
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
-import { isCursorSdkError } from "./sdk.ts";
+import { cursorSandboxUnsupported, isCursorSdkError } from "./sdk.ts";
 export { cursorSdkModelSelection } from "./sdkModel.ts";
 
 const CURSOR_DRIVER_KIND = CursorAgentSdk.CURSOR_PROVIDER;
@@ -333,13 +333,30 @@ class CursorModelUnavailableError extends Schema.TaggedError<CursorModelUnavaila
   }
 }
 
-// Uncoded SDK model rejections are identifiable only by message prefix.
-const classifyCursorModelRejection =
-  (modelSelection: ModelSelection) => (error: CursorAgentSdk.CursorAgentSdkRunnerError) =>
-    isCursorSdkError(error.cause, "ConfigurationError") &&
-    error.cause.message.startsWith("Cannot use this model:")
-      ? new CursorModelUnavailableError({ model: modelSelection.model, cause: error.cause })
+class CursorSandboxUnavailableError extends Schema.TaggedError<CursorSandboxUnavailableError>()(
+  "CursorSandboxUnavailableError",
+  { platform: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    // Windows Supervised and Auto skip the sandbox (see cursorRuntimeAgentPolicy).
+    return this.platform === "win32"
+      ? "Cursor cannot sandbox commands on Windows. Switch this thread to Supervised or Auto, which run without the sandbox here, or to Full access."
+      : "Cursor could not start its command sandbox. On Ubuntu 23.10+, AppArmor may block its helper; see https://github.com/pingdotgg/t3code/blob/main/docs/user/cursor.md. Otherwise, switch this thread to Full access.";
+  }
+}
+
+// Uncoded SDK configuration rejections are identifiable only by message text.
+const classifyCursorConfigurationError =
+  (modelSelection: ModelSelection, platform: NodeJS.Platform) =>
+  (error: CursorAgentSdk.CursorAgentSdkRunnerError) => {
+    if (!isCursorSdkError(error.cause, "ConfigurationError")) return error;
+    if (error.cause.message.startsWith("Cannot use this model:")) {
+      return new CursorModelUnavailableError({ model: modelSelection.model, cause: error.cause });
+    }
+    return cursorSandboxUnsupported(error.cause)
+      ? new CursorSandboxUnavailableError({ platform, cause: error.cause })
       : error;
+  };
 
 function stableJson(value: unknown): string {
   try {
@@ -2269,7 +2286,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               threadId: openInput.threadId,
               providerSessionId: input.providerSessionId,
             })
-            .pipe(Effect.mapError(classifyCursorModelRejection(openInput.modelSelection)));
+            .pipe(
+              Effect.mapError(classifyCursorConfigurationError(openInput.modelSelection, platform)),
+            );
           const next = {
             nativeThreadId: sdkSession.agentId,
             session: sdkSession,
@@ -2418,7 +2437,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   return handleInteractionUpdate(context, update);
                 },
               })
-              .pipe(Effect.mapError(classifyCursorModelRejection(turnInput.modelSelection)));
+              .pipe(
+                Effect.mapError(
+                  classifyCursorConfigurationError(turnInput.modelSelection, platform),
+                ),
+              );
             yield* Ref.set(told, {
               agent: agent.nativeThreadId,
               orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),

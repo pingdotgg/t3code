@@ -32,3 +32,17 @@ export function isCursorSdkError<
 >(cause: unknown, kind: K): cause is InstanceType<(typeof import("@cursor/sdk"))[K]> {
   return sdk !== undefined && cause instanceof sdk[kind];
 }
+
+// Sandboxing fails without cursorsandbox or after a process-wide unsupported result.
+export function cursorSandboxUnsupported(cause: unknown): boolean {
+  const seen = new Set<object>();
+  let current = cause;
+  while (typeof current === "object" && current !== null && !seen.has(current)) {
+    seen.add(current);
+    if (current instanceof Error && current.message.includes("sandboxing is not supported")) {
+      return true;
+    }
+    current = Reflect.get(current, "cause");
+  }
+  return false;
+}

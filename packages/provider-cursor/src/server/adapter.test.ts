@@ -21,6 +21,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -1594,6 +1595,126 @@ describe("CursorAdapterV2", () => {
         })
         .pipe(Effect.flip);
       assert.equal(makeProviderFailure({ cause: sendFailure }).message, expected);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    {
+      platform: "linux",
+      advice:
+        /AppArmor may block its helper; see https:\/\/github\.com\/pingdotgg\/t3code\/blob\/main\/docs\/user\/cursor\.md\. Otherwise, switch this thread to Full access/,
+    },
+    { platform: "win32", advice: /Switch this thread to Supervised or Auto/ },
+  ] as const)("says the Cursor sandbox is unavailable on $platform", ({ platform, advice }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-sandbox-" });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-sandbox-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "auto-accept-edits",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-sandbox",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              // The SDK's local executor throws this when cursorsandbox cannot start, e.g. AppArmor denying its user namespace.
+              send: () =>
+                Effect.fail(
+                  new CursorAgentSdk.CursorAgentSdkRunnerError({
+                    method: "run.start",
+                    cause: new ConfigurationError(
+                      "Local SDK sandboxing was requested, but sandboxing is not supported in this environment. Disable local.sandboxOptions.enabled or remove ~/.cursor/sandbox.json to run without sandboxing.",
+                      { isRetryable: false },
+                    ),
+                  }),
+                ),
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+        Effect.provideService(HostProcess.Platform, platform),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-sandbox-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const sendFailure = yield* runtime
+        .startTurn({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("cursor-sandbox-run"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("cursor-sandbox-attempt"),
+          rootNodeId: NodeId.make("cursor-sandbox-root"),
+          appThread: {
+            id: threadId,
+            projectId: ProjectId.make("cursor-sandbox-project"),
+            createdBy: "user",
+            creationSource: "web",
+            title: "Cursor sandbox",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "auto-accept-edits",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          message: {
+            messageId: MessageId.make("cursor-sandbox-message"),
+            createdBy: "user",
+            creationSource: "web",
+            text: "teste",
+            attachments: [],
+          },
+        })
+        .pipe(Effect.flip);
+      const message = makeProviderFailure({
+        cause: new ProviderAdapter.ProviderAdapterTurnStartError({
+          driver: CursorAgentSdk.CURSOR_PROVIDER,
+          threadId,
+          providerThreadId: providerThread.id,
+          runId: RunId.make("cursor-sandbox-run"),
+          cause: sendFailure,
+        }),
+      }).message;
+      assert.match(message, /^Cursor (?:could not start its command sandbox|cannot sandbox)/);
+      assert.match(message, advice);
     }).pipe(
       Effect.scoped,
       Effect.provide(
