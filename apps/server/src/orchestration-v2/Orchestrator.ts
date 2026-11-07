@@ -88,7 +88,6 @@ import {
   pendingBackgroundTurnItems,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
-import * as Predicate from "effect/Predicate";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -108,6 +107,7 @@ import {
 } from "./CheckpointRestoreSafety.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import {
+  CommandPolicyCapabilityUnsupportedError,
   CommandPolicyV2,
   goalCommandStopsActiveRun,
   isActiveRun,
@@ -900,6 +900,8 @@ function followsCurrentConversation(
     (message?.notification?.source.kind === "monitor" && !isBufferedProviderNotification(message))
   );
 }
+
+const isCapabilityUnsupported = Schema.is(CommandPolicyCapabilityUnsupportedError);
 
 function queuedRunModelSelection(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "messages">,
@@ -6399,7 +6401,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           (error) =>
             steerMode.type === "steer_active" &&
             command.createdBy === "user" &&
-            Predicate.isTagged(error.cause, "CommandPolicyCapabilityUnsupportedError") &&
+            isCapabilityUnsupported(error.cause) &&
             error.cause.capability !== "context_handoff",
           () => Effect.succeed(false),
         ),
