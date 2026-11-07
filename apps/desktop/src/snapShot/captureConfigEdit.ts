@@ -77,11 +77,10 @@ function hyprlandBinds(source: string, lua: boolean) {
       /^\s*bind[a-z]*\s*=\s*([^,]*),\s*([^,]*),\s*([^,]*),\s*(.*?)\s*(?:#.*)?$/.exec(
         line.trimEnd(),
       );
-    const modern =
-      lua &&
-      /^\s*hl\.bind\(\s*(["'])(.*?)\1\s*,\s*hl\.dsp\.global\(\s*(["'])(.*?)\3\s*\)\s*\)\s*;?\s*(?:--.*)?$/.exec(
-        line.trimEnd(),
-      );
+    const modern = lua && /^\s*hl\.bind\(\s*(["'])(.*?)\1\s*,(.*)$/.exec(line.trimEnd());
+    const global =
+      modern &&
+      /^\s*hl\.dsp\.global\(\s*(["'])(.*?)\1\s*\)\s*\)\s*;?\s*(?:--.*)?$/.exec(modern[3]!);
     if (legacy)
       bindings.push({
         start,
@@ -90,7 +89,12 @@ function hyprlandBinds(source: string, lua: boolean) {
         action: legacy[3]!.trim() === "global" ? legacy[4]!.trim() : "",
       });
     if (modern)
-      bindings.push({ start, end: start + line.length, keys: modern[2]!, action: modern[4]! });
+      bindings.push({
+        start,
+        end: start + line.length,
+        keys: modern[2]!,
+        action: global ? global[2]! : "",
+      });
     start += line.length;
   }
   return bindings;
@@ -163,7 +167,7 @@ export function editCaptureConfig(
   if (operation === "remove") return { after, shortcut: keys };
   const conflict = niri
     ? niriConfigConflict(after, appId, keys)
-    : hyprlandBinds(after, false).some((bind) => sameKeys(bind.keys, keys));
+    : hyprlandBinds(after, format === "hyprland-lua").some((bind) => sameKeys(bind.keys, keys));
   if (conflict) throw new Error(`${keys} is already used in this config. Choose another shortcut.`);
   const newline = source.includes("\r\n") ? "\r\n" : "\n";
   const binding = captureConfigBinding(format, appId, keys);

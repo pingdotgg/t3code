@@ -97,10 +97,12 @@ describe("Hyprland capture config edits", () => {
       );
     },
   );
-  it("does not steal an existing legacy shortcut", () => {
-    expect(() =>
-      editCaptureConfig("bind = SHIFT CTRL, 2, exec, kitty\n", "hyprland", app, "install"),
-    ).toThrow("already used");
+  it.each([
+    ["hyprland", "bind = SHIFT CTRL, 2, exec, kitty\n"],
+    ["hyprland-lua", 'hl.bind("SHIFT + CTRL + 2", hl.dsp.exec("kitty"))\n'],
+    ["hyprland-lua", 'hl.bind("CTRL + SHIFT + 2", hl.dsp.global("other.app:action"))\n'],
+  ] as const)("does not steal an existing %s shortcut: %s", (format, source) => {
+    expect(() => editCaptureConfig(source, format, app, "install")).toThrow("already used");
   });
   it.each([
     "return {}",
