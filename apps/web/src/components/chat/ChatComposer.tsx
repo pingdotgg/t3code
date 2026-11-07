@@ -142,7 +142,7 @@ import { useDictationSubmissionShortcut } from "../../speech/useDictationSubmiss
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
 import { ComposerSpeechButton, ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-import { shortcutLabelForCommand } from "../../keybindings";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "../../keybindings";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -1740,6 +1740,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
   };
   const onPromptChangeStable = useStableCallback(onPromptChange);
+  const isStopShortcutEventStable = useStableCallback(
+    (event: KeyboardEvent) =>
+      resolveShortcutCommand(event, keybindings, { context: { composerFocus: true } }) ===
+      "thread.stop",
+  );
 
   const applyPromptReplacement = (
     rangeStart: number,
@@ -3648,6 +3653,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         },
                       },
                     )}
+                    stopShortcutLabel={shortcutLabelForCommand(keybindings, "thread.stop", {
+                      context: { composerFocus: true },
+                    })}
+                    isStopShortcutEvent={isStopShortcutEventStable}
                     showPlanFollowUpPrompt={
                       pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                     }

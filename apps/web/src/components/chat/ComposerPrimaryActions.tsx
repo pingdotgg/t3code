@@ -34,6 +34,8 @@ interface ComposerPrimaryActionsProps {
   followUpBehavior?: "queue" | "steer";
   canSteer?: boolean;
   alternateShortcutLabel?: string | null;
+  stopShortcutLabel?: string | null;
+  isStopShortcutEvent?: (event: KeyboardEvent) => boolean;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   /** Dictation is running; Send finishes it and submits once the transcript lands. */
@@ -90,6 +92,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   followUpBehavior = "steer",
   canSteer = true,
   alternateShortcutLabel = null,
+  stopShortcutLabel = null,
+  isStopShortcutEvent,
   showPlanFollowUpPrompt,
   promptHasText,
   voiceInputActive = false,
@@ -128,7 +132,16 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
 
   const renderStopGenerationButton = (insidePendingAction: boolean) => (
-    <Tooltip key="interrupt">
+    <Tooltip
+      key="interrupt"
+      onOpenChange={(_open, eventDetails) => {
+        // The stop shortcut must reach the chat instead of only closing this tooltip.
+        if (eventDetails.reason !== "escape-key" || !isStopShortcutEvent?.(eventDetails.event))
+          return;
+        eventDetails.cancel();
+        eventDetails.allowPropagation();
+      }}
+    >
       <TooltipTrigger
         render={
           <button
@@ -150,7 +163,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <rect x="2" y="2" width="8" height="8" rx="1.5" />
         </svg>
       </TooltipTrigger>
-      <TooltipPopup>Interrupt</TooltipPopup>
+      <TooltipPopup>Interrupt{stopShortcutLabel ? ` (${stopShortcutLabel})` : ""}</TooltipPopup>
     </Tooltip>
   );
 
