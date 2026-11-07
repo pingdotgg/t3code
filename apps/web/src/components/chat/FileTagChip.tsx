@@ -5,6 +5,7 @@ import { WorkspaceEntryIcon } from "./WorkspaceEntryIcon";
 export function FileTagChipContent(props: {
   path: string;
   label: string;
+  wrapLabel?: boolean | undefined;
   theme: "light" | "dark";
   environmentId?: EnvironmentId | null | undefined;
   cwd?: string | undefined;
@@ -17,7 +18,13 @@ export function FileTagChipContent(props: {
         cwd={props.cwd}
         theme={props.theme}
       />
-      <ContextChipLabel>{props.label}</ContextChipLabel>
+      <ContextChipLabel
+        className={
+          props.wrapLabel ? "overflow-visible whitespace-normal break-all text-left" : undefined
+        }
+      >
+        {props.label}
+      </ContextChipLabel>
     </>
   );
 }

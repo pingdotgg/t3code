@@ -850,6 +850,7 @@ function useChatMarkdownState({
             fileLinkParentSuffixByPath,
           )
         }
+        wrapLabel={label !== undefined}
         copyMarkdown={copyMarkdown}
         theme={resolvedTheme}
         threadRef={threadRef}
