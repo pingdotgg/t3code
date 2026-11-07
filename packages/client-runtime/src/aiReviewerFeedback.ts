@@ -337,8 +337,11 @@ export function parseAiReviewerFeedback(body: string): AiReviewerFeedback | null
   const header = parseHeader(dropBadgeLines(prologue));
   if (!isAiReviewerSignal(normalized, details, header)) return null;
 
-  const agentPromptBlock =
+  const rawAgentPromptBlock =
     details.find((block) => AGENT_PROMPT_SUMMARY.test(block.summary))?.content ?? null;
+  // Empty Prompt-for-AI blocks must not count as Easy fix; fall back to the readable finding.
+  const agentPromptBlock =
+    rawAgentPromptBlock === null ? null : unwrapFence(rawAgentPromptBlock) || null;
   const detailsSuggestion =
     details.find((block) => COMMITTABLE_SUMMARY.test(block.summary))?.content ??
     details.find((block) => SUGGESTION_SUMMARY.test(block.summary))?.content ??
@@ -364,7 +367,7 @@ export function parseAiReviewerFeedback(body: string): AiReviewerFeedback | null
   let summary = summaryParts.join("\n\n").trim();
 
   if (summary === "" && agentPromptBlock !== null) {
-    summary = unwrapFence(agentPromptBlock);
+    summary = agentPromptBlock;
   }
 
   const suggestion = detailsSuggestion ?? fenced.suggestion ?? outsideSuggestion.suggestion;
@@ -376,7 +379,7 @@ export function parseAiReviewerFeedback(body: string): AiReviewerFeedback | null
       ? /BUGBOT_BUG_ID|DESCRIPTION START/iu.test(normalized) && summary !== ""
         ? summary
         : null
-      : unwrapFence(agentPromptBlock);
+      : agentPromptBlock;
 
   if (summary === "" && agentPrompt === null && suggestion === null) return null;
 

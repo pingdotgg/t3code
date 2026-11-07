@@ -287,6 +287,27 @@ See the docs.
     expect(parsed?.suggestion).toContain('<a href="https://example.com/docs">docs</a>');
   });
 
+  it("treats an empty Prompt for AI block as absent", () => {
+    const body = `_⚠️ Potential issue_ | _🟡 Minor_
+
+**Null deref on empty input.**
+
+<details>
+<summary>🤖 Prompt for AI Agents</summary>
+
+\`\`\`
+\`\`\`
+
+</details>
+
+<!-- fingerprinting:phantom:poseidon:eagle -->
+`;
+    const parsed = parseAiReviewerFeedback(body);
+    expect(parsed?.summary).toContain("Null deref");
+    expect(parsed?.agentPrompt).toBeNull();
+    expect(hasAiReviewerEasyFix(body)).toBe(false);
+  });
+
   it("returns null for ordinary human remarks", () => {
     expect(parseAiReviewerFeedback("Please rename this helper.")).toBeNull();
     expect(
