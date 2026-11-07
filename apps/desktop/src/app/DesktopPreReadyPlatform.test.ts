@@ -197,15 +197,29 @@ describe("DesktopPreReadyPlatform", () => {
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
 
-  it.effect(
-    "acquires a synchronous pre-ready layer before an asynchronous Clerk-shaped layer",
-    () =>
+  it.effect.each([
+    { enabledFeatures: undefined, expected: "CDPScreenshotNewSurface" },
+    {
+      enabledFeatures: "ExistingFeature<Trial:param/value",
+      expected: "ExistingFeature<Trial:param/value,CDPScreenshotNewSurface",
+    },
+    {
+      enabledFeatures: "ExistingFeature,CDPScreenshotNewSurface",
+      expected: "ExistingFeature,CDPScreenshotNewSurface",
+    },
+  ])(
+    "configures fresh screenshot surfaces before asynchronous startup with $enabledFeatures",
+    ({ enabledFeatures, expected }) =>
       Effect.gen(function* () {
         class ClerkShaped extends Context.Service<ClerkShaped, { readonly ready: true }>()(
           "@t3tools/desktop/app/DesktopPreReadyPlatform.test/ClerkShaped",
         ) {}
 
         const events: Array<string> = [];
+        hasSwitchMock.mockImplementation(
+          (name: string) => name === "enable-features" && enabledFeatures !== undefined,
+        );
+        getSwitchValueMock.mockReturnValue(enabledFeatures ?? "");
         registerSchemesMock.mockImplementation(() => {
           events.push("pre-ready");
         });
@@ -218,6 +232,7 @@ describe("DesktopPreReadyPlatform", () => {
           ClerkShaped,
           Effect.promise(() => Promise.resolve()).pipe(
             Effect.map(() => {
+              assert.deepEqual(appendSwitchMock.mock.calls, [["enable-features", expected]]);
               events.push("clerk");
               return { ready: true as const };
             }),
@@ -243,7 +258,7 @@ describe("DesktopPreReadyPlatform", () => {
         });
         assert.deepEqual(events, ["pre-ready", "clerk"]);
         assert.equal(registerSchemesMock.mock.calls.length, 1);
-        assert.equal(appendSwitchMock.mock.calls.length, 0);
+        assert.equal(appendSwitchMock.mock.calls.length, 1);
         assert.equal(setDesktopNameMock.mock.calls.length, 0);
       }),
   );
