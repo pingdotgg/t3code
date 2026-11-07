@@ -105,6 +105,13 @@ queries use a covering thread/run index for item counts and a partial index for 
 background items, including idle items. Latest user-message reads use an index ordered by update
 time.
 
+A projection read that orders messages by their first user or assistant turn item groups those
+items by `$.messageId` through a partial index on that expression (migration 81), so it does not
+parse every message item's payload; the index's expression and `WHERE` must stay identical to the
+query's. Migration 81 scans the turn-item table once on first start; a message item whose payload
+is not valid JSON is left out of the index. Each message-item write re-parses the old and new
+payload for the index, so its cost grows with the payload.
+
 Command palette results keep live VCS and linked pull-request queries leased to the visible
 viewport, including a small overscan region. Cached badges remain available while leases are
 released. Local Git status reads skip divergence calculations; callers that need ahead/behind
