@@ -434,9 +434,22 @@ export function threadContextsOutsideEnvironment(input: {
 
 /** A thread this agent can't read stays a link naming its machine, so the ids survive without attaching it. */
 export function unreadableThreadContextLink(record: ThreadContextRecord): string {
-  return /[\s()<>\\]/.test(`${record.environmentId}/${record.threadId}`)
-    ? formatHostedThreadLink(record, record.title)
-    : formatThreadLink(record, record.title);
+  // Ids may hold `/`, `)`, spaces or be dot segments, which some link forms lose; keep a form that parses back.
+  const namesRecord = (markdown: string) => {
+    let links = 0;
+    let exact = false;
+    replaceThreadLinks(markdown, (link) => {
+      links += 1;
+      exact = link.environmentId === record.environmentId && link.threadId === record.threadId;
+      return undefined;
+    });
+    return links === 1 && exact;
+  };
+  return (
+    [formatThreadLink(record, record.title), formatHostedThreadLink(record, record.title)].find(
+      namesRecord,
+    ) ?? record.title
+  );
 }
 
 export function remapComposerContextAttachments(
