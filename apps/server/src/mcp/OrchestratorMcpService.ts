@@ -879,17 +879,10 @@ function threadDetail(
 function runExecutedModel(
   projection: Pick<OrchestrationV2ThreadProjection, "providerTurns">,
   run: Pick<OrchestrationV2Run, "activeAttemptId"> | undefined,
-): { readonly executedModel: string | null; readonly modelSubstituted?: boolean } {
-  const turn =
-    run === undefined
-      ? undefined
-      : latestProviderTurnForAttempt(projection.providerTurns, run.activeAttemptId);
-  return turn?.model === undefined
-    ? { executedModel: null }
-    : {
-        executedModel: turn.model,
-        ...(turn.modelSubstituted === undefined ? {} : { modelSubstituted: turn.modelSubstituted }),
-      };
+): string | null {
+  return run === undefined
+    ? null
+    : (latestProviderTurnForAttempt(projection.providerTurns, run.activeAttemptId)?.model ?? null);
 }
 
 function threadRun(
@@ -902,7 +895,7 @@ function threadRun(
     status: run.status,
     providerInstanceId: run.modelSelection.instanceId,
     model: run.modelSelection.model,
-    ...runExecutedModel(projection, run),
+    executedModel: runExecutedModel(projection, run),
     requestedAt: DateTime.formatIso(run.requestedAt),
     startedAt: run.startedAt === null ? null : DateTime.formatIso(run.startedAt),
     completedAt: run.completedAt === null ? null : DateTime.formatIso(run.completedAt),
@@ -1564,7 +1557,7 @@ const make = Effect.gen(function* () {
         messageRoles: ["assistant"],
         messageRunIds: resultRunIds,
         turnItemRunIds: resultRunIds,
-        turnItemTypes: ["assistant_message", "error", "system_notice"],
+        turnItemTypes: ["assistant_message", "error"],
       })
       .pipe(Effect.mapError(threadManagementFailure));
     const childProjection = {
@@ -1648,7 +1641,7 @@ const make = Effect.gen(function* () {
       hasPendingChildRuns: hasPendingChildRuns(childProjection, childRun),
       providerInstanceId: modelSelection.instanceId,
       model: modelSelection.model,
-      ...runExecutedModel(childControls, executionRun),
+      executedModel: runExecutedModel(childControls, executionRun),
       options: modelSelection.options ?? [],
       summary: derivedResult,
       resultContextTransferId,
@@ -1818,7 +1811,6 @@ const make = Effect.gen(function* () {
       providerInstanceId: task.providerInstanceId,
       model: task.model,
       executedModel: null,
-      ...task.remoteChild?.resultModel,
       summary: task.result,
       resultContextTransferId: null,
       latestTerminalRunId: null,

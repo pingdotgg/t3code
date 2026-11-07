@@ -235,18 +235,8 @@ function resolveClaudeCatalogModel(
   );
 }
 
-/** `discovered` rows from Claude Code name the model each of their values resolves to. */
-export function resolveClaudeModelSlug(
-  catalog: ClaudeModelCatalog,
-  slugOrAlias: string,
-  discovered: ReadonlyArray<ClaudeModelInfo> = [],
-): string {
-  const known = resolveClaudeCatalogModel(catalog, slugOrAlias);
-  if (known) return known.model.slug;
-  const resolved = discovered
-    .find((info) => info.value.trim() === slugOrAlias)
-    ?.resolvedModel?.trim();
-  return resolved ? resolveClaudeModelSlug(catalog, resolved) : slugOrAlias;
+export function resolveClaudeModelSlug(catalog: ClaudeModelCatalog, slugOrAlias: string): string {
+  return resolveClaudeCatalogModel(catalog, slugOrAlias)?.model.slug ?? slugOrAlias;
 }
 
 export function getClaudeCatalogModelCapabilities(

@@ -86,9 +86,9 @@ type LaunchedWith = Pick<
   "modelSelection" | "runtimeMode" | "interactionMode"
 >;
 
-/** The thread the box launches for the task, which the test finishes. */
-type ReportedModel = Pick<OrchestrationV2ProviderTurn, "model" | "modelSubstituted">;
+type ReportedModel = Pick<OrchestrationV2ProviderTurn, "model">;
 
+/** The thread the box launches for the task, which the test finishes. */
 interface BoxThread {
   readonly launched: Ref.Ref<ThreadId | null>;
   /** The link session that launched it, as the box stamps it. */
@@ -934,9 +934,6 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       expect(status.structuredContent).toMatchObject({
         status: "completed",
         summary: "All 412 tests pass on the box.",
-        model: "gpt-5.4",
-        // The provider there reported no model, as an older box never does.
-        executedModel: null,
       });
       // Delivery validation still reads messages; choosing the observer does not need another read.
       expect(messageReads).toHaveLength(2);
@@ -1296,7 +1293,6 @@ it.effect("a task's result is its own run's whole last reply, not a later run's"
       yield* Ref.set(thread.reply, long);
       yield* Ref.set(thread.laterReply, "Someone else asked a follow-up.");
       // The provider there ran the task's run on another model, the later run on the one asked for.
-      // Neither turn says whether that was a substitution, as an older box's never do, so the labels decide.
       yield* Ref.set(thread.executedModel, { model: "gpt-5.4-mini" });
       yield* Ref.set(thread.laterExecutedModel, { model: "gpt-5.4" });
       yield* Ref.set(thread.status, "completed");
@@ -1304,11 +1300,8 @@ it.effect("a task's result is its own run's whole last reply, not a later run's"
       const task = yield* taskResult(a, taskId);
       expect(task?.status).toBe("completed");
       expect(task?.result).toBe(
-        `Requested model gpt-5.4, but the provider ran gpt-5.4-mini.\n\n${long}`,
+        `Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\n${long}`,
       );
-      const status = (yield* a.call("task_status", { taskId })).structuredContent;
-      expect(status).toMatchObject({ executedModel: "gpt-5.4-mini" });
-      expect(status).not.toHaveProperty("modelSubstituted");
       // Every wait was for the run the launch started.
       const waits = yield* Ref.get(thread.waitedFor);
       expect(waits.length).toBeGreaterThan(0);
@@ -1342,23 +1335,12 @@ it.effect("a task whose thread there waits on its own task ends with the answer 
       );
       expect(first).toBe("waiting there");
 
-      // The review reports and wakes the thread there, whose next run answers on
-      // the dated slug of the model it asked for, unlike the first run's substitute.
-      yield* Ref.set(thread.executedModel, { model: "gpt-5.4-mini", modelSubstituted: true });
-      yield* Ref.set(thread.laterExecutedModel, {
-        model: "gpt-5.4-2026-03-05",
-        modelSubstituted: false,
-      });
+      // The review reports and wakes the thread there, whose next run answers.
       yield* Ref.set(thread.laterReply, "The review found two issues; both are fixed.");
       yield* Deferred.succeed(thread.nestedSettled, undefined);
-      const result = "The review found two issues; both are fixed.";
-      expect(yield* taskResult(a, delegated.taskId)).toMatchObject({ status: "completed", result });
-      const status = yield* a.call("task_status", { taskId: delegated.taskId });
-      expect(status.structuredContent).toMatchObject({
-        summary: result,
-        model: "gpt-5.4",
-        executedModel: "gpt-5.4-2026-03-05",
-        modelSubstituted: false,
+      expect(yield* taskResult(a, delegated.taskId)).toMatchObject({
+        status: "completed",
+        result: "The review found two issues; both are fixed.",
       });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),

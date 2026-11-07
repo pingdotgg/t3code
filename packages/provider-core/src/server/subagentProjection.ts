@@ -176,56 +176,15 @@ export function makeSubagentConversationArtifacts(input: {
   return { message, turnItem };
 }
 
-/**
- * A delegated result, led by a note when the provider ran its run on another
- * model than the run requested, with that run's own provider notices.
- */
-export function withSubstitutedModelNote(
+/** A delegated result, led by a note when the provider reported running another model than requested. */
+export function withExecutedModelNote(
   result: string,
-  input: {
-    readonly requestedModel: string;
-    readonly executedModel: string | null | undefined;
-    // Set where the provider resolved aliases; older environments omit it.
-    readonly modelSubstituted?: boolean | undefined;
-    readonly notices?: ReadonlyArray<string>;
-  },
+  requestedModel: string,
+  executedModel: string | null | undefined,
 ): string {
-  if (
-    input.executedModel == null ||
-    !(input.modelSubstituted ?? input.executedModel !== input.requestedModel)
-  ) {
-    return result;
-  }
-  const note = [
-    `Requested model ${input.requestedModel}, but the provider ran ${input.executedModel}.`,
-    ...(input.notices ?? []).map((notice) => `Provider notice: ${notice}`),
-  ].join("\n");
-  return `${note}\n\n${result}`;
-}
-
-function rootProviderNotices(
-  projection: Pick<OrchestrationV2ThreadProjection, "turnItems" | "providerTurns">,
-  run: OrchestrationV2Run,
-): ReadonlyArray<string> {
-  const attemptTurnIds = new Set(
-    projection.providerTurns
-      .filter((turn) => run.activeAttemptId !== null && turn.runAttemptId === run.activeAttemptId)
-      .map((turn) => turn.id),
-  );
-  return projection.turnItems
-    .filter(
-      (item): item is Extract<OrchestrationV2TurnItem, { readonly type: "system_notice" }> =>
-        item.type === "system_notice" &&
-        item.runId === run.id &&
-        item.nodeId === run.rootNodeId &&
-        item.parentItemId === null &&
-        item.providerTurnId !== null &&
-        attemptTurnIds.has(item.providerTurnId) &&
-        // T3's own notices, such as usage limits, carry weak refs.
-        item.nativeItemRef?.strength === "strong",
-    )
-    .toSorted((left, right) => left.ordinal - right.ordinal)
-    .map((item) => item.message);
+  return executedModel == null || executedModel === requestedModel
+    ? result
+    : `Requested model ${requestedModel}; the provider reported running ${executedModel}.\n\n${result}`;
 }
 
 export function subagentResultForRun(
@@ -268,24 +227,22 @@ export function subagentResultForRun(
           .filter((item) => item.runId === run.id && item.type === "error")
           .toSorted((left, right) => right.ordinal - left.ordinal)[0]
       : undefined;
-  const result =
+  const text =
     (failure?.type === "error" ? failure.failure.message : undefined) ??
     message?.text ??
     turnItem?.text ??
     (run.status === "completed"
       ? "Child task completed without an assistant result."
       : `Child task ended with status ${run.status}.`);
-  const latestTurn = latestProviderTurnForAttempt(projection.providerTurns, run.activeAttemptId);
+  const executedModel = latestProviderTurnForAttempt(
+    projection.providerTurns,
+    run.activeAttemptId,
+  )?.model;
   return {
     text:
-      latestTurn?.model === undefined
-        ? result
-        : withSubstitutedModelNote(result, {
-            requestedModel: run.modelSelection.model,
-            executedModel: latestTurn.model,
-            modelSubstituted: latestTurn.modelSubstituted,
-            notices: rootProviderNotices(projection, run),
-          }),
+      executedModel === undefined
+        ? text
+        : withExecutedModelNote(text, run.modelSelection.model, executedModel),
     messageId: failure === undefined ? (message?.id ?? turnItem?.messageId ?? null) : null,
     turnItemId: failure?.id ?? turnItem?.id ?? null,
   };

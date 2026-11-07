@@ -6,7 +6,6 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  RunAttemptId,
   RunId,
   ScheduledTaskId,
   SECRET_REQUEST_UNSAVED_NOTE,
@@ -49,7 +48,6 @@ const childThreadId = ThreadId.make("thread-mcp-orchestrator-child");
 const activeRunId = RunId.make("run-mcp-active");
 const cancelledRunId = RunId.make("run-mcp-cancelled");
 const childRunId = RunId.make("run-mcp-child");
-const activeAttemptId = RunAttemptId.make("attempt-mcp-active");
 const taskId = NodeId.make("node-mcp-task-1");
 const now = DateTime.makeUnsafe("2026-08-04T12:00:00.000Z");
 const codexDriver = ProviderDriverKind.make("codex");
@@ -134,11 +132,11 @@ it("readThread preserves caller access errors and prefers activity-run status ov
       model: "gpt-5.4",
     }),
     runs: [
-      { ...makeRun({ id: activeRunId, ordinal: 1, status: "running" }), activeAttemptId },
+      makeRun({ id: activeRunId, ordinal: 1, status: "running" }),
       makeRun({ id: cancelledRunId, ordinal: 2, status: "cancelled" }),
     ],
-    providerTurns: [{ runAttemptId: activeAttemptId, ordinal: 1, model: "gpt-5.4-mini" }],
     visibleTurnItems: [],
+    providerTurns: [],
     runtimeRequests: [],
     messages: [],
     contextTransfers: [],
@@ -170,13 +168,9 @@ it("readThread preserves caller access errors and prefers activity-run status ov
                     ? (projection.thread as unknown as OrchestrationV2ThreadShell)
                     : null,
                 ),
-          getProjectThreadRecords: (input, fields) =>
+          getProjectThreadRecords: (input) =>
             input.threadId === parentThreadId
-              ? Effect.succeed(
-                  fields?.some((field) => field === "providerTurns")
-                    ? projection
-                    : { ...projection, providerTurns: [] },
-                )
+              ? Effect.succeed(projection)
               : Effect.die(`unexpected thread ${input.threadId}`),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
         ServerSettings.layerTest(),
@@ -203,12 +197,6 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     expect(result.thread.status).toBe("running");
     expect(result.thread.latestRunId).toBe(cancelledRunId);
     expect(result.thread.activeRunId).toBe(activeRunId);
-    expect(
-      result.recentRuns.map(({ runId, model, executedModel }) => ({ runId, model, executedModel })),
-    ).toEqual([
-      { runId: cancelledRunId, model: "gpt-5.4", executedModel: null },
-      { runId: activeRunId, model: "gpt-5.4", executedModel: "gpt-5.4-mini" },
-    ]);
 
     callerUnavailable = true;
     const denied = yield* service
@@ -234,8 +222,8 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
       model: "gpt-5.4",
     }),
     runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
-    providerTurns: [],
     visibleTurnItems: [],
+    providerTurns: [],
     runtimeRequests: [],
     messages: [],
     contextTransfers: [],
@@ -326,6 +314,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     }),
     runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
     visibleTurnItems: [],
+    providerTurns: [],
     runtimeRequests: [],
     messages: [],
     contextTransfers: [],
@@ -379,6 +368,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
       }),
     ],
     visibleTurnItems: [],
+    providerTurns: [],
     runtimeRequests: [],
     messages: [],
     contextTransfers: [
@@ -391,7 +381,6 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     ],
     subagents: [],
     providerThreads: [],
-    providerTurns: [],
     updatedAt: now,
   } as unknown as OrchestrationV2ThreadProjection;
 
@@ -453,6 +442,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       return parentRuns;
     },
     visibleTurnItems: [],
+    providerTurns: [],
     runtimeRequests: [],
     messages: [],
     contextTransfers: [],
@@ -489,6 +479,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
           },
         },
       ],
+      providerTurns: [],
       runtimeRequests: [],
       messages: [],
       contextTransfers: [],
@@ -685,6 +676,7 @@ it("requestSecret saves a pasted value to a file without opening a card", async 
     }),
     runs: [{ ...makeRun({ id: activeRunId, ordinal: 1, status: "running" }), rootNodeId: taskId }],
     visibleTurnItems: [],
+    providerTurns: [],
     runtimeRequests: [],
     messages: [],
     contextTransfers: [],
@@ -806,6 +798,7 @@ it("requestSecret returns the unsaved note for a declined, cancelled or timed-ou
           card === undefined
             ? []
             : [{ type: "secret_request", id: card.turnItemId, secretStatus: outcome }],
+        providerTurns: [],
         runtimeRequests: [],
         messages: [],
         contextTransfers: [],

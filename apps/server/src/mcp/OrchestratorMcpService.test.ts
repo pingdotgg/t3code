@@ -3154,7 +3154,6 @@ describe("OrchestratorMcpService provider resolution", () => {
             assert.equal(result.model, selection.model);
             assert.deepEqual(result.options, selection.options);
             assert.equal(result.executedModel, executedModel);
-            if (hasStoredResult) assert.equal(result.summary, "Stored review result.");
           }
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
       }),

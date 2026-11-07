@@ -204,11 +204,7 @@ const OrchestratorMcpRunningTaskNext = Schema.Literal(ORCHESTRATOR_MCP_RUNNING_T
 // Optional: linked environments on older versions omit it.
 const OrchestratorMcpExecutedModel = Schema.NullOr(Schema.String).annotate({
   description:
-    "Model the provider reported running, or null if unreported. Can differ from the requested `model`.",
-});
-const OrchestratorMcpModelSubstituted = Schema.Boolean.annotate({
-  description:
-    "Whether `executedModel` is another model than the requested `model`, not just its alias. Absent when unknown.",
+    "Model the provider reported running, or null when unavailable. Can differ from the requested `model`.",
 });
 
 export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
@@ -232,7 +228,6 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   model: Schema.NullOr(Schema.String),
   executedModel: Schema.optional(OrchestratorMcpExecutedModel),
-  modelSubstituted: Schema.optional(OrchestratorMcpModelSubstituted),
   options: Schema.optional(Schema.Array(ProviderOptionSelection)),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
@@ -475,7 +470,6 @@ export const OrchestratorMcpThreadRun = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   model: Schema.String,
   executedModel: Schema.optional(OrchestratorMcpExecutedModel),
-  modelSubstituted: Schema.optional(OrchestratorMcpModelSubstituted),
   requestedAt: IsoDateTime,
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
