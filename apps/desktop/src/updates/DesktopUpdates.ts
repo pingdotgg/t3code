@@ -31,6 +31,7 @@ import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
@@ -366,6 +367,7 @@ export const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const desktopState = yield* DesktopState.DesktopState;
+  const electronApp = yield* ElectronApp.ElectronApp;
   const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -824,10 +826,16 @@ export const make = Effect.gen(function* () {
               instance.stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT }),
             { concurrency: "unbounded" },
           );
+          // electron-updater relaunches a .deb install with app.relaunch(),
+          // which leaves the new version unable to install the next update.
+          // ElectronApp.relaunch avoids that.
           yield* electronUpdater.quitAndInstall({
             isSilent: true,
-            isForceRunAfter: true,
+            isForceRunAfter: !isDebPackage,
           });
+          if (isDebPackage) {
+            yield* electronApp.relaunch({});
+          }
           return { accepted: true, completed: false, failed: false };
         }).pipe(
           Effect.catchTags({
