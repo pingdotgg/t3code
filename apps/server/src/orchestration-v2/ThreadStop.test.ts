@@ -558,6 +558,7 @@ it.effect.each([
 it.effect.each([
   ["missed", "subagent.stop"],
   ["published", "recovery"],
+  ["published", "queued-recovery"],
 ] as const)(
   "an original task left running after its child finished settles with the child's result (%s, %s)",
   ([finalizer, repair]) =>
@@ -620,13 +621,63 @@ it.effect.each([
           },
         });
       }
+      // A published result may already hold a reserved, not yet dispatched, parent wake.
+      const wakeMessageId = MessageId.make(`message:stranded-wake:${finalizer}`);
       yield* apply({
         type: "run.updated",
         threadId: parentThreadId,
         occurredAt: now,
-        payload: { ...parent.runs[0]!, status: "completed", completedAt: now },
+        payload: {
+          ...parent.runs[0]!,
+          status: "completed",
+          completedAt: now,
+          ...(finalizer === "published"
+            ? {
+                delegatedCompletion: {
+                  disposition: "open",
+                  nextGeneration: 2,
+                  delivery: { generation: 1, messageId: wakeMessageId, taskIds: [task.id] },
+                },
+              }
+            : {}),
+        },
       });
-      if (repair === "recovery") yield* orchestrator.recoverDelegatedTasks;
+      if (repair === "queued-recovery") {
+        yield* apply({
+          type: "run.updated",
+          threadId: parentThreadId,
+          occurredAt: now,
+          payload: {
+            ...(yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!,
+            status: "running",
+            completedAt: null,
+          },
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("queue-stranded-wake"),
+          threadId: parentThreadId,
+          messageId: wakeMessageId,
+          text: "Delegated task reached a terminal state.",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+          delegatedCompletion: {
+            parentRunId: parent.runs[0]!.id,
+            generation: 1,
+            taskIds: [task.id],
+          },
+        });
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(parentThreadId)).runs.find(
+            (run) => run.userMessageId === wakeMessageId,
+          )?.status,
+          "queued",
+        );
+      }
+      const beforeRepair = yield* orchestrator.getThreadProjection(parentThreadId);
+      if (repair !== "subagent.stop") yield* orchestrator.recoverDelegatedTasks;
       else
         yield* orchestrator.dispatch({
           type: "subagent.stop",
@@ -654,7 +705,7 @@ it.effect.each([
       assert.equal(settled?.completionDelivery?.state, "disposed");
       assert.deepEqual(
         after.runs.map((run) => run.id),
-        parent.runs.map((run) => run.id),
+        beforeRepair.runs.map((run) => run.id),
       );
       assert.lengthOf(
         after.contextTransfers.filter((transfer) => transfer.type === "subagent_result"),
@@ -666,6 +717,38 @@ it.effect.each([
         ),
         0,
       );
+      if (finalizer === "published") {
+        const wake = yield* orchestrator
+          .dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`stranded-wake:${finalizer}`),
+            threadId: parentThreadId,
+            messageId: wakeMessageId,
+            text: "Delegated task reached a terminal state.",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "agent",
+            creationSource: "server",
+            delegatedCompletion: {
+              parentRunId: parent.runs[0]!.id,
+              generation: 1,
+              taskIds: [task.id],
+            },
+          })
+          .pipe(Effect.exit);
+        assert.deepEqual(
+          (yield* orchestrator.getThreadProjection(parentThreadId)).runs.map((run) => run.id),
+          beforeRepair.runs.map((run) => run.id),
+        );
+        assert.isTrue(Exit.isFailure(wake));
+        assert.equal(after.runs[0]?.delegatedCompletion?.delivery, null);
+        if (repair === "queued-recovery") {
+          assert.equal(
+            after.runs.find((run) => run.userMessageId === wakeMessageId)?.status,
+            "cancelled",
+          );
+        }
+      }
     }).pipe(Effect.provide(layerTest)),
 );
 
