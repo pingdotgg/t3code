@@ -70,10 +70,7 @@ import {
 import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
-import {
-  parseThreadListPullRequestFilter,
-  threadMatchesPullRequestListFilters,
-} from "@t3tools/shared/threadPullRequests";
+import { threadMatchesPullRequestListFilters } from "@t3tools/shared/threadPullRequests";
 import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
@@ -2997,13 +2994,18 @@ const make = Effect.gen(function* () {
           (thread) =>
             titleContains === undefined || thread.title.toLocaleLowerCase().includes(titleContains),
         )
-        .filter((thread) => {
-          const raw = input.pullRequest?.trim();
-          if (raw === undefined || raw.length === 0) return true;
-          const parsed = parseThreadListPullRequestFilter(raw);
-          if (parsed === null) return false;
-          return threadMatchesPullRequestListFilters(thread.pullRequests, parsed);
-        });
+        .filter((thread) =>
+          threadMatchesPullRequestListFilters(thread.pullRequests, {
+            pullRequestStates:
+              input.pullRequestStates === undefined || input.pullRequestStates.length === 0
+                ? undefined
+                : input.pullRequestStates,
+            pullRequest:
+              input.pullRequestNumber !== undefined || input.pullRequestUrl !== undefined
+                ? { number: input.pullRequestNumber, url: input.pullRequestUrl }
+                : undefined,
+          }),
+        );
       const cursor = input.cursor ?? 0;
       const limit = input.limit ?? DEFAULT_THREAD_LIST_LIMIT;
       const page = filtered.slice(cursor, cursor + limit);

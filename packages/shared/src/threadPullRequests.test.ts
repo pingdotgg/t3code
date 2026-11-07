@@ -4,7 +4,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   isPullRequestIdentityQuery,
   matchThreadSearchPullRequest,
-  parseThreadListPullRequestFilter,
   threadMatchesPullRequestListFilters,
   threadPullRequestMatchesIdentity,
 } from "./threadPullRequests.ts";
@@ -83,39 +82,6 @@ describe("threadMatchesPullRequestListFilters", () => {
       threadMatchesPullRequestListFilters([open, merged], { pullRequest: { number: 2 } }),
     ).toBe(true);
     expect(threadMatchesPullRequestListFilters([open], { pullRequest: { number: 2 } })).toBe(false);
-  });
-});
-
-describe("parseThreadListPullRequestFilter", () => {
-  it("parses states, numbers, repo#n, and forge pull URLs", () => {
-    expect(parseThreadListPullRequestFilter("open")).toEqual({ pullRequestStates: ["open"] });
-    expect(parseThreadListPullRequestFilter("merged")).toEqual({ pullRequestStates: ["merged"] });
-    expect(parseThreadListPullRequestFilter("closed")).toEqual({ pullRequestStates: ["closed"] });
-    expect(parseThreadListPullRequestFilter("#22889")).toEqual({
-      pullRequest: { number: 22889 },
-    });
-    expect(parseThreadListPullRequestFilter("22889")).toEqual({
-      pullRequest: { number: 22889 },
-    });
-    expect(parseThreadListPullRequestFilter("acme/app#22889")).toEqual({
-      pullRequest: { repository: "acme/app", number: 22889 },
-    });
-    expect(
-      parseThreadListPullRequestFilter("https://github.com/acme/app/pull/22889/files"),
-    ).toEqual({
-      pullRequest: { url: "https://github.com/acme/app/pull/22889/files" },
-    });
-    expect(
-      parseThreadListPullRequestFilter("https://gitlab.com/acme/app/-/merge_requests/12"),
-    ).toEqual({
-      pullRequest: { url: "https://gitlab.com/acme/app/-/merge_requests/12" },
-    });
-    expect(
-      parseThreadListPullRequestFilter("https://dev.azure.com/acme/app/_git/app/pullrequest/9"),
-    ).toEqual({
-      pullRequest: { url: "https://dev.azure.com/acme/app/_git/app/pullrequest/9" },
-    });
-    expect(parseThreadListPullRequestFilter("open auth")).toBeNull();
   });
 });
 

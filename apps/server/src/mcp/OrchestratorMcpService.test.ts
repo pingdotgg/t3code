@@ -3658,7 +3658,7 @@ describe("OrchestratorMcpService.listThreads pull request filters", () => {
       const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
       const open = yield* mcp.listThreads(client, {
         projectId: ProjectId.make("project:mcp-test"),
-        pullRequest: "open",
+        pullRequestStates: ["open"],
       });
       assert.deepStrictEqual(
         open.threads.map((thread) => thread.threadId),
@@ -3667,7 +3667,7 @@ describe("OrchestratorMcpService.listThreads pull request filters", () => {
 
       const byNumber = yield* mcp.listThreads(client, {
         projectId: ProjectId.make("project:mcp-test"),
-        pullRequest: "10",
+        pullRequestNumber: 10,
       });
       assert.deepStrictEqual(
         byNumber.threads.map((thread) => thread.threadId),
@@ -3676,7 +3676,7 @@ describe("OrchestratorMcpService.listThreads pull request filters", () => {
 
       const byUrl = yield* mcp.listThreads(client, {
         projectId: ProjectId.make("project:mcp-test"),
-        pullRequest: "https://github.com/acme/app/pull/11/files",
+        pullRequestUrl: "https://github.com/acme/app/pull/11/files",
       });
       assert.deepStrictEqual(
         byUrl.threads.map((thread) => thread.threadId),

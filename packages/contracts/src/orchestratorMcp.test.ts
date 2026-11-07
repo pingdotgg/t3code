@@ -69,15 +69,19 @@ describe("orchestrator MCP contracts", () => {
     ).toThrow();
   });
 
-  it("decodes the pullRequest list filter string", () => {
+  it("decodes pull request list filters", () => {
     expect(
       decodeThreadListInput({
         allProjects: true,
-        pullRequest: "open",
+        pullRequestStates: ["open"],
+        pullRequestNumber: 22889,
+        pullRequestUrl: "https://github.com/acme/app/pull/22889",
       }),
     ).toMatchObject({
       allProjects: true,
-      pullRequest: "open",
+      pullRequestStates: ["open"],
+      pullRequestNumber: 22889,
+      pullRequestUrl: "https://github.com/acme/app/pull/22889",
     });
   });
 });
