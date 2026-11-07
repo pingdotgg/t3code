@@ -93,6 +93,7 @@ import {
   splitCodexArtifactTemplateMarkdown,
 } from "@t3tools/shared/codexMarkdownDirectives";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
+import { shouldAutoloadEarlierHistory } from "./threadFeedViewportFill";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
@@ -3372,6 +3373,51 @@ export const ThreadFeed = memo(function ThreadFeed({
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Jumping to a different message whose row index is unchanged must still land the jump.
   }, [jumpToMessageId, jumpIndex]);
 
+  // Short pages with older history keep requesting earlier turns until the list
+  // can scroll, or until the server reports nothing left. Dedupes on list+content
+  // length so a no-growth page does not loop.
+  const historyControls = props.historyControls;
+  const autofillAttemptRef = useRef<string | null>(null);
+  const requestEarlierToFillViewport = useEffectEvent(() => {
+    if (loadedListKeyRef.current !== listMountKey) return;
+    const history = historyControls;
+    if (!history) {
+      autofillAttemptRef.current = null;
+      return;
+    }
+    if (history.loading) return;
+    const state = listRef.current?.getState();
+    if (!state) return;
+    if (
+      !shouldAutoloadEarlierHistory({
+        hasMoreHistory: history.hasMoreHistory,
+        loading: false,
+        error: history.error,
+        contentLength: state.contentLength,
+        scrollLength: state.scrollLength,
+        jumpToMessageActive: jumpToMessageId != null,
+        userScrollSessionActive: userScrollSessionRef.current,
+      })
+    ) {
+      autofillAttemptRef.current = null;
+      return;
+    }
+    const attemptKey = `${listMountKey}:${Math.round(state.contentLength)}`;
+    if (autofillAttemptRef.current === attemptKey) return;
+    autofillAttemptRef.current = attemptKey;
+    history.onLoadEarlier();
+  });
+  const historyHasMore = historyControls?.hasMoreHistory === true;
+  const historyLoading = historyControls?.loading === true;
+  const historyError = historyControls?.error ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- short underfilled pages request earlier history until they can scroll or history ends
+  useEffect(() => {
+    if (loadedListKey !== listMountKey) return;
+    if (jumpToMessageId != null) return;
+    if (!historyHasMore || historyLoading || historyError !== null) return;
+    requestEarlierToFillViewport();
+  }, [listMountKey, loadedListKey, historyHasMore, historyLoading, historyError, jumpToMessageId]);
+
   const reflowLayout = () => ({
     rowsTop: FEED_PADDING_TOP + listHeaderSizeRef.current,
     headerInset: anchorTopInset,
@@ -3435,6 +3481,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     }
     setViewportWidth((current) => (Math.abs(current - nextWidth) > 1 ? nextWidth : current));
     setViewportHeight((current) => (Math.abs(current - nextHeight) > 1 ? nextHeight : current));
+    requestEarlierToFillViewport();
   };
 
   const anchoredEndSpace = resolveChatListAnchoredEndSpace(
@@ -3587,6 +3634,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     if (disclosureAnchorKeyRef.current !== null) {
       settleDisclosureAfterLayout();
     }
+    requestEarlierToFillViewport();
   };
 
   const shouldRestoreVisibleContentPosition = (entry: ThreadFeedRow) => {
@@ -3924,6 +3972,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             onLoad={() => {
               loadedListKeyRef.current = listMountKey;
               setLoadedListKey(listMountKey);
+              requestEarlierToFillViewport();
             }}
             // Row positions start below the header; the reflow anchor converts between them.
             onMetricsChange={(metrics) => {
