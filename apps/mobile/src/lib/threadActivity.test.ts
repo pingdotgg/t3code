@@ -853,7 +853,7 @@ describe("buildThreadFeed", () => {
       runId,
       status: "completed" as const,
       startedAt: "2026-06-20T00:00:01.000Z",
-      completedAt: "2026-06-20T00:00:03.000Z",
+      completedAt: "2026-06-20T00:00:03.900Z",
     };
 
     const collapsed = deriveThreadFeedPresentation(feed, latestRun, new Set());

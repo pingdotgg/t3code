@@ -64,7 +64,6 @@ import {
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
 import { claudeResumeCompactionAge } from "@t3tools/shared/claudeCompaction";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { truncate } from "@t3tools/shared/String";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
@@ -78,6 +77,7 @@ import {
   IDLE_COMPACTION_TITLES,
   IDLE_COMPACTING_LABELS,
 } from "@t3tools/client-runtime/user-message";
+import { formatWorkingDuration } from "./time";
 
 export type PendingApproval = ThreadPendingApproval;
 export type PendingUserInput = ThreadPendingUserInput;
@@ -1201,7 +1201,7 @@ function deriveThreadFeedRunFolds(
               lastEntryEnd,
             ) ?? lastEntryEnd,
           );
-    const duration = elapsedMs === null ? null : formatDuration(elapsedMs);
+    const duration = elapsedMs === null ? null : formatWorkingDuration(elapsedMs);
     const interrupted =
       latestRunMatches && (latestRun.status === "interrupted" || latestRun.status === "cancelled");
     const deferredWorkItemIds = group.entries.flatMap((entry) =>
