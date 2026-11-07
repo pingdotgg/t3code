@@ -343,6 +343,7 @@ export const PullRequestListEntry = Schema.Struct({
   baseBranch: TrimmedNonEmptyString,
   state: PullRequestState,
   isDraft: Schema.Boolean,
+  isInMergeQueue: Schema.optional(Schema.Boolean),
   mergeability: PullRequestMergeability,
   /** Zero until fetched through `PullRequestListStatsInput`; GitHub listings omit counts. */
   additions: NonNegativeInt,
@@ -495,6 +496,7 @@ export const PullRequestSummary = Schema.Struct({
   reviewDecision: Schema.optional(Schema.NullOr(PullRequestReviewDecision)),
   checksState: Schema.optional(Schema.NullOr(PullRequestChecksState)),
   mergeability: Schema.optional(PullRequestMergeability),
+  isInMergeQueue: Schema.optional(Schema.Boolean),
   /** Null when the host says the pull request is in no stack; absent when the read did not ask. */
   stack: Schema.optional(Schema.NullOr(PullRequestStackMembership)),
   headSha: Schema.optional(TrimmedNonEmptyString),
@@ -514,6 +516,7 @@ export const PullRequestStack = Schema.Struct({
       number: PositiveInt,
       title: Schema.optional(Schema.String),
       isDraft: Schema.optional(Schema.Boolean),
+      isInMergeQueue: Schema.optional(Schema.Boolean),
       headSha: Schema.optional(TrimmedNonEmptyString),
       headBranch: TrimmedNonEmptyString,
       state: PullRequestState,
@@ -609,6 +612,7 @@ export const PullRequestDetail = Schema.Struct({
   author: Schema.NullOr(PullRequestActor),
   state: PullRequestState,
   isDraft: Schema.Boolean,
+  isInMergeQueue: Schema.optional(Schema.Boolean),
   mergeability: PullRequestMergeability,
   additions: NonNegativeInt,
   deletions: NonNegativeInt,

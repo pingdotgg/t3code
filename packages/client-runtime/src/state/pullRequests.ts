@@ -20,6 +20,7 @@ import {
   type PullRequestDiffInput,
   type PullRequestListEntry,
   type PullRequestRef,
+  type PullRequestMergeability,
   type PullRequestMergeMethod,
   PullRequestOperationError,
   PullRequestSummary,
@@ -412,7 +413,9 @@ export function createPullRequestStackAtomFamily<R, E>(
 
 export function pullRequestDetailToVcsStatus(
   detail: PullRequestDetail | PullRequestSummary,
-): NonNullable<VcsStatusResult["pr"]> {
+): NonNullable<VcsStatusResult["pr"]> & {
+  readonly mergeability?: PullRequestMergeability;
+} {
   return {
     number: detail.number,
     title: detail.title,
@@ -421,7 +424,9 @@ export function pullRequestDetailToVcsStatus(
     headRef: detail.headBranch,
     state: detail.state,
     ...(detail.isDraft === true ? { isDraft: true } : {}),
+    ...(detail.isInMergeQueue === true ? { isInMergeQueue: true } : {}),
     updatedAt: detail.updatedAt,
+    ...(detail.mergeability === undefined ? {} : { mergeability: detail.mergeability }),
   };
 }
 

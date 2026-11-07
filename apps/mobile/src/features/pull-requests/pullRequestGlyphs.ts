@@ -4,6 +4,7 @@ export const PullRequestGlyph = {
   pullRequest: "arrow.triangle.pull",
   draft: "git.pull-request.draft",
   closed: "git.pull-request.closed",
+  queued: "clock",
   merged: "arrow.triangle.merge",
   stack: "square.3.layers.3d",
   conflicting: "exclamationmark.triangle",

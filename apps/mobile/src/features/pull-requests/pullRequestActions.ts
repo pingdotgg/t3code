@@ -13,7 +13,12 @@ import { PullRequestGlyph } from "./pullRequestGlyphs";
 
 type ActionDetail = Pick<
   PullRequestDetail,
-  "state" | "isDraft" | "mergeability" | "autoMergeEnabled" | "workflowApprovalsRequired"
+  | "state"
+  | "isDraft"
+  | "isInMergeQueue"
+  | "mergeability"
+  | "autoMergeEnabled"
+  | "workflowApprovalsRequired"
 > & {
   readonly capabilities: Pick<
     PullRequestDetail["capabilities"],
@@ -107,9 +112,19 @@ export function canPerformPullRequestAction(pr: ActionDetail, action: PullReques
     case "draft":
       return !pr.isDraft;
     case "merge":
-      return !pr.isDraft && pr.mergeability !== "conflicting" && allowedMergeMethods(pr).length > 0;
+      return (
+        !pr.isDraft &&
+        !pr.isInMergeQueue &&
+        pr.mergeability !== "conflicting" &&
+        allowedMergeMethods(pr).length > 0
+      );
     case "enable-auto-merge":
-      return !pr.isDraft && pr.autoMergeEnabled === false && allowedMergeMethods(pr).length > 0;
+      return (
+        !pr.isDraft &&
+        !pr.isInMergeQueue &&
+        pr.autoMergeEnabled === false &&
+        allowedMergeMethods(pr).length > 0
+      );
     case "disable-auto-merge":
       return pr.autoMergeEnabled === true;
     default:
@@ -130,6 +145,7 @@ export function mergeUnavailableReason(
   if (!pr.viewerPermissions.actions.includes("merge"))
     return `Your account cannot merge this ${terminology.singular}.`;
   if (pr.isDraft) return "Mark this draft ready for review before merging.";
+  if (pr.isInMergeQueue) return `This ${terminology.singular} is already in the merge queue.`;
   if (pr.mergeability === "conflicting") return "Resolve the branch conflicts before merging.";
   if (!allowedMergeMethods(pr).length) return "This repository has no available merge methods.";
   return null;

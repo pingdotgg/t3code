@@ -67,6 +67,48 @@ describe("presentThreadLinkedPullRequests", () => {
       ])?.accessibilityLabel,
     ).toBe("#7 merge request open");
   });
+
+  it("marks a conflicting open link and recovers when mergeable again", () => {
+    const conflicting = presentThreadLinkedPullRequests([
+      linkedPr(7, {
+        snapshot: {
+          state: "open",
+          title: "Change 7",
+          headBranch: "change-7",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-09-08T00:00:00.000Z",
+          mergeability: "conflicting",
+        },
+      }),
+    ]);
+    expect(conflicting).toMatchObject({
+      conflicting: true,
+      accessibilityLabel: "#7 pull request has conflicts",
+      textClassName: "text-danger-foreground",
+    });
+
+    const mergeable = presentThreadLinkedPullRequests([
+      linkedPr(7, {
+        snapshot: {
+          state: "open",
+          title: "Change 7",
+          headBranch: "change-7",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-09-08T00:00:00.000Z",
+          mergeability: "mergeable",
+        },
+      }),
+    ]);
+    expect(mergeable).toMatchObject({
+      conflicting: false,
+      accessibilityLabel: "#7 pull request open",
+      textClassName: "text-adaptive-emerald-600-400",
+    });
+  });
 });
 
 describe("resolveThreadPrSource compatibility", () => {
@@ -77,6 +119,41 @@ describe("resolveThreadPrSource compatibility", () => {
     url: "https://github.com/t3tools/t3code/pull/1",
   };
   const branchRef = { ...legacyRef, number: 2, url: "https://github.com/t3tools/t3code/pull/2" };
+
+  it("presents a queued pull request as queued unless it conflicts", () => {
+    const snapshot = {
+      state: "open" as const,
+      title: "Change 7",
+      headBranch: "change-7",
+      baseBranch: "main",
+      isDraft: false,
+      updatedAt: null,
+      syncedAt: "2026-09-08T00:00:00.000Z",
+      isInMergeQueue: true,
+    };
+    expect(presentThreadLinkedPullRequests([linkedPr(7, { snapshot })])).toMatchObject({
+      isInMergeQueue: true,
+      accessibilityLabel: "#7 pull request queued",
+      textClassName: "text-adaptive-amber-700-400",
+    });
+    expect(
+      presentThreadLinkedPullRequests([
+        linkedPr(7, { snapshot: { ...snapshot, mergeability: "conflicting" } }),
+      ]),
+    ).toMatchObject({ isInMergeQueue: false, conflicting: true });
+    expect(
+      presentThreadLinkedPullRequests([
+        linkedPr(1, { snapshot: { ...snapshot, headBranch: "base" } }),
+        linkedPr(2, { snapshot: { ...snapshot, baseBranch: "base" } }),
+      ]),
+    ).toMatchObject({
+      kind: "stack",
+      state: "open",
+      isInMergeQueue: true,
+      accessibilityLabel: "2 pull requests in stack, queued",
+      textClassName: "text-adaptive-amber-700-400",
+    });
+  });
 
   it("polls the stored reference before the server config loads", () => {
     expect(

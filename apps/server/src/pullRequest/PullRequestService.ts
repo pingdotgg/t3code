@@ -1259,6 +1259,9 @@ export const make = Effect.gen(function* () {
       baseBranch: input.item.baseBranch,
       state: input.item.state,
       isDraft: input.item.isDraft,
+      ...(input.item.isInMergeQueue === undefined
+        ? {}
+        : { isInMergeQueue: input.item.isInMergeQueue }),
       mergeability: input.item.mergeability,
       additions: input.item.additions,
       deletions: input.item.deletions,
@@ -1721,6 +1724,9 @@ export const make = Effect.gen(function* () {
     ...(changeRequest.mergeability === undefined
       ? {}
       : { mergeability: changeRequest.mergeability }),
+    ...(changeRequest.isInMergeQueue === undefined
+      ? {}
+      : { isInMergeQueue: changeRequest.isInMergeQueue }),
     ...(changeRequest.stack === undefined ? {} : { stack: changeRequest.stack }),
     ...(changeRequest.headSha?.trim() ? { headSha: changeRequest.headSha.trim() } : {}),
     ...(changeRequest.autoMergeEnabled === undefined
@@ -1819,6 +1825,9 @@ export const make = Effect.gen(function* () {
             author: changeRequest.author,
             state: changeRequest.state,
             isDraft: changeRequest.isDraft,
+            ...(changeRequest.isInMergeQueue === undefined
+              ? {}
+              : { isInMergeQueue: changeRequest.isInMergeQueue }),
             mergeability: changeRequest.mergeability,
             additions: changeRequest.additions,
             deletions: changeRequest.deletions,

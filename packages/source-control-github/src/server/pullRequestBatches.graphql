@@ -10,6 +10,69 @@ query PullRequestSummary($owner: String!, $name: String!, $number: Int!, $stacks
       url
       state
       isDraft
+      isInMergeQueue
+      mergeable
+      reviewDecision
+      additions
+      deletions
+      changedFiles
+      updatedAt
+      mergedAt
+      closedAt
+      headRefName
+      baseRefName
+      author {
+        login
+        avatarUrl
+        ... on User {
+          name
+        }
+      }
+      latestReviews(first: 20) {
+        nodes {
+          state
+          author {
+            login
+          }
+        }
+      }
+      commits(last: 1) {
+        nodes {
+          commit {
+            statusCheckRollup {
+              state
+            }
+          }
+        }
+      }
+      stack @include(if: $stacks) {
+        number
+        size
+        baseRefName
+      }
+      stackEntry @include(if: $stacks) {
+        position
+      }
+    }
+  }
+}
+
+# `PullRequestSummary` without `isInMergeQueue`. GraphQL validates a field before `@include` runs, so
+# only a document that omits it is safe on an Enterprise server that may not know it. `aliased`
+# cannot slice a fragment spread, so the two share no fragment.
+query PullRequestSummaryEnterprise(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $stacks: Boolean!
+) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number
+      title
+      url
+      state
+      isDraft
       mergeable
       reviewDecision
       additions

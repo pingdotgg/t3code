@@ -47,9 +47,11 @@ import type {
 } from "./pullRequestBatches.graphql.ts";
 import {
   PageInfo as ListingPageInfo,
+  PullRequestEnterpriseRow,
   PullRequestList,
-  PullRequestRow,
+  PullRequestListEnterprise,
   PullRequestSearch,
+  PullRequestSearchEnterprise,
 } from "./pullRequestListings.graphql.ts";
 import type { PullRequestActionSummary } from "./pullRequestMutations.graphql.ts";
 import type {
@@ -59,6 +61,7 @@ import type {
   PullRequestCommitStats,
   PullRequestCheckContexts,
   PullRequestCore,
+  PullRequestCoreEnterprise,
   PullRequestFilesViewed,
   PullRequestFileStats,
   PullRequestHeads,
@@ -97,6 +100,7 @@ interface ListItemFields {
   readonly baseRefName: string;
   readonly state?: string | null | undefined;
   readonly isDraft?: boolean | undefined;
+  readonly isInMergeQueue?: boolean | undefined;
   readonly mergeable?: string | null | undefined;
   readonly reviewDecision?: string | null | undefined;
   readonly additions?: number | undefined;
@@ -339,6 +343,7 @@ export interface GitHubPullRequestListItem {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly isInMergeQueue?: boolean;
   readonly mergeability: PullRequestMergeability;
   readonly reviewDecision: PullRequestReviewDecision | null;
   readonly additions: number;
@@ -739,6 +744,7 @@ function toListItem(raw: ListItemFields): GitHubPullRequestListItem {
     baseBranch: raw.baseRefName,
     state: toState(raw),
     isDraft: raw.isDraft ?? false,
+    ...(raw.isInMergeQueue === undefined ? {} : { isInMergeQueue: raw.isInMergeQueue }),
     mergeability: toMergeability(raw.mergeable),
     reviewDecision: toReviewDecisionWithReviews(raw.reviewDecision, raw.latestReviews),
     additions: raw.additions ?? 0,
@@ -789,7 +795,12 @@ function toDetail(raw: DetailFields): GitHubPullRequestDetail {
 const decodeUnknownList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeWorkflowRuns = decodeJsonResult(RawWorkflowRunsSchema);
 const decodeFileEntry = Schema.decodeUnknownExit(RawPullRequestFileSchema);
-const decodeRow = Schema.decodeUnknownExit(PullRequestRow);
+const decodeRow = Schema.decodeUnknownExit(
+  Schema.Struct({
+    ...PullRequestEnterpriseRow.fields,
+    isInMergeQueue: Schema.optional(Schema.Boolean),
+  }),
+);
 
 /** Decode rows individually so one invalid node cannot blank the entire listing. */
 const LenientRows = Schema.Struct({
@@ -803,9 +814,23 @@ export const LenientPullRequestSearch = GraphQL.query(PullRequestSearch.name, {
   result: Schema.Struct({ search: LenientRows }),
 });
 
+export const LenientPullRequestSearchEnterprise = GraphQL.query(PullRequestSearchEnterprise.name, {
+  document: PullRequestSearchEnterprise.document,
+  variables: PullRequestSearchEnterprise.variables,
+  result: Schema.Struct({ search: LenientRows }),
+});
+
 export const LenientPullRequestList = GraphQL.query(PullRequestList.name, {
   document: PullRequestList.document,
   variables: PullRequestList.variables,
+  result: Schema.Struct({
+    repository: Schema.NullOr(Schema.Struct({ pullRequests: LenientRows })),
+  }),
+});
+
+export const LenientPullRequestListEnterprise = GraphQL.query(PullRequestListEnterprise.name, {
+  document: PullRequestListEnterprise.document,
+  variables: PullRequestListEnterprise.variables,
   result: Schema.Struct({
     repository: Schema.NullOr(Schema.Struct({ pullRequests: LenientRows })),
   }),
@@ -936,11 +961,14 @@ export interface GitHubPullRequestSummary {
   readonly reviewDecision: PullRequestReviewDecision | null;
   readonly checksState: PullRequestChecksState | null;
   readonly mergeability: PullRequestMergeability;
+  readonly isInMergeQueue?: boolean;
   /** Null means no stack; absent means not requested. */
   readonly stack?: PullRequestStackMembership | null;
 }
 
-export function toPullRequestSummary(pr: SummarizedPullRequest): GitHubPullRequestSummary {
+export function toPullRequestSummary(
+  pr: Omit<SummarizedPullRequest, "isInMergeQueue"> & { readonly isInMergeQueue?: boolean },
+): GitHubPullRequestSummary {
   return {
     number: pr.number,
     title: pr.title,
@@ -959,6 +987,7 @@ export function toPullRequestSummary(pr: SummarizedPullRequest): GitHubPullReque
     reviewDecision: toReviewDecisionWithReviews(pr.reviewDecision, nodesOf(pr.latestReviews)),
     checksState: rollupChecksState(rollupStates(pr.commits)),
     mergeability: toMergeability(pr.mergeable),
+    ...(pr.isInMergeQueue === undefined ? {} : { isInMergeQueue: pr.isInMergeQueue }),
     ...(pr.stack === undefined ? {} : { stack: toStackMembership(pr) ?? null }),
   };
 }
@@ -1022,7 +1051,9 @@ type CoreRequestedReviewer = NonNullable<
   >["nodes"]
 >[number];
 
-export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullRequestCore | null {
+export function toPullRequestCore(
+  result: PullRequestCore.Result | PullRequestCoreEnterprise.Result,
+): GitHubPullRequestCore | null {
   const repository = result.repository;
   const pr = repository?.pullRequest;
   if (repository == null || pr == null) return null;
@@ -1859,6 +1890,7 @@ const decodeStacks = decodeJsonResult(Schema.Array(RawStackSchema));
 export interface GitHubPullRequestStackLayer {
   readonly title?: string;
   readonly isDraft?: boolean;
+  readonly isInMergeQueue?: boolean;
   readonly headSha?: string;
   readonly number: number;
   readonly headBranch: string;

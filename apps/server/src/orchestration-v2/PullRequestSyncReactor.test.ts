@@ -810,6 +810,49 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
+  it.effect(
+    "writes a pull request entering the merge queue, but not an absent flag read as false",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const answers = yield* Ref.make<ReadonlyArray<boolean | undefined>>([
+            undefined,
+            false,
+            true,
+          ]);
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(42)] })]),
+            summary: (input) =>
+              Ref.modify(answers, ([next, ...rest]) => [
+                makeSummary(input, {
+                  updatedAt: NOW,
+                  ...(next === undefined ? {} : { isInMergeQueue: next }),
+                }),
+                rest,
+              ]),
+          });
+
+          yield* Effect.gen(function* () {
+            const reactor = yield* startAndSweep(fixture);
+            const firstSweep = yield* Ref.get(fixture.syncCommands);
+            assert.strictEqual(firstSweep.length, 1);
+            yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, firstSweep));
+
+            yield* sweepAgain(fixture, reactor);
+            assert.strictEqual((yield* Ref.get(fixture.syncCommands)).length, 1);
+
+            yield* sweepAgain(fixture, reactor);
+            const commands = yield* Ref.get(fixture.syncCommands);
+            assert.deepStrictEqual(
+              commands.map((command) => command.snapshot.isInMergeQueue),
+              [undefined, true],
+            );
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+  );
+
   it.effect("keeps the known mergeability while the host recomputes it", () =>
     Effect.scoped(
       Effect.gen(function* () {
