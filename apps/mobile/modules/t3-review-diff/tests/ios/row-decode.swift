@@ -252,7 +252,7 @@ private extension T3ReviewDiffView {
       check(acknowledgements == [true, true], "Every additive token patch must be acknowledged")
       check(Set(view.contentView.tokensByRowId.keys) == Set(["one", "two"]), "Token patches must never coalesce")
       print("Passed additive token patches and acknowledgements; all 12 row/payload lifecycle cases passed")
-      exit(0)
+      T3ReviewDiffView.runQueuedTokenDecodeCase(0)
     }
   }
 }

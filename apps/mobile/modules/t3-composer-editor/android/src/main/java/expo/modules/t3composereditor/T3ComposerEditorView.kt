@@ -23,12 +23,14 @@ import android.view.Gravity
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.KeyEvent
+import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
+import com.facebook.react.common.assets.ReactFontManager
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
@@ -275,8 +277,9 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     editor.typeface = if (fontFamily.contains("Mono", ignoreCase = true)) {
       Typeface.MONOSPACE
     } else {
-      Typeface.DEFAULT
+      ReactFontManager.getInstance().getTypeface(fontFamily, Typeface.NORMAL, context.assets)
     }
+    applyLineHeight()
     editor.applyPlaceholder()
   }
 
@@ -595,6 +598,9 @@ internal class SelectionAwareEditText(
   var textPasteThresholdBytes = 0
   var maxInputChars = Int.MAX_VALUE
   var clipboardFragment = ""
+
+  // Keeps autofill services such as SMS verification codes from writing into the draft.
+  override fun getAutofillType(): Int = View.AUTOFILL_TYPE_NONE
 
   /**
    * Editable TextView hints do not ellipsize, so long placeholders wrap and grow the composer.

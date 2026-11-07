@@ -40,6 +40,7 @@ const settings = Schema.decodeSync(ServerSettings)({
       agentToken: personal("op://simlock"),
     },
   ],
+  cloudSpeechCredentials: { openai: personal("op://voice"), xai: "" },
 });
 
 it.each([
@@ -52,6 +53,7 @@ it.each([
       "https://hub.test · Management Key",
       "EAS Simulator · Access Token",
       "Simlock Pool · Agent Token",
+      "Voice · OpenAI",
     ],
   ],
   ["work", ["Antigravity Work · OTHER_TOKEN", "GitHub · ghe.acme.test"]],
