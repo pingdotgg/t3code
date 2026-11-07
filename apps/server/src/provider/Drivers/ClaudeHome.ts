@@ -49,6 +49,7 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
 // that session: its session id, messaging socket and token, and effort.
 const CLAUDE_HOST_SESSION_VARIABLES = [
   "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
   "CLAUDE_CODE_SESSION_ID",
   "CLAUDE_CODE_HOST_SESSION_ID",
   "CLAUDE_CODE_CHILD_SESSION",
@@ -71,20 +72,19 @@ export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnviro
   instanceEnvironment: ProviderInstanceEnvironment | undefined,
   hostEnvironment: NodeJS.ProcessEnv,
 ) {
-  const baseEnvironment: NodeJS.ProcessEnv = {
-    ...hostEnvironment,
-    CLAUDE_CODE_ENTRYPOINT: "t3-code",
-  };
+  const baseEnvironment: NodeJS.ProcessEnv = { ...hostEnvironment };
   for (const name of CLAUDE_HOST_SESSION_VARIABLES) delete baseEnvironment[name];
   // The desktop runs the server as Node through Electron. Commands Claude runs inherit its env, so
   // an Electron app they start (T3 Code itself, VS Code) would run as Node and exit.
   delete baseEnvironment.ELECTRON_RUN_AS_NODE;
   const environment = yield* mergeProviderInstanceEnvironment(instanceEnvironment, baseEnvironment);
-  const settingsEntrypoint = (yield* readClaudeSettingsEnv(config, undefined, environment))
-    .CLAUDE_CODE_ENTRYPOINT;
-  return settingsEntrypoint
-    ? { ...environment, CLAUDE_CODE_ENTRYPOINT: settingsEntrypoint }
-    : environment;
+  const settingsEnv = yield* readClaudeSettingsEnv(config, undefined, environment);
+  const entrypoint =
+    settingsEnv.CLAUDE_CODE_ENTRYPOINT ||
+    environment.CLAUDE_CODE_ENTRYPOINT ||
+    // Subscriber API credits do not cover an unrecognized entrypoint, so API keys keep Claude's own.
+    (environment.ANTHROPIC_API_KEY || settingsEnv.ANTHROPIC_API_KEY ? undefined : "t3-code");
+  return entrypoint ? { ...environment, CLAUDE_CODE_ENTRYPOINT: entrypoint } : environment;
 });
 
 /** managed-mcp.json excludes other MCP config and forbids --strict-mcp-config; omit the flag when present. */

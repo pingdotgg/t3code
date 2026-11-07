@@ -100,4 +100,33 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         ).toBe("custom");
       }),
   );
+
+  it.effect("leaves the entrypoint unset for API-key processes so Anthropic bills them", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
+      const host = { CLAUDE_CODE_ENTRYPOINT: "claude-desktop", KEEP: "1" };
+      const apiKey = [{ name: "ANTHROPIC_API_KEY", value: "sk-ant-test", sensitive: true }];
+
+      expect(yield* mergeClaudeProcessEnvironment({ homePath }, apiKey, host)).toEqual({
+        ANTHROPIC_API_KEY: "sk-ant-test",
+        KEEP: "1",
+      });
+      expect(
+        yield* mergeClaudeProcessEnvironment({ homePath }, undefined, {
+          ...host,
+          ANTHROPIC_API_KEY: "sk-ant-host",
+        }),
+      ).toEqual({ ANTHROPIC_API_KEY: "sk-ant-host", KEEP: "1" });
+
+      yield* fileSystem.writeFileString(
+        path.join(homePath, "settings.json"),
+        JSON.stringify({ env: { ANTHROPIC_API_KEY: "sk-ant-settings" } }),
+      );
+      expect(yield* mergeClaudeProcessEnvironment({ homePath }, undefined, host)).toEqual({
+        KEEP: "1",
+      });
+    }),
+  );
 });
