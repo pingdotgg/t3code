@@ -133,6 +133,21 @@ it.effect("lists the fetch and push URLs of a partial clone remote", () =>
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("refuses to initialize a repository in a folder that does not exist", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-init-missing-" });
+    const cwd = path.join(parent, "removed-worktree");
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+
+    const error = yield* driver.initRepository({ cwd }).pipe(Effect.flip);
+
+    assert.match(error.message, /does not exist/i);
+    assert.isFalse(yield* fileSystem.exists(cwd));
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 const makeCheckpointFixture = Effect.fn("makeCheckpointFixture")(function* (
   driver: Effect.Success<ReturnType<typeof GitVcsDriver.makeVcsDriverShape>>,
   cwd: string,

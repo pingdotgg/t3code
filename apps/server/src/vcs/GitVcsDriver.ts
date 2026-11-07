@@ -13,6 +13,7 @@ import { ChildProcessSpawner } from "effect/process";
 import {
   GitCommandError,
   VcsProcessExitError,
+  VcsRepositoryDetectionError,
   VcsUnsupportedOperationError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
@@ -782,11 +783,33 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     return relativePaths.filter((relativePath) => !ignoredPaths.has(relativePath));
   });
 
-  const initRepository: VcsDriver.VcsDriver["Service"]["initRepository"] = (input) =>
-    gitCommand(vcsProcess, "GitVcsDriver.initRepository", input.cwd, ["init"], {
+  const initRepository: VcsDriver.VcsDriver["Service"]["initRepository"] = Effect.fn(
+    "GitVcsDriver.initRepository",
+  )(function* (input) {
+    // A deleted folder reports as a non-repository; say so instead of git's bare exit 128.
+    const exists = yield* fileSystem.exists(input.cwd).pipe(
+      Effect.mapError(
+        (cause) =>
+          new VcsRepositoryDetectionError({
+            operation: "GitVcsDriver.initRepository",
+            cwd: input.cwd,
+            detail: "Could not check that the folder exists.",
+            cause,
+          }),
+      ),
+    );
+    if (!exists) {
+      return yield* new VcsRepositoryDetectionError({
+        operation: "GitVcsDriver.initRepository",
+        cwd: input.cwd,
+        detail: "The folder does not exist.",
+      });
+    }
+    yield* gitCommand(vcsProcess, "GitVcsDriver.initRepository", input.cwd, ["init"], {
       timeoutMs: 10_000,
       maxOutputBytes: 64 * 1024,
-    }).pipe(Effect.asVoid);
+    });
+  });
 
   const resolveHeadCommit = (cwd: string) =>
     execute({
