@@ -123,6 +123,36 @@ describe("GhosttyTerminalCore snapshots", () => {
   });
 
   it.each([
+    { platform: "Win32", key: "ArrowLeft", prompt: "\x1bb", application: "\x1b[1;3D" },
+    { platform: "Win32", key: "ArrowRight", prompt: "\x1bf", application: "\x1b[1;3C" },
+    { platform: "MacIntel", key: "ArrowLeft", prompt: "\x1bb", application: "\x1b[1;3D" },
+    { platform: "MacIntel", key: "ArrowRight", prompt: "\x1bf", application: "\x1b[1;3C" },
+  ])(
+    "leaves Alt+$key to alternate-screen apps on $platform but moves by word at a prompt",
+    async ({ platform, key, prompt, application }) => {
+      const core = await createCore();
+      const event = {
+        code: key,
+        key,
+        repeat: false,
+        shiftKey: false,
+        ctrlKey: false,
+        altKey: true,
+        metaKey: false,
+        isComposing: false,
+        getModifierState: () => false,
+      } as unknown as KeyboardEvent;
+      const send = () =>
+        terminalNavigationShortcutData(event, platform, core.isAlternateScreen()) ??
+        core.encodeKey(event);
+
+      expect(send()).toBe(prompt);
+      core.write("\x1b[?1049h");
+      expect(send()).toBe(application);
+    },
+  );
+
+  it.each([
     { code: "", key: "Backspace", expected: "\x7f" },
     { code: "Unidentified", key: "Backspace", expected: "\x7f" },
     { code: "Backspace", key: "Backspace", expected: "\x7f" },
