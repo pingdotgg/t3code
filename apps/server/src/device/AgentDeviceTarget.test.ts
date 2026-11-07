@@ -207,7 +207,7 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
           path.join(path.dirname(command), "agent-device-launcher.mjs"),
           ...args,
         ]).then((result) => JSON.parse(result.stdout));
-      // agent-device 0.21.31 rejects these flags with "unknown option" or "not supported for command".
+      // agent-device 0.21.33 rejects these flags with "unknown option" or "not supported for command".
       const cdp = ["cdp", "target", "list", "--url", "http://127.0.0.1:8081"];
       expect(yield* Effect.promise(() => launch(cdp))).toEqual(cdp);
       expect(yield* Effect.promise(() => launch(["connection"]))).toEqual([
