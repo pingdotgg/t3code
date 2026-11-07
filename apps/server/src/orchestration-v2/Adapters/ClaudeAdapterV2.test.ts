@@ -2628,6 +2628,147 @@ describe("ClaudeAdapterV2 native fork", () => {
       ),
     ),
   );
+
+  // The forked transcript keeps the parent's /goal, so its Stop hook would block side-chat turns.
+  it.effect("clears an inherited goal on a side chat fork before its first turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-v2-side-chat-goal-",
+        });
+        const prompts: Array<{ readonly session: string | undefined; readonly text: string }> = [];
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path: yield* Path.Path,
+          random: yield* SecureRandom.SecureRandom,
+          idAllocator,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("source-native-session"),
+            open: (input) =>
+              Effect.gen(function* () {
+                const session = input.options.resume ?? input.options.sessionId;
+                const messages = yield* Queue.unbounded<SDKMessage>();
+                return {
+                  messages: Stream.fromQueue(messages),
+                  offer: (message: SDKUserMessage) =>
+                    Effect.gen(function* () {
+                      const content = message.message.content;
+                      const text =
+                        typeof content === "string"
+                          ? content
+                          : content
+                              .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                              .join("");
+                      prompts.push({ session, text });
+                      if (!text.startsWith("/goal clear")) return;
+                      // Claude Code answers /goal clear locally, without a model turn.
+                      yield* Queue.offer(messages, {
+                        type: "result",
+                        subtype: "success",
+                        duration_ms: 1,
+                        duration_api_ms: 0,
+                        is_error: false,
+                        num_turns: 0,
+                        result: "Goal cleared: The user has sent a later chat message",
+                        stop_reason: null,
+                        total_cost_usd: 0,
+                        usage: {
+                          input_tokens: 0,
+                          output_tokens: 0,
+                          cache_creation_input_tokens: 0,
+                          cache_read_input_tokens: 0,
+                        },
+                        modelUsage: {},
+                        permission_denials: [],
+                        uuid: "00000000-0000-4000-8000-000000032439",
+                        session_id: session ?? "",
+                      } as unknown as SDKMessage);
+                    }),
+                  setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.succeed([]),
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Queue.shutdown(messages),
+                };
+              }),
+            forkSession: () => Effect.succeed({ sessionId: "side-chat-native-session" }),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const modelSelection = {
+          instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
+          model: "claude-sonnet-4-6",
+        };
+        const sourceThreadId = ThreadId.make("thread-claude-goal-source");
+        const sideChatThreadId = ThreadId.make("thread-claude-goal-side-chat");
+        const runtime = yield* adapter.openSession({
+          threadId: sourceThreadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-goal-fork"),
+          modelSelection,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const sourceProviderThread = {
+          ...(yield* runtime.ensureThread({
+            threadId: sourceThreadId,
+            modelSelection,
+            runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+          })),
+          goal: {
+            objective: "The user has sent a later chat message containing the word banana",
+            status: "complete",
+            checks: 9,
+          },
+        } satisfies OrchestrationV2ProviderThread;
+
+        const sideChat = yield* runtime.forkThread({
+          sourceProviderThread,
+          targetThreadId: sideChatThreadId,
+          sideChat: true,
+        });
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: sideChatThreadId,
+            providerThread: sideChat,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("side-chat-goal-attempt"),
+            text: "do we support feature X? Check README.md.",
+            attachments: [],
+            modelSelection,
+          }),
+        );
+
+        assert.deepEqual(prompts, [
+          { session: "side-chat-native-session", text: "/goal clear" },
+          {
+            session: "side-chat-native-session",
+            text: "do we support feature X? Check README.md.",
+          },
+        ]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
 });
 
 function makeFakeClaudeCli(answerSetServers = true) {
