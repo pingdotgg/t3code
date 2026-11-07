@@ -151,7 +151,7 @@ function AvailableSecretDelivery(props: {
             type="button"
             size="sm"
             variant="outline"
-            disabled={!canRetrieve || busy}
+            disabled={state.value === null && (!canRetrieve || busy)}
             onClick={() => (state.value === null ? void reveal.reveal() : reveal.hide())}
           >
             {state.value === null ? "Reveal" : "Hide"}
