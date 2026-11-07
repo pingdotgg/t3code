@@ -2,11 +2,10 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { View } from "react-native";
 
 import { EmptyState } from "../../components/ui/EmptyState";
-import { environmentCatalog } from "../../connection/catalog";
 import type { AssetUrlFailureReason } from "../../state/asset-url-state";
-import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
+import { useRetryEnvironment } from "../connection/useRetryEnvironment";
 
 export function WorkspaceFilePreviewError(props: {
   readonly environmentId: EnvironmentId | null;
@@ -15,7 +14,7 @@ export function WorkspaceFilePreviewError(props: {
 }) {
   const { environmentId, onRetry } = props;
   const environment = useEnvironmentPresentation(environmentId);
-  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
+  const retryEnvironment = useRetryEnvironment();
   const retryConnection = () => {
     if (environmentId !== null) void retryEnvironment(environmentId);
     onRetry();
