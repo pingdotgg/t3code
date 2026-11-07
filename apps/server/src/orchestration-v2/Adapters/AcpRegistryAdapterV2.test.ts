@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -65,7 +66,9 @@ const decodeAcpRegistryAdapterSettings = Schema.decodeUnknownEffect(
   AcpRegistryAdapterV2Driver.configSchema,
 );
 
-const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
+const layerHost = TestProviderHost.layer().pipe(
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
 
 const layerRegistry = Layer.succeed(
   HttpClient.HttpClient,
@@ -109,6 +112,7 @@ const layerInjectedRuntimeCatalog = Layer.mock(AcpRegistrySupport.AcpRegistryCat
 
 const layerTest = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   IdAllocator.layer,
   McpProviderSessions.layer,
   layerHost,
@@ -1244,6 +1248,85 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("the agent process env names the thread it serves", () =>
+    Effect.gen(function* () {
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* (yield* Path.Path).fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const endpoint = "http://127.0.0.1:43123/mcp";
+      const instanceId = ProviderInstanceId.make("acp-registry-thread-env");
+      const threadId = ThreadId.make("thread-acp-registry-thread-env");
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("environment-acp-registry-thread-env"),
+        threadId,
+        providerSessionId: "mcp-session-acp-registry-thread-env",
+        providerInstanceId: instanceId,
+        endpoint,
+        authorizationHeader: "Bearer thread-env-token",
+        browserToolsAvailable: false,
+      });
+      // Several agents can run from one directory at once; the spawn env is how
+      // a process the agent starts (an MCP server, a shell tool) finds its own
+      // T3 thread, the same way Claude and Codex sessions do.
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawnEnvironments: Array<Record<string, unknown> | undefined> = [];
+      const capturingSpawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          if (command._tag === "StandardCommand") spawnEnvironments.push(command.options.env);
+        }).pipe(Effect.andThen(spawner.spawn(command))),
+      );
+      const withCapturedSpawns = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, capturingSpawner),
+        );
+      const adapter = yield* withCapturedSpawns(
+        makeAcpRegistryAdapterV2({
+          selfInvocation,
+          instanceId,
+          settings: yield* decodeAcpRegistryAdapterSettings({ agentId: "claude-acp" }),
+          environment: {},
+        }).pipe(
+          Effect.provide(
+            Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
+              resolve: () =>
+                Effect.succeed({
+                  distribution: "local" as const,
+                  spawn: {
+                    command: process.execPath,
+                    args: [mockAgentPath],
+                    env: { T3_ACP_SESSION_LIFECYCLE: "1" },
+                  },
+                }),
+            }),
+          ),
+        ),
+      );
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* withCapturedSpawns(
+        adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-registry-thread-env"),
+          modelSelection,
+          runtimePolicy,
+        }),
+      );
+      yield* withCapturedSpawns(runtime.ensureThread({ threadId, modelSelection, runtimePolicy }));
+      const agentEnvironment = spawnEnvironments.find(
+        (environment) => environment?.T3_ACP_SESSION_LIFECYCLE === "1",
+      );
+      assert.isDefined(agentEnvironment, "the agent itself must have been spawned");
+      assert.equal(agentEnvironment?.T3CODE_THREAD_ID, "thread-acp-registry-thread-env");
+      assert.equal(agentEnvironment?.T3_ACP_MCP_ENDPOINT, endpoint);
+      assert.equal(agentEnvironment?.T3_ACP_MCP_AUTHORIZATION, "Bearer thread-env-token");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect.each(["before", "after"] as const)(
     "reconciles a full prompt echo %s acknowledgment",
     (ordering) =>
@@ -1477,7 +1560,6 @@ describe("AcpRegistryAdapterV2", () => {
         [
           { usedTokens: 2_500, maxTokens: 10_000, cost: { amount: 0.42, currency: "USD" } },
           { usedTokens: 2_500, maxTokens: 10_000, cost: { amount: 0.42, currency: "USD" } },
-          { usedTokens: 3_000 },
         ],
       );
       assert.deepEqual(childThreads.at(-1)?.nativeMetadata, {
@@ -2168,6 +2250,175 @@ describe("AcpRegistryAdapterV2", () => {
       assert.equal(queuedTerminal.status, "interrupted");
       assert.isNull(queuedTerminal.failure);
       assert.isFalse(yield* queued.runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.each([
+    {
+      failure: "a lost session",
+      error: {
+        code: -32603,
+        message: "Internal error",
+        data: {
+          details:
+            "Request session.send failed with message: session event delivery failed: session not found: copilot-session",
+        },
+      },
+      restarts: true,
+    },
+    {
+      failure: "a lost session reported in the message",
+      error: {
+        code: -32603,
+        message:
+          "Request session.send failed with message: session event delivery failed: session not found: copilot-session",
+      },
+      restarts: true,
+    },
+    {
+      failure: "a session-lock timeout",
+      error: {
+        code: -32603,
+        message: "Internal error",
+        data: {
+          details:
+            "session lock unavailable during is_session_generation_current: acquisition timed out",
+        },
+      },
+      restarts: true,
+    },
+    {
+      failure: "a session-lock timeout reported in the message",
+      error: {
+        code: -32603,
+        message:
+          "Request session.send failed with message: session lock unavailable during is_session_generation_current: acquisition timed out",
+      },
+      restarts: true,
+    },
+    {
+      failure: "an unrelated internal error",
+      error: {
+        code: -32603,
+        message: "Request session.send failed with message: Session directory no longer exists",
+      },
+      restarts: false,
+    },
+  ] as const)("runs Copilot's next message after $failure", ({ error, restarts }) =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const replayDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-copilot-lost-" });
+      const scriptPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+      );
+      const request = (method: string, params: unknown = "<any>") => ({
+        type: "expect_outbound",
+        frame: { kind: "request", method, params },
+      });
+      const respond = (method: string, response: object) => ({
+        type: "emit_inbound",
+        frame: { kind: "response", method, ...response },
+      });
+      const start = (sessionId: string) => [
+        request("initialize"),
+        respond("initialize", {
+          result: { protocolVersion: 1, agentCapabilities: { loadSession: true } },
+        }),
+        request("session/new"),
+        respond("session/new", { result: { sessionId } }),
+      ];
+      const failedPrompt = [
+        ...start("copilot-session"),
+        request("session/prompt"),
+        respond("session/prompt", { error }),
+      ];
+      const completedPrompt = [
+        request("session/prompt"),
+        respond("session/prompt", { result: { stopReason: "end_turn" } }),
+      ];
+      const processes = restarts
+        ? [
+            failedPrompt,
+            [
+              ...start("replacement-session"),
+              request("session/load", {
+                sessionId: "copilot-session",
+                cwd: "<workspace>",
+                mcpServers: "<any>",
+              }),
+              respond("session/load", { result: {} }),
+              ...completedPrompt,
+            ],
+          ]
+        : [[...failedPrompt, ...completedPrompt]];
+      let spawned = 0;
+      const instanceId = ProviderInstanceId.make("copilot-lost-session");
+      const adapter = yield* makeAcpRegistryAdapterV2({
+        selfInvocation: yield* resolveSelfInvocation(),
+        instanceId,
+        settings: yield* decodeAcpRegistryAdapterSettings({ agentId: "github-copilot-cli" }),
+        environment: {},
+        makeRuntime: (runtimeInput) =>
+          Effect.gen(function* () {
+            const index = spawned++;
+            const transcript = yield* decodeAcpReplayTranscript(
+              {
+                provider: ACP_REGISTRY_PROVIDER,
+                protocol: "acp.ndjson-jsonrpc",
+                version: "1",
+                scenario: `copilot-lost-session-${index}`,
+                entries: processes[index] as never,
+              },
+              ACP_REGISTRY_PROVIDER,
+            ).pipe(Effect.orDie);
+            return yield* makeAcpReplayRuntime({
+              transcript,
+              statusPath: path.join(replayDir, `status-${index}.json`),
+              scriptPath,
+              childProcessSpawner,
+              fileSystem,
+            })(runtimeInput);
+          }),
+      }).pipe(Effect.provide(layerInjectedRuntimeCatalog));
+      const threadId = ThreadId.make("thread-copilot-lost-session");
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: replayDir,
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("session-copilot-lost-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const runTurn = (ordinal: number) =>
+        runtime
+          .startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal }),
+          )
+          .pipe(
+            Effect.andThen(
+              runtime.events.pipe(
+                Stream.filter((event) => event.type === "turn.terminal"),
+                Stream.take(1),
+                Stream.runCollect,
+              ),
+            ),
+            Effect.map(([terminal]) => terminal?.status),
+          );
+      assert.equal(yield* runTurn(1), "failed");
+      assert.equal(yield* runTurn(2), "completed");
+      assert.equal(spawned, restarts ? 2 : 1);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 });

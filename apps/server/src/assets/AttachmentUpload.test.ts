@@ -1,8 +1,10 @@
+import * as AssetSigner from "./AssetSigner.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ChatAttachmentId } from "@t3tools/contracts";
@@ -16,7 +18,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { base64UrlEncode, signPayload } from "../auth/utils.ts";
+import { base64UrlEncode } from "../auth/utils.ts";
 import * as ServerConfig from "../config.ts";
 import {
   claimPendingAttachments,
@@ -30,9 +32,14 @@ import {
   validateAttachmentUploadToken,
 } from "./AttachmentUpload.ts";
 
-const layerTest = ServerSecretStore.layer.pipe(
+const layerTest = AssetSigner.layer.pipe(
+  Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-attachment-upload-" })),
-  Layer.provideMerge(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+  Layer.provideMerge(
+    DocumentText.layer.pipe(
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
+  ),
 );
 
 const uploadInput = {
@@ -147,8 +154,7 @@ describe("AttachmentUpload", () => {
   it.effect("accepts unexpired image upload tokens issued before file support", () =>
     Effect.gen(function* () {
       const issued = yield* issueAttachmentUploadUrl(uploadInput);
-      const secretStore = yield* ServerSecretStore.ServerSecretStore;
-      const secret = yield* secretStore.getOrCreateRandom("asset-access-signing-key", 32);
+      const signer = yield* AssetSigner.AssetSigner;
       const encodedPayload = base64UrlEncode(
         yield* encodeLegacyAttachmentUploadClaims({
           version: 1,
@@ -160,7 +166,7 @@ describe("AttachmentUpload", () => {
           expiresAt: issued.expiresAt,
         }),
       );
-      const legacyToken = `${encodedPayload}.${signPayload(encodedPayload, secret)}`;
+      const legacyToken = `${encodedPayload}.${yield* signer.sign(encodedPayload)}`;
 
       expect(yield* validateAttachmentUploadToken(legacyToken)).toMatchObject({
         type: "image",
