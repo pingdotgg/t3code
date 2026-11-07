@@ -7,7 +7,9 @@ import {
   type ThreadTurnTokenUsageSummary,
 } from "@t3tools/client-runtime/state/thread-turn-token-usage";
 import type {
+  ProviderContextUsage,
   ScopedThreadRef,
+  ThreadId,
   UsageCostSource,
   UsagePriceItemInput,
   UsagePriceItemResult,
@@ -27,7 +29,7 @@ import {
   type TimingSpanKind,
 } from "@t3tools/shared/threadTimingTrace";
 import { formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
-import { ChartNoAxesGantt, Focus, Minus, Plus, Scan } from "lucide-react";
+import { ChartNoAxesGantt, Focus, Minus, Plus, RefreshCw, Scan } from "lucide-react";
 import {
   useId,
   useRef,
@@ -43,10 +45,29 @@ import { cn } from "~/lib/utils";
 import { useQuietThreadProjection } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
+import { threadEnvironment } from "~/state/threads";
+import { ContextUsageBreakdown, type ContextUsageBreakdownState } from "./ContextUsageBreakdown";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import { tokenTypeSegments } from "./usage/usageBreakdown";
 import { UsageShareBar, type ShareSegment } from "./usage/UsageShareBar";
+
+function activeClaudeThreadId(
+  projection: {
+    readonly thread: { readonly activeProviderThreadId: string | null; readonly id: ThreadId };
+    readonly providerThreads: ReadonlyArray<{
+      readonly id: string;
+      readonly driver: string;
+    }>;
+  } | null,
+): ThreadId | null {
+  if (projection === null) return null;
+  const active =
+    projection.providerThreads.find(
+      (thread) => thread.id === projection.thread.activeProviderThreadId,
+    ) ?? projection.providerThreads.at(-1);
+  return active?.driver === "claudeAgent" ? projection.thread.id : null;
+}
 
 const SPAN_BAR_CLASS: Record<TimingSpanKind, string> = {
   queue: "bg-muted-foreground/45",
@@ -202,6 +223,16 @@ export function InsightsPanel({
   const pricingPending = priceItems.length > 0 && priced.isPending && priced.data === null;
   const pricingError =
     priceItems.length > 0 && priced.error !== null && priced.data === null ? priced.error : null;
+  const claudeThreadId = activeClaudeThreadId(projection?.projection ?? null);
+  const contextUsageQuery = useEnvironmentQuery(
+    !visible || claudeThreadId === null
+      ? null
+      : threadEnvironment.contextUsage({
+          environmentId: threadRef.environmentId,
+          input: { threadId: claudeThreadId },
+        }),
+  );
+  const contextUsageState = contextUsageBreakdownState(contextUsageQuery);
   const costLabel = formatCostEstimate(threadCost);
   const headerBits = [
     trace !== null ? formatDuration(trace.totalMs) : null,
@@ -250,6 +281,13 @@ export function InsightsPanel({
             selectedRunId={null}
             onSelect={() => undefined}
           />
+          {claudeThreadId !== null ? (
+            <ContextCompositionSection
+              state={contextUsageState}
+              onRefresh={contextUsageQuery.refresh}
+              refreshing={contextUsageQuery.isPending && contextUsageQuery.data !== null}
+            />
+          ) : null}
           <p className="text-2xs text-muted-foreground">
             Timing appears after the first turn starts. Token totals update as the provider reports
             them.
@@ -265,9 +303,60 @@ export function InsightsPanel({
           threadCost={threadCost}
           pricingPending={pricingPending}
           pricingError={pricingError}
+          contextUsage={
+            claudeThreadId === null
+              ? null
+              : {
+                  state: contextUsageState,
+                  onRefresh: contextUsageQuery.refresh,
+                  refreshing: contextUsageQuery.isPending && contextUsageQuery.data !== null,
+                }
+          }
         />
       )}
     </div>
+  );
+}
+
+function contextUsageBreakdownState(query: {
+  readonly data: ProviderContextUsage | null;
+  readonly error: string | null;
+  readonly isPending: boolean;
+}): ContextUsageBreakdownState {
+  if (query.data !== null) return { status: "ready", usage: query.data };
+  if (query.isPending) return { status: "loading" };
+  return {
+    status: "error",
+    message: query.error ?? "Context breakdown is unavailable right now.",
+  };
+}
+
+function ContextCompositionSection({
+  state,
+  onRefresh,
+  refreshing,
+}: {
+  readonly state: ContextUsageBreakdownState;
+  readonly onRefresh: () => void;
+  readonly refreshing: boolean;
+}) {
+  return (
+    <section aria-label="Context composition" className="flex min-w-0 flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <h3 className="min-w-0 flex-1 text-sm font-medium text-foreground">Context composition</h3>
+        <Button
+          type="button"
+          variant="ghost-muted"
+          size="icon-xs"
+          aria-label="Refresh context composition"
+          disabled={state.status === "loading" || refreshing}
+          onClick={onRefresh}
+        >
+          <RefreshCw />
+        </Button>
+      </div>
+      <ContextUsageBreakdown state={state} />
+    </section>
   );
 }
 
@@ -280,6 +369,7 @@ function FlameChartPanel({
   threadCost,
   pricingPending,
   pricingError,
+  contextUsage,
 }: {
   readonly trace: ThreadTimingTrace;
   readonly turnItems: ReadonlyArray<ThreadStructureTurnItem>;
@@ -289,6 +379,11 @@ function FlameChartPanel({
   readonly threadCost: TurnCostEstimate | null;
   readonly pricingPending: boolean;
   readonly pricingError: string | null;
+  readonly contextUsage: {
+    readonly state: ContextUsageBreakdownState;
+    readonly onRefresh: () => void;
+    readonly refreshing: boolean;
+  } | null;
 }) {
   const layout = layoutThreadFlameChart(trace);
   const axis = buildCompressedTimingAxis(trace.turns);
@@ -412,6 +507,13 @@ function FlameChartPanel({
           pricingPending={pricingPending}
           pricingError={pricingError}
         />
+        {contextUsage !== null ? (
+          <ContextCompositionSection
+            state={contextUsage.state}
+            onRefresh={contextUsage.onRefresh}
+            refreshing={contextUsage.refreshing}
+          />
+        ) : null}
         <TurnTokenBreakdown
           rows={turnRows}
           costs={costs}
