@@ -652,6 +652,31 @@ it.live("removes clean submodules recursively, including deinitialized repositor
   ),
 );
 
+it.live("removes submodules whose tags match the remote's tags off every remote branch", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, worktree, submodule, command } = yield* submoduleCleanupFixture();
+      const tree = (yield* command(repo, ["rev-parse", "HEAD^{tree}"])).stdout.trim();
+      const release = (yield* command(repo, [
+        "commit-tree",
+        tree,
+        "-p",
+        "HEAD",
+        "-m",
+        "release",
+      ])).stdout.trim();
+      yield* command(repo, ["tag", "v0.9.1", release]);
+      yield* command(submodule, ["fetch", "origin", "tag", "v0.9.1"]);
+      const report = yield* service.runNow;
+      expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
+        outcome: "removed",
+        reason: expect.not.stringContaining("remote-tracking"),
+      });
+      expect(yield* fs.exists(worktree)).toBe(false);
+    }),
+  ),
+);
+
 it.live("keeps nested submodule files protected by the current keep rule", () =>
   runCleanupTest(
     Effect.gen(function* () {
