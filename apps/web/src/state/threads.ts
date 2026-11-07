@@ -12,8 +12,13 @@ import {
   createThreadEnvironmentAtoms,
   createThreadFamilyAtoms,
 } from "@t3tools/client-runtime/state/threads";
+import { ThreadSnapshotLoader } from "@t3tools/client-runtime/state/thread-snapshot";
+import { EnvironmentSupervisor } from "@t3tools/client-runtime/connection";
+import { createEnvironmentCommand } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
@@ -33,6 +38,17 @@ export const threadEnvironment = createThreadEnvironmentAtoms(
   connectionAtomRuntime,
   threadFamilies.snapshotAtom,
 );
+/** One fresh server read: "present" includes archived threads, "missing" means deleted. */
+export const readThreadPresence = createEnvironmentCommand(connectionAtomRuntime, {
+  label: "web-environment-thread:read-presence",
+  execute: Effect.fn("WebThreads.readThreadPresence")(function* (threadId: ThreadId) {
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    const loader = yield* ThreadSnapshotLoader;
+    const prepared = yield* SubscriptionRef.get(supervisor.prepared);
+    if (Option.isNone(prepared)) return "unavailable" as const;
+    return (yield* loader.load(prepared.value, threadId))._tag;
+  }),
+});
 const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
 export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
   environmentThreads.stateAtom,

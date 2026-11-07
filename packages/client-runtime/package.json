@@ -315,6 +315,10 @@
       "types": "./src/state/threads.ts",
       "default": "./src/state/threads.ts"
     },
+    "./state/thread-snapshot": {
+      "types": "./src/state/threadSnapshotHttp.ts",
+      "default": "./src/state/threadSnapshotHttp.ts"
+    },
     "./state/subagent-display": {
       "types": "./src/state/subagentDisplay.ts",
       "default": "./src/state/subagentDisplay.ts"

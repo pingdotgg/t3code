@@ -9,6 +9,7 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import { agentControlledBrowserCloseConfirmation } from "../components/ChatView.logic";
 import { closePreviewSession } from "../components/preview/closePreviewSession";
 import { useThreadTerminalActions } from "../components/terminal/useThreadTerminalActions";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { focusPanelTerminalAfterClose } from "../lib/terminalFocus";
 import { readLocalApi } from "../localApi";
@@ -20,11 +21,11 @@ import {
   type RightPanelSurface,
 } from "../rightPanelStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { readThreadShell } from "../state/entities";
+import { readThreadShell, waitForThreadRemoval } from "../state/entities";
 import { previewEnvironment } from "../state/preview";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { environmentShell } from "../state/shell";
-import { threadEnvironment } from "../state/threads";
+import { readThreadPresence, threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useStableCallback } from "./useStableCallback";
@@ -40,6 +41,10 @@ export function useRightPanelSurfaceClose(input: {
   const { threadRef, terminalLabelsById } = input;
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const deleteThread = useAtomCommand(threadEnvironment.delete, "side chat delete");
+  const readPresence = useAtomCommand(readThreadPresence, {
+    label: "side chat presence",
+    reportFailure: false,
+  });
   const canOperatePreview = useEnvironmentScope(
     threadRef?.environmentId ?? null,
     AuthPreviewOperateScope,
@@ -70,21 +75,32 @@ export function useRightPanelSurfaceClose(input: {
         terminalActions.closeTerminalSession(terminalId, ref);
       }
     }
-    if (
-      surface.kind === "side-chat" &&
-      readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope) &&
-      // A live shell without the side chat means it is already deleted.
-      !(
-        appAtomRegistry.get(environmentShell.stateValueAtom(ref.environmentId)).status === "live" &&
-        readThreadShell(scopeThreadRef(ref.environmentId, surface.threadId)) === null
-      )
-    ) {
-      // The server keeps a side chat with a run or message. Reopen skips one it deleted.
-      void deleteThread({
+    if (surface.kind !== "side-chat") return;
+    const sideChatRef = scopeThreadRef(ref.environmentId, surface.threadId);
+    const shellIsLive = () =>
+      appAtomRegistry.get(environmentShell.stateValueAtom(ref.environmentId)).status === "live";
+    const sideChatShell = readThreadShell(sideChatRef);
+    // Deleting and archiving both drop it from the live shell; an archived draft must survive.
+    if (shellIsLive() && sideChatShell === null) return;
+    // The server keeps a side chat with a run, so a later removal is an archive, not this delete.
+    const keptByServer = sideChatShell?.latestRun != null;
+    if (!readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope)) return;
+    // The server keeps a side chat with a run or message. Reopen skips one it deleted.
+    void deleteThread({
+      environmentId: ref.environmentId,
+      input: { threadId: surface.threadId, onlyIfUnused: true },
+    }).then(async (result) => {
+      // Success also covers a kept side chat, whose draft must survive.
+      if (keptByServer || result._tag !== "Success") return;
+      if (!(await waitForThreadRemoval(sideChatRef))) return;
+      // Another client's archive also drops it from the shell; only a missing thread was deleted.
+      const presence = await readPresence({
         environmentId: ref.environmentId,
-        input: { threadId: surface.threadId, onlyIfUnused: true },
+        input: surface.threadId,
       });
-    }
+      if (presence._tag !== "Success" || presence.value !== "missing") return;
+      if (shellIsLive()) useComposerDraftStore.getState().clearDraftThread(sideChatRef);
+    });
   };
   const closeAfterAgentBrowserConfirmation = (
     toClose: readonly RightPanelSurface[],

@@ -14,6 +14,7 @@ import {
 import { Trash2Icon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { ComposerHandleContext } from "../../composerHandleContext";
 import { useClientSettings } from "../../hooks/useSettings";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
@@ -111,6 +112,7 @@ export default function SideChatPane(props: {
     });
     setDeleting(false);
     if (result._tag === "Success") {
+      useComposerDraftStore.getState().clearDraftThread(threadRef);
       useRightPanelStore.getState().closeSurface(parentRef, `side-chat:${threadId}`);
     } else if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
@@ -123,7 +125,7 @@ export default function SideChatPane(props: {
   };
 
   return (
-    <div data-side-chat-pane className="flex h-full min-h-0 flex-col">
+    <div data-side-chat-pane={threadId} className="flex h-full min-h-0 flex-col">
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border pr-1 pl-3">
         <span className="min-w-0 flex-1 truncate text-xs font-medium">
           {shell?.title ?? "Side chat"}
