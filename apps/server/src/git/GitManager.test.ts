@@ -3413,6 +3413,56 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("finishes a pushed commit when the final status read fails", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-after-push"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "change.txt"), "change\n");
+      const gate = {
+        matches: (args: ReadonlyArray<string>) => args[0] === "push",
+        reached: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      const events: GitActionProgressEvent[] = [];
+      const { manager } = yield* makeManager({ gitSpawnGate: gate });
+
+      const action = yield* Effect.forkChild(
+        runStackedAction(
+          manager,
+          { cwd: repoDir, action: "commit_push", commitMessage: "Status after push" },
+          {
+            progressReporter: {
+              publish: (event) =>
+                Effect.sync(() => {
+                  events.push(event);
+                }),
+            },
+          },
+        ),
+      );
+      yield* Deferred.await(gate.reached);
+      NodeFS.writeFileSync(NodePath.join(repoDir, ".git", "index.lock"), "");
+      yield* Deferred.succeed(gate.release, undefined);
+      const result = yield* Fiber.join(action);
+
+      expect(result.push.status).toBe("pushed");
+      expect(result.toast.cta).toEqual({ kind: "none" });
+      expect(events.at(-1)?.kind).toBe("action_finished");
+      expect(
+        (yield* runGit(remoteDir, [
+          "--git-dir=.",
+          "log",
+          "-1",
+          "--pretty=%s",
+          "feature/status-after-push",
+        ])).stdout.trim(),
+      ).toBe("Status after push");
+    }),
+  );
+
   it.effect("hands the branch base to the host when a failed first push is retried", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
