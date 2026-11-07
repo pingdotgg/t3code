@@ -1,3 +1,4 @@
+import { ASSET_URL_MAX_IN_FLIGHT } from "@t3tools/client-runtime/state/assets";
 import { EnvironmentId, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -715,6 +716,203 @@ describe("prepareTurnAttachments", () => {
     ).rejects.toThrow("Upload failed for 'report.pdf' (500).");
 
     expect(removeCallsFor("pending-existing-pdf")).toBe(0);
+  });
+
+  describe("verifying saved uploads", () => {
+    const savedUpload = (n: number) => ({
+      ...file,
+      id: `file-${n}`,
+      uploadedAttachmentId: `pending-${n}-pdf`,
+      uploadEnvironmentId: environmentId,
+    });
+    const savedUploads = (count: number) => Array.from({ length: count }, (_, i) => savedUpload(i));
+
+    /** Hands every verification to the test as a deferred, keyed by the attachment id it checks. */
+    function holdVerifications() {
+      const held = new Map<string, PromiseWithResolvers<unknown>>();
+      const inFlight = { max: 0, current: 0 };
+      mocks.executeAtomQuery.mockImplementation(
+        async (_registry: unknown, target: unknown): Promise<unknown> => {
+          const { attachmentId } = (target as { input: { resource: { attachmentId: string } } })
+            .input.resource;
+          const deferred = Promise.withResolvers<unknown>();
+          held.set(attachmentId, deferred);
+          inFlight.current += 1;
+          inFlight.max = Math.max(inFlight.max, inFlight.current);
+          try {
+            return await deferred.promise;
+          } finally {
+            inFlight.current -= 1;
+          }
+        },
+      );
+      return {
+        started: () => [...held.keys()],
+        maxInFlight: () => inFlight.max,
+        resolve: (attachmentId: string, result: unknown = { _tag: "Success", value: {} }) =>
+          held.get(attachmentId)!.resolve(result),
+      };
+    }
+    // Lets queued promise callbacks run; the verifications are held, so nothing else can progress.
+    const settle = async () => {
+      for (let turn = 0; turn < 50; turn += 1) await Promise.resolve();
+    };
+    const outcomeOf = (preparing: Promise<unknown>) =>
+      preparing.then(
+        () => "resolved",
+        (error: unknown) => error,
+      );
+    const ids = (prepared: Awaited<ReturnType<typeof prepareTurnAttachments>>) =>
+      prepared.status === "ready" ? prepared.attachments.map((a) => ("id" in a ? a.id : null)) : [];
+
+    it("starts every verification together and keeps attachment order", async () => {
+      const verifications = holdVerifications();
+      const preparing = prepareTurnAttachments({ environmentId, attachments: savedUploads(3) });
+      await settle();
+
+      expect(verifications.started()).toEqual(["pending-0-pdf", "pending-1-pdf", "pending-2-pdf"]);
+      verifications.resolve("pending-2-pdf");
+      verifications.resolve("pending-0-pdf");
+      verifications.resolve("pending-1-pdf");
+      const prepared = await preparing;
+
+      expect(ids(prepared)).toEqual(["pending-0-pdf", "pending-1-pdf", "pending-2-pdf"]);
+      expect(prepared.status === "ready" && prepared.pendingAttachmentIds).toEqual([
+        "pending-0-pdf",
+        "pending-1-pdf",
+        "pending-2-pdf",
+      ]);
+      expect(mocks.upload).not.toHaveBeenCalled();
+    });
+
+    it("keeps at most the asset URL limit of verifications in flight", async () => {
+      const verifications = holdVerifications();
+      const preparing = prepareTurnAttachments({ environmentId, attachments: savedUploads(8) });
+      await settle();
+      expect(verifications.started()).toHaveLength(ASSET_URL_MAX_IN_FLIGHT);
+
+      verifications.resolve("pending-0-pdf");
+      await settle();
+      expect(verifications.started()).toHaveLength(ASSET_URL_MAX_IN_FLIGHT + 1);
+
+      for (let n = 1; n < 8; n += 1) {
+        verifications.resolve(`pending-${n}-pdf`);
+        await settle();
+      }
+      const prepared = await preparing;
+      expect(prepared.status).toBe("ready");
+      expect(verifications.started()).toHaveLength(8);
+      expect(verifications.maxInFlight()).toBe(ASSET_URL_MAX_IN_FLIGHT);
+    });
+
+    it("reports the first failing attachment in order", async () => {
+      mocks.executeAtomQuery.mockImplementation(async (_registry: unknown, target: unknown) => {
+        const { attachmentId } = (target as { input: { resource: { attachmentId: string } } }).input
+          .resource;
+        return attachmentId === "pending-0-pdf"
+          ? { _tag: "Success", value: {} }
+          : { _tag: "Failure", error: new Error(attachmentId) };
+      });
+
+      await expect(
+        prepareTurnAttachments({ environmentId, attachments: savedUploads(3) }),
+      ).rejects.toThrow("pending-1-pdf");
+      expect(mocks.upload).not.toHaveBeenCalled();
+    });
+
+    it("reports the first failing attachment even when a later one fails first", async () => {
+      const verifications = holdVerifications();
+      const outcome = outcomeOf(
+        prepareTurnAttachments({ environmentId, attachments: savedUploads(3) }),
+      );
+      await settle();
+
+      verifications.resolve("pending-2-pdf", { _tag: "Failure", error: new Error("third") });
+      verifications.resolve("pending-1-pdf", { _tag: "Failure", error: new Error("second") });
+      verifications.resolve("pending-0-pdf");
+
+      expect(await outcome).toEqual(new Error("second"));
+    });
+
+    it("does not leak a later verification that rejects after an earlier attachment failed", async () => {
+      mocks.executeAtomQuery.mockImplementation(async (_registry: unknown, target: unknown) => {
+        const { attachmentId } = (target as { input: { resource: { attachmentId: string } } }).input
+          .resource;
+        if (attachmentId === "pending-0-pdf") {
+          return { _tag: "Failure", error: new Error("first") };
+        }
+        throw new Error("transport defect");
+      });
+      await expect(
+        prepareTurnAttachments({ environmentId, attachments: savedUploads(3) }),
+      ).rejects.toThrow("first");
+    });
+
+    it("stops starting queued verifications once an earlier attachment fails", async () => {
+      const verifications = holdVerifications();
+      const outcome = outcomeOf(
+        prepareTurnAttachments({ environmentId, attachments: savedUploads(8) }),
+      );
+      await settle();
+      expect(verifications.started()).toHaveLength(ASSET_URL_MAX_IN_FLIGHT);
+
+      verifications.resolve("pending-0-pdf", { _tag: "Failure", error: new Error("first") });
+      expect(await outcome).toEqual(new Error("first"));
+      for (let n = 1; n < ASSET_URL_MAX_IN_FLIGHT; n += 1) {
+        verifications.resolve(`pending-${n}-pdf`);
+      }
+      await settle();
+
+      // The first freed slot went to the 7th before the loop saw the failure; the 8th never starts.
+      expect(verifications.started()).toHaveLength(ASSET_URL_MAX_IN_FLIGHT + 1);
+    });
+
+    it("verifies later attachments while an earlier expired one uploads, then keeps order", async () => {
+      const verifications = holdVerifications();
+      const uploading = Promise.withResolvers<{ status: number; body: string; headers: object }>();
+      mocks.upload.mockReturnValue(uploading.promise);
+      const preparing = prepareTurnAttachments({ environmentId, attachments: savedUploads(3) });
+      await settle();
+
+      verifications.resolve("pending-0-pdf", {
+        _tag: "Failure",
+        error: { _tag: "AssetAttachmentNotFoundError" },
+      });
+      await vi.waitFor(() => expect(mocks.upload).toHaveBeenCalledOnce());
+      // The upload is still running; the other two checks were already started.
+      expect(verifications.started()).toEqual(["pending-0-pdf", "pending-1-pdf", "pending-2-pdf"]);
+      verifications.resolve("pending-1-pdf");
+      verifications.resolve("pending-2-pdf");
+      uploading.resolve({ status: 204, body: "", headers: {} });
+      const prepared = await preparing;
+
+      expect(ids(prepared)).toEqual([MINTED_ID, "pending-1-pdf", "pending-2-pdf"]);
+      expect(prepared.status === "ready" && prepared.pendingAttachmentIds).toEqual([
+        MINTED_ID,
+        "pending-1-pdf",
+        "pending-2-pdf",
+      ]);
+    });
+
+    it("abandons without uploading when the owner cancels during verification", async () => {
+      const verifications = holdVerifications();
+      const controller = new AbortController();
+      const preparing = prepareTurnAttachments({
+        environmentId,
+        attachments: savedUploads(3),
+        signal: controller.signal,
+      });
+      await settle();
+
+      controller.abort();
+      verifications.resolve("pending-0-pdf");
+      verifications.resolve("pending-1-pdf");
+      verifications.resolve("pending-2-pdf");
+
+      expect(await preparing).toEqual({ status: "abandoned" });
+      expect(mocks.upload).not.toHaveBeenCalled();
+      expect(mocks.runAtomCommand).not.toHaveBeenCalled();
+    });
   });
 
   it("deletes the minted uploads when the owner abandons the send", async () => {
