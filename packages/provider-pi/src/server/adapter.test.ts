@@ -170,6 +170,7 @@ interface FakePi {
   readonly queueModels: (models: ReadonlyArray<unknown>) => void;
   readonly vetoNextNewSession: () => void;
   readonly allRequests: () => ReadonlyArray<PiRpcRecord>;
+  readonly promptThinkingLevels: ReadonlyArray<string>;
   readonly queueStats: (data: unknown) => void;
   /** Pi before 0.84.4 answers clear_queue as an unknown command. */
   readonly setClearQueue: (
@@ -223,6 +224,8 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   let isCompacting = false;
   let clearQueue: Parameters<FakePi["setClearQueue"]>[0] = { steering: [], followUp: [] };
   let stdinBuffer = "";
+  let thinkingLevel = "high";
+  const promptThinkingLevels: Array<string> = [];
 
   const emit = (record: PiRpcRecord, chunkBytes?: number) =>
     Effect.gen(function* () {
@@ -259,6 +262,13 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
             ...stateQueue.shift(),
           },
         };
+      case "set_model":
+        // Pi reapplies the target model's configured thinking default.
+        thinkingLevel = "low";
+        return base;
+      case "set_thinking_level":
+        thinkingLevel = String(record["level"]);
+        return base;
       case "prompt":
         if (isCompacting) {
           return { ...base, success: false, error: PI_COMPACTING_PROMPT_ERROR };
@@ -312,6 +322,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         stdinBuffer = stdinBuffer.slice(newline + 1);
         if (line.length === 0) continue;
         const record = decodeJsonLine(line) as PiRpcRecord;
+        if (record["type"] === "prompt") promptThinkingLevels.push(thinkingLevel);
         allRequests.push(record);
         yield* Queue.offer(requests, record);
         if (record["type"] === "get_state" && deferState) {
@@ -366,6 +377,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
 
   return {
     spawner,
+    promptThinkingLevels,
     emit,
     takeRequest,
     queueEntries: (data) => entriesQueue.push(data),
@@ -2212,6 +2224,56 @@ describe("PiAdapterV2", () => {
         updated.type === "provider_thread.updated" && updated.providerThread.id === placeholder.id,
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["anthropic/model-b", "default"])(
+    "preserves explicit thinking when switching models to %s in the same runtime",
+    (targetModel) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        fake.queueState({
+          model: { provider: "anthropic", id: "model-b" },
+          thinkingLevel: "high",
+          sessionFile: FAKE_SESSION_FILE,
+        });
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        const selection = (model: string): ModelSelection => ({
+          instanceId: PI_INSTANCE_ID,
+          model,
+          options: [{ id: "thinking", value: "high" }],
+        });
+
+        yield* startTurn(
+          runtime,
+          providerThread,
+          "default",
+          [],
+          "First",
+          selection("anthropic/model-a"),
+        );
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+        yield* fake.emit({ type: "agent_settled" });
+        yield* takeEvent((event) => event.type === "turn.terminal");
+
+        yield* startTurn(
+          runtime,
+          providerThread,
+          "default",
+          [],
+          "Second",
+          selection(targetModel),
+          2,
+        );
+        yield* fake.takeRequest("prompt");
+        assert.deepEqual(fake.promptThinkingLevels, ["high", "high"]);
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("resets applied thinking when returning to Pi default", () =>
