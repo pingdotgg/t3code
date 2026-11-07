@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { AppState, Platform } from "react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentCatalogState } from "@t3tools/client-runtime/state/connections";
 import {
   type RelayDeviceRegistrationRequest,
   type RelayAgentActivitySnapshotResponse,
@@ -25,6 +26,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { runtime } from "../../lib/runtime";
+import { environmentCatalog } from "../../connection/catalog";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
 import type { Preferences } from "../../persistence/mobile-preferences";
@@ -97,6 +99,7 @@ let widgetSnapshotReads = 0;
 let androidDeviceReplayedAt: number | null = null;
 let pushTokenSubscription: { remove: () => void } | null = null;
 let appStateSubscription: { remove: () => void } | null = null;
+let environmentCatalogSubscription: (() => void) | null = null;
 
 export type AgentAwarenessRegistrationStatus = "unknown" | "pending" | "registered" | "failed";
 let registrationStatus: AgentAwarenessRegistrationStatus = "unknown";
@@ -137,6 +140,8 @@ let pendingDeviceRegistration: {
 
 interface DeviceRegistrationInput {
   readonly observedPushToken?: string;
+  // A registration already in flight may have read the environment list before it changed.
+  readonly environmentsChanged?: boolean;
 }
 
 interface RegisterDeviceInput extends DeviceRegistrationInput {
@@ -203,6 +208,8 @@ export function setAgentAwarenessRelayTokenProvider(
     pushTokenSubscription = null;
     appStateSubscription?.remove();
     appStateSubscription = null;
+    environmentCatalogSubscription?.();
+    environmentCatalogSubscription = null;
     if (activeLiveActivityRegistrationRetry) {
       clearTimeout(activeLiveActivityRegistrationRetry);
       activeLiveActivityRegistrationRetry = null;
@@ -218,6 +225,7 @@ export function setAgentAwarenessRelayTokenProvider(
   }
   ensurePushTokenListener();
   ensureAppStateListener();
+  ensureEnvironmentCatalogListener();
   runRegistrationInBackground(
     refreshActiveLiveActivityRemoteRegistration(),
     "active live activity registration after cloud sign-in failed",
@@ -243,6 +251,8 @@ export function releaseAgentAwarenessRelayTokenProvider(): void {
   pushTokenSubscription = null;
   appStateSubscription?.remove();
   appStateSubscription = null;
+  environmentCatalogSubscription?.();
+  environmentCatalogSubscription = null;
   if (activeLiveActivityRegistrationRetry) {
     clearTimeout(activeLiveActivityRegistrationRetry);
     activeLiveActivityRegistrationRetry = null;
@@ -354,6 +364,7 @@ function registrationSignature(body: RelayDeviceRegistrationRequest): string {
     body.preferences.notifyOnInput,
     body.preferences.notifyOnCompletion,
     body.preferences.notifyOnFailure,
+    body.preferences.disabledEnvironmentIds?.join(",") ?? "",
   ].join("|");
 }
 
@@ -606,7 +617,8 @@ function registrationAddsInformation(
   next: DeviceRegistrationInput,
 ): boolean {
   return (
-    next.observedPushToken !== undefined && next.observedPushToken !== current.observedPushToken
+    next.environmentsChanged === true ||
+    (next.observedPushToken !== undefined && next.observedPushToken !== current.observedPushToken)
   );
 }
 
@@ -668,6 +680,11 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
   if (!canRegisterPushNotifications()) {
     return;
   }
+  const disabledEnvironmentIds = disabledEnvironmentIdsIn(
+    appAtomRegistry.get(environmentCatalog.catalogValueAtom),
+  );
+  // Registering before the catalog loads would clear the relay's filter; the catalog listener retries.
+  if (disabledEnvironmentIds === null) return;
 
   const [deviceId, storedPreferences] = yield* Effect.all([
     Effect.tryPromise({
@@ -725,6 +742,7 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
       ...(pushTokenRegistration.pushToken ? { pushToken: pushTokenRegistration.pushToken } : {}),
       notificationsEnabled: pushTokenRegistration.notificationsEnabled,
       preferences,
+      disabledEnvironmentIds,
     }),
     expectedGeneration,
   );
@@ -781,6 +799,38 @@ function publishWidget(source: AgentActivityWidgetSource): void {
   publishAgentActivityWidget(source).catch((error: unknown) => {
     logRegistrationError("agent activity widget publish failed", error);
   });
+}
+
+function disabledEnvironmentIdsIn(
+  catalog: EnvironmentCatalogState,
+): ReadonlyArray<EnvironmentId> | null {
+  if (!catalog.isReady) return null;
+  return [...catalog.entries]
+    .filter(([, entry]) => !entry.enabled)
+    .map(([environmentId]) => environmentId)
+    .sort();
+}
+
+// The relay filters pushes for this device, so it must learn every environment toggle.
+function ensureEnvironmentCatalogListener(): void {
+  if (environmentCatalogSubscription || !canRegisterPushNotifications()) {
+    return;
+  }
+  let observed = disabledEnvironmentIdsIn(
+    appAtomRegistry.get(environmentCatalog.catalogValueAtom),
+  )?.join(",");
+  environmentCatalogSubscription = appAtomRegistry.subscribe(
+    environmentCatalog.catalogValueAtom,
+    (catalog) => {
+      const next = disabledEnvironmentIdsIn(catalog)?.join(",");
+      if (next === undefined || next === observed) return;
+      observed = next;
+      enqueueDeviceRegistration(
+        { environmentsChanged: true },
+        "device registration after environment toggle failed",
+      );
+    },
+  );
 }
 
 // Binaries built before the native dismissEnded method throw here.
@@ -845,6 +895,8 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   pushTokenSubscription = null;
   appStateSubscription?.remove();
   appStateSubscription = null;
+  environmentCatalogSubscription?.();
+  environmentCatalogSubscription = null;
   if (activeLiveActivityRegistrationRetry) {
     clearTimeout(activeLiveActivityRegistrationRetry);
     activeLiveActivityRegistrationRetry = null;
