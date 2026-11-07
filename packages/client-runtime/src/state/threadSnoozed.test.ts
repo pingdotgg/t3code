@@ -12,6 +12,7 @@ import {
   hasQueuedTurnStart,
   pickSnoozePreset,
   resolveSnoozePresets,
+  snoozeWakeLabel,
   threadRaisedHandWhileSnoozed,
   threadWokeAt,
   isThreadWokeUnseen,
@@ -488,6 +489,18 @@ describe("pickSnoozePreset", () => {
       now: localDate(2026, 8, 31, 0, 1),
     });
     expect(picked?.snoozedUntil).toBe(localDate(2026, 8, 31, 9).toISOString());
+  });
+});
+
+describe("snoozeWakeLabel", () => {
+  it("reads a one-hour snooze as 1h on minute and live clocks", () => {
+    const wake = "2026-04-10T13:00:30.000Z";
+    expect(snoozeWakeLabel(wake, { now: NOW })).toBe("1h");
+    expect(snoozeWakeLabel(wake, { now: "2026-04-10T12:00:40.000Z" })).toBe("1h");
+    expect(snoozeWakeLabel("2026-04-10T15:00:30.000Z", { now: NOW })).toBe("3h");
+    expect(snoozeWakeLabel(wake, { now: "2026-04-10T12:01:00.000Z" })).toBe("59m");
+    expect(snoozeWakeLabel(wake, { now: "2026-04-10T13:00:10.000Z" })).toBe("1m");
+    expect(snoozeWakeLabel(wake, { now: "2026-04-10T13:00:30.000Z" })).toBe("now");
   });
 });
 
