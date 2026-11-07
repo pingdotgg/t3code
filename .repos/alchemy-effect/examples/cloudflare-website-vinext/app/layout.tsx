@@ -13,11 +13,7 @@ const pageLinks = [
   ["/notes", "Notes"],
 ] as const;
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body className="bg-slate-50 p-8 text-slate-900">

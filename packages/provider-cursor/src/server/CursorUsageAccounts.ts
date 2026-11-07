@@ -1,11 +1,14 @@
+import type { ProviderInstanceId } from "@t3tools/contracts";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type { ProviderUsageScan } from "@t3tools/provider-core/server/usage";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -25,6 +28,7 @@ import {
   type CursorCredentialSource,
 } from "./accountCache.ts";
 import * as CursorAccountReader from "./CursorAccountReader.ts";
+import { readStoredCursorApiKey } from "./credentialStore.ts";
 
 const CURSOR_ACCOUNT_READ_ERROR = "Cursor account usage could not be read.";
 
@@ -36,6 +40,10 @@ export class CursorUsageAccounts extends Context.Service<
   CursorUsageAccounts,
   {
     readonly scan: (input: {
+      readonly instances: ReadonlyArray<{
+        readonly instanceId: ProviderInstanceId;
+        readonly environment: NodeJS.ProcessEnv;
+      }>;
       readonly keychainUsageEnabled: boolean;
       readonly windowStartMs: number;
       readonly retentionCutoffMs: number;
@@ -52,6 +60,7 @@ const make = Effect.gen(function* () {
   const accountReader = yield* CursorAccountReader.CursorAccountReader;
   const hostEnvironment = yield* HostProcess.Environment;
   const platform = yield* HostProcess.Platform;
+  const digest = yield* Digest.Digest;
 
   const cachePath = path.join(host.paths.stateDir, CURSOR_ACCOUNT_CACHE_FILE_NAME);
   const caches = new Map<string, CursorAccountCache>();
@@ -187,12 +196,28 @@ const make = Effect.gen(function* () {
     awaitRefresh: boolean,
   ) {
     // A Keychain login outlives an uninstalled Cursor, so it also needs Cursor's local directory.
-    const localLogin = typeof credential === "string" ? credential : path.dirname(authPath);
-    if (!(yield* fileSystem.exists(localLogin).pipe(Effect.orElseSucceed(() => true)))) {
+    const localLogin =
+      typeof credential === "string"
+        ? credential
+        : credential.kind === "keychain"
+          ? path.dirname(authPath)
+          : null;
+    if (
+      localLogin !== null &&
+      !(yield* fileSystem.exists(localLogin).pipe(Effect.orElseSucceed(() => true)))
+    ) {
       return null;
     }
     yield* ensureLoaded;
-    const credentialKey = typeof credential === "string" ? credential : "keychain";
+    const credentialKey =
+      typeof credential === "string"
+        ? credential
+        : credential.kind === "apiKey"
+          ? // A fingerprint, so a replaced key never reads the previous account's cache.
+            `api-key:${Hex.encode(
+              yield* digest.digest(Digest.sha256, new TextEncoder().encode(credential.apiKey)),
+            )}`
+          : "keychain";
     const nowMs = yield* Clock.currentTimeMillis;
     const recentFailure = failures.get(credentialKey);
     let refreshing = false;
@@ -238,7 +263,13 @@ const make = Effect.gen(function* () {
   });
 
   const scan: CursorUsageAccounts["Service"]["scan"] = Effect.fn("CursorUsageAccounts.scan")(
-    function* ({ keychainUsageEnabled, windowStartMs, retentionCutoffMs, awaitRefresh }) {
+    function* ({
+      instances,
+      keychainUsageEnabled,
+      windowStartMs,
+      retentionCutoffMs,
+      awaitRefresh,
+    }) {
       const home = yield* HostProcess.HomeDirectory;
       const userHome =
         (platform === "win32" ? hostEnvironment["USERPROFILE"] : hostEnvironment["HOME"]) || home;
@@ -255,11 +286,46 @@ const make = Effect.gen(function* () {
         platform === "darwin"
           ? path.join(userHome, ".cursor", "auth.json")
           : path.join(cursorHome, platform === "win32" ? "Cursor" : "cursor", "auth.json");
+      // T3's Cursor sign-in and CURSOR_API_KEY name the account the agent uses, so they win.
+      const apiKeys = yield* Effect.forEach(instances, ({ instanceId, environment }) =>
+        environment.CURSOR_API_KEY?.trim()
+          ? Effect.succeed(environment.CURSOR_API_KEY.trim())
+          : readStoredCursorApiKey(instanceId).pipe(
+              Effect.provideService(ProviderHost.ProviderHost, host),
+              Effect.orElseSucceed(() => undefined),
+            ),
+      );
+      const uniqueApiKeys = [...new Set(apiKeys.filter((apiKey) => apiKey !== undefined))];
+      if (uniqueApiKeys.length > 0) {
+        const sources: ReadonlyArray<ProviderUsageScan | null> = yield* Effect.forEach(
+          uniqueApiKeys,
+          (apiKey) =>
+            accountSource(
+              { kind: "apiKey", apiKey },
+              authPath,
+              windowStartMs,
+              retentionCutoffMs,
+              awaitRefresh,
+            ),
+        );
+        // Keys for one account share its source, and a repeated source would count sessions twice.
+        // A failed key can hold older records, so a current read wins, then a refresh the client
+        // must follow up on.
+        const rank = (source: ProviderUsageScan) =>
+          source.status === "ok" ? 2 : source.refreshing ? 1 : 0;
+        const byAccount = new Map<string, ProviderUsageScan>();
+        for (const source of sources) {
+          if (source === null) continue;
+          const kept = byAccount.get(source.dir);
+          if (kept === undefined || rank(source) > rank(kept)) {
+            byAccount.set(source.dir, source);
+          }
+        }
+        return [...byAccount.values()];
+      }
       const credentialStore = hostEnvironment["AGENT_CLI_CREDENTIAL_STORE"];
       const loginUnavailable =
-        Boolean(hostEnvironment["CURSOR_AUTH_TOKEN"]?.trim()) ||
-        Boolean(hostEnvironment["CURSOR_API_KEY"]?.trim()) ||
-        credentialStore === "memory";
+        Boolean(hostEnvironment["CURSOR_AUTH_TOKEN"]?.trim()) || credentialStore === "memory";
       const useKeychain = platform === "darwin" && credentialStore !== "file";
       if (useKeychain && !loginUnavailable && !keychainUsageEnabled) {
         return [
