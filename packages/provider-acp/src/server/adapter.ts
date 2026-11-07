@@ -177,6 +177,7 @@ export interface AcpAdapterV2RuntimeInput {
   readonly processEnvironment?: NodeJS.ProcessEnv;
   readonly resumeSessionId?: string;
   readonly interruptPromptOnCancel?: boolean;
+  readonly allowOverlappingPrompts?: boolean;
   readonly clientCapabilities: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: AcpSessionRuntime.AcpSessionRuntimeOptions["clientInfo"];
   readonly requestLogger?: NonNullable<AcpSessionRuntime.AcpSessionRuntimeOptions["requestLogger"]>;
@@ -202,6 +203,12 @@ export interface AcpAdapterV2UserInputRequest {
 
 export interface AcpAdapterV2ExtensionContext {
   readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  readonly updateForegroundWork: (input: {
+    readonly sessionId: string;
+    readonly state: "running" | "idle" | "accepted";
+    readonly content?: string;
+    readonly stopReason?: "cancelled";
+  }) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly reportProviderRetry: (input: {
     readonly sessionId: string;
     readonly failure: OrchestrationV2ProviderFailure;
@@ -547,6 +554,7 @@ export interface AcpAdapterV2Flavor {
   readonly enablePostSettleContinuation?: boolean;
   /** Settle on native idle after the accepted user echo, only on negotiated ACP v2. */
   readonly followAgentWorkState?: boolean;
+  readonly followForegroundEvents?: boolean;
   /**
    * Grok CLI currently accepts and vision-processes image blocks while still
    * reporting the capability as false; without this override, screenshot turns
@@ -636,6 +644,7 @@ export interface AcpAdapterV2Options {
     /** `cancelAfterPromptStarts`: Stop is holding `session/cancel` until the prompt starts. */
     readonly onCancelHeld?: () => Effect.Effect<void>;
     readonly afterPromptWireSettled?: () => Effect.Effect<void>;
+    readonly afterPromptFailureHandled?: () => Effect.Effect<void>;
     readonly afterPromptSettledWithBackgroundWork?: () => Effect.Effect<void>;
     readonly onNativeResponseLifecycle?: (event: {
       readonly generation?: number;
@@ -1398,6 +1407,7 @@ interface ActiveAcpTurn {
   promptSettled: boolean;
   promptSettledStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
   workAccepted: boolean;
+  readonly promptAcceptanceText: string | null;
   readonly promptWireSettled: Deferred.Deferred<void, never>;
   /** Completed once `session/prompt` is the runtime's active prompt. */
   readonly promptDispatched: Deferred.Deferred<void, never>;
@@ -1890,6 +1900,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         };
         let pendingStopCloseTurn: ActiveAcpTurn | null = null;
         let followsAgentWorkState = false;
+        let canFollowForegroundEvents = false;
+        let pendingForegroundPrompts = 0;
         let agentWork: Extract<
           EffectAcpSchema.SessionUpdate,
           { sessionUpdate: "state_update" }
@@ -1921,9 +1933,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const setActiveSessionSetup = Effect.fnUntraced(function* (
           setup: AcpSessionRuntime.AcpSessionRuntimeStartResult,
         ) {
-          followsAgentWorkState =
-            flavor.followAgentWorkState === true &&
+          canFollowForegroundEvents =
             continuationRequests !== undefined &&
+            flavor.followForegroundEvents === true &&
+            setup.initializeResult.protocolVersion === 1;
+          followsAgentWorkState =
+            continuationRequests !== undefined &&
+            flavor.followAgentWorkState === true &&
             setup.initializeResult.protocolVersion === 2;
           agentWork = null;
           agentRequests.clear();
@@ -2365,6 +2381,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               : { processEnvironment: mcpContext.processEnvironment }),
             ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
             interruptPromptOnCancel: flavor.interruptPromptOnCancel ?? false,
+            ...(flavor.followForegroundEvents === true ? { allowOverlappingPrompts: true } : {}),
             clientCapabilities: {
               fs: {
                 readTextFile: flavor.clientFileSystem !== undefined,
@@ -5039,6 +5056,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           if (yield* followNativeChild(notification, context)) return;
           if (
+            canFollowForegroundEvents &&
+            followsAgentWorkState &&
+            context !== null &&
+            !context.workAccepted &&
+            !context.finalized &&
+            !acpIsProviderContinuationMessage(context.input.message) &&
+            notification.sessionId === (yield* Ref.get(activeSessionId)) &&
+            (update.sessionUpdate === "state_update" ||
+              acpRootSessionUpdateIngestsOutput(notification))
+          ) {
+            if (
+              update.sessionUpdate === "state_update" &&
+              update.state === "idle" &&
+              (yield* Ref.get(wakeBuffer)).length === 0
+            )
+              return;
+            yield* Ref.update(wakeBuffer, (buffer) => [...buffer, notification]);
+            return;
+          }
+          if (
             followsAgentWorkState &&
             !(yield* Ref.get(stoppedRunQuarantine)) &&
             notification.sessionId === (yield* Ref.get(activeSessionId))
@@ -6790,6 +6827,59 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (flavor.registerExtensions !== undefined) {
             yield* flavor.registerExtensions({
               runtime: targetRuntime,
+              updateForegroundWork: (notice) =>
+                runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  Effect.gen(function* () {
+                    if ((yield* Ref.get(activeSessionId)) !== notice.sessionId) return;
+                    if (yield* Ref.get(stoppedRunQuarantine)) return;
+                    if (!followsAgentWorkState && !canFollowForegroundEvents) return;
+                    if (canFollowForegroundEvents) followsAgentWorkState = true;
+                    const context = yield* Ref.get(activeTurn);
+                    if (notice.state === "accepted") {
+                      const text = context?.promptAcceptanceText;
+                      if (
+                        context !== null &&
+                        text &&
+                        notice.content?.includes(text) &&
+                        (yield* Deferred.isDone(context.promptDispatched))
+                      ) {
+                        context.workAccepted = true;
+                        agentWork = { sessionUpdate: "state_update", state: "running" };
+                        const continuationAlreadyRequested = yield* Ref.get(continuationRequested);
+                        yield* Ref.update(wakeBuffer, (buffer) =>
+                          !continuationAlreadyRequested &&
+                          !buffer.some(acpRootSessionUpdateIngestsOutput)
+                            ? []
+                            : buffer,
+                        );
+                        if ((yield* Ref.get(wakeBuffer)).length > 0) {
+                          yield* offerContinuationRun(notice.sessionId);
+                        }
+                      }
+                      return;
+                    }
+                    yield* handleSessionUpdate({
+                      sessionId: notice.sessionId,
+                      update: {
+                        sessionUpdate: "state_update",
+                        state: notice.state,
+                        ...(notice.state === "idle" && notice.stopReason !== undefined
+                          ? { stopReason: notice.stopReason }
+                          : {}),
+                      },
+                    });
+                  }),
+                ).pipe(
+                  Effect.asVoid,
+                  Effect.mapError(
+                    (cause) =>
+                      new EffectAcpErrors.AcpTransportError({
+                        detail: "Failed to project ACP foreground state",
+                        cause,
+                      }),
+                  ),
+                ),
               reportProviderRetry: (notice) =>
                 runRuntimeCallbackAtGeneration(handlerGeneration, reportProviderRetry(notice)).pipe(
                   Effect.asVoid,
@@ -8207,6 +8297,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptSettled: false,
               promptSettledStatus: null,
               workAccepted: false,
+              promptAcceptanceText:
+                promptParts?.prompt.find((block) => block.type === "text")?.text ?? null,
               promptWireSettled,
               promptDispatched,
               promptSentAt: null,
@@ -8308,12 +8400,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* runtimeCallbackPermit.withPermit(
                   Effect.gen(function* () {
                     const liveWork = agentWork;
-                    yield* Effect.forEach(yield* takeWakeBuffer, handleSessionUpdate, {
-                      discard: true,
-                    });
-                    agentWork = liveWork;
+                    const buffered = yield* takeWakeBuffer;
+                    yield* Effect.forEach(buffered, handleSessionUpdate, { discard: true });
+                    const bufferedIdle = canFollowForegroundEvents
+                      ? buffered.findLast(
+                          (item) =>
+                            item.update.sessionUpdate === "state_update" &&
+                            item.update.state === "idle",
+                        )?.update
+                      : undefined;
+                    agentWork =
+                      bufferedIdle?.sessionUpdate === "state_update" ? bufferedIdle : liveWork;
                     context.workAccepted = true;
                     yield* settleIdleWork(context);
+                    agentWork = liveWork;
                   }),
                 );
                 return;
@@ -8367,6 +8467,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const compactSession = isCompactionMessage(turnInput.message)
               ? flavor.compactSession
               : undefined;
+            if (flavor.followForegroundEvents === true) pendingForegroundPrompts += 1;
             yield* (
               compactSession === undefined
                 ? runtime.prompt({ prompt: promptParts!.prompt }, promptOptions)
@@ -8418,7 +8519,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 runRuntimeCallbackAtGeneration(
                   promptGeneration,
                   Effect.gen(function* () {
-                    if (context.finalized || followsAgentWorkState) return;
+                    if (
+                      context.finalized ||
+                      (followsAgentWorkState && flavor.followForegroundEvents !== true)
+                    )
+                      return;
+                    if (canFollowForegroundEvents && !context.workAccepted) {
+                      context.workAccepted = true;
+                      const buffered = yield* Ref.getAndSet(wakeBuffer, []);
+                      for (const notification of buffered) {
+                        yield* handleSessionUpdate(notification);
+                      }
+                      if (context.finalized) return;
+                    }
                     // ACP v2 reports a failed prompt as an idle `error`, not an RPC error.
                     const idleError = result.stopReason === "error" && !context.interrupted;
                     const hiddenFailure =
@@ -8477,6 +8590,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 runRuntimeCallbackAtGeneration(
                   promptGeneration,
                   Effect.gen(function* () {
+                    const failure = Cause.squash(cause);
+                    if (
+                      !context.interrupted &&
+                      flavor.restartRuntimeAfterPromptError?.(failure) === true
+                    ) {
+                      yield* Ref.set(runtimeRestartRequired, true);
+                    }
                     if (context.finalized) return;
                     const error = Cause.findError(cause);
                     // Native close rejects prompts cancelled before insertion with -32800.
@@ -8486,10 +8606,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         Result.isSuccess(error) &&
                         error.success._tag === "AcpRequestError" &&
                         error.success.code === -32800);
-                    const failure = Cause.squash(cause);
-                    if (!interrupted && flavor.restartRuntimeAfterPromptError?.(failure) === true) {
-                      yield* Ref.set(runtimeRestartRequired, true);
-                    }
                     yield* finalizeTurn(
                       context,
                       interrupted ? "interrupted" : "failed",
@@ -8509,8 +8625,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         }),
                       ),
                     );
+                    if (
+                      canFollowForegroundEvents &&
+                      !context.workAccepted &&
+                      !interrupted &&
+                      !(yield* Ref.get(runtimeRestartRequired)) &&
+                      (yield* Ref.get(wakeBuffer)).some(acpRootSessionUpdateIngestsOutput)
+                    ) {
+                      yield* offerContinuationRun(requestedSessionId);
+                    }
                   }),
-                ).pipe(Effect.asVoid),
+                ).pipe(
+                  Effect.asVoid,
+                  Effect.ensuring(options.testHooks?.afterPromptFailureHandled?.() ?? Effect.void),
+                ),
+              ),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  if (flavor.followForegroundEvents === true) pendingForegroundPrompts -= 1;
+                }),
               ),
               Effect.forkIn(sessionScope),
             );
@@ -8605,9 +8738,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     : flavor.getModelContextWindow?.(selection, session);
                 },
               }),
-          ...(postSettleContinuationEnabled || followsAgentWorkState
+          ...(postSettleContinuationEnabled || followsAgentWorkState || canFollowForegroundEvents
             ? {
                 hasPendingBackgroundWork: Effect.gen(function* () {
+                  if (pendingForegroundPrompts > 0) return true;
                   const rootSessionId = yield* Ref.get(activeSessionId);
                   if (
                     followsAgentWorkState &&
@@ -8857,8 +8991,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const transitionFiber = yield* Effect.gen(function* () {
                     const transition = yield* Effect.gen(function* () {
                       const interruptContext = yield* Ref.get(activeTurn);
+                      const supportsClose =
+                        (yield* Ref.get(activeSessionSetup))?.initializeResult.agentCapabilities
+                          ?.sessionCapabilities?.close != null;
                       if (
                         followsAgentWorkState &&
+                        (flavor.followForegroundEvents !== true || supportsClose) &&
                         turnInput.requestRuntimeRestart === true &&
                         (interruptContext === null ||
                           interruptContext.providerTurnId === turnInput.providerTurnId)
@@ -8908,6 +9046,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                             }
                           }),
                         );
+                        return undefined;
+                      }
+                      if (
+                        flavor.followForegroundEvents === true &&
+                        !supportsClose &&
+                        interruptContext === null &&
+                        pendingForegroundPrompts > 0 &&
+                        turnInput.requestRuntimeRestart === true
+                      ) {
+                        yield* quarantineStoppedRun();
+                        yield* runtime.cancel;
+                        yield* Ref.set(runtimeRestartRequired, true);
                         return undefined;
                       }
                       const softSteerCandidate =
@@ -9111,7 +9261,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         if (!settledSoftInterrupt && (yield* promptStillRunsAfterHold(context))) {
                           yield* runtime.cancel;
                         }
-                        if (restartRuntime && flavor.restartRuntimeAfterInterrupt === true) {
+                        if (
+                          restartRuntime &&
+                          (flavor.restartRuntimeAfterInterrupt === true ||
+                            flavor.followForegroundEvents === true)
+                        ) {
                           yield* Ref.set(runtimeRestartRequired, true);
                         }
                       }

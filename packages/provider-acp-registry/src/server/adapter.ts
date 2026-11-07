@@ -250,6 +250,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ...(copilotRouting === undefined
       ? {}
       : {
+          followForegroundEvents: true,
           clientCapabilitiesMeta: copilotClientCapabilitiesMeta,
           // Copilot CLI 1.0.105 rejects stdio MCP servers from the client.
           mcpOverHttp: true,
