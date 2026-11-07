@@ -1200,7 +1200,6 @@ export default function ChatView(props: ChatViewProps) {
     activeProjectIsScratch && draftId !== null,
   );
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
-  const canAutoBalanceEnvironments = hasMultipleEnvironments && !activeProjectIsScratch;
   const activeEnvironmentOption =
     logicalProjectEnvironments.find(
       (environment) => environment.environmentId === activeThread?.environmentId,
@@ -1269,7 +1268,7 @@ export default function ChatView(props: ChatViewProps) {
     clientSettingsHydrated &&
     draftId &&
     !envLocked &&
-    canAutoBalanceEnvironments &&
+    hasMultipleEnvironments &&
     loadBalancingSettings.loadBalancingEnabled &&
     draftThread?.environmentSelection !== "manual" &&
     (!composerHasAttachments || Boolean(draftThread?.loadBalancedEnvironmentId)) &&
@@ -3822,7 +3821,7 @@ export default function ChatView(props: ChatViewProps) {
                                   onAutoEnvironment={
                                     draftId &&
                                     !envLocked &&
-                                    canAutoBalanceEnvironments &&
+                                    hasMultipleEnvironments &&
                                     loadBalancingSettings.loadBalancingEnabled
                                       ? onAutoEnvironmentStable
                                       : undefined
@@ -3919,7 +3918,7 @@ export default function ChatView(props: ChatViewProps) {
                   onAutoEnvironment={
                     draftId &&
                     !envLocked &&
-                    canAutoBalanceEnvironments &&
+                    hasMultipleEnvironments &&
                     loadBalancingSettings.loadBalancingEnabled
                       ? onAutoEnvironmentStable
                       : undefined
