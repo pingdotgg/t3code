@@ -21,7 +21,7 @@ import type {
   StyleProp,
   ViewStyle,
 } from "react-native";
-import { Platform, PlatformColor, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import ReanimatedSwipeable, {
   type SwipeableMethods,
 } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -41,20 +41,23 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { GlassSurface } from "../../components/ui/GlassSurface";
+import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { SwipeRowActivationContext, type SwipeRowActivation } from "./swipe-row-activation";
 import { registerThreadDismissal } from "./thread-dismissal";
 
-// Mail-width trailing action lanes; compact shrinks for the sidebar column.
-const ACTION_ITEM_WIDTH = 74;
-const ACTION_ICON_SIZE = 18;
-const COMPACT_ACTION_ITEM_WIDTH = 64;
-const COMPACT_ACTION_ICON_SIZE = 16;
+// iOS 26 Messages/Mail: round Liquid Glass action pills, not full-height tinted lanes.
+const ACTION_ITEM_WIDTH = 58;
+const ACTION_CIRCLE_SIZE = 40;
+const ACTION_ICON_SIZE = 17;
+const COMPACT_ACTION_CIRCLE_SIZE = 32;
+const COMPACT_ACTION_ICON_SIZE = 14;
 
 const THREAD_SWIPE_SPRING = {
-  damping: 28,
-  mass: 0.8,
+  damping: 26,
+  mass: 0.7,
   overshootClamping: true,
-  stiffness: 300,
+  stiffness: 330,
 };
 
 interface ThreadSwipeAction {
@@ -74,13 +77,8 @@ interface ThreadSwipeSecondaryAction extends ThreadSwipeAction {
   readonly tone: "primary" | "secondary" | "danger";
 }
 
-function actionItemWidth(compact: boolean) {
-  return compact ? COMPACT_ACTION_ITEM_WIDTH : ACTION_ITEM_WIDTH;
-}
-
-function swipeActionsWidth(hasSecondaryAction: boolean, compact = false) {
-  const width = actionItemWidth(compact);
-  return hasSecondaryAction ? width * 2 : width;
+function swipeActionsWidth(hasSecondaryAction: boolean) {
+  return hasSecondaryAction ? ACTION_ITEM_WIDTH * 2 : ACTION_ITEM_WIDTH;
 }
 
 function resolveSecondaryAction(input: {
@@ -244,7 +242,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const swipeableRef = useRef<SwipeableMethods | null>(null);
   const compactActions = props.compactActions === true;
   const hasSecondaryAction = props.secondaryAction !== null;
-  const actionsWidth = swipeActionsWidth(hasSecondaryAction, compactActions);
+  const actionsWidth = swipeActionsWidth(hasSecondaryAction);
   const fullSwipeThreshold = Math.max(actionsWidth + 44, props.fullSwipeWidth * 0.58);
   const fullSwipeAction =
     props.fullSwipeAction ?? (props.secondaryAction === undefined ? "delete" : "primary");
@@ -526,39 +524,33 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   );
 }
 
-// Mail uses saturated system fills; theme tokens for secondary/danger are pastel chips.
-function swipeLaneBackground(tone: "primary" | "secondary" | "danger"): ColorValue | undefined {
-  if (Platform.OS !== "ios") return undefined;
-  if (tone === "danger") return PlatformColor("systemRed");
-  if (tone === "secondary") return PlatformColor("systemGray");
-  return PlatformColor("systemBlue");
+function swipeGlassTintClassName(tone: "primary" | "secondary" | "danger") {
+  if (tone === "danger") return "accent-danger";
+  if (tone === "secondary") return "accent-secondary";
+  return "accent-primary";
 }
 
-function swipeLaneClassName(tone: "primary" | "secondary" | "danger") {
-  if (Platform.OS === "ios") return undefined;
+function swipeIconTintClassName(tone: "primary" | "secondary" | "danger") {
+  if (tone === "danger") return "accent-danger";
+  if (tone === "secondary") return "accent-icon-muted";
+  return "accent-primary";
+}
+
+function swipeSolidFillClassName(tone: "primary" | "secondary" | "danger") {
   if (tone === "danger") return "bg-danger";
   if (tone === "secondary") return "bg-secondary";
   return "bg-primary";
 }
 
-function swipeLaneForegroundClassName(tone: "primary" | "secondary" | "danger") {
-  if (Platform.OS === "ios") return "accent-white";
+function swipeSolidIconTintClassName(tone: "primary" | "secondary" | "danger") {
   if (tone === "danger") return "accent-danger-foreground";
   if (tone === "secondary") return "accent-secondary-foreground";
   return "accent-primary-foreground";
 }
 
-function swipeLaneLabelClassName(tone: "primary" | "secondary" | "danger") {
-  if (Platform.OS === "ios") return "text-3xs font-t3-medium text-white";
-  if (tone === "danger") return "text-3xs font-t3-medium text-danger-foreground";
-  if (tone === "secondary") return "text-3xs font-t3-medium text-secondary-foreground";
-  return "text-3xs font-t3-medium text-primary-foreground";
-}
-
 function SwipeActionButton(props: {
   readonly accessibilityLabel: string;
   readonly actionsWidth: number;
-  readonly itemWidth: number;
   readonly tone: "primary" | "secondary" | "danger";
   readonly compact: boolean;
   readonly entryRange: readonly [number, number];
@@ -574,14 +566,13 @@ function SwipeActionButton(props: {
     actionsWidth,
     entryRange: [entryRangeStart, entryRangeEnd],
     fullSwipeThreshold,
-    itemWidth,
     stretchesOnFullSwipe,
     translation,
   } = props;
+  const circleSize = props.compact ? COMPACT_ACTION_CIRCLE_SIZE : ACTION_CIRCLE_SIZE;
   const iconSize = props.compact ? COMPACT_ACTION_ICON_SIZE : ACTION_ICON_SIZE;
-  const foreground = swipeLaneForegroundClassName(props.tone);
-  // Mail lanes fill the row height; the committing lane grows left as the drag overshoots.
-  const laneStyle = useAnimatedStyle(() => {
+  const useGlass = NATIVE_LIQUID_GLASS_SUPPORTED;
+  const actionStyle = useAnimatedStyle(() => {
     const reveal = Math.max(-translation.value, 0);
     const entryProgress = interpolate(
       reveal,
@@ -601,25 +592,45 @@ function SwipeActionButton(props: {
       opacity: stretchesOnFullSwipe ? entryProgress : entryProgress * (1 - fullSwipeProgress),
       transform: [
         {
-          translateX: stretchesOnFullSwipe ? -stretch : -stretch * fullSwipeProgress,
+          translateX:
+            interpolate(entryProgress, [0, 1], [22, 0]) - (stretchesOnFullSwipe ? 0 : stretch),
         },
+        { scale: interpolate(entryProgress, [0, 1], [0.78, 1]) },
       ],
-      width: itemWidth + (stretchesOnFullSwipe ? stretch : 0),
     };
   });
-  const contentStyle = useAnimatedStyle(() => {
-    if (!stretchesOnFullSwipe) return { transform: [{ translateX: 0 }] };
+  // Keep Liquid Glass circles fixed-size — animating GlassView width crashes UIKit.
+  // On a committing full-swipe the pill rides left with the drag and scales up slightly.
+  const circleStyle = useAnimatedStyle(() => {
     const reveal = Math.max(-translation.value, 0);
-    const stretch = Math.max(reveal - actionsWidth, 0);
+    const stretch = stretchesOnFullSwipe ? Math.max(reveal - actionsWidth, 0) : 0;
     const armedProgress = interpolate(
       reveal,
       [fullSwipeThreshold, fullSwipeThreshold + 20],
       [0, 1],
       Extrapolation.CLAMP,
     );
-    // Keep the glyph near the visible center of the expanding lane, like Mail.
+
     return {
-      transform: [{ translateX: -stretch * (0.5 + armedProgress * 0.15) }],
+      transform: [
+        { translateX: -stretch * (0.55 + armedProgress * 0.2) },
+        { scale: interpolate(armedProgress, [0, 1], [1, 1.08]) },
+      ],
+    };
+  });
+  const labelStyle = useAnimatedStyle(() => {
+    if (!stretchesOnFullSwipe) {
+      return { opacity: 1 };
+    }
+
+    const reveal = Math.max(-translation.value, 0);
+    return {
+      opacity: interpolate(
+        reveal,
+        [fullSwipeThreshold - 24, fullSwipeThreshold],
+        [1, 0],
+        Extrapolation.CLAMP,
+      ),
     };
   });
 
@@ -628,24 +639,72 @@ function SwipeActionButton(props: {
       accessibilityLabel={props.accessibilityLabel}
       accessibilityRole="button"
       onPress={props.menu === undefined ? props.onPress : undefined}
-      className={swipeLaneClassName(props.tone)}
       style={({ pressed }) => ({
         alignItems: "center",
-        backgroundColor: swipeLaneBackground(props.tone),
         height: "100%",
         justifyContent: "center",
-        opacity: pressed ? 0.85 : 1,
+        opacity: pressed ? 0.78 : 1,
         width: "100%",
       })}
     >
-      <Animated.View style={[{ alignItems: "center", justifyContent: "center" }, contentStyle]}>
-        <SymbolView
-          name={props.icon}
-          size={iconSize}
-          tintColorClassName={foreground}
-          type="monochrome"
-        />
-        <Text className={swipeLaneLabelClassName(props.tone)} numberOfLines={1}>
+      <Animated.View
+        style={[
+          {
+            alignItems: "center",
+            height: circleSize,
+            justifyContent: "center",
+            width: circleSize,
+          },
+          circleStyle,
+        ]}
+      >
+        {useGlass ? (
+          <GlassSurface
+            chrome="none"
+            isInteractive
+            tintColorClassName={swipeGlassTintClassName(props.tone)}
+            style={{
+              alignItems: "center",
+              borderRadius: circleSize / 2,
+              height: circleSize,
+              justifyContent: "center",
+              width: circleSize,
+            }}
+          >
+            <SymbolView
+              name={props.icon}
+              size={iconSize}
+              tintColorClassName={swipeIconTintClassName(props.tone)}
+              type="monochrome"
+            />
+          </GlassSurface>
+        ) : (
+          <View
+            className={swipeSolidFillClassName(props.tone)}
+            style={{
+              alignItems: "center",
+              borderRadius: 999,
+              height: circleSize,
+              justifyContent: "center",
+              width: circleSize,
+            }}
+          >
+            <SymbolView
+              name={props.icon}
+              size={iconSize}
+              tintColorClassName={swipeSolidIconTintClassName(props.tone)}
+              type="monochrome"
+            />
+          </View>
+        )}
+      </Animated.View>
+      <Animated.View
+        style={[
+          { height: 14, justifyContent: "center", paddingTop: props.compact ? 0 : 2 },
+          labelStyle,
+        ]}
+      >
+        <Text className="text-3xs font-t3-medium text-foreground-muted" numberOfLines={1}>
           {props.label}
         </Text>
       </Animated.View>
@@ -656,11 +715,13 @@ function SwipeActionButton(props: {
     <Animated.View
       style={[
         {
+          alignItems: "center",
           height: "100%",
-          overflow: "hidden",
+          justifyContent: "center",
+          width: ACTION_ITEM_WIDTH,
           zIndex: props.stretchesOnFullSwipe ? 2 : 1,
         },
-        laneStyle,
+        actionStyle,
       ]}
     >
       {props.menu === undefined ? (
@@ -689,11 +750,9 @@ function ThreadSwipeActions(props: {
   readonly secondaryAction: ThreadSwipeSecondaryAction | null;
   readonly translation: SharedValue<number>;
 }) {
-  const { compact, fullSwipeThreshold, onFullSwipeArmedChange, secondaryAction, translation } =
-    props;
+  const { fullSwipeThreshold, onFullSwipeArmedChange, secondaryAction, translation } = props;
   const fullSwipeIsPrimary = props.fullSwipeAction === "primary" || secondaryAction === null;
-  const itemWidth = actionItemWidth(compact);
-  const actionsWidth = swipeActionsWidth(secondaryAction !== null, compact);
+  const actionsWidth = swipeActionsWidth(secondaryAction !== null);
   useAnimatedReaction(
     () => -translation.value >= fullSwipeThreshold,
     (armed, previous) => {
@@ -716,11 +775,12 @@ function ThreadSwipeActions(props: {
       <SwipeActionButton
         accessibilityLabel={props.primaryAction.accessibilityLabel}
         actionsWidth={actionsWidth}
-        itemWidth={itemWidth}
         tone={props.primaryAction.destructive === true ? "danger" : "primary"}
-        compact={compact}
+        compact={props.compact}
         entryRange={
-          secondaryAction === null ? [8, itemWidth * 0.72] : [itemWidth * 0.55, actionsWidth * 0.85]
+          secondaryAction === null
+            ? [8, ACTION_ITEM_WIDTH * 0.72]
+            : [ACTION_ITEM_WIDTH * 0.55, ACTION_ITEM_WIDTH * 2 * 0.85]
         }
         fullSwipeThreshold={props.fullSwipeThreshold}
         icon={props.primaryAction.icon}
@@ -733,10 +793,9 @@ function ThreadSwipeActions(props: {
         <SwipeActionButton
           accessibilityLabel={secondaryAction.accessibilityLabel}
           actionsWidth={actionsWidth}
-          itemWidth={itemWidth}
           tone={secondaryAction.tone}
-          compact={compact}
-          entryRange={[8, itemWidth * 0.72]}
+          compact={props.compact}
+          entryRange={[8, ACTION_ITEM_WIDTH * 0.72]}
           fullSwipeThreshold={props.fullSwipeThreshold}
           icon={secondaryAction.icon}
           label={secondaryAction.label}
