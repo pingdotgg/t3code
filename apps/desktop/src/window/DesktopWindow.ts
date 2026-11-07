@@ -323,6 +323,7 @@ export const make = Effect.gen(function* () {
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
+  const runSync = Effect.runSyncWith(context);
   const mainWindowMutex = yield* Semaphore.make(1);
   const pendingMainReveals = new WeakMap<Electron.BrowserWindow, Effect.Effect<void>>();
   const revealMain = Effect.fn("desktop.window.revealMain")((window: Electron.BrowserWindow) =>
@@ -700,8 +701,20 @@ export const make = Effect.gen(function* () {
     window.on("move", scheduleBoundsPersist);
     window.on("maximize", scheduleBoundsPersist);
     window.on("unmaximize", scheduleBoundsPersist);
-    window.on("close", () => {
+    const shouldHideOnClose = Effect.gen(function* () {
+      if (yield* Ref.get(desktopState.quitting)) return false;
+      return yield* Ref.get(desktopState.closeToTray);
+    });
+    let sessionEnding = false;
+    // Windows sends this before logoff/shutdown; never hold the window open past it.
+    window.on("query-session-end", () => {
+      sessionEnding = true;
+    });
+    window.on("close", (event) => {
       runFork(flushBoundsPersist);
+      if (sessionEnding || !runSync(shouldHideOnClose)) return;
+      event.preventDefault();
+      window.hide();
     });
 
     if (environment.platform === "darwin") {

@@ -103,6 +103,7 @@ function makeFakeBrowserWindow() {
     focus: vi.fn(),
     getBounds: vi.fn(() => ({ x: 0, y: 0, width: 1100, height: 780 })),
     getNormalBounds: vi.fn(() => ({ x: 0, y: 0, width: 1100, height: 780 })),
+    hide: vi.fn(),
     isDestroyed: vi.fn(() => false),
     isFullScreen: vi.fn(() => false),
     isMaximized: vi.fn(() => false),
@@ -132,6 +133,7 @@ function makeFakeBrowserWindow() {
     window: window as unknown as Electron.BrowserWindow,
     getBounds: window.getBounds,
     getNormalBounds: window.getNormalBounds,
+    hide: window.hide,
     isDestroyed: window.isDestroyed,
     isFullScreen: window.isFullScreen,
     isMaximized: window.isMaximized,
@@ -936,6 +938,44 @@ describe("DesktopWindow", () => {
         assert.equal(fakeWindow.getBounds.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  it.effect.each([
+    { closeToTray: true, quitting: false, sessionEnding: false, expectHidden: true },
+    { closeToTray: false, quitting: false, sessionEnding: false, expectHidden: false },
+    { closeToTray: true, quitting: true, sessionEnding: false, expectHidden: false },
+    { closeToTray: true, quitting: false, sessionEnding: true, expectHidden: false },
+  ] as const)(
+    "hides instead of closing only while the tray owns the app (closeToTray=$closeToTray quitting=$quitting sessionEnding=$sessionEnding)",
+    ({ closeToTray, quitting, sessionEnding, expectHidden }) =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          const state = yield* DesktopState.DesktopState;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          // Quitting before creation blocks the window; flip the refs after it exists.
+          yield* Ref.set(state.closeToTray, closeToTray);
+          yield* Ref.set(state.quitting, quitting);
+
+          const close = fakeWindow.windowListeners.get("close");
+          const querySessionEnd = fakeWindow.windowListeners.get("query-session-end");
+          if (!close || !querySessionEnd) {
+            return yield* Effect.die("window lifecycle listeners were not registered");
+          }
+          if (sessionEnding) querySessionEnd();
+          const preventDefault = vi.fn();
+          close({ preventDefault });
+          yield* Effect.promise(() => Promise.resolve());
+
+          assert.equal(preventDefault.mock.calls.length, expectHidden ? 1 : 0);
+          assert.equal(fakeWindow.hide.mock.calls.length, expectHidden ? 1 : 0);
+        }).pipe(Effect.provide(layer));
+      }),
   );
 
   it.effect("preserves unrestorable bounds until the user changes the window", () =>
