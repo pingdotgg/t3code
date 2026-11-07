@@ -3,6 +3,8 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 
+vi.mock("../../state/threads", () => ({ environmentThreadShells: {} }));
+
 vi.mock("../../state/queries", () => ({
   useComposerPathSearch: () => ({ entries: [], isPending: false }),
   useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),

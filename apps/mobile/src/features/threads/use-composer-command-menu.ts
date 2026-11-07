@@ -14,7 +14,6 @@ import {
 } from "@t3tools/client-runtime/composerThreadItems";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
-const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
 const EMPTY_ENVIRONMENTS: ReadonlyArray<ComposerEnvironmentCandidate> = [];
 const NO_LINKED_ENVIRONMENTS: ReadonlyMap<EnvironmentId, string> = new Map();
 import { COMPOSER_CONTEXT_MAX_RECORDS } from "@t3tools/contracts";
@@ -50,11 +49,12 @@ import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
-import { useAtomRefresh } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
+import { environmentThreadShells } from "../../state/threads";
 import { serverEnvironment } from "../../state/server";
 import {
   useComposerPathSearch,
@@ -63,6 +63,8 @@ import {
 } from "../../state/queries";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
+
+const EMPTY_THREAD_SHELLS_ATOM = Atom.make<ReadonlyArray<EnvironmentThreadShell>>([]);
 
 const providerWorkspaceSnapshotRefresh = createProviderWorkspaceSnapshotRefreshAtomFamily({
   providers: serverEnvironment.providersValueAtom,
@@ -237,7 +239,6 @@ export function useComposerCommandMenu({
   draftMessage,
   ownerKey,
   environmentId,
-  threadShells = EMPTY_THREAD_SHELLS,
   environments = EMPTY_ENVIRONMENTS,
   linkedEnvironments = NO_LINKED_ENVIRONMENTS,
   currentThreadId = null,
@@ -259,7 +260,6 @@ export function useComposerCommandMenu({
   readonly draftMessage: string;
   readonly ownerKey: string | null;
   readonly environmentId: EnvironmentId | null;
-  readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
   readonly environments?: ReadonlyArray<ComposerEnvironmentCandidate>;
   /** The machines `environmentId` links to, by name, whose threads the picker also offers. */
   readonly linkedEnvironments?: ReadonlyMap<EnvironmentId, string>;
@@ -329,6 +329,11 @@ export function useComposerCommandMenu({
     }
     return detectComposerTrigger(draftMessage, selection.end);
   })();
+  const threadShells = useAtomValue(
+    trigger?.kind === "path" && trigger.query.trim().length > 0 && environmentId !== null
+      ? environmentThreadShells.visibleThreadShellsAtom
+      : EMPTY_THREAD_SHELLS_ATOM,
+  );
   const pathSearch = useComposerPathSearch({
     environmentId,
     cwd: trigger?.kind === "path" ? projectCwd : null,
