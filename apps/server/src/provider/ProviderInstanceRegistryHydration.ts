@@ -194,7 +194,7 @@ export const layer: Layer.Layer<
     // Instances of drivers the policy leaves out stay listed, as unavailable, so their threads
     // explain why instead of losing their provider.
     const layerMutable = ProviderInstanceRegistry.layer({
-      drivers: BUILT_IN_DRIVERS,
+      drivers: ManagedProviders.withManagedInstalls(serverSettings.managedPolicy, BUILT_IN_DRIVERS),
       configMap: initialConfigMap,
       blockedReason: (driver) =>
         ManagedProviders.disallowedDriverReason(serverSettings.managedPolicy, driver),

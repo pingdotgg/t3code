@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { AuthProvidersManageScope, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  AuthProvidersManageScope,
+  managedProviderInstallDenial,
+  ProviderDriverKind,
+} from "@t3tools/contracts";
 import { readPreparedConnection, useEnvironmentScope } from "../../state/session";
 import {
   isAtomCommandInterrupted,
@@ -29,7 +33,7 @@ import {
 
 import { ensureLocalApi } from "../../localApi";
 import { managedInstanceLocks, useManagedPolicy } from "../../state/managedPolicy";
-import { ManagedControl } from "../ManagedPolicy";
+import { ManagedControl, ManagedNotice } from "../ManagedPolicy";
 import { useEnvironmentHttpBaseUrl } from "../../state/environments";
 import { environmentPresentations } from "../../state/presentation";
 import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
@@ -50,6 +54,8 @@ import { AddCodexAccountDialog } from "./AddCodexAccountDialog";
 import { getOnboardingProviderState } from "../../onboarding/providerReadiness.logic";
 import { getProviderSummary } from "./providerStatus";
 import {
+  codexNeedsInstall,
+  codexSetupRefused,
   settleAuthorizationPage,
   settleHandoffAuthorizationPage,
   settleProviderInstall,
@@ -334,6 +340,10 @@ function ManagedCodexSetup({
   const [autoStartHandled, setAutoStartHandled] = useState(false);
   const installed = installation?.installedVersion != null;
   const authenticated = provider?.auth.status === "authenticated";
+  const canStartSetup = provider?.setup !== undefined && (installed || provider.setup.canInstall);
+  const setupRefused = codexSetupRefused(installation, provider?.setup?.canInstall);
+  const managedPolicy = useManagedPolicy(environmentId);
+  const setupDenial = setupRefused ? managedProviderInstallDenial(managedPolicy) : undefined;
   const updateAvailable =
     installed &&
     installation?.source !== "local" &&
@@ -357,7 +367,7 @@ function ManagedCodexSetup({
       void refreshProviders({ environmentId, input: { instanceId } });
     }
   }, [awaitingProvider, auth?.phase, refreshProviders, environmentId, instanceId]);
-  const startingAutomatically = autoStart && !autoStartHandled;
+  const startingAutomatically = autoStart && !autoStartHandled && !setupRefused;
   const waitingForAuthState =
     awaitingProvider === "sign-in" && !authenticated && (auth === null || auth.phase === "idle");
   const authInProgress =
@@ -555,7 +565,8 @@ function ManagedCodexSetup({
   const setup = async (methodId = "chatgpt") => {
     if (unavailable || busy) return;
     const signal = beginOperation();
-    if (installed && !updateAvailable) {
+    const canInstall = provider?.setup?.canInstall ?? false;
+    if (!codexNeedsInstall({ installed, updateAvailable, canInstall })) {
       await signIn(methodId, signal);
       return;
     }
@@ -580,7 +591,7 @@ function ManagedCodexSetup({
     !unavailable &&
     !busy &&
     installation !== null &&
-    provider?.setup?.canInstall
+    canStartSetup
   ) {
     setAutoStartHandled(true);
   }
@@ -856,24 +867,26 @@ function ManagedCodexSetup({
             ) : authActive ? (
               waitingControl
             ) : (
-              <ChatGptConnectionButton
-                size="sm"
-                disabled={
-                  unavailable ||
-                  busy ||
-                  (!installed ? !provider?.setup?.canInstall : !provider?.setup?.canAuthenticate)
-                }
-                onClick={() => {
-                  if (hasSavedAccount) setAccountPickerOpen(true);
-                  else void setup();
-                }}
-              >
-                {installActive || pending
-                  ? "Setting up..."
-                  : hasSavedAccount
-                    ? "Reconnect account"
-                    : "Continue with ChatGPT"}
-              </ChatGptConnectionButton>
+              <ManagedControl reason={setupDenial}>
+                <ChatGptConnectionButton
+                  size="sm"
+                  disabled={
+                    unavailable ||
+                    busy ||
+                    (!installed ? !provider?.setup?.canInstall : !provider?.setup?.canAuthenticate)
+                  }
+                  onClick={() => {
+                    if (hasSavedAccount) setAccountPickerOpen(true);
+                    else void setup();
+                  }}
+                >
+                  {installActive || pending
+                    ? "Setting up..."
+                    : hasSavedAccount
+                      ? "Reconnect account"
+                      : "Continue with ChatGPT"}
+                </ChatGptConnectionButton>
+              </ManagedControl>
             )
           }
           secondaryControl={
@@ -897,14 +910,16 @@ function ManagedCodexSetup({
                 Cancel
               </Button>
             ) : !authActive && !authenticated && hasSavedAccount ? (
-              <Button
-                size="sm"
-                variant="ghost-muted"
-                disabled={unavailable || busy}
-                onClick={() => void setup("chatgpt-change-account")}
-              >
-                Use a different account
-              </Button>
+              <ManagedControl reason={setupDenial}>
+                <Button
+                  size="sm"
+                  variant="ghost-muted"
+                  disabled={unavailable || busy || !canStartSetup}
+                  onClick={() => void setup("chatgpt-change-account")}
+                >
+                  Use a different account
+                </Button>
+              </ManagedControl>
             ) : !authActive && !authenticated && allowExistingCli ? (
               <Button
                 size="sm"
@@ -918,6 +933,7 @@ function ManagedCodexSetup({
           }
         >
           {needsManualCallback ? callbackFallback : callbackHelpContent}
+          {setupDenial ? <ManagedNotice>{setupDenial}</ManagedNotice> : null}
           {setupError ? (
             <p role="alert" className="text-xs text-destructive">
               {setupError}
@@ -994,33 +1010,39 @@ function ManagedCodexSetup({
               </>
             ) : (
               <>
-                <ChatGptConnectionButton
-                  size="sm"
-                  disabled={
-                    unavailable ||
-                    busy ||
-                    (!installed ? !provider?.setup?.canInstall : !provider?.setup?.canAuthenticate)
-                  }
-                  onClick={() => {
-                    if (hasSavedAccount) setAccountPickerOpen(true);
-                    else void setup();
-                  }}
-                >
-                  {pending
-                    ? "Setting up..."
-                    : hasSavedAccount
-                      ? "Reconnect account"
-                      : "Continue with ChatGPT"}
-                </ChatGptConnectionButton>
-                {hasSavedAccount ? (
-                  <Button
+                <ManagedControl reason={setupDenial}>
+                  <ChatGptConnectionButton
                     size="sm"
-                    variant="ghost"
-                    disabled={unavailable || busy}
-                    onClick={() => void setup("chatgpt-change-account")}
+                    disabled={
+                      unavailable ||
+                      busy ||
+                      (!installed
+                        ? !provider?.setup?.canInstall
+                        : !provider?.setup?.canAuthenticate)
+                    }
+                    onClick={() => {
+                      if (hasSavedAccount) setAccountPickerOpen(true);
+                      else void setup();
+                    }}
                   >
-                    Use a different account
-                  </Button>
+                    {pending
+                      ? "Setting up..."
+                      : hasSavedAccount
+                        ? "Reconnect account"
+                        : "Continue with ChatGPT"}
+                  </ChatGptConnectionButton>
+                </ManagedControl>
+                {hasSavedAccount ? (
+                  <ManagedControl reason={setupDenial}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={unavailable || busy || !canStartSetup}
+                      onClick={() => void setup("chatgpt-change-account")}
+                    >
+                      Use a different account
+                    </Button>
+                  </ManagedControl>
                 ) : null}
                 {allowExistingCli ? (
                   <Button
@@ -1040,6 +1062,11 @@ function ManagedCodexSetup({
       {authenticated ? (
         <div className="flex justify-end px-3 py-1 sm:px-4">
           <ChatGptUsageButton />
+        </div>
+      ) : null}
+      {setupDenial ? (
+        <div className="px-3 py-2 sm:px-4">
+          <ManagedNotice>{setupDenial}</ManagedNotice>
         </div>
       ) : null}
       {logoutWarning ? (

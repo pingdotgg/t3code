@@ -8,6 +8,7 @@ import {
   ANTIGRAVITY_AUTH_METHODS,
   type AntigravityAuthMethod,
   type EnvironmentId,
+  managedProviderInstallDenial,
   type ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -15,9 +16,11 @@ import { useRef, useState } from "react";
 import { Trash2Icon } from "lucide-react";
 
 import { ensureLocalApi } from "../../localApi";
+import { useManagedPolicy } from "../../state/managedPolicy";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { ManagedNotice } from "../ManagedPolicy";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow } from "./settingsLayout";
@@ -106,6 +109,7 @@ function ProviderSetupActions({
   readonly authMethod: AntigravityAuthMethod;
 }) {
   const target = { environmentId, input: { instanceId } };
+  const installDenial = managedProviderInstallDenial(useManagedPolicy(environmentId));
   const authQuery = useEnvironmentQuery(serverEnvironment.providerAuthState(target));
   const installQuery = useEnvironmentQuery(serverEnvironment.providerInstallState(target));
   const auth = authQuery.data;
@@ -146,7 +150,7 @@ function ProviderSetupActions({
                 ? enabled
                   ? "The configured Antigravity runtime is unavailable."
                   : "The configured Antigravity runtime has not been checked."
-                : installation?.totalBytes
+                : installation?.totalBytes && !installDenial
                   ? `${Math.ceil(installation.totalBytes / 1_000_000)} MB download.`
                   : "Not installed.";
 
@@ -203,7 +207,9 @@ function ProviderSetupActions({
                 Uses the custom binary path below. Installation keeps that path.
               </p>
             ) : null}
-            {!installed && !provider.setup?.canInstall ? (
+            {installDenial ? (
+              <ManagedNotice>{installDenial}</ManagedNotice>
+            ) : !installed && !provider.setup?.canInstall ? (
               <p className="text-muted-foreground">
                 Automatic installation unavailable. Set a binary path or use another environment.
               </p>

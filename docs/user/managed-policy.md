@@ -75,8 +75,9 @@ Administrative Templates > T3 Code. Set **Organization** whenever you set any ot
 Locks and provider fields go in the two JSON policies, as the same objects a policy file would hold.
 Machines pick up a change at the next Group Policy refresh; run `gpupdate /target:computer /force`
 to apply it now, then restart T3 Code.
-Setting **Allow T3 Connect**, **Allow webhook tasks**, **Allow importing browser cookies**, or
-**Allow usage data** to **Disabled** turns that feature off. Setting any other T3 Code policy to
+Setting **Allow T3 Connect**, **Allow webhook tasks**, **Allow importing browser cookies**,
+**Allow usage data**, or **Allow installing and updating providers** to **Disabled** turns that
+feature off. Setting any other T3 Code policy to
 **Disabled** restricts nothing, the same as **Not Configured**.
 
 **Windows registry value.** Instead of the template, set the `Policy` value (`REG_SZ`) to the whole policy as one line of JSON,
@@ -271,6 +272,19 @@ empty. A `codex` entry that is locked, or any `codex` entry under `maxRuntimeMod
 [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt), since that runtime would skip
 your fields. In the same way, an `opencode` entry like that rules out a server URL, so OpenCode
 starts the binary you set.
+
+`providers.installs: false` stops T3 Code from installing or updating provider software, including
+ACP Registry agents. Users can still remove what T3 Code installed. Providers you install yourself,
+for example through your device management tool, run as usual.
+
+T3 Code no longer offers install or update actions, but it does not block commands someone runs in
+a terminal. [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt) needs Codex to be on
+the machine already.
+
+ACP Registry agents T3 Code already installed stay at their version, because T3 Code stops refreshing
+the registry list. Codex installed through
+[Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt) gets no more updates, so it stops
+working once T3 Code no longer supports that version.
 
 ### Updates
 

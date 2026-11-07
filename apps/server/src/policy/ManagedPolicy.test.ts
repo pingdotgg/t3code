@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -12,8 +13,13 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { BUILT_IN_DRIVERS } from "../provider/builtInDrivers.ts";
+import { buildUnavailableProviderSnapshot } from "../provider/unavailableProviderSnapshot.ts";
 import * as ManagedPolicy from "./ManagedPolicy.ts";
-import { disallowedDriverReason, providerHostEnvironment } from "./managedProviders.ts";
+import {
+  disallowedDriverReason,
+  providerHostEnvironment,
+  withManagedInstalls,
+} from "./managedProviders.ts";
 
 it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
   const loadFrom = (contents: string | undefined) =>
@@ -403,6 +409,91 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       );
       assert.isUndefined(disallowedDriverReason(policy.summary, ProviderDriverKind.make("codex")));
     }),
+  );
+
+  it.effect("takes install and update actions off providers when installs are refused", () =>
+    Effect.gen(function* () {
+      const policy = yield* loadFrom(
+        JSON.stringify({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: { providers: { installs: false } },
+        }),
+      );
+      assert.deepEqual(policy.summary?.limits?.providers, { installs: false });
+
+      const instanceId = ProviderInstanceId.make("codex");
+      const driverKind = ProviderDriverKind.make("codex");
+      const provider = {
+        ...(yield* buildUnavailableProviderSnapshot({
+          driverKind,
+          instanceId,
+          displayName: undefined,
+          accentColor: undefined,
+          reason: "unused",
+        })),
+        setup: { canAuthenticate: true, canInstall: true },
+        versionAdvisory: {
+          status: "behind_latest" as const,
+          currentVersion: "1.0.0",
+          latestVersion: "2.0.0",
+          updateCommand: "npm install -g example",
+          canUpdate: true,
+          canInstallVersion: true,
+          checkedAt: null,
+          message: null,
+        },
+      };
+      const maintenance = {
+        provider: driverKind,
+        packageName: "example",
+        update: { command: "npm", args: ["install"], lockKey: "npm", label: "npm" },
+      };
+      assert.strictEqual(withManagedInstalls(undefined, BUILT_IN_DRIVERS), BUILT_IN_DRIVERS);
+      const [driver] = withManagedInstalls(policy.summary, [
+        {
+          ...BUILT_IN_DRIVERS[0]!,
+          create: () =>
+            Effect.succeed({
+              instanceId,
+              driverKind,
+              displayName: undefined,
+              enabled: true,
+              continuationIdentity: { driverKind, continuationKey: instanceId },
+              orchestrationAdapter: undefined as never,
+              textGeneration: undefined as never,
+              snapshot: {
+                resolveMaintenance: () => Effect.succeed(maintenance as never),
+                getSnapshot: Effect.succeed(provider),
+                refresh: Effect.succeed(provider),
+                streamChanges: Stream.make(provider),
+                applyUsageLimits: () => Effect.void,
+              },
+            }),
+        },
+      ]);
+      const instance = yield* driver!.create({
+        instanceId,
+        displayName: undefined,
+        environment: {} as never,
+        enabled: true,
+        config: {},
+      });
+
+      const offered = [
+        yield* instance.snapshot.getSnapshot,
+        yield* instance.snapshot.refresh,
+        ...(yield* Stream.runCollect(instance.snapshot.streamChanges)),
+      ];
+      for (const snapshot of offered) {
+        assert.isFalse(snapshot.setup?.canInstall);
+        assert.isTrue(snapshot.setup?.canAuthenticate);
+        assert.isFalse(snapshot.versionAdvisory?.canUpdate);
+        assert.isFalse(snapshot.versionAdvisory?.canInstallVersion);
+        assert.strictEqual(snapshot.versionAdvisory?.latestVersion, "2.0.0");
+      }
+      assert.isNull((yield* instance.snapshot.resolveMaintenance()).update);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("refuses provider limits it cannot enforce", () =>

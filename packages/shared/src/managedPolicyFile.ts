@@ -115,6 +115,7 @@ export const WINDOWS_POLICY_VALUES = {
   Telemetry: { type: "boolean", path: ["limits", "telemetry"] },
   BrowserCookieImport: { type: "boolean", path: ["limits", "browserCookieImport"] },
   ProviderInstances: { type: "json", path: ["limits", "providers", "instances"] },
+  ProviderInstalls: { type: "boolean", path: ["limits", "providers", "installs"] },
   UpdatesMode: { type: "string", path: ["limits", "updates", "mode"] },
   UpdatesFeedUrl: { type: "string", path: ["limits", "updates", "feedUrl"] },
   AllowNightly: { type: "boolean", path: ["limits", "updates", "allowNightly"] },

@@ -49,7 +49,11 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
 import { ManagedControl, ManagedNotice } from "../ManagedPolicy";
 import { managedInstanceLocks, useManagedPolicy } from "../../state/managedPolicy";
-import { disallowedProviderMessage, isManagedDriverAllowed } from "@t3tools/contracts";
+import {
+  disallowedProviderMessage,
+  isManagedDriverAllowed,
+  managedProviderInstallDenial,
+} from "@t3tools/contracts";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type {
@@ -772,6 +776,7 @@ export function ProviderInstanceCard({
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
   const managedPolicy = useManagedPolicy(environmentId);
   const instanceLocks = managedInstanceLocks(managedPolicy, instance.driver);
+  const installDenial = managedProviderInstallDenial(managedPolicy);
   const managedDriverReason = isManagedDriverAllowed(managedPolicy, instance.driver)
     ? undefined
     : disallowedProviderMessage(
@@ -1006,6 +1011,7 @@ export function ProviderInstanceCard({
               {versionAdvisory.detail}
             </p>
           </div>
+          {installDenial ? <ManagedNotice>{installDenial}</ManagedNotice> : null}
           {onRunVersionAction ? (
             <Button
               type="button"

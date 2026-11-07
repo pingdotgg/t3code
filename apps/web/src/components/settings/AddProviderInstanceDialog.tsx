@@ -18,6 +18,7 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   isManagedDriverAllowed,
+  managedProviderInstallDenial,
 } from "@t3tools/contracts";
 
 import {
@@ -28,6 +29,7 @@ import {
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { managedInstanceLocks, useManagedPolicy } from "../../state/managedPolicy";
+import { ManagedNotice } from "../ManagedPolicy";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { Button } from "../ui/button";
 import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
@@ -166,6 +168,7 @@ export function AddProviderInstanceDialog({
     isManagedDriverAllowed(managedPolicy, option.driverKind),
   );
   const acpRegistryAllowed = isManagedDriverAllowed(managedPolicy, ACP_REGISTRY_DRIVER_KIND);
+  const installDenial = managedProviderInstallDenial(managedPolicy);
   const [driver, setDriver] = useState<ProviderDriverKind>(
     () =>
       (featuredDriverOptions[0] ?? moreDriverOptions[0])?.driverKind ??
@@ -510,6 +513,9 @@ export function AddProviderInstanceDialog({
                           <div aria-hidden className="flex-1 border-t border-border/70" />
                         </div>
                       )}
+                      {acpRegistryAllowed && installDenial ? (
+                        <ManagedNotice>{installDenial}</ManagedNotice>
+                      ) : null}
                       {!acpRegistryAllowed ? null : isAcpRegistry && isManualAcpConfiguration ? (
                         <div className="grid gap-4">
                           <div className="flex items-start justify-between gap-3">
