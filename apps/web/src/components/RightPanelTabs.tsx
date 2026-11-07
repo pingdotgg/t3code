@@ -1028,6 +1028,43 @@ function RightPanelTab(
 
 export function RightPanelTabs(props: RightPanelTabsProps) {
   const focusedSurface = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
+  const focusedPullRequestAttention =
+    focusedSurface?.kind === "pull-request"
+      ? { id: focusedSurface.id, requestId: focusedSurface.attentionRequestId ?? 0 }
+      : null;
+  // Same PR still focused with a bumped request id: the link did something; pulse the panel.
+  const [pullRequestAttentionPulse, setPullRequestAttentionPulse] = useState({
+    surfaceId: null as string | null,
+    requestId: 0,
+    key: 0,
+  });
+  if (focusedPullRequestAttention) {
+    if (
+      pullRequestAttentionPulse.surfaceId === focusedPullRequestAttention.id &&
+      pullRequestAttentionPulse.requestId !== focusedPullRequestAttention.requestId
+    ) {
+      setPullRequestAttentionPulse({
+        surfaceId: focusedPullRequestAttention.id,
+        requestId: focusedPullRequestAttention.requestId,
+        key: pullRequestAttentionPulse.key + 1,
+      });
+    } else if (
+      pullRequestAttentionPulse.surfaceId !== focusedPullRequestAttention.id ||
+      pullRequestAttentionPulse.requestId !== focusedPullRequestAttention.requestId
+    ) {
+      setPullRequestAttentionPulse({
+        surfaceId: focusedPullRequestAttention.id,
+        requestId: focusedPullRequestAttention.requestId,
+        key: pullRequestAttentionPulse.key,
+      });
+    }
+  } else if (pullRequestAttentionPulse.surfaceId !== null) {
+    setPullRequestAttentionPulse({
+      surfaceId: null,
+      requestId: 0,
+      key: pullRequestAttentionPulse.key,
+    });
+  }
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
@@ -1526,7 +1563,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           />
         ) : null}
       </div>
-      <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
+      <div className="relative flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
+        {pullRequestAttentionPulse.key > 0 ? (
+          <div
+            key={pullRequestAttentionPulse.key}
+            aria-hidden
+            className="pointer-events-none absolute inset-0 z-20 motion-safe:animate-right-panel-attention-pulse"
+          />
+        ) : null}
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
             onAddBrowser={props.onAddBrowser}

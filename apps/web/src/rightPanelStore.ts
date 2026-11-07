@@ -76,12 +76,14 @@ export type RightPanelSurface =
       /** A clicked link waiting for the panel to show where it points; cleared once shown. */
       revealUrl?: string;
       detailTab?: PullRequestDetailTab;
+      /** Bumped on each open so a re-click can pulse the already-visible panel. */
+      attentionRequestId: number;
     }
   | { id: "pull-requests"; kind: "pull-requests" }
   | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 14;
+const RIGHT_PANEL_STORAGE_VERSION = 15;
 
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
@@ -285,6 +287,7 @@ export function pullRequestSurface(target: {
   number: number;
   url?: string;
   detailTab?: PullRequestDetailTab;
+  attentionRequestId?: number;
 }): PullRequestSurface {
   return {
     id: pullRequestSurfaceId(target),
@@ -296,6 +299,12 @@ export function pullRequestSurface(target: {
     number: target.number,
     ...(typeof target.url === "string" ? { url: target.url } : {}),
     ...(target.detailTab === undefined ? {} : { detailTab: target.detailTab }),
+    attentionRequestId:
+      typeof target.attentionRequestId === "number" &&
+      Number.isSafeInteger(target.attentionRequestId) &&
+      target.attentionRequestId >= 0
+        ? target.attentionRequestId
+        : 0,
   };
 }
 
@@ -535,11 +544,12 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                       ) {
                         return [];
                       }
-                      const { environmentId, ...rest } = surface;
+                      const { environmentId, attentionRequestId, ...rest } = surface;
                       return [
                         pullRequestSurface({
                           ...rest,
                           ...(typeof environmentId === "string" ? { environmentId } : {}),
+                          ...(typeof attentionRequestId === "number" ? { attentionRequestId } : {}),
                         }),
                       ];
                     }
@@ -763,14 +773,25 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       openPullRequest: (ref, target) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
-            const surface = pullRequestSurface(target);
+            const surfaceId = pullRequestSurfaceId(target);
+            const existing = current.surfaces.find(
+              (entry): entry is PullRequestSurface =>
+                entry.kind === "pull-request" && entry.id === surfaceId,
+            );
+            const surface = pullRequestSurface({
+              ...target,
+              attentionRequestId: (existing?.attentionRequestId ?? 0) + 1,
+            });
             const next = upsertSurface(current, surface);
             const { url, revealUrl } = target;
-            if (!url && !revealUrl) return next;
             return {
               ...next,
               surfaces: next.surfaces.map((entry) => {
                 if (entry.id !== surface.id || entry.kind !== "pull-request") return entry;
+                if (!url && !revealUrl) {
+                  // Reopen without a link: bump attention, keep any pending reveal.
+                  return { ...entry, ...surface };
+                }
                 // A later link replaces one not yet shown.
                 const { revealUrl: _previous, ...rest } = entry;
                 return { ...rest, ...surface, ...(revealUrl ? { revealUrl } : {}) };
