@@ -182,9 +182,9 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 
 /* Expanding a file mounts its body all at once. The virtualizer opens the row height
    immediately, so fading or clipping the body leaves a blank hole under the header.
-   Keep the body opaque and slide it out from under the header into that space.
-   Timing matches the app's 200ms collapsibles. Departing content cuts, the same
-   one-way rule the pull request chrome fold follows. */
+   Keep the body opaque and slide it one header-height out from under the sticky
+   header into that space. Timing matches the app's 200ms collapsibles. Departing
+   content cuts, the same one-way rule the pull request chrome fold follows. */
 [data-diff],
 [data-file] {
   transform: translateY(0);
@@ -194,7 +194,7 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 @starting-style {
   [data-diff],
   [data-file] {
-    transform: translateY(-10px);
+    transform: translateY(-32px);
   }
 }
 
