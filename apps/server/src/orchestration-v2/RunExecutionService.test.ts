@@ -14,6 +14,7 @@ import {
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2StoredEvent,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   ProviderDriverKind,
@@ -3829,7 +3830,7 @@ function runBackgroundItemScenario(
                 }
                 // Only the count of stored events matters to the run.
                 return event.type === "provider_thread.updated"
-                  ? [{} as OrchestrationV2DomainEvent]
+                  ? [{} as OrchestrationV2StoredEvent]
                   : [];
               });
               // A write outside a batch waits for queued snapshots, as the event sink's does.
