@@ -3453,10 +3453,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       });
       assert.isDefined(harness.runtime.getContextUsage);
-      const beforeTurn = yield* Effect.exit(
+      const beforeTurnError = yield* Effect.flip(
         harness.runtime.getContextUsage!({ providerThread: harness.providerThread }),
       );
-      assert.equal(beforeTurn._tag, "Failure");
+      assert.equal(beforeTurnError._tag, "ProviderAdapterProtocolError");
+      assert.equal(
+        beforeTurnError.detail,
+        "No live Claude session for this thread. Send a message first.",
+      );
       assert.equal(getContextUsageCalls, 0);
 
       yield* harness.runtime.startTurn(

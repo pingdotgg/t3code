@@ -178,7 +178,7 @@ export const UsagePriceItemResult = Schema.Struct({
 export type UsagePriceItemResult = typeof UsagePriceItemResult.Type;
 
 export const UsagePriceInput = Schema.Struct({
-  items: Schema.Array(UsagePriceItemInput),
+  items: Schema.Array(UsagePriceItemInput).check(Schema.isMaxLength(1_000)),
 });
 export type UsagePriceInput = typeof UsagePriceInput.Type;
 

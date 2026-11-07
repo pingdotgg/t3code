@@ -154,6 +154,63 @@ export function summarizeThreadTurnTokenUsage(
   };
 }
 
+function sumSummaryField(
+  summaries: ReadonlyArray<ThreadTurnTokenUsageSummary>,
+  field:
+    | "inputTokens"
+    | "uncachedInputTokens"
+    | "cachedInputTokens"
+    | "cacheCreationTokens"
+    | "outputTokens"
+    | "reasoningTokens"
+    | "otherInputTokens"
+    | "otherOutputTokens",
+): number | null {
+  let sum = 0;
+  let known = 0;
+  for (const summary of summaries) {
+    const value = summary[field];
+    if (value === null) continue;
+    sum += value;
+    known += 1;
+  }
+  return known === 0 ? null : sum;
+}
+
+/**
+ * Header / cost totals from the same per-run rows Insights prices.
+ * Attempt-less provider turns are omitted so the header cannot exceed the By-turn list.
+ */
+export function summarizeThreadTurnTokenUsageRows(
+  rows: ReadonlyArray<ThreadTurnTokenUsageRow>,
+): ThreadTurnTokenUsageSummary {
+  if (rows.length === 0) return emptySummary(0);
+  const summaries = rows.map((row) => row.usage);
+  const inputTokens = sumSummaryField(summaries, "inputTokens");
+  const outputTokens = sumSummaryField(summaries, "outputTokens");
+  const usageStatus: ThreadTurnTokenUsageStatus = summaries.every(
+    (summary) => summary.usageStatus === "complete",
+  )
+    ? "complete"
+    : summaries.some((summary) => summary.usageStatus !== "unavailable")
+      ? "partial"
+      : "unavailable";
+  return {
+    usageStatus,
+    inputTokens,
+    uncachedInputTokens: sumSummaryField(summaries, "uncachedInputTokens"),
+    cachedInputTokens: sumSummaryField(summaries, "cachedInputTokens"),
+    cacheCreationTokens: sumSummaryField(summaries, "cacheCreationTokens"),
+    outputTokens,
+    reasoningTokens: sumSummaryField(summaries, "reasoningTokens"),
+    otherInputTokens: sumSummaryField(summaries, "otherInputTokens"),
+    otherOutputTokens: sumSummaryField(summaries, "otherOutputTokens"),
+    totalTokens: inputTokens === null || outputTokens === null ? null : inputTokens + outputTokens,
+    turnCount: summaries.reduce((sum, summary) => sum + summary.turnCount, 0),
+    measuredTurnCount: summaries.reduce((sum, summary) => sum + summary.measuredTurnCount, 0),
+  };
+}
+
 /** Shape used by Usage pricing; missing counts become zero so unpriced models stay unpriced. */
 export function threadTurnTokenUsageTotals(
   usage: Pick<

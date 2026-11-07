@@ -211,6 +211,61 @@ describe("deriveThreadTimingTrace", () => {
     expect(trace!.queueWaitMs).toBe(0);
     expect(trace!.waitMs).toBe(0);
   });
+
+  it("counts overlapping turns once in activeMs", () => {
+    const trace = deriveThreadTimingTrace({
+      runs: [
+        run({
+          id: "r1",
+          ordinal: 1,
+          requestedAt: "2026-05-22T12:00:00.000Z",
+          startedAt: "2026-05-22T12:00:00.000Z",
+          completedAt: "2026-05-22T12:00:10.000Z",
+        }),
+        run({
+          id: "r2",
+          ordinal: 2,
+          requestedAt: "2026-05-22T12:00:05.000Z",
+          startedAt: "2026-05-22T12:00:05.000Z",
+          completedAt: "2026-05-22T12:00:15.000Z",
+        }),
+      ],
+      turnItems: [],
+      nowMs: NOW,
+    });
+
+    expect(trace!.totalMs).toBe(15_000);
+    expect(trace!.activeMs).toBe(15_000);
+    expect(trace!.workMs).toBe(20_000);
+  });
+
+  it("treats never-started runs as queued through endMs", () => {
+    const trace = deriveThreadTimingTrace({
+      runs: [
+        run({
+          id: "r1",
+          ordinal: 1,
+          status: "interrupted",
+          requestedAt: "2026-05-22T12:00:00.000Z",
+          startedAt: null,
+          completedAt: "2026-05-22T12:00:08.000Z",
+        }),
+      ],
+      turnItems: [],
+      nowMs: NOW,
+    });
+
+    expect(trace!.turns[0]!.queueWaitMs).toBe(8_000);
+    expect(trace!.turns[0]!.workMs).toBe(0);
+    expect(trace!.turns[0]!.spans).toEqual([
+      expect.objectContaining({
+        kind: "queue",
+        startMs: Date.parse("2026-05-22T12:00:00.000Z"),
+        endMs: Date.parse("2026-05-22T12:00:08.000Z"),
+        durationMs: 8_000,
+      }),
+    ]);
+  });
 });
 
 describe("layoutThreadFlameChart", () => {
@@ -252,6 +307,48 @@ describe("layoutThreadFlameChart", () => {
     expect(layout.nodes.find((node) => node.id === "tasks-1")?.depth).toBe(1);
     expect(layout.nodes.find((node) => node.id === "tool-1")?.depth).toBe(2);
     expect(layout.maxDepth).toBe(2);
+  });
+
+  it("gives partially overlapping equal-duration spans distinct depths", () => {
+    const trace = deriveThreadTimingTrace({
+      runs: [
+        run({
+          id: "r1",
+          ordinal: 1,
+          requestedAt: "2026-05-22T12:00:00.000Z",
+          startedAt: "2026-05-22T12:00:00.000Z",
+          completedAt: "2026-05-22T12:00:20.000Z",
+        }),
+      ],
+      turnItems: [
+        item({
+          id: "tool-a" as TurnItemId,
+          type: "command_execution",
+          runId: "r1" as RunId,
+          title: "a",
+          startedAt: utc("2026-05-22T12:00:00.000Z"),
+          completedAt: utc("2026-05-22T12:00:10.000Z"),
+          input: "a",
+        }),
+        item({
+          id: "tool-b" as TurnItemId,
+          type: "command_execution",
+          runId: "r1" as RunId,
+          title: "b",
+          startedAt: utc("2026-05-22T12:00:05.000Z"),
+          completedAt: utc("2026-05-22T12:00:15.000Z"),
+          input: "b",
+        }),
+      ],
+      nowMs: NOW,
+    });
+
+    const layout = layoutThreadFlameChart(trace!);
+    const depthA = layout.nodes.find((node) => node.id === "tool-a")?.depth;
+    const depthB = layout.nodes.find((node) => node.id === "tool-b")?.depth;
+    expect(depthA).toBeDefined();
+    expect(depthB).toBeDefined();
+    expect(depthA).not.toBe(depthB);
   });
 });
 
@@ -302,5 +399,21 @@ describe("buildCompressedTimingAxis", () => {
     expect(axis.breaks).toHaveLength(0);
     expect(axis.displayTotalMs).toBe(8_000);
     expect(axis.realToDisplay(6_000)).toBe(6_000);
+  });
+
+  it("does not double-count overlapping turns on the compressed axis", () => {
+    const axis = buildCompressedTimingAxis(
+      [
+        { ordinal: 1, requestedAtMs: 0, endMs: 100 },
+        { ordinal: 2, requestedAtMs: 50, endMs: 150 },
+      ],
+      { collapseAboveMs: 5_000, breakDisplayMs: 1_000 },
+    );
+
+    expect(axis.displayTotalMs).toBe(150);
+    expect(axis.realToDisplay(0)).toBe(0);
+    expect(axis.realToDisplay(100)).toBe(100);
+    expect(axis.realToDisplay(150)).toBe(150);
+    expect(axis.realToDisplay(50)).toBe(50);
   });
 });

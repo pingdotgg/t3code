@@ -31,9 +31,10 @@ jobs:
 
       - name: Compare with base
         env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
-          git fetch --quiet --depth=1 origin "$BASE_REF"
+          git fetch --quiet --depth=1 origin "$BASE_SHA"
           if ! git cat-file -e "FETCH_HEAD:$BUDGET" 2>/dev/null; then
             echo "Base branch has no agent context budget yet."
             exit 0
@@ -45,7 +46,7 @@ jobs:
             | "\(.key): \($base[0][.key]) -> \(.value) (+\(.value - $base[0][.key]))"
           ' "$BUDGET")
           if [ -z "$grown" ]; then
-            echo "Agent context is not larger than the PR base ($BASE_REF)."
+            echo "Agent context is not larger than the PR base ($BASE_SHA / $BASE_REF)."
             exit 0
           fi
           printf 'Agent context grew compared to %s:\n%s\n' "$BASE_REF" "$grown"

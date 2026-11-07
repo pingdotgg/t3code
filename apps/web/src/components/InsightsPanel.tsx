@@ -1,7 +1,7 @@
 import type { ThreadStructureTurnItem } from "@t3tools/client-runtime/state/models";
 import {
   listThreadTurnTokenUsageByRun,
-  summarizeThreadTurnTokenUsage,
+  summarizeThreadTurnTokenUsageRows,
   threadTurnTokenUsageTotals,
   type ThreadTurnTokenUsageRow,
   type ThreadTurnTokenUsageSummary,
@@ -182,8 +182,6 @@ export function InsightsPanel({
           messages: projection.projection.messages,
           nowMs,
         });
-  const tokenUsage =
-    projection === null ? null : summarizeThreadTurnTokenUsage(projection.projection.providerTurns);
   const turnRows =
     projection === null
       ? []
@@ -192,6 +190,7 @@ export function InsightsPanel({
           attempts: projection.projection.attempts,
           providerTurns: projection.projection.providerTurns,
         });
+  const tokenUsage = projection === null ? null : summarizeThreadTurnTokenUsageRows(turnRows);
   const priceItems = priceItemsForRows(turnRows);
   const priced = useEnvironmentQuery(
     !visible || priceItems.length === 0

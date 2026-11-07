@@ -2385,7 +2385,7 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live("prices turn totals with overrides and aliases for Insights", () =>
+  it.effect("prices turn totals with overrides and aliases for Insights", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
       yield* Effect.gen(function* () {

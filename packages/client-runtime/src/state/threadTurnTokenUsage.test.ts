@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   listThreadTurnTokenUsageByRun,
   summarizeThreadTurnTokenUsage,
+  summarizeThreadTurnTokenUsageRows,
   threadTurnTokenUsageTotals,
 } from "./threadTurnTokenUsage.ts";
 
@@ -290,6 +291,39 @@ describe("listThreadTurnTokenUsageByRun", () => {
       model: "Mixed models",
       priceModel: null,
       usage: { totalTokens: 33 },
+    });
+  });
+
+  it("header totals match by-run rows and ignore attempt-less turns", () => {
+    const providerTurns = [
+      {
+        runAttemptId: "attempt-1" as never,
+        turnTokenUsage: complete({ inputTokens: 40, outputTokens: 5 }),
+      },
+      {
+        runAttemptId: null,
+        turnTokenUsage: complete({ inputTokens: 999, outputTokens: 9 }),
+      },
+    ];
+    const rows = listThreadTurnTokenUsageByRun({
+      runs: [
+        {
+          id: "run-1" as never,
+          ordinal: 1,
+          activeAttemptId: "attempt-1" as never,
+          modelSelection: { instanceId: "claude" as never, model: "claude-opus-4" },
+        },
+      ],
+      attempts: [{ id: "attempt-1" as never, runId: "run-1" as never, status: "completed" }],
+      providerTurns,
+    });
+
+    expect(summarizeThreadTurnTokenUsage(providerTurns).inputTokens).toBe(1_039);
+    expect(summarizeThreadTurnTokenUsageRows(rows)).toMatchObject({
+      inputTokens: 40,
+      outputTokens: 5,
+      totalTokens: 45,
+      measuredTurnCount: 1,
     });
   });
 });
