@@ -56,6 +56,7 @@ vi.mock("../state/environments", async (original) => ({
         serverConfig: {
           environment: { platform: { os: "linux" }, capabilities: { projectCloneTracking: true } },
           settings: { addProjectBaseDirectory: "/workspace/" },
+          newProjectsRoot: "/workspace/",
         },
       },
     ],
@@ -132,6 +133,24 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
       await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
     }
   });
+});
+
+it.each([
+  { step: "folder", source: "Local folder", keys: "", description: /^(?!.*(Ctrl|⌘)).*Add.*Enter/ },
+  {
+    step: "highlighted folder",
+    source: "Local folder",
+    keys: "{ArrowDown}",
+    description: /Add.*(Ctrl|⌘) Enter/,
+  },
+  { step: "repository", source: "Git URL", keys: "", description: /Continue.*Enter/ },
+  { step: "new project", source: "New project", keys: "", description: /Create.*Enter/ },
+])("tells screen readers how to submit the $step step", async ({ source, keys, description }) => {
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByText(source, { exact: true }).click();
+  if (keys) await userEvent.keyboard(keys);
+  await expect.element(page.getByRole("combobox")).toHaveAccessibleDescription(description);
 });
 
 it("keeps the caret in place when an edit briefly makes the folder path not a path", async () => {
