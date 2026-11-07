@@ -57,7 +57,7 @@
     "canvas-confetti": "1.9.4",
     "class-variance-authority": "^0.7.1",
     "culori": "^4.0.2",
-    "dompurify": "^3.4.16",
+    "dompurify": "^3.4.17",
     "effect": "catalog:",
     "entities": "8.1.0",
     "fast-xml-parser": "5.7.3",
