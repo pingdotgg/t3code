@@ -2071,7 +2071,7 @@ describe("EnvironmentSupervisor routes", () => {
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
         grant: (target) =>
           target._tag === "RelayConnectionTarget"
-            ? Ref.get(relayGrant).pipe(Effect.map(Option.some))
+            ? Ref.get(relayGrant).pipe(Effect.asSome)
             : Effect.succeedSome(LEGACY_GRANT),
       });
       const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
