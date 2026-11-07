@@ -16,6 +16,7 @@ const COPILOT_SESSION_EVENT = "github.com/copilot/sessionEvent";
 export const copilotClientCapabilitiesMeta = {
   [COPILOT_META_KEY]: {
     events: [
+      "user.message",
       "assistant.turn_start",
       "assistant.idle",
       "session.idle",
@@ -89,12 +90,27 @@ export function makeCopilotSubagentRouting() {
       const data = event.data ?? {};
       const task = typeof data.parentToolCallId === "string" ? data.parentToolCallId : undefined;
       switch (event.type) {
+        case "user.message":
+          return event.agentId === undefined &&
+            (data.source === undefined || data.source === "user") &&
+            data.isAutopilotContinuation !== true &&
+            typeof data.content === "string"
+            ? context.updateForegroundWork({
+                sessionId: event.sessionId,
+                state: "accepted",
+                content: data.content,
+              })
+            : Effect.void;
         case "assistant.turn_start":
         case "assistant.idle":
+        case "session.idle":
           return event.agentId === undefined
             ? context.updateForegroundWork({
                 sessionId: event.sessionId,
                 state: event.type === "assistant.turn_start" ? "running" : "idle",
+                ...(event.type === "assistant.idle" && data.aborted === true
+                  ? { stopReason: "cancelled" }
+                  : {}),
               })
             : Effect.void;
         case "assistant.message_delta":

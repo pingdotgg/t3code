@@ -3139,6 +3139,7 @@ describe("AcpAdapterV2", () => {
         const readline = require("node:readline");
         const send = value => process.stdout.write(JSON.stringify(value) + "\\n");
         const promptIds = [];
+        let cancellations = 0;
         readline.createInterface({ input: process.stdin }).on("line", line => {
           const frame = JSON.parse(line);
           const respond = result => send({ jsonrpc: "2.0", id: frame.id, result });
@@ -3149,6 +3150,15 @@ describe("AcpAdapterV2", () => {
             send({ jsonrpc: "2.0", method: "github.com/copilot/sessionEvent",
               params: { sessionId: "mock-session-1", ...frame.params } });
             respond({});
+          } else if (frame.method === "_test/update") {
+            send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "mock-session-1", update: frame.params } });
+            respond({});
+          } else if (frame.method === "session/cancel") {
+            cancellations += 1;
+          } else if (frame.method === "session/close") {
+            send({ jsonrpc: "2.0", id: frame.id, error: { code: -32601, message: "unsupported" } });
+          } else if (frame.method === "_test/cancellations") {
+            respond({ cancellations });
           } else if (frame.method === "_test/release") {
             send({ jsonrpc: "2.0", id: promptIds[frame.params.index], result: { stopReason: "end_turn" } });
             respond({});
@@ -3214,8 +3224,11 @@ describe("AcpAdapterV2", () => {
         runtimePolicy,
       });
       const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      const projected: ProviderAdapter.ProviderAdapterV2Event[] = [];
       yield* runtime.events.pipe(
-        Stream.runForEach((item) => Queue.offer(events, item)),
+        Stream.runForEach((item) =>
+          Effect.sync(() => projected.push(item)).pipe(Effect.andThen(Queue.offer(events, item))),
+        ),
         Effect.forkScoped,
       );
       const terminal = () =>
@@ -3235,8 +3248,18 @@ describe("AcpAdapterV2", () => {
       yield* runtime.startTurn(turn(1));
       yield* Deferred.await(promptDispatched);
       assert.isDefined(nativeRuntime);
-      const event = (type: string, agentId?: string) =>
-        nativeRuntime!.request("_test/emit", { type, ...(agentId ? { agentId } : {}) });
+      const event = (type: string, agentId?: string, data?: object) =>
+        nativeRuntime!.request("_test/emit", {
+          type,
+          ...(agentId ? { agentId } : {}),
+          ...(data ? { data } : {}),
+        });
+      yield* event("session.idle");
+      assert.isTrue(
+        Option.isNone(yield* Queue.poll(continuations)),
+        "idle without a wake must not create a continuation",
+      );
+      yield* event("user.message", undefined, { content: "test prompt", delivery: "idle" });
       yield* event("assistant.turn_start");
       yield* event("assistant.idle", "child-agent");
       assert.isTrue(Exit.isFailure(yield* Effect.exit(runtime.startTurn(turn(2)))));
@@ -3266,11 +3289,347 @@ describe("AcpAdapterV2", () => {
       yield* nativeRuntime!.request("_test/release", { index: 0 });
       yield* Deferred.await(firstPromptReturned);
       yield* event("assistant.turn_start");
-      assert.isTrue(Exit.isFailure(yield* Effect.exit(runtime.startTurn(turn(4)))));
+      yield* nativeRuntime!.request("_test/update", {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "background wake" },
+      });
       yield* event("assistant.idle");
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(runtime.startTurn(turn(4)))),
+        "background wake must not accept the pending user prompt",
+      );
+      yield* Queue.take(continuations);
+      yield* event("user.message", undefined, { content: "test prompt", source: "agent-child" });
+      yield* event("assistant.idle");
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(runtime.startTurn(turn(4)))),
+        "injected messages must not accept the user prompt",
+      );
+      yield* event("user.message", undefined, { content: 42 });
+      yield* event("user.message", undefined, {});
+      yield* event("assistant.idle");
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(runtime.startTurn(turn(4)))),
+        "invalid messages must not accept the pending prompt",
+      );
+      yield* event("user.message", undefined, { content: "different request", delivery: "idle" });
+      yield* event("assistant.idle");
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(runtime.startTurn(turn(4)))),
+        "a different message must not accept the pending prompt",
+      );
+      yield* event("user.message", undefined, {
+        content: "test prompt",
+        isAutopilotContinuation: true,
+      });
+      yield* event("assistant.idle");
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(runtime.startTurn(turn(4)))),
+        "autopilot messages must not accept the pending prompt",
+      );
+      yield* event("user.message", "child-agent", { content: "test prompt" });
+      yield* event("assistant.idle");
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(runtime.startTurn(turn(4)))),
+        "child messages must not accept the pending prompt",
+      );
+      yield* event("user.message", undefined, { content: "test prompt", delivery: "idle" });
+      yield* event("assistant.turn_start");
+      yield* event("assistant.idle", undefined, { aborted: true });
+      const cancelled = (yield* terminal())[0];
+      assert.equal(cancelled?.status, "cancelled");
+      if (cancelled?.type !== "turn.terminal") return yield* Effect.die("missing terminal");
+      assert.isFalse(
+        projected.some(
+          (item) =>
+            item.type === "message.updated" &&
+            item.message.role === "assistant" &&
+            item.message.runId === turn(3).runId &&
+            item.message.text.includes("background wake"),
+        ),
+      );
+      const wake = makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        runtimePolicy,
+        now,
+        ordinal: 4,
+        messageCreatedBy: "agent",
+        messageCreationSource: "provider",
+      });
+      yield* runtime.startTurn(wake);
       assert.equal((yield* terminal())[0]?.status, "completed");
+      assert.isTrue(
+        projected.some(
+          (item) =>
+            item.type === "message.updated" &&
+            item.message.role === "assistant" &&
+            item.message.runId === wake.runId &&
+            item.message.text.includes("background wake"),
+        ),
+        JSON.stringify(projected.filter((item) => item.type === "message.updated")),
+      );
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: cancelled.providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      assert.deepEqual(yield* nativeRuntime!.request("_test/cancellations", {}), {
+        cancellations: 1,
+      });
       yield* nativeRuntime!.request("_test/release", { index: 1 });
       assert.equal(prompts, 2, "continuation must not send a prompt");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.each([
+    { close: true, settled: false },
+    { close: false, settled: false },
+    { close: true, settled: true },
+    { close: false, settled: true },
+  ])("stops Copilot work with close=$close and settled=$settled", ({ close, settled }) =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const dispatched = yield* Deferred.make<void>();
+      const response = yield* Deferred.make<{ readonly stopReason: "cancelled" }>();
+      const stopped = yield* Deferred.make<string>();
+      let runtimeCount = 0;
+      let event: ((value: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>) | undefined;
+      const instanceId = ProviderInstanceId.make("copilot-stop-lifecycle");
+      const adapter = yield* makeAcpRegistryAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        settings: COPILOT_SETTINGS,
+        environment: {},
+        continuationRequests: { offer: () => Effect.void },
+        makeRuntime: makeMockRuntime({
+          childProcessSpawner,
+          mockAgentPath,
+          wrapRuntime: (runtime) => {
+            runtimeCount += 1;
+            return {
+              ...runtime,
+              start: () =>
+                runtime.start().pipe(
+                  Effect.map((setup) => ({
+                    ...setup,
+                    initializeResult: {
+                      ...setup.initializeResult,
+                      protocolVersion: 1,
+                      agentCapabilities: {
+                        ...setup.initializeResult.agentCapabilities,
+                        sessionCapabilities: close ? { close: {} } : {},
+                      },
+                    },
+                  })),
+                ),
+              handleExtNotification: (method, schema, handler) =>
+                Effect.sync(() => {
+                  if (method === "github.com/copilot/sessionEvent") event = handler as typeof event;
+                }).pipe(Effect.andThen(runtime.handleExtNotification(method, schema, handler))),
+              prompt: (_payload, options) =>
+                Effect.gen(function* () {
+                  if (options?.dispatched) yield* Deferred.succeed(options.dispatched, undefined);
+                  yield* Deferred.succeed(dispatched, undefined);
+                  return yield* Deferred.await(response);
+                }),
+              closeSession: () =>
+                close
+                  ? event!({
+                      sessionId: "mock-session-1",
+                      type: "assistant.idle",
+                      data: { aborted: true },
+                    }).pipe(Effect.andThen(Deferred.succeed(stopped, "close")), Effect.as({}))
+                  : Effect.fail(
+                      new EffectAcpErrors.AcpRequestError({
+                        code: -32601,
+                        errorMessage: "unsupported",
+                      }),
+                    ),
+              cancel: Deferred.succeed(stopped, "cancel").pipe(
+                Effect.andThen(Deferred.succeed(response, { stopReason: "cancelled" as const })),
+                Effect.asVoid,
+              ),
+            };
+          },
+        }),
+      }).pipe(
+        Effect.provide(
+          Layer.mock(AcpRegistryCatalog)({ resolve: () => Effect.die("runtime is injected") }),
+        ),
+      );
+      const threadId = ThreadId.make("copilot-stop-lifecycle-thread");
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("copilot-stop-lifecycle-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((value) => Queue.offer(events, value)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      yield* Deferred.await(dispatched);
+      yield* event!({
+        sessionId: "mock-session-1",
+        type: "user.message",
+        data: { content: "test prompt" },
+      });
+      yield* event!({ sessionId: "mock-session-1", type: "assistant.turn_start" });
+      const take = (type: "provider_turn.updated" | "turn.terminal") =>
+        Stream.fromQueue(events).pipe(
+          Stream.filter((value) => value.type === type),
+          Stream.take(1),
+          Stream.runCollect,
+        );
+      const running = (yield* take("provider_turn.updated"))[0];
+      if (running?.type !== "provider_turn.updated")
+        return yield* Effect.die("missing running turn");
+      if (settled) {
+        yield* event!({ sessionId: "mock-session-1", type: "assistant.idle" });
+        const terminal = (yield* take("turn.terminal"))[0];
+        assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "completed");
+      }
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: running.providerTurn.id,
+        requestRuntimeRestart: true,
+      });
+      assert.equal(yield* Deferred.await(stopped), close ? "close" : "cancel");
+      if (!settled) {
+        const terminal = (yield* take("turn.terminal"))[0];
+        assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "interrupted");
+      }
+      yield* Deferred.succeed(response, { stopReason: "cancelled" as const });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          ordinal: 2,
+        }),
+      );
+      assert.equal(runtimeCount, 2);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("restarts after a late lost-session error from a settled foreground prompt", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const dispatched = yield* Deferred.make<void>();
+      const failed = yield* Deferred.make<void>();
+      const response = yield* Deferred.make<never, EffectAcpErrors.AcpError>();
+      let update: AcpAdapterV2ExtensionContext["updateForegroundWork"] | undefined;
+      let runtimeCount = 0;
+      const instanceId = ProviderInstanceId.make("acp-late-lost-session");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        continuationRequests: { offer: () => Effect.void },
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          followForegroundEvents: true,
+          restartRuntimeAfterPromptError: () => {
+            Deferred.doneUnsafe(failed, Effect.void);
+            return true;
+          },
+          registerExtensions: (context) =>
+            Effect.sync(() => {
+              update = context.updateForegroundWork;
+            }),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => {
+              runtimeCount += 1;
+              return {
+                ...runtime,
+                start: () =>
+                  runtime.start().pipe(
+                    Effect.map((setup) => ({
+                      ...setup,
+                      initializeResult: { ...setup.initializeResult, protocolVersion: 1 },
+                    })),
+                  ),
+                prompt: (_payload, options) =>
+                  Effect.gen(function* () {
+                    if (options?.dispatched) yield* Deferred.succeed(options.dispatched, undefined);
+                    yield* Deferred.succeed(dispatched, undefined);
+                    return yield* Deferred.await(response);
+                  }),
+              };
+            },
+          }),
+        },
+      });
+      const threadId = ThreadId.make("acp-late-lost-session-thread");
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("acp-late-lost-session-provider"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
+      );
+      yield* Deferred.await(dispatched);
+      yield* update!({ sessionId: "mock-session-1", state: "accepted", content: "test prompt" });
+      yield* update!({ sessionId: "mock-session-1", state: "idle" });
+      yield* Deferred.fail(
+        response,
+        new EffectAcpErrors.AcpRequestError({ code: -32603, errorMessage: "lost session" }),
+      );
+      yield* Deferred.await(failed);
+      yield* update!({ sessionId: "mock-session-1", state: "idle" });
+      yield* runtime.startTurn(
+        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 2 }),
+      );
+      assert.equal(runtimeCount, 2);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

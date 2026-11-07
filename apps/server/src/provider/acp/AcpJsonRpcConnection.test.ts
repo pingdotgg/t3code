@@ -205,13 +205,15 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("keeps a newer prompt cancellable after an older overlapping prompt returns", () =>
+  it.effect("delivers Copilot-style cancellation after an older overlapping prompt returns", () =>
     Effect.gen(function* () {
       const firstStarted = yield* Deferred.make<void>();
       const secondStarted = yield* Deferred.make<void>();
+      const secondItem = yield* Deferred.make<string>();
+      const completedItems: string[] = [];
       const script = `
         const readline = require("node:readline");
-        let first, count = 0;
+        let first, second, count = 0;
         const send = value => process.stdout.write(JSON.stringify(value) + "\\n");
         readline.createInterface({ input: process.stdin }).on("line", line => {
           const frame = JSON.parse(line);
@@ -221,13 +223,20 @@ describe("AcpSessionRuntime", () => {
           else if (frame.method === "session/prompt") {
             count += 1;
             if (count === 1) first = frame.id;
+            else second = frame.id;
             send({ jsonrpc: "2.0", method: "session/update", params: {
               sessionId: "test-session", update: { sessionUpdate: "agent_thought_chunk",
               content: { type: "text", text: "prompt-" + count + "-started" } }
             }});
+            if (count === 2) send({ jsonrpc: "2.0", method: "session/update", params: {
+              sessionId: "test-session", update: { sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "new prompt output" } }
+            }});
           } else if (frame.method === "_test/release-first") {
             send({ jsonrpc: "2.0", id: first, result: { stopReason: "end_turn" } });
             respond({});
+          } else if (frame.method === "session/cancel") {
+            send({ jsonrpc: "2.0", id: second, result: { stopReason: "cancelled" } });
           }
         });
       `;
@@ -235,10 +244,20 @@ describe("AcpSessionRuntime", () => {
         cwd: process.cwd(),
         clientInfo: { name: "t3-test", version: "0.0.0" },
         allowOverlappingPrompts: true,
+        interruptPromptOnCancel: false,
         spawn: { command: process.execPath, args: ["-e", script] },
       });
       yield* runtime.getEvents().pipe(
         Stream.runForEach((event) => {
+          if (event._tag === "EventStreamBarrier")
+            return Deferred.succeed(event.acknowledge, undefined).pipe(Effect.asVoid);
+          if (event._tag === "AssistantItemCompleted") completedItems.push(event.itemId);
+          if (
+            event._tag === "ContentDelta" &&
+            event.text === "new prompt output" &&
+            event.itemId !== undefined
+          )
+            return Deferred.succeed(secondItem, event.itemId).pipe(Effect.asVoid);
           if (event._tag === "ThoughtDelta" && event.text === "prompt-1-started")
             return Deferred.succeed(firstStarted, undefined).pipe(Effect.asVoid);
           if (event._tag === "ThoughtDelta" && event.text === "prompt-2-started")
@@ -256,8 +275,11 @@ describe("AcpSessionRuntime", () => {
         .prompt({ prompt: [{ type: "text", text: "second" }] })
         .pipe(Effect.forkScoped);
       yield* Deferred.await(secondStarted);
+      const itemId = yield* Deferred.await(secondItem);
       yield* runtime.request("_test/release-first", {});
       expect(yield* Fiber.join(first)).toMatchObject({ stopReason: "end_turn" });
+      yield* runtime.drainEvents;
+      expect(completedItems).not.toContain(itemId);
       yield* runtime.cancel;
       expect(yield* Fiber.join(second)).toMatchObject({ stopReason: "cancelled" });
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
