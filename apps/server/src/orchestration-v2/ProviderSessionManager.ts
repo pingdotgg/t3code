@@ -2106,13 +2106,15 @@ export const layerWithOptions = (
                       }
                     }).pipe(entry.requestEventPermit.withPermits(1));
                     yield* persistInstructionInvalidation(entry, event.providerThread).pipe(
-                      Effect.mapError(
-                        (cause) =>
-                          new ProviderAdapter.ProviderAdapterEventStreamError({
-                            driver: entry.runtime.driver,
+                      Effect.catch((cause) =>
+                        Effect.logWarning(
+                          "orchestration-v2.provider-session.instruction-invalidation-failed",
+                          {
                             providerSessionId: entry.runtime.providerSessionId,
+                            providerThreadId: event.providerThread.id,
                             cause,
-                          }),
+                          },
+                        ),
                       ),
                     );
                     yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });

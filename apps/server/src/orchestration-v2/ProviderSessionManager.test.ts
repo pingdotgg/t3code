@@ -3467,6 +3467,7 @@ it.effect.each([
   "contended-close",
   "detached-close",
   "failed-close",
+  "failed-event",
   "newer-run",
   "newer-session",
 ] as const)(
@@ -3530,6 +3531,12 @@ it.effect.each([
         const subscription = yield* runtime.subscribeEvents!;
         const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
         assert.isDefined(queue);
+        if (owner === "failed-event") {
+          yield* Ref.set(
+            beforeUnchangedWrite,
+            Effect.fail(new EventSink.EventSinkWriteError({ eventCount: 1 })),
+          );
+        }
         yield* Queue.offer(queue!, {
           type: "provider_thread.updated",
           driver: CODEX_DRIVER,
@@ -3588,6 +3595,14 @@ it.effect.each([
         yield* subscription.events.pipe(
           Stream.tap(() =>
             Effect.gen(function* () {
+              if (owner === "failed-event") {
+                assert.isTrue(yield* manager.isLive(providerSessionId));
+                assert.deepEqual(
+                  (yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]))
+                    .providerThreads[0]?.nativeMetadata?.acpInstructions,
+                  before.nativeMetadata?.acpInstructions,
+                );
+              }
               if (owner === "released-completion")
                 yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
               if (owner === "queued-completion" || owner === "released-completion")
@@ -3612,6 +3627,10 @@ it.effect.each([
           Stream.runHead,
         );
         if (release !== undefined) yield* Fiber.join(release);
+        if (owner === "failed-event") {
+          assert.isTrue(yield* manager.isLive(providerSessionId));
+          assert.equal((yield* Ref.get(state)).closeCount, 0);
+        }
         if (owner === "contended-close") assert.equal(conflicts, 4);
         if (owner === "failed-close") yield* subscription.close;
         if (owner === "repeated-close") {
@@ -3629,7 +3648,8 @@ it.effect.each([
             owner === "released-completion" ||
             owner === "repeated-close" ||
             owner === "contended-close" ||
-            owner === "failed-close"
+            owner === "failed-close" ||
+            owner === "failed-event"
             ? {
                 ...before,
                 nativeMetadata: {
