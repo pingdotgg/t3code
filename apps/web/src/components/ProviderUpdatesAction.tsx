@@ -1,5 +1,9 @@
 import { AuthProvidersManageScope, PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
-import { settlePromise } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { useRef, useState } from "react";
 
 import { useEnvironmentProviders, useEnvironments } from "~/state/environments";
@@ -15,6 +19,52 @@ import {
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+
+// `refreshModels` is the only refresh that drops the server's hour-long latest-version cache.
+export function useCheckProviderUpdates() {
+  const { environments } = useEnvironments();
+  const manageableIds = useEnvironmentsWithScope(environments, AuthProvidersManageScope);
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  const inFlight = useRef<Promise<void> | null>(null);
+
+  const check = async () => {
+    const failures = await Promise.all(
+      environments
+        .filter(
+          (environment) =>
+            environment.connection.phase === "connected" &&
+            manageableIds.has(environment.environmentId),
+        )
+        .map(async ({ environmentId, label }) => {
+          const result = await refreshProviders({ environmentId, input: { refreshModels: true } });
+          if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return [];
+          const error = squashAtomCommandFailure(result);
+          return [`${label}: ${error instanceof Error ? error.message : "Refresh failed."}`];
+        }),
+    );
+    const lines = failures.flat();
+    if (lines.length === 0) return;
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Could not check provider updates",
+        description: <span className="whitespace-pre-line">{lines.join("\n")}</span>,
+      }),
+    );
+  };
+
+  // A repeat click must not start a second model rediscovery while one is running.
+  return () => {
+    if (inFlight.current) return inFlight.current;
+    const running = check().finally(() => {
+      inFlight.current = null;
+    });
+    inFlight.current = running;
+    return running;
+  };
+}
 
 export function useProviderUpdates() {
   const { environments } = useEnvironments();
