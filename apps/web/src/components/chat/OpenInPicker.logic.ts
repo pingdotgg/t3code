@@ -9,10 +9,8 @@ export function shouldShowOpenInPicker(input: {
   readonly remoteOpenMode: RemoteOpenMode;
 }): boolean {
   if (!input.activeProjectName) return false;
-  if (
-    input.primaryEnvironmentId !== null &&
-    input.activeThreadEnvironmentId === input.primaryEnvironmentId
-  ) {
+  if (input.primaryEnvironmentId === null) return true;
+  if (input.activeThreadEnvironmentId === input.primaryEnvironmentId) {
     return true;
   }
   return input.remoteOpenMode !== "local-exec";

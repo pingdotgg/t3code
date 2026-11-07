@@ -166,10 +166,13 @@ export const primaryServerKeybindingsAtom = createShortcutKeybindingsAtom({
   environmentsAtom: environmentConnectionsAtom,
 }).pipe(Atom.withLabel("web-primary-server-keybindings"));
 
-export const primaryServerAvailableEditorsAtom = Atom.make(
-  (get): ReadonlyArray<EditorId> =>
-    get(primaryServerConfigAtom)?.availableEditors ?? EMPTY_AVAILABLE_EDITORS,
-).pipe(Atom.withLabel("web-primary-server-available-editors"));
+export const serverAvailableEditorsAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    (get): ReadonlyArray<EditorId> =>
+      get(serverEnvironment.configValueAtom(environmentId))?.availableEditors ??
+      EMPTY_AVAILABLE_EDITORS,
+  ).pipe(Atom.withLabel(`web-server-available-editors:${environmentId}`)),
+);
 
 const EMPTY_ENVIRONMENT_THEMES: ReadonlyArray<EnvironmentTheme> = [];
 

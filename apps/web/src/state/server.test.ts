@@ -2,10 +2,14 @@ import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connect
 import { EnvironmentId, type KeybindingRule, type ServerConfig } from "@t3tools/contracts";
 import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import { Atom, AtomRegistry } from "effect/reactivity";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { resolveShortcutCommand } from "../keybindings";
-import { createShortcutKeybindingsAtom } from "./server";
+import {
+  createShortcutKeybindingsAtom,
+  serverAvailableEditorsAtom,
+  serverEnvironment,
+} from "./server";
 
 const PRIMARY = EnvironmentId.make("primary");
 const A = EnvironmentId.make("a");
@@ -65,6 +69,24 @@ function makeHarness(input: {
 const registries: AtomRegistry.AtomRegistry[] = [];
 afterEach(() => {
   for (const registry of registries.splice(0)) registry.dispose();
+});
+
+it("reads and refreshes the active environment's editors without a desktop primary", () => {
+  const aConfig = Atom.make<ServerConfig | null>(null);
+  const bConfig = Atom.make<ServerConfig | null>({ ...config([]), availableEditors: ["zed"] });
+  using _configs = vi
+    .spyOn(serverEnvironment, "configValueAtom")
+    .mockImplementation((environmentId) => (environmentId === A ? aConfig : bConfig));
+  const registry = AtomRegistry.make();
+  registries.push(registry);
+
+  expect(registry.get(serverAvailableEditorsAtom(A))).toEqual([]);
+  registry.set(aConfig, { ...config([]), availableEditors: ["vscode"] });
+  expect(registry.get(serverAvailableEditorsAtom(A))).toEqual(["vscode"]);
+  expect(registry.get(serverAvailableEditorsAtom(B))).toEqual(["zed"]);
+  registry.set(aConfig, { ...config([]), availableEditors: ["cursor"] });
+  expect(registry.get(serverAvailableEditorsAtom(A))).toEqual(["cursor"]);
+  expect(registry.get(serverAvailableEditorsAtom(B))).toEqual(["zed"]);
 });
 
 describe("createShortcutKeybindingsAtom", () => {
