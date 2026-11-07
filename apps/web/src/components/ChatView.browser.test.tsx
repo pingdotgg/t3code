@@ -15,6 +15,7 @@ import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { getRouter } from "~/router";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { WELCOME_GUIDE_SEEN_STORAGE_KEY } from "./onboarding/WelcomeGuideDialog";
+import { seedWhatsNewForNewInstall, WHATS_NEW_SEEN_STORAGE_KEY } from "./onboarding/WhatsNewDialog";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
@@ -105,8 +106,10 @@ it("a new draft does not load its reserved thread before the server lists it", a
 it("offers lesson side chats while hiding upstream side chat entry points", async () => {
   const seenAt = localStorage.getItem(WELCOME_GUIDE_SEEN_STORAGE_KEY);
   localStorage.setItem(WELCOME_GUIDE_SEEN_STORAGE_KEY, JSON.stringify("2026-01-01T00:00:00.000Z"));
+  seedWhatsNewForNewInstall();
   using _welcomeGuide = {
     [Symbol.dispose]: () => {
+      localStorage.removeItem(WHATS_NEW_SEEN_STORAGE_KEY);
       if (seenAt === null) localStorage.removeItem(WELCOME_GUIDE_SEEN_STORAGE_KEY);
       else localStorage.setItem(WELCOME_GUIDE_SEEN_STORAGE_KEY, seenAt);
     },

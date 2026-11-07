@@ -22,7 +22,7 @@ import { Button } from "../ui/button";
 import { Dialog, DialogDescription } from "../ui/dialog";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
 
-const WHATS_NEW_SEEN_STORAGE_KEY = "t3learn:whats-new-seen:v2";
+export const WHATS_NEW_SEEN_STORAGE_KEY = "t3learn:whats-new-seen:v2";
 const LEGACY_WHATS_NEW_SEEN_STORAGE_KEY = "t3learn:whats-new-seen:v1";
 const WhatsNewSeenSchema = Schema.NullOr(Schema.Array(Schema.String));
 const nullableStringSchema = Schema.NullOr(Schema.String);
