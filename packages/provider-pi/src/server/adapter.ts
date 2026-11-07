@@ -1227,7 +1227,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               driver: PI_PROVIDER,
               turnItem: {
                 ...shared,
-                title: toolName,
+                title: null,
                 type: "file_change",
                 fileName,
                 ...(diffStr === undefined ? {} : { diffStr }),
@@ -1243,7 +1243,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           driver: PI_PROVIDER,
           turnItem: {
             ...shared,
-            title: toolName,
+            title: null,
             type: "dynamic_tool",
             ...mcpToolPresentation({ toolName }),
             toolName,

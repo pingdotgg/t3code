@@ -2630,6 +2630,7 @@ describe("PiAdapterV2", () => {
             if (event.type !== "turn_item.updated" || event.turnItem.type !== "dynamic_tool")
               return yield* Effect.die("Expected an image tool item");
             assert.equal(event.turnItem.status, phase === "end" ? "completed" : "running");
+            assert.equal(event.turnItem.title, index === 4 ? "extension" : null);
             assert.deepEqual(event.turnItem.output, test.expected);
             assert.deepEqual(
               toolOutputImages(event.turnItem.output),
@@ -2945,6 +2946,7 @@ describe("PiAdapterV2", () => {
       assert.isTrue(
         edit.type === "turn_item.updated" &&
           edit.turnItem.type === "file_change" &&
+          edit.turnItem.title === null &&
           edit.turnItem.fileName === "a.ts" &&
           edit.turnItem.diffStr === patch,
       );
