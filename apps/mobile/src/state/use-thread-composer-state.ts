@@ -24,6 +24,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   orchestrationV2WorktreePending,
   type EnvironmentId,
+  type ModelSelection,
   type ProviderInteractionMode,
   type RuntimeMode,
   type ScopedThreadRef,

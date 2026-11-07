@@ -130,15 +130,6 @@ export function draftModelPickMatchesThread(pick: ModelSelection, thread: ModelS
   return modelSelectionsEqual(withoutFastModeOff(pick), withoutFastModeOff(thread));
 }
 
-/**
- * Whether an existing thread's composer pick is set on the thread now. Same-instance changes
- * apply on the next turn, so an open question stays answerable; another instance replaces the
- * live session, so that pick still waits for a sent message.
- */
-export function threadModelPickAppliesNow(pick: ModelSelection, thread: ModelSelection): boolean {
-  return pick.instanceId === thread.instanceId;
-}
-
 function resolveDescriptorChoiceValue(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
   raw: string | null | undefined,

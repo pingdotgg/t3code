@@ -213,7 +213,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
       replaceOptions: true,
     });
     setStickyComposerModelSelection(nextModelSelection);
-    if (!isLocalDraftThread) void applyThreadModelPick(threadRef);
+    if (!isLocalDraftThread) applyThreadModelPick(threadRef);
     if (options?.focusComposer !== false) scheduleComposerFocus();
   };
   const onProviderModelSelectStable = useStableCallback(onProviderModelSelect);

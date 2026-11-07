@@ -11,7 +11,6 @@ import {
   getProviderOptionDescriptors,
   readCustomModelEntries,
   modelSelectionsEqual,
-  threadModelPickAppliesNow,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -98,24 +97,6 @@ describe("descriptor helpers", () => {
       }),
     ).toBe(false);
     expect(modelSelectionsEqual(left, { ...reordered, model: "gpt-5.5" })).toBe(false);
-  });
-
-  it("applies a thread's pick now only within its provider instance", () => {
-    const thread = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4");
-    const otherModel = { ...thread, model: "gpt-5.5" };
-    const otherEffort = { ...thread, options: [{ id: "reasoningEffort", value: "xhigh" }] };
-    expect(threadModelPickAppliesNow(otherModel, thread)).toBe(true);
-    expect(threadModelPickAppliesNow(otherEffort, thread)).toBe(true);
-    expect(
-      threadModelPickAppliesNow({ ...thread, options: [{ id: "fastMode", value: false }] }, thread),
-    ).toBe(true);
-    // Another instance replaces the live session, which may hold an open question.
-    expect(
-      threadModelPickAppliesNow(
-        { ...otherModel, instanceId: ProviderInstanceId.make("codex-2") },
-        thread,
-      ),
-    ).toBe(false);
   });
 });
 

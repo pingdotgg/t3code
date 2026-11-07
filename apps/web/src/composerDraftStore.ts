@@ -519,8 +519,6 @@ interface ComposerDraftStoreState {
       replaceOptions?: boolean;
     },
   ) => void;
-  /** Lets the thread's model show again once the server accepted this exact pick. */
-  releaseModelSelection: (threadRef: ScopedThreadRef, modelSelection: ModelSelection) => void;
   applyStickyState: (threadRef: ComposerThreadTarget) => void;
   setProviderModelOptions: (
     threadRef: ComposerThreadTarget,
@@ -3060,25 +3058,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftsByThreadKey[threadKey] = nextDraft;
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
-          });
-        },
-        releaseModelSelection: (threadRef, modelSelection) => {
-          const threadKey = scopedThreadKey(threadRef);
-          set((state) => {
-            const draft = state.draftsByThreadKey[threadKey];
-            // A newer pick, even of the same model, is still waiting for its own reply.
-            if (
-              !draft?.activeProvider ||
-              draft.modelSelectionByProvider[draft.activeProvider] !== modelSelection
-            ) {
-              return state;
-            }
-            const { modelSelectionExplicit: _explicit, ...retained } = draft;
-            const next = { ...retained, activeProvider: null, modelSelectionByProvider: {} };
-            const draftsByThreadKey = { ...state.draftsByThreadKey };
-            if (shouldRemoveDraft(next)) delete draftsByThreadKey[threadKey];
-            else draftsByThreadKey[threadKey] = next;
-            return { draftsByThreadKey };
           });
         },
         setProviderModelOptions: (threadRef, provider, nextProviderOptions, options) => {

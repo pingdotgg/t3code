@@ -312,14 +312,11 @@ describe("remote thread lifecycle commands", () => {
           },
         });
         expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject(expected);
-        const pending = h.commands.pendingThreadIdsAtom(ENVIRONMENT_ID);
-        expect(h.registry.get(pending)).toEqual(new Set([THREAD_ID]));
         const request = yield* Queue.take(h.requests);
         expect(h.registry.get(source)).toBe(initial);
         yield* Deferred.fail(request.reply, new Error("Remote rejected the action"));
         expect((yield* Effect.promise(() => result))._tag).toBe("Failure");
         expect(h.registry.get(h.visibleAtom)).toBe(initial);
-        expect(h.registry.get(pending)).toEqual(new Set());
       }),
   );
 

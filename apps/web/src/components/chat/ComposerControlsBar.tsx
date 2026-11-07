@@ -155,9 +155,7 @@ export function ComposerControlsBar(props: {
   });
   const controlSize = composerControlsCollapsed ? "xs" : "sm";
   const applyThreadModelPick = useApplyThreadModelPick();
-  const applyRouteThreadModelPick = useStableCallback(
-    () => void applyThreadModelPick(routeThreadRef),
-  );
+  const applyRouteThreadModelPick = useStableCallback(() => applyThreadModelPick(routeThreadRef));
   const traitsInput = resolveComposerTraitsInput({
     provider: selectedProvider,
     instanceId: selectedInstanceId,

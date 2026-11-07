@@ -129,10 +129,7 @@ const modelCommandMocks = vi.hoisted(() => ({
   setModelSelection: Symbol("set-model-selection"),
   canOperate: true,
   thread: null as unknown,
-  runs: [] as Array<{
-    readonly value: unknown;
-    readonly settle: (result: { readonly _tag: "Success" | "Failure" }) => void;
-  }>,
+  runs: [] as Array<unknown>,
 }));
 
 const incomingShareStorageMocks = vi.hoisted(() => ({
@@ -175,7 +172,8 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
     if (command !== modelCommandMocks.setModelSelection) {
       throw new Error("Unexpected network command in the inline read test");
     }
-    return new Promise((settle) => modelCommandMocks.runs.push({ value, settle }));
+    modelCommandMocks.runs.push(value);
+    return Promise.resolve();
   },
   squashAtomCommandFailure: (result: { readonly error: unknown }) => result.error,
 }));
@@ -525,57 +523,33 @@ describe("mobile composer drafts", () => {
     expect(appAtomRegistry.get(composerDraftsAtom)[key]).toBeUndefined();
   });
 
-  it("applies an existing thread's pick now and releases only the latest accepted pick", async () => {
+  it("sets an existing thread's pick on the thread only within its instance and with operate access", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const threadId = ThreadId.make("thread-1");
     const key = `${environmentId}:${threadId}`;
     const codex = ProviderInstanceId.make("codex");
     modelCommandMocks.runs.length = 0;
     modelCommandMocks.canOperate = true;
-    const initialThread = {
+    modelCommandMocks.thread = {
       ...v2ThreadShell,
       id: threadId,
       environmentId,
       modelSelection: { instanceId: codex, model: "gpt-5.4" },
     };
-    modelCommandMocks.thread = initialThread;
-    setComposerDraftText(key, "keep this unsent follow-up");
-    const first = { instanceId: codex, model: "gpt-5.5" };
-    const latest = { ...first };
-    selectThreadModel({ environmentId, threadId }, first, []);
-    modelCommandMocks.thread = { ...initialThread, modelSelection: first };
-    selectThreadModel({ environmentId, threadId }, latest, []);
-    expect(modelCommandMocks.runs.map((run) => run.value)).toEqual([
-      { environmentId, input: { threadId, modelSelection: first } },
-      { environmentId, input: { threadId, modelSelection: latest } },
+    const pick = { instanceId: codex, model: "gpt-5.5" };
+    selectThreadModel({ environmentId, threadId }, pick, []);
+    expect(modelCommandMocks.runs).toEqual([
+      { environmentId, input: { threadId, modelSelection: pick } },
     ]);
 
-    modelCommandMocks.runs[0]!.settle({ _tag: "Failure" });
-    await Promise.resolve();
-    expect(getComposerDraftSnapshot(key).modelSelection).toEqual(latest);
-    modelCommandMocks.runs[1]!.settle({ _tag: "Success" });
-    await Promise.resolve();
-    expect(getComposerDraftSnapshot(key).text).toBe("keep this unsent follow-up");
-    expect(getComposerDraftSnapshot(key).modelSelection).toBeUndefined();
-
-    // A rejected pick stays the composer's choice, as before.
-    modelCommandMocks.thread = {
-      ...initialThread,
-      modelSelection: { instanceId: codex, model: "gpt-5.4" },
-    };
-    selectThreadModel({ environmentId, threadId }, first, []);
-    modelCommandMocks.runs[2]!.settle({ _tag: "Failure" });
-    await Promise.resolve();
-    expect(getComposerDraftSnapshot(key).modelSelection).toEqual(first);
-
-    // Another provider instance would replace the live session, and a read-only
-    // connection cannot change the thread: both picks wait for a sent message.
+    // Another instance would replace the live session, and a read-only connection cannot
+    // change the thread: both picks wait for a sent message.
     const claude = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
     selectThreadModel({ environmentId, threadId }, claude, []);
     modelCommandMocks.canOperate = false;
-    selectThreadModel({ environmentId, threadId }, latest, []);
-    expect(modelCommandMocks.runs).toHaveLength(3);
-    expect(getComposerDraftSnapshot(key).modelSelection).toEqual(latest);
+    selectThreadModel({ environmentId, threadId }, pick, []);
+    expect(modelCommandMocks.runs).toHaveLength(1);
+    expect(getComposerDraftSnapshot(key).modelSelection).toEqual(pick);
   });
 
   it("releases an inactive thread pick only after its queued model becomes durable", () => {

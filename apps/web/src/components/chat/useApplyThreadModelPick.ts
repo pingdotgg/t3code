@@ -1,6 +1,5 @@
 import { RegistryContext } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { threadModelPickAppliesNow } from "@t3tools/shared/model";
 import { useContext } from "react";
 
 import { type ComposerThreadTarget, useComposerDraftStore } from "../../composerDraftStore";
@@ -13,7 +12,7 @@ export function useApplyThreadModelPick() {
   const setModelSelection = useOrchestrationCommand(threadEnvironment.setModelSelection, {
     label: "change model",
   });
-  return async (target: ComposerThreadTarget) => {
+  return (target: ComposerThreadTarget) => {
     if (typeof target === "string") return;
     const store = useComposerDraftStore.getState();
     const draft = store.draftsByThreadKey[scopedThreadKey(target)];
@@ -21,13 +20,12 @@ export function useApplyThreadModelPick() {
     const pick = draft.modelSelectionByProvider[draft.activeProvider];
     const thread = registry.get(environmentThreadShells.threadShellAtom(target));
     if (!pick || !thread || store.draftThreadsByThreadKey[scopedThreadKey(target)]) return;
-    if (!threadModelPickAppliesNow(pick, thread.modelSelection)) return;
-    const result = await setModelSelection({
+    // Another instance replaces the live session, which may hold an open question; that pick
+    // still waits for a sent message.
+    if (pick.instanceId !== thread.modelSelection.instanceId) return;
+    void setModelSelection({
       environmentId: target.environmentId,
       input: { threadId: target.threadId, modelSelection: pick },
     });
-    if (result._tag === "Success") {
-      useComposerDraftStore.getState().releaseModelSelection(target, pick);
-    }
   };
 }
