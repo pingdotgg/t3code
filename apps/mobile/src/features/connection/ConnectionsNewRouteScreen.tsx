@@ -23,6 +23,8 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { AppText as Text, AppTextInput, type AppTextInputProps } from "../../components/ui/AppText";
 import { FrostedCutout } from "../../components/ui/FrostedCutout";
 import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
+import { pairedAddress } from "@t3tools/client-runtime/connection";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
@@ -37,6 +39,7 @@ type ConnectionsNewRouteParams = {
   readonly pairingUrl?: string;
   readonly autoConnect?: string;
   readonly routeFor?: EnvironmentId;
+  readonly pairAgain?: boolean;
 };
 
 export function ConnectionsNewRouteScreen({
@@ -45,20 +48,27 @@ export function ConnectionsNewRouteScreen({
   const params = route.params ?? {};
   // Dev-only prefill prevents production links from supplying an attacker-chosen host and token.
   const routePairingUrl = __DEV__ ? (params.pairingUrl?.trim() ?? "") : "";
+  const { presentation } = useEnvironmentPresentation(
+    params.pairAgain ? (params.routeFor ?? null) : null,
+  );
+  const pairAgainHost = presentation === null ? null : pairedAddress(presentation.entry);
   // A new prefill link replaces whatever the form held.
   return (
     <PairingForm
-      key={routePairingUrl}
+      key={pairAgainHost ?? routePairingUrl}
       routePairingUrl={routePairingUrl}
+      pairAgainHost={pairAgainHost}
       routeFor={params.routeFor}
     />
   );
 }
 
 function PairingForm({
+  pairAgainHost,
   routePairingUrl,
   routeFor,
 }: {
+  readonly pairAgainHost: string | null;
   readonly routePairingUrl: string;
   readonly routeFor: EnvironmentId | undefined;
 }) {
@@ -66,7 +76,11 @@ function PairingForm({
     useRemoteConnections();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const [initialPairing] = useState(() => parsePairingUrl(routePairingUrl || connectionPairingUrl));
+  const [initialPairing] = useState(() =>
+    pairAgainHost === null
+      ? parsePairingUrl(routePairingUrl || connectionPairingUrl)
+      : { host: pairAgainHost, code: "" },
+  );
   const [hostInput, setHostInput] = useState(initialPairing.host);
   const [codeInput, setCodeInput] = useState(initialPairing.code);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -176,7 +190,7 @@ function PairingForm({
 
   return (
     <SettingsScreen
-      title="Add environment"
+      title={pairAgainHost !== null ? "Pair again" : "Add environment"}
       actions={[
         {
           accessibilityLabel: connecting ? "Connecting" : "Add environment",

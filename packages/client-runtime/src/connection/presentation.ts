@@ -3,7 +3,7 @@ import * as Option from "effect/Option";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import type { ConnectionTarget, SupervisorConnectionState } from "./model.ts";
-import { connectionRouteId, connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
+import { connectionRouteId, connectionRoutes, isLearned, routeHttpBaseUrl } from "./routes.ts";
 
 export type EnvironmentConnectionPhase =
   | "available"
@@ -62,6 +62,27 @@ export function presentConnectionState(
         traceId: state.lastFailure?.traceId ?? null,
       };
   }
+}
+
+// Learned routes borrow a saved route's credential; pair its owner again.
+export function pairedAddress(entry: ConnectionCatalogEntry): string | null {
+  const route = connectionRoutes(entry).find(
+    (candidate) => candidate.target._tag === "BearerConnectionTarget" && !isLearned(candidate),
+  );
+  return route === undefined ? null : routeHttpBaseUrl(route);
+}
+
+/** The paired address to pair again when the environment refused this device's saved credential. */
+export function pairAgainAddress(
+  entry: ConnectionCatalogEntry,
+  state: SupervisorConnectionState,
+): string | null {
+  // T3 Connect sign-in refusals are also "authentication"; a new pairing code doesn't fix those.
+  const refused =
+    state.phase === "blocked" &&
+    state.lastFailure?.reason === "authentication" &&
+    state.lastFailure.via === "direct";
+  return refused ? pairedAddress(entry) : null;
 }
 
 export function connectionStatusText(connection: EnvironmentConnectionPresentation): string {
