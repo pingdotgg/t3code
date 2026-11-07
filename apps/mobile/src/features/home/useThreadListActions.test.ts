@@ -157,6 +157,7 @@ vi.mock("../../state/threads", () => ({
   ),
 }));
 
+import { registerThreadDismissal } from "./thread-dismissal";
 import { dismissThreadUndoNotice, readThreadUndoNotice } from "./thread-undo-notice";
 import { useThreadListActions } from "./useThreadListActions";
 
@@ -404,6 +405,37 @@ describe("thread action undo", () => {
     expect(await first).toBe(true);
     expect(state.requests.map(({ action }) => action)).toEqual(["archive"]);
     expect(state.archivedRefreshes).toEqual([primaryEnvironmentId]);
+  });
+
+  it("keeps a search-result row instead of collapsing it on settle", async () => {
+    const thread = makeThread();
+    const dismiss = vi.fn(() => ({
+      finished: Promise.resolve(),
+      restore: vi.fn(),
+    }));
+    const unregister = registerThreadDismissal(`${thread.environmentId}:${thread.id}`, dismiss);
+    try {
+      expect(await useThreadListActions({ keepVisible: true }).settleThread(thread)).toBe(true);
+      expect(dismiss).not.toHaveBeenCalled();
+      expect(state.requests.map(({ action }) => action)).toEqual(["settle"]);
+    } finally {
+      unregister();
+    }
+  });
+
+  it("still collapses an archived search result", async () => {
+    const thread = makeThread();
+    const dismiss = vi.fn(() => ({
+      finished: Promise.resolve(),
+      restore: vi.fn(),
+    }));
+    const unregister = registerThreadDismissal(`${thread.environmentId}:${thread.id}`, dismiss);
+    try {
+      expect(await useThreadListActions({ keepVisible: true }).archiveThread(thread)).toBe(true);
+      expect(dismiss).toHaveBeenCalledOnce();
+    } finally {
+      unregister();
+    }
   });
 
   it("restores pin placement and snooze after settling, only once", async () => {

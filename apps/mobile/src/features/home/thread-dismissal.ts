@@ -31,3 +31,17 @@ export async function withThreadDismissal<T>(
     if (!committed) dismissals.forEach(({ restore }) => restore());
   }
 }
+
+/**
+ * Collapse the row only when it is leaving the list. Search keeps settle/snooze/pin
+ * rows in place, so dismissing them leaves a blank slot until the query clears.
+ */
+export async function withThreadListChange<T>(
+  key: string,
+  action: () => Promise<T>,
+  succeeded: (result: T) => boolean,
+  options?: { readonly dismiss?: boolean },
+): Promise<T> {
+  if (options?.dismiss === false) return action();
+  return withThreadDismissal(key, action, succeeded);
+}

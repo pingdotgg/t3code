@@ -482,8 +482,10 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     [backgroundColor, containerStyle],
   );
 
+  // Drop the animated height once restored: a numeric 0 from collapse sticks on the
+  // native view if the style keeps applying height after dismissing flips off.
   return (
-    <Animated.View style={dismissStyle}>
+    <Animated.View style={isDismissing ? dismissStyle : undefined}>
       <View
         onLayout={({ nativeEvent: { layout } }) => {
           rowHeight.set(layout.height);
