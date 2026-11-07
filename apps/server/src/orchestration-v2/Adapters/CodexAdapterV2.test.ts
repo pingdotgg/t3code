@@ -1477,6 +1477,289 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect.each(["request", "realtime"] as const)(
+    "only displays intentional voice errors from a %s failure",
+    (failure) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "voice-error-thread";
+          const detail =
+            failure === "request" ? "private protocol payload" : "Voice service is unavailable";
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: `voice-error-${failure}`,
+              entries: [
+                ...codexReplayPreamble({
+                  nativeThreadId,
+                  nativeTurnId: "unused",
+                  prompt: "",
+                }).slice(0, -3),
+                {
+                  type: "expect_outbound",
+                  label: "thread/realtime/start",
+                  frame: {
+                    id: 3,
+                    method: "thread/realtime/start",
+                    params: {
+                      threadId: nativeThreadId,
+                      outputModality: "audio",
+                      transport: { type: "webrtc", sdp: "v=offer\r\n" },
+                      version: "v3",
+                      clientManagedHandoffs: true,
+                      includeStartupContext: false,
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "thread/realtime/start",
+                  frame:
+                    failure === "request"
+                      ? { id: 3, error: { code: -32603, message: detail } }
+                      : { id: 3, result: {} },
+                },
+                ...(failure === "realtime"
+                  ? [
+                      {
+                        type: "emit_inbound" as const,
+                        label: "thread/realtime/error",
+                        frame: {
+                          method: "thread/realtime/error",
+                          params: { threadId: nativeThreadId, message: detail },
+                        },
+                      },
+                    ]
+                  : []),
+              ],
+            }),
+          );
+          const error = yield* harness.runtime.startVoiceSession!({
+            providerThread: harness.providerThread,
+            offerSdp: "v=offer\r\n",
+          }).pipe(Stream.runDrain, Effect.flip);
+          assert.equal(error._tag, "ProviderAdapterProtocolError");
+          if (error._tag === "ProviderAdapterProtocolError") {
+            assert.equal(
+              error.detail,
+              failure === "request" ? "Voice conversation failed." : detail,
+            );
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
+  it.effect(
+    "resubmits a voice handoff Codex started only once its turn is interrupted or failed",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "voice-thread";
+          const delegation = (input: string) =>
+            `<realtime_delegation>\n  <input>${input}</input>\n</realtime_delegation>`;
+          const voiceTurn = (
+            turnId: string,
+            request: string,
+            id: number,
+            status: "completed" | "interrupted" | "failed",
+          ) => [
+            {
+              type: "emit_inbound" as const,
+              label: `turn/started/${turnId}`,
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: turnId, status: "inProgress" }),
+                },
+              },
+            },
+            {
+              type: "emit_inbound" as const,
+              label: `item/started/${turnId}`,
+              frame: {
+                method: "item/started",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId,
+                  startedAtMs: 1782622440500,
+                  item: {
+                    type: "userMessage",
+                    id: `user-${turnId}`,
+                    content: [{ type: "text", text: delegation(request), text_elements: [] }],
+                  },
+                },
+              },
+            },
+            {
+              type: "expect_outbound" as const,
+              label: `turn/interrupt/${turnId}`,
+              frame: { id, method: "turn/interrupt", params: { threadId: nativeThreadId, turnId } },
+            },
+            {
+              type: "emit_inbound" as const,
+              label: `turn/interrupt/${turnId}`,
+              frame: { id, result: {} },
+            },
+            {
+              type: "emit_inbound" as const,
+              label: `turn/completed/${turnId}`,
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: turnId, status }),
+                },
+              },
+            },
+          ];
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: "voice-handoff-resubmit",
+              entries: [
+                // Initialization and thread/start only; Codex, not T3, starts these turns.
+                ...codexReplayPreamble({
+                  nativeThreadId,
+                  nativeTurnId: "unused",
+                  prompt: "",
+                }).slice(0, -3),
+                {
+                  type: "expect_outbound",
+                  label: "thread/realtime/start",
+                  frame: {
+                    id: 3,
+                    method: "thread/realtime/start",
+                    params: {
+                      threadId: nativeThreadId,
+                      outputModality: "audio",
+                      transport: { type: "webrtc", sdp: "v=offer\r\n" },
+                      version: "v3",
+                      clientManagedHandoffs: true,
+                      includeStartupContext: false,
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "thread/realtime/start",
+                  frame: { id: 3, result: {} },
+                },
+                // The interrupt lost the race: Codex finished, so it must not run twice.
+                ...voiceTurn("voice-raced", "already done", 4, "completed"),
+                ...voiceTurn("voice-stopped", "run the tests", 5, "interrupted"),
+                // A failed turn never did the work either, so its request is kept.
+                ...voiceTurn("voice-failed", "open a pull request", 6, "failed"),
+              ],
+            }),
+          );
+          yield* harness.runtime.startVoiceSession!({
+            providerThread: harness.providerThread,
+            offerSdp: "v=offer\r\n",
+          }).pipe(Stream.runDrain, Effect.forkScoped);
+
+          yield* harness.until(() => harness.continuationRequests.length === 2);
+          assert.deepEqual(
+            harness.continuationRequests.map((entry) => entry.detail),
+            ["run the tests", "open a pull request"],
+          );
+          const request = harness.continuationRequests[0];
+          assert.equal(request?.origin, "voice");
+          assert.equal(request?.delivery, "message_text");
+          assert.equal(request?.detail, "run the tests");
+          assert.equal(request?.providerThreadId, harness.providerThread.id);
+          const preamble = codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId: "active",
+            prompt: "work",
+          });
+          const voiceStarted = yield* Deferred.make<void>();
+          const activeHarness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: "voice-active-steer",
+              entries: [
+                ...preamble.slice(0, 5),
+                {
+                  type: "expect_outbound",
+                  label: "thread/realtime/start",
+                  frame: {
+                    id: 3,
+                    method: "thread/realtime/start",
+                    params: {
+                      threadId: nativeThreadId,
+                      outputModality: "audio",
+                      transport: { type: "webrtc", sdp: "v=offer\r\n" },
+                      version: "v3",
+                      clientManagedHandoffs: true,
+                      includeStartupContext: false,
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "thread/realtime/start",
+                  frame: { id: 3, result: {} },
+                },
+                ...preamble.slice(5).map((entry) => withReplayRequestId(entry, 4)),
+                ...voiceTurn("active", "also check types", 5, "completed").filter(
+                  (entry) =>
+                    entry.label === "item/started/active" ||
+                    entry.label === "turn/completed/active",
+                ),
+              ],
+            }),
+            undefined,
+            undefined,
+            undefined,
+            (entry) =>
+              entry.label === "thread/realtime/start"
+                ? Deferred.succeed(voiceStarted, undefined)
+                : Effect.void,
+          );
+          yield* activeHarness.runtime.startVoiceSession!({
+            providerThread: activeHarness.providerThread,
+            offerSdp: "v=offer\r\n",
+          }).pipe(Stream.runDrain, Effect.forkScoped);
+          yield* Deferred.await(voiceStarted);
+          const activeInput = makeCodexTestTurnInput({
+            threadId: activeHarness.threadId,
+            providerThread: activeHarness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("voice-active"),
+            text: "work",
+          });
+          yield* activeHarness.runtime.startTurn(activeInput);
+          yield* activeHarness.firstTerminal;
+          const spoken = activeHarness.events.find(
+            (event) =>
+              event.type === "message.updated" && event.message.text === "also check types",
+          );
+          assert.equal(spoken?.type, "message.updated");
+          if (spoken?.type === "message.updated") {
+            assert.equal(spoken.message.runId, activeInput.runId);
+            assert.equal(spoken.message.createdBy, "user");
+          }
+          assert.equal(activeHarness.continuationRequests.length, 0);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
   it.effect.each(["supported", "unsupported", "invalid"] as const)(
     "delivers native history with %s app-server protocol",
     (response) =>
