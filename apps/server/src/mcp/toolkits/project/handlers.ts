@@ -364,8 +364,15 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         .pipe(Effect.mapError(projectFailure));
     }),
   ),
-  t3_project_delete: McpToolAccess.writesEnvironment((input) =>
+  t3_project_delete: McpToolAccess.writesEnvironment((input, check) =>
     Effect.gen(function* () {
+      const { caller } = yield* check;
+      if (caller?.projectId === input.projectId)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message:
+            "This thread is in that project, so deleting the project would delete this thread too.",
+        });
       const projects = yield* Project.ProjectService;
       const clones = yield* ProjectCloneTracker.ProjectCloneTracker;
       return yield* mutateProjectWithClone(projects, clones, {

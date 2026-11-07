@@ -37,6 +37,7 @@ import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import * as ProjectHandlers from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
 
@@ -621,11 +622,11 @@ it.effect("a client launches with the fallback for an exhausted default", () =>
   }),
 );
 
-it.effect("deleting a project through MCP also discards its clone record", () =>
+it.effect("an MCP project delete discards its clone record, unless the caller is in it", () =>
   Effect.gen(function* () {
     const discarded: Array<ProjectId> = [];
     const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
-    const dependencies = Layer.merge(
+    const services = Layer.merge(
       harness.dependencies,
       Layer.mergeAll(
         Layer.mock(Project.ProjectService)({
@@ -651,17 +652,54 @@ it.effect("deleting a project through MCP also discards its clone record", () =>
         }),
       ),
     );
-    const toolkit = yield* ProjectToolkit.pipe(
-      Effect.provide(
-        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
-      ),
-    );
+    const deleteAs = Effect.fn("test.deleteAs")(function* (callerProjectId?: ProjectId) {
+      const threadId = ThreadId.make("thread:caller");
+      const { providerInstanceId } = liveThreadShell(threadId);
+      const dependencies =
+        callerProjectId === undefined
+          ? services
+          : Layer.merge(
+              services,
+              Layer.mergeAll(
+                Layer.succeed(McpInvocationContext.McpInvocationContext, {
+                  environmentId: EnvironmentId.make("environment"),
+                  requestNamespace: "thread:caller",
+                  thread: { threadId, providerSessionId: "session-1", providerInstanceId },
+                  client: undefined,
+                  issuedAt: 0,
+                  capabilities: new Set(["orchestration" as const]),
+                }),
+                Layer.mock(ThreadManagement.ThreadManagementService)({
+                  getThreadShell: () =>
+                    Effect.succeed({ ...liveThreadShell(threadId), projectId: callerProjectId }),
+                }),
+              ),
+            );
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      const result = yield* toolkit
+        .handle("t3_project_delete", { projectId: harness.projectId })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      return result.at(-1)?.result;
+    });
 
-    yield* toolkit
-      .handle("t3_project_delete", { projectId: harness.projectId })
-      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
-
+    yield* deleteAs();
     expect(discarded).toEqual([harness.projectId]);
+
+    expect(yield* deleteAs(harness.projectId)).toMatchObject({
+      code: "invalid_request",
+      message:
+        "This thread is in that project, so deleting the project would delete this thread too.",
+    });
+    expect(discarded).toEqual([harness.projectId]);
+
+    yield* deleteAs(ProjectId.make("project:elsewhere"));
+    expect(discarded).toEqual([harness.projectId, harness.projectId]);
   }),
 );
 
