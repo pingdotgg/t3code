@@ -42,7 +42,13 @@ import * as RpcSession from "../rpc/session.ts";
 import { presentConnectionState } from "./presentation.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
-import { connectionRouteId, entryWithRoutes, isLearned, mergeLearnedRoutes } from "./routes.ts";
+import {
+  connectionRouteId,
+  connectionRoutes,
+  entryWithRoutes,
+  isLearned,
+  mergeLearnedRoutes,
+} from "./routes.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -1994,6 +2000,8 @@ describe("EnvironmentSupervisor routes", () => {
         const current = yield* Ref.make(relayEntry);
         const supervisor = yield* EnvironmentSupervisor.make(relayEntry, {
           initiallyDesired: true,
+          // Same shared ref the registry writes under its lease lock in production.
+          currentEntry: current,
           learnRoutes: ({ activeRoute, reported }) =>
             Effect.gen(function* () {
               yield* Deferred.succeed(discoveryStarted, undefined);
@@ -2048,5 +2056,60 @@ describe("EnvironmentSupervisor routes", () => {
           `learned:${TARGET.environmentId}:${discovery !== "initial" ? "https://fixture.tail1234.ts.net" : "http://192.168.1.10:3773"}`,
         ]);
       }),
+  );
+
+  it.effect("keeps a newer currentEntry when learnRoutes returns an older snapshot", () =>
+    Effect.gen(function* () {
+      const gatewayId = `gateway:host:${TARGET.environmentId}@lan`;
+      const harness = yield* makeHarness({
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        initialConfig: () =>
+          Effect.succeed({
+            directEndpoints: [{ kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" }],
+          } as unknown as ServerConfig),
+      });
+      const current = yield* Ref.make(RELAY_ENTRY);
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+        currentEntry: current,
+        learnRoutes: ({ activeRoute, reported }) =>
+          Effect.gen(function* () {
+            const entry = yield* Ref.get(current);
+            const routes = mergeLearnedRoutes({
+              entry,
+              activeRoute,
+              reported,
+              allowInsecure: true,
+            });
+            if (routes === null) return Option.none();
+            const learnedOnly = entryWithRoutes(entry, routes);
+            // Registry would write this under the lease lock, then a gateway update can
+            // land before the old post-unlock supervisor write of the returned snapshot.
+            const withGateway = entryWithRoutes(learnedOnly, [
+              ...routes,
+              {
+                target: new BearerConnectionTarget({
+                  environmentId: TARGET.environmentId,
+                  label: TARGET.label,
+                  connectionId: gatewayId,
+                }),
+                profile: Option.none(),
+              },
+            ]);
+            yield* Ref.set(current, withGateway);
+            return Option.some(learnedOnly);
+          }),
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation >= 1,
+      );
+      yield* TestClock.adjust("1 second");
+      expect(
+        connectionRoutes(yield* Ref.get(current)).map((route) => connectionRouteId(route.target)),
+      ).toContain(gatewayId);
+      expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("connected");
+    }),
   );
 });
