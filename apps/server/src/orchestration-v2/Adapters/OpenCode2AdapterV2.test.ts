@@ -2883,6 +2883,68 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  // regression: #30519 T3 Code's MCP tools vanished after the session moved into a worktree
+  it.effect("registers T3 MCP in the session's moved location on the next turn", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+        threadId,
+        providerSessionId: "mcp:opencode2-adapter",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:3773/mcp",
+        authorizationHeader: "Bearer thread-credential",
+        browserToolsAvailable: false,
+      });
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+      const server = "t3-code-thread_opencode2-adapter";
+      const moved = "/work/opencode2-worktree";
+      const add = (directory: string) =>
+        out("mcp.add", {
+          server,
+          "location[directory]": directory,
+          config: {
+            type: "remote",
+            url: "http://127.0.0.1:3773/mcp",
+            headers: { Authorization: "Bearer thread-credential" },
+            oauth: false,
+          },
+        });
+      const { runtime, thread } = yield* resumed([
+        add(WORK),
+        reply("mcp.add", null),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.moved", {
+          sessionID: SESSION,
+          location: { directory: moved },
+          projectID: "global",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        // The session now runs in `moved`; a server left in WORK is invisible to it.
+        out("mcp.remove", { server, "location[directory]": WORK }),
+        reply("mcp.remove", null),
+        add(moved),
+        reply("mcp.add", null),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        out("mcp.remove", { server, "location[directory]": moved }),
+        reply("mcp.remove", null),
+      ]);
+      const first = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      assert.equal((yield* Fiber.join(first))?.status, "completed");
+      const second = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const next = yield* Effect.exit(runtime.startTurn(turnInput(thread)));
+      assert.isTrue(
+        Exit.isSuccess(next),
+        `after session.moved to ${moved}, the next turn must register T3 MCP there; it re-added it in ${WORK}, where the moved session cannot see it`,
+      );
+      assert.equal((yield* Fiber.join(second))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("registers a long thread id's MCP server under a name OpenCode accepts", () =>
     Effect.gen(function* () {
       const child = ThreadId.make(
