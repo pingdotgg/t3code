@@ -1,3 +1,4 @@
+import { withAttemptNativeSession } from "./AttemptNativeSession.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -1120,12 +1121,19 @@ export const layer: Layer.Layer<
           const sourceRun = sourceProjection.runs.find(
             (candidate) => candidate.id === nativeForkTransfer.sourcePoint.runId,
           );
-          const sourceProviderThread = sourceProjection.providerThreads.find(
-            (candidate) => candidate.id === sourceRun?.providerThreadId,
-          );
           const sourceAttempt = sourceProjection.attempts.find(
             (candidate) => candidate.id === sourceRun?.activeAttemptId,
           );
+          const currentSourceProviderThread = sourceProjection.providerThreads.find(
+            (candidate) => candidate.id === sourceRun?.providerThreadId,
+          );
+          const sourceProviderThread =
+            currentSourceProviderThread === undefined
+              ? undefined
+              : withAttemptNativeSession(
+                  currentSourceProviderThread,
+                  sourceAttempt?.nativeThreadId,
+                );
           const sourceProviderTurn =
             latestProviderTurnForAttempt(sourceProjection.providerTurns, sourceAttempt?.id) ??
             sourceProjection.providerTurns.find(
@@ -1671,6 +1679,17 @@ export const layer: Layer.Layer<
         !noteContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);
+      // An adopted native id has already been written by the provider even before its first app turn.
+      const runningNativeThreadId = runningProviderThread.nativeThreadRef?.nativeId;
+      const providerAdoptedNativeThread =
+        sameNativeThread &&
+        runningNativeThreadId != null &&
+        acceptedAttempts.some((source) => source.nativeThreadId !== undefined) &&
+        !projection.attempts.some(
+          (source) =>
+            source.providerThreadId === providerThread.id &&
+            source.nativeThreadId === runningNativeThreadId,
+        );
       return runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
@@ -1698,6 +1717,7 @@ export const layer: Layer.Layer<
           ) + 1,
         nativeThreadHasTurns:
           nativeInputRunIds.size > 0 ||
+          providerAdoptedNativeThread ||
           (legacyInputRunIds.size > 0 &&
             sameNativeThread &&
             !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),

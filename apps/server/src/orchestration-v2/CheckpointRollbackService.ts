@@ -1,3 +1,4 @@
+import { withAttemptNativeSession } from "./AttemptNativeSession.ts";
 import {
   CheckpointId,
   CheckpointScopeId,
@@ -144,8 +145,8 @@ export const layer: Layer.Layer<
       readonly restoreFiles?: boolean;
     }) {
       const context = yield* projections.getCheckpointRollbackContext(input.threadId, input);
-      const { providerThread, checkpoint, scope, targetAttempt, runsToRollback, staleCheckpoints } =
-        context;
+      const { checkpoint, scope, targetAttempt, runsToRollback, staleCheckpoints } = context;
+      const providerThread = context.providerThread;
       if (
         providerThread === undefined ||
         providerThread.providerSessionId === null ||
@@ -285,7 +286,10 @@ export const layer: Layer.Layer<
         runsToRollback.length === 0
           ? { providerThread }
           : yield* session.rollbackThread({
-              providerThread,
+              providerThread: withAttemptNativeSession(
+                providerThread,
+                targetAttempt?.nativeThreadId,
+              ),
               target: rollbackTarget,
               providerThreadTurns,
             });

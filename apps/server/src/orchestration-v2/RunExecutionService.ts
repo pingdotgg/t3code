@@ -501,7 +501,15 @@ export function routeProviderEvent(
       return [true, { ...state, inheritedBackgroundTurnItems }];
     }
     case "plan.updated":
-      return [ownsRun(event.plan.runId) || ownsChildThread(event.plan.threadId), state];
+      return [
+        ownsRun(event.plan.runId) ||
+          ownsChildThread(event.plan.threadId) ||
+          // A replacement plan supersedes the previous plan, which still carries
+          // the run that created it. Accept that update for the current thread so
+          // the superseded status reaches the projection instead of being dropped.
+          (event.plan.status === "superseded" && event.plan.threadId === input.threadId),
+        state,
+      ];
     case "runtime_request.updated":
       return [
         (event.threadId !== undefined && ownsChildThread(event.threadId)) ||
@@ -640,8 +648,15 @@ export const layer: Layer.Layer<
         };
       }) {
         const completedAt = input.completedAt ?? (yield* DateTime.now);
+        // Claude's `/clear` can move a run to a new native session after its attempt was
+        // written; rollback and fork must pair this run's cursor with that session.
+        const reportedNativeThreadId =
+          input.providerThread.id === input.attempt.providerThreadId
+            ? input.providerThread.nativeThreadRef?.nativeId
+            : undefined;
         const finalizedAttempt: OrchestrationV2RunAttempt = {
           ...input.attempt,
+          ...(reportedNativeThreadId == null ? {} : { nativeThreadId: reportedNativeThreadId }),
           status: input.terminal.status,
           completedAt,
         };
@@ -1029,7 +1044,7 @@ export const layer: Layer.Layer<
           attemptId: input.attempt.id,
           providerThreadId: input.providerThread.id,
         };
-        const eventSubscription =
+        const eventSubscription: ProviderAdapter.ProviderAdapterV2EventSubscription =
           input.session.subscribeEvents === undefined
             ? { events: input.session.events, close: Effect.void }
             : yield* input.session.subscribeEvents;
@@ -1404,7 +1419,11 @@ export const layer: Layer.Layer<
           event: ProviderAdapter.ProviderAdapterV2Event;
           accepted: boolean;
         }) {
-          if (!accepted) return;
+          if (!accepted) {
+            if (eventSubscription.discardEvent !== undefined)
+              yield* eventSubscription.discardEvent(event);
+            return;
+          }
           if (
             event.type === "provider_turn.updated" &&
             event.providerTurn.runAttemptId === input.attempt.id &&
@@ -1413,6 +1432,8 @@ export const layer: Layer.Layer<
             yield* Ref.set(latestRootProviderTurn, event.providerTurn);
           }
           let storedEventCount = 0;
+          let persistedProviderThread: OrchestrationV2ProviderThread | undefined;
+          let persistedProviderThreadSnapshot = false;
           const deliveredEvent = filterAssistantEvent(
             event,
             DateTime.toEpochMillis(yield* DateTime.now),
@@ -1428,48 +1449,68 @@ export const layer: Layer.Layer<
             if (event.type === "provider_turn.updated" && !nativeChildTurn) {
               firstRootProviderTurnId ??= event.providerTurn.id;
             }
-            const storedEvents = yield* providerEventIngestor.ingestNormalized({
-              analyticsContext: nativeChildTurn
-                ? {
-                    ...analyticsContext,
-                    origin: NATIVE_SUBAGENT_TURN_ORIGIN,
-                    segment: "native_child",
-                  }
-                : {
-                    ...analyticsContext,
-                    segment:
-                      event.type === "provider_turn.updated" &&
-                      event.providerTurn.id !== firstRootProviderTurnId
-                        ? "continuation"
-                        : input.attempt.reason,
-                  },
-              providerSessionId: input.providerSessionId,
-              providerInstanceId: input.run.providerInstanceId,
-              threadId: input.run.threadId,
-              runId: input.run.id,
-              nodeId: input.rootNode.id,
-              event: deliveredEvent,
-              ...(isRootProviderThreadUpdate
-                ? rootTerminalAlreadySeen
+            const persist = (snapshotCurrent: boolean) =>
+              providerEventIngestor.ingestNormalized({
+                ...(!snapshotCurrent ? { skipProviderThreadSnapshot: true } : {}),
+                analyticsContext: nativeChildTurn
                   ? {
-                      writeIfProviderThreadOwner: {
-                        providerThreadId: input.providerThread.id,
-                        runId: input.run.id,
-                        activeAttemptId: input.attempt.id,
-                        expectedLastRunOrdinal: input.run.ordinal,
-                      },
+                      ...analyticsContext,
+                      origin: NATIVE_SUBAGENT_TURN_ORIGIN,
+                      segment: "native_child",
                     }
                   : {
-                      writeIfRunCurrent: {
-                        runId: input.run.id,
-                        activeAttemptId: input.attempt.id,
-                        expectedStatus: "running" as const,
-                      },
-                    }
-                : {}),
-            });
-            storedEventCount = storedEvents.length;
-            if (isRootProviderThreadUpdate && rootTerminalAlreadySeen && storedEventCount === 0) {
+                      ...analyticsContext,
+                      segment:
+                        event.type === "provider_turn.updated" &&
+                        event.providerTurn.id !== firstRootProviderTurnId
+                          ? "continuation"
+                          : input.attempt.reason,
+                    },
+                providerSessionId: input.providerSessionId,
+                providerInstanceId: input.run.providerInstanceId,
+                threadId: input.run.threadId,
+                runId: input.run.id,
+                nodeId: input.rootNode.id,
+                event: deliveredEvent,
+                ...(isRootProviderThreadUpdate
+                  ? rootTerminalAlreadySeen
+                    ? {
+                        writeIfProviderThreadOwner: {
+                          providerThreadId: input.providerThread.id,
+                          runId: input.run.id,
+                          activeAttemptId: input.attempt.id,
+                          expectedLastRunOrdinal: input.run.ordinal,
+                        },
+                      }
+                    : {
+                        writeIfRunCurrent: {
+                          runId: input.run.id,
+                          activeAttemptId: input.attempt.id,
+                          expectedStatus: "running" as const,
+                        },
+                      }
+                  : {}),
+              });
+            const persisted: ProviderAdapter.ProviderAdapterV2PersistEventResult =
+              yield* eventSubscription.persistEvent === undefined
+                ? persist(true).pipe(Effect.map((storedEvents) => ({ storedEvents })))
+                : eventSubscription.persistEvent(event, persist);
+            storedEventCount = persisted.storedEvents.length;
+            persistedProviderThread = persisted.persistedProviderThread;
+            persistedProviderThreadSnapshot =
+              persisted.persistedProviderThread !== undefined ||
+              (event.type === "provider_thread.updated" &&
+                persisted.storedEvents.some(
+                  (record) =>
+                    record.event.type === "provider-thread.updated" &&
+                    record.event.payload.id === event.providerThread.id,
+                ));
+            if (
+              isRootProviderThreadUpdate &&
+              rootTerminalAlreadySeen &&
+              storedEventCount === 0 &&
+              persisted.persistedProviderThread === undefined
+            ) {
               yield* Ref.set(providerThreadOwnerLost, true);
             }
           } else if (
@@ -1486,8 +1527,13 @@ export const layer: Layer.Layer<
             reservedHeldTurnItemIds.add(event.turnItem.id);
           }
           if (event.type === "provider_thread.updated") {
-            if (event.providerThread.id === input.providerThread.id && storedEventCount > 0) {
-              yield* Ref.set(latestProviderThread, event.providerThread);
+            if (
+              event.providerThread.id === input.providerThread.id &&
+              persistedProviderThreadSnapshot
+            ) {
+              // Only a snapshot that actually persisted may replace the session.
+              // Rewind events stored alongside a skipped snapshot are not evidence.
+              yield* Ref.set(latestProviderThread, persistedProviderThread ?? event.providerThread);
             }
           }
           if (

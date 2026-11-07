@@ -569,7 +569,7 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
-  it.effect("rolls back runs a provider rewound off its active branch", () =>
+  it.effect.each([false, true])("rewinds runs (skip snapshot: %s)", (skipSnapshot) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -754,7 +754,63 @@ layer("ProviderEventIngestorV2", (it) => {
         nativeTurnId: null,
       });
 
-      yield* ingestor.ingestNormalized({
+      const reportedProviderThread: OrchestrationV2ProviderThread = {
+        id: rewoundThreadId,
+        driver: CODEX_DRIVER,
+        providerInstanceId: modelSelection.instanceId,
+        providerSessionId,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        nativeThreadRef: {
+          driver: CODEX_DRIVER,
+          nativeId: "rewound-thread",
+          strength: "strong",
+        },
+        nativeConversationHeadRef: {
+          driver: CODEX_DRIVER,
+          nativeId: "kept-turn-reply",
+          strength: "strong",
+        },
+        status: "idle",
+        firstRunOrdinal: 2,
+        lastRunOrdinal: 5,
+        handoffIds: [],
+        forkedFrom: null,
+        pendingBackgroundTasks: [],
+        contextUsage: null,
+        nativeMetadata: null,
+        goal: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const currentProviderThread: OrchestrationV2ProviderThread = {
+        ...reportedProviderThread,
+        nativeThreadRef: {
+          driver: CODEX_DRIVER,
+          nativeId: "current-native-session",
+          strength: "strong",
+        },
+        nativeConversationHeadRef: {
+          driver: CODEX_DRIVER,
+          nativeId: "current-head",
+          strength: "strong",
+        },
+        lastRunOrdinal: 6,
+      };
+      yield* eventSink.write({
+        events: [
+          {
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "provider-thread.updated",
+            threadId,
+            occurredAt: now,
+            payload: currentProviderThread,
+          },
+        ],
+      });
+
+      const storedEvents = yield* ingestor.ingestNormalized({
+        skipProviderThreadSnapshot: skipSnapshot,
         providerSessionId,
         providerInstanceId: modelSelection.instanceId,
         threadId,
@@ -762,31 +818,7 @@ layer("ProviderEventIngestorV2", (it) => {
         event: {
           type: "provider_thread.updated",
           driver: CODEX_DRIVER,
-          providerThread: {
-            id: rewoundThreadId,
-            driver: CODEX_DRIVER,
-            providerInstanceId: modelSelection.instanceId,
-            providerSessionId,
-            appThreadId: threadId,
-            ownerNodeId: null,
-            nativeThreadRef: {
-              driver: CODEX_DRIVER,
-              nativeId: "rewound-thread",
-              strength: "strong",
-            },
-            nativeConversationHeadRef: {
-              driver: CODEX_DRIVER,
-              nativeId: "kept-turn-reply",
-              strength: "strong",
-            },
-            status: "idle",
-            firstRunOrdinal: 2,
-            lastRunOrdinal: 5,
-            handoffIds: [],
-            forkedFrom: null,
-            createdAt: now,
-            updatedAt: now,
-          },
+          providerThread: reportedProviderThread,
           retainedNativeTurnIds: ["turn-started-outside-t3", "kept-turn"],
         },
       });
@@ -808,9 +840,13 @@ layer("ProviderEventIngestorV2", (it) => {
         ),
         ["ready", "ready", "stale"],
       );
+      assert.deepEqual(
+        projection.providerThreads.find((thread) => thread.id === rewoundThreadId),
+        skipSnapshot ? currentProviderThread : reportedProviderThread,
+      );
       assert.equal(
-        projection.providerThreads.find((thread) => thread.id === rewoundThreadId)?.lastRunOrdinal,
-        5,
+        storedEvents.some((stored) => stored.event.type === "provider-thread.updated"),
+        !skipSnapshot,
       );
     }),
   );

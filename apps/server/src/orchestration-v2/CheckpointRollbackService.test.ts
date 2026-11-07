@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import {
@@ -12,12 +13,14 @@ import {
   RunAttemptId,
   RunId,
   CheckpointScopeId,
+  ClaudeSettings,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -27,6 +30,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
@@ -34,6 +40,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
+import * as ClaudeAdapterV2 from "./Adapters/ClaudeAdapterV2.ts";
 import { resolveCodexRollbackTurnCount } from "./Adapters/CodexAdapterV2.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
@@ -46,6 +53,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 
+const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 const unrelatedProject = Option.some({
   workspaceRoot: "/nonexistent/t3-rollback-project",
 } as never);
@@ -694,6 +702,283 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
           ["ready", "ready", "ready", "stale", "stale", "stale", "stale", "stale", "ready"],
         );
       }),
+    );
+
+    // regression: #24153 a rollback across Claude's /clear paired the adopted session with a
+    // pre-clear message cursor, so the next resume asked the new session for a missing message.
+    it.effect.each([1, 2] as const)("keeps Claude session at turn %s", (targetOrdinal) =>
+      Effect.gen(function* () {
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("rollback-clear");
+        const providerThreadId = ProviderThreadId.make("rollback-clear-provider");
+        const providerSessionId = ProviderSessionId.make("rollback-clear-session");
+        const providerInstanceId = ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID;
+        const driver = ClaudeAdapterV2.CLAUDE_PROVIDER;
+        const modelSelection = { instanceId: providerInstanceId, model: "claude-sonnet-4-6" };
+        const cwd = "/nonexistent/t3-rollback-clear";
+        const scopeId = CheckpointScopeId.make("rollback-clear-scope");
+        const runId = (ordinal: number) => RunId.make(`rollback-clear-run-${ordinal}`);
+        const nodeId = (ordinal: number) => NodeId.make(`rollback-clear-node-${ordinal}`);
+        const checkpointId = (ordinal: number) =>
+          CheckpointId.make(`rollback-clear-checkpoint-${ordinal}`);
+        let sequence = 0;
+        const apply = (event: Record<string, unknown>) =>
+          store.apply({
+            ...event,
+            id: EventId.make(`rollback-clear-event-${sequence++}`),
+            threadId,
+            occurredAt: now,
+          } as OrchestrationV2DomainEvent);
+        yield* apply({
+          type: "thread.created",
+          payload: {
+            id: threadId,
+            createdBy: "user",
+            creationSource: "web",
+            projectId: ProjectId.make("rollback-clear-project"),
+            title: "Rollback across /clear",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            activeProviderThreadId: providerThreadId,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+        // Run 2 started in the original session, and its `/clear` adopted a new one.
+        yield* apply({
+          type: "provider-thread.updated",
+          payload: {
+            id: providerThreadId,
+            driver,
+            providerInstanceId,
+            providerSessionId,
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: { driver, nativeId: "native-after-clear", strength: "strong" },
+            nativeConversationHeadRef: { driver, nativeId: "current-head", strength: "weak" },
+            status: "idle",
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 2,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* apply({
+          type: "checkpoint-scope.created",
+          payload: {
+            id: scopeId,
+            threadId,
+            runId: runId(1),
+            nodeId: nodeId(1),
+            parentScopeId: null,
+            providerThreadId,
+            kind: "root_run",
+            ordinalWithinParent: 0,
+            advancesAppRunCount: true,
+            cwd,
+            createdAt: now,
+          },
+        });
+        for (const ordinal of [1, 2]) {
+          const attemptId = RunAttemptId.make(`rollback-clear-attempt-${ordinal}`);
+          const turnId = ProviderTurnId.make(`rollback-clear-turn-${ordinal}`);
+          yield* apply({
+            type: "run.created",
+            payload: {
+              id: runId(ordinal),
+              threadId,
+              ordinal,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId,
+              userMessageId: MessageId.make(`rollback-clear-message-${ordinal}`),
+              rootNodeId: nodeId(ordinal),
+              activeAttemptId: attemptId,
+              status: "completed",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: checkpointId(ordinal),
+              contextHandoffId: null,
+            },
+          });
+          yield* apply({
+            type: "node.updated",
+            payload: {
+              id: nodeId(ordinal),
+              threadId,
+              runId: runId(ordinal),
+              parentNodeId: null,
+              rootNodeId: nodeId(ordinal),
+              kind: "root_turn",
+              status: "completed",
+              countsForRun: true,
+              providerThreadId,
+              providerTurnId: turnId,
+              nativeItemRef: null,
+              runtimeRequestId: null,
+              checkpointScopeId: scopeId,
+              startedAt: now,
+              completedAt: now,
+            },
+          });
+          yield* apply({
+            type: "run-attempt.created",
+            runId: runId(ordinal),
+            payload: {
+              id: attemptId,
+              nativeThreadId: "native-before-clear",
+              runId: runId(ordinal),
+              attemptOrdinal: 1,
+              rootNodeId: nodeId(ordinal),
+              providerInstanceId,
+              providerThreadId,
+              providerTurnId: turnId,
+              reason: "initial",
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+            },
+          });
+          yield* apply({
+            type: "provider-turn.updated",
+            payload: {
+              id: turnId,
+              providerThreadId,
+              nodeId: nodeId(ordinal),
+              runAttemptId: attemptId,
+              nativeTurnRef: { driver, nativeId: `assistant-${ordinal}`, strength: "weak" },
+              ordinal,
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+            },
+          });
+        }
+        for (const ordinal of [0, 1, 2]) {
+          yield* apply({
+            type: "checkpoint.captured",
+            payload: {
+              id: checkpointId(ordinal),
+              threadId,
+              scopeId,
+              runId: ordinal === 0 ? null : runId(ordinal),
+              nodeId: nodeId(Math.max(1, ordinal)),
+              parentCheckpointId: null,
+              ordinalWithinScope: ordinal,
+              appRunOrdinal: ordinal === 0 ? null : ordinal,
+              ref: CheckpointRef.make(`refs/t3/rollback-clear/${ordinal}`),
+              status: "ready",
+              files: [],
+              capturedAt: now,
+            },
+          });
+        }
+
+        const fileSystem = yield* FileSystem.FileSystem;
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: providerInstanceId,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-rollback-clear-",
+          }),
+          fileSystem,
+          path: yield* Path.Path,
+          random: yield* SecureRandom.SecureRandom,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          queryRunner: {
+            allocateSessionId: Effect.die("unused allocateSessionId"),
+            open: () => Effect.die("unused open"),
+            forkSession: () => Effect.die("unused forkSession"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+        });
+        yield* runtime.events.pipe(Stream.runDrain, Effect.forkScoped);
+        const committed: OrchestrationV2DomainEvent[] = [];
+        yield* Effect.gen(function* () {
+          const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
+          yield* service.execute({
+            threadId,
+            providerThreadId,
+            scopeId,
+            checkpointId: checkpointId(targetOrdinal),
+            restoreFiles: false,
+          });
+        }).pipe(
+          Effect.provide(
+            layerCheckpointRollbackService.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  ThreadCommandExecutor.layer,
+                  IdAllocator.layer,
+                  Layer.mock(CheckpointService.CheckpointServiceV2)({
+                    restore: () => Effect.void,
+                    deleteStaleRefs: () => Effect.void,
+                  }),
+                  Layer.mock(EventSink.EventSinkV2)({
+                    write: ({ events }) =>
+                      Effect.sync(() => {
+                        committed.push(...events);
+                        return [];
+                      }),
+                  }),
+                  Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+                    open: () => Effect.succeed(runtime as never),
+                  }),
+                  Layer.mock(RuntimePolicy.RuntimePolicyV2)({
+                    resolve: () => Effect.succeed({} as never),
+                  }),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        const providerThread = committed.find(
+          (event) => event.type === "provider-thread.updated",
+        )?.payload;
+        assert.deepEqual(
+          {
+            session: providerThread?.nativeThreadRef?.nativeId,
+            resumeAt: providerThread?.nativeConversationHeadRef?.nativeId,
+          },
+          targetOrdinal === 1
+            ? { session: "native-before-clear", resumeAt: "assistant-1" }
+            : { session: "native-after-clear", resumeAt: "current-head" },
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
     );
 
     it.effect(
