@@ -507,14 +507,6 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
               "No EAS project to run the session under. Choose one for this host in Settings, or open the device from a thread whose project names extra.eas.projectId in app.json or its app config.",
             );
           }
-          const access = yield* expo
-            .availability(appId)
-            .pipe(Effect.mapError((error) => unavailable(error.message, error)));
-          if (!access.available) {
-            return yield* unavailable(
-              `EAS Simulator is not enabled for the ${access.account} Expo account.`,
-            );
-          }
           const entry = { name, appId, recordedAt: yield* Clock.currentTimeMillis };
           // Recorded first: a session the ledger cannot hold is never started.
           yield* writeLedger((entries) => [...entries, entry]);

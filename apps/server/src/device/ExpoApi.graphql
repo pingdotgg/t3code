@@ -21,17 +21,6 @@ query T3ExpoViewer {
   }
 }
 
-query T3EasSimulatorAvailability($appId: String!, $filter: [String!]) {
-  app {
-    byId(appId: $appId) {
-      ownerAccount {
-        name
-        accountFeatureGates(filter: $filter)
-      }
-    }
-  }
-}
-
 mutation T3CreateEasSimulatorSession($input: CreateDeviceRunSessionInput!) {
   deviceRunSession {
     createDeviceRunSession(deviceRunSessionInput: $input) {

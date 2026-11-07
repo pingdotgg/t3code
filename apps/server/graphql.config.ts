@@ -6,8 +6,4 @@ import { defineConfig } from "@effect/graphql-generator/Config";
 export default defineConfig({
   schema: "./schema/expo.graphql",
   documents: ["src/device/**/*.graphql"],
-  scalars: {
-    // Feature gates arrive as an object of gate name to boolean.
-    JSONObject: "effect/Schema#Json",
-  },
 });
