@@ -92,7 +92,16 @@ import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppea
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
 import { SettingsProviderAccountsRouteScreen } from "./features/settings/SettingsProviderAccountsRouteScreen";
+import { SettingsProviderInstanceRouteScreen } from "./features/settings/SettingsProviderInstanceRouteScreen";
+import {
+  SettingsAccessRouteScreen,
+  SettingsBrowserRouteScreen,
+  SettingsDevicesRouteScreen,
+  SettingsDiffsRouteScreen,
+  SettingsSecretsRouteScreen,
+} from "./features/settings/SettingsCatalogRouteScreens";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
+
 import { SettingsEnvironmentDetailRouteScreen } from "./features/settings/SettingsEnvironmentDetailRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsFollowUpRouteScreen } from "./features/settings/SettingsFollowUpRouteScreen";
@@ -205,6 +214,36 @@ const SETTINGS_SCREENS = {
     screen: SettingsProviderAccountsRouteScreen,
     linking: "settings/provider-accounts",
     options: settingsPage("Providers"),
+  }),
+  SettingsProviderInstance: createNativeStackScreen({
+    screen: SettingsProviderInstanceRouteScreen,
+    linking: "settings/providers/:environmentId/:instanceId",
+    options: settingsPage("Provider"),
+  }),
+  SettingsDiffs: createNativeStackScreen({
+    screen: SettingsDiffsRouteScreen,
+    linking: "settings/diffs",
+    options: settingsPage("Diffs & pull requests"),
+  }),
+  SettingsBrowser: createNativeStackScreen({
+    screen: SettingsBrowserRouteScreen,
+    linking: "settings/browser",
+    options: settingsPage("Browser"),
+  }),
+  SettingsDevices: createNativeStackScreen({
+    screen: SettingsDevicesRouteScreen,
+    linking: "settings/devices",
+    options: settingsPage("Devices"),
+  }),
+  SettingsAccess: createNativeStackScreen({
+    screen: SettingsAccessRouteScreen,
+    linking: "settings/access",
+    options: settingsPage("Sharing & access"),
+  }),
+  SettingsSecrets: createNativeStackScreen({
+    screen: SettingsSecretsRouteScreen,
+    linking: "settings/secrets",
+    options: settingsPage("Secrets"),
   }),
   SettingsEnvironmentMaintenance: createNativeStackScreen({
     screen: SettingsEnvironmentMaintenanceRouteScreen,

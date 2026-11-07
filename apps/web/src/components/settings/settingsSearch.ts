@@ -5,6 +5,11 @@ import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/con
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
+  settingsNavGroupsForSurface,
+  settingsSectionsForSurface,
+  type SettingsSectionId,
+} from "@t3tools/client-runtime/settings/catalog";
+import {
   sourceControlClients,
   type SourceControlDefinition,
 } from "@t3tools/client-runtime/source-control-clients";
@@ -86,76 +91,37 @@ export interface SettingsSearchAvailability {
   readonly hasPeerLinkHost?: boolean;
 }
 
-export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
-  "/settings/diagnostics": "Diagnostics",
-  "/settings/projects": "Projects",
-  "/settings/general": "General",
-  "/settings/appearance": "Appearance",
-  "/settings/chat": "Chat",
-  "/settings/diffs": "Diffs & pull requests",
-  "/settings/keybindings": "Keybindings",
-  "/settings/snap-shot": "SnapShots",
-  "/settings/providers": "Providers",
-  "/settings/threads": "Threads",
-  "/settings/browser": "Browser",
-  "/settings/devices": "Devices",
-  "/settings/scheduled-tasks": "Scheduled tasks",
-  "/settings/source-control": "Source control",
-  "/settings/worktrees": "Worktrees",
-  "/settings/connections": "Environments",
-  "/settings/access": "Sharing & access",
-  "/settings/secrets": "Secrets",
-  "/settings/maintenance": "Maintenance",
-  "/settings/labs": "Labs",
-  "/settings/about": "About",
-  "/settings/voice": "Voice",
-  "/settings/archived": "Archive",
-};
+export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = Object.fromEntries(
+  settingsSectionsForSurface("web", {
+    secretsFeatureEnabled: true,
+    includeSecondary: true,
+  }).flatMap((section) =>
+    section.webPath !== undefined
+      ? [[section.webPath as SettingsPath, section.label] as const]
+      : [],
+  ),
+) as Readonly<Record<SettingsPath, string>>;
 
 /** Sidebar order. A group without a heading is set apart by space alone. */
 export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   readonly heading: string | null;
   readonly paths: ReadonlyArray<SettingsPath>;
-}> = [
-  {
-    heading: null,
-    paths: [
-      "/settings/general",
-      "/settings/appearance",
-      "/settings/chat",
-      "/settings/diffs",
-      "/settings/keybindings",
-      "/settings/voice",
-      "/settings/snap-shot",
-    ],
-  },
-  {
-    heading: "Agents",
-    paths: [
-      "/settings/providers",
-      "/settings/threads",
-      "/settings/browser",
-      "/settings/devices",
-      "/settings/scheduled-tasks",
-    ],
-  },
-  {
-    heading: "Code",
-    paths: ["/settings/projects", "/settings/source-control", "/settings/worktrees"],
-  },
-  {
-    heading: "Connections",
-    paths: [
-      "/settings/connections",
-      "/settings/access",
-      ...(isSecretsFeatureEnabled ? (["/settings/secrets"] as const) : []),
-    ],
-  },
-  {
-    heading: null,
-    paths: ["/settings/maintenance", "/settings/labs", "/settings/about", "/settings/archived"],
-  },
-];
+}> = settingsNavGroupsForSurface("web", {
+  secretsFeatureEnabled: isSecretsFeatureEnabled,
+}).map((group) => ({
+  heading: group.heading,
+  paths: group.sections.flatMap((section) =>
+    section.webPath !== undefined ? [section.webPath as SettingsPath] : [],
+  ),
+}));
+
+/** Sections this web client implements — kept for catalog parity tests. */
+export const WEB_IMPLEMENTED_SETTINGS_SECTIONS = new Set<SettingsSectionId>(
+  settingsSectionsForSurface("web", {
+    secretsFeatureEnabled: true,
+    includeSecondary: true,
+  }).map((section) => section.id),
+);
 
 export function keybindingSearchAnchorId<Command extends KeybindingCommand>(command: Command) {
   return `keybinding-${command}` as const;
@@ -1463,7 +1429,7 @@ export function filterAvailableSettingsSearchItems(
 export function settingsForThisPlatform(
   items: ReadonlyArray<SettingsSearchItem>,
 ): ReadonlyArray<SettingsSearchItem> {
-  const platform = typeof navigator === "undefined" ? "" : navigator.platform;
+  const platform = typeof navigator === "undefined" ? "" : (navigator.platform ?? "");
   return items.filter(
     (item) =>
       (isElectron || item.desktopOnly !== true) &&

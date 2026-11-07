@@ -21,7 +21,7 @@ export function useSettingsWriter() {
       readonly environmentId: EnvironmentId;
       readonly patch: ServerSettingsPatch;
     }[],
-  ) => {
+  ): Promise<boolean> => {
     const outcomes = await Promise.all(
       writes.map(async (entry) => {
         const result = await updateSettings({
@@ -39,6 +39,8 @@ export function useSettingsWriter() {
     const failures = outcomes.filter((outcome) => outcome !== null);
     if (failures.length > 0) {
       Dialog.alert("Could not save settings", failures.join("\n\n"));
+      return false;
     }
+    return true;
   };
 }
