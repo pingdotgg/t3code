@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -275,6 +276,61 @@ it.effect(
             (yield* fs.readFileString(`${directory}/${file}`)).includes("synthetic-only"),
           );
         }
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each(["readDirectory", "remove"] as const)(
+  "serves deliveries when startup leftover %s is denied",
+  (failure) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { input, fs, real, dependencies } = yield* setup(true);
+        const directory = real!.directory!;
+        const leftover = ServerSecretStore.temporarySecretPath(
+          `${directory}/secret-delivery-${"b".repeat(64)}.bin`,
+          "11111111-1111-4111-8111-111111111111",
+        );
+        yield* fs.writeFileString(leftover, "synthetic-leftover", { mode: 0o600 });
+        const denied = (path: string) =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: failure,
+              pathOrDescriptor: path,
+              description: "Synthetic permission denial",
+            }),
+          );
+        const filesystem = {
+          ...fs,
+          ...(failure === "readDirectory"
+            ? {
+                readDirectory: (path: string) =>
+                  path === directory ? denied(path) : fs.readDirectory(path),
+              }
+            : {
+                remove: (path: string, options: Parameters<typeof fs.remove>[1]) =>
+                  path === leftover ? denied(path) : fs.remove(path, options),
+              }),
+        } satisfies FileSystem.FileSystem;
+        const service = yield* SecretDeliveries.SecretDeliveries.pipe(
+          Effect.provide(
+            SecretDeliveries.layer.pipe(
+              Layer.provide(
+                Layer.merge(dependencies, Layer.succeed(FileSystem.FileSystem, filesystem)),
+              ),
+            ),
+          ),
+        );
+        const receipt = yield* service.publish(input);
+        assert.equal(
+          (yield* service.read({
+            threadId: input.threadId,
+            deliveryId: receipt.deliveryId,
+          })).value.includes("synthetic-only"),
+          true,
+        );
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
 );

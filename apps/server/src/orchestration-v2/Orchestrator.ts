@@ -8982,14 +8982,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         );
       const run = projection.runs.find((candidate) => candidate.id === command.runId);
-      if (run === undefined || run.rootNodeId !== command.nodeId) {
+      const existing = projection.turnItems.find((item) => item.id === command.turnItemId);
+      if (run === undefined || (existing === undefined && run.rootNodeId !== command.nodeId)) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
           cause: "Secret delivery run is unavailable.",
         });
       }
-      const existing = projection.turnItems.find((item) => item.id === command.turnItemId);
       if (
         existing !== undefined &&
         (existing.type !== "secret_delivery" || existing.runId !== command.runId)
@@ -9013,7 +9013,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         type: "turn-item.updated",
         threadId: command.threadId,
         runId: command.runId,
-        nodeId: command.nodeId,
+        nodeId: existing?.nodeId ?? command.nodeId,
         providerInstanceId: run.providerInstanceId,
         occurredAt: now,
         payload: unchanged
@@ -9022,9 +9022,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               id: command.turnItemId,
               threadId: command.threadId,
               runId: command.runId,
-              nodeId: command.nodeId,
-              providerThreadId: run.providerThreadId,
-              providerTurnId: providerTurnForRun(projection, run)?.id ?? null,
+              nodeId: existing?.nodeId ?? command.nodeId,
+              providerThreadId: existing ? existing.providerThreadId : run.providerThreadId,
+              providerTurnId: existing
+                ? existing.providerTurnId
+                : (providerTurnForRun(projection, run)?.id ?? null),
               nativeItemRef: null,
               parentItemId: null,
               ordinal: existing?.ordinal ?? (yield* nextTurnItemOrdinal(projection)),

@@ -297,12 +297,19 @@ const make = Effect.gen(function* () {
   // The singleton delivery owner has not been published yet: no delivery writer can be active.
   // Only startup removes crash leftovers; hourly sweeps must not race a live store write.
   if (store.directory !== undefined) {
-    for (const file of yield* fs.readDirectory(store.directory)) {
-      const target = ServerSecretStore.temporarySecretTarget(file);
-      if (target !== undefined && STORE_NAME_PATTERN.test(target)) {
-        yield* fs.remove(NodePath.join(store.directory, file));
+    const directory = store.directory;
+    yield* Effect.gen(function* () {
+      for (const file of yield* fs.readDirectory(directory)) {
+        const target = ServerSecretStore.temporarySecretTarget(file);
+        if (target !== undefined && STORE_NAME_PATTERN.test(target)) {
+          yield* fs
+            .remove(NodePath.join(directory, file))
+            .pipe(
+              Effect.catch(() => Effect.logWarning("Could not remove a secret delivery leftover")),
+            );
+        }
       }
-    }
+    }).pipe(Effect.catch(() => Effect.logWarning("Could not scan secret delivery leftovers")));
   }
   yield* sweep;
   yield* sweep.pipe(

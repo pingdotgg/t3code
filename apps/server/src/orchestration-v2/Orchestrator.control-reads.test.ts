@@ -1749,9 +1749,21 @@ it.effect("records secret delivery metadata without reopening a deleted item", (
         return receipt.deliveryId;
       }).pipe(Effect.provide(NodeServices.layer)),
     );
-    for (const [index, secretStatus] of (
-      ["available", "deleted", "available"] as const
-    ).entries()) {
+    const original = (yield* projections.getThreadRecords(threadId, ["turnItems"], {
+      turnItemTypes: ["secret_delivery"],
+    })).turnItems[0]!;
+    yield* projections.apply({
+      id: EventId.make("delivery:steer-restart"),
+      type: "run.updated",
+      threadId,
+      occurredAt: yield* DateTime.now,
+      payload: {
+        ...run,
+        rootNodeId: NodeId.make("node:steer-restart"),
+        providerThreadId: ProviderThreadId.make("provider-thread:restart"),
+      },
+    });
+    for (const [index, secretStatus] of (["expired", "deleted", "available"] as const).entries()) {
       yield* orchestrator.dispatch({
         type: "secret_delivery.record",
         commandId: CommandId.make(`delivery:${index}`),
@@ -1763,11 +1775,24 @@ it.effect("records secret delivery metadata without reopening a deleted item", (
         secretStatus,
         expiresAt: 86400000,
       });
+      const item = (yield* projections.getThreadRecords(threadId, ["turnItems"], {
+        turnItemTypes: ["secret_delivery"],
+      })).turnItems[0]!;
+      assert.equal(
+        item.type === "secret_delivery" && item.secretStatus,
+        index === 0 ? "expired" : "deleted",
+      );
+      assert.equal(item.nodeId, original.nodeId);
+      assert.equal(item.providerThreadId, original.providerThreadId);
+      assert.equal(item.providerTurnId, original.providerTurnId);
     }
     const items = (yield* projections.getThreadRecords(threadId, ["turnItems"], {
       turnItemTypes: ["secret_delivery"],
     })).turnItems;
     assert.equal(items.length, 1);
+    assert.equal(items[0]?.nodeId, original.nodeId);
+    assert.equal(items[0]?.providerThreadId, original.providerThreadId);
+    assert.equal(items[0]?.providerTurnId, original.providerTurnId);
     assert.equal(items[0]?.type, "secret_delivery");
     assert.equal(items[0]?.type === "secret_delivery" && items[0].secretStatus, "deleted");
   }).pipe(Effect.provide(layerTest)),
