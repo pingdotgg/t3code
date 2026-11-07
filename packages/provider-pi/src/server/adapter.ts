@@ -59,7 +59,7 @@ import {
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import {
   makePiRpcConnection,
-  parsePiModelSlug,
+  resolvePiModelSlug,
   piRecordField as recordField,
   piRecordNumber as recordNumber,
   piRecordString as recordString,
@@ -585,7 +585,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let baselineThinking: string | null = null;
       let contextWindow: number | null = null;
       const modelContextWindows = new Map<string, number>();
-      let modelsDiscovered = false;
+      let discoveredModels: ReadonlyArray<unknown> | null = null;
       // Prompt ACKs lack IDs; retain session send order and ownership so late ACKs cannot affect new turns.
       const pendingPromptResponses: Array<PiPromptSend> = [];
       const pendingCompactResponses: Array<{
@@ -2462,14 +2462,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           }
         }
         const stateData = yield* request({ type: "get_state" });
-        if (!modelsDiscovered) {
+        if (discoveredModels === null) {
           const modelsData = yield* request({ type: "get_available_models" }).pipe(
             Effect.orElseSucceed(() => undefined),
           );
           const models = recordField(modelsData, "models");
           if (Array.isArray(models)) {
             for (const model of models) rememberModelContextWindow(model);
-            modelsDiscovered = true;
+            discoveredModels = models;
           }
         }
         contextWindow = rememberModelContextWindow(recordField(stateData, "model"));
@@ -2567,7 +2567,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             appliedThinking = baselineThinking;
           }
         } else if (modelSelection.model !== appliedModel) {
-          const parsed = parsePiModelSlug(modelSelection.model);
+          const parsed = resolvePiModelSlug(modelSelection.model, discoveredModels);
           if (parsed === null) {
             return yield* protocolError(
               `Pi model '${modelSelection.model}' must use provider/model format`,
