@@ -1,13 +1,23 @@
+import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import {
   omitLocalVisibleTurnItems,
   restoreLocalVisibleTurnItems,
 } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
+import {
+  dedupeSnapshotBodies,
+  restoreSnapshotBodies,
+} from "@t3tools/shared/orchestrationV2DedupedBodies";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 
-import { StoredOrchestrationThreadSnapshot } from "./orchestrationCache.ts";
+import {
+  ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
+  StoredOrchestrationThreadSnapshot,
+} from "./orchestrationCache.ts";
 
-// Keep the full format for web/desktop; older clients discard compact records.
+// Each item is written once and shared again on decode, so a thread loaded from the cache costs
+// what a thread from the server costs. Older clients discard these records and refetch.
 export const COMPACT_THREAD_CACHE_SCHEMA_VERSION = 6 as const;
 
 const StoredCompactThreadSnapshot = StoredOrchestrationThreadSnapshot.mapFields((fields) => ({
@@ -26,6 +36,25 @@ class InvalidThreadCache extends Schema.TaggedError<InvalidThreadCache>()(
   "InvalidThreadCache",
   {},
 ) {}
+
+/** JSON decodes every copy of a body separately: point an item at its record's copy again. */
+function shareBodiesWithRecords(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadProjection {
+  return restoreSnapshotBodies(dedupeSnapshotBodies(projection));
+}
+
+/** A full record decodes both copies of each item: keep one object wherever they match. */
+function shareFullRecordItems(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadProjection {
+  const items = new Map(projection.turnItems.map((item) => [item.id, item]));
+  const visibleTurnItems = projection.visibleTurnItems.map((row) => {
+    const item = row.sourceThreadId === projection.thread.id ? items.get(row.item.id) : undefined;
+    return item !== undefined && Equal.equals(item, row.item) ? { ...row, item } : row;
+  });
+  return { ...projection, visibleTurnItems };
+}
 
 const encodeCompact = Schema.encodeEffect(Schema.fromJsonString(StoredCompactThreadSnapshot));
 const decodeCompatible = Schema.decodeUnknownEffect(
@@ -57,7 +86,15 @@ export const encodeStoredThreadSnapshot = Effect.fn("ThreadCache.encode")(functi
 
 export const decodeStoredThreadSnapshot = Effect.fn("ThreadCache.decode")(function* (raw: string) {
   const stored = yield* decodeCompatible(raw);
-  if (stored.schemaVersion !== COMPACT_THREAD_CACHE_SCHEMA_VERSION) return stored;
+  if (stored.schemaVersion === ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION) {
+    return {
+      ...stored,
+      snapshot: {
+        ...stored.snapshot,
+        projection: shareBodiesWithRecords(shareFullRecordItems(stored.snapshot.projection)),
+      },
+    };
+  }
   const { turnItemsOmitLocalVisible, turnItemCount, visibleTurnItemCount, ...snapshot } =
     stored.snapshot;
   const { projection } = snapshot;
@@ -80,9 +117,11 @@ export const decodeStoredThreadSnapshot = Effect.fn("ThreadCache.decode")(functi
     visibleIds.add(identity);
     return valid;
   });
+  // A record that could not be compacted carries both copies: a retained request card followed by
+  // newer items is enough, since `turnItems` then no longer starts with the visible rows.
   const restored = turnItemsOmitLocalVisible
     ? restoreLocalVisibleTurnItems(projection)
-    : projection;
+    : shareFullRecordItems(projection);
   const itemIds = new Set<string>();
   const validItems = restored.turnItems.every((item) => {
     const valid = item.threadId === threadId && !itemIds.has(item.id);
@@ -101,5 +140,5 @@ export const decodeStoredThreadSnapshot = Effect.fn("ThreadCache.decode")(functi
   ) {
     return yield* new InvalidThreadCache();
   }
-  return { ...stored, snapshot: { ...snapshot, projection: restored } };
+  return { ...stored, snapshot: { ...snapshot, projection: shareBodiesWithRecords(restored) } };
 });

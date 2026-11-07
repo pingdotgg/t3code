@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
   type OrchestrationV2TurnItem,
+  type ScopedThreadRef,
   type ThreadId as ThreadIdType,
 } from "@t3tools/contracts";
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
@@ -35,7 +36,11 @@ import * as ManagedRelay from "../relay/managedRelay.ts";
 import { request, subscribeDynamic } from "../rpc/client.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
-import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
+import {
+  estimateRetainedThreadBytes,
+  THREAD_SNAPSHOT_IDLE_TTL_MS,
+  UNFINISHED_RUN_STATUSES,
+} from "./threadRetention.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
@@ -157,6 +162,91 @@ interface ThreadResumeSnapshot {
 interface ThreadResumeCache {
   snapshot: ThreadResumeSnapshot | undefined;
   owner: object | undefined;
+  /** The family's budget for left threads, when the platform sets one. */
+  readonly left?: LeftThreadBudget;
+  readonly key?: string;
+  /** Some thread-state atom has it open, even while an environment restart closes its scope. */
+  mounted?: boolean;
+  /** The persisted cache has some copy of this thread, possibly an older bounded one. */
+  saved?: boolean;
+  /** Its size when it was left. */
+  bytes?: number;
+}
+
+export interface LeftThreadRetention {
+  /**
+   * Past this estimated size, left threads give up their in-memory state, the largest first. The
+   * thread just left does not count, so going back and forth between two threads stays warm.
+   */
+  readonly maxBytes: number;
+  /** A left thread's state is gone, through this budget or its idle TTL. */
+  readonly onRelease?: (thread: ScopedThreadRef) => void;
+}
+
+/**
+ * A deleted thread keeps its tombstone. A thread with unfinished runs and one whose latest save
+ * failed keep state the cache lacks. A thread with a pending question or approval waits for the user,
+ * so it stays ready to answer. A thread kept out of the cache on purpose, such as an expanded one,
+ * needs only some saved copy to come back from, and reloads its older pages on scroll.
+ */
+function isReleasable(cache: ThreadResumeCache, snapshot: ThreadResumeSnapshot): boolean {
+  const { state } = snapshot;
+  if (state.status === "deleted" || Option.isNone(state.data)) return false;
+  if (state.data.value.runs.some((run) => UNFINISHED_RUN_STATUSES.has(run.status))) return false;
+  if (pendingRuntimeRequestIds(state.data.value).length > 0) return false;
+  if (snapshot.persisted) return true;
+  return !shouldPersistThread(state.data.value, state.history) && cache.saved === true;
+}
+
+class LeftThreadBudget {
+  /** Oldest first. Holds only threads the user navigated to, left, and can reopen from the cache. */
+  private readonly order = new Set<ThreadResumeCache>();
+  private readonly visited = new Set<string>();
+  private readonly retention: LeftThreadRetention;
+
+  constructor(retention: LeftThreadRetention) {
+    this.retention = retention;
+  }
+
+  markVisited(key: string): void {
+    this.visited.add(key);
+  }
+
+  open(cache: ThreadResumeCache): void {
+    cache.mounted = true;
+    this.order.delete(cache);
+  }
+
+  /** Needs the atom unmounted and the scope closed, whichever comes last; the scope's close saves. */
+  leave(cache: ThreadResumeCache): void {
+    if (cache.mounted === true || cache.owner !== undefined) return;
+    const snapshot = cache.snapshot;
+    if (snapshot === undefined || !this.visited.has(cache.key!)) return;
+    if (!isReleasable(cache, snapshot)) return;
+    cache.bytes = estimateRetainedThreadBytes(Option.getOrThrow(snapshot.state.data));
+    this.order.delete(cache);
+    this.order.add(cache);
+    let total = -cache.bytes;
+    for (const entry of this.order) total += entry.bytes!;
+    while (total > this.retention.maxBytes) {
+      let largest: ThreadResumeCache | undefined;
+      for (const entry of this.order) {
+        // Among equals, the one left longest ago.
+        if (entry !== cache && entry.bytes! > (largest?.bytes ?? -1)) largest = entry;
+      }
+      if (largest === undefined) return;
+      total -= largest.bytes!;
+      largest.snapshot = undefined;
+      this.forget(largest);
+    }
+  }
+
+  /** Reached by the budget above, and by the idle TTL for any thread. */
+  forget(cache: ThreadResumeCache): void {
+    this.order.delete(cache);
+    this.visited.delete(cache.key!);
+    this.retention.onRelease?.(parseThreadKey(cache.key!));
+  }
 }
 
 function matchesThreadSnapshot(
@@ -228,6 +318,17 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       : candidate;
   const owner = {};
   if (resumeCache) resumeCache.owner = owner;
+  if (resumeCache?.left) {
+    const { left } = resumeCache;
+    // Added first so it runs last, after the final cache save below.
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        if (resumeCache.owner !== owner) return;
+        resumeCache.owner = undefined;
+        left.leave(resumeCache);
+      }),
+    );
+  }
   const loaded =
     retained === undefined
       ? yield* cache.loadThread(environmentId, threadId).pipe(
@@ -249,6 +350,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     (snapshot) => !hasMissingPendingQuestionCard(snapshot.projection),
   );
   const cachedThread = Option.map(cached, (snapshot) => snapshot.projection);
+  // A record discarded above is no copy to come back from.
+  if (resumeCache && Option.isSome(loaded)) resumeCache.saved = Option.isSome(cached);
   // Seed the resume cursor from the cached snapshot so a warm cache can catch up
   // via `afterSequence` instead of re-downloading the full thread body.
   const initialSequence =
@@ -330,6 +433,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       Effect.tap(() =>
         Effect.sync(() => {
           savedSnapshot = snapshot;
+          if (resumeCache?.owner === owner) resumeCache.saved = true;
           if (
             !matchesThreadSnapshot(
               committed,
@@ -1085,14 +1189,21 @@ export function createEnvironmentThreadStateAtoms<R, E>(
     | R,
     E
   >,
+  options?: {
+    /** Without it, a left thread keeps its state for the whole idle TTL. */
+    readonly leftThreads?: LeftThreadRetention;
+  },
 ) {
+  const left = options?.leftThreads && new LeftThreadBudget(options.leftThreads);
   // Cache definitions must outlive collectible live-atom definitions. The
   // registry retains these nodes without retaining environment or RPC scopes.
   const resumeFamily = Atom.family((key: string) =>
-    Atom.make((): ThreadResumeCache => ({
-      snapshot: undefined,
-      owner: undefined,
-    })).pipe(
+    Atom.make((get): ThreadResumeCache => {
+      if (left === undefined) return { snapshot: undefined, owner: undefined };
+      const cache: ThreadResumeCache = { snapshot: undefined, owner: undefined, left, key };
+      get.addFinalizer(() => left.forget(cache));
+      return cache;
+    }).pipe(
       Atom.setIdleTTL(THREAD_SNAPSHOT_IDLE_TTL_MS),
       Atom.withLabel(`environment-thread-resume:${key}`),
     ),
@@ -1105,6 +1216,13 @@ export function createEnvironmentThreadStateAtoms<R, E>(
         (get) => {
           get.mount(resumeAtom);
           const resume = get.once(resumeAtom);
+          if (left) {
+            left.open(resume);
+            get.addFinalizer(() => {
+              resume.mounted = false;
+              left.leave(resume);
+            });
+          }
           const live = threadStateChanges(environmentId, threadId, resume);
           return resume.snapshot === undefined
             ? live
@@ -1120,6 +1238,8 @@ export function createEnvironmentThreadStateAtoms<R, E>(
   return {
     stateAtom: (environmentId: EnvironmentIdType, threadId: ThreadIdType) =>
       family(threadKey({ environmentId, threadId })),
+    /** The user navigated to this thread: only such threads count toward the left-thread budget. */
+    markThreadVisited: (ref: ScopedThreadRef) => left?.markVisited(threadKey(ref)),
   };
 }
 

@@ -1,6 +1,7 @@
 import { createChildThreadApprovalsAtom } from "@t3tools/client-runtime/state/thread-requests";
 import { useAtomValue } from "@effect/atom-react";
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
 import {
   createEnvironmentThreadDetailAtoms,
@@ -33,7 +34,24 @@ export const threadEnvironment = createThreadEnvironmentAtoms(
   connectionAtomRuntime,
   threadFamilies.snapshotAtom,
 );
-const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
+// What left threads may keep in memory. A thread opened from a bounded server window costs a few MB
+// at most, so only threads grown by long streaming or scrollback reach it.
+const LEFT_THREADS_MAX_BYTES = 50 * 1024 * 1024;
+
+let leftThreadReleased: (threadKey: string) => void = () => {};
+
+/** Whoever remembers more of a left thread lets go of it here, together with its state. */
+export function onLeftThreadReleased(listener: (threadKey: string) => void): void {
+  leftThreadReleased = listener;
+}
+
+const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime, {
+  leftThreads: {
+    maxBytes: LEFT_THREADS_MAX_BYTES,
+    onRelease: (thread) => leftThreadReleased(scopedThreadKey(thread)),
+  },
+});
+export const markThreadVisited = environmentThreads.markThreadVisited;
 export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
   environmentThreads.stateAtom,
 );

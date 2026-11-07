@@ -1225,6 +1225,55 @@ describe("MessagesTimeline thread find", () => {
       expect(top).toBeLessThan(bounds.bottom);
     });
   });
+
+  it("lets go of a timeline once find has no match in it", async () => {
+    setup();
+    const base = baseProps();
+    await using screen = await renderElement(
+      <MessagesTimeline {...base} timelineEntries={[message("Short thread")]} />,
+    );
+    // In its own function, so nothing in this test's frame holds the entries after the switch.
+    const revealMatch = async () => {
+      const replies = Array.from({ length: 40 }, (_, index) =>
+        message(
+          `${index === 5 ? "Needle here" : `Reply ${index}`}\n\n${"line\n\n".repeat(8)}`,
+          { role: "assistant" },
+          `r-${index}`,
+        ),
+      );
+      await screen.rerender(
+        <MessagesTimeline
+          {...base}
+          routeThreadKey="environment-local:thread-find-left"
+          timelineEntries={replies}
+          liveFollowEnabled={false}
+          findOpen
+          findExpanded
+          findQuery="Needle"
+          activeFindMatch={{ entryId: "entry-r-5", runId: null, occurrence: 0 }}
+        />,
+      );
+      const viewport = base.listRef.current!.getScrollableNode()!;
+      await vi.waitFor(() => {
+        const row = screen.container.querySelector('[data-timeline-row-id="entry-r-5"]');
+        expect(row).not.toBeNull();
+        const bounds = viewport.getBoundingClientRect();
+        const top = row!.getBoundingClientRect().top;
+        expect(top).toBeGreaterThanOrEqual(bounds.top);
+        expect(top).toBeLessThan(bounds.bottom);
+      });
+      return new WeakRef(replies);
+    };
+    const shown = await revealMatch();
+
+    // Twice, because React keeps the previous render's props until the next render.
+    for (const text of ["Another thread", "Another thread, updated"]) {
+      await screen.rerender(<MessagesTimeline {...base} timelineEntries={[message(text)]} />);
+    }
+    await cdp().send("HeapProfiler.collectGarbage");
+
+    expect(shown.deref()).toBeUndefined();
+  });
 });
 
 describe("compact reasoning math", () => {

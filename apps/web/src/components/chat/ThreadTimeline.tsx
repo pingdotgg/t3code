@@ -1,14 +1,16 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { type ComponentProps, useLayoutEffect } from "react";
+import { type ComponentProps, use, useLayoutEffect } from "react";
 import { useIncrementalTimelineEntries } from "../../hooks/useIncrementalTimelineEntries";
 import type { TimelineEntriesInput, TimelineEntry } from "../../session-logic";
 import { useTimelineVisibleTurnItems } from "../../state/entities";
+import { markThreadVisited } from "../../state/threads";
 import {
   peekRememberedThreadTimeline,
   rememberReadyThreadTimeline,
   resolveThreadSwitchTimeline,
   timelineHasEphemeralPreviewUrls,
 } from "../ChatView.logic";
+import { BackgroundThreadContext } from "./backgroundThread";
 import { MessagesTimeline } from "./MessagesTimeline";
 
 /**
@@ -47,6 +49,12 @@ export function ThreadTimeline({
     nextEntries: entries,
     rememberedForActive: peekRememberedThreadTimeline<typeof entries>(activeThreadKey),
   });
+  // A side chat shows its thread beside the one the user navigated to.
+  const backgroundThread = use(BackgroundThreadContext);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the left-thread budget which thread the user navigated to, once it is on screen
+  useLayoutEffect(() => {
+    if (!backgroundThread && threadDetailRef !== null) markThreadVisited(threadDetailRef);
+  }, [backgroundThread, threadDetailRef]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stores the committed ready timeline in the module-level cache used during thread switches
   useLayoutEffect(() => {
     if (detailLoading || entries.length === 0 || timelineHasEphemeralPreviewUrls(entries)) {
