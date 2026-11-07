@@ -146,7 +146,6 @@ async function setup() {
     useOpenFavoriteEditorShortcut({
       enabled: true,
       environmentId: selected,
-      keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       availableEditors: editors,
       openInCwd: "/work/project",
     });

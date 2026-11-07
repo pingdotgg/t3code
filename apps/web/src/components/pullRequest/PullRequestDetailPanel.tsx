@@ -47,8 +47,9 @@ import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
-import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
+import type { ShortcutMatchContext } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
+import { registerCommands } from "~/shortcuts/dispatcher";
 import {
   usePullRequestDefaultMergeMethodResolver,
   writeHandoffToComposer,
@@ -483,22 +484,26 @@ export function PullRequestDetailPanel({
         description: error.message,
       }),
   });
-  const copyFromShortcut = useEffectEvent((event: KeyboardEvent) => {
-    if (!shortcutsEnabled || event.defaultPrevented || isCommandPaletteOpen()) return;
-    const command = resolveShortcutCommand(event, keybindings, {
-      context: getShortcutContext(),
-    });
-    if (command !== "pullRequest.copyNumber") return;
+  const copyNumberFromShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (!shortcutsEnabled) return false;
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) copyReference(`#${reference.number}`, `${terminology.shortLabel} number`);
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown capture listener for the copy-number shortcut
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers pullRequest.copyNumber while the detail panel is mounted
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => copyFromShortcut(event);
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, []);
+    return registerCommands(
+      {
+        "pullRequest.copyNumber": (event) => copyNumberFromShortcut(event),
+      },
+      {
+        capture: true,
+        when: (event) => !event.defaultPrevented && !isCommandPaletteOpen() && shortcutsEnabled,
+        context: () => getShortcutContext(),
+        keybindings: () => keybindings,
+      },
+    );
+  }, [keybindings, shortcutsEnabled, getShortcutContext]);
   const autoMergeKey = `${pullRequestKey}:${detail?.autoMergeMethod ?? ""}`;
   const [seenAutoMergeKey, setSeenAutoMergeKey] = useState<string | null>(null);
   if (seenAutoMergeKey !== autoMergeKey) {

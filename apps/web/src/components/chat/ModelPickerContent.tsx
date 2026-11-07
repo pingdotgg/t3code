@@ -43,12 +43,8 @@ import { ModelEsque } from "./providerIconUtils";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { registerModelPickerContent } from "../../modelPickerVisibility";
 import { primaryServerKeybindingsAtom } from "../../state/server";
-import {
-  modelPickerJumpCommandForIndex,
-  modelPickerJumpIndexFromCommand,
-  resolveShortcutCommand,
-  shortcutLabelForCommand,
-} from "../../keybindings";
+import { modelPickerJumpCommandForIndex, shortcutLabelForCommand } from "../../keybindings";
+import { registerCommands, type CommandHandlers } from "../../shortcuts/dispatcher";
 import {
   useEnvironmentModelPreferences,
   useToggleEnvironmentModelFavorite,
@@ -307,20 +303,6 @@ function ModelPickerList({
   );
 }
 
-// Capture gives picker shortcuts priority over the composer.
-function WindowKeyDownListener({ onKeyDown }: { onKeyDown: (event: KeyboardEvent) => void }) {
-  const handleKeyDown = useEffectEvent(onKeyDown);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a capture-phase window keydown listener for the picker's lifetime
-  useEffect(() => {
-    const listener = (event: KeyboardEvent) => handleKeyDown(event);
-    window.addEventListener("keydown", listener, true);
-    return () => {
-      window.removeEventListener("keydown", listener, true);
-    };
-  }, []);
-  return null;
-}
-
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
   environmentId: EnvironmentId | null;
   activeInstanceId: ProviderInstanceId;
@@ -483,11 +465,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return resolvedModel;
   };
 
-  const modelJumpShortcutContext = {
-    terminalFocus: false,
-    terminalOpen: props.terminalOpen,
-    modelPickerOpen: true,
-  } as const;
   const lockedProvider = props.lockedProvider;
   const lockedContinuationGroupKey = props.lockedContinuationGroupKey;
   const canOpenProviderSetup = onOpenProviderSetup !== undefined;
@@ -754,65 +731,79 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     selectedModelKeySet,
   };
 
-  const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
-    if (
-      event.defaultPrevented ||
-      event.repeat ||
-      event.isComposing ||
-      event.keyCode === 229 ||
-      isCommandPaletteOpen()
-    ) {
-      return;
-    }
-
-    const command = resolveShortcutCommand(event, keybindings, {
-      platform: navigator.platform,
-      context: modelJumpShortcutContext,
+  const selectAdjacentProvider = useEffectEvent((direction: 1 | -1) => {
+    const next = adjacentModelPickerProvider({
+      entries: sidebarInstanceEntries,
+      selectedInstanceId,
+      direction,
+      disabledInstanceIds: lockedDisabledInstanceIds,
+      selectableUnavailableInstanceIds,
     });
-    if (command === "modelPicker.previousProvider" || command === "modelPicker.nextProvider") {
-      event.preventDefault();
-      event.stopPropagation();
-      const next = adjacentModelPickerProvider({
-        entries: sidebarInstanceEntries,
-        selectedInstanceId,
-        direction: command === "modelPicker.nextProvider" ? 1 : -1,
-        disabledInstanceIds: lockedDisabledInstanceIds,
-        selectableUnavailableInstanceIds,
-      });
-      setSearchQuery("");
-      handleSelectInstance(next);
-      announce(
-        next === "favorites" ? "Favorites" : (entryByInstanceId.get(next)?.displayName ?? next),
-        "model-picker",
-      );
-      return;
-    }
-    const jumpIndex = modelPickerJumpIndexFromCommand(command ?? "");
-    if (jumpIndex === null) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-
+    setSearchQuery("");
+    handleSelectInstance(next);
+    announce(
+      next === "favorites" ? "Favorites" : (entryByInstanceId.get(next)?.displayName ?? next),
+      "model-picker",
+    );
+  });
+  const selectJumpModel = useEffectEvent((jumpIndex: number) => {
     const targetModelKey = modelJumpModelKeys[jumpIndex];
-    if (!targetModelKey) {
-      return;
-    }
+    if (!targetModelKey) return false;
     const model = parseModelPickerModelKey(targetModelKey);
-    if (!model) {
-      return;
-    }
+    if (!model) return false;
     const selectedSlug = handleModelSelect(model.slug, model.instanceId);
-    if (selectedSlug === null) return;
+    if (selectedSlug === null) return false;
     const name = flatModels.find(
       (item) => item.slug === selectedSlug && item.instanceId === model.instanceId,
     )?.name;
     announce(`Model: ${name ?? selectedSlug}`, "model-picker");
-  };
+  });
+
+  // Capture so picker chords win over the composer.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers model-picker jump/provider commands for the picker's lifetime
+  useEffect(() => {
+    const jumpHandlers = Object.fromEntries(
+      MODEL_PICKER_JUMP_KEYBINDING_COMMANDS.map((command, jumpIndex) => [
+        command,
+        (event: KeyboardEvent) => {
+          if (event.isComposing || event.keyCode === 229) return false;
+          event.preventDefault();
+          event.stopPropagation();
+          return selectJumpModel(jumpIndex);
+        },
+      ]),
+    ) as CommandHandlers;
+    return registerCommands(
+      {
+        "modelPicker.previousProvider": (event) => {
+          if (event.isComposing || event.keyCode === 229) return false;
+          event.preventDefault();
+          event.stopPropagation();
+          selectAdjacentProvider(-1);
+        },
+        "modelPicker.nextProvider": (event) => {
+          if (event.isComposing || event.keyCode === 229) return false;
+          event.preventDefault();
+          event.stopPropagation();
+          selectAdjacentProvider(1);
+        },
+        ...jumpHandlers,
+      },
+      {
+        capture: true,
+        when: (event) => !event.defaultPrevented && !event.repeat && !isCommandPaletteOpen(),
+        context: () => ({
+          terminalFocus: false,
+          terminalOpen: props.terminalOpen,
+          modelPickerOpen: true,
+        }),
+        keybindings: () => keybindings,
+      },
+    );
+  }, [keybindings, props.terminalOpen]);
 
   return (
     <TooltipProvider delay={0}>
-      <WindowKeyDownListener onKeyDown={onWindowKeyDown} />
       <div
         ref={pickerContentRef}
         className={cn(

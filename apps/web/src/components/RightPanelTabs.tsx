@@ -63,7 +63,8 @@ import { isElectron } from "~/env";
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
-import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
+import type { ShortcutMatchContext } from "~/keybindings";
+import { registerCommands } from "~/shortcuts/dispatcher";
 import { readLocalApi } from "~/localApi";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
@@ -1039,15 +1040,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
   if (props.open === false && addSurfaceMenuOpen) setAddSurfaceMenuOpen(false);
 
-  const onNewSurfaceKeyDown = useEffectEvent((event: KeyboardEvent) => {
-    if (event.defaultPrevented || event.isComposing) return;
-    if (
-      resolveShortcutCommand(event, props.keybindings, {
-        context: { ...props.getShortcutContext(), rightPanelOpen: true },
-      }) !== "rightPanel.new"
-    )
-      return;
-    if (!addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
+  const openNewSurfaceMenu = useEffectEvent((event: KeyboardEvent) => {
+    if (event.isComposing) return false;
+    if (!addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) {
+      return false;
+    }
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) {
@@ -1055,11 +1052,21 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       setAddSurfaceMenuOpen(true);
     }
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for the new surface shortcut while the panel is open
+  const registerNewSurfaceCommand = useEffectEvent(() =>
+    registerCommands(
+      { "rightPanel.new": (event) => openNewSurfaceMenu(event) },
+      {
+        capture: true,
+        when: (event) => !event.defaultPrevented,
+        context: () => ({ ...props.getShortcutContext(), rightPanelOpen: true }),
+        keybindings: () => props.keybindings,
+      },
+    ),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers rightPanel.new while the panel is open
   useEffect(() => {
     if (props.open === false) return;
-    document.addEventListener("keydown", onNewSurfaceKeyDown, true);
-    return () => document.removeEventListener("keydown", onNewSurfaceKeyDown, true);
+    return registerNewSurfaceCommand();
   }, [props.open]);
 
   const updateTabScrollState = (viewport: HTMLDivElement) => {

@@ -71,6 +71,7 @@ import {
   RotateCcwIcon,
   SettingsIcon,
   MonitorIcon,
+  PanelBottomIcon,
   PinIcon,
   PinOffIcon,
   PlugIcon,
@@ -78,6 +79,8 @@ import {
   TextSearchIcon,
   UserPlusIcon,
 } from "lucide-react";
+import { buildRegistryPaletteActions } from "../commands/palette";
+import { readCommandContext } from "../commands/context";
 import { openThreadFind } from "./chat/threadFindStore";
 import {
   useDeferredValue,
@@ -96,6 +99,10 @@ import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstra
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { copyThreadReference } from "../lib/copyThreadReference";
+import {
+  queueTerminalToggleFromPalette,
+  restoreTerminalToggleFromPalette,
+} from "../lib/terminalToggleFromPalette";
 import {
   queueWorkspaceFocusFromPalette,
   restoreWorkspaceFocusFromPalette,
@@ -362,6 +369,7 @@ function CommandPaletteDialog(props: {
       data-testid="command-palette"
       finalFocus={() => {
         if (restoreWorkspaceFocusFromPalette()) return false;
+        if (restoreTerminalToggleFromPalette()) return false;
         const returnFocus = getCommandPaletteReturnFocus();
         if (returnFocus === false) return false;
         const composer = composerHandleRef?.current;
@@ -1340,6 +1348,20 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  if (paletteRouteTarget !== null) {
+    actionItems.push({
+      kind: "action",
+      value: "action:toggle-terminal",
+      title: "Toggle terminal",
+      searchTerms: ["toggle", "terminal", "drawer", "shell", "console"],
+      icon: <PanelBottomIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "terminal.toggle",
+      run: async () => {
+        queueTerminalToggleFromPalette();
+      },
+    });
+  }
+
   const promptLinkTarget = paletteRouteTarget
     ? paletteRouteTarget.kind === "server"
       ? paletteRouteTarget.threadRef
@@ -1725,6 +1747,25 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  // Every keybinding command appears here by definition; custom rows above win on id.
+  const coveredCommands = new Set(
+    actionItems.flatMap((item) =>
+      item.kind === "action" && item.shortcutCommand ? [item.shortcutCommand] : [],
+    ),
+  );
+  // Theme submenu parents also claim their shortcutCommand.
+  for (const item of [changeThemeItem, changeAppearanceItem, themeEditorItem]) {
+    if (item.shortcutCommand) coveredCommands.add(item.shortcutCommand);
+  }
+  const routeThreadRef =
+    paletteRouteTarget?.kind === "server" ? paletteRouteTarget.threadRef : null;
+  actionItems.push(
+    ...buildRegistryPaletteActions({
+      context: readCommandContext({ threadRef: routeThreadRef, pathname }),
+      exclude: coveredCommands,
+    }),
+  );
 
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
   // Every setting goes to the palette's own matcher, so settings get the same

@@ -92,9 +92,10 @@ import {
 import {
   METRIC_OPTIONS,
   WINDOW_OPTIONS,
-  resolveUsageShortcut,
+  isUsageShortcutBlockedTarget,
   type UsageMetric,
 } from "./usageShortcuts";
+import { registerCommands } from "../../shortcuts/dispatcher";
 import {
   PROVIDER_ORDER,
   PROVIDER_PRESENTATION,
@@ -266,32 +267,52 @@ export function UsagePage() {
       setLimitsNow(Date.now());
       if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
     });
-  const onUsageKeyDown = useEffectEvent((event: KeyboardEvent) => {
-    if (
-      event.defaultPrevented ||
-      event.repeat ||
-      event.isComposing ||
-      isCommandPaletteOpen() ||
-      isModelPickerOpen()
-    )
-      return;
-
-    const command = resolveUsageShortcut(event, keybindings);
-    const metricOption = METRIC_OPTIONS.find((option) => option.command === command);
-    const periodOption = WINDOW_OPTIONS.find((option) => option.command === command);
-    if (!metricOption && !periodOption) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    if (metricOption) selectMetric(metricOption.value);
-    if (periodOption && !showingLimits) selectWindow(periodOption.days);
+  const applyUsageMetric = useEffectEvent((metric: UsageMetric) => {
+    selectMetric(metric);
+  });
+  const applyUsageWindow = useEffectEvent((days: number) => {
+    if (!showingLimits) selectWindow(days);
   });
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window capture keydown listener for usage metric and period shortcuts
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers usage metric and period commands while the page is mounted
   useEffect(() => {
-    globalThis.window.addEventListener("keydown", onUsageKeyDown, true);
-    return () => globalThis.window.removeEventListener("keydown", onUsageKeyDown, true);
-  }, []);
+    const metricHandlers = Object.fromEntries(
+      METRIC_OPTIONS.map((option) => [
+        option.command,
+        (event: KeyboardEvent) => {
+          if (event.isComposing) return false;
+          event.preventDefault();
+          event.stopPropagation();
+          applyUsageMetric(option.value);
+        },
+      ]),
+    );
+    const periodHandlers = Object.fromEntries(
+      WINDOW_OPTIONS.map((option) => [
+        option.command,
+        (event: KeyboardEvent) => {
+          if (event.isComposing) return false;
+          event.preventDefault();
+          event.stopPropagation();
+          applyUsageWindow(option.days);
+        },
+      ]),
+    );
+    return registerCommands(
+      { ...metricHandlers, ...periodHandlers },
+      {
+        capture: true,
+        when: (event) =>
+          !event.defaultPrevented &&
+          !event.repeat &&
+          !isCommandPaletteOpen() &&
+          !isModelPickerOpen() &&
+          !isUsageShortcutBlockedTarget(event.target),
+        context: () => ({ usagePageOpen: true }),
+        keybindings: () => keybindings,
+      },
+    );
+  }, [keybindings]);
 
   const refreshWindow = () => {
     if (refreshingRef.current) return;

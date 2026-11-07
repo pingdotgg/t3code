@@ -1,5 +1,9 @@
 import { attachSidebarTree } from "../lib/sidebarTree";
-import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
+import {
+  THREAD_JUMP_KEYBINDING_COMMANDS,
+  type EnvironmentId,
+  type ScopedProjectRef,
+} from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import {
@@ -90,13 +94,11 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { isElectron } from "../env";
 import {
-  resolveShortcutCommand,
   shortcutLabelForCommand,
   shouldShowThreadJumpHintsForModifiers,
   threadJumpCommandForIndex,
-  threadJumpIndexFromCommand,
-  threadTraversalDirectionFromCommand,
 } from "../keybindings";
+import { registerCommands, type CommandHandlers } from "../shortcuts/dispatcher";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isPreviewFocused } from "../lib/previewFocus";
@@ -2888,15 +2890,51 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const routePreviewOpen = useRightPanelStore(
     (state) => selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview",
   );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown for thread navigation shortcuts using the current thread list
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers thread prev/next/jump commands against the current thread list
   useEffect(() => {
-    const onWindowKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) {
-        return;
-      }
-      const command = resolveShortcutCommand(event, keybindings, {
-        platform: navigator.platform,
-        context: {
+    const navigateToThreadKey = (event: KeyboardEvent, targetThreadKey: string | null) => {
+      if (!targetThreadKey) return false;
+      const targetThread = threadByKey.get(targetThreadKey);
+      if (!targetThread) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
+    };
+    const jumpHandlers = Object.fromEntries(
+      THREAD_JUMP_KEYBINDING_COMMANDS.map((command, jumpIndex) => [
+        command,
+        (event: KeyboardEvent) => navigateToThreadKey(event, orderedThreadKeys[jumpIndex] ?? null),
+      ]),
+    ) as CommandHandlers;
+    return registerCommands(
+      {
+        "thread.previous": (event) =>
+          navigateToThreadKey(
+            event,
+            resolveAdjacentThreadId({
+              threadIds: orderedThreadKeys,
+              currentThreadId: routeRowThreadKey,
+              direction: "previous",
+            }),
+          ),
+        "thread.next": (event) =>
+          navigateToThreadKey(
+            event,
+            resolveAdjacentThreadId({
+              threadIds: orderedThreadKeys,
+              currentThreadId: routeRowThreadKey,
+              direction: "next",
+            }),
+          ),
+        ...jumpHandlers,
+      },
+      {
+        when: (event) =>
+          !event.defaultPrevented &&
+          !event.repeat &&
+          !isCommandPaletteOpen() &&
+          !isModelPickerOpen(),
+        context: () => ({
           terminalFocus: isTerminalFocused(),
           terminalOpen: routeTerminalOpen,
           previewFocus: isPreviewFocused(),
@@ -2904,36 +2942,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           modelPickerOpen: isModelPickerOpen(),
           isWeb: !isElectron,
           isDesktop: isElectron,
-        },
-      });
-      const navigateToThreadKey = (targetThreadKey: string | null) => {
-        if (!targetThreadKey) return false;
-        const targetThread = threadByKey.get(targetThreadKey);
-        if (!targetThread) return false;
-        event.preventDefault();
-        event.stopPropagation();
-        navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
-        return true;
-      };
-      const traversalDirection = threadTraversalDirectionFromCommand(command);
-      if (traversalDirection !== null) {
-        navigateToThreadKey(
-          resolveAdjacentThreadId({
-            threadIds: orderedThreadKeys,
-            currentThreadId: routeRowThreadKey,
-            direction: traversalDirection,
-          }),
-        );
-        return;
-      }
-      const jumpIndex = threadJumpIndexFromCommand(command ?? "");
-      if (jumpIndex === null) return;
-      navigateToThreadKey(orderedThreadKeys[jumpIndex] ?? null);
-    };
-    window.addEventListener("keydown", onWindowKeyDown);
-    return () => window.removeEventListener("keydown", onWindowKeyDown);
+        }),
+      },
+    );
   }, [
-    keybindings,
     navigateToThread,
     orderedThreadKeys,
     routePreviewOpen,

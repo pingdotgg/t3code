@@ -1,6 +1,8 @@
 import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useEffect, useEffectEvent } from "react";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
+import { executeCommand, registerCommand } from "../../commands/registry";
+import type { CommandRunContext } from "../../commands/types";
 import { resolveChatShortcutCommand, type ShortcutMatchContext } from "../../keybindings";
 import { isTerminalCloseConfirmPending } from "../../lib/terminalCloseConfirm";
 import {
@@ -53,6 +55,20 @@ interface ChatShortcutsInput {
 export function useChatShortcuts(input: ChatShortcutsInput) {
   const embedded = input.embedded === true;
   const composerElement = embedded ? (input.composerElement ?? null) : null;
+  const lookupHandler = useEffectEvent((command: KeybindingCommand) => {
+    return (
+      input.commands[command] ??
+      composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??
+      input.fallback(command)
+    );
+  });
+  const runRegistered = useEffectEvent((command: KeybindingCommand, context: CommandRunContext) => {
+    const run = lookupHandler(command);
+    if (!run) return false;
+    const event =
+      context.event ?? new KeyboardEvent("keydown", { bubbles: true, cancelable: true });
+    return run({ event, terminalFocusOwner: getTerminalFocusOwner() }) !== false;
+  });
   const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
     const { keybindings } = input;
     if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
@@ -84,13 +100,11 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       context: shortcutContext,
     });
     if (!command) return;
-    const run =
-      input.commands[command] ??
-      composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??
-      input.fallback(command);
-    if (!run || run({ event, terminalFocusOwner }) === false) return;
-    event.preventDefault();
-    event.stopPropagation();
+    // Shared registry is the only run path; handlers register below.
+    if (executeCommand(command, { source: "keybinding", event })) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
   });
   const dismissFind = useEffectEvent((event: KeyboardEvent) => {
     if (
@@ -113,13 +127,56 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     const command = resolveChatShortcutCommand(event, input.keybindings, input.scriptKeybindings, {
       context: input.getShortcutContext(event.target),
     });
-    const run = command
-      ? composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command]
-      : undefined;
+    if (!command) return;
+    if (executeCommand(command, { source: "keybinding", event })) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    // Embedded chats do not publish to the registry; run composer chords locally.
+    const run = composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command];
     if (!run || run({ event, terminalFocusOwner: null }) === false) return;
     event.preventDefault();
     event.stopPropagation();
   });
+
+  const commandIdsKey = Object.keys(input.commands).toSorted().join("\0");
+  const scriptCommandIdsKey = input.scriptKeybindings
+    .map((binding) => binding.command)
+    .toSorted()
+    .join("\0");
+
+  // Publish chat handlers into the shared registry so keys and the palette share one path.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- rebinds registry handlers when the chat's command ids change
+  useEffect(() => {
+    if (embedded || !input.enabled) return;
+    const composerCommands = composerShortcutCommands(input.composerRef, input.branchToolbarRef);
+    const chatCommandIds = (
+      commandIdsKey.length === 0 ? [] : commandIdsKey.split("\0")
+    ) as KeybindingCommand[];
+    const scriptCommandIds = (
+      scriptCommandIdsKey.length === 0 ? [] : scriptCommandIdsKey.split("\0")
+    ) as KeybindingCommand[];
+    const ids = new Set<KeybindingCommand>([
+      ...chatCommandIds,
+      ...(Object.keys(composerCommands) as KeybindingCommand[]),
+      ...scriptCommandIds,
+    ]);
+    const disposers = [...ids].map((command) =>
+      registerCommand(command, (context) => runRegistered(command, context)),
+    );
+    return () => {
+      for (const dispose of disposers) dispose();
+    };
+  }, [
+    embedded,
+    input.enabled,
+    commandIdsKey,
+    scriptCommandIdsKey,
+    input.composerRef,
+    input.branchToolbarRef,
+  ]);
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches keydown listeners for chat shortcuts and find dismissal: on the window, or on an embedded chat's composer
   useEffect(() => {
     if (embedded) {

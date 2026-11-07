@@ -1630,7 +1630,6 @@ export default function ChatView(props: ChatViewProps) {
   useOpenFavoriteEditorShortcut({
     enabled: showOpenInPicker && !backgroundThread,
     environmentId: activeThread?.environmentId ?? environmentId,
-    keybindings,
     availableEditors,
     openInCwd: gitCwd,
   });
@@ -1890,6 +1889,7 @@ export default function ChatView(props: ChatViewProps) {
     panelTerminalIds,
     canReuseTerminal,
     gitCwd,
+    registerTerminalToggleMenuAction: !embedded,
     setTerminalUiLaunchContext,
     setThreadError,
   });
@@ -2737,16 +2737,7 @@ export default function ChatView(props: ChatViewProps) {
     },
   });
 
-  // A focused desktop browser page forwards these chords as menu actions.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to desktop bridge menu actions that toggle the right panel
-  useEffect(() => {
-    if (embedded) return;
-    return window.desktopBridge?.onMenuAction((action) => {
-      if (action === "rightPanel.toggle") toggleRightPanelStable();
-      else if (action === "rightPanel.toggleMaximized") toggleRightPanelMaximizedStable();
-    });
-  }, [embedded, toggleRightPanelStable, toggleRightPanelMaximizedStable]);
-
+  // Desktop-forwarded right-panel chords reach the same registry handlers as keys/palette.
   usePasteToFocusComposer(embedded ? null : activeThreadId, composerRef);
   // A delegated task is a remote thread's subagent.
   const isSubagentThread =

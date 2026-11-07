@@ -234,11 +234,29 @@ function registerThreadUndoCommands(
   readSidebarVisible: () => boolean,
 ): () => void {
   const threadSidebarShown = () => !isAppModalPage(router.state.location.pathname);
+  const undoShortcutContext = (event: KeyboardEvent) => ({
+    terminalFocus: isTerminalFocused(),
+    previewFocus: isPreviewFocused(),
+    ...readRoutePanelsOpen(router),
+    // A collapsed sidebar hides the notice, so text fields keep their own undo.
+    editableFocus:
+      isEditableFocused(event.target) && !(readSidebarVisible() && threadUndoClaimsShortcut()),
+    modelPickerOpen: isModelPickerOpen(),
+  });
   const unregister = registerCommands(
-    {},
+    {
+      "thread.undo": (event) => {
+        if (isCommandPaletteOpen() || isModelPickerOpen()) return false;
+        if (!undoLatestThreadAction()) return false;
+        heldUndoKey = event.code;
+        event.preventDefault();
+        event.stopPropagation();
+      },
+    },
     {
       capture: true,
       when: threadSidebarShown,
+      context: undoShortcutContext,
       onKeyDown: (event) => {
         // Cancel a held key's repeats so they cannot fall through to the
         // editor's own undo, even after the last notice is gone.
@@ -253,29 +271,12 @@ function registerThreadUndoCommands(
         const command = resolveShortcutCommand(
           event,
           appAtomRegistry.get(primaryServerKeybindingsAtom),
-          {
-            context: {
-              terminalFocus: isTerminalFocused(),
-              previewFocus: isPreviewFocused(),
-              ...readRoutePanelsOpen(router),
-              // A collapsed sidebar hides the notice, so text fields keep their own undo.
-              editableFocus:
-                isEditableFocused(event.target) &&
-                !(readSidebarVisible() && threadUndoClaimsShortcut()),
-              modelPickerOpen: isModelPickerOpen(),
-            },
-          },
+          { context: undoShortcutContext(event) },
         );
-        if (command !== "thread.undo") {
-          if (!MODIFIER_KEYS.has(event.key)) releaseThreadUndoShortcut();
-          return false;
+        if (command !== "thread.undo" && !MODIFIER_KEYS.has(event.key)) {
+          releaseThreadUndoShortcut();
         }
-        if (isCommandPaletteOpen() || isModelPickerOpen()) return false;
-        if (!undoLatestThreadAction()) return false;
-        heldUndoKey = event.code;
-        event.preventDefault();
-        event.stopPropagation();
-        return true;
+        return false;
       },
     },
   );
@@ -324,47 +325,34 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
     context: { usagePageOpen },
   });
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener that toggles the sidebar on its shortcut
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers sidebar.toggle for keys, palette, and the desktop menu
   useEffect(() => {
     // A hidden sidebar would still save the toggle, so the shortcut does nothing without one.
     if (!showSidebar) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
-      if (
-        event.target instanceof HTMLElement &&
-        event.target.closest("[data-keybinding-capture]")
-      ) {
-        return;
-      }
-      if (
-        isRichTextBoldShortcut(event, window.getSelection()) &&
-        event.target instanceof HTMLElement &&
-        event.target.closest('[data-composer-rich-text="true"]')
-      ) {
-        // The rich-text composer claims Mod+B only to bold selected text;
-        // the toggle stays available everywhere else.
-        return;
-      }
-      if (
-        resolveShortcutCommand(event, keybindings, { context: { usagePageOpen } }) !==
-        "sidebar.toggle"
-      )
-        return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      toggleSidebar();
-    };
-
-    window.addEventListener("keydown", onKeyDown, true);
-    const unsubscribe = window.desktopBridge?.onMenuAction((action) => {
-      if (action === "sidebar.toggle") toggleSidebar();
-    });
-    return () => {
-      window.removeEventListener("keydown", onKeyDown, true);
-      unsubscribe?.();
-    };
-  }, [keybindings, showSidebar, toggleSidebar, usagePageOpen]);
+    return registerCommands(
+      {
+        "sidebar.toggle": (event) => {
+          if (
+            isRichTextBoldShortcut(event, window.getSelection()) &&
+            event.target instanceof HTMLElement &&
+            event.target.closest('[data-composer-rich-text="true"]')
+          ) {
+            // The rich-text composer claims Mod+B only to bold selected text;
+            // the toggle stays available everywhere else.
+            return false;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          toggleSidebar();
+        },
+      },
+      {
+        capture: true,
+        when: (event) => !event.defaultPrevented && !isKeybindingCaptureTarget(event),
+        context: () => ({ usagePageOpen }),
+      },
+    );
+  }, [showSidebar, toggleSidebar, usagePageOpen]);
 
   // The control lives as long as the shell, so it carries the shell's commands. Created
   // once so re-renders never re-register them.
