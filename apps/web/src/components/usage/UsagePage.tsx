@@ -6,6 +6,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import {
   USAGE_CONTRACT_VERSION,
+  ProviderDriverKind,
   type EnvironmentId,
   type UsageProviderKind,
   type UsageSummaryInput,
