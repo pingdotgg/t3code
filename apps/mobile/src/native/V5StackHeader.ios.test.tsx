@@ -14,6 +14,9 @@ vi.mock("react-native-keyboard-controller", () => ({
 vi.mock("../lib/useMobileNavigationTheme", () => ({
   useMobileNavigationTheme: () => ({ colors: { card: "white" } }),
 }));
+vi.mock("../features/layout/workspace/navigation-tabs", () => ({
+  useEnabledNavigationTabs: () => ["threads", "pullRequests", "usage"],
+}));
 vi.mock("./native-layout-metrics", () => ({
   useDeviceType: () => "phone",
   useNativeLayoutMetrics: () => null,
