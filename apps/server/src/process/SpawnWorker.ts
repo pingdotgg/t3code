@@ -396,7 +396,7 @@ class SpawnWorker {
         child.emit("error", error);
         continue;
       }
-      // The worker owned the only handle, so end the whole tree before reporting the exit.
+      // The worker owned the only handle, so try to end the whole tree before reporting the exit.
       const finish = () => {
         child.exit(null, "SIGKILL");
         child.abandon();
