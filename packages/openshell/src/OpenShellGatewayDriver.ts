@@ -166,11 +166,14 @@ class DrainDeadlineError extends Schema.TaggedError<DrainDeadlineError>()("Drain
 }) {}
 
 /**
- * Fallback idempotency key when the caller omits one. Retries must pass the
- * same key to converge, so process-local uniqueness is enough here.
+ * Fallback idempotency key when the caller omits one and nothing durable is
+ * injected. Random per process on purpose: a counter would repeat after a
+ * restart and let a spawn reuse an existing worker's sandbox name.
  */
-let fallbackKeyCounter = 0;
-const fallbackIdempotencyKey = (): string => `t3-${(fallbackKeyCounter++).toString(36)}`;
+const fallbackIdempotencyKey = (): string => {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+};
 
 /**
  * Deterministic sandbox-name hash (spec section 5.4). Stability is what
@@ -280,6 +283,12 @@ export interface OpenShellGatewayDriverOptions {
   readonly index?: FleetWorkerIndex;
   /** Epoch-ms clock, injectable for TTL tests. */
   readonly now?: () => number;
+  /**
+   * Durable fallback idempotency key for spawns that omit one. The server
+   * injects one from its secret store so a restart cannot mint a key an
+   * earlier process already used; absent, keys are random per process.
+   */
+  readonly fallbackIdempotencyKey?: () => Promise<string>;
 }
 
 const toMillis = (value: number | Duration.Duration | undefined): number | undefined =>
@@ -320,6 +329,7 @@ export class OpenShellGatewayDriver implements GatewayDriver {
   private readonly drainExecutor: FleetDrainExecutor | undefined;
   private readonly index: FleetWorkerIndex;
   private readonly now: () => number;
+  private readonly fallbackKey: () => Promise<string>;
 
   constructor(options: OpenShellGatewayDriverOptions) {
     this.client = options.client;
@@ -330,6 +340,7 @@ export class OpenShellGatewayDriver implements GatewayDriver {
     this.drainExecutor = options.drainExecutor;
     this.index = options.index ?? memoryFleetWorkerIndex();
     this.now = options.now ?? Date.now;
+    this.fallbackKey = options.fallbackIdempotencyKey ?? (async () => fallbackIdempotencyKey());
   }
 
   listTemplates(): Promise<ReadonlyArray<OpenShellSandboxTemplate>> {
@@ -371,7 +382,7 @@ export class OpenShellGatewayDriver implements GatewayDriver {
         message: "No sandbox template: pass spec.template or set settings.defaultSandboxTemplate.",
       });
     }
-    const idempotencyKey = options.idempotencyKey ?? fallbackIdempotencyKey();
+    const idempotencyKey = options.idempotencyKey ?? (await this.fallbackKey());
     const name = `t3-worker-${sandboxNameHash(this.managedBy, idempotencyKey)}`;
     const labels = {
       [FLEET_ROLE_LABEL]: "worker",
@@ -380,8 +391,14 @@ export class OpenShellGatewayDriver implements GatewayDriver {
     };
     // A retry with the same idempotency key may return an already-registered
     // sandbox, so a policy failure keeps it: deleting could destroy a live
-    // worker without drain and strand its fleet row.
-    const preExisting = (await this.client.get(name)) !== null;
+    // worker without drain and strand its fleet row. An unreachable gateway
+    // says nothing about existence, which counts as unknown, not new.
+    let preExisting: boolean | "unknown";
+    try {
+      preExisting = (await this.client.get(name)) !== null;
+    } catch {
+      preExisting = "unknown";
+    }
     const created = await this.client.createFromTemplate({
       template,
       name,
@@ -395,7 +412,24 @@ export class OpenShellGatewayDriver implements GatewayDriver {
     try {
       await this.client.setPolicy(created.name, sandboxPolicyForRuntimeMode(runtimeMode));
     } catch (cause) {
-      if (preExisting) {
+      if (preExisting === false) {
+        let deleteFailure: unknown;
+        try {
+          await this.client.deleteSandbox(created.name);
+        } catch (deleteCause) {
+          deleteFailure = deleteCause;
+        }
+        throw new OpenShellGatewayDriverError({
+          reason: "gateway",
+          message:
+            deleteFailure === undefined
+              ? `The sandbox policy could not be set; ${created.name} was deleted again.`
+              : `The sandbox policy could not be set and ${created.name} could not be deleted; ` +
+                "it remains for the orphan sweep to reclaim.",
+          cause: deleteFailure === undefined ? cause : { cause, deleteFailure },
+        });
+      }
+      if (preExisting === true) {
         throw new OpenShellGatewayDriverError({
           reason: "gateway",
           message:
@@ -404,20 +438,14 @@ export class OpenShellGatewayDriver implements GatewayDriver {
           cause,
         });
       }
-      let deleteFailure: unknown;
-      try {
-        await this.client.deleteSandbox(created.name);
-      } catch (deleteCause) {
-        deleteFailure = deleteCause;
-      }
+      // Unknown pre-existence: the lookup failed, so this sandbox may be a live
+      // worker from an earlier attempt. Keep it; the orphan sweep judges it later.
       throw new OpenShellGatewayDriverError({
         reason: "gateway",
         message:
-          deleteFailure === undefined
-            ? `The sandbox policy could not be set; ${created.name} was deleted again.`
-            : `The sandbox policy could not be set and ${created.name} could not be deleted; ` +
-              "it remains for the orphan sweep to reclaim.",
-        cause: deleteFailure === undefined ? cause : { cause, deleteFailure },
+          `The sandbox policy could not be set and it is unknown whether ${created.name} ` +
+          "already existed, so it was kept rather than deleted.",
+        cause,
       });
     }
     const ready = await this.client.waitReady(created.name, IMAGE_PREP_TIMEOUT_SECS);
@@ -622,11 +650,14 @@ export class OpenShellGatewayDriver implements GatewayDriver {
         return { environmentId, outcome: "drain_pending", drain };
       }
       if (drained.state === "failed") {
+        // The drain just updated the row's error; the row read above is stale.
+        const fresh = await this.index.get(environmentId);
         return {
           environmentId,
           outcome: "refused",
           drain,
-          reason: row.lastError ?? "drain failed; the sandbox is kept (nothing lost)",
+          reason:
+            fresh?.lastError ?? row.lastError ?? "drain failed; the sandbox is kept (nothing lost)",
         };
       }
     }

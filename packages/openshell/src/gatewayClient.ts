@@ -101,7 +101,7 @@ export interface OpenShellSandboxCreateSpec {
 export interface OpenShellGatewayClient {
   readonly health: () => Promise<void>;
   readonly createFromTemplate: (spec: OpenShellSandboxCreateSpec) => Promise<OpenShellSandboxView>;
-  /** `null` when the gateway has no such sandbox. */
+  /** `null` only when the gateway confirms no such sandbox; other failures throw. */
   readonly get: (name: string) => Promise<OpenShellSandboxView | null>;
   readonly listAll: (selector?: {
     labels?: Readonly<Record<string, string>>;
@@ -190,6 +190,20 @@ const toSandboxView = (sandbox: OpenShellSdkSandbox): OpenShellSandboxView => {
   };
 };
 
+/**
+ * Only the gateway's confirmed "no such sandbox" answers count as absence. A
+ * transport failure must not read as an absent sandbox, or a caller could
+ * delete a sandbox it never actually saw.
+ */
+export const isSandboxNotFoundError = (cause: unknown): boolean => {
+  const nullish = cause as { status?: unknown; statusCode?: unknown; code?: unknown } | null;
+  if (nullish === null || nullish === undefined) return false;
+  if (nullish.status === 404 || nullish.statusCode === 404) return true;
+  if (nullish.code === "not_found" || nullish.code === "NOT_FOUND") return true;
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return /\b404\b|not found/i.test(message);
+};
+
 const templateFromUnknown = Schema.decodeUnknownSync(OpenShellSandboxTemplate);
 
 /**
@@ -255,7 +269,8 @@ export const connectOpenShellGateway = async (
     get: async (name) => {
       try {
         return toSandboxView(await client.sandbox.get(name));
-      } catch {
+      } catch (cause) {
+        if (!isSandboxNotFoundError(cause)) throw cause;
         return null;
       }
     },
