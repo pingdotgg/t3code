@@ -66,8 +66,7 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
     managedDirectory: "/unused-managed-codex",
     resolve: () => Effect.die("unused"),
     acquire: () => Effect.die("unused"),
-    // @effect-diagnostics-next-line effectSucceedWithVoid:off - No compatibility advisory is undefined, not void.
-    compatibility: () => Effect.succeed(undefined),
+    compatibility: () => Effect.undefined,
     start: Effect.sync(() => {
       calls.push("isolated-codex-start");
       return { ...state, driver: ProviderDriverKind.make("codex") };

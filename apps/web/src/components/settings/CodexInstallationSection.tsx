@@ -217,7 +217,7 @@ export function CodexInstallationSection({
             title="CLI or proxy account"
             description={
               loginCommand
-                ? "Run this command in a terminal on this environment. Open the URL it prints on any device and enter the code. Enable device code authentication in your ChatGPT security settings if prompted. For a proxy, configure the separate home above instead."
+                ? "Run the command in this environment's terminal. Open its URL on any device and enter the code. Enable ChatGPT device code authentication if prompted. For a proxy, configure the separate home above."
                 : "Install Codex to get a login command for this environment. For a proxy, configure the separate home above."
             }
             control={
