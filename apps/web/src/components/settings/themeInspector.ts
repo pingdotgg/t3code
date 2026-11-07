@@ -2,7 +2,11 @@ import { THEME_COLOR_ROLES, getThemeColorVariable, type ThemeColorRole } from ".
 
 export type ThemePaintKind = "background" | "border" | "foreground";
 
-export type ThemePaintSnapshot = Readonly<Record<ThemePaintKind, string>>;
+type ThemePseudoElement = "::before" | "::after";
+
+export type ThemePaintSnapshot = Readonly<
+  Record<ThemePaintKind, string> & { pseudoElements: ReadonlyArray<ThemePseudoElement> }
+>;
 export type ThemeElementInspection = Readonly<{
   element: Element;
   role: ThemeColorRole;
@@ -254,29 +258,52 @@ function elementHasVisibleText(element: Element): boolean {
   );
 }
 
-function getThemePaintSnapshot(
-  element: Element,
-  { forHitTest = false }: { forHitTest?: boolean } = {},
-): ThemePaintSnapshot | null {
-  const style = window.getComputedStyle(element);
-  if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) {
-    return null;
-  }
+function isHiddenStyle(style: CSSStyleDeclaration): boolean {
+  return style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0;
+}
 
-  const borderPaints: Array<string> = [];
+function getThemeBorderPaints(style: CSSStyleDeclaration): Array<string> {
+  const paints: Array<string> = [];
   for (const [color, borderStyle, width] of [
     [style.borderTopColor, style.borderTopStyle, style.borderTopWidth],
     [style.borderRightColor, style.borderRightStyle, style.borderRightWidth],
     [style.borderBottomColor, style.borderBottomStyle, style.borderBottomWidth],
     [style.borderLeftColor, style.borderLeftStyle, style.borderLeftWidth],
   ] as const) {
-    if (borderStyle !== "none" && Number.parseFloat(width) > 0) borderPaints.push(color);
+    if (borderStyle !== "none" && Number.parseFloat(width) > 0) paints.push(color);
   }
   if (style.outlineStyle !== "none" && Number.parseFloat(style.outlineWidth) > 0) {
-    borderPaints.push(style.outlineColor);
+    paints.push(style.outlineColor);
   }
-  if (style.borderImageSource !== "none") borderPaints.push(style.borderImageSource);
-  if (style.boxShadow !== "none") borderPaints.push(style.boxShadow);
+  if (style.borderImageSource !== "none") paints.push(style.borderImageSource);
+  if (style.boxShadow !== "none") paints.push(style.boxShadow);
+  return paints;
+}
+
+function getThemePaintSnapshot(
+  element: Element,
+  {
+    forHitTest = false,
+    pseudoElements: knownPseudoElements,
+  }: { forHitTest?: boolean; pseudoElements?: ReadonlyArray<ThemePseudoElement> } = {},
+): ThemePaintSnapshot | null {
+  const style = window.getComputedStyle(element);
+  if (isHiddenStyle(style)) return null;
+
+  const backgroundPaints = [style.backgroundColor, style.backgroundImage];
+  const borderPaints = getThemeBorderPaints(style);
+  // Glass surfaces paint on pseudo-elements, which the element's own computed style omits.
+  // Probes only change colors, so a baseline's painted pseudo-elements stay valid.
+  const pseudoElements: Array<ThemePseudoElement> = [];
+  for (const pseudo of knownPseudoElements ?? (["::before", "::after"] as const)) {
+    const pseudoStyle = window.getComputedStyle(element, pseudo);
+    if (!knownPseudoElements && (pseudoStyle.content === "none" || isHiddenStyle(pseudoStyle))) {
+      continue;
+    }
+    pseudoElements.push(pseudo);
+    backgroundPaints.push(pseudoStyle.backgroundColor, pseudoStyle.backgroundImage);
+    borderPaints.push(...getThemeBorderPaints(pseudoStyle));
+  }
 
   const foregroundPaints: Array<string> = [];
   if (forHitTest || elementHasVisibleText(element)) foregroundPaints.push(style.color);
@@ -286,9 +313,10 @@ function getThemePaintSnapshot(
   if (style.textShadow !== "none") foregroundPaints.push(style.textShadow);
 
   return {
-    background: [style.backgroundColor, style.backgroundImage].join("\n"),
+    background: backgroundPaints.join("\n"),
     border: borderPaints.join("\n"),
     foreground: foregroundPaints.join("\n"),
+    pseudoElements,
   };
 }
 
@@ -403,7 +431,7 @@ export function highlightThemeRoleUsage(roles: ReadonlyArray<ThemeColorRole>): n
     const changed = new Set<Element>();
     try {
       for (const [element, before] of baseline) {
-        const after = getThemePaintSnapshot(element);
+        const after = getThemePaintSnapshot(element, { pseudoElements: before.pseudoElements });
         if (after && changedThemePaintKinds(before, after).length > 0) changed.add(element);
       }
     } finally {
@@ -447,7 +475,10 @@ export function inspectThemeRoleAtElement(initialElement: Element): ThemeElement
       const restore = applyThemeTokenProbe(role);
       try {
         for (const [candidate, before] of baseline) {
-          const after = getThemePaintSnapshot(candidate, { forHitTest: true });
+          const after = getThemePaintSnapshot(candidate, {
+            forHitTest: true,
+            pseudoElements: before.pseudoElements,
+          });
           if (!after) continue;
           const candidateRoles = roles.get(candidate) ?? {};
           for (const kind of changedThemePaintKinds(before, after)) {
