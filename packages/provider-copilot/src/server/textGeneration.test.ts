@@ -48,6 +48,44 @@ it.layer(NodeServices.layer)("GitHub Copilot text generation", (it) => {
     }),
   );
 
+  it.effect("gives a review guide read access and the investigation time limit", () =>
+    Effect.gen(function* () {
+      let sent: { readonly investigate?: boolean; readonly timeoutMs: number } | undefined;
+      const generation = makeGitHubCopilotTextGeneration({
+        settings,
+        environment: {},
+        fileSystem: yield* FileSystem.FileSystem,
+        path: yield* Path.Path,
+        makeClient: () =>
+          ({
+            generateText: async (input: NonNullable<typeof sent>) => {
+              sent = input;
+              return '{"stops":[]}';
+            },
+          }) as unknown as CopilotSdkClient,
+      });
+
+      yield* generation
+        .generateReviewGuide({
+          cwd: "/repo",
+          number: 1,
+          title: "t",
+          description: "",
+          baseBranch: "main",
+          baseCommit: "abc",
+          settledReview: "",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("githubCopilot"),
+            model: "claude-haiku-4.5",
+          },
+        })
+        .pipe(Effect.ignore);
+
+      assert.isTrue(sent?.investigate);
+      assert.strictEqual(sent?.timeoutMs, 900_000);
+    }),
+  );
+
   it.effect("force stops a CLI that never answers", () =>
     Effect.gen(function* () {
       let forced = false;

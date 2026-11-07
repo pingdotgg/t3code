@@ -185,6 +185,8 @@ export interface CopilotSdkClient {
     readonly model: string;
     readonly prompt: string;
     readonly timeoutMs: number;
+    /** Lets the model read the checkout, limited by `copilotInvestigationToolDecision`. */
+    readonly investigate?: boolean;
   }) => Promise<string>;
   readonly stop: () => Promise<unknown>;
   readonly forceStop: () => Promise<void>;
@@ -246,6 +248,59 @@ function wrapSession(session: Awaited<ReturnType<CopilotClient["createSession"]>
   } satisfies CopilotSdkSession;
 }
 
+const INVESTIGATION_TOOLS = ["view", "grep", "glob", "bash"];
+const READ_ONLY_GIT_COMMAND = /^git (?:diff|log|show)(?: [\w./:@^~=+,%-]+)*$/;
+// Git accepts abbreviated long options, so `--outp=x` has to fail like `--output=x`.
+const UNSAFE_GIT_OPTION = /^(?:-o|--ou|--ex|--te)/;
+const INVESTIGATION_FEEDBACK =
+  "Read-only: only plain git diff, git log, and git show run, without pipes, and only files in this checkout can be read.";
+
+const isReadOnlyGitCommand = (command: string) =>
+  READ_ONLY_GIT_COMMAND.test(command) &&
+  !command.split(" ").some((word) => UNSAFE_GIT_OPTION.test(word));
+
+/**
+ * The enforcement point: Copilot runs commands it considers read-only, `git diff --output`
+ * included, without a permission request, but this hook sees every tool call.
+ */
+export function copilotInvestigationToolDecision(
+  input: { readonly toolName: string; readonly toolArgs: unknown },
+  cwd: string,
+) {
+  const args = record(input.toolArgs);
+  const path = stringField(args, "path");
+  const allowed =
+    input.toolName === "bash"
+      ? isReadOnlyGitCommand(stringField(args, "command") ?? "")
+      : INVESTIGATION_TOOLS.includes(input.toolName) &&
+        (path === undefined || isInsideDirectory(cwd, path));
+  return allowed
+    ? ({ permissionDecision: "allow" } as const)
+    : ({ permissionDecision: "deny", permissionDecisionReason: INVESTIGATION_FEEDBACK } as const);
+}
+
+/** Second line behind the hook, for anything that still asks. */
+export function copilotInvestigationDecision(
+  request: PermissionRequest,
+  cwd: string,
+): PermissionRequestResult {
+  const allowed =
+    request.kind === "read"
+      ? isInsideDirectory(cwd, request.resolvedPath ?? request.path)
+      : request.kind === "shell" &&
+        !request.hasWriteFileRedirection &&
+        isReadOnlyGitCommand(request.fullCommandText);
+  return allowed ? { kind: "approve-once" } : { kind: "reject", feedback: INVESTIGATION_FEEDBACK };
+}
+
+function isInsideDirectory(directory: string, path: string) {
+  const absolute = path.startsWith("/") ? path : `${directory}/${path}`;
+  return (
+    (absolute === directory || absolute.startsWith(`${directory}/`)) &&
+    !absolute.split("/").includes("..")
+  );
+}
+
 export async function generateCopilotText(
   client: Pick<CopilotClient, "start" | "createSession" | "deleteSession" | "stop">,
   input: {
@@ -253,6 +308,7 @@ export async function generateCopilotText(
     readonly model: string;
     readonly prompt: string;
     readonly timeoutMs: number;
+    readonly investigate?: boolean;
   },
 ) {
   try {
@@ -260,8 +316,18 @@ export async function generateCopilotText(
     const session = await client.createSession({
       model: input.model,
       workingDirectory: input.cwd,
-      availableTools: [],
-      onPermissionRequest: () => ({ kind: "reject" }),
+      availableTools: input.investigate === true ? INVESTIGATION_TOOLS : [],
+      onPermissionRequest: (request) =>
+        input.investigate === true
+          ? copilotInvestigationDecision(request, input.cwd)
+          : { kind: "reject" },
+      ...(input.investigate === true
+        ? {
+            hooks: {
+              onPreToolUse: (tool) => copilotInvestigationToolDecision(tool, input.cwd),
+            },
+          }
+        : {}),
     });
     try {
       return (await session.sendAndWait(input.prompt, input.timeoutMs))?.data.content ?? "";

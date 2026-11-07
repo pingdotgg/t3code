@@ -50,8 +50,11 @@ Stop a running background agent from **Lineage** without ending the turn.
 
 ## Generated text
 
-Copilot can write thread titles, commit messages, and branch names when you select it for text
-generation in **Settings**.
+Copilot can write thread titles, commit messages, branch names, pull request titles and
+descriptions, and review guides when you select it for text generation in **Settings**. It is not
+chosen automatically, because generated text uses your Copilot quota.
+
+Review guides can only read the checkout and run `git diff`, `git log`, and `git show`.
 
 ## If Copilot reports it is not compatible
 
