@@ -300,6 +300,7 @@ const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"
   "run_interrupt_request",
   "run_interrupt_result",
   "secret_request",
+  "secret_delivery",
   "link_request",
   "subagent",
 ]);
@@ -309,6 +310,8 @@ const PERSISTENT_RESOURCE_V2_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"
   "thread_created",
   // Still answerable after a steer supersedes the attempt that asked.
   "secret_request",
+  // Still retrievable for its 24 hours, however the turn folds.
+  "secret_delivery",
   "link_request",
 ]);
 

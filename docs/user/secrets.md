@@ -56,3 +56,15 @@ The value never appears in the conversation. Most requests keep it from the agen
 passes it to the tool that needs it. When an agent has to run a command with the value, the card
 says so instead: the value goes into a private file that the agent's commands can read for about 24
 hours.
+
+## When an agent sends you a secret
+
+An agent that creates or finds a credential for you, such as a new database password, can send it as
+a private card instead of printing it in the chat. The card shows only its label until you select
+**Reveal**. **Copy** puts the value on your clipboard without showing it. **Hide** clears it from
+the screen, as does leaving the thread or putting the app or tab in the background.
+
+You can reveal or copy it from web, desktop, or mobile for 24 hours, and only from the original
+thread with a connection that can operate it. Forked threads and guest shares show the card without
+the value. **Delete** removes T3 Code's copy early. It cannot change or revoke the credential
+itself, and anything you already copied stays where you pasted it.
