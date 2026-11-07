@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react";
+import { useThreadMediaVisible } from "./ThreadMediaVisibility";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import {
@@ -7,8 +7,6 @@ import {
   type MediaVideoPreviewSource,
 } from "../../lib/videoPreviewSource";
 
-export const ThreadMediaVisibleContext = createContext(false);
-
 export function ThreadMarkdownVideo(props: {
   readonly source: MediaVideoPreviewSource;
   readonly thumbnailVisible?: boolean;
@@ -16,8 +14,7 @@ export function ThreadMarkdownVideo(props: {
   readonly borderRadius?: number;
 }) {
   const { source } = props;
-  const feedVisible = useContext(ThreadMediaVisibleContext);
-  const visible = props.thumbnailVisible ?? feedVisible;
+  const visible = useThreadMediaVisible(props.thumbnailVisible);
   const thumbnailKey = mediaVideoThumbnailKey(source);
   const asset = useAssetUrlState(
     "environmentId" in source ? source.environmentId : null,

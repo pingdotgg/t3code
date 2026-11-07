@@ -1,7 +1,7 @@
 import { useIsFocused } from "@react-navigation/native";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { useAudioPlayerStatus } from "expo-audio";
-import { useContext, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppState, Pressable, View } from "react-native";
 import type { FilePreviewSource } from "../../components/FilePreviewModal";
 import { filePreviewKey } from "../../lib/filePreviewGallery";
@@ -10,7 +10,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { useFullscreenVideoOpen, useMediaAudioSessionHold } from "../../lib/videoAudioSession";
 import { useRefreshAssetUrl } from "../../state/assets";
-import { ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
+import { useThreadMediaVisible } from "./ThreadMediaVisibility";
 import {
   acquireAudioSession,
   activateAudioSession,
@@ -233,7 +233,7 @@ function VisibleFilePreview(props: PreviewProps) {
 }
 
 export function ThreadInlineFilePreview(props: PreviewProps) {
-  const visible = useContext(ThreadMediaVisibleContext);
+  const visible = useThreadMediaVisible();
   const focused = useIsFocused();
   return (
     <View
