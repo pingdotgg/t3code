@@ -2542,16 +2542,49 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         return providerThread;
       });
 
-      const applySelection = Effect.fnUntraced(function* (modelSelection: ModelSelection) {
-        const thinking = getModelSelectionStringOptionValue(modelSelection, "thinking");
-        if (modelSelection.model === PI_INHERIT_MODEL_SLUG) {
-          if (appliedModel !== null && baselineModel !== null) {
-            const restoredModel = yield* request({ type: "set_model", ...baselineModel });
+      const applySelection = Effect.fnUntraced(
+        function* (modelSelection: ModelSelection) {
+          const thinking = getModelSelectionStringOptionValue(modelSelection, "thinking");
+          if (modelSelection.model === PI_INHERIT_MODEL_SLUG) {
+            if (appliedModel !== null && baselineModel !== null) {
+              const restoredModel = yield* request({ type: "set_model", ...baselineModel });
+              appliedThinking = null;
+              contextWindow = rememberModelContextWindow(restoredModel);
+              appliedModel = null;
+              const updatedAt = yield* DateTime.now;
+              sessionEntity = { ...sessionEntity, model: PI_INHERIT_MODEL_SLUG, updatedAt };
+              yield* emit({
+                type: "provider_session.updated",
+                driver: PI_PROVIDER,
+                providerSession: sessionEntity,
+              });
+            }
+            if (
+              thinking === undefined &&
+              baselineThinking !== null &&
+              appliedThinking !== baselineThinking
+            ) {
+              yield* request({ type: "set_thinking_level", level: baselineThinking });
+              appliedThinking = baselineThinking;
+            }
+          } else if (modelSelection.model !== appliedModel) {
+            const parsed = parsePiModelSlug(modelSelection.model);
+            if (parsed === null) {
+              return yield* protocolError(
+                `Pi model '${modelSelection.model}' must use provider/model format`,
+              );
+            }
+            const selectedModel = yield* request({
+              type: "set_model",
+              provider: parsed.provider,
+              modelId: parsed.modelId,
+            });
+            // Pi resets thinking to the target model's configured default on set_model.
             appliedThinking = null;
-            contextWindow = rememberModelContextWindow(restoredModel);
-            appliedModel = null;
+            contextWindow = rememberModelContextWindow(selectedModel);
+            appliedModel = modelSelection.model;
             const updatedAt = yield* DateTime.now;
-            sessionEntity = { ...sessionEntity, model: PI_INHERIT_MODEL_SLUG, updatedAt };
+            sessionEntity = { ...sessionEntity, model: modelSelection.model, updatedAt };
             yield* emit({
               type: "provider_session.updated",
               driver: PI_PROVIDER,
@@ -2559,46 +2592,23 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             });
           }
           if (
-            thinking === undefined &&
-            baselineThinking !== null &&
-            appliedThinking !== baselineThinking
+            thinking !== undefined &&
+            thinking !== appliedThinking &&
+            PI_THINKING_LEVELS.has(thinking)
           ) {
-            yield* request({ type: "set_thinking_level", level: baselineThinking });
-            appliedThinking = baselineThinking;
+            yield* request({ type: "set_thinking_level", level: thinking });
+            appliedThinking = thinking;
           }
-        } else if (modelSelection.model !== appliedModel) {
-          const parsed = parsePiModelSlug(modelSelection.model);
-          if (parsed === null) {
-            return yield* protocolError(
-              `Pi model '${modelSelection.model}' must use provider/model format`,
-            );
-          }
-          const selectedModel = yield* request({
-            type: "set_model",
-            provider: parsed.provider,
-            modelId: parsed.modelId,
-          });
-          // Pi resets thinking to the target model's configured default on set_model.
-          appliedThinking = null;
-          contextWindow = rememberModelContextWindow(selectedModel);
-          appliedModel = modelSelection.model;
-          const updatedAt = yield* DateTime.now;
-          sessionEntity = { ...sessionEntity, model: modelSelection.model, updatedAt };
-          yield* emit({
-            type: "provider_session.updated",
-            driver: PI_PROVIDER,
-            providerSession: sessionEntity,
-          });
-        }
-        if (
-          thinking !== undefined &&
-          thinking !== appliedThinking &&
-          PI_THINKING_LEVELS.has(thinking)
-        ) {
-          yield* request({ type: "set_thinking_level", level: thinking });
-          appliedThinking = thinking;
-        }
-      });
+        },
+        (effect) =>
+          effect.pipe(
+            // A timed-out or interrupted selection may still mutate Pi after the caller stops waiting.
+            Effect.tapError((error) =>
+              error._tag === "PiRpcTimeoutError" ? connection.terminate : Effect.void,
+            ),
+            Effect.onInterrupt(() => connection.terminate),
+          ),
+      );
 
       const resolvePromptPayload = Effect.fnUntraced(function* (
         text: string,
