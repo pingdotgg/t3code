@@ -1,4 +1,5 @@
 import { makeAggregateState } from "./agentActivityAggregate.ts";
+import * as AgentWidgetRefresh from "./AgentWidgetRefresh.ts";
 import type { RelayAgentActivityState, RelayDeliveryResult } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -12,6 +13,22 @@ import * as FcmDeliveries from "./FcmDeliveries.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 
 const layerPublisher = AgentActivityPublisher.layer.pipe(
+  Layer.provide(
+    Layer.succeed(AgentWidgetRefresh.AgentWidgetRefresh, {
+      revoke: () => Effect.void,
+      refresh: () => Effect.succeed({ aggregate: null }),
+      notify: () => Effect.succeed([]),
+      process: (job) =>
+        Effect.succeed({
+          deviceId: job.target.deviceId,
+          kind: "widget_refresh",
+          ok: true,
+          apnsStatus: null,
+          apnsReason: null,
+          apnsId: null,
+        }),
+    }),
+  ),
   Layer.provide(
     Layer.succeed(FcmDeliveries.FcmDeliveries, {
       enqueue: () => Effect.succeed(null),
@@ -71,7 +88,7 @@ function makeAgentActivityRows(
   overrides: Partial<AgentActivityRows.AgentActivityRows["Service"]> = {},
 ): AgentActivityRows.AgentActivityRows["Service"] {
   return {
-    upsert: () => Effect.void,
+    upsert: () => Effect.succeed(true),
     remove: () => Effect.void,
     pruneTerminal: () => Effect.void,
     listForUser: () => Effect.succeed([state]),
@@ -140,6 +157,156 @@ function makeApnsDeliveries(
 }
 
 describe("AgentActivityPublisher", () => {
+  it.effect("repaints backfilled inbox rows without a notification", () => {
+    const replays: boolean[] = [];
+    const widgetUsers: string[] = [];
+    let changed = true;
+    return Effect.gen(function* () {
+      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+      const publish = publisher.publish({
+        environmentId: state.environmentId,
+        environmentPublicKey: "key",
+        threadId: state.threadId,
+        state: { ...state, phase: "completed", retained: true },
+        replay: true,
+      });
+      yield* publish;
+      expect(widgetUsers).toEqual(["dev:julius"]);
+      changed = false;
+      yield* publish;
+      expect(widgetUsers).toEqual(["dev:julius"]);
+      changed = true;
+      yield* publish;
+      expect(widgetUsers).toEqual(["dev:julius", "dev:julius"]);
+      expect(replays).toEqual([true, true, true]);
+    }).pipe(
+      Effect.provide(
+        AgentActivityPublisher.layer.pipe(
+          Layer.provide(
+            Layer.succeed(AgentWidgetRefresh.AgentWidgetRefresh, {
+              revoke: () => Effect.void,
+              refresh: () => Effect.succeed({ aggregate: null }),
+              process: () => Effect.die("unused widget job"),
+              notify: ({ userId }) =>
+                Effect.sync(() => {
+                  widgetUsers.push(userId);
+                  return [];
+                }),
+            }),
+          ),
+          Layer.provide(
+            Layer.succeed(FcmDeliveries.FcmDeliveries, {
+              enqueue: () => Effect.succeed(null),
+              process: () => Effect.void,
+            }),
+          ),
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(
+                AgentActivityRows.AgentActivityRows,
+                makeAgentActivityRows({ upsert: () => Effect.sync(() => changed) }),
+              ),
+              Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
+              Layer.succeed(
+                LiveActivities.LiveActivities,
+                makeLiveActivities({ listTargets: () => Effect.succeed([target("ios")]) }),
+              ),
+              Layer.succeed(
+                ApnsDeliveries.ApnsDeliveries,
+                makeApnsDeliveries({
+                  sendForTarget: (input) =>
+                    Effect.sync(() => {
+                      replays.push(input.replay === true);
+                      return null;
+                    }),
+                  sendPushNotificationForTarget: () => Effect.die("Backfill must not notify"),
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+  it.effect.each([true, false])(
+    "enqueues the widget refresh independently of notification delivery: enabled=%s",
+    (enabled) => {
+      const widgetUsers: string[] = [];
+      const android = {
+        ...target("android"),
+        platform: "android" as const,
+        ios_major_version: null,
+      };
+      return Effect.gen(function* () {
+        const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+        const publish = publisher.publish({
+          environmentId: state.environmentId,
+          environmentPublicKey: "key",
+          threadId: state.threadId,
+          state,
+        });
+        if (enabled) {
+          const error = yield* Effect.flip(publish);
+          expect(error._tag).toBe("FcmDeliveryError");
+        } else {
+          expect(yield* publish).toMatchObject({ ok: true });
+        }
+        expect(widgetUsers).toEqual([android.user_id]);
+      }).pipe(
+        Effect.provide(
+          AgentActivityPublisher.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
+                Layer.succeed(
+                  EnvironmentLinks.EnvironmentLinks,
+                  makeEnvironmentLinks({
+                    listDeliveryUsersForEnvironment: ({ includeDisabled }) =>
+                      Effect.succeed(
+                        includeDisabled
+                          ? [
+                              {
+                                userId: android.user_id,
+                                notificationsEnabled: enabled,
+                                liveActivitiesEnabled: enabled,
+                              },
+                            ]
+                          : [],
+                      ),
+                  }),
+                ),
+                Layer.succeed(
+                  LiveActivities.LiveActivities,
+                  makeLiveActivities({ listTargets: () => Effect.succeed([android]) }),
+                ),
+                Layer.succeed(ApnsDeliveries.ApnsDeliveries, makeApnsDeliveries()),
+                Layer.succeed(FcmDeliveries.FcmDeliveries, {
+                  enqueue: () =>
+                    Effect.fail(
+                      new FcmDeliveries.FcmDeliveryError({
+                        operation: "enqueue",
+                        cause: "test failure",
+                      }),
+                    ),
+                  process: () => Effect.void,
+                }),
+                Layer.succeed(AgentWidgetRefresh.AgentWidgetRefresh, {
+                  revoke: () => Effect.void,
+                  refresh: () => Effect.succeed({ aggregate: null }),
+                  notify: ({ userId }) =>
+                    Effect.sync(() => {
+                      widgetUsers.push(userId);
+                      return [];
+                    }),
+                  process: () => Effect.die("unused"),
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
   it.effect("routes Android publication and registration replay to FCM alongside iOS", () => {
     const android = { ...target("android"), platform: "android" as const, ios_major_version: null };
     const ios = target("ios");
@@ -158,13 +325,29 @@ describe("AgentActivityPublisher", () => {
         deviceId: android.device_id,
       });
       expect(fcmCalls).toEqual([
-        { target: android, state },
+        { target: android, state, replay: false },
         { target: android, state: null, replay: true },
       ]);
       expect(appleDevices).toEqual(["ios"]);
     }).pipe(
       Effect.provide(
         AgentActivityPublisher.layer.pipe(
+          Layer.provide(
+            Layer.succeed(AgentWidgetRefresh.AgentWidgetRefresh, {
+              revoke: () => Effect.void,
+              refresh: () => Effect.succeed({ aggregate: null }),
+              notify: () => Effect.succeed([]),
+              process: (job) =>
+                Effect.succeed({
+                  deviceId: job.target.deviceId,
+                  kind: "widget_refresh",
+                  ok: true,
+                  apnsStatus: null,
+                  apnsReason: null,
+                  apnsId: null,
+                }),
+            }),
+          ),
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
@@ -485,6 +668,43 @@ describe("makeAggregateState", () => {
         nowMs: hourMs,
       }),
     ).toBeNull();
+  });
+
+  it("keeps older inbox completions and exact counts beyond the row cap", () => {
+    const oldRows = Array.from({ length: 8 }, (_, index): RelayAgentActivityState => ({
+      ...state,
+      threadId: `old-${index}` as RelayAgentActivityState["threadId"],
+      phase: "completed",
+      retained: true,
+    }));
+    const aggregate = makeAggregateState({
+      activeStates: [
+        { ...state, updatedAt: "1970-01-02T00:00:00.000Z" },
+        {
+          ...state,
+          threadId: "input" as RelayAgentActivityState["threadId"],
+          phase: "waiting_for_input",
+          updatedAt: "1970-01-02T00:00:00.000Z",
+        },
+        ...oldRows,
+      ],
+      terminalState: null,
+      nowMs: 24 * hourMs,
+    });
+    expect(aggregate).toMatchObject({
+      activeCount: 2,
+      workingCount: 1,
+      attentionCount: 1,
+      totalCount: 10,
+    });
+    expect(aggregate?.activities).toHaveLength(5);
+    expect(aggregate?.activities.map((row) => row.phase)).toEqual([
+      "waiting_for_input",
+      "running",
+      "completed",
+      "completed",
+      "completed",
+    ]);
   });
 
   it("gives active agents the display slots before finished ones", () => {
