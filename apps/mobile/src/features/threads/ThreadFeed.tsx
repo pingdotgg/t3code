@@ -37,7 +37,9 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import {
   IDLE_COMPACTING_LABELS,
+  isSentMessageHidden,
   resolveUserMessageFileCards,
+  type SentMessageDisplaySettings,
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -306,6 +308,10 @@ function formatMessageTime(input: string): string {
   return MESSAGE_TIME_FORMATTER.format(timestamp);
 }
 
+const MINIMIZE_SENT_MESSAGES: SentMessageDisplaySettings = {
+  agentMessageDisplay: "minimize",
+  automationMessageDisplay: "minimize",
+};
 const TURN_FOLD_HEIGHT = 42;
 const FEED_PADDING_TOP = 12;
 // Rows re-measure within a commit or two of a width change. LegendList also defers imperative
@@ -364,6 +370,7 @@ export interface ThreadFeedProps {
   /** A message to scroll to once it is in the feed; see `onJumpedToMessage`. */
   readonly jumpToMessageId?: MessageId | null;
   readonly onJumpedToMessage?: () => void;
+  readonly sentMessageDisplay?: SentMessageDisplaySettings;
   readonly contentInsetEndAdjustment: SharedValue<number>;
   readonly keyboardOffset: number;
   readonly sendingWithKeyboard?: boolean;
@@ -3314,13 +3321,26 @@ export const ThreadFeed = memo(function ThreadFeed({
   const [loadedListKey, setLoadedListKey] = useState<string | null>(null);
   const { jumpToMessageId } = props;
   const jumpReady = !!jumpToMessageId && loadedListKey === `${feedThreadKey}:filled`;
+  const sentMessageDisplay = props.sentMessageDisplay ?? MINIMIZE_SENT_MESSAGES;
   if (jumpReady && revealedMessageId !== jumpToMessageId) {
     setInteractionState((current) => ({ ...current, revealedMessageId: jumpToMessageId }));
   }
-  const presentedFeed = appendGuestPendingMessages(
+  const unfilteredFeed = appendGuestPendingMessages(
     useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups, revealedMessageId),
     guestShare,
   );
+  const presentedFeed =
+    sentMessageDisplay.agentMessageDisplay === "hide" ||
+    sentMessageDisplay.automationMessageDisplay === "hide"
+      ? unfilteredFeed.filter(
+          (entry) =>
+            entry.type !== "message" ||
+            entry.message.id === workflowOpening?.messageId ||
+            entry.message.id === jumpToMessageId ||
+            entry.message.id === revealedMessageId ||
+            !isSentMessageHidden(entry.message, sentMessageDisplay),
+        )
+      : unfilteredFeed;
   const jumpRunId =
     jumpReady &&
     !presentedFeed.some((entry) => entry.type === "message" && entry.id === jumpToMessageId)

@@ -483,10 +483,13 @@ function ThreadDetailBody(
     threadId: props.selectedThread.id,
   });
   const composerError = useAtomValue(threadComposerErrorsAtom)[selectedThreadKey]?.message ?? null;
-  const preferences = useAtomValue(mobilePreferencesAtom);
-  const toolCallVisibility = AsyncResult.isSuccess(preferences)
-    ? (preferences.value.toolCallVisibility ?? "showAll")
-    : "showAll";
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const preferences = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : null;
+  const sentMessageDisplay = {
+    agentMessageDisplay: preferences?.agentMessageDisplay ?? "minimize",
+    automationMessageDisplay: preferences?.automationMessageDisplay ?? "minimize",
+  } as const;
+  const toolCallVisibility = preferences?.toolCallVisibility ?? "showAll";
   const queuedCount = useThreadQueuedCount(props.selectedThreadDetailRef);
   const turnSubagents = useThreadTurnSubagents(props.selectedThreadDetailRef);
   const agentsSegment = resolveSubagentPillSegment(turnSubagents);
@@ -1517,6 +1520,7 @@ function ThreadDetailBody(
                 anchorMessageId={anchorMessageId}
                 jumpToMessageId={jumpMessageLoaded ? jumpMessageId : null}
                 onJumpedToMessage={() => finishThreadMessageJump(selectedThreadKey)}
+                sentMessageDisplay={sentMessageDisplay}
                 ref={feedRef}
                 contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
                 keyboardOffset={composerKeyboardOffset}

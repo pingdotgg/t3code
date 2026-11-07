@@ -343,6 +343,10 @@ export type ChatWidth = typeof ChatWidth.Type;
 export const EffortDisplay = Schema.Literals(["label", "bars"]);
 export type EffortDisplay = typeof EffortDisplay.Type;
 
+/** How the timeline shows a message another agent or an automation sent into a thread. */
+export const SentMessageDisplay = Schema.Literals(["minimize", "hide"]);
+export type SentMessageDisplay = typeof SentMessageDisplay.Type;
+
 export const ToolCallVisibility = Schema.Literals(["showAll", "hideSuccessful", "hideAll", "zen"]);
 export type ToolCallVisibility = typeof ToolCallVisibility.Type;
 
@@ -509,6 +513,12 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   followUpBehavior: Schema.Literals(["queue", "steer"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("steer")),
+  ),
+  agentMessageDisplay: SentMessageDisplay.pipe(
+    Schema.withDecodingDefault(Effect.succeed("minimize" as const)),
+  ),
+  automationMessageDisplay: SentMessageDisplay.pipe(
+    Schema.withDecodingDefault(Effect.succeed("minimize" as const)),
   ),
   proactivePanelsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   showSkillsInSlashMenu: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -1912,6 +1922,8 @@ export const ClientSettingsPatch = Schema.Struct({
   composerRichTextEnabled: Schema.optionalKey(Schema.Boolean),
   sendShortcut: Schema.optionalKey(Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"])),
   followUpBehavior: Schema.optionalKey(Schema.Literals(["queue", "steer"])),
+  agentMessageDisplay: Schema.optionalKey(SentMessageDisplay),
+  automationMessageDisplay: Schema.optionalKey(SentMessageDisplay),
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   boringSidebarEnabled: Schema.optionalKey(Schema.Boolean),

@@ -4,6 +4,7 @@ import { ComposerContextId, GuestMessageId, ScheduledTaskId } from "@t3tools/con
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
 import {
+  isSentMessageHidden,
   resolveUserMessageFileCards,
   resolveUserMessageGrouping,
   resolveUserMessagePresentation,
@@ -231,6 +232,36 @@ describe("resolveUserMessagePresentation", () => {
         attribution: "automation",
         scheduledTaskId: "task:daily-audit",
       });
+    }
+  });
+});
+
+describe("isSentMessageHidden", () => {
+  const agent = { role: "user", createdBy: "agent" as const, creationSource: "mcp" as const };
+  const automation = {
+    role: "user",
+    scheduledTaskId: ScheduledTaskId.make("task:daily-audit"),
+  };
+
+  it("hides only the kinds of sent messages the user chose to hide", () => {
+    const cases = [
+      [{ agentMessageDisplay: "hide", automationMessageDisplay: "minimize" }, true, false],
+      [{ agentMessageDisplay: "minimize", automationMessageDisplay: "hide" }, false, true],
+      [{ agentMessageDisplay: "minimize", automationMessageDisplay: "minimize" }, false, false],
+    ] as const;
+    for (const [settings, agentHidden, automationHidden] of cases) {
+      expect(isSentMessageHidden({ ...agent, text: "Status?" }, settings)).toBe(agentHidden);
+      expect(isSentMessageHidden({ ...automation, text: "Triage" }, settings)).toBe(
+        automationHidden,
+      );
+    }
+    const hideAll = { agentMessageDisplay: "hide", automationMessageDisplay: "hide" } as const;
+    for (const message of [
+      { role: "user", createdBy: "user" as const, text: "mine" },
+      { role: "user", createdBy: "agent" as const, creationSource: "server" as const, text: "t3" },
+      { role: "assistant", createdBy: "agent" as const, text: "reply" },
+    ]) {
+      expect(isSentMessageHidden(message, hideAll)).toBe(false);
     }
   });
 });

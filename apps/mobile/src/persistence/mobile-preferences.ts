@@ -12,6 +12,7 @@ import {
   PullRequestListState,
   type ProviderInstanceId,
   type PullRequestMergeMethod,
+  type SentMessageDisplay,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { ToolCallVisibility } from "@t3tools/contracts/settings";
@@ -113,6 +114,8 @@ export interface Preferences {
   /** Hardware Return behavior is iOS-only. */
   readonly composerEnterBehavior?: ComposerEnterBehavior;
   readonly followUpBehavior?: FollowUpBehavior;
+  readonly agentMessageDisplay?: SentMessageDisplay;
+  readonly automationMessageDisplay?: SentMessageDisplay;
   readonly microphones?: ReadonlyArray<MicrophoneEntry>;
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
@@ -198,6 +201,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     dismissedDatabaseStorageNotices?: readonly string[];
     composerEnterBehavior?: ComposerEnterBehavior;
     followUpBehavior?: FollowUpBehavior;
+    agentMessageDisplay?: SentMessageDisplay;
+    automationMessageDisplay?: SentMessageDisplay;
     microphones?: ReadonlyArray<MicrophoneEntry>;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
@@ -306,6 +311,15 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (parsed.followUpBehavior === "queue" || parsed.followUpBehavior === "steer") {
     preferences.followUpBehavior = parsed.followUpBehavior;
+  }
+  if (parsed.agentMessageDisplay === "minimize" || parsed.agentMessageDisplay === "hide") {
+    preferences.agentMessageDisplay = parsed.agentMessageDisplay;
+  }
+  if (
+    parsed.automationMessageDisplay === "minimize" ||
+    parsed.automationMessageDisplay === "hide"
+  ) {
+    preferences.automationMessageDisplay = parsed.automationMessageDisplay;
   }
   if (Array.isArray(parsed.microphones)) {
     preferences.microphones = parsed.microphones.flatMap((entry): MicrophoneEntry[] => {
