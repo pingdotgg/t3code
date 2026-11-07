@@ -110,10 +110,15 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
   ).toBe(true);
 
   const queuedThreadKeys = new Set([`${environmentId}:thread-150`]);
-  await act(async () => root.render(<Probe input={{ ...input, queuedThreadKeys }} tab="chats" />));
+  await act(async () =>
+    root.render(
+      <Probe input={{ ...input, queuedThreadKeys, workingShelfExpanded: true }} tab="chats" />,
+    ),
+  );
   const queued = seen.at(-1)!;
   expect(queued.layout.items).toHaveLength(161);
   expect(queued.layout.settledCount).toBe(1049);
+  expect(queued.layout.workingCount).toBe(1);
   expect(
     queued.items.find((item) => item.type === "v2-thread" && item.item.thread.id === "thread-150"),
   ).toMatchObject({ hasQueuedMessages: true, item: { variant: "card" } });

@@ -68,6 +68,7 @@ export type ThreadListV2Status =
   | "input"
   | "request"
   | "working"
+  | "pending"
   | "waiting"
   | "failed"
   | "limited"
@@ -267,6 +268,7 @@ export function resolveThreadListV2Status(
     | "runtime"
     | "blockedOnThreadWait"
   >,
+  options?: { readonly hasQueuedMessages?: boolean },
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
     return "approval";
@@ -286,6 +288,9 @@ export function resolveThreadListV2Status(
     ["preparing", "queued", "starting", "running", "waiting"].includes(thread.runtime.status)
   ) {
     return "working";
+  }
+  if (options?.hasQueuedMessages === true) {
+    return "pending";
   }
   if (thread.runtime?.status === "idle") {
     return "waiting";
@@ -501,12 +506,13 @@ export function threadListV2ListItemsAreEqual(
 function resolveThreadListV2ItemTimeLabel(
   item: ThreadListV2Item,
   showSnoozeWakeLabel: boolean,
+  options?: { readonly hasQueuedMessages?: boolean },
 ): string {
   const { thread, variant, snoozed } = item;
   if (showSnoozeWakeLabel) return "";
   if (
     variant === "card" &&
-    (resolveThreadListV2Status(thread) !== "ready" ||
+    (resolveThreadListV2Status(thread, options) !== "ready" ||
       item.wokeAt !== null ||
       threadHasUnseenCompletion(thread))
   )
@@ -554,16 +560,19 @@ export function buildThreadListV2ListItems(input: {
       item.variant === "card"
         ? input.moveAvailability?.get(`${item.thread.environmentId}:${item.thread.id}`)
         : undefined;
+    const hasQueuedMessages =
+      queuedThreadKeys?.has(`${item.thread.environmentId}:${item.thread.id}`) === true;
     return {
       type: "v2-thread",
       key: `v2-thread:${item.thread.environmentId}:${item.thread.id}`,
       item,
       snoozeWakeLabelText,
-      timeLabel: resolveThreadListV2ItemTimeLabel(item, snoozeWakeLabelText !== undefined),
+      timeLabel: resolveThreadListV2ItemTimeLabel(item, snoozeWakeLabelText !== undefined, {
+        hasQueuedMessages,
+      }),
       snoozePresetMinute,
       showTrailingDivider: false,
-      hasQueuedMessages:
-        queuedThreadKeys?.has(`${item.thread.environmentId}:${item.thread.id}`) === true,
+      hasQueuedMessages,
       canMoveUp: move?.canMoveUp === true,
       canMoveDown: move?.canMoveDown === true,
     };
@@ -752,7 +761,10 @@ export function buildThreadListV2Items(input: {
       settled.push(thread);
     } else if (thread.pinnedAt != null) {
       pinned.push(thread);
-    } else if (workingShelfEnabled && (input.isWorking ?? isThreadWorking)(thread)) {
+    } else if (
+      workingShelfEnabled &&
+      (hasQueuedMessages || (input.isWorking ?? isThreadWorking)(thread))
+    ) {
       working.push(thread);
     } else {
       active.push(thread);
