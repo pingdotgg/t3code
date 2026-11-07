@@ -1,13 +1,8 @@
 #!/usr/bin/env node
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off - Host-side browser automation.
-/**
- * Scripted learner: a throwaway OminaX server on the free Replay provider, driven through the
- * built web app the way a learner would: New lesson, a plain Send during a reply, and a queued
- * send during a reply. It checks that the basic flow works. It does not reproduce Claude's
- * in-place steering or the CW2 refusal; SteeringCompletion.integration.test.ts pins those.
- *
- *   vp run learner-e2e [--skip-build] [--out <dir>]
- */
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off globalConsole:off - Host-side browser automation.
+// Scripted learner on Replay: New lesson, a plain Send mid-reply, a queued send mid-reply.
+// It checks the basic flow only; Claude's in-place steering and the provider refusals are
+// pinned by SteeringCompletion.integration.test.ts. Usage: vp run learner-e2e [--skip-build] [--out <dir>]
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -143,8 +138,8 @@ async function runLearner(page: Page): Promise<void> {
     if ((await composer(page).innerText()).trim() !== "") {
       throw new Error("The draft bounced back into the composer.");
     }
-    // Replay can't steer in place, so a steer cuts the attempt off and restarts it. Since #119
-    // a refused steer falls back to the queue instead, which only L2b should see.
+    // Replay can't steer in place, so a steer cuts the attempt off and restarts it.
+    // A refused steer falls back to the queue instead, which only L2b should see.
     const outcome = await Promise.race([
       page
         .getByText("Cut off by a steer")
