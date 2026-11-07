@@ -518,6 +518,8 @@ export const EnvironmentCloudLinkStateResult = Schema.Struct({
   relayUrl: Schema.NullOr(Schema.String),
   relayIssuer: Schema.NullOr(Schema.String),
   managedTunnelActive: Schema.optional(Schema.Boolean),
+  /** The live public address of the host's managed tunnel, when its connector reports one. */
+  managedTunnelHttpBaseUrl: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   publishAgentActivity: Schema.Boolean,
   holdWebhooksWhileOffline: Schema.optional(Schema.Boolean),
   linkRevoked: Schema.optional(Schema.Boolean),

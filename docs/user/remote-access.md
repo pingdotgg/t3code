@@ -316,8 +316,10 @@ environment of an already running T3 server.
 ## Connect an outside agent
 
 Claude Code, Codex, ChatGPT and other agents T3 Code did not start can drive
-threads on an environment through its MCP server. See
-[outside agents](./outside-agents.md) for setup.
+threads on an environment through its MCP server. On the host, **Settings →
+Sharing & access** shows the MCP URL to give the agent, including its T3 Connect
+address when the tunnel is on. See [outside agents](./outside-agents.md) for
+setup.
 
 ## Link another environment
 

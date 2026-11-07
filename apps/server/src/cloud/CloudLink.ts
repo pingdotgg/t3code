@@ -1283,6 +1283,10 @@ const make = Effect.gen(function* () {
       ],
       { concurrency: 8 },
     );
+    // Only a running connector knows the tunnel hostname the relay assigned.
+    const connector = Option.isSome(endpointRuntimeConfig)
+      ? yield* endpointRuntime.inspectConnector
+      : null;
     // A not-linked check predates the stored tunnel config; the next check replaces it.
     const currentReachability = Option.filter(
       latestReachability,
@@ -1297,6 +1301,10 @@ const make = Effect.gen(function* () {
       relayUrl: Option.isSome(relayUrl) ? bytesToString(relayUrl.value) : null,
       relayIssuer: Option.isSome(relayIssuer) ? bytesToString(relayIssuer.value) : null,
       managedTunnelActive: Option.isSome(endpointRuntimeConfig),
+      managedTunnelHttpBaseUrl:
+        connector?.hostname === undefined || connector.hostname === null
+          ? null
+          : `https://${connector.hostname}`,
       publishAgentActivity: Option.isSome(publishAgentActivity)
         ? bytesToString(publishAgentActivity.value) === "true"
         : false,

@@ -8,16 +8,26 @@ in once, and you choose what it may do.
 
 ## Get the MCP URL
 
-In **Settings → Environments**, open a saved environment's menu and choose
-**Copy MCP URL**. The URL is the environment's address followed by `/mcp`, for
-example:
+For the environment on this machine, open **Settings → Sharing & access** and
+find **MCP URL** on its card. With T3 Connect on and its tunnel connected, this
+is the environment's public address followed by `/mcp`:
 
 ```text
 https://<environment-address>/mcp
 ```
 
-The copied URL uses the route this device is connected over, so an agent on the
-same device can reach it.
+That is the URL a hosted agent, such as ChatGPT, needs. With T3 Connect off, the
+same setting shows a loopback address, which only an agent on the machine
+running T3 Code can reach.
+
+For a saved remote environment, open **Settings → Environments**, open the
+environment's menu, and choose **Copy MCP URL**.
+
+For the local environment, the copied URL uses its T3 Connect address when the
+tunnel is available, and otherwise a loopback or `https` route.
+
+For a saved remote environment, the copied URL uses the connected route when
+that route has an address, and otherwise the first saved route with one.
 
 - **An agent on your own computers** can use `localhost` on the host, T3
   Connect, or any `https` address, such as

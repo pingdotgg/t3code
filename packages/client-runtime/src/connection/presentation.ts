@@ -1,4 +1,5 @@
 import type { ServerConfig } from "@t3tools/contracts";
+import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import * as Option from "effect/Option";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
@@ -117,6 +118,25 @@ export function environmentMcpUrl(input: {
     if (mcpUrl !== null) return mcpUrl;
   }
   return null;
+}
+
+/**
+ * The MCP address for the environment this app runs. Agents only sign in over https or
+ * loopback, so a plain-http LAN address is not offered.
+ */
+export function localEnvironmentMcpUrl(input: {
+  readonly entry: ConnectionCatalogEntry;
+  readonly tunnelHttpBaseUrl?: string | null | undefined;
+}): string | null {
+  const tunnelUrl = input.tunnelHttpBaseUrl ? mcpUrlFromBase(input.tunnelHttpBaseUrl) : null;
+  if (tunnelUrl !== null && isAgentSignInMcpUrl(tunnelUrl)) return tunnelUrl;
+  const mcpUrl = environmentMcpUrl({ entry: input.entry });
+  return mcpUrl !== null && isAgentSignInMcpUrl(mcpUrl) ? mcpUrl : null;
+}
+
+function isAgentSignInMcpUrl(mcpUrl: string): boolean {
+  const url = new URL(mcpUrl);
+  return url.protocol === "https:" || isLocalLoopbackHost(url.hostname);
 }
 
 function mcpUrlFromBase(httpBaseUrl: string): string | null {
