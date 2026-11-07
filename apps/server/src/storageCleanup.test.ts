@@ -677,6 +677,36 @@ it.live("removes submodules whose tags match the remote's tags off every remote 
   ),
 );
 
+it.live("keeps submodules whose tags the remote lacks or has at another commit", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, worktree, submodule, command } = yield* submoduleCleanupFixture();
+      const commitOff = (cwd: string, message: string) =>
+        Effect.gen(function* () {
+          const tree = (yield* command(cwd, ["rev-parse", "HEAD^{tree}"])).stdout.trim();
+          return (yield* command(cwd, [
+            "commit-tree",
+            tree,
+            "-p",
+            "HEAD",
+            "-m",
+            message,
+          ])).stdout.trim();
+        });
+      yield* command(repo, ["tag", "v0.9.1", yield* commitOff(repo, "release")]);
+      const local = yield* commitOff(submodule, "local release");
+      for (const tag of ["local-only", "v0.9.1"]) {
+        yield* command(submodule, ["tag", tag, local]);
+        expect(
+          (yield* service.runNow).entries.find((entry) => entry.path === worktree),
+        ).toMatchObject({ outcome: "kept", reason: expect.stringContaining("remote-tracking") });
+        yield* command(submodule, ["tag", "-d", tag]);
+      }
+      expect(yield* fs.exists(worktree)).toBe(true);
+    }),
+  ),
+);
+
 it.live("keeps nested submodule files protected by the current keep rule", () =>
   runCleanupTest(
     Effect.gen(function* () {
