@@ -43,6 +43,12 @@ const ScheduledTaskFixedTimeSchedule = Schema.Struct({
       description: "Default: every day.",
     }),
   ),
+  missedRun: Schema.optional(
+    Schema.Literals(["skip", "run_once"]).annotate({
+      description:
+        "If the environment was off or asleep at the time. 'skip' (default) waits for the next time; 'run_once' runs once when it is back. Omitted: keep stored.",
+    }),
+  ),
 });
 
 const ISO_WITH_OFFSET =

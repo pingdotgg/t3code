@@ -70,6 +70,8 @@ export interface DraftState {
   /** The stored ISO run time, sent back unchanged when the field was not edited. */
   readonly savedRunAt: string;
   readonly weekdays: ReadonlySet<number>;
+  readonly runMissedOnce: boolean;
+  readonly savedRunMissedOnce?: boolean | undefined;
   readonly projectId: string;
   readonly threadId: string;
   readonly threadMode: ScheduledTaskThreadMode;
@@ -233,6 +235,9 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     type: "fixed_time",
     timeOfDay: draft.timeOfDay || "09:00",
     ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
+    ...(draft.runMissedOnce === draft.savedRunMissedOnce
+      ? {}
+      : { missedRun: draft.runMissedOnce ? ("run_once" as const) : ("skip" as const) }),
   };
 }
 
@@ -255,6 +260,9 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     runAt: schedule.type === "once" ? toDateTimeLocalValue(new Date(schedule.runAt)) : "",
     savedRunAt: schedule.type === "once" ? schedule.runAt : "",
     weekdays,
+    runMissedOnce: schedule.type === "fixed_time" && schedule.missedRun === "run_once",
+    savedRunMissedOnce:
+      schedule.type === "fixed_time" ? schedule.missedRun === "run_once" : undefined,
     projectId: task.projectId,
     threadId: task.threadId ?? "",
     threadMode: scheduledTaskThreadMode(task),
