@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
+import * as SchemaAST from "effect/SchemaAST";
 
 import { mapSettingsSecrets } from "../settingsSecrets.ts";
 
@@ -241,6 +242,34 @@ const clampDefaultRuntimeModes = (
     },
   };
 };
+
+/**
+ * Every path a policy can manage, with its built-in default. Fields come from the schema, since
+ * optional ones have no default to find; keys from the default cover records.
+ */
+export function listManageableSettings() {
+  const builtIn = encodeSettings(DEFAULT_SERVER_SETTINGS);
+  const leaves = (
+    path: string,
+    value: unknown,
+    ast: SchemaAST.AST | undefined,
+  ): ReadonlyArray<readonly [string, unknown]> => {
+    const fields = new Map(
+      ast !== undefined && SchemaAST.isObjects(ast)
+        ? ast.propertySignatures.map(({ name, type }) => [String(name), type])
+        : [],
+    );
+    const children = isRecord(value) ? value : {};
+    const keys = new Set([...fields.keys(), ...Object.keys(children)]);
+    return keys.size > 0
+      ? [...keys].flatMap((key) => leaves(`${path}.${key}`, children[key], fields.get(key)))
+      : [[path, value]];
+  };
+  return Object.entries(ServerSettings.fields)
+    .filter(([key]) => !UNMANAGEABLE_KEYS.has(key) && !DERIVED_FROM.has(key))
+    .flatMap(([key, field]) => leaves(key, getPath(builtIn, [key]), field.ast))
+    .toSorted(([left], [right]) => left.localeCompare(right));
+}
 
 /** Build the overlay for a policy's settings, or describe the first entry this build cannot apply. */
 export function makeManagedSettings(

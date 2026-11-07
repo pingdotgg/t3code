@@ -14,6 +14,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { BUILT_IN_DRIVERS } from "../provider/builtInDrivers.ts";
 import * as ManagedPolicy from "./ManagedPolicy.ts";
 import { disallowedDriverReason, providerHostEnvironment } from "./managedProviders.ts";
+import * as ManagedSettings from "./managedSettings.ts";
 
 it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
   const loadFrom = (contents: string | undefined) =>
@@ -53,6 +54,22 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       });
     }),
   );
+
+  it("lists only settings a policy can manage", () => {
+    const listed = ManagedSettings.listManageableSettings();
+    const paths = listed.map(([path]) => path);
+    assert.include(paths, "storageCleanup.logsAfterDays");
+    assert.include(paths, "backgroundActivity.baseProfile");
+    assert.include(paths, "backgroundActivity.overrides.pauseWhenOnBattery");
+    assert.notInclude(paths, "backgroundActivity.overrides");
+    assert.notInclude(paths, "projectSettingsOverrides");
+    assert.notInclude(paths, "compactIdleThreads");
+    for (const [path, value] of listed) {
+      if (value === undefined) continue;
+      const managed = ManagedSettings.makeManagedSettings({ [path]: { value, locked: false } });
+      assert.equal(managed._tag, "Valid", path);
+    }
+  });
 
   it.effect("tells clients which capabilities the policy switches off", () =>
     Effect.gen(function* () {
