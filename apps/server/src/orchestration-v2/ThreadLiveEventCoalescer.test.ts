@@ -359,6 +359,7 @@ describe("ThreadLiveEventCoalescer", () => {
           runtimeRequests: [],
           messages: [],
           plans: [],
+          artifacts: [],
           turnItems: [],
           checkpointScopes: [],
           checkpoints: [],

@@ -126,12 +126,15 @@ function shouldPublishAgentAwarenessEvent(
       return isTurnItemPayload(event.payload) && turnItemUpdateCanEndBackgroundWork(event.payload);
     case "message.updated":
     case "plan.updated":
+    case "artifact.updated":
     case "checkpoint-scope.created":
     case "checkpoint.captured":
     case "checkpoint.rollback-requested":
     case "context-handoff.updated":
     case "context-transfer.created":
     case "context-transfer.updated":
+      return false;
+    default:
       return false;
   }
 }

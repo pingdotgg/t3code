@@ -168,6 +168,7 @@ function makeProjection(visibleTurnItems: OrchestrationV2ProjectedTurnItem[]) {
     runtimeRequests: [{ id: "req-1" }],
     messages: [],
     plans: [],
+    artifacts: [],
     turnItems: visibleTurnItems.map((row) => row.item),
     checkpointScopes: [],
     checkpoints: [],
