@@ -121,6 +121,8 @@ function makeTestAdapter(input: {
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
   readonly backgroundWork?: Ref.Ref<boolean>;
   readonly closedSessions?: Ref.Ref<ReadonlyArray<string>>;
+  // ACP cannot truncate, so its rollback answers with a fresh, empty native session.
+  readonly rollback?: "truncates" | "replaces_native_thread";
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
@@ -392,8 +394,25 @@ function makeTestAdapter(input: {
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () =>
             unimplemented(input.driver, "readThreadSnapshot unused in provider switch test"),
-          rollbackThread: () =>
-            unimplemented(input.driver, "rollbackThread unused in provider switch test"),
+          rollbackThread: ({ providerThread }) =>
+            input.rollback === undefined
+              ? unimplemented(input.driver, "rollbackThread unused in provider switch test")
+              : Effect.succeed({
+                  providerThread:
+                    input.rollback === "truncates" || providerThread.nativeThreadRef === null
+                      ? providerThread
+                      : {
+                          ...providerThread,
+                          nativeThreadRef: {
+                            ...providerThread.nativeThreadRef,
+                            nativeId: `${providerThread.nativeThreadRef.nativeId}:after-rollback`,
+                          },
+                          nativeConversationHeadRef: null,
+                        },
+                  providerTurns: [],
+                  messages: [],
+                  runtimeRequests: [],
+                }),
           forkThread: () =>
             unimplemented(input.driver, "forkThread unused in provider switch test"),
         };
@@ -1458,6 +1477,316 @@ describe("orchestration v2 provider switching", () => {
             );
             assert.include(run4History, "Original brief");
             assert.include(run4History, latestResult);
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name,
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: { type: "readOnly" },
+                  },
+                },
+                layerRegistry,
+              ),
+            ),
+          );
+        }),
+      ),
+  );
+
+  it.live.each([
+    {
+      name: "an ACP rollback that starts a fresh agent session",
+      instanceId: GROK_MODEL_SELECTION.instanceId,
+      driver: GROK_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      modelSelection: GROK_MODEL_SELECTION,
+      rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      history: "plain",
+      delivers: ["favourite colour is teal"],
+      withholds: ["favourite animal is an otter"],
+    },
+    {
+      name: "a native rollback whose next resume fails",
+      instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+      driver: CLAUDE_DRIVER,
+      capabilities: ClaudeProviderCapabilitiesV2,
+      modelSelection: CLAUDE_MODEL_SELECTION,
+      rollback: "truncates",
+      failResumeAfterRollback: true,
+      history: "plain",
+      delivers: ["favourite colour is teal"],
+      withholds: ["favourite animal is an otter"],
+    },
+    {
+      // Pi forks into a new native thread that still holds the kept turns.
+      name: "a native rollback that forks a new native thread",
+      instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+      driver: CLAUDE_DRIVER,
+      capabilities: ClaudeProviderCapabilitiesV2,
+      modelSelection: CLAUDE_MODEL_SELECTION,
+      rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      history: "plain",
+      delivers: [],
+      withholds: ["favourite colour is teal", "favourite animal is an otter"],
+    },
+    {
+      name: "an ACP rollback to a turn recorded before attempts kept their native session",
+      instanceId: GROK_MODEL_SELECTION.instanceId,
+      driver: GROK_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      modelSelection: GROK_MODEL_SELECTION,
+      rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      history: "legacy_first_turn",
+      delivers: ["favourite colour is teal"],
+      withholds: ["favourite animal is an otter"],
+    },
+    {
+      name: "an ACP rollback in a forked thread",
+      instanceId: GROK_MODEL_SELECTION.instanceId,
+      driver: GROK_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      modelSelection: GROK_MODEL_SELECTION,
+      rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      history: "forked",
+      delivers: ["favourite colour is teal", "home town is Oslo"],
+      withholds: ["favourite animal is an otter"],
+    },
+    {
+      name: "an ACP rollback where no attempt recorded its native session",
+      instanceId: GROK_MODEL_SELECTION.instanceId,
+      driver: GROK_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      modelSelection: GROK_MODEL_SELECTION,
+      rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      history: "legacy_all_turns",
+      delivers: ["favourite colour is teal"],
+      withholds: ["favourite animal is an otter"],
+    },
+    {
+      name: "an ACP rollback of a forked thread to its baseline",
+      instanceId: GROK_MODEL_SELECTION.instanceId,
+      driver: GROK_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      modelSelection: GROK_MODEL_SELECTION,
+      rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      history: "forked_to_baseline",
+      delivers: ["home town is Oslo"],
+      withholds: ["favourite colour is teal", "favourite animal is an otter"],
+    },
+  ] as const)(
+    "gives the agent the kept conversation and not the rewound turn after $name",
+    (scenario) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const name = `rollback-kept-context-${scenario.driver}-${scenario.history}`;
+          const cwd = yield* checkpointWorkspace(name);
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+          const failResumeOnce = yield* Ref.make(false);
+          const nativeThreadGeneration = yield* Ref.make(0);
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: scenario.instanceId,
+              driver: scenario.driver,
+              capabilities: scenario.capabilities,
+              modelSelection: scenario.modelSelection,
+              responseByRunOrdinal: { 1: "noted", 2: "noted" },
+              capturedTurns,
+              injectedHistory,
+              failResumeOnce,
+              nativeThreadGeneration,
+              rollback: scenario.rollback,
+            }),
+          ]);
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const runToCompletion = Effect.fn("runToCompletion")(function* (
+              ordinal: number,
+              text: string,
+              thread: ThreadId = threadId,
+            ) {
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`${thread}:${ordinal}`),
+                threadId: thread,
+                messageId: MessageId.make(`${thread}:${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text,
+                attachments: [],
+                modelSelection: scenario.modelSelection,
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.threadId === thread &&
+                    event.payload.ordinal === ordinal &&
+                    (event.payload.status === "completed" || event.payload.status === "failed"),
+                ),
+                Stream.runHead,
+              );
+              yield* worker.drain();
+            });
+            const createThread = (thread: ThreadId) =>
+              orchestrator.dispatch({
+                type: "thread.create",
+                commandId: CommandId.make(`${thread}:create`),
+                threadId: thread,
+                projectId,
+                createdBy: "user",
+                creationSource: "web",
+                title: "Edit from here",
+                modelSelection: scenario.modelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+              });
+            const forked =
+              scenario.history === "forked" || scenario.history === "forked_to_baseline";
+            if (forked) {
+              const sourceThreadId = ThreadId.make(`${name}:source`);
+              yield* createThread(sourceThreadId);
+              yield* runToCompletion(
+                1,
+                "My home town is Oslo. Reply with only the word: noted",
+                sourceThreadId,
+              );
+              yield* orchestrator.dispatch({
+                type: "thread.fork",
+                commandId: CommandId.make(`${name}:fork`),
+                sourceThreadId,
+                targetThreadId: threadId,
+                sourcePoint: {
+                  type: "run",
+                  runId: (yield* orchestrator.getThreadProjection(sourceThreadId)).runs[0]!.id,
+                },
+                createdBy: "user",
+                creationSource: "web",
+              });
+            } else {
+              yield* createThread(threadId);
+            }
+            yield* runToCompletion(
+              1,
+              "My favourite colour is teal. Reply with only the word: noted",
+            );
+            yield* runToCompletion(
+              2,
+              "My favourite animal is an otter. Reply with only the word: noted",
+            );
+            const beforeRollback = yield* orchestrator.getThreadProjection(threadId);
+            if (
+              scenario.history === "legacy_first_turn" ||
+              scenario.history === "legacy_all_turns"
+            ) {
+              const firstRunId = beforeRollback.runs.find((run) => run.ordinal === 1)?.id;
+              yield* (yield* EventSink.EventSinkV2).write({
+                events: beforeRollback.attempts
+                  .filter(
+                    (attempt) =>
+                      scenario.history === "legacy_all_turns" || attempt.runId === firstRunId,
+                  )
+                  .map(({ nativeThreadId: _nativeThreadId, ...legacy }, index) => ({
+                    id: EventId.make(`${name}:legacy-attempt:${index}`),
+                    type: "run-attempt.updated" as const,
+                    threadId,
+                    occurredAt: beforeRollback.thread.createdAt,
+                    payload: legacy,
+                  })),
+              });
+            }
+            const keptOrdinal = scenario.history === "forked_to_baseline" ? 0 : 1;
+            const keptCheckpoint = beforeRollback.checkpoints.find(
+              (checkpoint) =>
+                (checkpoint.appRunOrdinal ?? 0) === keptOrdinal && checkpoint.status === "ready",
+            );
+            if (keptCheckpoint === undefined) {
+              return yield* Effect.die("Expected a checkpoint after the first turn.");
+            }
+            yield* orchestrator.dispatch({
+              type: "checkpoint.rollback",
+              commandId: CommandId.make(`${name}:rollback`),
+              threadId,
+              scopeId: keptCheckpoint.scopeId,
+              checkpointId: keptCheckpoint.id,
+              restoreFiles: false,
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  (event.type === "run.updated" &&
+                    event.payload.ordinal === 2 &&
+                    event.payload.status === "rolled_back") ||
+                  (event.type === "thread.metadata-updated" &&
+                    event.payload.rollbackFailure != null),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+            assert.deepEqual(
+              (yield* orchestrator.getThreadProjection(threadId)).runs.map((run) => run.status),
+              scenario.history === "forked_to_baseline"
+                ? ["rolled_back", "rolled_back"]
+                : ["completed", "rolled_back"],
+            );
+            if (scenario.failResumeAfterRollback) {
+              const providerSessionId = (yield* orchestrator.getThreadProjection(threadId))
+                .providerThreads[0]?.providerSessionId;
+              if (providerSessionId == null) {
+                return yield* Effect.die("Expected a provider session after the rollback.");
+              }
+              yield* orchestrator.dispatch({
+                type: "provider-session.detach",
+                commandId: CommandId.make(`${name}:detach`),
+                threadId,
+                providerSessionId,
+              });
+              yield* worker.drain();
+              yield* Ref.set(failResumeOnce, true);
+            }
+            const historyBeforeRun3 = (yield* Ref.get(injectedHistory)).length;
+            yield* runToCompletion(3, "What did I say first?");
+
+            const run3 = (yield* Ref.get(capturedTurns)).at(-1);
+            const delivered =
+              (run3?.text ?? "") +
+              (yield* encodeJson((yield* Ref.get(injectedHistory)).slice(historyBeforeRun3)));
+            for (const kept of scenario.delivers) {
+              assert.include(delivered, kept, "the agent's session lacks this kept turn");
+            }
+            for (const withheld of scenario.withholds) {
+              assert.notInclude(delivered, withheld, "the session holds it or it was rewound");
+            }
+            if (scenario.name === "an ACP rollback that starts a fresh agent session") {
+              const recoveries = (projection: OrchestrationV2ThreadProjection) =>
+                projection.contextHandoffs.filter(
+                  (handoff) => handoff.strategy === "full_thread_summary",
+                ).length;
+              const recoveriesBeforeRun4 = recoveries(
+                yield* orchestrator.getThreadProjection(threadId),
+              );
+              const sessionsBeforeRun4 = yield* Ref.get(nativeThreadGeneration);
+              yield* runToCompletion(4, "And what did I say second?");
+              assert.strictEqual(
+                recoveries(yield* orchestrator.getThreadProjection(threadId)),
+                recoveriesBeforeRun4,
+                "the recovered session holds the kept turns, so the next turn replays nothing",
+              );
+              assert.strictEqual(yield* Ref.get(nativeThreadGeneration), sessionsBeforeRun4);
+            }
           }).pipe(
             Effect.provide(
               ProviderReplayHarness.layerWithRegistry(
