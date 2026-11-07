@@ -8,7 +8,7 @@ import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { useRef } from "react";
 
-import { withThreadDismissal } from "./thread-dismissal";
+import { withThreadListChange } from "./thread-dismissal";
 import * as Dialog from "../../components/ui/Dialog";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
@@ -104,6 +104,7 @@ function liveThread(thread: EnvironmentThreadShell): EnvironmentThreadShell {
 
 function useThreadActionExecutor(
   onCompleted?: (action: ThreadListAction, thread: EnvironmentThreadShell) => void,
+  keepVisible = false,
 ) {
   const archiveMutation = useAtomCommand(threadEnvironment.archive, { reportFailure: false });
   const unarchiveMutation = useAtomCommand(threadEnvironment.unarchive, { reportFailure: false });
@@ -148,7 +149,10 @@ function useThreadActionExecutor(
       }
       if (action === "unsettle") ThreadUndo.invalidate("settle", key);
       onStarted?.();
-      const result = await withThreadDismissal(
+      // Search keeps settle/unsettle rows; archive and delete always leave.
+      const dismiss =
+        action === "archive" || action === "delete" || action === "unarchive" || !keepVisible;
+      const result = await withThreadListChange(
         key,
         async () =>
           action === "unsettle"
@@ -175,6 +179,7 @@ function useThreadActionExecutor(
                 input: { threadId: thread.id },
               }),
         (result) => result._tag === "Success",
+        { dismiss },
       );
       if (result._tag === "Failure") {
         Dialog.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
@@ -216,7 +221,7 @@ function confirmThreadDeletion(
   });
 }
 
-export function useThreadListActions(): {
+export function useThreadListActions(options?: { readonly keepVisible?: boolean }): {
   readonly archiveThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly settleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
@@ -236,7 +241,9 @@ export function useThreadListActions(): {
   readonly renameThread: (thread: EnvironmentThreadShell) => void;
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
 } {
-  const executeAction = useThreadActionExecutor();
+  // Search lists every match across shelves, so a state change must not collapse the row away.
+  const keepVisible = options?.keepVisible === true;
+  const executeAction = useThreadActionExecutor(undefined, keepVisible);
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const pinMutation = useAtomCommand(threadEnvironment.pin, { reportFailure: false });
@@ -355,7 +362,7 @@ export function useThreadListActions(): {
 
       selectionHaptic();
       const claim = ThreadUndo.begin("snooze", key);
-      const result = await withThreadDismissal(
+      const result = await withThreadListChange(
         key,
         () =>
           snoozeMutation({
@@ -366,6 +373,7 @@ export function useThreadListActions(): {
             },
           }),
         (result) => result._tag === "Success",
+        { dismiss: !keepVisible },
       );
       if (result._tag === "Failure") {
         claim.finish();
@@ -402,7 +410,7 @@ export function useThreadListActions(): {
 
       selectionHaptic();
       ThreadUndo.invalidate("snooze", key);
-      const result = await withThreadDismissal(
+      const result = await withThreadListChange(
         key,
         () =>
           unsnoozeMutation({
@@ -410,6 +418,7 @@ export function useThreadListActions(): {
             input: { threadId: thread.id, reason: "user" },
           }),
         (result) => result._tag === "Success",
+        { dismiss: !keepVisible },
       );
       if (result._tag === "Failure") {
         const error = Cause.squash(result.cause);
@@ -451,7 +460,7 @@ export function useThreadListActions(): {
     // Pinning clears snooze, so older Settled or Snoozed undos would fight this pin.
     ThreadUndo.invalidate("settle", scopedThreadKey(thread.environmentId, thread.id));
     ThreadUndo.invalidate("snooze", scopedThreadKey(thread.environmentId, thread.id));
-    const result = await withThreadDismissal(
+    const result = await withThreadListChange(
       scopedThreadKey(thread.environmentId, thread.id),
       () =>
         pinMutation({
@@ -459,6 +468,7 @@ export function useThreadListActions(): {
           input: { threadId: thread.id, ...(orderKey !== undefined ? { orderKey } : {}) },
         }),
       (result) => result._tag === "Success",
+      { dismiss: !keepVisible },
     );
     if (result._tag === "Failure") {
       const error = Cause.squash(result.cause);
@@ -484,7 +494,7 @@ export function useThreadListActions(): {
     selectionHaptic();
     const plan = ThreadUndo.planThreadUndo("unpin", thread);
     const claim = ThreadUndo.begin("pin", scopedThreadKey(thread.environmentId, thread.id));
-    const result = await withThreadDismissal(
+    const result = await withThreadListChange(
       scopedThreadKey(thread.environmentId, thread.id),
       () =>
         unpinMutation({
@@ -492,6 +502,7 @@ export function useThreadListActions(): {
           input: { threadId: thread.id },
         }),
       (result) => result._tag === "Success",
+      { dismiss: !keepVisible },
     );
     if (result._tag === "Failure") {
       claim.finish();

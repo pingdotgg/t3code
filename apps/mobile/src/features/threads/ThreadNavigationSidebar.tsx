@@ -141,7 +141,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     moveThread,
     renameThread,
     regenerateThreadTitle,
-  } = useThreadListActions();
+  } = useThreadListActions({ keepVisible: props.searchQuery.trim().length > 0 });
   const pendingTasks = usePendingNewTasks();
   const launchingThreads = useLaunchingThreads(threads);
   const activeNewTask = useActiveNewTask();

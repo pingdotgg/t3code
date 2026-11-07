@@ -104,7 +104,7 @@ export function HomeRouteScreen() {
     renameThread,
     regenerateThreadTitle,
     unsettleThread,
-  } = useThreadListActions();
+  } = useThreadListActions({ keepVisible: searchQuery.trim().length > 0 });
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } =
     usePendingTaskListActions(selectThreadRoute);

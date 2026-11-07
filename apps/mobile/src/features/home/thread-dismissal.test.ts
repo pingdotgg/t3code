@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { registerThreadDismissal, withThreadDismissal } from "./thread-dismissal";
+import {
+  registerThreadDismissal,
+  withThreadDismissal,
+  withThreadListChange,
+} from "./thread-dismissal";
 
 describe("thread dismissal", () => {
   it("waits for every visible copy before changing thread state", async () => {
@@ -57,4 +61,20 @@ describe("thread dismissal", () => {
       }
     },
   );
+
+  it("skips collapse when the row stays in the list", async () => {
+    const dismiss = vi.fn(() => ({
+      finished: Promise.resolve(),
+      restore: vi.fn(),
+    }));
+    const unregister = registerThreadDismissal("env:thread", dismiss);
+    try {
+      expect(
+        await withThreadListChange("env:thread", async () => "kept", Boolean, { dismiss: false }),
+      ).toBe("kept");
+      expect(dismiss).not.toHaveBeenCalled();
+    } finally {
+      unregister();
+    }
+  });
 });

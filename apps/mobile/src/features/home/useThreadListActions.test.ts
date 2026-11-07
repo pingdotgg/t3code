@@ -182,6 +182,7 @@ vi.mock("../../state/threads", () => ({
 
 import { appAtomRegistry } from "../../state/atom-registry";
 import { composerDraftsAtom } from "../../state/use-composer-drafts";
+import { registerThreadDismissal } from "./thread-dismissal";
 import { dismissThreadUndoNotice, readThreadUndoNotice } from "./thread-undo-notice";
 import { useThreadListActions } from "./useThreadListActions";
 
@@ -460,6 +461,49 @@ describe("thread action undo", () => {
     expect(await first).toBe(true);
     expect(state.requests.map(({ action }) => action)).toEqual(["archive"]);
     expect(state.archivedRefreshes).toEqual([primaryEnvironmentId]);
+  });
+
+  it.each([
+    "settleThread",
+    "unsettleThread",
+    "snoozeThread",
+    "unsnoozeThread",
+    "pinThread",
+    "unpinThread",
+  ] as const)("keeps a search-result row visible on %s", async (handler) => {
+    const thread = makeThread();
+    const dismiss = vi.fn(() => ({
+      finished: Promise.resolve(),
+      restore: vi.fn(),
+    }));
+    const unregister = registerThreadDismissal(`${thread.environmentId}:${thread.id}`, dismiss);
+    try {
+      expect(
+        await useThreadListActions({ keepVisible: true })[handler](
+          thread,
+          "2099-01-01T09:00:00.000Z",
+        ),
+      ).toBe(true);
+      expect(dismiss).not.toHaveBeenCalled();
+      expect(state.requests.map(({ action }) => action)).toEqual([handler.replace("Thread", "")]);
+    } finally {
+      unregister();
+    }
+  });
+
+  it("still collapses an archived search result", async () => {
+    const thread = makeThread();
+    const dismiss = vi.fn(() => ({
+      finished: Promise.resolve(),
+      restore: vi.fn(),
+    }));
+    const unregister = registerThreadDismissal(`${thread.environmentId}:${thread.id}`, dismiss);
+    try {
+      expect(await useThreadListActions({ keepVisible: true }).archiveThread(thread)).toBe(true);
+      expect(dismiss).toHaveBeenCalledOnce();
+    } finally {
+      unregister();
+    }
   });
 
   it("sends a different action while one is pending for the same thread", async () => {
