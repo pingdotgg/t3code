@@ -19,6 +19,59 @@ const openDatabase = (filename: string) =>
   );
 
 describe("readOpenCodeUsage", () => {
+  it.effect("selects Z.AI rates without changing model names or guessing other providers", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-zai-test-" });
+      const db = yield* openDatabase(path.join(dir, "opencode.db"));
+      yield* db.unsafe("CREATE TABLE message (id TEXT, session_id TEXT, data TEXT)");
+      const legacy = path.join(dir, "storage", "message", "session-1");
+      yield* fileSystem.makeDirectory(legacy, { recursive: true });
+      const cases = [
+        { modelID: "glm-5.3", providerID: "zai-coding-plan", rateModel: "zai/glm-5.3" },
+        { modelID: "glm-5.3", providerID: "zai", rateModel: "zai/glm-5.3" },
+        { model: { id: "glm-5.3", providerID: "zai-coding-plan" }, rateModel: "zai/glm-5.3" },
+        { model: { modelID: "glm-5.3" }, providerID: "zai", rateModel: "zai/glm-5.3" },
+        { modelID: "glm-5.3", providerID: "other", rateModel: undefined },
+        { modelID: "glm-5.3", rateModel: undefined },
+        { modelID: "zai/glm-5.3", providerID: "zai", rateModel: undefined },
+      ];
+      for (const [index, { rateModel, ...model }] of cases.entries()) {
+        const data = JSON.stringify({
+          ...model,
+          id: `msg-${index}`,
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: 1780000000000 },
+          cost: 0,
+          tokens: { input: 100, output: 20 },
+        });
+        for (const storage of ["sqlite", "json"] as const) {
+          if (storage === "sqlite") {
+            yield* db.unsafe("DELETE FROM message");
+            yield* db.unsafe("INSERT INTO message VALUES (?, ?, ?)", [
+              `msg-${index}`,
+              "session-1",
+              data,
+            ]);
+          } else {
+            yield* db.unsafe("DELETE FROM message");
+            yield* fileSystem.writeFileString(path.join(legacy, "message.json"), data);
+          }
+          const result = yield* readOpenCodeUsage(dir, 0);
+          assert.isFalse(result.error);
+          const records = result.files.flatMap((file) => file.records);
+          assert.strictEqual(records.length, 1);
+          assert.strictEqual(records[0]?.model, "modelID" in model ? model.modelID : "glm-5.3");
+          assert.strictEqual(records[0]?.rateModel, rateModel);
+          assert.isNull(records[0]?.reportedCostUsd);
+          if (storage === "json") yield* fileSystem.remove(path.join(legacy, "message.json"));
+        }
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("bounds raw history allocations while counting every eligible message once", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
