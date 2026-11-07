@@ -38,6 +38,12 @@ describe("parseXcodeMarks", () => {
       { line: 2, kind: "mark", title: "Mid", separator: false },
     ]);
   });
+
+  it("parses classic Mac CR-only line endings", () => {
+    expect(parseXcodeMarks("a\r// MARK: Mid\rb")).toEqual([
+      { line: 2, kind: "mark", title: "Mid", separator: false },
+    ]);
+  });
 });
 
 describe("xcodeMarkMenuLabel", () => {
