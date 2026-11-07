@@ -49,7 +49,6 @@ function draft(overrides: Partial<VoiceDraftSnapshot> = {}): VoiceDraftSnapshot 
     ownerKey: "environment:thread",
     text: "hello world",
     selection: { start: 6, end: 11 },
-    revision: 1,
     ...overrides,
   };
 }
@@ -102,7 +101,7 @@ describe("environment voice input", () => {
     expect(harness.controller.currentState.phase).toBe("error");
     expect(harness.deleted).toEqual([]);
 
-    harness.setDraft(draft({ text: "updated ", revision: 2, selection: { start: 8, end: 8 } }));
+    harness.setDraft(draft({ text: "updated ", selection: { start: 8, end: 8 } }));
     await harness.controller.start();
     expect(transcribe.mock.calls.map(([uri]) => uri)).toEqual([
       "file:///voice.m4a",
@@ -648,7 +647,6 @@ describe("VoiceInputController", () => {
     harness.setDraft(
       draft({
         text: "> cited line\n\nhello world",
-        revision: 2,
         selection: { start: 25, end: 25 },
       }),
     );

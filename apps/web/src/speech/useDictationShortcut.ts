@@ -5,12 +5,20 @@ import { useEffect, useRef, type RefObject } from "react";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { useClientSettings } from "../hooks/useSettings";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { isEditableFocused } from "../lib/editableFocus";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 
 const HOLD_THRESHOLD_MS = 300;
 
 function shouldFinishDictationOnRelease(mode: "auto" | "hold" | "toggle", elapsedMs: number) {
   return mode === "hold" || (mode === "auto" && elapsedMs >= HOLD_THRESHOLD_MS);
+}
+
+function typedInOtherField(event: KeyboardEvent, editor: HTMLElement | null | undefined) {
+  return (
+    isEditableFocused(event.target) &&
+    !(event.target instanceof Node && editor?.contains(event.target))
+  );
 }
 
 type SpeechActions = {
@@ -37,6 +45,8 @@ type ShortcutInput = {
   previewFocus?: boolean;
   /** When set, the chord targets this editor only while it has focus. */
   targetRef?: RefObject<HTMLElement | null>;
+  /** The dictating editor when `targetRef` does not name it; Escape in other text fields reaches them. */
+  editorRef?: RefObject<HTMLElement | null>;
   /** An editor outside this document reports whether it holds the keyboard. */
   ownsFocus?: () => boolean;
   /** Receives handlers that replay keys an outside editor relayed, as if typed here. */
@@ -103,7 +113,8 @@ export function useDictationShortcut(input: ShortcutInput) {
       if (
         event.key === "Escape" &&
         (pressed.current !== null ||
-          (speech.state.phase !== "idle" && speech.state.phase !== "error"))
+          (speech.state.phase !== "idle" && speech.state.phase !== "error")) &&
+        !typedInOtherField(event, (current.current.targetRef ?? current.current.editorRef)?.current)
       ) {
         event.preventDefault();
         event.stopImmediatePropagation();

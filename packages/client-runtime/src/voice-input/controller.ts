@@ -50,7 +50,6 @@ export type VoiceDraftSnapshot = {
   readonly ownerKey: string;
   readonly text: string;
   readonly selection: { readonly start: number; readonly end: number };
-  readonly revision: number;
 };
 
 export type VoiceRecorderStatus = {
@@ -115,12 +114,7 @@ export function resolveTranscriptCommit(
   transcript: string,
   locale: string,
 ): TranscriptCommitResult {
-  if (
-    !current ||
-    current.ownerKey !== captured.ownerKey ||
-    current.text !== captured.text ||
-    current.revision !== captured.revision
-  ) {
+  if (!current || current.ownerKey !== captured.ownerKey) {
     return { kind: "stale" };
   }
 
@@ -129,14 +123,17 @@ export function resolveTranscriptCommit(
     return { kind: "empty" };
   }
 
-  const isEmptySelection = captured.selection.start === captured.selection.end;
+  // Mobile fixes the selection when recording starts, so it can outrun a draft shortened since.
+  const { text } = current;
+  const start = Math.max(0, Math.min(text.length, current.selection.start));
+  const end = Math.max(start, Math.min(text.length, current.selection.end));
+  const isEmptySelection = start === end;
   const language = locale.split(/[-_]/)[0]!.toLowerCase();
   let insertion = replacement;
   if (isEmptySelection && !WORD_SPACELESS_LANGUAGES.has(language)) {
     const auto = language === "auto";
-    const caret = captured.selection.start;
-    const left = captured.text.slice(Math.max(0, caret - 2), caret);
-    const right = captured.text.slice(caret, caret + 2);
+    const left = text.slice(Math.max(0, start - 2), start);
+    const right = text.slice(start, start + 2);
     const leftEdge = auto ? /[A-Za-z0-9.!?,:;)\]}'"]$/ : /(?:\p{L}|\p{M}|\p{N}|[.!?,:;)\]}'"])$/u;
     const rightEdge = auto ? /^[A-Za-z0-9([{'"]/ : /^[\p{L}\p{M}\p{N}([{'"]/u;
     const leftNeedsBoundary =
@@ -150,12 +147,7 @@ export function resolveTranscriptCommit(
     insertion = `${leftNeedsBoundary ? " " : ""}${replacement}${rightNeedsBoundary ? " " : ""}`;
   }
 
-  const result = replaceTextRange(
-    captured.text,
-    captured.selection.start,
-    captured.selection.end,
-    insertion,
-  );
+  const result = replaceTextRange(text, start, end, insertion);
   return {
     kind: "commit",
     text: result.text,

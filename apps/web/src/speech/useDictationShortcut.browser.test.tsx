@@ -1,17 +1,25 @@
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { createRef, type RefObject } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { render } from "../../test/render";
 import { useDictationShortcut } from "./useDictationShortcut";
 
 vi.mock("../hooks/useSettings", () => ({ useClientSettings: () => "hold" }));
 
-function Probe({ speech }: { speech: Parameters<typeof useDictationShortcut>[0]["speech"] }) {
+function Probe({
+  speech,
+  editorRef,
+}: {
+  speech: Parameters<typeof useDictationShortcut>[0]["speech"];
+  editorRef?: RefObject<HTMLElement | null>;
+}) {
   useDictationShortcut({
     keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
     speech,
     disabled: false,
     terminalOpen: false,
     modelPickerOpen: false,
+    ...(editorRef ? { editorRef } : {}),
   });
   return null;
 }
@@ -111,4 +119,25 @@ it("lets Escape in another text field reach that field instead of canceling the 
   );
   expect(speech.cancel).not.toHaveBeenCalled();
   expect(fieldEscape).toHaveBeenCalledOnce();
+});
+
+it("still cancels on Escape in the dictating editor", async () => {
+  const speech = {
+    ...actions(true),
+    state: { phase: "recording" as const, error: null, errorAction: null },
+  };
+  const editorRef = createRef<HTMLTextAreaElement>();
+  await using screen = await render(
+    <>
+      <Probe speech={speech} editorRef={editorRef} />
+      <textarea aria-label="Prompt" ref={editorRef} />
+    </>,
+  );
+  const editor = screen.getByRole("textbox", { name: "Prompt" }).element();
+  if (!(editor instanceof HTMLTextAreaElement)) throw new Error("expected the prompt textarea");
+  editor.focus();
+  editor.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+  );
+  expect(speech.cancel).toHaveBeenCalledOnce();
 });
