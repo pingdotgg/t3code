@@ -1026,44 +1026,67 @@ function RightPanelTab(
   );
 }
 
+export type PullRequestAttentionPulse = {
+  scope: string | null;
+  surfaceId: string | null;
+  requestId: number;
+  key: number;
+};
+
+/** Same focused PR in the same panel with a bumped request id → pulse; a new scope only baselines. */
+export function nextPullRequestAttentionPulse(
+  current: PullRequestAttentionPulse,
+  focused: { scope: string; id: string; requestId: number } | null,
+): PullRequestAttentionPulse {
+  if (focused === null) {
+    return current.surfaceId === null && current.scope === null
+      ? current
+      : { scope: null, surfaceId: null, requestId: 0, key: current.key };
+  }
+  const sameSurface = current.scope === focused.scope && current.surfaceId === focused.id;
+  if (sameSurface && current.requestId !== focused.requestId) {
+    return {
+      scope: focused.scope,
+      surfaceId: focused.id,
+      requestId: focused.requestId,
+      key: current.key + 1,
+    };
+  }
+  if (!sameSurface || current.requestId !== focused.requestId) {
+    return {
+      scope: focused.scope,
+      surfaceId: focused.id,
+      requestId: focused.requestId,
+      key: current.key,
+    };
+  }
+  return current;
+}
+
 export function RightPanelTabs(props: RightPanelTabsProps) {
   const focusedSurface = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
+  // widthStorageKey is per-thread in chat, so a thread switch does not inherit the prior baseline.
+  const attentionScope = props.widthStorageKey ?? props.environmentId ?? "";
   const focusedPullRequestAttention =
     focusedSurface?.kind === "pull-request"
-      ? { id: focusedSurface.id, requestId: focusedSurface.attentionRequestId ?? 0 }
+      ? {
+          scope: attentionScope,
+          id: focusedSurface.id,
+          requestId: focusedSurface.attentionRequestId ?? 0,
+        }
       : null;
-  // Same PR still focused with a bumped request id: the link did something; pulse the panel.
   const [pullRequestAttentionPulse, setPullRequestAttentionPulse] = useState({
+    scope: null as string | null,
     surfaceId: null as string | null,
     requestId: 0,
     key: 0,
   });
-  if (focusedPullRequestAttention) {
-    if (
-      pullRequestAttentionPulse.surfaceId === focusedPullRequestAttention.id &&
-      pullRequestAttentionPulse.requestId !== focusedPullRequestAttention.requestId
-    ) {
-      setPullRequestAttentionPulse({
-        surfaceId: focusedPullRequestAttention.id,
-        requestId: focusedPullRequestAttention.requestId,
-        key: pullRequestAttentionPulse.key + 1,
-      });
-    } else if (
-      pullRequestAttentionPulse.surfaceId !== focusedPullRequestAttention.id ||
-      pullRequestAttentionPulse.requestId !== focusedPullRequestAttention.requestId
-    ) {
-      setPullRequestAttentionPulse({
-        surfaceId: focusedPullRequestAttention.id,
-        requestId: focusedPullRequestAttention.requestId,
-        key: pullRequestAttentionPulse.key,
-      });
-    }
-  } else if (pullRequestAttentionPulse.surfaceId !== null) {
-    setPullRequestAttentionPulse({
-      surfaceId: null,
-      requestId: 0,
-      key: pullRequestAttentionPulse.key,
-    });
+  const nextAttentionPulse = nextPullRequestAttentionPulse(
+    pullRequestAttentionPulse,
+    focusedPullRequestAttention,
+  );
+  if (nextAttentionPulse !== pullRequestAttentionPulse) {
+    setPullRequestAttentionPulse(nextAttentionPulse);
   }
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;

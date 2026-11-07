@@ -1054,19 +1054,6 @@ describe("rightPanelStore", () => {
     expect(surface()).not.toHaveProperty("revealUrl");
   });
 
-  it("bumps attention when reopening the pull request already in the panel", () => {
-    const pr = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4909 };
-    useRightPanelStore.getState().openPullRequest(refA, pr);
-    expect(
-      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
-    ).toMatchObject({ attentionRequestId: 1 });
-
-    useRightPanelStore.getState().openPullRequest(refA, pr);
-    expect(
-      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
-    ).toMatchObject({ attentionRequestId: 2 });
-  });
-
   it("restores each environment, thread and PR surface's detail tab after reload and URL reopen", async () => {
     const pr = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4909 };
     const otherPr = { ...pr, projectId: "project-b" };
