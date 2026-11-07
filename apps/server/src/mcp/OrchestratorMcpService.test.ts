@@ -1408,7 +1408,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     Effect.gen(function* () {
       const subscribed = yield* Deferred.make<void>();
       const returned = yield* Deferred.make<void>();
-      const dispatched = yield* Ref.make<ReadonlyArray<{ readonly type: string }>>([]);
+      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
       const threadWaitBudgets = yield* Ref.make<ReadonlyArray<number | undefined>>([]);
       const task = {
         id: taskId,
@@ -1431,7 +1431,9 @@ describe("OrchestratorMcpService provider resolution", () => {
           assertProviderInstanceEnabled: () => Effect.void,
           isProviderInstanceEnabledForProject: () => Effect.succeed(true),
           getThreadRecords: (threadId) =>
-            Effect.succeed(threadId === parentThreadId ? parentProjection([task]) : childProjection),
+            Effect.succeed(
+              threadId === parentThreadId ? parentProjection([task]) : childProjection,
+            ),
           getThreadEventSequence: () => Effect.succeed(0),
           delegatedTaskResultPending: () => Effect.succeed(false),
           streamStoredEventsFrom: () =>

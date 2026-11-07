@@ -538,7 +538,7 @@ export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   threadId: ThreadId,
   runId: Schema.optional(RunId),
   timeoutMs: Schema.optional(Schema.Finite).annotate({
-    description: "Default 30 s, max 45 s. A timeout does not stop the thread.",
+    description: "Default 30 s, max 45 s.",
   }),
   untilDelegatedWorkSettled: Schema.optional(
     Schema.Boolean.annotate({
