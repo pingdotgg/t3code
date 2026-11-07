@@ -173,22 +173,37 @@ export function makePool() {
       started: started.promise,
       exit: exit.promise,
       dispose: () =>
-        (disposal ??= (async () => {
-          Atomics.store(state, 1, 1);
-          port1.postMessage("dispose");
-          await released.promise;
-          port1.close();
-          worker.off("error", onError);
-          worker.off("exit", onExit);
-          jobs.delete(job);
-          if (dead) return;
-          if (closed || idle) {
-            await stop(worker);
-          } else {
-            idle = worker;
-            worker.unref();
-          }
-        })()),
+        (disposal ??= new Promise<void>((resolve, reject) => {
+          // Bound the caller's wait; only release can relinquish child ownership.
+          // @effect-diagnostics-next-line globalTimers:off -- this Promise adapter bounds callers without cancelling worker-owned cleanup.
+          const timer = setTimeout(resolve, 1_000);
+          const cleanup = async () => {
+            Atomics.store(state, 1, 1);
+            port1.postMessage("dispose");
+            await released.promise;
+            port1.close();
+            worker.off("error", onError);
+            worker.off("exit", onExit);
+            jobs.delete(job);
+            if (dead) return;
+            if (closed || idle) {
+              await stop(worker);
+            } else {
+              idle = worker;
+              worker.unref();
+            }
+          };
+          void cleanup().then(
+            () => {
+              clearTimeout(timer);
+              resolve();
+            },
+            (error) => {
+              clearTimeout(timer);
+              reject(error);
+            },
+          );
+        })),
     };
     jobs.add(job);
     worker.postMessage({ input, port: port2, control }, [port2]);

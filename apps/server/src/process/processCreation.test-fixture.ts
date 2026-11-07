@@ -5,20 +5,31 @@ import * as NodeHttp from "node:http";
 import * as NodeModule from "node:module";
 import * as NodeWorkerThreads from "node:worker_threads";
 
-const { control, nativeOnly } = NodeWorkerThreads.workerData as {
+const { control, nativeOnly, failure } = NodeWorkerThreads.workerData as {
   control: SharedArrayBuffer;
   nativeOnly?: boolean;
+  failure?: { at: "disposing" | "child-exited"; mode: "error" | "exit" };
 };
 const barrier = new Int32Array(control);
 const parent = NodeWorkerThreads.parentPort!;
+const childExit = Promise.withResolvers<void>();
 const require = NodeModule.createRequire(import.meta.url);
 const childProcesses = require("node:child_process") as typeof NodeChildProcess;
 const workers = require("node:worker_threads") as typeof NodeWorkerThreads;
 const spawn = childProcesses.spawn;
 const Worker = workers.Worker;
 const postMessage = workers.MessagePort.prototype.postMessage;
+const failAt = (at: "disposing" | "child-exited") => {
+  if (failure?.at !== at) return;
+  if (failure.mode === "exit") process.exit(17);
+  throw new Error(`Fixture worker failed at ${at}`);
+};
 workers.MessagePort.prototype.postMessage = function (...args: Parameters<typeof postMessage>) {
-  if (args[0] === "dispose") parent.postMessage({ type: "disposing" });
+  if (args[0] === "dispose") {
+    // Throw outside the Effect finalizer so this is a native worker failure.
+    if (failure?.at === "disposing") queueMicrotask(() => failAt("disposing"));
+    else parent.postMessage({ type: "disposing" });
+  }
   return Reflect.apply(postMessage, this, args);
 };
 
@@ -60,6 +71,10 @@ workers.Worker = class extends Worker {
         : options,
     );
     this.on("message", (event: { type?: string }) => {
+      if (event.type === "child-exited" && failure?.at === "child-exited") {
+        childExit.resolve();
+        return;
+      }
       if (event.type === "creation-blocked" || event.type === "child-exited")
         parent.postMessage(event);
     });
@@ -127,7 +142,11 @@ const server = NodeHttp.createServer((request, response) => {
     },
   );
 });
-parent.once("message", () => {
+parent.on("message", (message: string) => {
+  if (message === "fail-child-exit") {
+    void childExit.promise.then(() => queueMicrotask(() => failAt("child-exited")));
+    return;
+  }
   void runner.dispose().finally(() => {
     server.closeAllConnections();
     server.close(() => parent.close());

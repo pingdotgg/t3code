@@ -20,7 +20,11 @@ const request = (port: number, path: string) =>
     request.once("error", reject);
   });
 
-export async function probeProcessCreation(nativeOnly = false, cancel = false) {
+export async function probeProcessCreation(
+  nativeOnly = false,
+  cancel = false,
+  failure?: { at: "disposing" | "child-exited"; mode: "error" | "exit" },
+) {
   const control = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
   const barrier = new Int32Array(control);
   const listening = Promise.withResolvers<number>();
@@ -28,10 +32,17 @@ export async function probeProcessCreation(nativeOnly = false, cancel = false) {
   const stopped = Promise.withResolvers<void>();
   const disposing = Promise.withResolvers<void>();
   const childExited = Promise.withResolvers<void>();
+  const milestones = [listening, blocked, disposing, childExited];
+  // A worker failure can precede acquisition of any of these milestones.
+  for (const milestone of milestones) void milestone.promise.catch(() => {});
+  const fail = (error: Error) => {
+    for (const milestone of milestones) milestone.reject(error);
+  };
+  let stopping = false;
   const worker = new NodeWorkerThreads.Worker(
     new URL("./processCreation.test-fixture.ts", import.meta.url),
     {
-      workerData: { control, nativeOnly },
+      workerData: { control, nativeOnly, failure },
       execArgv: [],
     },
   );
@@ -41,18 +52,17 @@ export async function probeProcessCreation(nativeOnly = false, cancel = false) {
     if (event.type === "disposing") disposing.resolve();
     if (event.type === "child-exited") childExited.resolve();
   });
-  worker.once("error", (error) => {
-    listening.reject(error);
-    blocked.reject(error);
+  worker.once("error", fail);
+  worker.once("exit", (code) => {
+    if (!stopping) fail(new Error(`Fixture worker exited unexpectedly (${code})`));
+    stopped.resolve();
   });
-  worker.once("exit", () => stopped.resolve());
   const release = () => {
     Atomics.store(barrier, 0, 1);
     Atomics.notify(barrier, 0);
   };
   let running: Promise<string> | undefined;
-  // A startup failure can happen before the controller starts waiting for the gate.
-  void blocked.promise.catch(() => {});
+  let cancellation: Promise<string> | undefined;
   try {
     const port = await listening.promise;
     running = request(port, "/run");
@@ -62,10 +72,12 @@ export async function probeProcessCreation(nativeOnly = false, cancel = false) {
     if (serverThread) release();
     const probe = JSON.parse(await request(port, "/probe")) as { gateClosed: boolean };
     if (cancel && !serverThread) {
-      const cancellation = request(port, "/cancel");
+      cancellation = request(port, "/cancel");
+      void cancellation.catch(() => {});
       await disposing.promise;
       release();
       await cancellation;
+      if (failure?.at === "child-exited") worker.postMessage("fail-child-exit");
       await childExited.promise;
       await running.catch(() => {});
       return { serverThread, ...probe, stdout: "cancelled", code: null };
@@ -76,6 +88,8 @@ export async function probeProcessCreation(nativeOnly = false, cancel = false) {
   } finally {
     release();
     await running?.catch(() => {});
+    await cancellation?.catch(() => {});
+    stopping = true;
     worker.postMessage("stop");
     await stopped.promise;
   }

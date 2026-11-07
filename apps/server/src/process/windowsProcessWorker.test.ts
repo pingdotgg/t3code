@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- verifies real child streams and process-tree ownership.
 import * as NodeNet from "node:net";
+import * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
@@ -94,49 +95,90 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("Windows proces
     }),
   );
 
-  it.live("waits for tree cleanup when disposing a running child", () =>
-    Effect.promise(async () => {
-      const pool = makePool();
-      const connected = Promise.withResolvers<void>();
-      const disconnected = Promise.withResolvers<void>();
-      const sockets = new Set<import("node:net").Socket>();
-      const server = NodeNet.createServer((socket) => {
-        sockets.add(socket);
-        socket.on("error", () => {});
-        socket.once("data", () => connected.resolve());
-        socket.once("close", () => {
-          sockets.delete(socket);
-          disconnected.resolve();
+  it.live.each(["normal", "taskkill", "child-exit"] as const)(
+    "retains tree cleanup ownership when disposing a running child (%s)",
+    (mode) =>
+      Effect.promise(async () => {
+        const connected = Promise.withResolvers<void>();
+        const disconnected = Promise.withResolvers<void>();
+        const sockets = new Set<import("node:net").Socket>();
+        const server = NodeNet.createServer((socket) => {
+          sockets.add(socket);
+          socket.on("error", () => {});
+          socket.once("data", () => connected.resolve());
+          socket.once("close", () => {
+            sockets.delete(socket);
+            disconnected.resolve();
+          });
         });
-      });
-      server.listen(0, "127.0.0.1");
-      await new Promise<void>((resolve, reject) => {
-        server.once("listening", resolve);
-        server.once("error", reject);
-      });
-      const address = server.address();
-      if (!address || typeof address === "string") throw new Error("Missing test address");
-      const descendant = `const s=require('node:net').connect(${address.port},'127.0.0.1',()=>s.write('ready')); s.once('close',()=>process.exit());`;
-      const job = pool.start({
-        command: process.execPath,
-        args: [
-          "-e",
-          `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true}); process.stdin.resume();`,
-        ],
-        env: process.env,
-        shell: false,
-      });
-      try {
-        await job.started;
-        await connected.promise;
-        await job.dispose();
-        await disconnected.promise;
-      } finally {
-        for (const socket of sockets) socket.destroy();
-        await job.dispose();
-        await pool.close();
-        await new Promise<void>((resolve) => server.close(() => resolve()));
-      }
-    }),
+        server.listen(0, "127.0.0.1");
+        await new Promise<void>((resolve, reject) => {
+          server.once("listening", resolve);
+          server.once("error", reject);
+        });
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("Missing test address");
+        const descendant = `const s=require('node:net').connect(${address.port},'127.0.0.1',()=>s.write('ready')); s.once('close',()=>process.exit());`;
+        const fixture = new NodeWorkerThreads.Worker(
+          new URL("./processCleanup.test-fixture.ts", import.meta.url),
+          {
+            workerData: { mode, descendant },
+            execArgv: [],
+          },
+        );
+        const cleaned = Promise.withResolvers<{ reused: boolean }>();
+        const failed = Promise.withResolvers<never>();
+        const fail = (error: Error) => {
+          cleaned.reject(error);
+          failed.reject(error);
+        };
+        const stopped = new Promise<number>((resolve) => {
+          fixture.once("exit", (code) => {
+            fail(new Error(`Cleanup fixture exited unexpectedly (${code})`));
+            resolve(code);
+          });
+        });
+        fixture.on("message", (event: { type: string; reused: boolean }) => {
+          if (event.type === "cleaned") cleaned.resolve(event);
+        });
+        fixture.once("error", fail);
+        void cleaned.promise.catch(() => {});
+        void failed.promise.catch(() => {});
+        const message = () => new Promise<unknown>((resolve) => fixture.once("message", resolve));
+        try {
+          await Promise.race([message(), failed.promise]);
+          await Promise.race([connected.promise, failed.promise]);
+          const disposed = message();
+          // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node worker messages have no target origin.
+          fixture.postMessage("dispose");
+          const result = await Promise.race([disposed, failed.promise]);
+          expect(result).toMatchObject({
+            type: "disposed",
+            settled: true,
+            exited: mode === "normal",
+          });
+          if (mode !== "normal") {
+            expect(result).toMatchObject({
+              separateOwner: true,
+              live: true,
+              closed: mode === "child-exit",
+            });
+            expect(sockets.size).toBe(1);
+          }
+        } finally {
+          // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node worker messages have no target origin.
+          fixture.postMessage("release");
+          try {
+            const result = await cleaned.promise;
+            if (mode === "taskkill") expect(result.reused).toBe(true);
+            expect(await stopped).toBe(0);
+            await disconnected.promise;
+          } finally {
+            for (const socket of sockets) socket.destroy();
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+            await stopped;
+          }
+        }
+      }),
   );
 });
