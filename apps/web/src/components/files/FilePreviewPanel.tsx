@@ -414,7 +414,7 @@ function WorkspaceDocumentPreview(props: {
           path: props.absolutePath,
           ...(props.document ? {} : { disposition: "attachment" as const }),
         };
-  // Drafts have no server file revision, so they reload on every workspace mutation.
+  // Drafts keep reloading on every workspace mutation, as before.
   const revisioned = resource._tag === "media-file";
   const assetUrl = useAssetUrlState(
     props.environmentId,
