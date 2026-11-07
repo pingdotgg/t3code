@@ -1902,6 +1902,15 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertCommandOutputStreamingOutput,
       },
+      {
+        driver: ProviderDriverKind.make("cursor"),
+        transcriptFile: new URL(
+          "./command_output_streaming/cursor_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CURSOR_MODEL_SELECTION,
+        assertOutput: assertCommandOutputStreamingOutput,
+      },
     ],
   },
   {
