@@ -5,9 +5,30 @@
 
 static const char *scenario;
 
+/* KWallet, through Secret Service, stores the key as server=<folder>,
+ * user=<entry> with no application attribute. Pairs follow Chromium's
+ * freedesktop_secret_key_provider.h branding. */
+static const char *const kwallet_items[][3] = {
+    {"chrome", "Chrome Keys", "Chrome Safe Storage"},
+    {"chromium", "Chromium Keys", "Chromium Safe Storage"},
+};
+
+static GList *search_kwallet(GHashTable *attributes) {
+    const char *server = g_hash_table_lookup(attributes, "server");
+    const char *user = g_hash_table_lookup(attributes, "user");
+    for (gsize i = 0; i < G_N_ELEMENTS(kwallet_items); i++) {
+        if (g_strcmp0(server, kwallet_items[i][1]) == 0 && g_strcmp0(user, kwallet_items[i][2]) == 0) {
+            scenario = "kwallet";
+            return g_list_append(NULL, g_object_new(SECRET_TYPE_ITEM, NULL));
+        }
+    }
+    return NULL;
+}
+
 GList *__wrap_secret_service_search_sync(SecretService *service, const SecretSchema *schema,
                                        GHashTable *attributes, SecretSearchFlags flags,
                                        GCancellable *cancellable, GError **error) {
+    if (!g_hash_table_contains(attributes, "application")) return search_kwallet(attributes);
     g_assert_null(service);
     g_assert_null(cancellable);
     g_assert_cmpstr(schema->name, ==, "chrome_libsecret_os_crypt_password_v2");
@@ -16,6 +37,9 @@ GList *__wrap_secret_service_search_sync(SecretService *service, const SecretSch
     g_assert_cmpuint(g_hash_table_size(attributes), ==, 1);
     scenario = g_intern_string(g_hash_table_lookup(attributes, "application"));
     if (strcmp(scenario, "missing") == 0) return NULL;
+    for (gsize i = 0; i < G_N_ELEMENTS(kwallet_items); i++) {
+        if (strcmp(scenario, kwallet_items[i][0]) == 0) return NULL;
+    }
     if (strcmp(scenario, "cancelled") == 0) {
         g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CANCELLED, "cancelled");
         return NULL;
