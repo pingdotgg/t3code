@@ -3,6 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -102,7 +103,7 @@ describe("ssh command", () => {
       name: "opt-in tail",
       keepErrorOutputTail: true,
       exitCode: 1,
-      stderr: "stderr failure ".repeat(400),
+      stderr: "stderr failure ".repeat(100),
     },
     { name: "successful output", keepErrorOutputTail: true, exitCode: 0, stderr: "" },
   ])("preserves process output: $name", ({ keepErrorOutputTail, exitCode, stderr }) =>
@@ -156,12 +157,35 @@ describe("ssh command", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("redacts credentials from stdout in non-zero command failures", () => {
+  it.effect("redacts credentials from command output in non-zero command failures", () => {
+    const token = "fake-pairing-token";
+    const launchLogTail = (credential: string, qrCode: ReadonlyArray<string>) =>
+      [
+        `Token: ${credential}`,
+        `Pairing URL: http://127.0.0.1:3773/pair#token=${credential}`,
+        `App link: t3code://pair?url=http%3A%2F%2F127.0.0.1%3A3773%2Fpair%23token%3D${credential}`,
+        ...qrCode,
+        "Remote T3 server did not become ready on 127.0.0.1:3773.",
+      ].join("\n");
+    const padding = "earlier launch output\n".repeat(200);
+    const stderr = `${padding}${launchLogTail(token, [
+      "  █▀▀▀▀▀█ ▄▀▄▄█ █▀▀▀▀▀█  ",
+      "  ▀▀▀▀▀▀▀ ▀ ▀ ▀ ▀▀▀▀▀▀▀  ",
+    ])}\n`;
+    const redactedStderr = `${padding}${launchLogTail("[redacted]", ["[redacted QR code]"])}\n`;
+    const warnings: Array<string> = [];
     const spawner = ChildProcessSpawner.make(() =>
-      Effect.succeed(makeFailedProcess({ stdout: '{"credential":"pairing-secret"}\n' })),
+      Effect.succeed(makeFailedProcess({ stdout: '{"credential":"pairing-secret"}\n', stderr })),
     );
     const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
-    const layerProcess = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, layerSpawner);
+    const layerProcess = Layer.mergeAll(
+      NodeServices.layer,
+      NodeCrypto.layer,
+      layerSpawner,
+      Logger.layer([Logger.make(({ message }) => warnings.push(JSON.stringify(message)))], {
+        mergeWithExisting: false,
+      }),
+    );
 
     return Effect.gen(function* () {
       const result = yield* Effect.result(
@@ -179,9 +203,14 @@ describe("ssh command", () => {
       assert.isTrue(Result.isFailure(result));
       if (Result.isFailure(result)) {
         assert.instanceOf(result.failure, SshCommandError);
-        assert.equal(result.failure.message, '{"credential":"[redacted]"}');
         assert.equal(result.failure.stdout, '{"credential":"[redacted]"}\n');
+        assert.equal(result.failure.stderr, `[truncated]\n${redactedStderr.slice(-4_000)}`);
+        assert.equal(result.failure.message, result.failure.stderr.trim());
       }
+      const failureLog = warnings.find((entry) => entry.includes("ssh.command.failed"));
+      assert.isDefined(failureLog);
+      assert.notInclude(failureLog, token);
+      assert.include(failureLog, "[redacted QR code]");
     }).pipe(Effect.provide(layerProcess));
   });
 });
