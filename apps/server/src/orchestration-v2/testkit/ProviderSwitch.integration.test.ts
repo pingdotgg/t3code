@@ -18,6 +18,7 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
   ProviderDriverKind,
@@ -2943,6 +2944,125 @@ describe("orchestration v2 provider switching", () => {
           );
         }),
       ),
+  );
+
+  it.live("starts a scheduled fresh run on an idle thread whose session has background work", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("fresh-context-scheduled");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
+        const backgroundWork = yield* Ref.make(false);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            closedSessions,
+            backgroundWork,
+            nativeThreadGeneration: yield* Ref.make(0),
+          }),
+        ]);
+        const scheduledThreadId = ThreadId.make("thread:fresh-context:scheduled");
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          // Mirrors ScheduledTaskService firing a fresh_session task into its bound thread.
+          const fire = (name: string) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "agent",
+              creationSource: "mcp",
+              commandId: CommandId.make(`scheduled-task:fresh-context:${name}`),
+              threadId: scheduledThreadId,
+              messageId: MessageId.make(`scheduled-task-message:fresh-context:${name}`),
+              scheduledTaskId: ScheduledTaskId.make("scheduled-task:fresh-context"),
+              text: `Prompt ${name}`,
+              attachments: [],
+              freshContext: true,
+              dispatchMode: { type: "queue_after_active" },
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "agent",
+            creationSource: "mcp",
+            commandId: CommandId.make("command:fresh-context:scheduled:create"),
+            threadId: scheduledThreadId,
+            projectId: ProjectId.make("project:fresh-context:scheduled"),
+            title: "Scheduled fresh context",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* fire("alpha");
+          yield* worker.drain();
+          yield* waitForIdle(scheduledThreadId);
+          // The previous run left a background command or subagent behind.
+          yield* Ref.set(backgroundWork, true);
+
+          // Someone sending from the client is still told to wait or press Stop.
+          const refused = yield* orchestrator
+            .dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:fresh-context:scheduled:interactive"),
+              threadId: scheduledThreadId,
+              messageId: MessageId.make("message:fresh-context:scheduled:interactive"),
+              text: "Prompt interactive",
+              attachments: [],
+              freshContext: true,
+              dispatchMode: { type: "start_immediately" },
+            })
+            .pipe(Effect.flip);
+          assert.include(String(refused.cause), "a fresh session would end them");
+
+          // Nobody watches a scheduled fire to wait or press Stop, so refusing it stalls the schedule.
+          yield* fire("beta");
+          yield* worker.drain();
+          yield* waitForIdle(scheduledThreadId);
+          yield* worker.drain();
+          const projection = yield* orchestrator.getThreadProjection(scheduledThreadId);
+          const turns = yield* Ref.get(capturedTurns);
+          const turnFor = (name: string) =>
+            turns.find((turn) => turn.text.endsWith(`Prompt ${name}`));
+
+          assert.deepEqual(
+            projection.runs.map((run) => [run.freshContext, run.status]),
+            [
+              [true, "completed"],
+              [true, "completed"],
+            ],
+          );
+          assert.notEqual(turnFor("beta")?.providerThreadId, turnFor("alpha")?.providerThreadId);
+          assert.notEqual(turnFor("beta")?.nativeThreadId, turnFor("alpha")?.nativeThreadId);
+          assert.deepEqual(yield* Ref.get(closedSessions), []);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "fresh-context-scheduled",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+    ),
   );
 
   it.live("keeps the thread a queued fresh run reserved for that run", () =>
