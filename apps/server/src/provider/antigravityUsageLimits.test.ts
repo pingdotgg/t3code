@@ -65,7 +65,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     userId?: string;
     userInfoAt?: number;
     missingToken?: boolean;
-    authMethod?: "oauth-personal" | "gemini-api-key";
+    authMethod?: "oauth-personal" | "oauth-business" | "gemini-api-key";
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -330,11 +330,12 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  // Oracle: the existing endpoint merge keeps the most-used reading.
-  it.effect("keeps the used endpoint reading and its reset over an untouched reading", () =>
+  // Oracle: workspace sign-ins are metered on cloudcode-pa, so its reading wins even when less used.
+  it.effect("reports a business account's quota from the endpoint it is metered on", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-21T10:16:04Z")));
       const { probe } = yield* fixture({
+        authMethod: "oauth-business",
         summaryByHost: {
           "daily-cloudcode-pa.googleapis.com": {
             buckets: [
@@ -383,9 +384,8 @@ describe("Antigravity subscription limits", () => {
           id: "3p-weekly",
           label: "Claude & GPT (shared) · Weekly",
           kind: "weekly",
-          usedPercent: 50,
+          usedPercent: 0,
           windowDurationMins: 10080,
-          resetsAt: "2026-10-27T10:16:04.000Z",
         },
       ]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
@@ -474,7 +474,7 @@ describe("Antigravity subscription limits", () => {
       const byId = new Map(limits.windows.map((window) => [window.id, window]));
       expect(byId.get("gemini-weekly")?.label).toBe("Gemini · Weekly");
       expect(byId.get("3p-5h")?.usedPercent).toBeCloseTo(70);
-      expect(byId.get("3p-weekly")?.usedPercent).toBe(100);
+      expect(byId.get("3p-weekly")?.usedPercent).toBe(50);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
