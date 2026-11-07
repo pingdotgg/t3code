@@ -3,9 +3,11 @@ import { ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 import { CursorSettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { createModelSelection } from "@t3tools/shared/model";
 import { beforeEach, vi } from "vite-plus/test";
 
@@ -50,11 +52,18 @@ beforeEach(() => {
   cursorSdkMock.create.mockReset();
   cursorSdkMock.send.mockReset();
   cursorSdkMock.create.mockImplementation(async (options) => {
-    cursorSdkMock.send.mockImplementation(async (prompt) => ({
-      status: "running",
-      cancel: cursorSdkMock.cancel,
-      wait: () => cursorSdkMock.prompt(prompt, options),
-    }));
+    cursorSdkMock.send.mockImplementation(async (prompt) => {
+      const run = {
+        status: "running",
+        cancel: cursorSdkMock.cancel,
+        wait: async () => {
+          const result = await cursorSdkMock.prompt(prompt, options);
+          run.status = result.status;
+          return result;
+        },
+      };
+      return run;
+    });
     return {
       close: cursorSdkMock.close,
       [Symbol.asyncDispose]: async () => {
@@ -95,23 +104,30 @@ describe("CursorTextGeneration", () => {
       };
       yield* generation.generateCommitMessage(input);
       expect(cursorSdkMock.create).toHaveBeenLastCalledWith(
-        expect.objectContaining({ apiKey: "first-browser-key" }),
+        expect.objectContaining({ apiKey: "first-browser-key", tools: [] }),
       );
       apiKey = "second-browser-key";
       yield* generation.generateCommitMessage(input);
       expect(cursorSdkMock.create).toHaveBeenLastCalledWith(
-        expect.objectContaining({ apiKey: "second-browser-key" }),
+        expect.objectContaining({ apiKey: "second-browser-key", tools: [] }),
       );
     }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("continues in the temp directory when the SDK cannot sandbox", () =>
     Effect.gen(function* () {
-      cursorSdkMock.create.mockImplementationOnce(async () => {
-        throw new Error(
-          "Local SDK sandboxing was requested, but sandboxing is not supported in this environment. Disable local.sandboxOptions.enabled or remove ~/.cursor/sandbox.json to run without sandboxing.",
-        );
-      });
+      // The SDK accepts sandboxOptions at create and rejects them when send builds the executor.
+      cursorSdkMock.create.mockImplementationOnce(async () => ({
+        close: cursorSdkMock.close,
+        [Symbol.asyncDispose]: async () => {
+          cursorSdkMock.close();
+        },
+        send: async () => {
+          throw new Error(
+            "Local SDK sandboxing was requested, but sandboxing is not supported in this environment. Disable local.sandboxOptions.enabled or remove ~/.cursor/sandbox.json to run without sandboxing.",
+          );
+        },
+      }));
       const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
         CURSOR_API_KEY: "test-cursor-key",
       });
@@ -126,10 +142,13 @@ describe("CursorTextGeneration", () => {
 
       expect(generated.subject).toBe("Add generated commit message");
       expect(cursorSdkMock.create).toHaveBeenCalledTimes(2);
+      expect(cursorSdkMock.close).toHaveBeenCalledTimes(2);
       expect(cursorSdkMock.create.mock.calls[0]?.[0]).toMatchObject({
+        tools: [],
         local: { sandboxOptions: { enabled: true } },
       });
       expect(cursorSdkMock.create.mock.calls[1]?.[0]).toMatchObject({
+        tools: [],
         local: {
           cwd: "/isolated-text-generation",
           store: { dispose: cursorSdkMock.storeDispose },
@@ -167,7 +186,115 @@ describe("CursorTextGeneration", () => {
 
       expect(generated.subject).toBe("Update README dummy comment with attribution and date");
       expect(generated.body).toBe("");
+      expect(cursorSdkMock.prompt).toHaveBeenCalledOnce();
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    { name: "invalid JSON", result: "Add a generated commit message" },
+    {
+      name: "a body with the wrong type",
+      result: '{"subject":"Add generated commit message","body":[]}',
+    },
+    { name: "empty output", result: "   " },
+  ])("retries $name with a fresh agent before returning a commit message", ({ result }) =>
+    Effect.gen(function* () {
+      cursorSdkMock.prompt
+        .mockResolvedValueOnce({ id: "invalid-output", status: "finished", result })
+        .mockImplementationOnce(async (prompt) => {
+          expect(cursorSdkMock.close).toHaveBeenCalledOnce();
+          expect(prompt).toContain("Return ONLY the JSON object");
+          return {
+            id: "valid-output",
+            status: "finished",
+            result: '{"subject":"Add generated commit message","body":""}',
+          };
+        });
+      const generation = yield* makeCursorTextGeneration(cursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      });
+      const generated = yield* generation.generateCommitMessage({
+        cwd: process.cwd(),
+        branch: "feature/cursor",
+        stagedSummary: "M file.ts",
+        stagedPatch: "diff",
+        modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "auto"),
+      });
+
+      expect(generated).toEqual({
+        subject: "Add generated commit message",
+        body: "",
+      });
+      expect(cursorSdkMock.create).toHaveBeenCalledTimes(2);
+      expect(cursorSdkMock.close).toHaveBeenCalledTimes(2);
+      expect(cursorSdkMock.storeDispose).toHaveBeenCalledOnce();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("stops after a second invalid reply and preserves the validation error", () =>
+    Effect.gen(function* () {
+      cursorSdkMock.prompt.mockResolvedValue({
+        id: "invalid-output",
+        status: "finished",
+        result: '{"subject":"Add generated commit message","body":null}',
+      });
+      const generation = yield* makeCursorTextGeneration(cursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      });
+      const failure = yield* Effect.flip(
+        generation.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: null,
+          stagedSummary: "M file.ts",
+          stagedPatch: "diff",
+          modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "auto"),
+        }),
+      );
+
+      expect(failure.operation).toBe("generateCommitMessage");
+      expect(failure.detail).toBe("Cursor SDK returned invalid structured output.");
+      expect(Schema.isSchemaError(failure.cause)).toBe(true);
+      expect(cursorSdkMock.prompt).toHaveBeenCalledTimes(2);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps both attempts inside the original deadline and cancels the pending retry", () =>
+    Effect.gen(function* () {
+      const firstStarted = Promise.withResolvers<void>();
+      const retryStarted = Promise.withResolvers<void>();
+      const firstResult = Promise.withResolvers<RunResult>();
+      cursorSdkMock.prompt
+        .mockImplementationOnce(() => {
+          firstStarted.resolve();
+          return firstResult.promise;
+        })
+        .mockImplementationOnce(() => {
+          retryStarted.resolve();
+          return new Promise(() => {});
+        });
+      const generation = yield* makeCursorTextGeneration(cursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      });
+      const request = yield* generation
+        .generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Fix reconnect",
+          modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "auto"),
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+
+      yield* Effect.promise(() => firstStarted.promise);
+      yield* TestClock.adjust("2 minutes");
+      firstResult.resolve({ id: "invalid-output", status: "finished", result: "Not JSON" });
+      yield* Effect.promise(() => retryStarted.promise);
+      yield* TestClock.adjust("1 minute");
+
+      expect(cursorSdkMock.prompt).toHaveBeenCalledTimes(2);
+      expect(cursorSdkMock.cancel).toHaveBeenCalledOnce();
+      expect((yield* Fiber.join(request)).detail).toBe("Cursor SDK request timed out.");
+      expect(cursorSdkMock.close).toHaveBeenCalledTimes(2);
+      expect(cursorSdkMock.storeDispose).toHaveBeenCalledOnce();
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("generates thread titles through Cursor SDK text generation", () =>
@@ -208,7 +335,7 @@ describe("CursorTextGeneration", () => {
     },
     { status: "cancelled", error: undefined, detail: "Cursor SDK request was cancelled." },
   ] as const)(
-    "rejects a $status Cursor SDK run ($error.code) that includes valid title JSON",
+    "does not retry an unsuccessful $status Cursor SDK run ($error.code)",
     ({ status, error, detail }) =>
       Effect.gen(function* () {
         const promptResult = {
@@ -237,7 +364,30 @@ describe("CursorTextGeneration", () => {
         expect(failure.message).not.toContain("Raw Cursor");
         expect(failure.cause).toBe(error);
         expect(cursorSdkMock.close).toHaveBeenCalledOnce();
+        expect(cursorSdkMock.prompt).toHaveBeenCalledOnce();
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("stops after a second empty reply", () =>
+    Effect.gen(function* () {
+      cursorSdkMock.prompt.mockResolvedValue({
+        id: "empty-output",
+        status: "finished",
+        result: "   ",
+      });
+      const generation = yield* makeCursorTextGeneration(cursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      });
+      const failure = yield* Effect.flip(
+        generation.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Fix reconnect",
+          modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "composer-2"),
+        }),
+      );
+      expect(failure.detail).toBe("Cursor SDK returned empty output.");
+      expect(cursorSdkMock.prompt).toHaveBeenCalledTimes(2);
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("fails closed when ambient sandbox policy can expand write access", () =>

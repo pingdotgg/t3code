@@ -2,7 +2,6 @@ import * as FileSystem from "effect/FileSystem";
 
 import type { AgentOptions, RunResult } from "@cursor/sdk";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { type ProviderSetupError, TextGenerationError } from "@t3tools/contracts";
@@ -114,45 +113,35 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
             catch: sdkFailure("Cursor SDK agent store could not be disposed."),
           }).pipe(Effect.ignore({ log: true })),
       );
-      const agentOptions = {
-        apiKey,
-        mode: "plan",
-        model: cursorSdkModelSelection(modelSelection),
-        local: {
-          cwd,
-          store,
-          autoReview: false,
-          sandboxOptions: { enabled: true },
-          settingSources: [],
-          enableAgentRetries: true,
-        },
-      } satisfies AgentOptions;
-      const createCursorAgent = (sandboxEnabled: boolean) =>
-        Effect.tryPromise({
-          try: (signal) =>
-            Agent.create(
-              sandboxEnabled
-                ? agentOptions
-                : {
-                    ...agentOptions,
-                    local: {
-                      ...agentOptions.local,
-                      sandboxOptions: { enabled: false },
-                    },
-                  },
-            ).then((agent) => {
-              if (signal.aborted) agent.close();
-              return agent;
-            }),
-          catch: sdkFailure("Cursor SDK agent could not be created."),
-        });
+      // Text-only: no built-in tools. Schema is enforced only by prompt + decode; tools make models chatty.
+      const agentOptions = (sandboxEnabled: boolean) =>
+        ({
+          apiKey,
+          mode: "plan",
+          model: cursorSdkModelSelection(modelSelection),
+          tools: [],
+          local: {
+            cwd,
+            store,
+            autoReview: false,
+            sandboxOptions: { enabled: sandboxEnabled },
+            settingSources: [],
+            enableAgentRetries: true,
+          },
+        }) satisfies AgentOptions;
 
-      const request = Effect.gen(function* () {
-        // Empty cwd and setting sources isolate the run from user projects even if sandboxing fails.
+      const request = Effect.fn("CursorTextGeneration.request")(function* (
+        sandboxEnabled: boolean,
+      ) {
         const agent = yield* Effect.acquireRelease(
-          createCursorAgent(true).pipe(
-            Effect.catchIf(cursorSandboxUnsupported, () => createCursorAgent(false)),
-          ),
+          Effect.tryPromise({
+            try: (signal) =>
+              Agent.create(agentOptions(sandboxEnabled)).then((agent) => {
+                if (signal.aborted) agent.close();
+                return agent;
+              }),
+            catch: sdkFailure("Cursor SDK agent could not be created."),
+          }),
           (agent) =>
             Effect.tryPromise({
               try: () => agent[Symbol.asyncDispose](),
@@ -162,10 +151,12 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         );
         const run = yield* Effect.tryPromise({
           try: (signal) =>
-            agent.send(prompt).then((run) => {
-              if (signal.aborted) void run.cancel().catch(() => undefined);
-              return run;
-            }),
+            agent
+              .send(`${prompt}\n\nReturn ONLY the JSON object. No prose, no markdown fences.`)
+              .then((run) => {
+                if (signal.aborted) void run.cancel().catch(() => undefined);
+                return run;
+              }),
           catch: sdkFailure("Cursor SDK request could not be sent."),
         });
         yield* Effect.addFinalizer(() =>
@@ -176,37 +167,43 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
               }).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true }))
             : Effect.void,
         );
-        return yield* Effect.tryPromise({
+        const promptResult = yield* Effect.tryPromise({
           try: () => run.wait(),
           catch: sdkFailure("Cursor SDK run failed."),
         });
-      }).pipe(Effect.scoped);
-      const promptResult = yield* request.pipe(
-        Effect.timeoutOption(CURSOR_TIMEOUT_MS),
-        Effect.flatMap(
-          Option.match({
-            onNone: () =>
-              Effect.fail(
-                new TextGenerationError({
-                  operation,
-                  detail: "Cursor SDK request timed out.",
-                }),
-              ),
-            onSome: (value) => Effect.succeed(value),
-          }),
-        ),
+        const rawResult = promptResult.result?.trim() ?? "";
+        if (promptResult.status !== "finished" || !rawResult) {
+          return yield* new TextGenerationError({
+            operation,
+            detail: cursorSdkResultDetail(promptResult),
+            ...(promptResult.error ? { cause: promptResult.error } : {}),
+          });
+        }
+
+        return yield* TextGenerationOperations.decodeJsonReply(input, "Cursor SDK", rawResult);
+      }, Effect.scoped);
+
+      // SDK may reject sandboxing at create or lazily at send; empty cwd still isolates without it.
+      return yield* request(true).pipe(
+        Effect.catchIf(cursorSandboxUnsupported, () => request(false)),
+        Effect.retry({
+          times: 1,
+          while: (cause) =>
+            isTextGenerationError(cause) &&
+            (Schema.isSchemaError(cause.cause) ||
+              cause.detail === "Cursor SDK returned empty output."),
+        }),
+        Effect.timeoutOrElse({
+          duration: CURSOR_TIMEOUT_MS,
+          orElse: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation,
+                detail: "Cursor SDK request timed out.",
+              }),
+            ),
+        }),
       );
-
-      const rawResult = promptResult.result?.trim() ?? "";
-      if (promptResult.status !== "finished" || !rawResult) {
-        return yield* new TextGenerationError({
-          operation,
-          detail: cursorSdkResultDetail(promptResult),
-          ...(promptResult.error ? { cause: promptResult.error } : {}),
-        });
-      }
-
-      return yield* TextGenerationOperations.decodeJsonReply(input, "Cursor SDK", rawResult);
     },
     (effect, input) => {
       const { operation } = input;
