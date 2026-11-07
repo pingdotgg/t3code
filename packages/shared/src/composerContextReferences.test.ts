@@ -521,21 +521,24 @@ describe("threadLinkContextReferences", () => {
       () => "Here",
     );
     expect(pasted.records).toEqual([copied, threadContextRecord(thread("env-9", "t9"), "Here")]);
-    for (const [environmentId, threadId, carried] of [
-      ["env-1", "a)b", true],
-      ["env-1", "a b", true],
-      ["env-1", "a>b", true],
-      ["env-1", "a%29b", true],
-      ["env-1", "..", true],
-      ["source/machine", "t1", true],
+    for (const [environmentId, threadId, form] of [
+      ["env-1", "a)b", "https://"],
+      ["env-1", "a(b", "https://"],
+      ["env-1", "a b", "https://"],
+      ["env-1", "a>b", "https://"],
+      ["env-1", "a\\!b", "https://"],
+      ["env-1", "a%29b", "t3-thread://"],
+      ["env-1", "..", "t3-thread://"],
+      ["source/machine", "t1", "https://"],
       // No link form carries both: a hosted URL drops the dot segment.
-      [".", "a b", false],
+      [".", "a b", null],
     ] as const) {
       const record = threadContextRecord(thread(environmentId, threadId), "Copied title");
       const link = unreadableThreadContextLink(record);
-      if (!carried) expect(link).toBe("Copied title");
+      if (form === null) expect(link).toBe("Copied title");
+      else expect(link).toContain(`](${form}`);
       expect(threadLinkContextReferences(link, [], () => undefined).records).toEqual(
-        carried ? [record] : [],
+        form === null ? [] : [record],
       );
     }
     expect(

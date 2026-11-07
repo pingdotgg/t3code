@@ -434,7 +434,6 @@ export function threadContextsOutsideEnvironment(input: {
 
 /** A thread this agent can't read stays a link naming its machine, so the ids survive without attaching it. */
 export function unreadableThreadContextLink(record: ThreadContextRecord): string {
-  // Ids may hold `/`, `)`, spaces or be dot segments, which some link forms lose; keep a form that parses back.
   const namesRecord = (markdown: string) => {
     let links = 0;
     let exact = false;
@@ -446,7 +445,9 @@ export function unreadableThreadContextLink(record: ThreadContextRecord): string
     return links === 1 && exact;
   };
   const link = formatThreadLink(record, record.title);
-  if (namesRecord(link)) return link;
+  // Markdown mangles a v2 link with these characters; `/` and dot segments are caught by parsing back.
+  if (!/[\s()<>\\]/.test(`${record.environmentId}/${record.threadId}`) && namesRecord(link))
+    return link;
   try {
     const hosted = formatHostedThreadLink(record, record.title);
     if (namesRecord(hosted)) return hosted;
