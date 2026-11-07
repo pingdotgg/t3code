@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Config from "effect/Config";
 import * as Deferred from "effect/Deferred";
@@ -88,67 +89,70 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
 const ARCHIVE = { archiveVersion: "1.2.3-preview.20260911.4" } as const;
 
 describe("ssh tunnel scripts", () => {
-  it.live("serializes concurrent launches and keeps the live server's PID", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const path = yield* Config.String("PATH").pipe(Config.withDefault(""));
-      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launch-lock-" });
-      const state = `${home}/.t3/ssh-launch/test`;
-      const lockDir = `${home}/.t3/ssh-launch/.launch-lock`;
-      const runtime = `${home}/.t3/runtime/versions/${ARCHIVE.archiveVersion}`;
-      yield* fs.makeDirectory(state, { recursive: true });
-      yield* fs.makeDirectory(lockDir);
-      yield* fs.makeDirectory(runtime, { recursive: true });
-      yield* fs.makeDirectory(`${home}/.t3/userdata`);
-      yield* fs.makeDirectory(`${home}/bin`);
-      yield* Effect.addFinalizer(() =>
-        fs.readFileString(`${home}/starts`).pipe(
-          Effect.tap((pids) =>
-            Effect.sync(() => {
-              for (const pid of pids.trim().split("\n")) {
-                try {
-                  process.kill(Number(pid), "SIGTERM");
-                } catch {
-                  // The fixture may already have exited after a failed launch.
+  // https://github.com/pingdotgg/t3code/issues/32549: this fixture needs POSIX sh and FIFOs.
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "serializes concurrent launches and keeps the live server's PID",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Config.String("PATH").pipe(Config.withDefault(""));
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launch-lock-" });
+        const state = `${home}/.t3/ssh-launch/test`;
+        const lockDir = `${home}/.t3/ssh-launch/.launch-lock`;
+        const runtime = `${home}/.t3/runtime/versions/${ARCHIVE.archiveVersion}`;
+        yield* fs.makeDirectory(state, { recursive: true });
+        yield* fs.makeDirectory(lockDir);
+        yield* fs.makeDirectory(runtime, { recursive: true });
+        yield* fs.makeDirectory(`${home}/.t3/userdata`);
+        yield* fs.makeDirectory(`${home}/bin`);
+        yield* Effect.addFinalizer(() =>
+          fs.readFileString(`${home}/starts`).pipe(
+            Effect.tap((pids) =>
+              Effect.sync(() => {
+                for (const pid of pids.trim().split("\n")) {
+                  try {
+                    process.kill(Number(pid), "SIGTERM");
+                  } catch {
+                    // The fixture may already have exited after a failed launch.
+                  }
                 }
-              }
-            }),
+              }),
+            ),
+            Effect.ignore,
           ),
-          Effect.ignore,
-        ),
-      );
-      // Both launches must reclaim the entry of a launch that died holding the lock.
-      const exited = yield* spawner.spawn(ChildProcess.make("true"));
-      yield* exited.exitCode;
-      yield* fs.writeFileString(`${lockDir}/${exited.pid}.dead`, "");
-      const fifo = yield* spawner.spawn(
-        ChildProcess.make("mkfifo", [`${home}/started-first`, `${home}/started-second`]),
-      );
-      assert.equal(Number(yield* fifo.exitCode), 0);
+        );
+        // Both launches must reclaim the entry of a launch that died holding the lock.
+        const exited = yield* spawner.spawn(ChildProcess.make("true"));
+        yield* exited.exitCode;
+        yield* fs.writeFileString(`${lockDir}/${exited.pid}.dead`, "");
+        const fifo = yield* spawner.spawn(
+          ChildProcess.make("mkfifo", [`${home}/started-first`, `${home}/started-second`]),
+        );
+        assert.equal(Number(yield* fifo.exitCode), 0);
 
-      let script = "";
-      const capture = ChildProcessSpawner.make((command) =>
-        Effect.gen(function* () {
-          if (command._tag === "StandardCommand") {
-            const stdin = command.options.stdin;
-            if (typeof stdin === "object" && "stream" in stdin && Stream.isStream(stdin.stream)) {
-              script = yield* stdin.stream.pipe(Stream.decodeText(), Stream.mkString);
+        let script = "";
+        const capture = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (command._tag === "StandardCommand") {
+              const stdin = command.options.stdin;
+              if (typeof stdin === "object" && "stream" in stdin && Stream.isStream(stdin.stream)) {
+                script = yield* stdin.stream.pipe(Stream.decodeText(), Stream.mkString);
+              }
             }
-          }
-          return makeSuccessfulProcess('{"remotePort":3774,"serverKind":"managed"}\n');
-        }),
-      );
-      yield* SshTunnel.launchOrReuseRemoteServer(
-        { alias: "test", hostname: "test.invalid", username: null, port: null },
-        undefined,
-        ARCHIVE,
-      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, capture));
-      yield* fs.writeFileString(`${home}/launch.sh`, script);
-      yield* fs.writeFileString(`${runtime}/.install-complete`, ARCHIVE.archiveVersion);
-      yield* fs.writeFileString(
-        `${runtime}/t3`,
-        `#!/bin/sh
+            return makeSuccessfulProcess('{"remotePort":3774,"serverKind":"managed"}\n');
+          }),
+        );
+        yield* SshTunnel.launchOrReuseRemoteServer(
+          { alias: "test", hostname: "test.invalid", username: null, port: null },
+          undefined,
+          ARCHIVE,
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, capture));
+        yield* fs.writeFileString(`${home}/launch.sh`, script);
+        yield* fs.writeFileString(`${runtime}/.install-complete`, ARCHIVE.archiveVersion);
+        yield* fs.writeFileString(
+          `${runtime}/t3`,
+          `#!/bin/sh
 set -eu
 case "$1" in
   --version) exit 0 ;;
@@ -178,97 +182,97 @@ case "$1" in
   *) exit 2 ;;
 esac
 `,
-      );
-      yield* fs.chmod(`${runtime}/t3`, 0o700);
-      // A lock wait blocks on the launch's stdin instead of the clock.
-      yield* fs.writeFileString(
-        `${home}/bin/sleep`,
-        "#!/bin/sh\nprintf 'lock-wait\\n' >&2\nread -r release || true\n",
-      );
-      yield* fs.chmod(`${home}/bin/sleep`, 0o700);
-
-      const release = new TextEncoder().encode("release\n");
-      const runLaunch = Effect.fn("test.runConcurrentLauncher")(function* (
-        launch: "first" | "second" | "third",
-        stdin: Stream.Stream<Uint8Array>,
-        blocked: Deferred.Deferred<void>,
-      ) {
-        const child = yield* spawner.spawn(
-          ChildProcess.make("sh", [`${home}/launch.sh`, "test"], {
-            env: {
-              HOME: home,
-              PATH: `${home}/bin:${path}`,
-              T3_TEST_NODE: process.execPath,
-              T3_TEST_LAUNCH: launch,
-            },
-            stdin: { stream: stdin, endOnDone: true },
-          }),
         );
-        return yield* Effect.all(
-          [
-            child.stdout.pipe(Stream.decodeText(), Stream.mkString),
-            child.stderr.pipe(
-              Stream.decodeText(),
-              Stream.splitLines,
-              Stream.tap((line) =>
-                line === "pick-port" || line === "lock-wait"
-                  ? Deferred.succeed(blocked, undefined)
-                  : Effect.void,
+        yield* fs.chmod(`${runtime}/t3`, 0o700);
+        // A lock wait blocks on the launch's stdin instead of the clock.
+        yield* fs.writeFileString(
+          `${home}/bin/sleep`,
+          "#!/bin/sh\nprintf 'lock-wait\\n' >&2\nread -r release || true\n",
+        );
+        yield* fs.chmod(`${home}/bin/sleep`, 0o700);
+
+        const release = new TextEncoder().encode("release\n");
+        const runLaunch = Effect.fn("test.runConcurrentLauncher")(function* (
+          launch: "first" | "second" | "third",
+          stdin: Stream.Stream<Uint8Array>,
+          blocked: Deferred.Deferred<void>,
+        ) {
+          const child = yield* spawner.spawn(
+            ChildProcess.make("sh", [`${home}/launch.sh`, "test"], {
+              env: {
+                HOME: home,
+                PATH: `${home}/bin:${path}`,
+                T3_TEST_NODE: process.execPath,
+                T3_TEST_LAUNCH: launch,
+              },
+              stdin: { stream: stdin, endOnDone: true },
+            }),
+          );
+          return yield* Effect.all(
+            [
+              child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+              child.stderr.pipe(
+                Stream.decodeText(),
+                Stream.splitLines,
+                Stream.tap((line) =>
+                  line === "pick-port" || line === "lock-wait"
+                    ? Deferred.succeed(blocked, undefined)
+                    : Effect.void,
+                ),
+                Stream.mkString,
               ),
-              Stream.mkString,
+              child.exitCode.pipe(Effect.map(Number)),
+            ],
+            { concurrency: "unbounded" },
+          );
+        });
+        // Hold the first launch in port selection until the second either waits
+        // for the lock or also selects a port. The second continues only after
+        // the first exits.
+        const firstBlocked = yield* Deferred.make<void>();
+        const secondBlocked = yield* Deferred.make<void>();
+        const firstDone = yield* Deferred.make<void>();
+        const first = yield* Effect.forkChild(
+          runLaunch(
+            "first",
+            Stream.fromEffect(Deferred.await(secondBlocked).pipe(Effect.as(release))),
+            firstBlocked,
+          ).pipe(Effect.ensuring(Deferred.succeed(firstDone, undefined))),
+        );
+        yield* Deferred.await(firstBlocked);
+        const results = yield* Effect.all(
+          [
+            Fiber.join(first),
+            runLaunch(
+              "second",
+              Stream.fromEffect(Deferred.await(firstDone).pipe(Effect.as(release))),
+              secondBlocked,
             ),
-            child.exitCode.pipe(Effect.map(Number)),
           ],
           { concurrency: "unbounded" },
         );
-      });
-      // Hold the first launch in port selection until the second either waits
-      // for the lock or also selects a port. The second continues only after
-      // the first exits.
-      const firstBlocked = yield* Deferred.make<void>();
-      const secondBlocked = yield* Deferred.make<void>();
-      const firstDone = yield* Deferred.make<void>();
-      const first = yield* Effect.forkChild(
-        runLaunch(
-          "first",
-          Stream.fromEffect(Deferred.await(secondBlocked).pipe(Effect.as(release))),
-          firstBlocked,
-        ).pipe(Effect.ensuring(Deferred.succeed(firstDone, undefined))),
-      );
-      yield* Deferred.await(firstBlocked);
-      const results = yield* Effect.all(
-        [
-          Fiber.join(first),
-          runLaunch(
-            "second",
-            Stream.fromEffect(Deferred.await(firstDone).pipe(Effect.as(release))),
-            secondBlocked,
-          ),
-        ],
-        { concurrency: "unbounded" },
-      );
-      for (const [stdout, stderr, exitCode] of results) {
-        assert.equal(exitCode, 0, stderr);
-        assert.deepEqual(JSON.parse(stdout), { remotePort: 3774, serverKind: "managed" });
-      }
-      const runtimeInfo = JSON.parse(
-        yield* fs.readFileString(`${home}/.t3/userdata/server-runtime.json`),
-      );
-      const recordedPid = yield* fs.readFileString(`${state}/pid`);
-      assert.equal(Number(recordedPid), runtimeInfo.pid);
-      assert.equal((yield* fs.readFileString(`${home}/starts`)).trim().split("\n").length, 1);
-      assert.deepEqual(yield* fs.readDirectory(lockDir), []);
+        for (const [stdout, stderr, exitCode] of results) {
+          assert.equal(exitCode, 0, stderr);
+          assert.deepEqual(JSON.parse(stdout), { remotePort: 3774, serverKind: "managed" });
+        }
+        const runtimeInfo = JSON.parse(
+          yield* fs.readFileString(`${home}/.t3/userdata/server-runtime.json`),
+        );
+        const recordedPid = yield* fs.readFileString(`${state}/pid`);
+        assert.equal(Number(recordedPid), runtimeInfo.pid);
+        assert.equal((yield* fs.readFileString(`${home}/starts`)).trim().split("\n").length, 1);
+        assert.deepEqual(yield* fs.readDirectory(lockDir), []);
 
-      // A live launch is never evicted, however long it holds the lock.
-      const live = `${lockDir}/${process.pid}.live`;
-      yield* fs.writeFileString(live, "");
-      const thirdBlocked = yield* Deferred.make<void>();
-      const [, stderr, exitCode] = yield* runLaunch("third", Stream.empty, thirdBlocked);
-      assert.equal(exitCode, 1);
-      assert.include(stderr, "Another connection is still starting T3 on this host.");
-      assert.deepEqual(yield* fs.readDirectory(lockDir), [`${process.pid}.live`]);
-      assert.equal(yield* fs.readFileString(`${state}/pid`), recordedPid);
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+        // A live launch is never evicted, however long it holds the lock.
+        const live = `${lockDir}/${process.pid}.live`;
+        yield* fs.writeFileString(live, "");
+        const thirdBlocked = yield* Deferred.make<void>();
+        const [, stderr, exitCode] = yield* runLaunch("third", Stream.empty, thirdBlocked);
+        assert.equal(exitCode, 1);
+        assert.include(stderr, "Another connection is still starting T3 on this host.");
+        assert.deepEqual(yield* fs.readDirectory(lockDir), [`${process.pid}.live`]);
+        assert.equal(yield* fs.readFileString(`${state}/pid`), recordedPid);
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it("rejects archive versions that are not a single exact version segment", () => {
