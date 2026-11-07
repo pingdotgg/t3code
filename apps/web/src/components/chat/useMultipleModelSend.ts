@@ -234,10 +234,13 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
       if (clearedDraft) {
         restoreComposerDraft(composerDraftTarget, sendSnapshot);
         if (composerRef.current && currentRouteThreadKeyRef.current === routeThreadKey) {
-          promptRef.current = messageText;
+          promptRef.current = sendSnapshot.draftPrompt;
           composerRef.current.resetCursorState({
-            cursor: collapseExpandedComposerCursor(messageText, messageText.length),
-            prompt: messageText,
+            cursor: collapseExpandedComposerCursor(
+              sendSnapshot.draftPrompt,
+              sendSnapshot.draftPrompt.length,
+            ),
+            prompt: sendSnapshot.draftPrompt,
             detectTrigger: true,
           });
         }

@@ -487,6 +487,10 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     const sendCtx = composerRef.current?.getSendContext();
+    const trayCitations = [
+      ...(useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.trayCitations ??
+        []),
+    ];
     // `/side` beats an open question and a plan follow-up, which would send the text to main.
     const sideChatCommand =
       sendCtx && !directAnnotation && !queuedRunEdit.isEditing
@@ -507,6 +511,7 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     if (onSideChat && sendCtx && sideChatCommand && sideChatDisabledReason === null) {
       if (
+        trayCitations.length > 0 ||
         sendCtx.images.length > 0 ||
         sendCtx.files.length > 0 ||
         filterTerminalContextsWithText(sendCtx.terminalContexts).length > 0 ||
@@ -760,7 +765,7 @@ export function useComposerSend(input: ComposerSendInput) {
       if (composerRef.current?.validateProviderInput(outgoingFollowUpText) === false) {
         return;
       }
-      const followUpPromptSnapshot = sendCtx.prompt;
+      const followUpPromptSnapshot = promptAtSend;
       const followUpTerminalContexts = [...sendableComposerTerminalContexts];
       const followUpReviewComments = [...composerReviewComments];
       const followUpPreviewAnnotations = [...composerPreviewAnnotations];
@@ -784,6 +789,7 @@ export function useComposerSend(input: ComposerSendInput) {
         restorePlanFollowUpComposer({
           snapshot: {
             prompt: followUpPromptSnapshot,
+            trayCitations,
             terminalContexts: followUpTerminalContexts,
             reviewComments: followUpReviewComments,
             previewAnnotations: followUpPreviewAnnotations,
@@ -798,6 +804,8 @@ export function useComposerSend(input: ComposerSendInput) {
             promptRef.current = snapshot.prompt;
             composerTerminalContextsRef.current = [...snapshot.terminalContexts];
           },
+          writeTrayCitations: (citations) =>
+            useComposerDraftStore.getState().setTrayCitations(composerDraftTarget, citations),
           writePrompt: (prompt) => setComposerDraftPrompt(composerDraftTarget, prompt),
           writeTerminalContexts: (contexts) =>
             setComposerDraftTerminalContexts(composerDraftTarget, [...contexts]),
@@ -858,6 +866,12 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     const threadIdForSend = activeThread.id;
     const sendSnapshot = snapshotComposerSend({
+      draftPrompt: directAnnotation
+        ? ensureInlineContextReferences(promptAtSend, [
+            previewAnnotationContextReference(directAnnotation.annotation),
+          ])
+        : promptAtSend,
+      trayCitations,
       prompt: promptForSend,
       images: composerImages,
       files: composerFiles,
@@ -1481,13 +1495,16 @@ export function useComposerSend(input: ComposerSendInput) {
         optimisticBlobPreviews.release(optimisticMessage);
         const retryComposerImages = restoreComposerDraft(composerDraftTarget, sendSnapshot);
         if (currentRouteThreadKeyRef.current === routeThreadKey) {
-          promptRef.current = messageTextForSend;
+          promptRef.current = sendSnapshot.draftPrompt;
           composerImagesRef.current = retryComposerImages;
           composerFilesRef.current = composerFilesSnapshot;
           composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
           composerRef.current?.resetCursorState({
-            cursor: collapseExpandedComposerCursor(messageTextForSend, messageTextForSend.length),
-            prompt: messageTextForSend,
+            cursor: collapseExpandedComposerCursor(
+              sendSnapshot.draftPrompt,
+              sendSnapshot.draftPrompt.length,
+            ),
+            prompt: sendSnapshot.draftPrompt,
             detectTrigger: true,
           });
         }

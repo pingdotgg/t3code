@@ -1,4 +1,8 @@
-import { type OrchestrationV2ProviderTurn, type RunAttemptId } from "@t3tools/contracts";
+import {
+  type AssistantCitation,
+  type OrchestrationV2ProviderTurn,
+  type RunAttemptId,
+} from "@t3tools/contracts";
 import {
   deriveLatestThreadRun,
   deriveThreadRuntime,
@@ -1169,6 +1173,7 @@ export function shouldRefocusComposerOnWindowFocus(
 }
 
 export interface PlanFollowUpComposerSnapshot {
+  readonly trayCitations: ReadonlyArray<AssistantCitation>;
   readonly prompt: string;
   readonly terminalContexts: ReadonlyArray<TerminalContextDraft>;
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
@@ -1184,6 +1189,7 @@ export function restorePlanFollowUpComposer(input: {
   readonly draftHasUserContent: boolean;
   readonly routeIsCurrent: boolean;
   readonly writeComposerRefs: (snapshot: PlanFollowUpComposerSnapshot) => void;
+  readonly writeTrayCitations: (citations: ReadonlyArray<AssistantCitation>) => void;
   readonly writePrompt: (prompt: string) => void;
   readonly writeTerminalContexts: (contexts: ReadonlyArray<TerminalContextDraft>) => void;
   readonly writeReviewComments: (comments: ReadonlyArray<ReviewCommentContext>) => void;
@@ -1199,6 +1205,7 @@ export function restorePlanFollowUpComposer(input: {
   if (input.draftHasUserContent) return;
   if (input.routeIsCurrent) input.writeComposerRefs(input.snapshot);
   input.writePrompt(input.snapshot.prompt);
+  input.writeTrayCitations(input.snapshot.trayCitations);
   input.writeTerminalContexts(input.snapshot.terminalContexts);
   input.writeReviewComments(input.snapshot.reviewComments);
   input.writePreviewAnnotations(input.snapshot.previewAnnotations);
@@ -1356,6 +1363,8 @@ export function makeModelDisabledReason(
 
 /** What the composer held when the user pressed send, after a direct annotation merged in. */
 export interface ComposerSendContents {
+  readonly draftPrompt?: string;
+  readonly trayCitations?: ReadonlyArray<AssistantCitation>;
   readonly prompt: string;
   readonly images: ReadonlyArray<ComposerImageAttachment>;
   readonly files: ReadonlyArray<ComposerFileAttachment>;
@@ -1376,7 +1385,18 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
   const images = [...contents.images];
   const files = [...contents.files];
   const terminalContexts = [...contents.sendableTerminalContexts];
+  const cleanPrompt = (prompt: string) =>
+    contents.terminalContexts
+      .filter((context) => !terminalContexts.includes(context))
+      .reduce(
+        (text, context) =>
+          removeInlineContextReference(text, terminalContextReference(context).contextId).prompt,
+        prompt,
+      )
+      .trim();
   return {
+    draftPrompt: cleanPrompt(contents.draftPrompt ?? contents.prompt),
+    trayCitations: [...(contents.trayCitations ?? [])],
     images,
     files,
     attachments: [...images, ...files],
@@ -1385,14 +1405,7 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
     reviewComments: [...contents.reviewComments],
     threadContexts: [...contents.threadContexts],
     environmentContexts: [...contents.environmentContexts],
-    messageText: contents.terminalContexts
-      .filter((context) => !terminalContexts.includes(context))
-      .reduce(
-        (text, context) =>
-          removeInlineContextReference(text, terminalContextReference(context).contextId).prompt,
-        contents.prompt,
-      )
-      .trim(),
+    messageText: cleanPrompt(contents.prompt),
   };
 }
 

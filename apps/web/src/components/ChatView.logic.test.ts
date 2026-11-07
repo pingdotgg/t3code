@@ -12,6 +12,7 @@ import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { ensureInlineContextReferences } from "../lib/composerContextReferences";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { terminalContextReference } from "../lib/composerContextRecords";
 import {
   CommandId,
@@ -57,6 +58,17 @@ import {
 const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
+const trayCitation = {
+  version: 1 as const,
+  environmentId,
+  threadId,
+  messageId: MessageId.make("source"),
+  text: "Source",
+  start: 0,
+  end: 6,
+  prefix: "",
+  suffix: "",
+};
 const now = "2026-03-29T00:00:00.000Z";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -1043,10 +1055,18 @@ describe("snapshotComposerSend", () => {
 
   it("drops expired terminal contexts from the contexts and from the prompt", () => {
     const snapshot = snapshotComposerSend({
-      prompt: ensureInlineContextReferences("run", [
+      draftPrompt: ensureInlineContextReferences("run", [
         terminalContextReference(expired),
         terminalContextReference(live),
       ]),
+      trayCitations: [trayCitation],
+      prompt:
+        serializeAssistantCitation(trayCitation) +
+        "\n" +
+        ensureInlineContextReferences("run", [
+          terminalContextReference(expired),
+          terminalContextReference(live),
+        ]),
       images: [],
       files: [],
       terminalContexts: [expired, live],
@@ -1057,9 +1077,15 @@ describe("snapshotComposerSend", () => {
       environmentContexts: [],
     });
 
+    expect(snapshot.draftPrompt).toBe(
+      ensureInlineContextReferences("run", [terminalContextReference(live)]).trim(),
+    );
+    expect(snapshot.trayCitations).toEqual([trayCitation]);
     expect(snapshot.terminalContexts).toEqual([live]);
     expect(snapshot.messageText).toBe(
-      ensureInlineContextReferences("run", [terminalContextReference(live)]).trim(),
+      serializeAssistantCitation(trayCitation) +
+        "\n" +
+        ensureInlineContextReferences("run", [terminalContextReference(live)]).trim(),
     );
   });
 });
@@ -1167,8 +1193,11 @@ describe("restorePlanFollowUpComposer", () => {
     },
   ])("$name", ({ before, routeIsCurrent, after }) => {
     const composer: { draft: string; refs: string; cursor: string | null } = { ...before };
+    const writeTrayCitations = vi.fn();
     restorePlanFollowUpComposer({
+      writeTrayCitations,
       snapshot: {
+        trayCitations: [trayCitation],
         prompt: "Tighten step 2",
         environmentContexts: [],
         terminalContexts: [],
@@ -1194,6 +1223,7 @@ describe("restorePlanFollowUpComposer", () => {
       },
     });
 
+    expect(writeTrayCitations.mock.calls).toEqual(before.draft ? [] : [[[trayCitation]]]);
     expect(composer).toEqual(after);
   });
 });
