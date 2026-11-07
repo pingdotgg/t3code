@@ -749,6 +749,15 @@ export function withUsageLimitsCommands(
 ): ServerProvider[] {
   const supportedDrivers = new Set([
     ...providersWithLimits(providers).map((provider) => provider.driver),
+    ...providers
+      .filter(
+        (provider) =>
+          provider.supportsUsageLimits === true &&
+          provider.enabled &&
+          provider.installed &&
+          isProviderAvailable(provider),
+      )
+      .map((provider) => provider.driver),
     ...sources.flatMap((source) => source.accounts.map((account) => account.driver)),
   ]);
   const unreadableSource = sources.some(
