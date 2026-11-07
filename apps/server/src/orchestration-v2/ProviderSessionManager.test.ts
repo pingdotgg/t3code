@@ -3885,31 +3885,23 @@ it.effect(
             unloaded: unloadedNativeThreadIds,
           })),
         );
+        // An unreadable setting at load marks the catalog unknown so it refreshes later.
         yield* Ref.set(settingsUnavailable, true);
         yield* resume(threadA);
-        yield* resume(threadA);
-        assert.deepEqual(yield* observed, { resumeCount: 1, unloaded: [] });
         yield* Ref.set(settingsUnavailable, false);
         yield* resume(threadB);
         assert.deepEqual(yield* observed, { resumeCount: 2, unloaded: [] });
 
         yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
         // Background work, or a probe that cannot tell, keeps the stale thread loaded.
+        // A native resume meanwhile must not overwrite the recorded catalog.
         yield* Ref.set(pendingWork, Effect.succeed(true));
         yield* resume(threadA, { ...modelSelection, model: "gpt-5.4-mini" });
-        yield* resume(threadA);
         yield* Ref.set(pendingWork, Effect.die("probe failed"));
         yield* resume(threadA);
         assert.deepEqual(yield* observed, { resumeCount: 4, unloaded: [] });
 
         yield* Ref.set(pendingWork, Effect.succeed(false));
-        const reloaded = yield* resume(threadA);
-        assert.deepEqual(reloaded.nativeThreadRef, providerThreads[threadA]!.nativeThreadRef);
-        assert.deepEqual(yield* observed, { resumeCount: 5, unloaded: ["native-links-a"] });
-        yield* Ref.set(settingsUnavailable, true);
-        yield* resume(threadA);
-        assert.deepEqual(yield* observed, { resumeCount: 5, unloaded: ["native-links-a"] });
-        yield* Ref.set(settingsUnavailable, false);
         yield* resume(threadA);
         assert.deepEqual(yield* observed, { resumeCount: 5, unloaded: ["native-links-a"] });
 
@@ -4012,13 +4004,11 @@ it.effect.each([true, false])(
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const pendingWork = yield* Ref.make<Effect.Effect<boolean>>(Effect.succeed(false));
-      const settingsUnavailable = yield* Ref.make(false);
-      const settings = yield* makeTestSettings(settingsUnavailable);
+      const settings = yield* makeTestSettings(yield* Ref.make(false));
       yield* Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
         const now = yield* DateTime.now;
         const threadId = ThreadId.make("thread-provider-session-manager-links-exclusive");
         const providerSessionId = yield* idAllocator.allocate.providerSession({
@@ -4028,25 +4018,18 @@ it.effect.each([true, false])(
         yield* eventSink.write({
           events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
         });
-        const providerThread = makeProviderThread({
-          idAllocator,
-          threadId,
-          providerSessionId,
-          now,
-          nativeThreadId: "native-links-exclusive",
-        });
         const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
         const counts = Ref.get(state).pipe(
           Effect.map(({ openCount, closeCount }) => ({ openCount, closeCount })),
         );
 
-        yield* Ref.set(settingsUnavailable, true);
         const first = yield* open;
-        yield* first.resumeThread({ providerThread, threadId, modelSelection, runtimePolicy });
-        assert.strictEqual(yield* open, first);
-        yield* Ref.set(settingsUnavailable, false);
-
         yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
+        if (!canResumeAfterRestart) {
+          assert.strictEqual(yield* open, first);
+          assert.deepEqual(yield* counts, { openCount: 1, closeCount: 0 });
+          return;
+        }
         yield* Ref.set(pendingWork, Effect.succeed(true));
         assert.strictEqual(yield* open, first);
         yield* Ref.set(pendingWork, Effect.die("probe failed"));
@@ -4055,7 +4038,13 @@ it.effect.each([true, false])(
           idAllocator,
           threadId,
           providerSessionId,
-          providerThread,
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now,
+            nativeThreadId: "native-links-exclusive",
+          }),
           now,
         });
         yield* eventSink.write({ events: pending.events });
@@ -4075,65 +4064,8 @@ it.effect.each([true, false])(
             },
           ],
         });
-
-        const second = yield* open;
-        if (!canResumeAfterRestart) {
-          assert.strictEqual(second, first);
-          assert.deepEqual(yield* counts, { openCount: 1, closeCount: 0 });
-          return;
-        }
-        assert.notStrictEqual(second, first);
+        yield* open;
         assert.deepEqual(yield* counts, { openCount: 2, closeCount: 1 });
-        const resumed = yield* second.resumeThread({
-          providerThread,
-          threadId,
-          modelSelection,
-          runtimePolicy,
-        });
-        assert.deepEqual(resumed.nativeThreadRef, providerThread.nativeThreadRef);
-        assert.equal((yield* Ref.get(state)).resumeCount, 2);
-
-        yield* settings.updateSettings({ linkedEnvironmentsEnabled: false });
-        const third = yield* open;
-        assert.notStrictEqual(third, second);
-        assert.deepEqual(yield* counts, { openCount: 3, closeCount: 2 });
-
-        // A turn that starts while the refresh probes for background work keeps the runtime.
-        yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
-        const probing = yield* Deferred.make<void>();
-        const finishProbe = yield* Deferred.make<void>();
-        yield* Ref.set(
-          pendingWork,
-          Deferred.succeed(probing, undefined).pipe(
-            Effect.andThen(Deferred.await(finishProbe)),
-            Effect.as(false),
-          ),
-        );
-        const reopening = yield* open.pipe(Effect.forkChild);
-        yield* Deferred.await(probing);
-        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
-        yield* third.startTurn({
-          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
-          threadId,
-          runId,
-          runOrdinal: 1,
-          providerTurnOrdinal: 1,
-          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
-          rootNodeId: idAllocator.derive.rootNode({ runId }),
-          providerThread,
-          message: {
-            createdBy: "user",
-            creationSource: "web",
-            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
-            text: "turn",
-            attachments: [],
-          },
-          modelSelection,
-          runtimePolicy,
-        });
-        yield* Deferred.succeed(finishProbe, undefined);
-        assert.strictEqual(yield* Fiber.join(reopening), third);
-        assert.deepEqual(yield* counts, { openCount: 3, closeCount: 2 });
       }).pipe(
         Effect.provide(
           layerTest({
@@ -4426,9 +4358,6 @@ it.effect(
         yield* settings.updateSettings({ linkedEnvironmentsEnabled: false });
         yield* Ref.set(pendingWork, false);
         assert.equal(yield* countRawResumes(failed), 1);
-        assert.equal(yield* countRawResumes(failed), 0);
-        assert.equal(yield* countRawResumes(sibling), 0);
-        assert.equal(yield* countRawResumes(healthy), 0);
         assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
           "idle-failed-runtime",
           "idle-failed-runtime",

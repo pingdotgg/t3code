@@ -946,6 +946,7 @@ export const layerWithOptions = (
           readonly providerSessionId: ProviderSessionId;
           readonly onlyIfIdleGeneration?: number;
           readonly keepIfBusyOtherThan?: ReadonlyArray<ProviderThreadId>;
+          readonly keepIf?: Effect.Effect<boolean>;
         }): Effect.fn.Return<readonly [Option.Option<LiveSessionEntry>, DateTime.Utc]> {
           const key = sessionKey(input.providerSessionId);
           const candidate = (yield* Ref.get(sessions)).get(key);
@@ -979,7 +980,15 @@ export const layerWithOptions = (
               return ["removed", updated] as const;
             }),
             DateTime.now,
-          ).pipe(candidate.requestEventPermit.withPermits(1));
+          ).pipe(
+            (remove) =>
+              Effect.flatMap(
+                input.keepIf ?? Effect.succeed(false),
+                (kept): Effect.Effect<readonly [Effect.Success<typeof remove>[0], DateTime.Utc]> =>
+                  kept ? Effect.zip(Effect.succeed("kept" as const), DateTime.now) : remove,
+              ),
+            candidate.requestEventPermit.withPermits(1),
+          );
           const [outcome, releasedAt] = removed;
           if (outcome === "changed") return yield* removeLiveEntry(input);
           return [
@@ -1033,6 +1042,7 @@ export const layerWithOptions = (
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
         readonly keepIfBusyOtherThan?: ReadonlyArray<ProviderThreadId>;
+        readonly keepIf?: Effect.Effect<boolean>;
         readonly gracefulSubscribers?: boolean;
       }) =>
         Effect.acquireUseRelease(
@@ -1798,15 +1808,17 @@ export const layerWithOptions = (
                 Effect.catchCause(() => Effect.succeed(true)),
               );
         if (hasPendingWork) return;
-        const hasUnfinishedRecords = yield* Effect.forEach(entry.attachedThreadIds, (threadId) =>
-          projectionStore.getThreadRecords(threadId, ["runtimeRequests", "providerThreads"]),
+        // Checked under the request permit so a runless request mid-persist is not cancelled.
+        const hasUnfinishedRecords = Effect.forEach(entry.attachedThreadIds, (threadId) =>
+          projectionStore.getThreadRecords(threadId, ["runtimeRequests", "providerThreads"], {
+            runtimeRequestStatuses: ["pending"],
+          }),
         ).pipe(
           Effect.map((projections) =>
             projections.some(
               (projection) =>
                 projection.runtimeRequests.some(
                   (request) =>
-                    request.status === "pending" &&
                     request.responseCapability.type === "live" &&
                     request.responseCapability.providerSessionId === providerSessionId,
                 ) ||
@@ -1819,12 +1831,12 @@ export const layerWithOptions = (
           ),
           Effect.orElseSucceed(() => true),
         );
-        if (hasUnfinishedRecords) return;
         yield* releaseEntry({
           providerSessionId,
           reason: "idle_timeout",
           detail: "Linked environments changed; reopening the provider session.",
           onlyIfIdleGeneration: generation,
+          keepIf: hasUnfinishedRecords,
         }).pipe(logReleaseFailure(providerSessionId));
       });
 
