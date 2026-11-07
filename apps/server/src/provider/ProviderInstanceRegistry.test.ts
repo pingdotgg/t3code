@@ -2,6 +2,8 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - the SDK mock rewrites the login mid-probe, outside Effect.
+import * as NodeFS from "node:fs";
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
@@ -484,14 +486,23 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       let probeCount = 0;
       let successfulProbeCount = 0;
       let failProbe = false;
+      let loginDuringFailedProbe: string | undefined;
       const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
         () =>
           ({
-            initializationResult: () => {
+            initializationResult: async () => {
               probeCount++;
-              if (failProbe) return Promise.reject(new Error("initialization failed"));
+              if (failProbe) {
+                if (loginDuringFailedProbe !== undefined) {
+                  NodeFS.writeFileSync(
+                    accountConfigPath,
+                    JSON.stringify({ oauthAccount: { organizationUuid: loginDuringFailedProbe } }),
+                  );
+                }
+                throw new Error("initialization failed");
+              }
               successfulProbeCount++;
-              return Promise.resolve({
+              return {
                 commands: [
                   {
                     name: successfulProbeCount === 1 ? "last-good" : "recovered",
@@ -505,7 +516,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
                   subscriptionType: "pro",
                   tokenSource: "oauth",
                 },
-              });
+              };
             },
             usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
               rate_limits_available: true,
@@ -600,6 +611,109 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
       );
       expect(probeCount).toBeGreaterThan(sameAccountFailureProbeCount);
+
+      failProbe = false;
+      yield* claude!.snapshot.refresh;
+      yield* TestClock.adjust("1 second");
+      yield* claude!.invalidateCaches ?? Effect.void;
+      failProbe = true;
+      loginDuringFailedProbe = "org-c";
+      const loginDuringFailure = yield* claude!.snapshot.refresh;
+      expect(loginDuringFailure).toMatchObject({
+        status: "warning",
+        auth: { status: "unknown" },
+        message: "Claude Agent CLI failed while checking account status.",
+      });
+      expect(loginDuringFailure.usageLimits).toBeUndefined();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("re-probes Claude after a login switches the account", () =>
+    Effect.gen(function* () {
+      if (yield* HostProcess.isWindows) return;
+
+      const fixtures = yield* makeTildeProviderFixtures();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const accountConfigPath = path.join(fixtures.claudeHomePath, ".claude.json");
+      const logIn = (account: { email: string; organizationUuid: string; utilization: number }) =>
+        fs
+          .writeFileString(
+            accountConfigPath,
+            JSON.stringify({
+              oauthAccount: {
+                accountUuid: `${account.organizationUuid}-user`,
+                organizationUuid: account.organizationUuid,
+                emailAddress: account.email,
+              },
+            }),
+          )
+          .pipe(Effect.tap(() => Effect.sync(() => (loggedIn = account))));
+      let loggedIn = {
+        email: "account-a@example.com",
+        organizationUuid: "org-a",
+        utilization: 100,
+      };
+      yield* logIn(loggedIn);
+      let probeCount = 0;
+      const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            initializationResult: () => {
+              probeCount++;
+              return Promise.resolve({
+                commands: [] as Array<ClaudeSdk.SlashCommand>,
+                account: { email: loggedIn.email, subscriptionType: "pro", tokenSource: "oauth" },
+              });
+            },
+            usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+              rate_limits_available: true,
+              rate_limits: {
+                five_hour: { utilization: loggedIn.utilization, resets_at: "2026-07-18T14:39:00Z" },
+              },
+            }),
+          }) as ReturnType<typeof ClaudeSdk.query>,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+
+      const claudeId = ProviderInstanceId.make("claude_account_switch");
+      const { registry } = yield* makeProviderInstanceRegistry<ClaudeDriverEnv>({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [claudeId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const claude = yield* registry.getInstance(claudeId);
+      expect(claude).toBeDefined();
+
+      const before = yield* claude!.snapshot.refresh;
+      expect(before.auth).toMatchObject({
+        status: "authenticated",
+        email: "account-a@example.com",
+        workspaceId: "org-a",
+      });
+      const probesBeforeLogin = probeCount;
+
+      yield* TestClock.adjust("1 second");
+      yield* logIn({ email: "account-b@example.com", organizationUuid: "org-b", utilization: 10 });
+      const after = yield* claude!.snapshot.refresh;
+
+      expect(
+        { auth: after.auth, usageWindows: after.usageLimits?.windows },
+        "the check after a re-login must report the new account, not the old account's cached probe",
+      ).toMatchObject({
+        auth: { status: "authenticated", email: "account-b@example.com", workspaceId: "org-b" },
+        usageWindows: [expect.objectContaining({ usedPercent: 10 })],
+      });
+      expect(probeCount).toBeGreaterThan(probesBeforeLogin);
     }).pipe(Effect.provide(layerTest)),
   );
 

@@ -22,7 +22,10 @@ const Credentials = Schema.Struct({
 });
 const Config = Schema.Struct({
   oauthAccount: Schema.optional(
-    Schema.Struct({ organizationUuid: Schema.optional(Schema.String) }),
+    Schema.Struct({
+      accountUuid: Schema.optional(Schema.String),
+      organizationUuid: Schema.optional(Schema.String),
+    }),
   ),
 });
 const Grant = Schema.Struct({
@@ -172,10 +175,24 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
   Effect.orElseSucceed(() => undefined),
 );
 
-export const readClaudeOrganizationId = (accountConfigPath: string) =>
+const readClaudeOauthAccount = (accountConfigPath: string) =>
   readJson(Config, accountConfigPath).pipe(
-    Effect.map((config) => config.oauthAccount?.organizationUuid?.trim() || undefined),
+    Effect.map((config) => config.oauthAccount),
     Effect.orElseSucceed(() => undefined),
+  );
+
+export const readClaudeOrganizationId = (accountConfigPath: string) =>
+  readClaudeOauthAccount(accountConfigPath).pipe(
+    Effect.map((account) => account?.organizationUuid?.trim() || undefined),
+  );
+
+/** Changes when a login switches account; constant when signed out, on an API key, or unreadable. */
+export const readClaudeAccountKey = (accountConfigPath: string) =>
+  readClaudeOauthAccount(accountConfigPath).pipe(
+    Effect.map(
+      (account) =>
+        `${account?.accountUuid?.trim() ?? ""}\0${account?.organizationUuid?.trim() ?? ""}`,
+    ),
   );
 
 export const claudeAccountConfigPath = Effect.fn("claudeAccountConfigPath")(function* (
