@@ -3553,6 +3553,149 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect.each([
+    { shape: "string", content: "Command finished\nwith details" },
+    {
+      shape: "text block",
+      content: [
+        { type: "text", text: "Command finished\n" },
+        { type: "image", data: "Never display image", mimeType: "image/png" },
+        { type: "text", text: "with details" },
+      ],
+    },
+  ])("shows only displayable $shape custom output of a command-only prompt", ({ content }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread, "default", [], "/command-only");
+      yield* fake.takeRequest("prompt");
+      const custom = {
+        role: "custom",
+        customType: "command-result",
+        display: true,
+        content,
+        details: { secret: "Never display details" },
+      };
+      for (const message of [
+        { ...custom, display: false },
+        { ...custom, display: undefined },
+        { ...custom, display: "true" },
+        { ...custom, content: [{ type: "image", data: "Never display image" }] },
+        { ...custom, content: "   " },
+        custom,
+        custom,
+        { ...custom, customType: undefined },
+      ]) {
+        yield* fake.emit({
+          type: "message_start",
+          message: { ...message, content: "Unfinished custom output" },
+        });
+        yield* fake.emit({ type: "message_end", message });
+      }
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      const notices = [];
+      while (true) {
+        const event = yield* takeEvent(
+          (event) =>
+            event.type === "turn.terminal" ||
+            event.type === "message.updated" ||
+            (event.type === "turn_item.updated" && event.turnItem.type === "system_notice"),
+        );
+        if (event.type === "turn.terminal") {
+          assert.equal(event.status, "completed");
+          break;
+        }
+        if (event.type !== "turn_item.updated" || event.turnItem.type !== "system_notice") {
+          return yield* Effect.die("Custom output must not create assistant messages");
+        }
+        assert.equal(event.turnItem.status, "completed");
+        notices.push(event.turnItem);
+      }
+      assert.deepEqual(
+        notices.map((item) => item.message),
+        [
+          "[command-result] Command finished\nwith details",
+          "[command-result] Command finished\nwith details",
+          "Command finished\nwith details",
+        ],
+      );
+      assert.notEqual(notices[0]!.id, notices[1]!.id);
+      assert.notEqual(notices[0]!.nodeId, notices[1]!.nodeId);
+      assert.isBelow(notices[0]!.ordinal, notices[1]!.ordinal);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps assistant identities and custom notices ordered within an active turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.emit({ type: "agent_start" });
+      for (const text of ["Before custom", "After custom"]) {
+        yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+        yield* fake.emit({
+          type: "message_update",
+          assistantMessageEvent: {
+            type: "text_end",
+            contentIndex: 0,
+            content: text,
+          },
+        });
+        yield* fake.emit({ type: "message_end", message: { role: "assistant" } });
+        if (text === "Before custom") {
+          const custom = {
+            role: "custom",
+            customType: "extension",
+            display: true,
+            content: "Result",
+          };
+          yield* fake.emit({ type: "message_start", message: custom });
+          yield* fake.emit({ type: "message_end", message: custom });
+        }
+      }
+      yield* fake.emit({ type: "agent_settled" });
+      const items = [];
+      const messages = [];
+      while (true) {
+        const event = yield* takeEvent(
+          (event) =>
+            event.type === "turn.terminal" ||
+            event.type === "message.updated" ||
+            event.type === "turn_item.updated",
+        );
+        if (event.type === "turn.terminal") {
+          assert.equal(event.status, "completed");
+          break;
+        }
+        if (event.type === "message.updated") messages.push(event.message);
+        if (event.type === "turn_item.updated") items.push(event.turnItem);
+      }
+      assert.deepEqual(
+        messages.map((message) => message.text),
+        ["Before custom", "After custom"],
+      );
+      assert.equal(new Set(messages.map((message) => message.id)).size, 2);
+      assert.deepEqual(
+        items.map((item) => item.type),
+        ["assistant_message", "system_notice", "assistant_message"],
+      );
+      assert.equal(new Set(items.map((item) => item.id)).size, 3);
+      assert.equal(new Set(items.map((item) => item.nodeId)).size, 3);
+      assert.isBelow(items[0]!.ordinal, items[1]!.ordinal);
+      assert.isBelow(items[1]!.ordinal, items[2]!.ordinal);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("leaves /compacted as an ordinary prompt", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
