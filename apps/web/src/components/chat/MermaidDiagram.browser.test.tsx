@@ -39,7 +39,7 @@ vi.mock(import("pele/lazy"), async (original) => {
 });
 
 function ZeroSizeHost({ children }: { children: ReactNode }) {
-  return <div style={{ width: 0, height: 0, overflow: "hidden" }}>{children}</div>;
+  return <div className="h-0 w-0 overflow-hidden">{children}</div>;
 }
 
 function ExpandableHost({ children }: { children: ReactNode }) {
@@ -49,7 +49,7 @@ function ExpandableHost({ children }: { children: ReactNode }) {
       <button type="button" onClick={() => setOpen(true)}>
         Open
       </button>
-      {open ? <div style={{ width: 480 }}>{children}</div> : null}
+      {open ? <div className="w-[480px]">{children}</div> : null}
     </div>
   );
 }
@@ -97,14 +97,14 @@ describe("MermaidDiagram in collapsed containers", () => {
     await vi.waitFor(() => {
       expect(mountSpy).toHaveBeenCalled();
       expect(screen.container.querySelector("[data-markdown-mermaid] svg")).not.toBeNull();
+      expect(screen.container.textContent).not.toContain("Unable to render diagram");
     });
-    expect(screen.container.textContent).not.toContain("Unable to render diagram");
   });
 
   it("renders inside MarkdownDetails after expand", async () => {
     mountSpy.mockClear();
     await using screen = await render(
-      <div style={{ width: 480 }}>
+      <div className="w-[480px]">
         <MarkdownDetails>
           <summary>Plan</summary>
           <Suspense fallback={null}>
@@ -128,7 +128,7 @@ describe("MermaidDiagram in collapsed containers", () => {
   it("keeps a successful diagram when a later Pele error arrives", async () => {
     mountSpy.mockClear();
     await using screen = await render(
-      <div style={{ width: 480 }}>
+      <div className="w-[480px]">
         <Suspense fallback={null}>
           <MermaidDiagram source={FLOW} onExpand={() => undefined} />
         </Suspense>
@@ -146,14 +146,16 @@ describe("MermaidDiagram in collapsed containers", () => {
       options?.onError?.(new Error("resize while collapsed"));
     });
 
-    expect(screen.container.textContent).not.toContain("Unable to render diagram");
-    expect(screen.container.querySelector("[data-markdown-mermaid] svg")).not.toBeNull();
+    await vi.waitFor(() => {
+      expect(screen.container.textContent).not.toContain("Unable to render diagram");
+      expect(screen.container.querySelector("[data-markdown-mermaid] svg")).not.toBeNull();
+    });
   });
 
   it("recovers when source changes after a render error", async () => {
     mountSpy.mockClear();
     await using screen = await render(
-      <div style={{ width: 480 }}>
+      <div className="w-[480px]">
         <Suspense fallback={null}>
           <MermaidDiagram source={"flowchart LR\nA-->"} onExpand={() => undefined} />
         </Suspense>
@@ -164,13 +166,13 @@ describe("MermaidDiagram in collapsed containers", () => {
 
     await vi.waitFor(() => {
       expect(screen.container.textContent).toContain("Unable to render diagram");
+      expect(screen.container.querySelector("[data-markdown-mermaid] button")).toHaveAttribute(
+        "hidden",
+      );
     });
-    expect(screen.container.querySelector("[data-markdown-mermaid] button")).toHaveAttribute(
-      "hidden",
-    );
 
     await screen.rerender(
-      <div style={{ width: 480 }}>
+      <div className="w-[480px]">
         <Suspense fallback={null}>
           <MermaidDiagram source={FLOW} onExpand={() => undefined} />
         </Suspense>
@@ -179,7 +181,7 @@ describe("MermaidDiagram in collapsed containers", () => {
 
     await vi.waitFor(() => {
       expect(screen.container.querySelector("[data-markdown-mermaid] svg")).not.toBeNull();
+      expect(screen.container.textContent).not.toContain("Unable to render diagram");
     });
-    expect(screen.container.textContent).not.toContain("Unable to render diagram");
   });
 });
