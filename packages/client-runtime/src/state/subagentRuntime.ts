@@ -277,7 +277,11 @@ export function deriveWorkflowGroups(
     // provider only admits a phase once something in it starts. Members seed
     // the map; the declared titles then overwrite whatever they guessed.
     const phaseTitles = new Map<number, string>();
+    const membersByPhase = new Map<number | null, RuntimeSubagent[]>();
     for (const member of workflowMembers) {
+      const phaseMembers = membersByPhase.get(member.phaseIndex);
+      if (phaseMembers === undefined) membersByPhase.set(member.phaseIndex, [member]);
+      else phaseMembers.push(member);
       if (member.phaseIndex === null) continue;
       phaseTitles.set(
         member.phaseIndex,
@@ -290,9 +294,9 @@ export function deriveWorkflowGroups(
       .sort((a, b) => a.index - b.index);
 
     const phases = knownPhases.map((phase) => {
-      const phaseMembers = workflowMembers
-        .filter((member) => member.phaseIndex === phase.index)
-        .sort((a, b) => (a.agentIndex ?? 0) - (b.agentIndex ?? 0));
+      const phaseMembers = (membersByPhase.get(phase.index) ?? []).sort(
+        (a, b) => (a.agentIndex ?? 0) - (b.agentIndex ?? 0),
+      );
       const hasActiveMember = phaseMembers.some(
         // Idle members count as active for phase-liveness: a resumable Codex
         // member has not finished the phase.
@@ -312,9 +316,9 @@ export function deriveWorkflowGroups(
       };
     });
 
-    const unphasedMembers = workflowMembers
-      .filter((member) => member.phaseIndex === null)
-      .sort((a, b) => (a.agentIndex ?? 0) - (b.agentIndex ?? 0));
+    const unphasedMembers = (membersByPhase.get(null) ?? []).sort(
+      (a, b) => (a.agentIndex ?? 0) - (b.agentIndex ?? 0),
+    );
 
     return { workflow, phases, unphasedMembers };
   });
