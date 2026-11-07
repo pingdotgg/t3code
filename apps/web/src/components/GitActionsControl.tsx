@@ -21,6 +21,7 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useDeadlinePassed } from "../hooks/useDeadline";
 import { useNowSecond } from "../hooks/useNowSecond";
@@ -36,6 +37,8 @@ import {
   InfoIcon,
   LockIcon,
   GlobeIcon,
+  ListIcon,
+  ListTreeIcon,
 } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { RadioGroup } from "~/components/ui/radio-group";
@@ -64,6 +67,7 @@ import {
 } from "./GitActionsControl.logic";
 import { WizardPopup, WizardHeader, WizardSteps, WizardPanel, WizardFooter } from "./ui/wizard";
 import { StartTruncatedPath } from "./StartTruncatedPath";
+import { CommitFileTree } from "./CommitFileTree";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import {
@@ -83,6 +87,7 @@ import { Textarea } from "~/components/ui/textarea";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useOpenInPreferredEditor } from "~/editorPreferences";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 import {
   useGitStackedAction,
   useSourceControlActionRunning,
@@ -274,6 +279,8 @@ function getMenuActionDisabledReason({
 }
 
 const COMMIT_DIALOG_TITLE = "Commit changes";
+const COMMIT_FILE_VIEW_STORAGE_KEY = "t3code.commitDialogFileView";
+const CommitFileViewSchema = Schema.Literals(["list", "tree"]);
 const COMMIT_DIALOG_DESCRIPTION =
   "Review and confirm your commit. Leave the message blank to auto-generate one.";
 
@@ -971,6 +978,11 @@ export default function GitActionsControl({
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
   const [isEditingFiles, setIsEditingFiles] = useState(false);
+  const [commitFileView, setCommitFileView] = useLocalStorage(
+    COMMIT_FILE_VIEW_STORAGE_KEY,
+    "list",
+    CommitFileViewSchema,
+  );
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
   const [inlineSuccess, setInlineSuccess] = useState<InlineGitActionSuccess | null>(null);
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
@@ -1064,6 +1076,8 @@ export default function GitActionsControl({
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
   const allSelected = excludedFiles.size === 0;
   const noneSelected = selectedFiles.length === 0;
+  const hasFileDirectories = allFiles.some((file) => file.path.includes("/"));
+  const showFileTree = commitFileView === "tree" && hasFileDirectories;
 
   const initAction = useVcsInitAction(sourceControlScope);
   const runImmediateGitAction = useGitStackedAction(sourceControlScope);
@@ -1728,13 +1742,32 @@ export default function GitActionsControl({
                     )}
                   </div>
                   {allFiles.length > 0 && (
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => setIsEditingFiles((prev) => !prev)}
-                    >
-                      {isEditingFiles ? "Done" : "Edit"}
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      {hasFileDirectories && (
+                        <ToggleGroup
+                          value={[commitFileView]}
+                          onValueChange={(next) => {
+                            const view = next[0];
+                            if (view === "list" || view === "tree") setCommitFileView(view);
+                          }}
+                          aria-label="File view"
+                        >
+                          <Toggle value="list" aria-label="List view">
+                            <ListIcon />
+                          </Toggle>
+                          <Toggle value="tree" aria-label="Tree view">
+                            <ListTreeIcon />
+                          </Toggle>
+                        </ToggleGroup>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => setIsEditingFiles((prev) => !prev)}
+                      >
+                        {isEditingFiles ? "Done" : "Edit"}
+                      </Button>
+                    </div>
                   )}
                 </div>
                 {!gitStatusForActions || allFiles.length === 0 ? (
@@ -1744,59 +1777,70 @@ export default function GitActionsControl({
                     <div className="h-44 rounded-lg bg-card ring-1 ring-black/5 dark:bg-white/[0.025] dark:ring-white/5">
                       <ScrollArea>
                         <div className="space-y-1 p-1">
-                          {allFiles.map((file) => {
-                            const isExcluded = excludedFiles.has(file.path);
-                            return (
-                              <div
-                                key={file.path}
-                                className="flex w-full items-center gap-2 rounded-md px-2 py-1 font-mono hover:bg-accent/50"
-                              >
-                                {isEditingFiles && (
-                                  <Checkbox
-                                    checked={!excludedFiles.has(file.path)}
-                                    onCheckedChange={() => {
-                                      setExcludedFiles((prev) => {
-                                        const next = new Set(prev);
-                                        if (next.has(file.path)) {
-                                          next.delete(file.path);
-                                        } else {
-                                          next.add(file.path);
-                                        }
-                                        return next;
-                                      });
-                                    }}
-                                  />
-                                )}
-                                <button
-                                  type="button"
-                                  className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left enabled:cursor-pointer"
-                                  disabled={!canOperateThread || workingTreeRoot === null}
-                                  aria-label={`Open ${file.path} in editor`}
-                                  onClick={() => openChangedFileInEditor(file.path)}
+                          {showFileTree ? (
+                            <CommitFileTree
+                              files={allFiles}
+                              excludedFiles={excludedFiles}
+                              isEditing={isEditingFiles}
+                              canOpenFile={canOperateThread && workingTreeRoot !== null}
+                              onExcludedFilesChange={setExcludedFiles}
+                              onOpenFile={openChangedFileInEditor}
+                            />
+                          ) : (
+                            allFiles.map((file) => {
+                              const isExcluded = excludedFiles.has(file.path);
+                              return (
+                                <div
+                                  key={file.path}
+                                  className="flex w-full items-center gap-2 rounded-md px-2 py-1 font-mono hover:bg-accent/50"
                                 >
-                                  <StartTruncatedPath
-                                    path={file.path}
-                                    className={`flex-1${isExcluded ? " text-muted-foreground" : ""}`}
-                                  />
-                                  <span className="shrink-0">
-                                    {isExcluded ? (
-                                      <span className="text-muted-foreground">Excluded</span>
-                                    ) : (
-                                      <>
-                                        <span className="text-diff-addition">
-                                          +{formatDiffCount(file.insertions)}
-                                        </span>
-                                        <span className="text-muted-foreground"> / </span>
-                                        <span className="text-diff-deletion">
-                                          -{formatDiffCount(file.deletions)}
-                                        </span>
-                                      </>
-                                    )}
-                                  </span>
-                                </button>
-                              </div>
-                            );
-                          })}
+                                  {isEditingFiles && (
+                                    <Checkbox
+                                      checked={!excludedFiles.has(file.path)}
+                                      onCheckedChange={() => {
+                                        setExcludedFiles((prev) => {
+                                          const next = new Set(prev);
+                                          if (next.has(file.path)) {
+                                            next.delete(file.path);
+                                          } else {
+                                            next.add(file.path);
+                                          }
+                                          return next;
+                                        });
+                                      }}
+                                    />
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left enabled:cursor-pointer"
+                                    disabled={!canOperateThread || workingTreeRoot === null}
+                                    aria-label={`Open ${file.path} in editor`}
+                                    onClick={() => openChangedFileInEditor(file.path)}
+                                  >
+                                    <StartTruncatedPath
+                                      path={file.path}
+                                      className={`flex-1${isExcluded ? " text-muted-foreground" : ""}`}
+                                    />
+                                    <span className="shrink-0">
+                                      {isExcluded ? (
+                                        <span className="text-muted-foreground">Excluded</span>
+                                      ) : (
+                                        <>
+                                          <span className="text-diff-addition">
+                                            +{formatDiffCount(file.insertions)}
+                                          </span>
+                                          <span className="text-muted-foreground"> / </span>
+                                          <span className="text-diff-deletion">
+                                            -{formatDiffCount(file.deletions)}
+                                          </span>
+                                        </>
+                                      )}
+                                    </span>
+                                  </button>
+                                </div>
+                              );
+                            })
+                          )}
                         </div>
                       </ScrollArea>
                     </div>
