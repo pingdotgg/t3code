@@ -1,6 +1,7 @@
 import { InlineButton } from "../ui/button";
 import { useId, useState } from "react";
 
+import { observeResize } from "../../lib/observeResize";
 import { cn } from "../../lib/utils";
 
 export function ExpandableText({
@@ -18,16 +19,22 @@ export function ExpandableText({
 }) {
   const textId = useId();
   const [expanded, setExpanded] = useState(false);
-  const canExpand = collapsedText !== text || text.length > 180 || text.includes("\n");
+  const [clipped, setClipped] = useState(false);
+  const canExpand = expanded || clipped || collapsedText !== text;
 
   return (
     <div className={cn("min-w-0", className)}>
       <div
+        // A new text can be clipped at the same box size, which a resize alone would not report.
+        key={collapsedText}
+        ref={(element) => {
+          if (element === null) return;
+          return observeResize(element, () => {
+            setClipped(element.scrollHeight - element.clientHeight > 1);
+          });
+        }}
         id={textId}
-        className={cn(
-          "whitespace-pre-wrap break-words",
-          !expanded && canExpand ? collapsedClassName : null,
-        )}
+        className={cn("whitespace-pre-wrap break-words", !expanded && collapsedClassName)}
       >
         {expanded ? text : collapsedText}
       </div>

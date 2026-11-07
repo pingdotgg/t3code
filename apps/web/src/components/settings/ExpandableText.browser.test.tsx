@@ -30,3 +30,24 @@ it("offers the disclosure when the error is clipped by the clamp", async () => {
 
   await expect.element(screen.getByRole("button", { name: "Show full error" })).toBeVisible();
 });
+
+it("keeps the disclosure while expanded and follows container resizes", async () => {
+  await using screen = await render(
+    <div style={{ width: 200 }}>
+      <ExpandableText text={LONG_SINGLE_LINE_ERROR} />
+    </div>,
+  );
+
+  await screen.getByRole("button", { name: "Show full error" }).click();
+  await screen.getByRole("button", { name: "Show less" }).click();
+  await expect.element(screen.getByRole("button", { name: "Show full error" })).toBeVisible();
+
+  await screen.rerender(
+    <div style={{ width: 960 }}>
+      <ExpandableText text={LONG_SINGLE_LINE_ERROR} />
+    </div>,
+  );
+  await expect
+    .element(screen.getByRole("button", { name: "Show full error" }))
+    .not.toBeInTheDocument();
+});
