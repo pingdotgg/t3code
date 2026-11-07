@@ -184,6 +184,54 @@ describe("applyGuestStreamEvent", () => {
     // Once placed, a later snapshot whose window no longer holds the row must not resurrect it.
     const placed = apply([itemEvent(2, guestMessageRow("u1", waiting.id)), snapshot(3)], queued);
     expect(placed.awaitingRowIds.size).toBe(0);
+
+    const windowed = apply(
+      [
+        {
+          type: "thread",
+          item: {
+            kind: "snapshot",
+            snapshotSequence: 3,
+            projection,
+            historyCursor: "cursor-1",
+            hasMoreHistory: true,
+          },
+        },
+      ],
+      queued,
+    );
+    const historyPlaced = applyGuestStreamEvent(windowed, {
+      type: "history-page",
+      cursor: "cursor-1",
+      page: {
+        snapshotSequence: 3,
+        items: [
+          {
+            position: 0,
+            visibility: "local",
+            sourceThreadId: projection.thread.id,
+            sourceItemId: TurnItemId.make("u1"),
+            item: guestMessageRow("u1", waiting.id),
+          },
+        ],
+        nextCursor: null,
+        hasMoreHistory: false,
+      },
+    });
+    expect(itemIds(historyPlaced)).toEqual(["u1"]);
+    const reconnected = apply(
+      [{ type: "view", view: { ...view, messages: [sent] } }, snapshot(4)],
+      historyPlaced,
+    );
+    expect(itemIds(reconnected)).toEqual([]);
+    expect(
+      unplacedGuestMessages(
+        reconnected.view!.messages,
+        reconnected.projection!.visibleTurnItems,
+        reconnected.awaitingRowIds,
+      ),
+    ).toEqual([]);
+    expect(historyPlaced.awaitingRowIds.has(waiting.id)).toBe(false);
   });
 });
 
