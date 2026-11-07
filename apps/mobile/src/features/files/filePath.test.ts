@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   fileRoutePathSegments,
+  isMarkdownPreviewFile,
   needsWorkspaceFileContents,
   resolveFileLinkPath,
   resolveWorkspaceRelativeFilePath,
@@ -57,4 +58,13 @@ describe("needsWorkspaceFileContents", () => {
     expect(needsWorkspaceFileContents({ ...input, metadataKind: undefined })).toBe(true);
     expect(needsWorkspaceFileContents({ ...input, metadataKind: "directory" })).toBe(false);
   });
+});
+
+describe("isMarkdownPreviewFile", () => {
+  it.each(["README.md", "docs/guide.mdx", "CHANGELOG.markdown", "notes.MDOWN", "todo.mkd"])(
+    "previews %s as Markdown",
+    (path) => {
+      expect(isMarkdownPreviewFile(path)).toBe(true);
+    },
+  );
 });
