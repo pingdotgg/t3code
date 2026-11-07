@@ -299,8 +299,15 @@ describe("index.html boot script", () => {
       prefersDark: true,
     },
     {
-      name: "a removed custom theme falls back to system",
+      name: "a removed custom theme falls back to system without mode keys",
+      expectedAppearance: "dark",
       storage: { [THEME_STORAGE_KEY]: "gone-theme" },
+      prefersDark: true,
+    },
+    {
+      name: "an unresolved selection with follow-system off retains the light fallback",
+      expectedAppearance: "light",
+      storage: { [THEME_STORAGE_KEY]: "gone-theme", [THEME_FOLLOW_SYSTEM_STORAGE_KEY]: "false" },
       prefersDark: true,
     },
     {
@@ -331,8 +338,8 @@ describe("index.html boot script", () => {
       const boot = runBootScript({ storage, prefersDark });
       const runtimeAppearance = runtimeResolvedAppearance(storage, prefersDark);
       expect(boot.isDark).toBe(runtimeAppearance === "dark");
-      if (expectedAppearance) {
-        expect(runtimeAppearance).toBe(expectedAppearance);
+      if (expectedAppearance) expect(runtimeAppearance).toBe(expectedAppearance);
+      if (expectedAppearance && storage[THEME_STORAGE_KEY] === "source-only") {
         vi.stubGlobal("window", {
           localStorage: { getItem: (key: string) => storage[key] ?? null },
         });

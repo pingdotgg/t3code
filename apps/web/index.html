@@ -99,16 +99,14 @@
             THEME_FOLLOW_SYSTEM_STORAGE_KEY,
           );
           const preferenceMode =
-            theme === "light" || theme === "dark"
-              ? theme
-              : (legacyMode ?? (themeModes === null ? "system" : baseAppearance));
+            theme === "light" || theme === "dark" ? theme : (legacyMode ?? baseAppearance);
           const appearanceMode = isThemePreferenceMode(storedAppearanceMode)
             ? storedAppearanceMode
             : storedFollowSystem === "true"
               ? "system"
               : storedFollowSystem === "false"
                 ? preferenceMode
-                : theme === "system"
+                : theme === "system" || !isKnownTheme
                   ? "system"
                   : preferenceMode;
           // A valid mix half for the wanted appearance takes over: it decides

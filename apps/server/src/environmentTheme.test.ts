@@ -70,26 +70,35 @@ const currentThemes = Effect.gen(function* () {
 it.layer(NodeServices.layer)("environment theme", (it) => {
   it.effect("expands authored sources into the version one wire contract", () =>
     withEnvironmentThemes(
-      {
-        "authored.json": JSON.stringify({
-          version: 2,
-          name: "Authored",
-          appearance: "dark",
-          sources: {
-            dark: {
-              version: 2,
-              seed: { canvas: "#101010", accent: "#123456" },
-              overrides: { focus: "#ff0000", terminalBackground: "#002200" },
-            },
-          },
-        }),
-      },
+      Object.fromEntries(
+        [1, 2].flatMap((version) =>
+          [true, false].map((cached) => [
+            `authored-${version}-${cached}.json`,
+            JSON.stringify({
+              version,
+              name: "Authored",
+              appearance: "dark",
+              ...(cached ? { colors: { focus: "#000000" } } : {}),
+              sources: {
+                dark: {
+                  version: 2,
+                  seed: { canvas: "#101010", accent: "#123456" },
+                  overrides: { focus: "#ff0000", terminalBackground: "#002200" },
+                },
+              },
+            }),
+          ]),
+        ),
+      ),
       Effect.gen(function* () {
         const themes = yield* currentThemes;
-        assert.equal(themes.length, 1);
-        assert.equal(themes[0]!.version, 1);
-        assert.equal(Object.keys(themes[0]!.colors!).length, THEME_COLOR_ROLES.length);
-        assert.equal("sources" in themes[0]!, false);
+        assert.equal(themes.length, 4);
+        for (const theme of themes) {
+          assert.equal(theme.version, 1);
+          assert.equal(Object.keys(theme.colors!).length, THEME_COLOR_ROLES.length);
+          assert.equal("sources" in theme, false);
+          assert.equal(theme.colors!.focus, "oklch(0.627955 0.257683 29.234)");
+        }
       }),
     ),
   );

@@ -162,9 +162,37 @@ describe("theme files", () => {
         }),
       ).toThrow();
     }
+    data.set(CUSTOM_THEMES_STORAGE_KEY, "[]");
+    using _backupQuota = vi
+      .spyOn(window.localStorage, "setItem")
+      .mockImplementation((key, value) => {
+        if (key.endsWith(":original")) throw new Error("quota exceeded");
+        data.set(key, value);
+      });
     installCustomTheme(theme);
     invalidateCustomThemes();
+    const saved = data.get(CUSTOM_THEMES_STORAGE_KEY)!;
+    data.set(CUSTOM_THEMES_STORAGE_KEY, "[]");
+    const capacity = CUSTOM_THEMES_STORAGE_KEY.length + saved.length;
+    _backupQuota.mockImplementation((key, value) => {
+      const next = new Map(data).set(key, value);
+      const size = [...next].reduce(
+        (total, [name, content]) => total + name.length + content.length,
+        0,
+      );
+      if (size > capacity) throw new Error("quota exceeded");
+      data.set(key, value);
+    });
+    invalidateCustomThemes();
+    installCustomTheme(theme);
+    expect(data.get(CUSTOM_THEMES_STORAGE_KEY)).toBe(saved);
+    invalidateCustomThemes();
     const restored = getCustomThemes()[0]!;
+    _backupQuota.mockImplementation((key, value) => {
+      data.set(key, value);
+    });
+    updateCustomTheme({ ...restored, label: "Edited" });
+    expect(data.has(`${CUSTOM_THEMES_STORAGE_KEY}:original`)).toBe(false);
     expect(restored.sources).toEqual(theme.sources);
     expect(restored.colors).toEqual(theme.colors);
     const { colors: _colors, variants: _variants, ...sourceOnly } = theme;

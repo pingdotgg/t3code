@@ -500,15 +500,24 @@ function saveCustomThemes(
   themes: ReadonlyArray<ThemeDefinition>,
 ): void {
   if (typeof window === "undefined") return;
+  let original: string | null = null;
   try {
     if (
       themes.some((theme) => theme.sources) &&
       window.localStorage.getItem(`${CUSTOM_THEMES_STORAGE_KEY}:original`) === null
     ) {
-      const original = window.localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY);
-      if (original !== null)
-        window.localStorage.setItem(`${CUSTOM_THEMES_STORAGE_KEY}:original`, original);
+      original = window.localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY);
+      const stored: unknown = original === null ? null : JSON.parse(original);
+      if (
+        Array.isArray(stored) &&
+        stored.some((theme) => isRecord(theme) && theme.sources !== undefined)
+      )
+        original = null;
     }
+  } catch {
+    // Recovery is best effort; storage failures must not block the primary save.
+  }
+  try {
     window.localStorage.setItem(CUSTOM_THEMES_STORAGE_KEY, JSON.stringify(storedThemes));
     customThemeLibrarySnapshot = { status: "ready", storedThemes, themes };
   } catch (cause) {
@@ -518,6 +527,13 @@ function saveCustomThemes(
       reason: "storage-unavailable",
       cause,
     });
+  }
+  if (original !== null) {
+    try {
+      window.localStorage.setItem(`${CUSTOM_THEMES_STORAGE_KEY}:original`, original);
+    } catch {
+      // Save first so the recovery copy cannot consume the primary write's quota.
+    }
   }
   notifyCustomThemeListeners();
 }

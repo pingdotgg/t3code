@@ -35,7 +35,12 @@ export function expandAuthoredThemeFile(raw: string): string {
   } catch {
     return raw;
   }
-  if (typeof value !== "object" || value === null || !("version" in value) || value.version !== 2)
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("version" in value) ||
+    (value.version !== 2 && !(value.version === 1 && "sources" in value))
+  )
     return raw;
   if (
     !("sources" in value) ||

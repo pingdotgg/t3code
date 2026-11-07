@@ -145,7 +145,7 @@ function getSystemDark() {
 }
 
 function readStoredFollowSystem(theme: Theme): boolean {
-  if (typeof window === "undefined") return theme === "system";
+  if (typeof window === "undefined") return getThemePreferenceMode(theme) === null;
 
   try {
     const raw = selectionStorage().getItem(THEME_FOLLOW_SYSTEM_STORAGE_KEY);
@@ -153,7 +153,7 @@ function readStoredFollowSystem(theme: Theme): boolean {
     if (raw === "false") return false;
   } catch {}
 
-  return theme === "system";
+  return getThemePreferenceMode(theme) === null;
 }
 
 function isThemePreferenceMode(value: string | null): value is ThemePreferenceMode {
@@ -169,7 +169,7 @@ export function readAppearanceModePreference(theme: Theme): ThemePreferenceMode 
   }
 
   if (readStoredFollowSystem(theme)) return "system";
-  return getThemePreferenceMode(theme) ?? "system";
+  return getThemePreferenceMode(theme) ?? "light";
 }
 
 function writeAppearanceModePreference(appearanceMode: ThemePreferenceMode): void {
