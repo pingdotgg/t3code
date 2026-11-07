@@ -13,6 +13,7 @@ import {
   SidebarStageBackdrop,
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
+import { TooltipProvider } from "../ui/tooltip";
 import { Badge } from "../ui/badge";
 import { T3Wordmark } from "../T3Wordmark";
 import {
@@ -170,41 +171,43 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   };
 
   return (
-    <SidebarMenu className="flex-row items-center">
-      {isOnUtilityPage ? (
-        <SidebarMenuItem className="min-w-0 flex-1">
-          <SidebarMenuButton size="control" onClick={handleBackClick}>
-            <ArrowLeftIcon />
-            <span>Back</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      ) : (
-        // Keep the three utilities in the design's compact, icon-only row.
-        <SidebarMenuItem className="shrink-0">
-          <div className="flex gap-1">
-            <SidebarUtilityItem
-              icon={<SettingsIcon className="size-4" />}
-              label="Settings"
-              onClick={handleSettingsClick}
-            />
-            {pullRequestsSupported ? (
+    <TooltipProvider>
+      <SidebarMenu className="flex-row items-center">
+        {isOnUtilityPage ? (
+          <SidebarMenuItem className="min-w-0 flex-1">
+            <SidebarMenuButton size="control" onClick={handleBackClick}>
+              <ArrowLeftIcon />
+              <span>Back</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        ) : (
+          // Keep the three utilities in the design's compact, icon-only row.
+          <SidebarMenuItem className="shrink-0">
+            <div className="flex gap-1">
               <SidebarUtilityItem
-                icon={<PullRequestGlyph.pullRequest className="size-4" />}
-                label="Pull Requests"
-                onClick={handlePullRequestsClick}
+                icon={<SettingsIcon className="size-4" />}
+                label="Settings"
+                onClick={handleSettingsClick}
               />
-            ) : null}
-            <SidebarUtilityItem
-              icon={<ChartNoAxesColumnIcon className="size-4" />}
-              label="Usage"
-              onClick={handleUsageClick}
-            />
-          </div>
-        </SidebarMenuItem>
-      )}
-      <SidebarThreadUndoNotice />
-      <SidebarUpdatePill />
-    </SidebarMenu>
+              {pullRequestsSupported ? (
+                <SidebarUtilityItem
+                  icon={<PullRequestGlyph.pullRequest className="size-4" />}
+                  label="Pull Requests"
+                  onClick={handlePullRequestsClick}
+                />
+              ) : null}
+              <SidebarUtilityItem
+                icon={<ChartNoAxesColumnIcon className="size-4" />}
+                label="Usage"
+                onClick={handleUsageClick}
+              />
+            </div>
+          </SidebarMenuItem>
+        )}
+        <SidebarThreadUndoNotice />
+        <SidebarUpdatePill />
+      </SidebarMenu>
+    </TooltipProvider>
   );
 });
 

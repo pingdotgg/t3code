@@ -477,7 +477,7 @@ export function SnapShotSettings() {
                   <Menu>
                     <MenuTrigger
                       aria-label={"Snapshot sound: " + soundLabel}
-                      render={<SelectButton size="sm" />}
+                      render={<SelectButton variant="well" size="compact" />}
                       className="w-auto min-w-0"
                       disabled={!captureAvailable}
                     >
