@@ -56,7 +56,10 @@ import {
   PullRequestGlyph,
   type PullRequestGlyphIcon,
 } from "./pullRequest/pullRequestIcons";
-import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+import {
+  pullRequestStateKey,
+  resolvePullRequestState,
+} from "./pullRequest/pullRequestPresentation";
 
 export interface PrStatusIndicator {
   label: string;
@@ -141,6 +144,7 @@ export function linkedPullRequestSnapshotStatus(
       title: snapshot.title,
       state: snapshot.state,
       isDraft: snapshot.isDraft,
+      ...(snapshot.isInMergeQueue === true ? { isInMergeQueue: true } : {}),
       headRef: snapshot.headBranch,
       baseRef: snapshot.baseBranch,
       ...(snapshot.updatedAt === null ? {} : { updatedAt: snapshot.updatedAt }),
@@ -339,7 +343,11 @@ export function ThreadPullRequestsMiniList({
         const presentation =
           snapshot === null
             ? null
-            : resolvePullRequestState({ state: snapshot.state, isDraft: snapshot.isDraft });
+            : resolvePullRequestState({
+                state: snapshot.state,
+                isDraft: snapshot.isDraft,
+                isInMergeQueue: snapshot.isInMergeQueue,
+              });
         return (
           <ThreadPullRequestMiniListItem
             key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
@@ -417,7 +425,11 @@ export function prStatusIndicator(
 ): PrStatusIndicator | null {
   if (!pr) return null;
   const { shortLabel } = sourceControlClients.get(provider?.kind).changeRequest;
-  const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true });
+  const state = resolvePullRequestState({
+    state: pr.state,
+    isDraft: pr.isDraft === true,
+    isInMergeQueue: pr.isInMergeQueue,
+  });
 
   const tooltipLead = `${shortLabel} #${pr.number} - ${state.label}`;
   return {
@@ -434,12 +446,14 @@ export function prStatusIndicator(
 export function ChangeRequestStatusIcon({
   state,
   isDraft = false,
+  isInMergeQueue,
   className,
 }: Pick<NonNullable<ThreadPr>, "state"> & {
   readonly isDraft?: boolean | undefined;
+  readonly isInMergeQueue?: boolean | undefined;
   readonly className?: string | undefined;
 }) {
-  const presentation = resolvePullRequestState({ state, isDraft });
+  const presentation = resolvePullRequestState({ state, isDraft, isInMergeQueue });
   return <presentation.Icon className={className} />;
 }
 
@@ -733,7 +747,12 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
               />
             }
           >
-            <ChangeRequestStatusIcon state={pr.state} isDraft={pr.isDraft} className="size-3" />
+            <ChangeRequestStatusIcon
+              state={pr.state}
+              isDraft={pr.isDraft}
+              isInMergeQueue={pr.isInMergeQueue}
+              className="size-3"
+            />
           </TooltipTrigger>
           <TooltipPopup side="top">
             <PrStatusTooltipContent status={prStatus} />
@@ -811,10 +830,12 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
   );
 }
 
-function settledPrHoverColorClass(state: ThreadPullRequestBadge["state"]): string {
+function settledPrHoverColorClass(state: keyof typeof PULL_REQUEST_STATE_PRESENTATION): string {
   switch (state) {
     case "draft":
       return "group-hover/sidebar-row:text-zinc-500 dark:group-hover/sidebar-row:text-zinc-400/80";
+    case "queued":
+      return "group-hover/sidebar-row:text-amber-600 dark:group-hover/sidebar-row:text-amber-300/90";
     case "open":
       return "group-hover/sidebar-row:text-emerald-600 dark:group-hover/sidebar-row:text-emerald-300/90";
     case "merged":
@@ -868,13 +889,7 @@ export function ThreadSearchPullRequestNumber({
   });
   if (presentation === null) return null;
   const aggregate = badge !== null && (badge.kind === "stack" || badge.others > 0);
-  const state = aggregate
-    ? badge.state
-    : pr === null
-      ? null
-      : pr.state === "open" && pr.isDraft
-        ? "draft"
-        : pr.state;
+  const state = aggregate ? badge.state : pr === null ? null : pullRequestStateKey(pr);
   return (
     <span
       aria-label={presentation.label}

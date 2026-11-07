@@ -112,6 +112,7 @@ export interface ProviderChangeRequestSummary {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft?: boolean;
+  readonly isInMergeQueue?: boolean;
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
   readonly updatedAt: string;
@@ -207,6 +208,7 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly viewerPermissions: PullRequestViewerPermissions;
   readonly baseComparison?: PullRequestBaseComparison;
   readonly behindBy?: number;
+  readonly isInMergeQueue?: boolean;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
   readonly workflowApprovalsRequired?: number;

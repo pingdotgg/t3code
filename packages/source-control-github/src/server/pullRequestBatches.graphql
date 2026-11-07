@@ -10,6 +10,7 @@ query PullRequestSummary($owner: String!, $name: String!, $number: Int!, $stacks
       url
       state
       isDraft
+      isInMergeQueue
       mergeable
       reviewDecision
       additions

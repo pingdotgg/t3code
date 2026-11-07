@@ -12,6 +12,7 @@ fragment PullRequestNode on PullRequest {
   headRefOid
   state
   isDraft
+  isInMergeQueue
   mergedAt
   closedAt
   updatedAt

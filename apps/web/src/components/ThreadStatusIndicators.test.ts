@@ -3,6 +3,8 @@ import { ProjectId, type PullRequestSummary, type VcsStatusResult } from "@t3too
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+  linkedPullRequestSnapshotStatus,
+  prStatusIndicator,
   resolveDisplayedThreadPr,
   resolveDisplayedThreadPrProvider,
 } from "./ThreadStatusIndicators";
@@ -118,5 +120,34 @@ describe("resolveDisplayedThreadPr", () => {
         gitStatus: status({ refName: "main", pr: mainPr }),
       }),
     ).toBeNull();
+  });
+});
+
+describe("prStatusIndicator", () => {
+  it.each([
+    { isDraft: false, isInMergeQueue: true, label: "PR in merge queue" },
+    { isDraft: false, isInMergeQueue: false, label: "PR open" },
+  ])("labels a linked snapshot as $label", ({ isDraft, isInMergeQueue, label }) => {
+    const linked = linkedPullRequestSnapshotStatus({
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number: 42,
+      url: "https://github.com/pingdotgg/t3code/pull/42",
+      source: "manual",
+      linkedAt: "2026-11-03T00:00:00.000Z",
+      snapshot: {
+        state: "open",
+        title: "Feature PR",
+        headBranch: "feature/current",
+        baseBranch: "main",
+        isDraft,
+        isInMergeQueue,
+        updatedAt: null,
+        syncedAt: "2026-11-03T00:00:00.000Z",
+      },
+      stack: null,
+    });
+
+    expect(prStatusIndicator(linked?.pr ?? null, linked?.sourceControlProvider)?.label).toBe(label);
   });
 });

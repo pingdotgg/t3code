@@ -31,6 +31,13 @@ const STATES = {
     text: "text-danger-foreground",
     background: "bg-danger",
   },
+  queued: {
+    label: "In merge queue",
+    icon: PullRequestGlyph.merged,
+    tint: "accent-adaptive-amber-700-300",
+    text: "text-adaptive-amber-700-300",
+    background: "bg-adaptive-amber-500-a12-a16",
+  },
   draft: {
     label: "Draft",
     icon: PullRequestGlyph.draft,
@@ -43,8 +50,13 @@ const STATES = {
   { label: string; icon: AppSymbolName; tint: string; text: string; background: string }
 >;
 
-export function pullRequestStatus(pr: Pick<PullRequestListEntry, "state" | "isDraft">) {
-  return STATES[pr.isDraft && pr.state === "open" ? "draft" : pr.state];
+export function pullRequestStatus(
+  pr: Pick<PullRequestListEntry, "state" | "isDraft"> & {
+    readonly isInMergeQueue?: boolean | undefined;
+  },
+) {
+  if (pr.state !== "open") return STATES[pr.state];
+  return STATES[pr.isDraft ? "draft" : pr.isInMergeQueue === true ? "queued" : "open"];
 }
 
 export function pullRequestConflict(pr: {

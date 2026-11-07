@@ -204,6 +204,7 @@ function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
     headBranch: summary.headBranch,
     baseBranch: summary.baseBranch,
     isDraft: summary.isDraft ?? false,
+    ...(summary.isInMergeQueue === undefined ? {} : { isInMergeQueue: summary.isInMergeQueue }),
     updatedAt: summary.updatedAt,
     closedAt: summary.closedAt ?? null,
     mergedAt: summary.mergedAt ?? null,
@@ -252,6 +253,7 @@ function snapshotFieldsEqual(left: SnapshotFields, right: SnapshotFields): boole
     left.headBranch === right.headBranch &&
     left.baseBranch === right.baseBranch &&
     left.isDraft === right.isDraft &&
+    left.isInMergeQueue === right.isInMergeQueue &&
     left.updatedAt === right.updatedAt &&
     (left.closedAt ?? null) === (right.closedAt ?? null) &&
     (left.mergedAt ?? null) === (right.mergedAt ?? null) &&

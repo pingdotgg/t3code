@@ -1154,6 +1154,7 @@ export function PullRequestDetailPanel({
         mergeability: detail.mergeability,
         checksState,
         autoMergeEnabled: detail.autoMergeEnabled,
+        isInMergeQueue: detail.isInMergeQueue,
         hasMergeMethod: allowedMergeMethods.length > 0,
         canMerge: !stackOwnsMerge && can("merge"),
         canMarkReady: can("ready"),
@@ -1171,6 +1172,7 @@ export function PullRequestDetailPanel({
       (!autoMergeArmed &&
         primaryAction !== "enable-auto-merge" &&
         !detail.isDraft &&
+        detail.isInMergeQueue !== true &&
         !conflicting &&
         can("enable-auto-merge") &&
         allowedMergeMethods.length > 0));
@@ -1186,10 +1188,15 @@ export function PullRequestDetailPanel({
     detail?.state === "open" &&
     can("merge") &&
     !detail.isDraft &&
+    detail.isInMergeQueue !== true &&
     !conflicting &&
     allowedMergeMethods.length > 1;
   const statePresentation = detail
-    ? resolvePullRequestState({ state: detail.state, isDraft: detail.isDraft })
+    ? resolvePullRequestState({
+        state: detail.state,
+        isDraft: detail.isDraft,
+        isInMergeQueue: detail.isInMergeQueue,
+      })
     : null;
   const showsDeleteBranch = detail !== null && canDeletePullRequestBranch(detail);
   const environmentConnected = environments.some(
@@ -1329,7 +1336,12 @@ export function PullRequestDetailPanel({
                   onSelect={onSelectPullRequest}
                   mergeMethod={selectedMergeMethod}
                   stale={!nativeStackQuery.isFresh}
-                  canMerge={supportsStackActions && can("merge") && allowedMergeMethods.length > 0}
+                  canMerge={
+                    supportsStackActions &&
+                    can("merge") &&
+                    allowedMergeMethods.length > 0 &&
+                    detail.isInMergeQueue !== true
+                  }
                   canRebase={supportsStackActions && detail.viewerPermissions.stackRebase === true}
                   onActed={() => {
                     refreshDetail();

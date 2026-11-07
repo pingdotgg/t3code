@@ -63,6 +63,7 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         url: "https://github.com/acme/web/pull/7",
         body: "",
         isDraft: false,
+        isInMergeQueue: false,
         mergeable: "MERGEABLE",
         mergeStateStatus: "BLOCKED",
         reviewDecision: null,
@@ -1042,6 +1043,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         headRefName: `feat/${number}`,
         state: "OPEN",
         isDraft: false,
+        isInMergeQueue: number === 7,
         mergeable: "MERGEABLE",
         reviewDecision: null,
         latestReviews: {
@@ -1093,6 +1095,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
           reviewDecision: seven?.reviewDecision,
           checksState: seven?.checksState,
           mergeability: seven?.mergeability,
+          isInMergeQueue: seven?.isInMergeQueue,
         },
         {
           number: 7,
@@ -1103,6 +1106,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
           reviewDecision: "approved",
           checksState: "passing",
           mergeability: "mergeable",
+          isInMergeQueue: true,
         },
       );
       assert.strictEqual(eight?.headBranch, "feat/8");
@@ -1140,6 +1144,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                       headRefName: "feat/eight",
                       state: "OPEN",
                       isDraft: false,
+                      isInMergeQueue: false,
                       mergeable: "MERGEABLE",
                       reviewDecision: null,
                       latestReviews: { nodes: [] },
