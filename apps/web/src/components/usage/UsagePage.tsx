@@ -638,7 +638,7 @@ function UsageOverview({
   readonly onCursorEnabled: () => void;
   readonly onSelectModel: (key: string) => void;
 }) {
-  const [breakdown, setBreakdown] = useState<"model" | "time">("model");
+  const [breakdown, setBreakdown] = useState<"model" | "project" | "time">("model");
   const shownHourly = shownWindow.resolution === "hour";
   const loading = usageLoading(showingKept, selectedEnvironments, refreshingUsage, hiddenProviders);
   // Copy the primitive; JSX reads of loading.partial would merge all derivations into one compiler cache
@@ -673,6 +673,24 @@ function UsageOverview({
       : merged.models;
   const breakdownPeak = breakdownModels.reduce(
     (peak, model) => Math.max(peak, metric === "tokens" ? model.totalTokens : model.costUsd),
+    0,
+  );
+  const breakdownProjects =
+    metric === "tokens"
+      ? merged.projects.toSorted(
+          (left, right) => right.totalTokens - left.totalTokens || right.costUsd - left.costUsd,
+        )
+      : merged.projects;
+  const projectGroups = new Map<string, string[]>();
+  for (const project of breakdownProjects) {
+    if (project.kind !== "project") continue;
+    const key = `${project.environmentId}\0${project.title}`;
+    const peers = projectGroups.get(key) ?? [];
+    peers.push(project.projectId);
+    projectGroups.set(key, peers);
+  }
+  const projectPeak = breakdownProjects.reduce(
+    (peak, project) => Math.max(peak, metric === "tokens" ? project.totalTokens : project.costUsd),
     0,
   );
   const rankedProviders = rankProvidersByMetric(activeProviders, merged.providers, metric);
@@ -906,12 +924,15 @@ function UsageOverview({
             value={[breakdown]}
             onValueChange={(next) => {
               const value = next[0];
-              if (value === "model" || value === "time") setBreakdown(value);
+              if (value === "model" || value === "project" || value === "time") {
+                setBreakdown(value);
+              }
             }}
           >
             {(
               [
                 { value: "model", label: "Model" },
+                { value: "project", label: "Project" },
                 { value: "time", label: shownHourly ? "Hour" : "Day" },
               ] as const
             ).map((option) => (
@@ -996,6 +1017,111 @@ function UsageOverview({
               )}
             </tbody>
           </table>
+        ) : breakdown === "project" ? (
+          <>
+            <table className={cn("w-full text-sm", figureClass(loadingPartial))}>
+              <thead>
+                <tr className="border-b border-border text-right text-xs text-muted-foreground">
+                  <th className="py-2 pr-3 text-left font-normal">#</th>
+                  <th className="w-full py-2 text-left font-normal">Project</th>
+                  <th className="py-2 pl-6 font-normal">Cost</th>
+                  <th className="hidden py-2 pl-6 font-normal sm:table-cell">Share</th>
+                  <th className="py-2 pl-6 font-normal">Tokens</th>
+                </tr>
+              </thead>
+              <tbody>
+                {breakdownProjects.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-muted-foreground">
+                      No activity in this window.
+                    </td>
+                  </tr>
+                ) : (
+                  breakdownProjects.map((project, index) => {
+                    const value = metric === "tokens" ? project.totalTokens : project.costUsd;
+                    const costUnknown =
+                      project.records > 0 && project.unpricedRecords >= project.records;
+                    let projectIdLabel: string | null = null;
+                    if (project.kind === "project") {
+                      const peers =
+                        projectGroups.get(`${project.environmentId}\0${project.title}`) ?? [];
+                      if (peers.length > 1) {
+                        let length = 8;
+                        while (length < project.projectId.length) {
+                          const prefix = project.projectId.slice(0, length);
+                          if (
+                            !peers.some((id) => id !== project.projectId && id.startsWith(prefix))
+                          )
+                            break;
+                          length += 1;
+                        }
+                        projectIdLabel = `ID ${project.projectId.slice(0, length)}`;
+                      }
+                    }
+                    return (
+                      <tr
+                        key={project.key}
+                        className="border-b border-border/50 text-right whitespace-nowrap text-muted-foreground tabular-nums"
+                      >
+                        <td className="py-2.5 pr-3 text-left text-xs">{index + 1}</td>
+                        <td className="py-2.5 text-left whitespace-normal">
+                          <span className={project.kind === "project" ? "text-foreground" : ""}>
+                            {project.kind === "project"
+                              ? project.title
+                              : project.kind === "unlinked"
+                                ? "Unlinked usage"
+                                : "Project unavailable"}
+                          </span>
+                          {project.kind === "project" && selectedEnvironments.length > 1 ? (
+                            <span className="ml-1.5 text-xs">{project.environmentLabel}</span>
+                          ) : null}
+                          {projectIdLabel !== null ? (
+                            <span className="block text-xs">{projectIdLabel}</span>
+                          ) : null}
+                          {value > 0 && projectPeak > 0 ? (
+                            <div aria-hidden className="mt-1.5 h-0.5 max-w-48">
+                              <div
+                                className="h-full rounded-full bg-foreground/60"
+                                style={{ width: `max(0.5rem, ${(value / projectPeak) * 100}%)` }}
+                              />
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="py-2.5 pl-6 text-foreground">
+                          {costUnknown ? (
+                            <span className="text-muted-foreground">Unpriced</span>
+                          ) : (
+                            <>
+                              {formatUsd(project.costUsd)}
+                              {project.unpricedRecords > 0 ? (
+                                <span className="block text-xs text-muted-foreground">
+                                  Some unpriced
+                                </span>
+                              ) : null}
+                            </>
+                          )}
+                        </td>
+                        <td className="hidden py-2.5 pl-6 sm:table-cell">
+                          {metric === "tokens"
+                            ? formatPercent(project.tokenShare)
+                            : costUnknown
+                              ? ""
+                              : formatPercent(project.costShare)}
+                        </td>
+                        <td className="py-2.5 pl-6">{formatTokens(project.totalTokens)}</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+
+            <p className="text-xs text-muted-foreground">
+              Unlinked usage has no unique T3 project. Project unavailable means attribution was not
+              reported or is temporarily unavailable; refresh to retry, and older servers may need
+              an update. Costs exclude records with no known price; tokens include them.
+            </p>
+          </>
         ) : (
           <div
             className="overflow-x-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"

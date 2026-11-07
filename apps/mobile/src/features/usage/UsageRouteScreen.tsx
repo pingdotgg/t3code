@@ -15,6 +15,7 @@ import {
   isModelCostUnknown,
   type DailyTotals,
   type MergedUsage,
+  type ProjectTotals,
 } from "@t3tools/shared/usageMerge";
 import {
   enumerateDays,
@@ -53,6 +54,12 @@ import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usageProviders";
 
 type UsageView = UsageChartMetric | "limits";
+type UsageBreakdown = "model" | "project";
+const BREAKDOWN_OPTIONS = [
+  { value: "model", label: "Model" },
+  { value: "project", label: "Project" },
+] as const;
+
 const VIEW_OPTIONS = [
   { value: "cost", label: "Cost" },
   { value: "tokens", label: "Tokens" },
@@ -100,6 +107,7 @@ function UsageScreen(props: {
   // A workspace pane knows its width in the render that resizes it; measuring lags a frame.
   const width = useWorkspaceSettledContentWidth() ?? measuredWidth;
   const wide = width >= WIDE_WIDTH;
+  const [breakdown, setBreakdown] = useState<UsageBreakdown>("model");
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
     window: makeWindow(30),
@@ -376,7 +384,14 @@ function UsageScreen(props: {
                         columns={width >= 900 ? 6 : wide ? 3 : 2}
                       />
                       <CostSection merged={merged} wide={wide} />
-                      <ModelsSection merged={merged} metric={metric} columns={wide ? 2 : 1} />
+                      <ModelsSection
+                        merged={merged}
+                        metric={metric}
+                        columns={wide ? 2 : 1}
+                        breakdown={breakdown}
+                        onBreakdownChange={setBreakdown}
+                        showEnvironment={selectedEnvironments.length > 1}
+                      />
                     </UsageUpdating>
                   </>
                 )}
@@ -903,10 +918,13 @@ function ModelsSection(props: {
   readonly merged: MergedUsage;
   readonly metric: UsageChartMetric;
   readonly columns: 1 | 2;
+  readonly breakdown: UsageBreakdown;
+  readonly onBreakdownChange: (value: UsageBreakdown) => void;
+  readonly showEnvironment: boolean;
 }) {
   const { merged, metric } = props;
   const colors = useProviderColors();
-  if (merged.models.length === 0) return null;
+  if (merged.models.length === 0 && merged.projects.length === 0) return null;
 
   // Hermes lacks toSorted.
   const ordered = [...merged.models].sort((a, b) =>
@@ -916,48 +934,183 @@ function ModelsSection(props: {
   );
 
   return (
-    <SettingsSection title="By model">
-      <View className="flex-row flex-wrap">
-        {ordered.map((model, index) => (
-          <View
-            key={`${model.provider}:${model.model}`}
-            className={cn(
-              "flex-row items-center gap-3 p-4",
-              index >= props.columns && "border-t border-border-subtle",
-              index % props.columns === 1 && "border-l border-border-subtle",
-            )}
-            style={{ width: `${100 / props.columns}%` }}
-          >
+    <SettingsSection
+      title="Breakdown"
+      trailing={
+        <SegmentedControl
+          options={BREAKDOWN_OPTIONS}
+          selected={props.breakdown}
+          onSelect={props.onBreakdownChange}
+          className="w-48"
+        />
+      }
+    >
+      {props.breakdown === "project" ? (
+        <ProjectRows
+          merged={merged}
+          metric={metric}
+          columns={props.columns}
+          showEnvironment={props.showEnvironment}
+        />
+      ) : (
+        <View className="flex-row flex-wrap">
+          {ordered.map((model, index) => (
             <View
-              className="size-2.5 shrink-0 rounded-full"
-              style={{ backgroundColor: colors[model.provider] }}
-            />
-            <View className="min-w-0 flex-1 gap-0.5">
-              <Text className="text-base text-foreground" numberOfLines={1}>
-                {model.model}
-              </Text>
-              <Text className="text-sm text-foreground-muted">
+              key={`${model.provider}:${model.model}`}
+              className={cn(
+                "flex-row items-center gap-3 p-4",
+                index >= props.columns && "border-t border-border-subtle",
+                index % props.columns === 1 && "border-l border-border-subtle",
+              )}
+              style={{ width: `${100 / props.columns}%` }}
+            >
+              <View
+                className="size-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: colors[model.provider] }}
+              />
+              <View className="min-w-0 flex-1 gap-0.5">
+                <Text className="text-base text-foreground" numberOfLines={1}>
+                  {model.model}
+                </Text>
+                <Text className="text-sm text-foreground-muted">
+                  {metric === "tokens"
+                    ? `${formatPercent(model.tokenShare)} of tokens · ${
+                        isModelCostUnknown(model) ? "no known rates" : formatUsd(model.costUsd)
+                      }`
+                    : isModelCostUnknown(model)
+                      ? `no known rates · ${formatTokens(model.totalTokens)} tokens`
+                      : `${formatPercent(model.costShare)} of cost · ${formatTokens(model.totalTokens)} tokens`}
+                </Text>
+              </View>
+              <Text className="text-base tabular-nums text-foreground">
                 {metric === "tokens"
-                  ? `${formatPercent(model.tokenShare)} of tokens · ${
-                      isModelCostUnknown(model) ? "no known rates" : formatUsd(model.costUsd)
-                    }`
+                  ? formatTokens(model.totalTokens)
                   : isModelCostUnknown(model)
-                    ? `no known rates · ${formatTokens(model.totalTokens)} tokens`
-                    : `${formatPercent(model.costShare)} of cost · ${formatTokens(model.totalTokens)} tokens`}
+                    ? "Unpriced"
+                    : formatUsd(model.costUsd)}
               </Text>
             </View>
-            <Text className="text-base tabular-nums text-foreground">
-              {metric === "tokens"
-                ? formatTokens(model.totalTokens)
-                : isModelCostUnknown(model)
-                  ? "Unpriced"
-                  : formatUsd(model.costUsd)}
-            </Text>
-          </View>
-        ))}
-      </View>
+          ))}
+        </View>
+      )}
     </SettingsSection>
   );
+}
+
+function ProjectRows(props: {
+  readonly merged: MergedUsage;
+  readonly metric: UsageChartMetric;
+  readonly columns: 1 | 2;
+  readonly showEnvironment: boolean;
+}) {
+  const { merged, metric, columns } = props;
+  // Hermes lacks toSorted.
+  const ordered = [...merged.projects].sort((a, b) =>
+    metric === "cost"
+      ? b.costUsd - a.costUsd || b.totalTokens - a.totalTokens
+      : b.totalTokens - a.totalTokens || b.costUsd - a.costUsd,
+  );
+  const groups = new Map<string, string[]>();
+  for (const row of ordered) {
+    if (row.kind !== "project") continue;
+    const key = `${row.environmentId}\0${row.title}`;
+    const peers = groups.get(key) ?? [];
+    peers.push(row.projectId);
+    groups.set(key, peers);
+  }
+  return (
+    <View>
+      <View className="flex-row flex-wrap">
+        {ordered.map((row, index) => {
+          const unknown = row.records > 0 && row.unpricedRecords >= row.records;
+          const label =
+            row.kind === "project"
+              ? row.title
+              : row.kind === "unlinked"
+                ? "Unlinked usage"
+                : "Project unavailable";
+          const value =
+            metric === "tokens"
+              ? formatTokens(row.totalTokens)
+              : unknown
+                ? "Unpriced"
+                : formatUsd(row.costUsd);
+          const detail = projectDetail(row, metric, unknown, groups, props.showEnvironment);
+          return (
+            <View
+              key={row.key}
+              accessible
+              accessibilityLabel={`${label}, ${value}, ${detail}`}
+              className={cn(
+                "flex-row items-center gap-3 p-4",
+                index >= columns && "border-t border-border-subtle",
+                index % columns === 1 && "border-l border-border-subtle",
+              )}
+              style={{ width: `${100 / columns}%` }}
+            >
+              <View className="min-w-0 flex-1 gap-0.5">
+                <Text
+                  className={
+                    row.kind === "project"
+                      ? "text-base text-foreground"
+                      : "text-base text-foreground-muted"
+                  }
+                  numberOfLines={2}
+                >
+                  {label}
+                </Text>
+                <Text className="text-sm text-foreground-muted">{detail}</Text>
+              </View>
+              <Text className="text-base tabular-nums text-foreground">{value}</Text>
+            </View>
+          );
+        })}
+      </View>
+      {ordered.length === 0 ? (
+        <Text className="p-4 text-sm text-foreground-muted">No project usage in this window.</Text>
+      ) : null}
+      <Text className="px-4 pb-4 text-xs text-foreground-tertiary">
+        Unlinked usage matches no single T3 project. Project unavailable means details were not
+        reported or are temporarily unavailable. Refresh to retry; older servers may need an update.
+        Costs exclude records with no known price; tokens include them.
+      </Text>
+    </View>
+  );
+}
+
+function projectDetail(
+  row: ProjectTotals,
+  metric: UsageChartMetric,
+  unknown: boolean,
+  groups: ReadonlyMap<string, readonly string[]>,
+  showEnvironment: boolean,
+) {
+  const qualifiers: string[] = [];
+  if (row.kind === "project") {
+    if (showEnvironment) qualifiers.push(row.environmentLabel);
+    const peers = groups.get(`${row.environmentId}\0${row.title}`) ?? [];
+    if (peers.length > 1) {
+      let length = 8;
+      while (length < row.projectId.length) {
+        const prefix = row.projectId.slice(0, length);
+        if (!peers.some((id) => id !== row.projectId && id.startsWith(prefix))) break;
+        length += 1;
+      }
+      qualifiers.push(`ID ${row.projectId.slice(0, length)}`);
+    }
+  } else {
+    qualifiers.push(
+      row.kind === "unlinked" ? "No single T3 project" : "Project details unavailable",
+    );
+  }
+  const partial = !unknown && row.unpricedRecords > 0 ? " · some unpriced" : "";
+  const figure =
+    metric === "tokens"
+      ? `${formatPercent(row.tokenShare)} of tokens · ${unknown ? "no known rates" : formatUsd(row.costUsd)}${partial}`
+      : unknown
+        ? `no known rates · ${formatTokens(row.totalTokens)} tokens`
+        : `${formatPercent(row.costShare)} of cost · ${formatTokens(row.totalTokens)} tokens${partial}`;
+  return [...qualifiers, figure].join(" · ");
 }
 
 function usageEnvironmentStatus(environment: EnvironmentUsageStatus, refreshing: boolean): string {

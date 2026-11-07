@@ -1,6 +1,11 @@
 import * as Schema from "effect/Schema";
 
-import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  ForwardCompatibleArray,
+  NonNegativeInt,
+  ProjectId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 
 /** Bump for incompatible UsageSummary changes; skipped unknown array variants need no bump. */
 export const USAGE_CONTRACT_VERSION = 6 as const;
@@ -69,6 +74,26 @@ export const UsageBucket = Schema.Struct({
   sessions: NonNegativeInt,
 });
 export type UsageBucket = typeof UsageBucket.Type;
+
+/** Window-wide usage of one project in one source; buckets stay unsplit so older clients merge unchanged. */
+export const UsageProjectTotals = Schema.Struct({
+  /** Environment-local; absent for usage no T3 thread claims, such as terminal sessions. */
+  projectId: Schema.optional(ProjectId),
+  provider: UsageProviderKind,
+  sourcePath: Schema.optional(TrimmedNonEmptyString),
+  totals: UsageTokenTotals,
+  costUsd: Schema.Number,
+  records: NonNegativeInt,
+  unpricedRecords: NonNegativeInt,
+  sessions: NonNegativeInt,
+});
+export type UsageProjectTotals = typeof UsageProjectTotals.Type;
+
+export const UsageProject = Schema.Struct({
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+});
+export type UsageProject = typeof UsageProject.Type;
 
 export const UsageSourceFingerprint = Schema.Struct({
   hostId: TrimmedNonEmptyString,
@@ -150,6 +175,9 @@ export const UsageSummary = Schema.Struct({
   scanDurationMs: NonNegativeInt,
   /** The filter the server applied; absent means unfiltered, including servers that predate filters. */
   modelFilter: Schema.optional(UsageModelFilter),
+  /** Absent when the server predates projects or could not read them; totals are unaffected. */
+  projectTotals: Schema.optional(ForwardCompatibleArray(UsageProjectTotals)),
+  projects: Schema.optional(ForwardCompatibleArray(UsageProject)),
 });
 export type UsageSummary = typeof UsageSummary.Type;
 

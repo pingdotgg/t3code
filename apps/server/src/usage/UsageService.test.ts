@@ -15,6 +15,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import {
   EnvironmentId,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   UsageDay,
@@ -42,6 +43,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as CodexUsageHistory from "./CodexUsageHistory.ts";
+import * as UsageProjectAttribution from "./UsageProjectAttribution.ts";
 import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
 import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
@@ -165,7 +167,11 @@ const layerService = (input: {
     Layer.provideMerge(AntigravityUsage.layer),
     Layer.provideMerge(MuseUsageHome.layer),
     Layer.provideMerge(ProviderHostLive.layer),
-    Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
+    Layer.provideMerge(
+      Layer.merge(CodexUsageHistory.layer, UsageProjectAttribution.layer).pipe(
+        Layer.provideMerge(Sqlite.layerMemory),
+      ),
+    ),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
     Layer.provideMerge(
       Layer.mock(ServerSecretStore.ServerSecretStore)({
@@ -2443,6 +2449,109 @@ describe("UsageService", () => {
             ratesDocument: rates,
           }),
         ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("totals usage per T3 project from provider thread bindings", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const piTranscript = NodePath.join(home, "pi", "sessions", "bound.jsonl");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.dirname(piTranscript), { recursive: true });
+        await NodeFSP.writeFile(
+          piTranscript,
+          [
+            { type: "session", id: "pi-header-id" },
+            {
+              type: "usage",
+              id: "pi-event",
+              timestamp: "2026-08-01T10:00:00Z",
+              provider: "openai",
+              model: "model",
+              usage: { output: 17 },
+            },
+          ]
+            .map((line) => encodeUnknownJsonString(line))
+            .join("\n") + "\n",
+        );
+      });
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          transcript,
+          claudeLine(1, 3, "claude-fable-5", "bound") +
+            claudeLine(2, 5, "claude-fable-5", "worktree") +
+            claudeLine(3, 7, "claude-fable-5", "ambiguous") +
+            claudeLine(4, 11, "claude-fable-5", "terminal") +
+            claudeLine(5, 13, "claude-fable-5", "deleted-project"),
+        ),
+      );
+      const projectRows = (summary: UsageSummary) =>
+        (summary.projectTotals ?? [])
+          .filter((row) => row.provider !== "pi")
+          .map((row) => [String(row.projectId ?? null), row.totals.outputTokens, row.sessions])
+          .toSorted(([a], [b]) => String(a).localeCompare(String(b)));
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const project = (id: string, title: string, deletedAt: string | null = null) =>
+          sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at)
+            VALUES (${id}, ${title}, ${`/work/${id}`}, '[]', '2026-08-01', '2026-08-01', ${deletedAt})`;
+        const thread = (id: string, projectId: string) =>
+          sql`INSERT INTO orchestration_v2_projection_threads (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+            VALUES (${id}, ${projectId}, ${id}, 'claudeAgent', 'full-access', 'default', '2026-08-01', '2026-08-01', '{}')`;
+        const binding = (id: string, threadId: string, nativeId: string, driver = "claudeAgent") =>
+          sql`INSERT INTO orchestration_v2_projection_provider_threads (provider_thread_id, thread_id, provider, driver, status, updated_at, payload_json)
+            VALUES (${id}, ${threadId}, ${driver}, ${driver}, 'idle', '2026-08-01', ${encodeUnknownJsonString(
+              { nativeThreadRef: { driver, nativeId } },
+            )})`;
+        yield* project("p-app", "App");
+        yield* project("p-other", "Other");
+        yield* project("p-gone", "Gone", "2026-08-02");
+        yield* thread("t-main", "p-app");
+        yield* thread("t-worktree", "p-app");
+        yield* thread("t-other", "p-other");
+        yield* thread("t-gone", "p-gone");
+        yield* binding("pt-1", "t-main", "bound");
+        yield* binding("pt-2", "t-worktree", "worktree");
+        yield* binding("pt-3", "t-main", "ambiguous");
+        yield* binding("pt-4", "t-other", "ambiguous");
+        yield* binding("pt-5", "t-gone", "deleted-project");
+        // Another driver's identical native id must not claim a Claude session.
+        yield* binding("pt-6", "t-other", "terminal", "codex");
+        yield* binding("pt-7", "t-main", piTranscript, "pi");
+        yield* binding("pt-8", "t-other", "pi-header-id", "pi");
+
+        const service = yield* UsageService.make;
+        const summary = yield* service.readSummary(WINDOW);
+        assert.deepStrictEqual(projectRows(summary), [
+          ["null", 18, 2],
+          ["p-app", 8, 2],
+          ["p-gone", 13, 1],
+        ]);
+        assert.deepStrictEqual(
+          summary.projectTotals
+            ?.filter((row) => row.provider === "pi")
+            .map((row) => [row.projectId, row.totals.outputTokens, row.sessions]),
+          [[ProjectId.make("p-app"), 17, 1]],
+        );
+        assert.deepStrictEqual(
+          summary.projects?.toSorted((a, b) => a.projectId.localeCompare(b.projectId)),
+          [
+            { projectId: ProjectId.make("p-app"), title: "App" },
+            { projectId: ProjectId.make("p-gone"), title: "Gone" },
+          ],
+        );
+        assert.strictEqual(totalOutputTokens(summary), 56);
+
+        yield* sql`DROP TABLE orchestration_v2_projection_provider_threads`;
+        const unattributed = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.strictEqual(unattributed.projectTotals, undefined);
+        assert.strictEqual(unattributed.projects, undefined);
+        assert.strictEqual(totalOutputTokens(unattributed), 56);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(layerService({ prefix: "usage-service-project-test", home, settings })),
       );
     }).pipe(Effect.scoped),
   );
