@@ -3,7 +3,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { showThreadUndoNotice } from "./thread-undo-notice";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, CommandId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { useRef } from "react";
@@ -11,13 +11,18 @@ import { useRef } from "react";
 import { withThreadDismissal } from "./thread-dismissal";
 import * as Dialog from "../../components/ui/Dialog";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { uuidv4 } from "../../lib/uuid";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
 import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { connectedEnvironmentIdsAtom } from "../../state/presentation";
 import { readEnvironmentScope } from "../../state/session";
-import { environmentThreadShells, threadEnvironment } from "../../state/threads";
+import {
+  environmentThreadShells,
+  threadEnvironment,
+  watchThreadTitleRegeneration,
+} from "../../state/threads";
 import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -508,10 +513,15 @@ export function useThreadListActions(): {
 
     titleRegenerationInFlightThreadKeys.current.add(key);
     selectionHaptic();
+    const commandId = CommandId.make(uuidv4());
+    const watch = watchThreadTitleRegeneration(
+      { environmentId: thread.environmentId, threadId: thread.id },
+      commandId,
+    );
     const succeeded = await (async () => {
       const result = await updateThreadMetadata({
         environmentId: thread.environmentId,
-        input: { threadId: thread.id, regenerateTitle: true },
+        input: { threadId: thread.id, regenerateTitle: true, commandId },
       });
       if (result._tag === "Failure") {
         const error = Cause.squash(result.cause);
@@ -526,6 +536,13 @@ export function useThreadListActions(): {
       return true;
     })();
     titleRegenerationInFlightThreadKeys.current.delete(key);
+    if (succeeded) {
+      void watch.failure.then((failure) => {
+        if (failure !== null) Dialog.alert("Could not regenerate title", failure);
+      });
+    } else {
+      watch.cancel();
+    }
     return succeeded;
   };
   const renameThread = (thread: EnvironmentThreadShell) => {

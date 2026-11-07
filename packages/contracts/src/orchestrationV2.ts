@@ -41,6 +41,7 @@ import {
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
+import { ThreadTitleRegenerationFailure } from "./threadTitle.ts";
 import { AuthMcpClientAccess } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
@@ -504,6 +505,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
       }),
     ),
   ),
+  titleRegenerationFailure: Schema.optional(Schema.NullOr(ThreadTitleRegenerationFailure)),
   rollbackRequestId: Schema.optional(CommandId),
   rollbackFailure: Schema.optional(
     Schema.NullOr(
@@ -2159,6 +2161,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
       }),
     ),
   ),
+  titleRegenerationFailure: Schema.optional(Schema.NullOr(ThreadTitleRegenerationFailure)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
@@ -3131,6 +3134,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     requestId: CommandId,
     title: Schema.optional(TrimmedNonEmptyString),
+    failure: Schema.optional(TrimmedNonEmptyString),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.runtime-mode.set"),

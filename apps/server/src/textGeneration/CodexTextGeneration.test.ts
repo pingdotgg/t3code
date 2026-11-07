@@ -211,6 +211,35 @@ function withFakeCodexEnv<A, E, R>(
 }
 
 it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
+  it.effect("reports the final CLI error instead of its echoed prompt", () =>
+    withFakeCodexEnv(
+      {
+        output: "",
+        exitCode: 1,
+        stderr: [
+          "OpenAI Codex v0.164.0",
+          "user",
+          "Regenerate the thread title. ".repeat(40),
+          "ERROR: Reconnecting... 5/5",
+          "ERROR: unknown provider for model unavailable-model",
+        ].join("\n"),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* textGeneration
+            .generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Name this thread",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            })
+            .pipe(Effect.flip);
+          expect(error.detail).toBe(
+            "Codex CLI command failed: unknown provider for model unavailable-model",
+          );
+        }),
+    ),
+  );
+
   it.effect.each(["exec", "mcp list"] as const)(
     "kills a stalled %s CLI when its request is interrupted",
     (command) =>

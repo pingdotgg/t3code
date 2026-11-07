@@ -11,6 +11,8 @@ import {
   EMPTY_THREAD_HISTORY_META,
   type EnvironmentThreadStatus,
   type ThreadHistoryMeta,
+  type TitleRegenerationWatch,
+  watchTitleRegeneration,
 } from "@t3tools/client-runtime/state/threads";
 import {
   arrayElementsEqual,
@@ -335,6 +337,18 @@ export function waitForThreadShell(ref: ScopedThreadRef, timeoutMs = 5_000): Pro
     atom: environmentThreadShells.threadShellAtom(ref),
     predicate: (thread) => thread !== null,
     timeoutMs,
+  });
+}
+
+/** Start before dispatching the request; see `watchTitleRegeneration`. */
+export function watchThreadTitleRegeneration(
+  ref: ScopedThreadRef,
+  requestId: string,
+): TitleRegenerationWatch {
+  return watchTitleRegeneration({
+    registry: appAtomRegistry,
+    atom: environmentThreadShells.threadShellAtom(ref),
+    requestId,
   });
 }
 

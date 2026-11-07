@@ -12,7 +12,7 @@ import {
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Atom } from "effect/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 import { presentThreadShell, threadRuntimeIsActive } from "./models.ts";
@@ -198,6 +198,51 @@ function sameApartFromStreaming(
       after,
     )
   );
+}
+
+export interface TitleRegenerationWatch {
+  /** The server's reason when the request kept the title; null when it landed or stopped mattering. */
+  readonly failure: Promise<string | null>;
+  readonly cancel: () => void;
+}
+
+/**
+ * Watches one title regeneration request. Start it before dispatching: a request that
+ * finishes before the watch starts never shows as pending, so its success goes unseen.
+ */
+export function watchTitleRegeneration(input: {
+  readonly registry: AtomRegistry.AtomRegistry;
+  readonly atom: Atom.Atom<EnvironmentThreadShell | null>;
+  readonly requestId: string;
+  readonly timeoutMs?: number;
+}): TitleRegenerationWatch {
+  let finish: (failure: string | null) => void = () => {};
+  const failure = new Promise<string | null>((resolve) => {
+    let pending = false;
+    let settled = false;
+    let unsubscribe: (() => void) | null = null;
+    finish = (value) => {
+      if (settled) return;
+      settled = true;
+      globalThis.clearTimeout(timeout);
+      unsubscribe?.();
+      resolve(value);
+    };
+    const inspect = (shell: EnvironmentThreadShell | null) => {
+      if (shell === null) return finish(null);
+      if (shell.titleRegenerationFailure?.requestId === input.requestId) {
+        return finish(shell.titleRegenerationFailure.message);
+      }
+      if (shell.titleRegeneration?.requestId === input.requestId) pending = true;
+      else if (pending) finish(null);
+    };
+    // @effect-diagnostics-next-line globalTimers:off - Client UI waits on atoms, outside an Effect runtime.
+    const timeout = globalThis.setTimeout(() => finish(null), input.timeoutMs ?? 180_000);
+    unsubscribe = input.registry.subscribe(input.atom, inspect);
+    if (settled) unsubscribe();
+    else inspect(input.registry.get(input.atom));
+  });
+  return { failure, cancel: () => finish(null) };
 }
 
 export function createEnvironmentThreadShellAtoms(input: {

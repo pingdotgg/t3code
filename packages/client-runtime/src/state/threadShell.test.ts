@@ -16,7 +16,12 @@ import { PrimaryConnectionTarget } from "../connection/model.ts";
 import { v2Now, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import { isThreadWorking } from "./threadInbox.ts";
-import { childThreadInputsTitle, createEnvironmentThreadShellAtoms } from "./threadShell.ts";
+import type { EnvironmentThreadShell } from "./models.ts";
+import {
+  watchTitleRegeneration,
+  childThreadInputsTitle,
+  createEnvironmentThreadShellAtoms,
+} from "./threadShell.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
 const remoteEnvironmentId = EnvironmentId.make("remote-environment-v2");
@@ -632,5 +637,44 @@ describe("v2 thread shell lists", () => {
       dispose();
       harness.registry.dispose();
     }
+  });
+});
+
+describe("watchTitleRegeneration", () => {
+  const shell = (
+    fields: Pick<EnvironmentThreadShell, "titleRegeneration" | "titleRegenerationFailure">,
+  ) => fields as EnvironmentThreadShell;
+  const pending = (requestId: string) =>
+    shell({ titleRegeneration: { requestId, startedAt: "2026-11-03T00:00:00.000Z" } });
+
+  it.each([
+    {
+      name: "reports its own failure",
+      after: shell({ titleRegenerationFailure: { requestId: "a", message: "Login expired" } }),
+      expected: "Login expired",
+    },
+    { name: "settles when the title lands", after: shell({}), expected: null },
+    {
+      name: "ignores a newer request's failure",
+      after: shell({ titleRegenerationFailure: { requestId: "b", message: "Login expired" } }),
+      expected: null,
+    },
+  ])("$name", async ({ after, expected }) => {
+    const registry = AtomRegistry.make();
+    const atom = Atom.make<EnvironmentThreadShell | null>(shell({})).pipe(Atom.keepAlive);
+    const watch = watchTitleRegeneration({ registry, atom, requestId: "a" });
+    registry.set(atom, pending("a"));
+    registry.set(atom, after);
+    await expect(watch.failure).resolves.toBe(expected);
+    registry.dispose();
+  });
+
+  it("settles when cancelled because the request was never accepted", async () => {
+    const registry = AtomRegistry.make();
+    const atom = Atom.make<EnvironmentThreadShell | null>(shell({})).pipe(Atom.keepAlive);
+    const watch = watchTitleRegeneration({ registry, atom, requestId: "a" });
+    watch.cancel();
+    await expect(watch.failure).resolves.toBeNull();
+    registry.dispose();
   });
 });

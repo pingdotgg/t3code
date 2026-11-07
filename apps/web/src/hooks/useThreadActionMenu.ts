@@ -10,6 +10,7 @@ import {
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
+  CommandId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -23,6 +24,7 @@ import {
 } from "../components/threadActionMenu.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { copyThreadReference } from "../lib/copyThreadReference";
+import { randomUUID } from "../lib/utils";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
@@ -32,6 +34,7 @@ import {
   readEnvironmentSupportsAutoSettleOptOut,
   readThreadShell,
   useProjects,
+  watchThreadTitleRegeneration,
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { readLocalApi } from "../localApi";
@@ -247,15 +250,28 @@ export function useThreadActionMenu(input: {
         case "rename":
           onStartRename();
           return;
-        case "regenerate-title":
+        case "regenerate-title": {
           if (isRegeneratingTitle) return;
-          await reportFailure("Failed to regenerate thread title", () =>
-            updateThreadMetadata({
-              environmentId: threadRef.environmentId,
-              input: { threadId: threadRef.threadId, regenerateTitle: true },
-            }),
-          );
+          const commandId = CommandId.make(randomUUID());
+          const watch = watchThreadTitleRegeneration(threadRef, commandId);
+          const result = await updateThreadMetadata({
+            environmentId: threadRef.environmentId,
+            input: { threadId: threadRef.threadId, regenerateTitle: true, commandId },
+          });
+          if (result._tag === "Failure") {
+            watch.cancel();
+            if (!isAtomCommandInterrupted(result)) {
+              failureToast("Failed to regenerate thread title", squashAtomCommandFailure(result));
+            }
+            return;
+          }
+          void watch.failure.then((failure) => {
+            if (failure !== null) {
+              failureToast("Failed to regenerate thread title", new Error(failure));
+            }
+          });
           return;
+        }
         case "mark-unread":
           markThreadUnread(threadRef);
           return;

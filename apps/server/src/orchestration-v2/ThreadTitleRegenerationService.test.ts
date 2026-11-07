@@ -11,6 +11,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
+  TextGenerationError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -515,10 +516,16 @@ describe("ThreadTitleRegenerationService", () => {
     }),
   );
 
-  it.effect("clears the marker and keeps the title when generation fails", () =>
+  it.effect("keeps the title and records why when generation fails", () =>
     Effect.gen(function* () {
       const harness = makeHarness({
-        generateTitle: () => Effect.die(new Error("model unavailable")),
+        generateTitle: () =>
+          Effect.fail(
+            new TextGenerationError({
+              operation: "generateThreadTitle",
+              detail: "Claude CLI command failed: OAuth session expired",
+            }),
+          ),
       });
       yield* Effect.gen(function* () {
         const threads = yield* ThreadManagement.ThreadManagementService;
@@ -540,6 +547,14 @@ describe("ThreadTitleRegenerationService", () => {
         const projection = yield* threads.getThreadProjection(threadId);
         assert.equal(projection.thread.title, "Seed title");
         assert.isNotOk(projection.thread.titleRegeneration);
+        assert.deepEqual(projection.thread.titleRegenerationFailure, {
+          requestId,
+          message: "Claude CLI command failed: OAuth session expired",
+        });
+
+        yield* armRegeneration({ command: "command:title:failure:2", threadId });
+        const retried = yield* threads.getThreadProjection(threadId);
+        assert.isNotOk(retried.thread.titleRegenerationFailure);
       }).pipe(Effect.provide(harness.layer));
     }),
   );

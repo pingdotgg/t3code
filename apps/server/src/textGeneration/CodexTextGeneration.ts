@@ -353,7 +353,12 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       );
 
       if (exitCode !== 0) {
-        const stderrDetail = stderr.trim();
+        const stderrDetail =
+          stderr
+            .split("\n")
+            .findLast((line) => line.startsWith("ERROR: "))
+            ?.slice("ERROR: ".length)
+            .trim() || stderr.trim();
         const stdoutDetail = stdout.trim();
         const detail = stderrDetail.length > 0 ? stderrDetail : stdoutDetail;
         return yield* new TextGenerationError({

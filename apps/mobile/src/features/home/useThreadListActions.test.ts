@@ -23,13 +23,22 @@ const state = vi.hoisted(() => ({
   requests: [] as {
     action: string;
     environmentId: string;
-    input: { threadId: string; orderKey?: string; snoozedUntil?: string; reason?: string };
+    input: {
+      threadId: string;
+      orderKey?: string;
+      snoozedUntil?: string;
+      reason?: string;
+      commandId?: string;
+    };
   }[],
   dialogs: [] as { onConfirm: () => void }[],
   alerts: [] as {
     title: string;
+    message?: string;
     buttons?: { text: string; onPress?: () => void }[];
   }[],
+  titleFailure: null as string | null,
+  watchedTitleRequests: [] as string[],
   afterRequest: undefined as (() => void) | undefined,
 }));
 
@@ -48,8 +57,8 @@ vi.mock("expo-haptics", () => ({
   ImpactFeedbackStyle: { Light: "light" },
 }));
 vi.mock("../../components/ui/Dialog", () => ({
-  alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
-    state.alerts.push({ title, buttons }),
+  alert: (title: string, message: string, buttons?: { text: string; onPress?: () => void }[]) =>
+    state.alerts.push({ title, message, buttons }),
   confirm: (dialog: { onConfirm: () => void }) => state.dialogs.push(dialog),
 }));
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
@@ -119,7 +128,12 @@ vi.mock("../../state/thread-order", () => ({
     };
   },
 }));
+vi.mock("../../lib/uuid", () => ({ uuidv4: () => "command" }));
 vi.mock("../../state/threads", () => ({
+  watchThreadTitleRegeneration: (_ref: unknown, requestId: string) => {
+    state.watchedTitleRequests.push(requestId);
+    return { failure: Promise.resolve(state.titleFailure), cancel: () => {} };
+  },
   environmentThreadShells: {
     threadShellsAtom: "thread-shells",
     navigationThreadShellsAtom: "thread-shells",
@@ -199,6 +213,8 @@ beforeEach(() => {
   state.shells = [];
   state.dialogs = [];
   state.alerts = [];
+  state.titleFailure = null;
+  state.watchedTitleRequests = [];
   state.afterRequest = undefined;
 });
 
@@ -239,6 +255,23 @@ describe("thread list operation permissions", () => {
     await confirm!();
 
     expect(state.requests).toEqual([]);
+  });
+});
+
+describe("thread title regeneration", () => {
+  it("alerts why the request it dispatched kept the title", async () => {
+    state.titleFailure = "Claude CLI command failed: OAuth session expired";
+
+    await useThreadListActions().regenerateThreadTitle(makeThread());
+    await Promise.resolve();
+
+    expect(state.watchedTitleRequests).toEqual([state.requests[0]?.input.commandId]);
+    expect(state.alerts).toEqual([
+      expect.objectContaining({
+        title: "Could not regenerate title",
+        message: "Claude CLI command failed: OAuth session expired",
+      }),
+    ]);
   });
 });
 

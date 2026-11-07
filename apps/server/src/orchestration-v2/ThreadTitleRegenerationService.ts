@@ -1,7 +1,9 @@
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
+import { truncate } from "@t3tools/shared/String";
 import {
   CommandId,
+  TextGenerationError,
   type ChatAttachment,
   type MessageId,
   type OrchestrationV2AppThread,
@@ -17,6 +19,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -46,6 +49,20 @@ export class ThreadTitleRegenerationService extends Context.Service<
   }
 >()("t3/orchestration-v2/ThreadTitleRegenerationService") {}
 
+type TitleOutcome =
+  | { readonly type: "stale" }
+  | { readonly type: "complete"; readonly title?: string; readonly failure?: string };
+
+const GENERIC_FAILURE = "The title could not be generated.";
+const isTextGenerationError = Schema.is(TextGenerationError);
+
+function failureMessage(cause: Cause.Cause<unknown>): string {
+  const error = Cause.findErrorOption(cause);
+  const detail =
+    Option.isSome(error) && isTextGenerationError(error.value) ? error.value.detail.trim() : "";
+  return detail.length === 0 ? GENERIC_FAILURE : truncate(detail, 500);
+}
+
 const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -57,6 +74,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly requestId: CommandId;
     readonly title?: string;
+    readonly failure?: string;
   }) =>
     threads
       .dispatch({
@@ -65,6 +83,7 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         requestId: input.requestId,
         ...(input.title === undefined ? {} : { title: input.title }),
+        ...(input.failure === undefined ? {} : { failure: input.failure }),
       })
       .pipe(Effect.asVoid);
 
@@ -110,9 +129,7 @@ const make = Effect.gen(function* () {
   const execute: ThreadTitleRegenerationService["Service"]["execute"] = Effect.fn(
     "ThreadTitleRegenerationService.execute",
   )(function* (input) {
-    const outcome:
-      | { readonly type: "stale" }
-      | { readonly type: "complete"; readonly title?: string } = yield* Effect.gen(function* () {
+    const outcome: TitleOutcome = yield* Effect.gen(function* () {
       const projection = yield* threads.getThreadRecords(
         input.threadId,
         ["messages"],
@@ -193,7 +210,13 @@ const make = Effect.gen(function* () {
               threadId: input.threadId,
               requestId: input.requestId,
               cause,
-            }).pipe(Effect.as({ type: "complete" as const })),
+            }).pipe(
+              Effect.as({
+                type: "complete" as const,
+                // A first title falls back to the prompt; only a requested regeneration reports.
+                ...(input.kind.type === "regenerate" ? { failure: failureMessage(cause) } : {}),
+              }),
+            ),
       ),
     );
 
@@ -203,6 +226,7 @@ const make = Effect.gen(function* () {
     yield* complete({
       ...input,
       ...(outcome.title === undefined ? {} : { title: outcome.title }),
+      ...(outcome.failure === undefined ? {} : { failure: outcome.failure }),
     });
   });
 
