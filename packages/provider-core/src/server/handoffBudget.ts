@@ -113,13 +113,15 @@ export function handoffBudget(input: {
   const native = usage?.usedTokens ?? input.nativeContextEstimate;
   const current =
     Buffer.byteLength(JSON.stringify(input.userText)) + attachmentTokenAllowance(input.attachments);
+  // Small local windows would otherwise reserve all of themselves for work.
+  const workReserve = Math.min(Math.max(16_000, Math.floor(window / 4)), Math.floor(window / 2));
   return Math.max(
     0,
     Math.min(
       input.tokenCap,
       // Cap imported history only; adapters own attachment transport limits.
       HANDOFF_BYTE_CAP,
-      window - native - current - Math.max(16_000, Math.ceil(window / 4)),
+      window - native - current - workReserve,
     ),
   );
 }

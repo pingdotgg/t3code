@@ -548,7 +548,7 @@ describe("orchestration v2 provider switching", () => {
                 : scenario === "large-current-input" || priorImages || exhaustedTarget
                   ? {
                       getModelContextWindow: () =>
-                        scenario.includes("target-tight") ? 25_121 : 32_000,
+                        scenario.includes("target-tight") ? 18_241 : 32_000,
                     }
                   : {}),
             ...(scenario.endsWith("-native") || scenario === "large-current-input"
