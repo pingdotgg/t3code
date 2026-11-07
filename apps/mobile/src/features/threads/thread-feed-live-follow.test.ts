@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   resolveThreadFeedLiveFollow,
+  settleThreadFeedJump,
   resolveThreadFeedReflowAnchor,
   resolveThreadFeedReflowOffset,
   resolveThreadFeedReflowScroll,
@@ -308,5 +309,49 @@ describe("width reflow anchors", () => {
         layout,
       ),
     ).toBeNull();
+  });
+});
+
+describe("settleThreadFeedJump", () => {
+  const landings = (positions: ReadonlyArray<number | undefined>) => {
+    let lands = 0;
+    return {
+      land: async () => {
+        lands += 1;
+      },
+      position: () => positions[Math.min(lands, positions.length - 1)],
+      lands: () => lands,
+    };
+  };
+
+  it("lands again until the measured rows stop moving the target", async () => {
+    // The first landing trusts estimated rows; measuring them moves the target.
+    const feed = landings([14389, 13563, 13480, 13480]);
+    await settleThreadFeedJump({ ...feed, cancelled: () => false });
+    expect(feed.lands()).toBe(3);
+  });
+
+  it("lands once when the target was already in place", async () => {
+    const feed = landings([500, 500]);
+    await settleThreadFeedJump({ ...feed, cancelled: () => false });
+    expect(feed.lands()).toBe(1);
+  });
+
+  it("keeps landing while the target has no position yet", async () => {
+    const feed = landings([undefined, 700, 700]);
+    await settleThreadFeedJump({ ...feed, cancelled: () => false });
+    expect(feed.lands()).toBe(2);
+  });
+
+  it("gives up on a target that never settles", async () => {
+    const feed = landings(Array.from({ length: 50 }, (_, index) => index * 100));
+    await settleThreadFeedJump({ ...feed, cancelled: () => false });
+    expect(feed.lands()).toBeLessThan(10);
+  });
+
+  it("stops landing once the user takes the scroll", async () => {
+    const feed = landings([14389, 13563, 13480]);
+    await settleThreadFeedJump({ ...feed, cancelled: () => feed.lands() >= 1 });
+    expect(feed.lands()).toBe(1);
   });
 });
