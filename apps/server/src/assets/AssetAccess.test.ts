@@ -1039,6 +1039,55 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("serves relative videos from workspace HTML with byte ranges", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-html-video-" });
+      const directory = path.join(root, "report");
+      yield* fs.makeDirectory(path.join(directory, "videos"), { recursive: true });
+      const htmlPath = path.join(directory, "index.html");
+      yield* fs.writeFileString(htmlPath, '<video controls src="videos/clip.mp4"></video>');
+      const bytes = new TextEncoder().encode("video fixture bytes");
+      for (const [extension, mimeType] of [
+        ["avi", "video/x-msvideo"],
+        ["m4v", "video/mp4"],
+        ["mkv", "video/x-matroska"],
+        ["mov", "video/quicktime"],
+        ["mp4", "video/mp4"],
+        ["ogv", "video/ogg"],
+        ["webm", "video/webm"],
+      ] as const) {
+        const name = `videos/clip.${extension.toUpperCase()}`;
+        const filePath = path.join(directory, name);
+        yield* fs.writeFile(filePath, bytes);
+        const canonicalPath = yield* fs.realPath(filePath);
+        for (const resource of [
+          { _tag: "workspace-file" as const, threadId: ThreadId.make("thread-1"), path: htmlPath },
+          { _tag: "draft-workspace-file" as const, cwd: root, path: "report/index.html" },
+        ]) {
+          const url = yield* issueAssetUrl({ resource, workspaceRoot: root });
+          const suffix = url.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const token = suffix.slice(0, suffix.indexOf("/"));
+          const asset = yield* resolveAsset(token, name);
+          expect(asset).toEqual({ kind: "file", path: canonicalPath, mimeType });
+          if (asset?.kind !== "file") throw new Error("Expected a relative video asset");
+          const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset, "bytes=2-6"));
+          expect(response.status).toBe(206);
+          expect(response.headers.get("content-type")).toBe(mimeType);
+          expect(response.headers.get("content-range")).toBe(`bytes 2-6/${bytes.length}`);
+          expect(response.headers.get("cache-control")).toBe("private, no-store");
+          expect(new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()))).toEqual(
+            bytes.slice(2, 7),
+          );
+          expect(yield* resolveAsset(token, `../${name}`)).toBeNull();
+          expect(yield* resolveAsset(token, `videos/.hidden.${extension}`)).toBeNull();
+          expect(yield* resolveAsset(`${token}tampered`, name)).toBeNull();
+        }
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("rejects workspace files outside the authorized root", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

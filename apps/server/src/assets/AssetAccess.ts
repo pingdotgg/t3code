@@ -100,6 +100,13 @@ const PREVIEW_ASSET_EXTENSIONS = new Set([
   ".ttf",
   ".woff",
   ".woff2",
+  ".avi",
+  ".m4v",
+  ".mkv",
+  ".mov",
+  ".mp4",
+  ".ogv",
+  ".webm",
 ]);
 
 const AssetClaimsSchema = Schema.Union([
@@ -1031,5 +1038,14 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     workspaceRoot: claims.workspaceRoot,
     relativePath: joinedRelativePath,
   });
-  return workspaceFile ? ({ kind: "file", path: workspaceFile } satisfies ResolvedAsset) : null;
+  const mimeType = isWorkspaceVideoPreviewPath(decodedPath)
+    ? hostPreviewMimeTypeFromExtension(path.extname(decodedPath))
+    : null;
+  return workspaceFile
+    ? ({
+        kind: "file",
+        path: workspaceFile,
+        ...(mimeType ? { mimeType } : {}),
+      } satisfies ResolvedAsset)
+    : null;
 });
