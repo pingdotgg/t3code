@@ -1707,6 +1707,91 @@ it.effect("loads later fj review pages when the server caps pages below the requ
   );
 });
 
+it.effect("reads an fj pull request through the path of a renamed repository", () => {
+  const requests: string[] = [];
+  return Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    const provider = yield* ForgejoPullRequestProvider.make.pipe(
+      Effect.provideService(ForgejoCli.ForgejoCli, cli),
+    );
+    const readSummary = provider.getChangeRequestSummary;
+    if (readSummary === undefined) return yield* Effect.die("summary read missing");
+    const summary = yield* readSummary({
+      cwd: "/repo",
+      repository: "maria/old-name",
+      host: "forgejo.test",
+      number: 7,
+    });
+    assert.strictEqual(summary.number, 7);
+    assert.strictEqual(summary.url, "https://forgejo.test/maria/new-name/pulls/7");
+    assert.deepStrictEqual(requests, [
+      "https://forgejo.test/api/v1/repos/maria/old-name/pulls/7",
+      "https://forgejo.test/api/v1/repos/maria/new-name/pulls/7",
+    ]);
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        readFileString: () =>
+          Effect.succeed(
+            encodeJson({ hosts: { "forgejo.test": { type: "Application", token: "test-token" } } }),
+          ),
+      }),
+    ),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        requests.push(request.url);
+        assert.strictEqual(request.headers.authorization, "token test-token");
+        const { pathname } = new URL(request.url);
+        if (pathname === "/api/v1/repos/maria/old-name/pulls/7") {
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(
+                '<a href="/api/v1/repos/maria/new-name/pulls/7">Moved Permanently</a>.',
+                {
+                  status: 301,
+                  headers: { location: "/api/v1/repos/maria/new-name/pulls/7" },
+                },
+              ),
+            ),
+          );
+        }
+        assert.strictEqual(pathname, "/api/v1/repos/maria/new-name/pulls/7");
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              encodeJson({
+                ...requiredChecksPullRequest,
+                html_url: "https://forgejo.test/maria/new-name/pulls/7",
+              }),
+            ),
+          ),
+        );
+      }),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: {
+          run: (input) => {
+            if (input.command === "git") {
+              return Effect.succeed(
+                processOutput("origin\thttps://forgejo.test/maria/old-name.git (fetch)"),
+              );
+            }
+            assert.strictEqual(input.command, "fj");
+            return Effect.succeed(processOutput(""));
+          },
+        },
+      }),
+    ),
+    Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
+  );
+});
+
 it.effect("handles fj mutation statuses without retrying failures or reading absent bodies", () =>
   Effect.gen(function* () {
     for (const status of [204, 205, 302, 401, 403, 404, 429, 500]) {
