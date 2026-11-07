@@ -218,7 +218,7 @@ describe("link proof over a non-loopback desktop transport", () => {
         const rejected = yield* post("/api/connect/link-proof", payload, headers);
         expect(rejected.status).toBe(400);
         expect(yield* responseJson(rejected)).toMatchObject({
-          message: "Invalid managed endpoint origin.",
+          message: expect.stringContaining("t3 connect link"),
         });
         const loopback = yield* post(
           "/api/connect/link-proof",
@@ -235,23 +235,27 @@ describe("link proof over a non-loopback desktop transport", () => {
       name: "non-loopback tunnel origin",
       origin: { localHttpHost: "172.24.162.233", localHttpPort: 3773 },
       headers: {},
+      message: "Invalid managed endpoint origin.",
     },
     {
       name: "mismatched port",
       origin: { localHttpHost: "127.0.0.1", localHttpPort: 3774 },
       headers: {},
+      message: "Invalid managed endpoint origin.",
     },
     {
       name: "forwarded host",
       origin: proofRequest.origin,
       headers: { "x-forwarded-host": "127.0.0.1:3773" },
+      message: expect.stringContaining("t3 connect link"),
     },
     {
       name: "forwarded protocol",
       origin: proofRequest.origin,
       headers: { "x-forwarded-proto": "http" },
+      message: expect.stringContaining("t3 connect link"),
     },
-  ])("rejects $name even for desktop bootstrap", ({ origin, headers }) =>
+  ])("rejects $name even for desktop bootstrap", ({ origin, headers, message }) =>
     Effect.gen(function* () {
       const { post, exchange } = yield* linkProofClient;
       const token = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN);
@@ -261,9 +265,7 @@ describe("link proof over a non-loopback desktop transport", () => {
         { ...headers, authorization: `Bearer ${token}` },
       );
       expect(response.status).toBe(400);
-      expect(yield* responseJson(response)).toMatchObject({
-        message: "Invalid managed endpoint origin.",
-      });
+      expect(yield* responseJson(response)).toMatchObject({ message });
     }),
   );
 

@@ -111,6 +111,7 @@ import {
   hasExactScope,
   hasForwardedAuthorityHeaders,
   isAllowedEndpointOrigin,
+  isLoopbackRequestUrl,
   isSupportedLinkProviderKind,
   linkProofScopes,
   managedEndpointRuntimeConfigsMatch,
@@ -137,6 +138,12 @@ const RELAY_CONFIG_FIELD_MESSAGES = {
   cloudUserId: "Cloud user id is required.",
   cloudMintPublicKey: "Cloud mint public key must be a valid Ed25519 public key.",
 } as const;
+const ORIGIN_INVALID_MESSAGES = {
+  endpoint: "Invalid managed endpoint origin.",
+  local: "Could not resolve local environment origin.",
+  remote:
+    "T3 Connect can only be turned on from the machine running this environment. On that machine, use Settings → Sharing & access or run `t3 connect link`.",
+} as const;
 
 export class CloudLinkRelayConfigInvalidError extends Schema.TaggedError<CloudLinkRelayConfigInvalidError>()(
   "CloudLinkRelayConfigInvalidError",
@@ -157,12 +164,10 @@ export class CloudLinkRelayConfigInvalidError extends Schema.TaggedError<CloudLi
 
 export class CloudLinkOriginInvalidError extends Schema.TaggedError<CloudLinkOriginInvalidError>()(
   "CloudLinkOriginInvalidError",
-  { origin: Schema.Literals(["endpoint", "local"]) },
+  { origin: Schema.Literals(["endpoint", "local", "remote"]) },
 ) {
   override get message(): string {
-    return this.origin === "endpoint"
-      ? "Invalid managed endpoint origin."
-      : "Could not resolve local environment origin.";
+    return ORIGIN_INVALID_MESSAGES[this.origin];
   }
 }
 
@@ -579,15 +584,10 @@ const make = Effect.gen(function* () {
   const makeCloudLinkProof = Effect.fn("environment.cloud.makeLinkProof")(function* (
     request: RelayLinkProofRequest,
     requestUrl: string,
-    allowNonLoopbackRequestHost = false,
   ) {
     if (
       !isSupportedLinkProviderKind(request) ||
-      !isAllowedEndpointOrigin({
-        origin: request.origin,
-        requestUrl,
-        allowNonLoopbackRequestHost,
-      })
+      !isAllowedEndpointOrigin({ origin: request.origin, requestUrl })
     ) {
       return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
     }
@@ -628,16 +628,18 @@ const make = Effect.gen(function* () {
   const linkProof = Effect.fn("environment.cloud.linkProof")(
     function* (request: RelayLinkProofRequest, httpRequest: HttpServerRequest.HttpServerRequest) {
       const requestUrl = requestAbsoluteUrl(httpRequest);
-      if (requestUrl === null || hasForwardedAuthorityHeaders(httpRequest)) {
+      if (requestUrl === null) {
         return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
       }
       const principal = yield* EnvironmentAuthenticatedPrincipal;
       // WSL desktop requests use the distro IP; only the server-issued bootstrap subject qualifies.
-      return yield* makeCloudLinkProof(
-        request,
-        requestUrl,
-        principal.subject === "desktop-bootstrap",
-      );
+      if (
+        hasForwardedAuthorityHeaders(httpRequest) ||
+        (principal.subject !== "desktop-bootstrap" && !isLoopbackRequestUrl(requestUrl))
+      ) {
+        return yield* new CloudLinkOriginInvalidError({ origin: "remote" });
+      }
+      return yield* makeCloudLinkProof(request, requestUrl);
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("generate-link-proof")),
   );

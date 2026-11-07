@@ -79,21 +79,18 @@ export function parseManagedEndpointLocalOrigin(localOrigin: string) {
   };
 }
 
+export function isLoopbackRequestUrl(requestUrl: string): boolean {
+  return isLoopbackHostname(new URL(requestUrl).hostname);
+}
+
 export function isAllowedEndpointOrigin(input: {
   readonly origin: RelayManagedEndpointOrigin;
   readonly requestUrl: string;
-  readonly allowNonLoopbackRequestHost?: boolean;
 }): boolean {
-  if (!isLoopbackHostname(input.origin.localHttpHost)) {
-    return false;
-  }
-
-  const url = new URL(input.requestUrl);
-  if (!input.allowNonLoopbackRequestHost && !isLoopbackHostname(url.hostname)) {
-    return false;
-  }
-
-  return input.origin.localHttpPort === endpointRequestPort(url);
+  return (
+    isLoopbackHostname(input.origin.localHttpHost) &&
+    input.origin.localHttpPort === endpointRequestPort(new URL(input.requestUrl))
+  );
 }
 
 export function isSupportedLinkProviderKind(request: RelayLinkProofRequest): boolean {
