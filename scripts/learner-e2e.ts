@@ -11,7 +11,7 @@ import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
 
-import { chromium, type Page } from "playwright-core";
+import { chromium, type Browser, type Page } from "playwright-core";
 
 import {
   buildShowcasePairingUrl,
@@ -39,11 +39,13 @@ const BUILT_IN_DRIVERS = [
 // The last line of every Replay showcase turn.
 const REPLY_END = "This turn is a replay.";
 
+// Resolves links through the nearest existing ancestor, so a path that doesn't exist yet counts.
 function realpathOrSelf(path: string): string {
   try {
     return NodeFS.realpathSync(path);
   } catch {
-    return path;
+    const parent = NodePath.dirname(path);
+    return parent === path ? path : NodePath.join(realpathOrSelf(parent), NodePath.basename(path));
   }
 }
 
@@ -85,14 +87,9 @@ async function expectNoErrorToast(page: Page): Promise<void> {
 /** Waits until a finished reply sits below the message and nothing is running. */
 async function waitForReplyBelow(page: Page, message: string): Promise<void> {
   // Only a finished showcase turn reaches its last line, so this waits out restarts and queues.
-  const reply = page.locator(`:text("${REPLY_END}"):below(:text("${message}"))`).first();
-  await Promise.race([
-    reply.waitFor(),
-    errorToast(page)
-      .first()
-      .waitFor()
-      .then(() => expectNoErrorToast(page)),
-  ]);
+  const reply = page.locator(`:text("${REPLY_END}"):below(:text("${message}"))`);
+  await reply.or(errorToast(page)).first().waitFor();
+  await expectNoErrorToast(page);
   await stopButton(page).waitFor({ state: "detached" });
   await expectNoErrorToast(page);
 }
@@ -134,23 +131,21 @@ async function runLearner(page: Page): Promise<void> {
     const steer = "What happens on a collision?";
     await composer(page).fill(steer);
     await page.getByRole("button", { name: "Steer message" }).click();
+    // Replay can't steer in place, so a steer cuts the attempt off and restarts it.
+    // A refused steer falls back to the queue instead (only L2b should see one) or errors.
+    await page
+      .getByText("Cut off by a steer")
+      .or(queuedChip(page))
+      .or(errorToast(page))
+      .first()
+      .waitFor();
     await expectNoErrorToast(page);
+    if (await queuedChip(page).isVisible()) {
+      throw new Error("The send was queued instead of restarting the reply.");
+    }
     if ((await composer(page).innerText()).trim() !== "") {
       throw new Error("The draft bounced back into the composer.");
     }
-    // Replay can't steer in place, so a steer cuts the attempt off and restarts it.
-    // A refused steer falls back to the queue instead, which only L2b should see.
-    const outcome = await Promise.race([
-      page
-        .getByText("Cut off by a steer")
-        .waitFor()
-        .then(() => "restarted"),
-      queuedChip(page)
-        .waitFor()
-        .then(() => "queued"),
-    ]);
-    if (outcome === "queued")
-      throw new Error("The send was queued instead of restarting the reply.");
     await waitForReplyBelow(page, steer);
   });
 
@@ -186,7 +181,7 @@ async function main(): Promise<void> {
       ? NodePath.join(NodeOS.tmpdir(), `learner-e2e-${Date.now()}`)
       : args[outIndex + 1]!,
   );
-  await NodeFSP.mkdir(outDir, { recursive: true });
+  if (isLiveDataDir(outDir)) throw new Error(`Refusing to write into live data: ${outDir}`);
   if (!skipBuild) {
     step = "web build";
     const build = NodeChildProcess.spawnSync("vp", ["build"], {
@@ -195,58 +190,63 @@ async function main(): Promise<void> {
     });
     if (build.status !== 0) throw new Error("The web build failed.");
   }
+  step = "setup";
   if (!NodeFS.existsSync(NodePath.join(REPO_ROOT, "apps/web/dist/index.html"))) {
     throw new Error("No web build at apps/web/dist. Run without --skip-build.");
   }
 
   const baseDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "learner-e2e-"));
   if (isLiveDataDir(baseDir)) throw new Error(`Refusing to run in live data: ${baseDir}`);
-  const workspace = NodePath.join(baseDir, "workspace");
-  await NodeFSP.mkdir(NodePath.join(baseDir, "userdata"), { recursive: true });
-  await NodeFSP.mkdir(workspace);
-  await NodeFSP.writeFile(
-    NodePath.join(baseDir, "userdata", "settings.json"),
-    JSON.stringify({
-      providerInstances: {
-        // Only Replay runs: no paid model is reachable, and startup probes nothing else.
-        ...Object.fromEntries(
-          BUILT_IN_DRIVERS.map((driver) => [driver, { driver, enabled: false }]),
-        ),
-        devReplay: {
-          displayName: "Replay (dev)",
-          driver: "acpRegistry",
-          config: {
-            source: "local",
-            commandPath: NodeProcess.execPath,
-            commandArgs: [REPLAY_AGENT],
+  await NodeFSP.mkdir(outDir, { recursive: true });
+  let server: NodeChildProcess.ChildProcess | undefined;
+  let browser: Browser | undefined;
+  let page: Page | undefined;
+  try {
+    const workspace = NodePath.join(baseDir, "workspace");
+    await NodeFSP.mkdir(NodePath.join(baseDir, "userdata"), { recursive: true });
+    await NodeFSP.mkdir(workspace);
+    await NodeFSP.writeFile(
+      NodePath.join(baseDir, "userdata", "settings.json"),
+      JSON.stringify({
+        providerInstances: {
+          // Only Replay runs: no paid model is reachable, and startup probes nothing else.
+          ...Object.fromEntries(
+            BUILT_IN_DRIVERS.map((driver) => [driver, { driver, enabled: false }]),
+          ),
+          devReplay: {
+            displayName: "Replay (dev)",
+            driver: "acpRegistry",
+            config: {
+              source: "local",
+              commandPath: NodeProcess.execPath,
+              commandArgs: [REPLAY_AGENT],
+            },
           },
         },
-      },
-      defaultModelSelection: { instanceId: "devReplay", model: "slow" },
-    }),
-  );
+        defaultModelSelection: { instanceId: "devReplay", model: "slow" },
+      }),
+    );
 
-  // New lesson in the sidebar needs a project to start from; serve won't bootstrap one.
-  const addProject = NodeChildProcess.spawnSync(
-    NodeProcess.execPath,
-    ["apps/server/src/bin.ts", "project", "add", workspace, "--base-dir", baseDir],
-    { cwd: REPO_ROOT, encoding: "utf8" },
-  );
-  if (addProject.status !== 0) throw new Error(`project add failed: ${addProject.stderr}`);
+    // New lesson in the sidebar needs a project to start from; serve won't bootstrap one.
+    const addProject = NodeChildProcess.spawnSync(
+      NodeProcess.execPath,
+      ["apps/server/src/bin.ts", "project", "add", workspace, "--base-dir", baseDir],
+      { cwd: REPO_ROOT, encoding: "utf8" },
+    );
+    if (addProject.status !== 0) throw new Error(`project add failed: ${addProject.stderr}`);
 
-  const serverLog = NodeFS.createWriteStream(NodePath.join(outDir, "server.log"));
-  let server: NodeChildProcess.ChildProcess | undefined;
-  const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-  page.setDefaultTimeout(STEP_TIMEOUT_MS);
-  page.on("pageerror", (error) => consoleErrors.push(error.stack ?? error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error") consoleErrors.push(message.text());
-  });
-  try {
+    browser = await chromium.launch();
+    const opened = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    page = opened;
+    opened.setDefaultTimeout(STEP_TIMEOUT_MS);
+    opened.on("pageerror", (error) => consoleErrors.push(error.stack ?? error.message));
+    opened.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+
     step = "server boot";
     const port = await reserveAvailablePort();
-    server = NodeChildProcess.spawn(
+    const spawned = NodeChildProcess.spawn(
       NodeProcess.execPath,
       [
         "apps/server/src/bin.ts",
@@ -262,10 +262,11 @@ async function main(): Promise<void> {
       ],
       { cwd: REPO_ROOT, env: NodeProcess.env, stdio: ["ignore", "pipe", "pipe"] },
     );
+    server = spawned;
     // stdout carries the startup pairing token, so only stderr goes to the log.
-    server.stderr?.pipe(serverLog);
+    spawned.stderr?.pipe(NodeFS.createWriteStream(NodePath.join(outDir, "server.log")));
     const exited = new Promise<never>((_, reject) =>
-      server?.once("exit", (code) => reject(new Error(`The server exited (code ${code}).`))),
+      spawned.once("exit", (code) => reject(new Error(`The server exited (code ${code}).`))),
     );
     exited.catch(() => {});
     // The port opens before the app serves; this line marks the app ready.
@@ -279,7 +280,7 @@ async function main(): Promise<void> {
       ),
       new Promise<void>((resolve) => {
         let output = "";
-        server?.stdout?.on("data", (chunk: Buffer) => {
+        spawned.stdout?.on("data", (chunk: Buffer) => {
           output += chunk.toString();
           if (output.includes("OminaX server is ready.")) resolve();
         });
@@ -287,15 +288,16 @@ async function main(): Promise<void> {
     ]);
     console.log(`server ready (${elapsed()})`);
     const credential = await issuePairingCredential(baseDir);
-    await page.goto(buildShowcasePairingUrl("127.0.0.1", port, credential), {
+    await opened.goto(buildShowcasePairingUrl("127.0.0.1", port, credential), {
       waitUntil: "domcontentloaded",
     });
     console.log(`page loaded (${elapsed()})`);
-    await runLearner(page);
+    await runLearner(opened);
     console.log("learner-e2e passed");
+    if (outIndex === -1) await NodeFSP.rm(outDir, { recursive: true, force: true });
   } catch (error) {
     await page
-      .screenshot({ path: NodePath.join(outDir, "failure.png"), fullPage: true })
+      ?.screenshot({ path: NodePath.join(outDir, "failure.png"), fullPage: true })
       .catch(() => {});
     await NodeFSP.writeFile(NodePath.join(outDir, "console-errors.txt"), consoleErrors.join("\n"));
     await NodeFSP.copyFile(
@@ -308,7 +310,7 @@ async function main(): Promise<void> {
     console.error(`Screenshot, console errors and server log: ${outDir}`);
     process.exitCode = 1;
   } finally {
-    await browser.close();
+    await browser?.close();
     if (server !== undefined) await stopProcess(server);
     await NodeFSP.rm(baseDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }

@@ -17,6 +17,7 @@ it("refuses base dirs inside the live data folders, through links too", () => {
 
     assert.equal(isLiveDataDir(NodePath.join(home, ".t3"), home), true);
     assert.equal(isLiveDataDir(NodePath.join(home, ".t3-learn", "userdata"), home), true);
+    assert.equal(isLiveDataDir(NodePath.join(home, ".t3-learn", "not-yet", "out"), home), true);
     assert.equal(isLiveDataDir(NodePath.join(home, ".t3x"), home), false);
     assert.equal(isLiveDataDir(NodeOS.tmpdir(), home), false);
   } finally {
