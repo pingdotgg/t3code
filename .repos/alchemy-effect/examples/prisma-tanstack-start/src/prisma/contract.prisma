@@ -1,4 +1,4 @@
-// Prisma Next contract source. The Vite plugin and `bun run emit` generate
+// Prisma contract source. The Vite plugin and `bun run emit` generate
 // `contract.json` and `contract.d.ts` next to this file.
 
 model User {

@@ -1,21 +1,27 @@
-import { Match as M, Schema as S } from "effect";
-import type { Update } from "foldkit";
-import type { Document, HtmlBuilder } from "foldkit/html";
+import { Button } from "@foldkit/ui";
+import { Effect, Schema } from "effect";
+import { Command, Runtime, type Update } from "foldkit";
+import { type Document, type HtmlBuilder } from "foldkit/html";
 import { defineMessageUnion } from "foldkit/message";
+import { modifyFields } from "foldkit/struct";
+import { COUNT_COOKIE } from "./cookie";
 
 // MODEL
 
-export const Model = S.Struct({ count: S.Number });
+export const Model = Schema.Struct({
+  count: Schema.Number,
+  renderedAt: Schema.String,
+  renderedOn: Schema.Literals(["Server", "Client"]),
+});
 export type Model = typeof Model.Type;
 
 // FLAGS
-//
-// What the server knew when it rendered, and what the browser is handed back
-// so it can rebuild the same first Model. The server reads it from the
-// request; hydration decodes it from the page rather than guessing. Flags
-// ship in the HTML, so they are public — never put a secret here.
 
-export const Flags = S.Struct({ initialCount: S.Number });
+export const Flags = Schema.Struct({
+  initialCount: Schema.Number,
+  renderedAt: Schema.String,
+  renderedOn: Schema.Literals(["Server", "Client"]),
+});
 export type Flags = typeof Flags.Type;
 
 // MESSAGE
@@ -23,52 +29,101 @@ export type Flags = typeof Flags.Type;
 export const Message = defineMessageUnion({
   ClickedDecrement: {},
   ClickedIncrement: {},
-  ClickedReset: {},
+  CompletedPersistCount: {},
 });
-export const { ClickedDecrement, ClickedIncrement, ClickedReset } = Message;
+
 export type Message = typeof Message.Type;
 
 // UPDATE
 
-export const update = (
-  model: Model,
-  message: Message,
-): Update.Return<Model, Message> =>
-  M.value(message).pipe(
-    M.withReturnType<Update.Return<Model, Message>>(),
-    M.tagsExhaustive({
-      ClickedDecrement: () => ({ model: { count: model.count - 1 } }),
-      ClickedIncrement: () => ({ model: { count: model.count + 1 } }),
-      ClickedReset: () => ({ model: { count: 0 } }),
-    }),
-  );
+export const update = (model: Model, message: Message) =>
+  Message.match<Update.Return<Model, Message>>(message, {
+    ClickedDecrement: () => {
+      const nextCount = model.count - 1;
+      return {
+        model: modifyFields(model, { count: () => nextCount }),
+        commands: [PersistCount({ count: nextCount })],
+      };
+    },
+    ClickedIncrement: () => {
+      const nextCount = model.count + 1;
+      return {
+        model: modifyFields(model, { count: () => nextCount }),
+        commands: [PersistCount({ count: nextCount })],
+      };
+    },
+    CompletedPersistCount: () => ({ model }),
+  });
+
+// COMMAND
+
+const COUNT_COOKIE_MAX_AGE_SECONDS = 31536000;
+
+export const PersistCount = Command.define("PersistCount", {
+  args: { count: Schema.Number },
+  messages: [Message.CompletedPersistCount],
+  execute: ({ count }) =>
+    Effect.try(() => {
+      document.cookie = `${COUNT_COOKIE}=${count}; path=/; max-age=${COUNT_COOKIE_MAX_AGE_SECONDS}`;
+    }).pipe(
+      Effect.map(() => Message.CompletedPersistCount()),
+      Effect.catch(() => Effect.succeed(Message.CompletedPersistCount())),
+    ),
+});
 
 // INIT
-//
-// Runs on the server to produce the rendered Model, then again in the browser
-// with the same Flags. Both sides must reach the same Model or hydration
-// rebuilds the tree it was supposed to adopt.
 
-export const init = (flags: Flags): Update.Return<Model, Message> => ({
-  model: { count: flags.initialCount },
+export const init: Runtime.ApplicationInit<Model, Message, Flags> = (flags) => ({
+  model: {
+    count: flags.initialCount,
+    renderedAt: flags.renderedAt,
+    renderedOn: flags.renderedOn,
+  },
 });
 
 // VIEW
 
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
-  title: `Counter: ${model.count}`,
+  title: `Count ${model.count}`,
   body: h.div(
-    [h.Id("app")],
+    [h.Class("min-h-screen bg-white flex flex-col items-center justify-center gap-6 p-6")],
     [
-      h.p([h.Id("count")], [model.count.toString()]),
+      h.h1([h.Class("text-2xl font-semibold text-gray-800")], ["Server-rendered counter"]),
+      h.p([h.Id("count"), h.Class("text-6xl font-bold text-gray-800")], [model.count.toString()]),
       h.div(
-        [],
+        [h.Class("flex flex-wrap justify-center gap-4")],
         [
-          h.button([h.OnClick(ClickedDecrement())], ["-"]),
-          h.button([h.OnClick(ClickedReset())], ["Reset"]),
-          h.button([h.OnClick(ClickedIncrement())], ["+"]),
+          Button.view(
+            {
+              onClick: Message.ClickedDecrement(),
+              toView: (attributes) => h.button([...attributes.button, h.Class(buttonStyle)], ["-"]),
+            },
+            h,
+          ),
+          Button.view(
+            {
+              onClick: Message.ClickedIncrement(),
+              toView: (attributes) => h.button([...attributes.button, h.Class(buttonStyle)], ["+"]),
+            },
+            h,
+          ),
+        ],
+      ),
+      h.p(
+        [h.Id("provenance"), h.Class("text-sm text-gray-500")],
+        [`Rendered on the ${model.renderedOn} at ${model.renderedAt}`],
+      ),
+      h.p(
+        [h.Class("text-sm text-gray-500 max-w-md text-center")],
+        [
+          "The count persists in a cookie. Reload the page and the server " +
+            "renders your latest count into the HTML before any JavaScript runs.",
         ],
       ),
     ],
   ),
 });
+
+// STYLE
+
+const buttonStyle = "bg-black text-white hover:bg-gray-700 px-4 py-2 transition";

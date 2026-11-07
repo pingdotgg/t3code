@@ -1,8 +1,8 @@
+import type { AgentAwarenessThread } from "../orchestration-v2/ProjectionStore.ts";
 import {
   isListedThreadLineage,
   type EnvironmentId,
   type OrchestrationV2DomainEvent,
-  type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   type Project,
   type RuntimeRequestId,
@@ -22,14 +22,10 @@ import {
 import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
-import {
-  normalizeRelayIssuer,
-  RELAY_ACTIVITY_PUBLISH_TYP,
-  signRelayJwt,
-} from "@t3tools/shared/relayJwt";
+import { normalizeRelayIssuer, RELAY_ACTIVITY_PUBLISH_TYP } from "@t3tools/shared/relayJwt";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -52,7 +48,7 @@ import {
   RELAY_ISSUER_SECRET,
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
-import { getOrCreateEnvironmentKeyPairFromSecretStore } from "../cloud/environmentKeys.ts";
+import { EnvironmentSigningKey } from "../cloud/environmentKeys.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -119,6 +115,7 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.unpinned":
     case "thread.pin-reordered":
     case "thread.active-reordered":
+    case "thread.tags-updated":
     case "thread.visited":
     case "thread.marked-unread":
     case "thread.runtime-mode-updated":
@@ -175,6 +172,17 @@ function agentAwarenessPublishIdentity(
   return JSON.stringify(
     subagentRequest === null ? meaningfulState : [meaningfulState, subagentRequest.requestId],
   );
+}
+
+const CLEARED_PUBLISH_IDENTITY = agentAwarenessPublishIdentity(null);
+
+// A published tombstone stays recorded so repeats are skipped, but it is not live state.
+function hasLivePublishedState(
+  publishedStateByThread: ReadonlyMap<ThreadId, string>,
+  threadId: ThreadId,
+): boolean {
+  const identity = publishedStateByThread.get(threadId);
+  return identity !== undefined && identity !== CLEARED_PUBLISH_IDENTITY;
 }
 
 function resolveAgentActivityPublishingStartupState(input: {
@@ -248,19 +256,7 @@ function deliveryStats(
   };
 }
 
-function signRelayAgentActivityPublishProof(input: {
-  readonly privateKey: string;
-  readonly payload: RelayAgentActivityPublishProofPayload;
-}) {
-  return signRelayJwt({
-    privateKey: input.privateKey,
-    typ: RELAY_ACTIVITY_PUBLISH_TYP,
-    payload: input.payload,
-  });
-}
-
 const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
-  readonly privateKey: string;
   readonly relayIssuer: string;
   readonly environmentId: string;
   readonly threadId: ThreadId;
@@ -280,11 +276,12 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
     threadId: input.threadId,
     state: input.state,
   } satisfies RelayAgentActivityPublishProofPayload;
-  return yield* signRelayAgentActivityPublishProof({ privateKey: input.privateKey, payload });
+  const signingKey = yield* EnvironmentSigningKey;
+  return yield* signingKey.sign({ typ: RELAY_ACTIVITY_PUBLISH_TYP, payload });
 });
 
 function describeThreadShellForAwareness(
-  thread: Option.Option<OrchestrationV2ThreadShell>,
+  thread: Option.Option<AgentAwarenessThread>,
 ): Record<string, unknown> {
   if (Option.isNone(thread)) {
     return { found: false };
@@ -310,7 +307,7 @@ interface SubagentRequest {
 
 function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly environmentId: EnvironmentId;
-  readonly thread: Option.Option<OrchestrationV2ThreadShell>;
+  readonly thread: Option.Option<AgentAwarenessThread>;
   readonly project: Option.Option<Project>;
   readonly pendingSubagentRequest: SubagentRequestAwareness | null;
 }): {
@@ -356,7 +353,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
   };
 }
 
-function terminalWorkSinceStart(thread: OrchestrationV2ThreadShell, startedAt: number): boolean {
+function terminalWorkSinceStart(thread: AgentAwarenessThread, startedAt: number): boolean {
   return (
     thread.latestRunCompletedAt != null &&
     DateTime.toEpochMillis(thread.latestRunCompletedAt) > startedAt
@@ -367,7 +364,7 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   readonly environmentId: EnvironmentId;
   readonly startedAt: number;
   readonly projects: ReadonlyArray<Pick<Project, "id" | "title">>;
-  readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
+  readonly threads: ReadonlyArray<AgentAwarenessThread>;
 }): ReadonlyArray<ThreadId> {
   const projectById = new Map(input.projects.map((project) => [project.id, project]));
   return input.threads
@@ -399,9 +396,9 @@ export const make = Effect.gen(function* () {
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const signingKey = yield* EnvironmentSigningKey;
   const scope = yield* Effect.scope;
-  const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const catchUpRequests = yield* Queue.dropping<void>(1);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
@@ -525,13 +522,12 @@ export const make = Effect.gen(function* () {
       }
       const relayClient = cachedRelayClient;
       const proof = yield* makePublishProof({
-        privateKey: cloudLinkKeyPair.privateKey,
         relayIssuer: relayConfig.issuer,
         environmentId,
         threadId,
         state: input.state,
-        jti: yield* crypto.randomUUIDv4(),
-      });
+        jti: yield* random.uuidV4(),
+      }).pipe(Effect.provideService(EnvironmentSigningKey, signingKey));
 
       yield* Effect.logInfo("publishing agent activity for thread", {
         environmentId,
@@ -564,19 +560,19 @@ export const make = Effect.gen(function* () {
     });
 
     // Read only this thread; full shell reads would make each activity event scale with all threads.
-    const threadShell = yield* threads.getThreadShell(threadId);
+    const threadShell = yield* readAwarenessThread(threadId);
     yield* trackSubagentRequest(threadId, threadShell);
     if (
       threadShell !== null &&
       !isListedThreadLineage(threadShell.lineage) &&
-      !(yield* Ref.get(publishedStateByThreadRef)).has(threadId)
+      !hasLivePublishedState(yield* Ref.get(publishedStateByThreadRef), threadId)
     ) {
       // Subagents and side chats have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
       return;
     }
     const thread =
       threadShell === null || threadShell.archivedAt !== null
-        ? Option.none<OrchestrationV2ThreadShell>()
+        ? Option.none<AgentAwarenessThread>()
         : Option.some(threadShell);
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
@@ -591,11 +587,15 @@ export const make = Effect.gen(function* () {
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
-      !publishedStateByThread.has(threadId)
+      !hasLivePublishedState(publishedStateByThread, threadId)
     ) {
       if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
     }
-    if (publishedStateByThread.get(threadId) === publishIdentity) {
+    if (
+      publishedStateByThread.get(threadId) === publishIdentity &&
+      // A held completion settled after an earlier clear still has to alert.
+      !(snapshot.state === null && heldCompletions.has(threadId))
+    ) {
       // Clear moot deadlines so later transient nulls cannot skip their deferral window.
       publishConfirmDeadlines.delete(threadId);
       heldCompletions.delete(threadId);
@@ -610,10 +610,7 @@ export const make = Effect.gen(function* () {
     // Confirm tombstones over live state to avoid removing active cards.
     // Confirm completion: a run can end moments before its continuation starts, and the relay
     // alerts on every move into completed.
-    const requiresConfirmation =
-      (snapshot.state === null &&
-        publishedStateByThread.get(threadId) !== agentAwarenessPublishIdentity(null)) ||
-      snapshot.state?.phase === "completed";
+    const requiresConfirmation = snapshot.state === null || snapshot.state?.phase === "completed";
     if (requiresConfirmation) {
       if (snapshot.state?.phase === "completed") heldCompletions.add(threadId);
       const nowMs = (yield* DateTime.now).epochMilliseconds;
@@ -714,22 +711,21 @@ export const make = Effect.gen(function* () {
     if (state !== null) recordAlertAt(threadId, state.updatedAt);
     publishConfirmDeadlines.delete(threadId);
     heldCompletions.delete(threadId);
-    yield* Ref.update(publishedStateByThreadRef, (publishedStates) => {
-      const nextPublishedStates = new Map(publishedStates);
-      if (snapshot.state === null) {
-        nextPublishedStates.delete(threadId);
-      } else {
-        nextPublishedStates.set(threadId, publishIdentity);
-      }
-      return nextPublishedStates;
-    });
+    yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
+      new Map(publishedStates).set(threadId, publishIdentity),
+    );
   });
+
+  const readAwarenessThread = (threadId: ThreadId) =>
+    threads
+      .getAgentAwarenessSnapshot(threadId)
+      .pipe(Effect.map((snapshot) => snapshot.threads[0] ?? null));
 
   // The subagent helpers below are untraced: they run per event inside
   // publishThreadUnsafe, whose span already covers them.
-  const findTopLevelThreadId = Effect.fnUntraced(function* (child: OrchestrationV2ThreadShell) {
+  const findTopLevelThreadId = Effect.fnUntraced(function* (child: AgentAwarenessThread) {
     const seen = new Set<ThreadId>([child.id]);
-    let current: OrchestrationV2ThreadShell | null = child;
+    let current: AgentAwarenessThread | null = child;
     while (
       current?.lineage.relationshipToParent === "subagent" ||
       current?.lineage.sideChat === true
@@ -737,14 +733,14 @@ export const make = Effect.gen(function* () {
       const parentId: ThreadId | null = current.lineage.parentThreadId;
       if (parentId === null || seen.has(parentId)) return null;
       seen.add(parentId);
-      current = yield* threads.getThreadShell(parentId);
+      current = yield* readAwarenessThread(parentId);
     }
     return current?.id ?? null;
   });
 
   const trackSubagentRequest = Effect.fnUntraced(function* (
     threadId: ThreadId,
-    threadShell: OrchestrationV2ThreadShell | null,
+    threadShell: AgentAwarenessThread | null,
   ) {
     const request =
       threadShell === null || threadShell.archivedAt !== null
@@ -773,7 +769,7 @@ export const make = Effect.gen(function* () {
 
   const trackSubagentWhilePaused = Effect.fnUntraced(function* (threadId: ThreadId) {
     if (!hasPublished) return;
-    yield* trackSubagentRequest(threadId, yield* threads.getThreadShell(threadId));
+    yield* trackSubagentRequest(threadId, yield* readAwarenessThread(threadId));
   });
 
   // The map can miss a child's update while publishing is off or the relay is
@@ -783,7 +779,7 @@ export const make = Effect.gen(function* () {
     let pendingChangeOrder = 0;
     for (const [childId, entry] of subagentRequests) {
       if (entry.topLevelThreadId !== topLevelThreadId) continue;
-      const child = yield* threads.getThreadShell(childId);
+      const child = yield* readAwarenessThread(childId);
       const request =
         child === null || child.archivedAt !== null ? null : subagentPendingRequest(child);
       const pendingRequest = child?.pendingRuntimeRequest;
@@ -898,22 +894,22 @@ export const make = Effect.gen(function* () {
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
     const projectSnapshot = yield* projects.snapshot;
-    // Hydrate only live children; their requests can make a top-level thread wait.
-    const awarenessThreadIds = (yield* threads.listActiveShellIndex()).flatMap((thread) =>
-      isListedThreadLineage(thread.lineage) ||
-      (thread.lineage.relationshipToParent === "subagent" && thread.mayBeLive)
-        ? [thread.id]
-        : [],
+    const activitySnapshot = yield* threads.getAgentAwarenessSnapshot();
+    // Live children aren't listed, but a waiting one makes its top-level thread wait.
+    const liveChildren = yield* Effect.forEach(
+      (yield* threads.listActiveShellIndex()).filter(
+        (thread) => thread.lineage.relationshipToParent === "subagent" && thread.mayBeLive,
+      ),
+      (thread) => readAwarenessThread(thread.id),
     );
-    const shellSnapshot = yield* threads.getShellSnapshot({
-      location: "active",
-      threadIds: awarenessThreadIds,
-    });
     const activeThreadIds = resolveAgentAwarenessRelayActiveThreadIds({
       environmentId,
       startedAt,
       projects: projectSnapshot.projects,
-      threads: shellSnapshot.threads,
+      threads: [
+        ...activitySnapshot.threads,
+        ...liveChildren.filter((thread) => thread !== null),
+      ],
     });
     if (activeThreadIds.length === 0) {
       yield* Effect.logDebug("agent activity snapshot has no publishable threads");
