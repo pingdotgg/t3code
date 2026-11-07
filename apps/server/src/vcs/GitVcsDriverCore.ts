@@ -1909,46 +1909,40 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     readonly comparisonRef: string;
   };
 
+  // Inferred bases get their own key so ahead-of-default and PR targets keep reading only
+  // explicit t3-merge-base settings.
+  const reviewBaseConfigKey = (refName: string) => `branch.${refName}.t3-review-base-ref`;
+
+  const readInferredReviewBase = Effect.fn("readInferredReviewBase")(function* (
+    cwd: string,
+    refName: string,
+  ) {
+    const stored = yield* readConfigValue(cwd, reviewBaseConfigKey(refName));
+    if (!stored?.startsWith("refs/heads/") && !stored?.startsWith("refs/remotes/")) return null;
+    const resolved = yield* resolveComparisonBaseRef(cwd, stored);
+    if (resolved === null) return null;
+    return {
+      baseRef: stored.replace(/^refs\/(heads|remotes)\//, ""),
+      comparisonRef: resolved.comparisonRef,
+    };
+  });
+
   const persistInferredBranchBase = Effect.fn("persistInferredBranchBase")(function* (
     cwd: string,
     refName: string,
     base: ResolvedReviewBase,
   ) {
-    const branchName = base.comparisonRef.startsWith("refs/heads/")
-      ? base.comparisonRef.slice("refs/heads/".length)
-      : base.comparisonRef.startsWith("refs/remotes/")
-        ? (parseRemoteRefWithRemoteNames(
-            base.comparisonRef.slice("refs/remotes/".length),
-            (yield* listRemoteNames(cwd).pipe(Effect.orElseSucceed(() => []))).toSorted(
-              (left, right) => right.length - left.length,
-            ),
-          )?.branchName ?? base.baseRef)
-        : base.baseRef;
-    if (branchName.length === 0 || branchName === refName) return;
+    if (base.comparisonRef === `refs/heads/${refName}`) return;
     yield* writeConfigValue({
       cwd,
-      key: branchBaseConfigKey(refName),
-      value: branchName,
+      key: reviewBaseConfigKey(refName),
+      value: base.comparisonRef,
     }).pipe(
       Effect.catchTags({
         GitCommandError: () =>
           Effect.logWarning("inferred review base could not be persisted; continuing without it"),
       }),
     );
-    if (base.comparisonRef.startsWith("refs/remotes/")) {
-      yield* writeConfigValue({
-        cwd,
-        key: `branch.${refName}.t3-merge-base-ref`,
-        value: base.comparisonRef,
-      }).pipe(
-        Effect.catchTags({
-          GitCommandError: () =>
-            Effect.logWarning(
-              "inferred review base-ref could not be persisted; continuing without it",
-            ),
-        }),
-      );
-    }
   });
 
   const resolveReflogCreatedFromBase = Effect.fn("resolveReflogCreatedFromBase")(function* (
@@ -1959,7 +1953,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const reflog = yield* executeGit(
       "GitVcsDriver.resolveReflogCreatedFromBase",
       cwd,
-      ["reflog", "show", "--format=%H%x09%gs", "--", `refs/heads/${refName}`],
+      ["reflog", "show", "--format=%H%x09%gs", `refs/heads/${refName}`],
       { allowNonZeroExit: true },
     );
     if (reflog.exitCode !== 0 || reflog.stdout.length === 0) return null;
@@ -2192,17 +2186,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { baseRef: comparisonRef, comparisonRef };
     }
     if (configuredBase !== null) return configuredBase;
-    // Slash-containing local bases look remote to resolveComparisonBaseRef; honor them directly.
-    if (
-      configuredBaseBranch.includes("/") &&
-      !configuredBaseBranch.startsWith("refs/") &&
-      (yield* branchExists(cwd, configuredBaseBranch))
-    ) {
-      return {
-        baseRef: configuredBaseBranch,
-        comparisonRef: `refs/heads/${configuredBaseBranch}`,
-      };
-    }
 
     const primaryRemoteName = yield* resolvePrimaryRemoteName(cwd).pipe(
       Effect.orElseSucceed(() => null),
@@ -2277,7 +2260,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (options && options.baseStrategy === "nearest-parent") {
       // Only persist when nothing was configured; a bad explicit base must not lock in a guess.
       const remember =
-        configuredBaseBranch.length === 0
+        configuredBaseBranch.length === 0 && configuredBaseRef === null
           ? (base: ResolvedReviewBase) =>
               persistInferredBranchBase(cwd, refName, base).pipe(Effect.as(base))
           : (base: ResolvedReviewBase) => Effect.succeed(base);
@@ -2288,6 +2271,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const fromPullRequest = yield* resolveNamedBaseCandidate(pullRequestBaseName);
         if (fromPullRequest !== null) return yield* remember(fromPullRequest);
       }
+
+      const stored = yield* readInferredReviewBase(cwd, refName);
+      if (stored !== null) return stored;
 
       const fromReflog = yield* resolveReflogCreatedFromBase(
         cwd,

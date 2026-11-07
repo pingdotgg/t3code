@@ -3326,14 +3326,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           "upstream/missing",
         ]);
         const inferred = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+        // Reflog records "Created from HEAD" at local main's tip.
         assert.deepStrictEqual(inferred.branchChanges, {
-          baseRef: "origin/main",
-          insertions: 2,
+          baseRef: "main",
+          insertions: 1,
           deletions: 0,
         });
         assert.strictEqual(inferred.aheadCount, 2);
         assert.isNull(
-          yield* driver.readConfigValue(cwd, "branch.feature/configured-base.t3-merge-base"),
+          yield* driver.readConfigValue(cwd, "branch.feature/configured-base.t3-review-base-ref"),
         );
 
         yield* git(cwd, [
@@ -3403,9 +3404,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.strictEqual(status.aheadOfDefaultCount, 2);
         assert.strictEqual(status.aheadCount, 2);
         assert.strictEqual(
-          yield* git(cwd, ["config", "branch.feature/from-develop.t3-merge-base"]),
-          "develop",
+          yield* git(cwd, ["config", "branch.feature/from-develop.t3-review-base-ref"]),
+          "refs/heads/develop",
         );
+        const reread = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+        assert.strictEqual(reread.branchChanges?.baseRef, "develop");
+        assert.strictEqual(reread.aheadOfDefaultCount, 2);
 
         const preview = yield* driver.getReviewDiffPreview({ cwd });
         const changes = preview.sources.find((source) => source.kind === "branch-range")!;
@@ -3460,8 +3464,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           { path: "feature.txt", previousPath: null, additions: 1, deletions: 0 },
         ]);
         assert.strictEqual(
-          yield* git(cwd, ["config", "branch.feature/pr-base.t3-merge-base"]),
-          "release/v2",
+          yield* git(cwd, ["config", "branch.feature/pr-base.t3-review-base-ref"]),
+          "refs/heads/release/v2",
         );
       }),
     );
@@ -3551,12 +3555,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(cwd, [
             "config",
             "--unset-all",
-            "branch.feature/local-base.t3-merge-base",
-          ]).pipe(Effect.ignore);
-          yield* git(cwd, [
-            "config",
-            "--unset-all",
-            "branch.feature/local-base.t3-merge-base-ref",
+            "branch.feature/local-base.t3-review-base-ref",
           ]).pipe(Effect.ignore);
           if (configuredBase !== undefined) {
             yield* git(cwd, ["config", "branch.feature/local-base.gh-merge-base", configuredBase]);
