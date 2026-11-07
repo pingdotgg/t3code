@@ -1,6 +1,7 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
-import type { AppBarMenu } from "../../components/ui/AppBar.types";
+import type { AppBarConfirm, AppBarMenu } from "../../components/ui/AppBar.types";
+import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import {
   AuthSourceControlWriteScope,
   EnvironmentId,
@@ -71,12 +72,6 @@ function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
   return parts.join(" · ");
 }
 
-type QuickActionIcon =
-  | "arrow.down.circle"
-  | "arrow.up.right.circle"
-  | "checkmark.circle"
-  | "arrow.up.circle";
-
 export type ThreadGitMenuProps = {
   readonly environmentId: EnvironmentId | string;
   readonly threadId: ThreadId | string;
@@ -142,15 +137,18 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     ? (quickAction.hint ?? "This action is unavailable.")
     : null;
 
-  const quickActionIcon: QuickActionIcon = (() => {
+  const quickActionIcon: Extract<AppSymbolName, string> = (() => {
     if (quickAction.kind === "run_pull") return "arrow.down.circle";
-    if (quickAction.kind === "open_pr") return "arrow.up.right.circle";
+    if (quickAction.kind === "open_pr") return PullRequestGlyph.pullRequest;
     if (quickAction.kind === "run_action") {
       if (quickAction.action === "commit") return "checkmark.circle";
       if (quickAction.action === "push" || quickAction.action === "commit_push")
         return "arrow.up.circle";
+      if (quickAction.action === "create_pr" || quickAction.action === "commit_push_pr") {
+        return PullRequestGlyph.pullRequest;
+      }
     }
-    return "arrow.up.right.circle";
+    return PullRequestGlyph.pullRequest;
   })();
 
   const openExistingPr = async () => {
@@ -301,9 +299,11 @@ export function threadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | 
   };
 }
 
-/** The thread's git menu, shared by the thread bar and Review. */
-export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMenu | null {
-  const model = useThreadGitControlModel(props);
+function threadGitMenuFromModel(
+  props: ThreadGitMenuProps,
+  model: ReturnType<typeof useThreadGitControlModel>,
+  omitQuickAction: boolean,
+): AppBarMenu {
   return {
     title: "Git controls",
     icon: "point.topleft.down.curvedto.point.bottomright.up",
@@ -317,16 +317,20 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
         subtitle: compactMenuStatus(props.gitStatus),
         onPress: () => {},
       },
-      {
-        id: "git-quick-action",
-        title: model.quickAction.label,
-        icon: model.quickActionIcon,
-        disabled: model.quickAction.disabled,
-        subtitle: model.quickActionHint ?? undefined,
-        onPress: () => {
-          void model.runQuickAction();
-        },
-      },
+      ...(omitQuickAction
+        ? []
+        : [
+            {
+              id: "git-quick-action",
+              title: model.quickAction.label,
+              icon: model.quickActionIcon,
+              disabled: model.quickAction.disabled,
+              subtitle: model.quickActionHint ?? undefined,
+              onPress: () => {
+                void model.runQuickAction();
+              },
+            },
+          ]),
       {
         id: "git-review",
         title: "Review changes",
@@ -362,4 +366,68 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
       },
     ],
   };
+}
+
+/** Short pill copy for the thread-bar CTA — full quick-action label stays in a11y. */
+function shortGitBarLabel(
+  quickAction: ReturnType<typeof useThreadGitControlModel>["quickAction"],
+  shortLabel: string,
+): { readonly label: string; readonly disabled: boolean } | null {
+  if (quickAction.kind === "open_pr") {
+    return { label: "View", disabled: quickAction.disabled };
+  }
+  if (quickAction.kind === "run_pull") {
+    return { label: "Pull", disabled: quickAction.disabled };
+  }
+  if (quickAction.kind === "run_action") {
+    switch (quickAction.action) {
+      case "create_pr":
+      case "commit_push_pr":
+        return { label: shortLabel, disabled: quickAction.disabled };
+      case "push":
+        return { label: "Push", disabled: quickAction.disabled };
+      case "commit":
+      case "commit_push":
+        return { label: "Commit", disabled: quickAction.disabled };
+      default:
+        return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Thread-bar git controls: a compact one-tap pill for the next git step, plus the overflow
+ * menu for everything else (review, more).
+ */
+export function useThreadGitBar(props: ThreadGitMenuProps): {
+  readonly primaryAction: AppBarConfirm | null;
+  readonly menu: AppBarMenu;
+} {
+  const model = useThreadGitControlModel(props);
+  const terminology = sourceControlClients.get(
+    props.gitStatus?.sourceControlProvider?.kind,
+  ).changeRequest;
+  const short = shortGitBarLabel(model.quickAction, terminology.shortLabel);
+  const primaryAction: AppBarConfirm | null = short
+    ? {
+        label: short.label,
+        accessibilityLabel: model.quickAction.label,
+        showLabel: true,
+        disabled: short.disabled,
+        onPress: () => {
+          void model.runQuickAction();
+        },
+      }
+    : null;
+  return {
+    primaryAction,
+    menu: threadGitMenuFromModel(props, model, primaryAction !== null),
+  };
+}
+
+/** The thread's git menu, shared by Review (no primary button there). */
+export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMenu | null {
+  const model = useThreadGitControlModel(props);
+  return threadGitMenuFromModel(props, model, false);
 }

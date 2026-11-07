@@ -3,7 +3,7 @@ import { AppActivityIndicator } from "./AppActivityIndicator";
 import type { HeaderBarButtonMailSearchToolbarItem } from "react-native-screens";
 import { NavigationContext } from "@react-navigation/native";
 import { use, useId, useLayoutEffect } from "react";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
 import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
 import { NativeStackScreenOptions, useScreenOptionsWriter } from "../../native/StackHeader";
@@ -19,7 +19,7 @@ import {
 } from "../../features/layout/native-mail-search-toolbar";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import type { AppBarMenuItem, AppBarProps } from "./AppBar.types";
-import type { AppSymbolName } from "./AppSymbol";
+import { SymbolView, type AppSymbolName } from "./AppSymbol";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { useControlTheme } from "./useControlTheme";
 
@@ -198,6 +198,55 @@ export function AppBar(props: AppBarProps) {
       props.confirm ||
       closeInspector ? (
         <Toolbar placement="right">
+          {/* First child is trailing-edge on iOS; keep confirm outermost when labelled. */}
+          {props.confirm?.loading ? (
+            <Toolbar.Custom>
+              <View
+                className="size-11 items-center justify-center"
+                accessible
+                accessibilityLabel={props.confirm.accessibilityLabel ?? props.confirm.label}
+                accessibilityState={{ busy: true }}
+              >
+                <AppActivityIndicator colorClassName="accent-prominent-action" />
+              </View>
+            </Toolbar.Custom>
+          ) : props.confirm?.icon && !props.confirm.showLabel ? (
+            // Custom AppSymbols (e.g. PR glyph) are not SF Symbols — render via SymbolView,
+            // same footprint as other trailing icons (no prominent pill).
+            <Toolbar.Custom>
+              <Pressable
+                accessibilityLabel={props.confirm.accessibilityLabel ?? props.confirm.label}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: Boolean(props.confirm.disabled) }}
+                disabled={props.confirm.disabled}
+                onPress={props.confirm.onPress}
+                className="size-11 items-center justify-center"
+              >
+                <SymbolView
+                  name={props.confirm.icon}
+                  size={22}
+                  tintColorClassName="accent-header-foreground"
+                />
+              </Pressable>
+            </Toolbar.Custom>
+          ) : props.confirm ? (
+            <Toolbar.Button
+              icon={
+                props.confirm.icon
+                  ? iosIcon(props.confirm.icon)
+                  : props.confirm.showLabel
+                    ? undefined
+                    : "checkmark"
+              }
+              label={props.confirm.showLabel ? props.confirm.label : undefined}
+              variant="prominent"
+              visibilityPriority="high"
+              tintColor={colors["--color-prominent-action"]}
+              accessibilityLabel={props.confirm.accessibilityLabel ?? props.confirm.label}
+              disabled={props.confirm.disabled}
+              onPress={props.confirm.onPress}
+            />
+          ) : null}
           {props.actions?.map(({ loading, ...action }) =>
             loading ? (
               <Toolbar.Custom key={action.accessibilityLabel}>
@@ -219,28 +268,6 @@ export function AppBar(props: AppBarProps) {
           )}
           {visibleMenus.map(createNativeHeaderMenu)}
           {props.trailing}
-          {props.confirm?.loading ? (
-            <Toolbar.Custom>
-              <View
-                className="size-11 items-center justify-center"
-                accessible
-                accessibilityLabel={props.confirm.label}
-                accessibilityState={{ busy: true }}
-              >
-                <AppActivityIndicator colorClassName="accent-prominent-action" />
-              </View>
-            </Toolbar.Custom>
-          ) : props.confirm ? (
-            <Toolbar.Button
-              icon="checkmark"
-              variant="prominent"
-              visibilityPriority="high"
-              tintColor={colors["--color-prominent-action"]}
-              accessibilityLabel={props.confirm.label}
-              disabled={props.confirm.disabled}
-              onPress={props.confirm.onPress}
-            />
-          ) : null}
           {closeInspector ? (
             <ScreenHeaderButton
               accessibilityLabel="Close inspector"
