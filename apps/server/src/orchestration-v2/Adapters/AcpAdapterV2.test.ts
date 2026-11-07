@@ -1919,6 +1919,13 @@ describe("AcpAdapterV2", () => {
         content: { q0__other: "Friday", q1: ["Codex"], q1__other: "Pi" },
       },
     },
+    {
+      scenario: "keeps a typed listed value for a multiple choice",
+      schema: titledChoiceSchema,
+      questions: titledChoiceQuestions,
+      answers: { q0: "Not yet", q1: "Codex" },
+      result: { action: "accept", content: { q0: "Not yet", q1: ["Codex"] } },
+    },
   ])("form elicitation $scenario", ({ schema, questions, answers, result, withAttachments }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

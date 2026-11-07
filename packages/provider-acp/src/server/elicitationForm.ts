@@ -243,14 +243,16 @@ export function parseElicitationForm(
         (entry): entry is string =>
           typeof entry === "string" && !field.values.has(entry) && entry.trim().length > 0,
       );
-      if (custom.length === 0) continue;
-      routed.set(companion, custom.join(", "));
-      if (field.kind === "choice") routed.delete(id);
-      else
+      if (custom.length > 0) routed.set(companion, custom.join(", "));
+      if (field.kind === "choice") {
+        if (custom.length > 0) routed.delete(id);
+      } else if (custom.length > 0 || typeof answer === "string") {
+        // Clients submit typed text as a string, even when it names a listed option.
         routed.set(
           id,
           entries.filter((entry) => typeof entry === "string" && field.values.has(entry)),
         );
+      }
     }
     return routed;
   };
