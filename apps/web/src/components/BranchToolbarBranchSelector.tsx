@@ -744,6 +744,7 @@ export function BranchToolbarBranchSelector({
             environmentId={environmentId}
             pr={displayedPr}
             number={prNumber}
+            url={prUrl}
             reference={currentLinkedPr}
             status={displayedPrStatus}
             project={activeProject}

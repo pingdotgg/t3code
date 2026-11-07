@@ -44,6 +44,10 @@ import {
 } from "../pullRequest/pullRequestDetail.logic";
 import { PullRequestChecksPopover } from "../pullRequest/PullRequestChecksPopover";
 import {
+  openOnHostLabel,
+  showPullRequestLinkContextMenu,
+} from "../pullRequest/pullRequestLinkContextMenu";
+import {
   pullRequestChecksState,
   PullRequestCheckStatusIcon,
   PullRequestDiffStat,
@@ -85,6 +89,7 @@ export function ThreadDetailsPrRow({
   environmentId,
   pr,
   number,
+  url,
   reference: linkedReference,
   status,
   project,
@@ -97,6 +102,7 @@ export function ThreadDetailsPrRow({
   environmentId: EnvironmentId;
   pr: ThreadPr;
   number: number;
+  url: string;
   reference?: Pick<PullRequestRef, "host" | "repository" | "number"> | null;
   status: PrStatusIndicator | null;
   project: EnvironmentProject | null;
@@ -138,9 +144,23 @@ export function ThreadDetailsPrRow({
   const checksQuery = useEnvironmentQueryRefresh(checksAtom);
   const checksAreNewer = useEnvironmentQueryIsNewer(checksAtom, detailAtom);
   const detail = resolvePullRequestDetailChecks(detailData, checksData, checksAreNewer);
-  const terminology = sourceControlClients.get(
+  const sourceControl = sourceControlClients.get(
     detail?.provider ?? project?.repositoryIdentity?.provider,
-  ).changeRequest;
+  );
+  const terminology = sourceControl.changeRequest;
+  // The pull request's own menu, rather than the card's menu of sections.
+  const openLinkMenu = (event: ReactMouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void showPullRequestLinkContextMenu({
+      url,
+      // The URL names the host even when no project or detail does.
+      openLabel: openOnHostLabel(
+        sourceControlClients.parseChangeRequestUrl(url)?.definition ?? sourceControl,
+      ),
+      position: { x: event.clientX, y: event.clientY },
+    });
+  };
   const open = reference !== null && (detail?.state ?? pr?.state) === "open";
   const refreshKey = `${environmentId}:${project?.id}:${reference?.host}:${reference?.repository}:${number}`;
   useLiveRefresh(
@@ -413,6 +433,7 @@ export function ThreadDetailsPrRow({
             aria-label={openAriaLabel}
             onClick={onOpen}
             onAuxClick={onOpen}
+            onContextMenu={openLinkMenu}
           />
         }
       >
@@ -440,7 +461,9 @@ export function ThreadDetailsPrRow({
         <div className="pb-1.5">
           {openRow(detail.title, "row", true)}
           <div className="mt-1.5 flex h-5 min-w-0 items-center gap-0.5 ps-9 pe-2.5 text-xs text-muted-foreground">
-            <span className="me-1 shrink-0 tabular-nums">#{number}</span>
+            <span className="me-1 shrink-0 tabular-nums" onContextMenu={openLinkMenu}>
+              #{number}
+            </span>
             {showChecks && checksRollup !== null ? (
               <PullRequestChecksPopover
                 checksState={checksRollup}

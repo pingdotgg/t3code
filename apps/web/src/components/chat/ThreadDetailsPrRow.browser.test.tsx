@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   checkoutError: null as Error | null,
   addToast: vi.fn(),
   updateToast: vi.fn(),
+  showLinkMenu: vi.fn(),
 }));
 
 vi.mock(import("~/state/entities"), async (importOriginal) => ({
@@ -76,6 +77,11 @@ vi.mock(import("../pullRequest/usePullRequestActions"), async (importOriginal) =
   usePullRequestActionRunner: () => ({ actionPending: false, perform: state.perform }),
 }));
 
+vi.mock(import("../pullRequest/pullRequestLinkContextMenu"), async (original) => ({
+  ...(await original()),
+  showPullRequestLinkContextMenu: state.showLinkMenu,
+}));
+
 vi.mock(import("~/hooks/useHandleNewThread"), async (original) => ({
   ...(await original()),
   useNewThreadHandler: (() => state.newThread) as never,
@@ -115,6 +121,7 @@ it("merges with the last selected merge method", async () => {
         environmentId={EnvironmentId.make("environment")}
         pr={null}
         number={1}
+        url="https://github.com/owner/repo/pull/1"
         status={null}
         project={null}
         label="Test PR"
@@ -144,6 +151,7 @@ it("requires a new merge click after passing checks become pending and pass agai
       environmentId={EnvironmentId.make("environment")}
       pr={null}
       number={1}
+      url="https://github.com/owner/repo/pull/1"
       status={null}
       project={null}
       label="Test PR"
@@ -177,8 +185,46 @@ it("requires a new merge click after passing checks become pending and pass agai
   expect(state.perform).not.toHaveBeenCalled();
 });
 
+it("opens the pull request's link menu on right click instead of the card's", async () => {
+  await using screen = await setup();
+  const cardMenu = vi.fn();
+  await act(async () => {
+    await screen.rerender(
+      <div onContextMenu={cardMenu}>
+        <ThreadDetailsPrRow
+          environmentId={EnvironmentId.make("environment")}
+          pr={null}
+          number={1}
+          url="https://gitlab.com/owner/repo/-/merge_requests/1"
+          status={null}
+          project={null}
+          label="Test PR"
+          openAriaLabel="Open PR"
+          onOpen={vi.fn()}
+        />
+      </div>,
+    );
+  });
+  for (const target of [
+    screen.container.querySelector('[aria-label="Open PR"]')!,
+    [...screen.container.querySelectorAll("span")].find((span) => span.textContent === "#1")!,
+  ]) {
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 7 });
+    await act(async () => target.dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(true);
+  }
+  expect(cardMenu).not.toHaveBeenCalled();
+  const menu = {
+    url: "https://gitlab.com/owner/repo/-/merge_requests/1",
+    openLabel: "Open on GitLab",
+    position: { x: 7, y: 0 },
+  };
+  expect(state.showLinkMenu.mock.calls).toEqual([[menu], [menu]]);
+});
+
 async function setup() {
   state.perform.mockReset();
+  state.showLinkMenu.mockReset();
   state.checkoutError = null;
   state.newThread.mockReset().mockResolvedValue({
     draftId: DraftId.make("new-draft"),
