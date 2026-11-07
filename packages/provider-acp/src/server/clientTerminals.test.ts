@@ -9,6 +9,8 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeFS from "effect/FileSystem";
+import * as NodePath from "effect/Path";
 
 import {
   makeAcpClientTerminals,
@@ -377,6 +379,99 @@ describe("AcpClientTerminals", () => {
         expect(terminals.readOutputSnapshot("owner-session", created.terminalId)).toBeDefined();
       }),
     ),
+  );
+  // A daemonized grandchild holds the pipe write-ends past the direct child's
+  // exit, so the output pumps never see EOF and release would wedge behind
+  // them. Real agent terminals hit this with dev servers and ssh -f.
+  it.live.each([true, false])(
+    "completes release with held pipes (wait before release: %s)",
+    (waitBeforeRelease) =>
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawned = yield* Deferred.make<ChildProcessSpawner.ChildProcessHandle>();
+        const stdoutStopped = yield* Deferred.make<void>();
+        const stderrStopped = yield* Deferred.make<void>();
+        const terminals = yield* makeAcpClientTerminals({ defaultCwd: process.cwd() }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
+            ...spawner,
+            spawn: (command) =>
+              spawner.spawn(command).pipe(
+                Effect.tap((child) => Deferred.succeed(spawned, child)),
+                Effect.map((child) => ({
+                  ...child,
+                  stdout: child.stdout.pipe(
+                    Stream.ensuring(Deferred.succeed(stdoutStopped, undefined)),
+                  ),
+                  stderr: child.stderr.pipe(
+                    Stream.ensuring(Deferred.succeed(stderrStopped, undefined)),
+                  ),
+                })),
+              ),
+          }),
+        );
+        yield* Effect.addFinalizer(() => terminals.disposeAll);
+        const fs = yield* NodeFS.FileSystem;
+        const path = yield* NodePath.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-acp-daemon-" });
+        const pidFile = path.join(directory, "daemon.pid");
+        const daemonScript = path.join(directory, "daemon.js");
+        yield* fs.writeFileString(
+          daemonScript,
+          [
+            "const cp = require('child_process');",
+            "const holder = cp.spawn(process.execPath, ['-e', 'setInterval(() => { console.log(String(process.pid)); }, 250)'], {",
+            "  detached: true,",
+            "  windowsHide: true,",
+            "  stdio: ['ignore', process.stdout, process.stderr],",
+            "});",
+            "holder.unref();",
+            "require('fs').writeFileSync(process.env.DAEMON_PID_FILE, String(holder.pid));",
+            "console.log('daemonized');",
+          ].join("\n"),
+        );
+        // Kill the holder last so a failed assertion cannot wedge the suite on
+        // the same held pipes that wedge the real caller.
+        const cleanup = Effect.gen(function* () {
+          const text = yield* fs.readFileString(pidFile).pipe(Effect.orElseSucceed(() => ""));
+          const pid = Number.parseInt(text, 10);
+          if (Number.isInteger(pid)) {
+            yield* Effect.try(() => process.kill(pid)).pipe(Effect.ignore);
+          }
+        });
+        const created = yield* terminals.create({
+          sessionId: "session",
+          command: process.execPath,
+          args: [daemonScript],
+          env: [{ name: "DAEMON_PID_FILE", value: pidFile }],
+        });
+        const outcome = yield* Effect.gen(function* () {
+          if (waitBeforeRelease) {
+            const exit = yield* terminals.waitForExit({
+              sessionId: "session",
+              terminalId: created.terminalId,
+            });
+            expect(exit.exitCode).toBe(0);
+            expect(yield* Deferred.isDone(stdoutStopped)).toBe(false);
+            expect(yield* Deferred.isDone(stderrStopped)).toBe(false);
+          } else {
+            const child = yield* Deferred.await(spawned);
+            yield* child.exitCode;
+          }
+          yield* terminals.release({
+            sessionId: "session",
+            terminalId: created.terminalId,
+          });
+          expect(yield* Deferred.isDone(stdoutStopped)).toBe(true);
+          expect(yield* Deferred.isDone(stderrStopped)).toBe(true);
+          expect(terminals.readOutputSnapshot("session", created.terminalId)?.output).toContain(
+            "daemonized",
+          );
+          const pid = Number.parseInt(yield* fs.readFileString(pidFile), 10);
+          expect(() => process.kill(pid, 0)).not.toThrow();
+          return true;
+        }).pipe(Effect.result, Effect.ensuring(cleanup));
+        expect(Result.isSuccess(outcome) && outcome.success === true).toBe(true);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });
 
