@@ -8150,6 +8150,8 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     "independent-patches",
     "expired-snooze",
     "wake",
+    "wake-then-resume",
+    "pin-then-resume",
     "stop",
     "stop-before-arm",
     "stop-before-arm-mismatched-recovery",
@@ -8299,8 +8301,10 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert.isNull(current.thread.snoozedUntil);
         return;
       }
-      const snooze = scenario === "wake" || scenario === "cancel-resume-keep-snooze";
-      const autoResume = scenario !== "wake";
+      const wakesBeforeResume = scenario === "wake-then-resume" || scenario === "pin-then-resume";
+      const snooze =
+        scenario === "wake" || scenario === "cancel-resume-keep-snooze" || wakesBeforeResume;
+      const autoResume = scenario !== "wake" && !wakesBeforeResume;
       const arm = limitRecoveryCommand(shell, autoResume, DateTime.toEpochMillis(now), snooze);
       assert(arm?.type === "thread.metadata.update" && arm.limitRecovery != null);
       const automaticArm = {
@@ -8472,6 +8476,33 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           limitRecovery: { runId: run.id, resetAt, autoResume: false, snooze: false },
         });
         assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.snoozedUntil);
+      }
+      if (wakesBeforeResume) {
+        yield* orchestrator.dispatch(
+          scenario === "pin-then-resume"
+            ? {
+                type: "thread.pin",
+                commandId: CommandId.make(`recovery:pin:${scenario}`),
+                threadId,
+              }
+            : {
+                type: "thread.unsnooze",
+                commandId: CommandId.make(`recovery:sidebar-wake:${scenario}`),
+                threadId,
+                reason: "user",
+              },
+        );
+        assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.snoozedUntil);
+        // "Resume at reset" omits snooze, so it inherits the stored flag.
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`recovery:resume-after-wake:${scenario}`),
+          threadId,
+          limitRecovery: { runId: run.id, resetAt, autoResume: true },
+        });
+        const current = yield* orchestrator.getThreadProjection(threadId);
+        assert.isTrue(current.thread.limitRecovery!.autoResume);
+        assert.isNull(current.thread.snoozedUntil);
       }
       assert.isNull(limitRecoveryCommand(armedShell, true, DateTime.toEpochMillis(now)));
       yield* orchestrator.dispatch({
