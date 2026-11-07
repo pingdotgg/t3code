@@ -291,6 +291,53 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
     }),
   );
 
+  it.effect("drops Cursor streaming deltas while keeping its lifecycle updates", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const threadId = ThreadId.make("cursor-deltas");
+      const cursorUpdate = (update: object) => ({
+        provider: "cursor",
+        kind: "protocol",
+        event: {
+          direction: "incoming",
+          stage: "decoded",
+          payload: { type: "interaction.update", runId: "run-1", update },
+        },
+      });
+      const toolCall = { type: "shell", args: { command: "ls" } };
+      const transient = [
+        { type: "text-delta", text: "Hel" },
+        { type: "thinking-delta", text: "Hmm" },
+        { type: "token-delta", tokens: 3 },
+        { type: "shell-output-delta", event: { stdout: "a.ts\n" } },
+        { type: "partial-tool-call", callId: "call-1", modelCallId: "m-1", toolCall },
+      ].map(cursorUpdate);
+      const retained = [
+        { type: "tool-call-started", callId: "call-1", modelCallId: "m-1", toolCall },
+        { type: "tool-call-completed", callId: "call-1", modelCallId: "m-1", toolCall },
+        { type: "turn-ended" },
+      ].map(cursorUpdate);
+
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
+        const native = store.logger("native");
+        for (const event of [...transient, ...retained]) {
+          yield* native.write(event, threadId);
+        }
+        yield* store.close();
+
+        const records = NodeFS.readFileSync(ownedLogPath(basePath, "cursor-deltas"), "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => decodeUnknownJson(parseLogLine(line).payload));
+        assert.deepEqual(records, retained);
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect("bounds oversized records while retaining failure details", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
