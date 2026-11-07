@@ -33,6 +33,7 @@ import {
   type ProviderDriver,
   type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
+import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import { providerModelsFromSettings } from "@t3tools/provider-core/server/snapshotProbe";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
@@ -45,18 +46,22 @@ import {
   type AcpRegistryConfigurationProbe,
   type AcpRegistryConfigurationProbeResult,
   type AcpRegistryLiveConfiguration,
+  type AcpRegistryUsageLimitsReader,
+  type GlmUsageReader,
   deleteAcpRegistrySession,
   disableAcpRegistryProvider,
   listAcpRegistrySessions,
   listAcpRegistryProviders,
   logoutAcpRegistry,
   probeAcpRegistryConfiguration,
+  readAcpRegistryGlmUsageLimits,
   setAcpRegistryProvider,
 } from "./probe.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistryAuth from "./auth.ts";
 import * as AcpRegistryAuthenticationState from "./authenticationState.ts";
+import { isZaiUsageLimitsInstance } from "./zaiUsageLimits.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -465,6 +470,52 @@ export const checkAcpRegistryProviderReadiness = Effect.fn(
     : snapshot;
 });
 
+export const checkAcpRegistryProvider = Effect.fn("AcpRegistryDriver.checkProvider")(function* (
+  input: SnapshotIdentity & {
+    readonly settings: AcpRegistrySettings;
+    readonly cwd: string;
+    readonly environment: NodeJS.ProcessEnv;
+    readonly readUsageLimits: AcpRegistryUsageLimitsReader;
+  },
+): Effect.fn.Return<ServerProvider, never, AcpRegistrySupport.AcpRegistryCatalog> {
+  const provider = yield* checkAcpRegistryProviderReadiness(input);
+  // Reading limits resolves the agent, which can install packages; only a ready agent is safe to spawn.
+  if (
+    !isZaiUsageLimitsInstance(input.settings) ||
+    !provider.installed ||
+    provider.status !== "ready"
+  ) {
+    return provider;
+  }
+  const usageLimits = yield* input.readUsageLimits({
+    instanceId: input.instanceId,
+    settings: input.settings,
+    cwd: input.cwd,
+    environment: input.environment,
+  });
+  return { ...provider, usageLimits };
+});
+
+export function scopedGlmUsageLimitsReader(input: {
+  readonly instanceId: ProviderInstance["instanceId"];
+  readonly displayName: string | undefined;
+  readonly setAuthentication: (confirmed: boolean) => Effect.Effect<void>;
+  readonly read: GlmUsageReader;
+}): AcpRegistryUsageLimitsReader {
+  const group = {
+    id: `acpRegistry:${input.instanceId}`,
+    label: input.displayName?.trim() || "GLM Agent",
+  };
+  return (probeInput) =>
+    input.read(probeInput).pipe(
+      // The agent's quota reply proves or disproves its own sign-in.
+      Effect.tap(({ signedIn }) =>
+        signedIn === undefined ? Effect.void : input.setAuthentication(signedIn),
+      ),
+      Effect.map(({ limits }) => ({ ...limits, group })),
+    );
+}
+
 export type AcpRegistryDriverEnv =
   | AcpRegistryAdapterV2DriverEnv
   | Digest.Digest
@@ -583,7 +634,33 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             }),
           );
     });
-    const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
+    const makeUsageLimitsReader = (onSignedOut: Effect.Effect<void>) =>
+      scopedGlmUsageLimitsReader({
+        instanceId,
+        displayName,
+        setAuthentication: (confirmed) =>
+          confirmedAuthentication
+            .set(confirmed)
+            .pipe(Effect.andThen(confirmed ? Effect.void : onSignedOut)),
+        read: (input) =>
+          readAcpRegistryGlmUsageLimits(input).pipe(
+            Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(SecureRandom.SecureRandom, random),
+          ),
+      });
+    const readUsageLimits = makeUsageLimitsReader(Effect.void);
+    const refreshScope = yield* Effect.scope;
+    const checkProvider = checkAcpRegistryProvider({
+      ...readinessInput,
+      cwd: host.paths.cwd,
+      readUsageLimits,
+    }).pipe(
+      Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+      Effect.flatMap(withLiveRuntimeState),
+    );
+    // The initial snapshot stays local: the forced refresh right after creation reads GLM usage in the background.
+    const initialProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.flatMap(withLiveRuntimeState),
     );
@@ -643,15 +720,33 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       return { provider: enriched, generation: cacheState.generation };
     });
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
-    const snapshot = yield* makeManagedServerProvider<
+    const snapshot: ManagedServerProvider = yield* makeManagedServerProvider<
       ProviderSnapshotSettings<AcpRegistrySettings>
     >({
       resolveMaintenance: () => Effect.succeed(MAINTENANCE),
       getSettings: snapshotSettings.getSettings,
       streamSettings: snapshotSettings.streamSettings,
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
-      initialSnapshot: () => checkProvider,
+      initialSnapshot: () => initialProvider,
       checkProvider,
+      ...(isZaiUsageLimitsInstance(effectiveConfig)
+        ? {
+            // This read holds the refresh permit and republishes only limits, so a sign-out refreshes after it.
+            checkUsageLimits: makeUsageLimitsReader(
+              Effect.suspend(() =>
+                clearLiveState.pipe(
+                  Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
+                  Effect.andThen(snapshot.refresh),
+                ),
+              ).pipe(Effect.forkIn(refreshScope), Effect.asVoid),
+            )({
+              instanceId,
+              settings: effectiveConfig,
+              cwd: host.paths.cwd,
+              environment: processEnvironment,
+            }),
+          }
+        : {}),
       enrichSnapshot: Effect.fn("enrichSnapshot")(function ({
         snapshot,
         getSnapshot,

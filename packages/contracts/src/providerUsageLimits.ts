@@ -17,6 +17,8 @@ export const ServerProviderUsageWindow = Schema.Struct({
   usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.optional(IsoDateTime),
   windowDurationMins: Schema.optional(NonNegativeInt),
+  /** False when exhausting this window still leaves the model usable. */
+  blocksModel: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 
@@ -32,6 +34,13 @@ export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 export const ServerProviderUsageLimits = Schema.Struct({
   checkedAt: IsoDateTime,
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
+  /** Limits with the same group id pool and scope together under this label. */
+  group: Schema.optional(
+    Schema.Struct({
+      id: TrimmedNonEmptyString,
+      label: TrimmedNonEmptyString,
+    }),
+  ),
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
   externalUsage: Schema.optional(

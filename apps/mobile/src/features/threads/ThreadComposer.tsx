@@ -521,7 +521,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const usageLimitsOffered =
     selectedProviderStatus !== null &&
     hasProviderUsageLimits(
-      selectedProviderStatus.driver,
+      selectedProviderStatus,
       props.serverConfig?.providers ?? [],
       props.serverConfig?.usageLimitSources ?? [],
     );

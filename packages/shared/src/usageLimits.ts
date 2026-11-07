@@ -30,6 +30,7 @@ export function exhaustedUsageWindow(
   const exhausted = (provider?.usageLimits?.windows ?? []).filter(
     (window) =>
       (window.usedPercent ?? 0) >= 100 &&
+      window.blocksModel !== false &&
       (!window.resetsAt ||
         !Number.isFinite(Date.parse(window.resetsAt)) ||
         Date.parse(window.resetsAt) > now),
@@ -151,6 +152,18 @@ function providersWithLimits(providers: readonly ServerProvider[]): readonly Ser
   );
 }
 
+// Drivers pool limits per driver; a group overrides that with the adapter's own scope.
+function limitsGroupKey(provider: Pick<ServerProvider, "driver" | "usageLimits">): string {
+  return provider.usageLimits?.group?.id ?? provider.driver;
+}
+
+function sharesLimitsScope(
+  selected: Pick<ServerProvider, "driver" | "usageLimits">,
+  candidate: Pick<ServerProvider, "driver" | "usageLimits">,
+): boolean {
+  return limitsGroupKey(candidate) === limitsGroupKey(selected);
+}
+
 export type LimitPresentations = ReadonlyMap<
   EnvironmentId,
   {
@@ -175,7 +188,7 @@ export function collectExternalUsageLinks(presentations: LimitPresentations) {
   for (const presentation of presentations.values()) {
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       const external = provider.usageLimits?.externalUsage;
-      if (external && provider.auth.status === "authenticated") {
+      if (external && provider.auth.status !== "unauthenticated") {
         const account = `${provider.displayName ?? provider.instanceId} on ${presentation.entry.target.label}`;
         links.set(external.url, {
           ...external,
@@ -438,9 +451,14 @@ export interface LimitPoolWindow {
 
 export interface LimitPool {
   readonly driver: ServerProvider["driver"];
+  readonly id: string;
+  readonly title: string;
   readonly accounts: readonly LimitAccount[];
   readonly windows: readonly LimitPoolWindow[];
 }
+
+const driverTitle = (driver: ServerProvider["driver"]): string =>
+  PROVIDER_DISPLAY_NAMES[driver] ?? String(driver);
 
 export function displayLimitWindows(pool: LimitPool) {
   if (pool.driver === "antigravity") {
@@ -473,13 +491,18 @@ export function collectLimitPools(
   accounts: readonly LimitAccount[],
   now: number,
 ): readonly LimitPool[] {
-  const byDriver = new Map<ServerProvider["driver"], LimitAccount[]>();
+  const byPool = new Map<
+    string,
+    { readonly driver: ServerProvider["driver"]; readonly members: LimitAccount[] }
+  >();
   for (const account of accounts) {
-    const list = byDriver.get(account.driver);
-    if (list) list.push(account);
-    else byDriver.set(account.driver, [account]);
+    // A group without an account identity cannot prove two accounts share one allowance.
+    const id = account.limits.group ? `${account.limits.group.id}:${account.key}` : account.driver;
+    const group = byPool.get(id);
+    if (group) group.members.push(account);
+    else byPool.set(id, { driver: account.driver, members: [account] });
   }
-  return [...byDriver].map(([driver, members]) => {
+  return [...byPool].map(([id, { driver, members }]) => {
     const orderWindow = members
       .flatMap((account) => account.limits.windows)
       .sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind])[0];
@@ -498,7 +521,8 @@ export function collectLimitPools(
         accountSortName(left).localeCompare(accountSortName(right)) ||
         left.key.localeCompare(right.key),
     );
-    return { driver, accounts: sorted, windows: poolWindows(sorted, now) };
+    const title = members[0]?.limits.group?.label ?? driverTitle(driver);
+    return { driver, id, title, accounts: sorted, windows: poolWindows(sorted, now) };
   });
 }
 
@@ -693,17 +717,18 @@ export function isUsageLimitsCommand(prompt: string): boolean {
 }
 
 export function hasProviderUsageLimits(
-  driver: ServerProvider["driver"],
+  provider: ServerProvider,
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
 ): boolean {
   return (
-    providersWithLimits(providers).some((provider) => provider.driver === driver) ||
-    sources.some(
-      (source) =>
-        source.accounts.some((account) => account.driver === driver) ||
-        (source.error !== undefined && source.accounts.length === 0),
-    )
+    providersWithLimits(providers).some((candidate) => sharesLimitsScope(provider, candidate)) ||
+    (provider.usageLimits?.group === undefined &&
+      sources.some(
+        (source) =>
+          source.accounts.some((account) => account.driver === provider.driver) ||
+          (source.error !== undefined && source.accounts.length === 0),
+      ))
   );
 }
 
@@ -729,15 +754,19 @@ export function withUsageLimitsCommands(
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
 ): ServerProvider[] {
-  const supportedDrivers = new Set([
-    ...providersWithLimits(providers).map((provider) => provider.driver),
-    ...sources.flatMap((source) => source.accounts.map((account) => account.driver)),
-  ]);
+  const supportedScopes = new Set(providersWithLimits(providers).map(limitsGroupKey));
+  const sourceDrivers = new Set<string>(
+    sources.flatMap((source) => source.accounts.map((account) => account.driver)),
+  );
   const unreadableSource = sources.some(
     (source) => source.error !== undefined && source.accounts.length === 0,
   );
   return providers.map((provider) => {
-    if (!unreadableSource && !supportedDrivers.has(provider.driver)) return provider;
+    const supported =
+      supportedScopes.has(limitsGroupKey(provider)) ||
+      (provider.usageLimits?.group === undefined &&
+        (unreadableSource || sourceDrivers.has(provider.driver)));
+    if (!supported) return provider;
     const commands = (items: readonly ServerProviderSlashCommand[]) => [
       ...items.filter((command) => command.name !== USAGE_LIMITS_COMMAND.name),
       USAGE_LIMITS_COMMAND,
@@ -764,10 +793,12 @@ export function collectProviderUsageLimits(
   now: number,
 ): UsageLimitsReport | null {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
-  if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
+  if (!selected || !hasProviderUsageLimits(selected, providers, sources)) return null;
+  // Hub accounts carry no group, so they never belong to a grouped provider's report.
+  const scopedSources = selected.usageLimits?.group === undefined ? sources : [];
   const resolveKey = accountKeyResolver([
     ...providers.filter((provider) => provider.enabled).map(nativeReport),
-    ...sources.flatMap((source) => source.accounts),
+    ...scopedSources.flatMap((source) => source.accounts),
   ]);
   type NativeSnapshot = { provider: ServerProvider; limits: ServerProviderUsageLimits };
   const nativeByAccount = new Map<
@@ -775,7 +806,7 @@ export function collectProviderUsageLimits(
     { usage: NativeSnapshot; credits: NativeSnapshot | null }
   >();
   for (const provider of providersWithLimits(providers)) {
-    if (provider.driver !== selected.driver || !provider.usageLimits) continue;
+    if (!sharesLimitsScope(selected, provider) || !provider.usageLimits) continue;
     const snapshot = { provider, limits: provider.usageLimits };
     const key = resolveKey(nativeReport(provider)) ?? `instance:${provider.instanceId}`;
     const previous = nativeByAccount.get(key);
@@ -812,7 +843,7 @@ export function collectProviderUsageLimits(
     credits,
   } of native) {
     const key = resolveKey(nativeReport(provider));
-    const hubCredits = sources
+    const hubCredits = scopedSources
       .flatMap((source) => source.accounts.map((account) => ({ source, account })))
       .filter(
         ({ account }) =>
@@ -854,7 +885,7 @@ export function collectProviderUsageLimits(
       limits: shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
     });
   }
-  for (const source of sources) {
+  for (const source of scopedSources) {
     const matching = source.accounts.filter((account) => account.driver === selected.driver);
     for (const account of matching) {
       const key = resolveKey(account);

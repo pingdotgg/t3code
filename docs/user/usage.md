@@ -165,6 +165,11 @@ Grok reports the remaining subscription allowance and reset time for its current
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication
 or endpoint configurations do not report subscription limits.
 
+GLM Agent (1.16 or newer) reports its Coding Plan limits using the same sign-in the agent itself
+uses, so there is nothing extra to configure: sign in with `glm-acp-agent --setup`, or set
+`Z_AI_API_KEY` in the instance's **Environment variables**. BigModel accounts follow
+`ACP_GLM_BASE_URL`.
+
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 

@@ -37,7 +37,8 @@ export function ComposerUsageLimits({
           const resetCreditInput =
             account.resetCreditInput ??
             (account.instanceId ? { instanceId: account.instanceId } : undefined);
-          const driverLabel = DRIVER_LABEL[account.driver] ?? String(account.driver);
+          const driverLabel =
+            DRIVER_LABEL[account.driver] ?? (account.displayName?.trim() || String(account.driver));
           return (
             <AccountLimits
               key={account.id}

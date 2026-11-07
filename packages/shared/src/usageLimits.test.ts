@@ -11,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   type LimitAccount,
   collectProviderUsageLimits,
+  hasProviderUsageLimits,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
   collectLimitAccounts,
@@ -124,15 +125,18 @@ describe("new thread model fallback", () => {
     ).toBeDefined();
   });
   it.each([
-    ["cursor", ["autoPercentUsed"], "claude-opus-5-5", false],
-    ["cursor", ["autoPercentUsed"], "composer-2.5", false],
-    ["cursor", ["autoPercentUsed", "apiPercentUsed"], "composer-2.5", true],
-    ["antigravity", ["gemini-weekly"], "claude-opus-5-5", false],
-    ["antigravity", ["3p-weekly"], "claude-opus-5-5", true],
-    ["antigravity", ["gemini-weekly"], "antigravity-default", true],
-    ["opencode", ["go_weekly"], "opencode/big-pickle", false],
-    ["opencode", ["go_weekly"], "opencode-go/big-pickle", true],
-  ] as const)("matches %s pools %s to %s", (driver, ids, model, usesFallback) => {
+    ["cursor", ["autoPercentUsed"], "claude-opus-5-5", false, []],
+    ["cursor", ["autoPercentUsed"], "composer-2.5", false, []],
+    ["cursor", ["autoPercentUsed", "apiPercentUsed"], "composer-2.5", true, []],
+    ["antigravity", ["gemini-weekly"], "claude-opus-5-5", false, []],
+    ["antigravity", ["3p-weekly"], "claude-opus-5-5", true, []],
+    ["antigravity", ["gemini-weekly"], "antigravity-default", true, []],
+    ["opencode", ["go_weekly"], "opencode/big-pickle", false, []],
+    ["opencode", ["go_weekly"], "opencode-go/big-pickle", true, []],
+    ["codex", ["time_limit-5-1"], "gpt-6.1-sol", false, ["time_limit-5-1"]],
+    ["codex", ["time_limit-5-1", "tokens_limit-3-5"], "gpt-6.1-sol", true, ["time_limit-5-1"]],
+  ] as const)("matches %s pools %s to %s", (driver, ids, model, usesFallback, nonBlocking) => {
+    const toolCallAllowance = new Set<string>(nonBlocking);
     const defaultSelection = { ...selection, model };
     expect(
       resolveNewThreadModelSelection({
@@ -143,7 +147,12 @@ describe("new thread model fallback", () => {
             driver: ProviderDriverKind.make(driver),
             usageLimits: {
               checkedAt: limited.checkedAt,
-              windows: ids.map((id) => ({ ...window, id, usedPercent: 100 })),
+              windows: ids.map((id) => ({
+                ...window,
+                id,
+                usedPercent: 100,
+                ...(toolCallAllowance.has(id) ? { blocksModel: false } : {}),
+              })),
             },
           }),
           available,
@@ -342,6 +351,92 @@ describe("pools", () => {
       },
     });
     expect(collectLimitAccounts(input)).toHaveLength(1);
+  });
+
+  it("titles grouped limits by group and keeps each account's allowance separate", () => {
+    const zai = provider({
+      instanceId: ProviderInstanceId.make("acpRegistry_zai"),
+      driver: ProviderDriverKind.make("acpRegistry"),
+      displayName: "Z.ai",
+      usageLimits: {
+        checkedAt,
+        windows: [{ ...window, id: "tokens_limit-3-5", usedPercent: 30 }],
+        group: { id: "acpRegistry:acpRegistry_zai", label: "Z.ai" },
+      },
+    });
+    const kimi = provider({
+      instanceId: ProviderInstanceId.make("acpRegistry_kimi"),
+      driver: ProviderDriverKind.make("acpRegistry"),
+      displayName: "Kimi",
+      usageLimits: {
+        checkedAt,
+        windows: [{ ...window, id: "kimi_session", usedPercent: 60 }],
+        group: { id: "acpRegistry:acpRegistry_kimi", label: "Kimi" },
+      },
+    });
+    const codex = provider({
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 50 }] },
+    });
+    const desktopZai = provider({
+      ...zai,
+      usageLimits: {
+        ...zai.usageLimits!,
+        windows: [{ ...window, id: "tokens_limit-3-5", usedPercent: 90 }],
+      },
+    });
+    const input = new Map([
+      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: [zai, kimi, codex] } }],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: { providers: [desktopZai] },
+        },
+      ],
+    ]);
+    const pools = collectLimitPools(collectLimitAccounts(input), now);
+    // A slug shared across environments may be a different plan, so it is never averaged in.
+    expect(pools.map((pool) => [pool.title, pool.driver, pool.windows[0]?.usedPercent])).toEqual([
+      ["Z.ai", "acpRegistry", 30],
+      ["Kimi", "acpRegistry", 60],
+      ["Codex", "codex", 50],
+      ["Z.ai", "acpRegistry", 90],
+    ]);
+  });
+
+  it("titles any driver's grouped limits by group instead of pooling them by driver", () => {
+    const group = { id: "team:shared-codex", label: "Team Codex" };
+    const seatA = provider({
+      instanceId: ProviderInstanceId.make("codex-a"),
+      displayName: "Seat A",
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 30 }], group },
+    });
+    const seatB = provider({
+      instanceId: ProviderInstanceId.make("codex-b"),
+      displayName: "Seat B",
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 40 }], group },
+    });
+    const personal = provider({
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 50 }] },
+    });
+    const pools = collectLimitPools(
+      collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            { ...laptop, serverConfig: { providers: [seatA, seatB, personal] } },
+          ],
+        ]),
+      ),
+      now,
+    );
+    expect(pools.map((pool) => [pool.title, pool.driver, pool.windows[0]?.members.length])).toEqual(
+      [
+        ["Team Codex", "codex", 1],
+        ["Team Codex", "codex", 1],
+        ["Codex", "codex", 1],
+      ],
+    );
   });
 
   it("takes windows from a fresher hub read but credits and redeem from the native instance", () => {
@@ -1424,6 +1519,58 @@ describe("/usage-limits", () => {
     expect(mixed[2]).toBe(unrelated);
     expect(mixed[3]).toBe(disabled);
   });
+
+  it("scopes grouped limits to their own group while other drivers pool by driver", () => {
+    const zai = provider({
+      instanceId: ProviderInstanceId.make("acpRegistry_zai"),
+      driver: ProviderDriverKind.make("acpRegistry"),
+      displayName: "Z.ai",
+      usageLimits: {
+        checkedAt: limits.checkedAt,
+        windows: [{ ...window, id: "tokens_limit-3-5", usedPercent: 30 }],
+        group: { id: "acpRegistry:acpRegistry_zai", label: "Z.ai" },
+      },
+    });
+    const kimi = provider({
+      instanceId: ProviderInstanceId.make("acpRegistry_kimi"),
+      driver: ProviderDriverKind.make("acpRegistry"),
+      displayName: "Kimi",
+    });
+    const providers = [zai, kimi];
+    expect(hasProviderUsageLimits(zai, providers, [])).toBe(true);
+    expect(hasProviderUsageLimits(kimi, providers, [])).toBe(false);
+    expect(collectProviderUsageLimits(kimi.instanceId, providers, [], now)).toBeNull();
+    expect(
+      collectProviderUsageLimits(zai.instanceId, providers, [], now)?.accounts.map(
+        (account) => account.id,
+      ),
+    ).toEqual([zai.instanceId]);
+    const withCommands = withUsageLimitsCommands(providers, []);
+    expect(
+      withCommands
+        .find((entry) => entry.instanceId === zai.instanceId)
+        ?.slashCommands.map((command) => command.name),
+    ).toContain("usage-limits");
+    expect(
+      withCommands.find((entry) => entry.instanceId === kimi.instanceId)?.slashCommands,
+    ).toEqual([]);
+    const hubError = { ...sources[0]!, accounts: [], error: "token expired" };
+    const grouped = collectProviderUsageLimits(
+      zai.instanceId,
+      providers,
+      [...sources, hubError],
+      now,
+    );
+    expect(grouped?.accounts.map((account) => account.id)).toEqual([zai.instanceId]);
+    expect(grouped?.notices.join(" ")).not.toContain("token expired");
+
+    const codexWithoutLimits = provider({ instanceId: ProviderInstanceId.make("codex-work") });
+    expect(
+      withUsageLimitsCommands([selected, codexWithoutLimits], []).every((entry) =>
+        entry.slashCommands.some((command) => command.name === "usage-limits"),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("sameUsageLimitCommandCoverage", () => {
@@ -1499,6 +1646,32 @@ describe("external usage settings", () => {
     ]);
     expect(collectLimitAccounts(presentations)).toEqual([]);
     expect(collectLimitNotices(presentations)).toEqual([]);
+  });
+
+  it("shows a link unless the account is known to be signed out", () => {
+    const linked = (status: "unknown" | "unauthenticated") =>
+      provider({
+        instanceId: ProviderInstanceId.make(status),
+        auth: { status },
+        usageLimits: {
+          checkedAt: "2026-09-03T11:00:00.000Z",
+          windows: [],
+          unavailable: { reason: "unsupported", message: "Update the agent." },
+          externalUsage: { label: "Agent usage", url: `https://example.test/${status}` },
+        },
+      });
+    const presentations = new Map([
+      [
+        EnvironmentId.make("a"),
+        {
+          entry: { target: { label: "A" } },
+          serverConfig: { providers: [linked("unknown"), linked("unauthenticated")] },
+        },
+      ],
+    ]);
+    expect(collectExternalUsageLinks(presentations).map((link) => link.url)).toEqual([
+      "https://example.test/unknown",
+    ]);
   });
 });
 

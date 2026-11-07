@@ -9,9 +9,13 @@ import {
   type ProviderInstanceId,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
+import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -35,6 +39,15 @@ import {
 } from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import {
+  GLM_READ_FAILED_MESSAGE,
+  GLM_USAGE_METHOD,
+  type GlmUsageRead,
+  glmSignIn,
+  glmUpdateRequiredLimits,
+  mapGlmUsageLimits,
+  readGlmUsageCapability,
+} from "./zaiUsageLimits.ts";
 
 const MAX_AUTH_METHODS = 32;
 const MAX_MODELS = 256;
@@ -460,9 +473,11 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
 );
 
 const MANAGEMENT_TIMEOUT = Duration.seconds(60);
+// The read runs inside the provider refresh, so a hung agent must not hold it for long.
+const GLM_USAGE_TIMEOUT = Duration.seconds(15);
 
 const makeAcpRegistryManagementRuntime = Effect.fn("AcpRegistryProbe.makeManagementRuntime")(
-  function* (input: AcpRegistryManagementInput) {
+  function* (input: AcpRegistryManagementInput, options?: { readonly install?: boolean }) {
     const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const random = yield* SecureRandom.SecureRandom;
@@ -470,7 +485,7 @@ const makeAcpRegistryManagementRuntime = Effect.fn("AcpRegistryProbe.makeManagem
       AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
     );
     const resolved = yield* catalog
-      .resolve(input.settings, input.cwd, input.environment)
+      .resolve(input.settings, input.cwd, input.environment, options)
       .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError));
     const runtimeContext = yield* Layer.build(
       AcpSessionRuntime.layer({
@@ -585,6 +600,60 @@ function managementFailure(
     ? classified
     : new AcpRegistryOperationError({ ...failure, cause: error });
 }
+
+export type AcpRegistryUsageLimitsReader = (
+  input: AcpRegistryConfigurationProbeInput,
+) => Effect.Effect<ServerProviderUsageLimits>;
+
+export type GlmUsageReader = (
+  input: AcpRegistryConfigurationProbeInput,
+) => Effect.Effect<GlmUsageRead>;
+
+const glmUsageReadFailed = DateTime.now.pipe(
+  Effect.map((now): GlmUsageRead => ({
+    limits: makeUnavailableUsageLimits({
+      checkedAt: DateTime.formatIso(now),
+      reason: "probeFailed",
+      message: GLM_READ_FAILED_MESSAGE,
+    }),
+  })),
+);
+
+// The agent reads its own credentials and region, so failures become states instead of errors.
+// A background read must never install the agent; the configuration probe prepares it.
+export const readAcpRegistryGlmUsageLimits = Effect.fn("AcpRegistryProbe.readGlmUsageLimits")(
+  function* (input: AcpRegistryManagementInput) {
+    const runtime = yield* makeAcpRegistryManagementRuntime(input, { install: false });
+    const initialized = yield* runtime.initialize();
+    if (!readGlmUsageCapability(initialized)) {
+      const limits = glmUpdateRequiredLimits({
+        environment: input.environment,
+        checkedAt: DateTime.formatIso(yield* DateTime.now),
+      });
+      return { limits } satisfies GlmUsageRead;
+    }
+    const result = yield* runtime.request(GLM_USAGE_METHOD, {});
+    const limits = mapGlmUsageLimits({
+      result,
+      environment: input.environment,
+      readAt: DateTime.formatIso(yield* DateTime.now),
+    });
+    const signedIn = glmSignIn(result);
+    return (signedIn === undefined ? { limits } : { limits, signedIn }) satisfies GlmUsageRead;
+  },
+  (effect) =>
+    effect.pipe(
+      Effect.scoped,
+      Effect.timeoutOrElse({ duration: GLM_USAGE_TIMEOUT, orElse: () => glmUsageReadFailed }),
+      Effect.tapCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.void
+          : Effect.logWarning("GLM usage read failed", cause),
+      ),
+      Effect.catch(() => glmUsageReadFailed),
+      Effect.catchDefect(() => glmUsageReadFailed),
+    ),
+);
 
 export const listAcpRegistrySessions = Effect.fn("AcpRegistryProbe.listSessions")(
   function* (input: AcpRegistryManagementInput & { readonly cursor?: string }) {
