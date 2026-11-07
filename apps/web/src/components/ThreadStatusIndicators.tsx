@@ -11,6 +11,7 @@ import { pullRequestDetailToVcsStatus } from "@t3tools/client-runtime/state/pull
 import {
   resolveEnvironmentMachineKind,
   type EnvironmentId,
+  type PullRequestMergeability,
   type ScopedThreadRef,
   type ThreadLinkedPullRequest,
   type ThreadPullRequestLink,
@@ -56,7 +57,7 @@ import {
   PullRequestGlyph,
   type PullRequestGlyphIcon,
 } from "./pullRequest/pullRequestIcons";
-import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+import { resolvePullRequestIndicatorPresentation } from "./pullRequest/pullRequestPresentation";
 
 export interface PrStatusIndicator {
   label: string;
@@ -76,8 +77,13 @@ export interface TerminalStatusIndicator {
 
 export type ThreadPr = VcsStatusResult["pr"];
 
+/** VCS status PR shape plus optional mergeability from linked snapshots / summaries. */
+export type ThreadPrStatus = NonNullable<ThreadPr> & {
+  readonly mergeability?: PullRequestMergeability;
+};
+
 export interface LinkedThreadPullRequestStatus {
-  readonly pr: NonNullable<ThreadPr>;
+  readonly pr: ThreadPrStatus;
   readonly sourceControlProvider: NonNullable<VcsStatusResult["sourceControlProvider"]>;
 }
 
@@ -144,6 +150,7 @@ export function linkedPullRequestSnapshotStatus(
       headRef: snapshot.headBranch,
       baseRef: snapshot.baseBranch,
       ...(snapshot.updatedAt === null ? {} : { updatedAt: snapshot.updatedAt }),
+      ...(snapshot.mergeability === undefined ? {} : { mergeability: snapshot.mergeability }),
     },
     sourceControlProvider: { kind, name: kind, baseUrl: "" },
   };
@@ -339,7 +346,14 @@ export function ThreadPullRequestsMiniList({
         const presentation =
           snapshot === null
             ? null
-            : resolvePullRequestState({ state: snapshot.state, isDraft: snapshot.isDraft });
+            : resolvePullRequestIndicatorPresentation({
+                state: snapshot.state,
+                isDraft: snapshot.isDraft,
+                baseBranch: snapshot.baseBranch,
+                ...(snapshot.mergeability === undefined
+                  ? {}
+                  : { mergeability: snapshot.mergeability }),
+              });
         return (
           <ThreadPullRequestMiniListItem
             key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
@@ -412,18 +426,23 @@ function ThreadPullRequestMiniListItem({
 }
 
 export function prStatusIndicator(
-  pr: ThreadPr,
+  pr: ThreadPrStatus | null | undefined,
   provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
 ): PrStatusIndicator | null {
   if (!pr) return null;
   const { shortLabel } = sourceControlClients.get(provider?.kind).changeRequest;
-  const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true });
+  const presentation = resolvePullRequestIndicatorPresentation({
+    state: pr.state,
+    isDraft: pr.isDraft === true,
+    baseBranch: pr.baseRef,
+    ...(pr.mergeability === undefined ? {} : { mergeability: pr.mergeability }),
+  });
 
-  const tooltipLead = `${shortLabel} #${pr.number} - ${state.label}`;
+  const tooltipLead = `${shortLabel} #${pr.number} - ${presentation.label}`;
   return {
-    label: `${shortLabel} ${state.label.toLowerCase()}`,
-    colorClass: state.toneClassName,
-    Icon: state.Icon,
+    label: `${shortLabel} ${presentation.label.toLowerCase()}`,
+    colorClass: presentation.toneClassName,
+    Icon: presentation.Icon,
     tooltip: `${tooltipLead}: ${pr.title}`,
     tooltipLead,
     tooltipTitle: pr.title,
@@ -434,12 +453,21 @@ export function prStatusIndicator(
 export function ChangeRequestStatusIcon({
   state,
   isDraft = false,
+  mergeability,
+  baseBranch,
   className,
 }: Pick<NonNullable<ThreadPr>, "state"> & {
   readonly isDraft?: boolean | undefined;
+  readonly mergeability?: PullRequestMergeability | undefined;
+  readonly baseBranch?: string | undefined;
   readonly className?: string | undefined;
 }) {
-  const presentation = resolvePullRequestState({ state, isDraft });
+  const presentation = resolvePullRequestIndicatorPresentation({
+    state,
+    isDraft,
+    ...(mergeability === undefined ? {} : { mergeability }),
+    ...(baseBranch === undefined ? {} : { baseBranch }),
+  });
   return <presentation.Icon className={className} />;
 }
 
@@ -458,7 +486,7 @@ export function resolveDisplayedThreadPr(input: {
   gitStatus: VcsStatusResult | null;
   linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;
   linkedPullRequestStatus?: LinkedThreadPullRequestStatus | null | undefined;
-}): ThreadPr | null {
+}): ThreadPrStatus | null {
   const { threadBranch, gitStatus, linkedPullRequest, linkedPullRequestStatus } = input;
   if (linkedPullRequest != null) {
     return linkedPullRequestStatus?.pr ?? null;
@@ -733,7 +761,13 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
               />
             }
           >
-            <ChangeRequestStatusIcon state={pr.state} isDraft={pr.isDraft} className="size-3" />
+            <ChangeRequestStatusIcon
+              state={pr.state}
+              isDraft={pr.isDraft}
+              {...(pr.mergeability === undefined ? {} : { mergeability: pr.mergeability })}
+              baseBranch={pr.baseRef}
+              className="size-3"
+            />
           </TooltipTrigger>
           <TooltipPopup side="top">
             <PrStatusTooltipContent status={prStatus} />

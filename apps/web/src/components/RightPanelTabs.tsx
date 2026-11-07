@@ -100,7 +100,7 @@ import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanel
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
-import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+import { resolvePullRequestIndicatorPresentation } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
@@ -816,9 +816,14 @@ function PullRequestSurfaceIcon({
   if (status === null) {
     return <PullRequestGlyph.pullRequest className="size-3 shrink-0 text-muted-foreground" />;
   }
-  const presentation = resolvePullRequestState({
+  const isDraft = status.isDraft ?? detail?.isDraft ?? seed?.isDraft ?? false;
+  const mergeability = "mergeability" in status ? status.mergeability : detail?.mergeability;
+  const baseBranch = "baseBranch" in status ? status.baseBranch : detail?.baseBranch;
+  const presentation = resolvePullRequestIndicatorPresentation({
     state: status.state,
-    isDraft: status.isDraft ?? detail?.isDraft ?? seed?.isDraft ?? false,
+    isDraft,
+    ...(mergeability === undefined || mergeability === null ? {} : { mergeability }),
+    ...(baseBranch === undefined ? {} : { baseBranch }),
   });
   return <presentation.Icon className={cn("size-3 shrink-0", presentation.toneClassName)} />;
 }
