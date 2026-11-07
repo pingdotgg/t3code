@@ -186,8 +186,6 @@ const createdSession = (
   directory: string,
   name: string,
   permissions: ReadonlyArray<unknown> = t3Rules(name),
-
-  narrows = false,
 ): ReadonlyArray<ProviderReplayEntry> => [
   out("event.subscribe"),
   out("model.list", "<any>"),
@@ -198,7 +196,8 @@ const createdSession = (
       catalogModel("mimo-v2.6-flash-free", "MiMo V2.6 Flash Free"),
     ],
   }),
-  ...(narrows ? [out("agent.list", "<any>"), reply("agent.list", agentList(directory))] : []),
+  out("agent.list", "<any>"),
+  reply("agent.list", agentList(directory)),
 
   out("session.create", { location: { directory }, model: "<any>", permissions, title: name }),
   reply("session.create", sessionInfo(directory, permissions, name)),
@@ -371,8 +370,6 @@ describe("OpenCode 2 through the orchestrator", () => {
 
           out("session.get", { sessionID: SESSION }),
           reply("session.get", sessionInfo(cwd, t3Rules(name), name)),
-          out("agent.list", "<any>"),
-          reply("agent.list", agentList(cwd)),
           out("session.update", { sessionID: SESSION, permissions: autoEditRules(name) }),
           reply("session.update", null),
           ...answeredPrompt("SECOND"),
@@ -409,7 +406,7 @@ describe("OpenCode 2 through the orchestrator", () => {
         name,
         threadId: thread.threadId,
         entries: [
-          ...createdSession(cwd, name, planRules(name), true),
+          ...createdSession(cwd, name, planRules(name)),
 
           out("session.switchAgent", { sessionID: SESSION, agent: "plan" }),
           reply("session.switchAgent", null),
@@ -417,10 +414,20 @@ describe("OpenCode 2 through the orchestrator", () => {
           ...answeredPrompt("PLANNED"),
           out("session.get", { sessionID: SESSION }),
           reply("session.get", sessionInfo(cwd, planRules(name), name)),
-          out("session.update", { sessionID: SESSION, permissions: t3Rules(name) }),
+          out("session.update", {
+            sessionID: SESSION,
+            permissions: [
+              ...FULL_ACCESS,
+              { action: "edit", resource: "*", effect: "deny" },
+              ...PLAN_PATHS.slice(BUILD_PATHS.length),
+              ...mcpRules(name),
+            ],
+          }),
           reply("session.update", null),
           out("session.switchAgent", { sessionID: SESSION, agent: "build" }),
           reply("session.switchAgent", null),
+          out("session.update", { sessionID: SESSION, permissions: t3Rules(name) }),
+          reply("session.update", null),
           ...answeredPrompt("BUILT"),
         ],
         commands: [
