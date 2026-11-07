@@ -44,6 +44,45 @@ it.effect("failed installation cleans staging and exposes only a safe failure me
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect.each([
+  { npmReason: "NotFound", pnpmReason: "NotFound", reason: "package_manager_missing" },
+  { npmReason: "NotFound", pnpmReason: "PermissionDenied", reason: undefined },
+  { npmReason: "PermissionDenied", pnpmReason: "NotFound", reason: undefined },
+] as const)(
+  "classifies npm $npmReason and pnpm $pnpmReason spawn failures",
+  ({ npmReason, pnpmReason, reason }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-install-" });
+      const commands: string[] = [];
+      const error = yield* ensureDeviceHub(baseDir).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: ({ command, args }) => {
+            commands.push(command);
+            return Effect.fail(
+              new ProcessRunner.ProcessSpawnError({
+                command,
+                argumentCount: args.length,
+                cause: PlatformError.systemError({
+                  _tag: command === "npm" ? npmReason : pnpmReason,
+                  module: "ChildProcess",
+                  method: "spawn",
+                  description: "private diagnostic text",
+                }),
+              }),
+            );
+          },
+        }),
+        Effect.flip,
+      );
+      expect(error.reason).toBe(reason);
+      expect(error.message).not.toContain("private diagnostic text");
+      expect(commands).toEqual(npmReason === "NotFound" ? ["npm", "pnpm"] : ["npm"]);
+      expect(yield* fs.readDirectory(path.join(baseDir, "tools", "expo-device-hub"))).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("inventory reports only completed versions without installing the required version", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

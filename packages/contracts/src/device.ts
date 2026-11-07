@@ -588,6 +588,7 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       "invalid_payload",
       "settings_failed",
       "hub_rejected",
+      "package_manager_missing",
     ]),
     exitCode: Schema.optional(Schema.Number),
     cause: Schema.Defect(),
@@ -600,6 +601,8 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       invalid_payload: "The device request could not be encoded.",
       settings_failed: "Could not read or save device settings.",
       hub_rejected: "The device hub could not complete the request.",
+      package_manager_missing:
+        "Neither npm nor pnpm was found on this host. Install Node.js with npm on this host, make npm available to the T3 server, then fully restart T3 Code (including the tray app) or the T3 server before retrying.",
     }[this.reason];
     return `Device ${this.operation} failed: ${explanation}`;
   }

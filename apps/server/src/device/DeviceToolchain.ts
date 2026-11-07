@@ -36,6 +36,7 @@ export class DeviceToolchainInstallError extends Schema.TaggedError<DeviceToolch
   {
     tool: Schema.String,
     step: Schema.String,
+    reason: Schema.optional(Schema.Literal("package_manager_missing")),
     exitCode: Schema.optional(Schema.Number),
     cause: Schema.optional(Schema.Defect()),
   },
@@ -139,7 +140,19 @@ const installTool = Effect.fn("DeviceToolchain.installTool")(function* (
                 })
               : Effect.fail(error),
         }),
-        Effect.mapError(fail("running npm install")),
+        Effect.mapError(
+          (cause) =>
+            new DeviceToolchainInstallError({
+              tool: spec.name,
+              step: "running npm install",
+              ...(cause._tag === "ProcessSpawnError" &&
+              cause.cause instanceof PlatformError.PlatformError &&
+              cause.cause.reason._tag === "NotFound"
+                ? { reason: "package_manager_missing" as const }
+                : {}),
+              cause,
+            }),
+        ),
       );
     if (result.code !== 0) {
       return yield* new DeviceToolchainInstallError({
