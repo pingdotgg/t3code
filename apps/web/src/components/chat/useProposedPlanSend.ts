@@ -131,7 +131,12 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
     }
 
     const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx?.providerAvailable || !sendCtx.interactionModeEnabled) {
+    if (!sendCtx?.providerAvailable) {
+      return false;
+    }
+    // Plan-mode follow-ups need the provider's plan mode; Build uses default and must still work
+    // when Settings has Plan mode off.
+    if (nextInteractionMode === "plan" && !sendCtx.interactionModeEnabled) {
       return false;
     }
 

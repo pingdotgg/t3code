@@ -241,16 +241,18 @@ export function ProposedPlanTimelineRow({
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
         findActive={ctx.findActive}
-        canBuild={ctx.canOperateThread && row.proposedPlan.status === "active"}
-        isBuilding={ctx.isBuildingProposedPlan}
+        canBuild={
+          ctx.canOperateThread &&
+          row.proposedPlan.status === "active" &&
+          !ctx.isProposedPlanBuildBusy
+        }
         onBuild={
           onBuildProposedPlan
-            ? () => {
-                void onBuildProposedPlan({
+            ? () =>
+                onBuildProposedPlan({
                   id: row.proposedPlan.id,
                   planMarkdown: row.proposedPlan.planMarkdown,
-                });
-              }
+                })
             : undefined
         }
       />

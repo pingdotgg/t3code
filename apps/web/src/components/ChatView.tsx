@@ -1462,6 +1462,8 @@ export default function ChatView(props: ChatViewProps) {
     (compactionRunning || (compactRequestIsActive && !compactionSettled));
   const isWorking =
     phase === "running" || isSendBusy || isCompacting || runlessWorkStartedAt !== null;
+  // Connecting outlives isSendBusy after the server acks a Build, so Build must stay blocked.
+  const isProposedPlanBuildBusy = isWorking || phase === "connecting";
   const activeContextWindow = deriveLatestContextWindowSnapshot(
     serverVisibleTurnItems ?? [],
     activeThreadLiveTokenUsage,
@@ -2922,7 +2924,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadBranch,
     activeProposedPlan,
     isServerThread,
-    isSendBusy,
+    isSendBusy: isProposedPlanBuildBusy,
     composerRef,
     beginLocalDispatch,
     resetLocalDispatch,
@@ -3515,7 +3517,7 @@ export default function ChatView(props: ChatViewProps) {
                   onUseArtifactTemplate={insertArtifactTemplateStable}
                   onSendAppMessage={sendAppMessageStable}
                   onBuildProposedPlan={onBuildProposedPlanStable}
-                  isBuildingProposedPlan={isSendBusy}
+                  isProposedPlanBuildBusy={isProposedPlanBuildBusy}
                   isRevertingCheckpoint={isRevertingCheckpoint}
                   onImageExpand={onExpandTimelineImageStable}
                   onFileOpen={openFileAttachmentStable}

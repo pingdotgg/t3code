@@ -46,7 +46,6 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   workspaceRoot,
   findActive = false,
   canBuild = false,
-  isBuilding = false,
   onBuild,
 }: {
   planMarkdown: string;
@@ -56,10 +55,10 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   workspaceRoot: string | undefined;
   findActive?: boolean;
   canBuild?: boolean;
-  isBuilding?: boolean;
-  onBuild?: (() => void) | undefined;
+  onBuild?: (() => void | Promise<unknown>) | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [isBuilding, setIsBuilding] = useState(false);
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [lastSavePath, setLastSavePath] = useState("");
@@ -191,7 +190,16 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               {isSavingToWorkspace ? "Saving..." : "Save to workspace"}
             </MenuItem>
             {onBuild ? (
-              <MenuItem onClick={onBuild} disabled={!canBuild || isBuilding}>
+              <MenuItem
+                disabled={!canBuild || isBuilding}
+                onClick={() => {
+                  if (!canBuild || isBuilding) return;
+                  setIsBuilding(true);
+                  void Promise.resolve(onBuild()).finally(() => {
+                    setIsBuilding(false);
+                  });
+                }}
+              >
                 {isBuilding ? "Building..." : "Build"}
               </MenuItem>
             ) : null}

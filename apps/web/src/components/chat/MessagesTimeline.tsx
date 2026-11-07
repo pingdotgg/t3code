@@ -283,7 +283,7 @@ interface MessagesTimelineProps {
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   onSendAppMessage?: (text: string) => Promise<void>;
   onBuildProposedPlan?: TimelineRowSharedState["onBuildProposedPlan"];
-  isBuildingProposedPlan?: boolean;
+  isProposedPlanBuildBusy?: boolean;
   onRunShellCommand?: (command: string) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -384,7 +384,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
   onSendAppMessage,
   onBuildProposedPlan,
-  isBuildingProposedPlan = false,
+  isProposedPlanBuildBusy = false,
   onRunShellCommand,
   isRevertingCheckpoint,
   onImageExpand,
@@ -1046,7 +1046,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onUseArtifactTemplate,
     onSendAppMessage,
     onBuildProposedPlan,
-    isBuildingProposedPlan,
+    isProposedPlanBuildBusy,
     onAppFullscreenChange,
     onFileDownload,
     openPullRequest,

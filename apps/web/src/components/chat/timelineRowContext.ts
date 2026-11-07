@@ -67,7 +67,8 @@ export interface TimelineRowSharedState {
   onBuildProposedPlan:
     | ((plan: { readonly id: PlanId; readonly planMarkdown: string }) => Promise<boolean>)
     | undefined;
-  isBuildingProposedPlan: boolean;
+  /** True while the thread cannot start another Build (local send or active turn). */
+  isProposedPlanBuildBusy: boolean;
   onAppFullscreenChange: (rowId: string, fullscreen: boolean) => void;
   onRunShellCommand: ((command: string) => void) | undefined;
   findActive: boolean;

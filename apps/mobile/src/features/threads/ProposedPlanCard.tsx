@@ -28,9 +28,10 @@ import { Menu } from "../../components/ui/Menu";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { uuidv4 } from "../../lib/uuid";
 import { projectEnvironment } from "../../state/projects";
-import { readEnvironmentScope } from "../../state/session";
+import { useEnvironmentScope } from "../../state/session";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useQuietThreadStructure } from "../../state/use-thread-detail";
 
 export function ProposedPlanCard(props: {
   readonly environmentId: EnvironmentId;
@@ -41,9 +42,12 @@ export function ProposedPlanCard(props: {
   readonly renderMarkdown: (text: string) => ReactNode;
 }) {
   const canWrite = useAtomValue(projectEnvironment.writeFile.permissionAtom(props.environmentId));
-  const canOperate = readEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
+  const canOperate = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
   const threadRef = scopeThreadRef(props.environmentId, props.threadId);
   const thread = useAtomValue(environmentThreadShells.threadShellAtom(threadRef));
+  const structure = useQuietThreadStructure(threadRef);
+  const plan = structure?.projection.plans.find((entry) => entry.id === props.planId);
+  const planIsActive = plan?.kind === "proposed_plan" ? plan.status === "active" : true;
   const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
   const setInteractionMode = useAtomCommand(threadEnvironment.setInteractionMode, {
     reportFailure: false,
@@ -54,7 +58,8 @@ export function ProposedPlanCard(props: {
   const [building, setBuilding] = useState(false);
   const [lastPath, setLastPath] = useState("plan.md");
   const contents = `${props.markdown.trimEnd()}\n`;
-  const canBuild = canOperate && thread !== null && !threadRuntimeIsActive(thread.runtime);
+  const canBuild =
+    canOperate && thread !== null && !threadRuntimeIsActive(thread.runtime) && planIsActive;
   const canSave = canWrite && Boolean(props.workspaceRoot) && !saving && !building;
   const menuActions = useMemo((): MenuAction[] => {
     const actions: MenuAction[] = [
