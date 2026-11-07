@@ -1631,6 +1631,14 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   }
 }
 
+@media (width >= 48rem) {
+  [data-chrome-art] [data-overview-zoom] > [data-slot="sidebar-inner"] {
+    background: var(--chrome-art-paint);
+    background-attachment: fixed;
+    background-blend-mode: var(--chrome-art-blend, normal);
+  }
+}
+
 @keyframes live-tool-shine {
   from {
     background-position:
