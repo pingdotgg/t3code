@@ -20,6 +20,8 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
+import { requestDesktopUpdate, DesktopCliUpdateError } from "./desktopUpdate.ts";
+import { resolveBaseDir } from "../os-jank.ts";
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import {
@@ -243,6 +245,14 @@ export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(functio
 });
 
 const updateFlags = {
+  check: Flag.Boolean("check").pipe(
+    Flag.withDescription("Inspect cached update capability without changing the installation."),
+    Flag.withDefault(false),
+  ),
+  json: Flag.Boolean("json").pipe(
+    Flag.withDescription("Print the versioned --check result as JSON."),
+    Flag.withDefault(false),
+  ),
   ...projectLocationFlags,
   channel: Flag.Literals("channel", CLI_RELEASE_CHANNELS).pipe(
     Flag.withDescription(
@@ -270,37 +280,95 @@ const versionArgument = Argument.String("version").pipe(
   Argument.optional,
 );
 
+export const runUpdateCommand = Effect.fn("cli.update.command")(function* (flags: {
+  readonly baseDir: Option.Option<string>;
+  readonly check: boolean;
+  readonly json: boolean;
+  readonly channel: Option.Option<CliReleaseChannel>;
+  readonly version: Option.Option<string>;
+  readonly allowDowngrade: boolean;
+  readonly yes: boolean;
+}) {
+  const environment = yield* HostProcess.Environment;
+  const desktopOwned =
+    environment.T3CODE_DESKTOP_CLI === "1" || Boolean(environment.T3CODE_CLI_PATH?.trim());
+  if (flags.json && !flags.check)
+    return yield* new DesktopCliUpdateError({ reason: "--json requires --check." });
+  if (desktopOwned) {
+    if (
+      Option.isSome(flags.version) ||
+      Option.isSome(flags.channel) ||
+      flags.allowDowngrade ||
+      flags.yes
+    ) {
+      return yield* new DesktopCliUpdateError({
+        reason:
+          "Desktop updates use the app's coordinated selection and confirmation. Run t3 update without version, --channel, --allow-downgrade, or --yes; switch tracks in the app.",
+      });
+    }
+    const result = yield* requestDesktopUpdate({
+      baseDir: yield* resolveBaseDir(
+        Option.getOrUndefined(flags.baseDir) ?? environment.T3CODE_HOME,
+      ),
+      currentVersion: packageJson.version,
+      check: flags.check,
+    });
+    return yield* Console.log(
+      typeof result === "string"
+        ? result === "started"
+          ? "The desktop coordinated update started. Follow its progress in T3 Code."
+          : result === "cancelled"
+            ? "Update cancelled. No update was started."
+            : "No updates are currently offered by this desktop updater."
+        : flags.json
+          ? JSON.stringify(result)
+          : `${result.pathway}: ${result.state}. ${result.reason ?? ""}`,
+    );
+  }
+  if (flags.check) {
+    const result = {
+      schema: "t3.update-check.v1",
+      coordinated: false,
+      owner: "standalone",
+      pathway: "standalone",
+      currentVersion: packageJson.version,
+      targetVersion: null,
+      state: "unavailable",
+      reason:
+        "This standalone CLI updates its own runtime and service; it does not coordinate a desktop app.",
+    };
+    return yield* Console.log(flags.json ? JSON.stringify(result) : result.reason);
+  }
+  const logLevel = yield* GlobalFlag.LogLevel;
+  const config = yield* resolveCliAuthConfig(flags, logLevel);
+  return yield* runUpdate({
+    baseDir: config.baseDir,
+    logsDir: config.logsDir,
+    serverRuntimeStatePath: config.serverRuntimeStatePath,
+    channel: Option.getOrUndefined(flags.channel),
+    requestedVersion: Option.getOrUndefined(flags.version),
+    allowDowngrade: flags.allowDowngrade,
+    assumeYes: flags.yes,
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        CliService.layer(config),
+        ProcessRunner.layer,
+        FetchHttpClient.layer,
+        ManagedPolicy.layer,
+      ),
+    ),
+  );
+});
+
 export const updateCommand = Command.make("update", {
   ...updateFlags,
   version: versionArgument,
 }).pipe(
   Command.withDescription(
-    "Download a newer t3 and switch this machine to it, including the background service when one is installed.",
+    "Update this desktop installation through its coordinated updater, or update a standalone CLI and service.",
   ),
-  Command.withHandler((flags) =>
-    Effect.gen(function* () {
-      const logLevel = yield* GlobalFlag.LogLevel;
-      const config = yield* resolveCliAuthConfig(flags, logLevel);
-      return yield* runUpdate({
-        baseDir: config.baseDir,
-        logsDir: config.logsDir,
-        serverRuntimeStatePath: config.serverRuntimeStatePath,
-        channel: Option.getOrUndefined(flags.channel),
-        requestedVersion: Option.getOrUndefined(flags.version),
-        allowDowngrade: flags.allowDowngrade,
-        assumeYes: flags.yes,
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            CliService.layer(config),
-            ProcessRunner.layer,
-            FetchHttpClient.layer,
-            ManagedPolicy.layer,
-          ),
-        ),
-      );
-    }),
-  ),
+  Command.withHandler(runUpdateCommand),
 );
 
 const findForegroundServer = Effect.fn("cli.update.find_foreground_server")(function* (input: {

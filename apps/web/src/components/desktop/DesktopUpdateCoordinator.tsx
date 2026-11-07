@@ -1,0 +1,162 @@
+import type { DesktopUpdateCommandRequest, DesktopUpdateState } from "@t3tools/contracts";
+import { useEffect, useEffectEvent, useState } from "react";
+import { downloadLocalUpdate, installLocalUpdate } from "../sidebar/SidebarUpdatePill";
+import { useUpdateEverything } from "../sidebar/useUpdateEverything";
+import { UpdateEverythingDialog } from "../sidebar/UpdateEverythingDialog";
+import {
+  getDesktopUpdateDownloadedVersion,
+  resolveDesktopUpdateButtonAction,
+} from "../desktopUpdate.logic";
+import { stackedThreadToast, toastManager } from "../ui/toast";
+
+export function DesktopUpdateCoordinator() {
+  const command = window.desktopBridge?.updateCommand;
+  const [rendererId] = useState(() => crypto.randomUUID());
+  const [request, setRequest] = useState<DesktopUpdateCommandRequest | null>(null);
+  const [prepared, setPrepared] = useState<DesktopUpdateState | null>(null);
+  const action = prepared?.enabled ? resolveDesktopUpdateButtonAction(prepared) : "none";
+  const localVersion =
+    prepared && action !== "none" ? getDesktopUpdateDownloadedVersion(prepared) : null;
+  const everything = useUpdateEverything(localVersion);
+
+  const receive = useEffectEvent(async (incoming: DesktopUpdateCommandRequest) => {
+    if (!command) return;
+    const bridge = window.desktopBridge!;
+    if (request !== null) {
+      await command.complete({
+        version: 1,
+        requestId: incoming.requestId,
+        ok: false,
+        code: "internal-error",
+        message: "An update is already in progress.",
+      });
+      return;
+    }
+    let current = await bridge.getUpdateState();
+    if (
+      current.status === "idle" ||
+      current.status === "up-to-date" ||
+      current.status === "error"
+    ) {
+      current = (await bridge.checkForUpdate()).state;
+    }
+    if (current.status === "checking" || current.status === "downloading") {
+      await command.complete({
+        version: 1,
+        requestId: incoming.requestId,
+        ok: false,
+        code: "internal-error",
+        message: "An update check or download is already in progress.",
+      });
+      return;
+    }
+    const localAction = current.enabled ? resolveDesktopUpdateButtonAction(current) : "none";
+    if (localAction === "none" && !everything.hasUpdates) {
+      const reason = !current.enabled
+        ? (current.message ?? "Desktop updates are disabled.")
+        : current.status === "error"
+          ? current.message
+          : null;
+      await command.complete(
+        reason
+          ? {
+              version: 1,
+              requestId: incoming.requestId,
+              ok: false,
+              code: "internal-error",
+              message: reason,
+            }
+          : { version: 1, requestId: incoming.requestId, ok: true, status: "up-to-date" },
+      );
+      return;
+    }
+    setPrepared(current);
+    setRequest(incoming);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- receives native update intents independently of the local backend connection
+  useEffect(() => {
+    if (!command) return;
+    const unsubscribe = command.onRequest((incoming) => {
+      void receive(incoming).catch(async () => {
+        await command.complete({
+          version: 1,
+          requestId: incoming.requestId,
+          ok: false,
+          code: "internal-error",
+          message: "The coordinated update could not be prepared.",
+        });
+      });
+    });
+    void command.setReady(true, rendererId);
+    return () => {
+      unsubscribe();
+      void command.setReady(false, rendererId);
+    };
+  }, [command, rendererId]);
+
+  const cancel = async () => {
+    if (!request || !command) return;
+    setRequest(null);
+    await command.complete({
+      version: 1,
+      requestId: request.requestId,
+      ok: true,
+      status: "cancelled",
+    });
+  };
+  const confirm = async () => {
+    if (!request || !command) return;
+    const currentRequest = request;
+    setRequest(null);
+    if (
+      !(await command.complete({
+        version: 1,
+        requestId: currentRequest.requestId,
+        ok: true,
+        status: "started",
+      }))
+    )
+      return;
+    try {
+      const bridge = window.desktopBridge!;
+      await everything.run({
+        ...(action === "download"
+          ? {
+              downloadLocal: (reportError) =>
+                downloadLocalUpdate(bridge, { notifyDownloaded: false, reportError }),
+            }
+          : {}),
+        ...(action !== "none"
+          ? {
+              installLocal: (reportError) =>
+                installLocalUpdate(bridge, reportError, localVersion ?? undefined),
+            }
+          : {}),
+      });
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not update T3 Code",
+          description: error instanceof Error ? error.message : "The coordinated update failed.",
+        }),
+      );
+    } finally {
+      await command.finish(currentRequest.requestId);
+    }
+  };
+  if (!request) return null;
+  return (
+    <UpdateEverythingDialog
+      open
+      onOpenChange={(open) => {
+        if (!open) void cancel();
+      }}
+      version={everything.version}
+      providerCount={everything.providerCount}
+      rows={everything.rows}
+      restarts={everything.restarts}
+      onConfirm={() => void confirm()}
+    />
+  );
+}

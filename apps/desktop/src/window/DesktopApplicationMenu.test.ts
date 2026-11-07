@@ -1,3 +1,4 @@
+import * as DesktopUpdateCommand from "../updates/DesktopUpdateCommand.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -118,6 +119,17 @@ const configureMenu = (
         Layer.provideMerge(layerElectronMenu(applicationMenuTemplate)),
         Layer.provideMerge(layerDesktopWindow(selectedAction)),
         Layer.provideMerge(layerDesktopUpdates),
+        Layer.provide(
+          Layer.mock(DesktopUpdateCommand.DesktopUpdateCommand, {
+            request: (request) =>
+              Effect.succeed({
+                version: 1,
+                requestId: request.requestId,
+                ok: true,
+                status: "cancelled",
+              }),
+          }),
+        ),
         Layer.provideMerge(layerElectronDialog),
         Layer.provideMerge(layerElectronApp),
         Layer.provideMerge(

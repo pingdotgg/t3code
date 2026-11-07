@@ -10,6 +10,9 @@ import * as NodePath from "node:path";
 import {
   DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION,
   DesktopAppActivationRequest,
+  DesktopUpdateCommandRequest,
+  type DesktopUpdateCommandResponse,
+  type DesktopAppControlResponse,
   type DesktopAppActivationResponse,
 } from "@t3tools/contracts";
 import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppControl";
@@ -26,6 +29,7 @@ import type * as Electron from "electron";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL } from "../ipc/channels.ts";
+import * as DesktopUpdateCommand from "../updates/DesktopUpdateCommand.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import { DesktopAppActivationBroker } from "./DesktopAppActivationBroker.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -34,6 +38,7 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 const MAX_REQUEST_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 15_000;
 const isDesktopAppActivationRequest = Schema.is(DesktopAppActivationRequest);
+const isDesktopUpdateCommandRequest = Schema.is(DesktopUpdateCommandRequest);
 
 export class DesktopAppActivationStartError extends Schema.TaggedError<DesktopAppActivationStartError>()(
   "DesktopAppActivationStartError",
@@ -110,6 +115,10 @@ export async function startDesktopAppControlServer(input: {
   readonly directory: string | null;
   readonly userId: number | undefined;
   readonly handle: (request: DesktopAppActivationRequest) => Promise<DesktopAppActivationResponse>;
+  readonly cancelUpdate?: (requestId: string) => void;
+  readonly handleUpdate?: (
+    request: DesktopUpdateCommandRequest,
+  ) => Promise<DesktopUpdateCommandResponse>;
   readonly cancel: (requestId: string) => void;
   readonly onReclaimError: (error: unknown) => void;
 }): Promise<RunningControlServer> {
@@ -124,7 +133,7 @@ export async function startDesktopAppControlServer(input: {
 
     socket.setTimeout(5_000, () => socket.destroy());
 
-    const finish = (response: DesktopAppActivationResponse) => {
+    const finish = (response: DesktopAppControlResponse) => {
       responseSent = true;
       if (!socket.destroyed) socket.end(`${JSON.stringify(response)}\n`);
     };
@@ -151,6 +160,15 @@ export async function startDesktopAppControlServer(input: {
         return;
       }
 
+      if (isDesktopUpdateCommandRequest(parsed) && input.handleUpdate) {
+        activeRequestId = parsed.requestId;
+        void input
+          .handleUpdate(parsed)
+          .then(finish, () =>
+            finish(invalidResponse(parsed.requestId, "The desktop update request failed.")),
+          );
+        return;
+      }
       if (!isDesktopAppActivationRequest(parsed)) {
         pipe(
           requestIdFromUnknown(parsed),
@@ -169,7 +187,10 @@ export async function startDesktopAppControlServer(input: {
     socket.on("error", () => socket.destroy());
     socket.on("close", () => {
       sockets.delete(socket);
-      if (!responseSent && activeRequestId !== null) input.cancel(activeRequestId);
+      if (!responseSent && activeRequestId !== null) {
+        input.cancel(activeRequestId);
+        input.cancelUpdate?.(activeRequestId);
+      }
     });
   };
 
@@ -298,6 +319,7 @@ const { logWarning } = makeComponentLogger("desktop-app-activation");
 export const make = Effect.gen(function* () {
   const desktopEnvironment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const updateCommand = yield* DesktopUpdateCommand.DesktopUpdateCommand;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const path = yield* Path.Path;
   const userId = yield* HostProcess.UserId;
@@ -338,6 +360,10 @@ export const make = Effect.gen(function* () {
             ...address,
             userId,
             handle: (request) => broker.request(request),
+            handleUpdate: (request) => runPromise(updateCommand.request(request)),
+            cancelUpdate: (requestId) => {
+              void runPromise(updateCommand.cancel(requestId));
+            },
             cancel: (requestId) => broker.cancel(requestId),
             onReclaimError: (cause) =>
               void runPromise(

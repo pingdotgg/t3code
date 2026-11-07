@@ -1,3 +1,4 @@
+import * as DesktopUpdateCommand from "./updates/DesktopUpdateCommand.ts";
 import * as MacPermissions from "./permissions/MacPermissions.ts";
 for (const stream of [process.stdout, process.stderr]) {
   stream.on("error", (err: NodeJS.ErrnoException) => {
@@ -216,10 +217,14 @@ const layerDesktopApplication = Layer.mergeAll(
 ).pipe(
   Layer.provideMerge(layerDesktopSnapShot),
   Layer.provideMerge(
-    DesktopUpdates.layer.pipe(
-      Layer.provide(DesktopUpdatePolicy.layer),
-      // The same layer as the foundation's, so the policy is still read once.
-      Layer.provide(DesktopManagedPolicy.layer),
+    DesktopUpdateCommand.layer.pipe(
+      Layer.provideMerge(
+        DesktopUpdates.layer.pipe(
+          Layer.provide(DesktopUpdatePolicy.layer),
+          // The same layer as the foundation's, so the policy is still read once.
+          Layer.provide(DesktopManagedPolicy.layer),
+        ),
+      ),
     ),
   ),
   Layer.provideMerge(layerDesktopWslBackend),

@@ -1,3 +1,4 @@
+import * as DesktopUpdateCommand from "../updates/DesktopUpdateCommand.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -33,6 +34,7 @@ export class DesktopApplicationMenu extends Context.Service<
 >()("@t3tools/desktop/window/DesktopApplicationMenu") {}
 
 type DesktopApplicationMenuRuntimeServices =
+  | DesktopUpdateCommand.DesktopUpdateCommand
   | DesktopUpdates.DesktopUpdates
   | DesktopWindow.DesktopWindow
   | ElectronDialog.ElectronDialog;
@@ -69,6 +71,14 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
   const electronDialog = yield* ElectronDialog.ElectronDialog;
   const result = yield* updates.check("menu");
   const updateState = result.state;
+  if (updateState.status === "available" || updateState.status === "downloaded") {
+    yield* (yield* DesktopUpdateCommand.DesktopUpdateCommand).request({
+      version: 1,
+      requestId: "menu-update",
+      type: "update",
+    });
+    return;
+  }
 
   if (updateState.status === "up-to-date") {
     yield* electronDialog.showMessageBox({

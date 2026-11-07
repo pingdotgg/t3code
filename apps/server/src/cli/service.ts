@@ -1,3 +1,4 @@
+import { runUpdateCommand } from "./update.ts";
 import * as NodeUtil from "node:util";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -5,6 +6,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
@@ -239,24 +241,20 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
 );
 
 const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
-  Command.withDescription("Deprecated. Run `t3 update` to move to a newer release."),
+  Command.withDescription("Deprecated alias for t3 update."),
   Command.unlisted,
   Command.withHandler((flags) =>
-    runServiceCommand(
-      flags,
-      Effect.gen(function* () {
-        yield* Console.log(
-          "`t3 service update` is deprecated: run `t3 update` to move to a newer release, or `t3 service install` to repair the service. Repairing now.",
-        );
-        const result = yield* reconcileService({ allowDowngrade: flags.allowDowngrade });
-        if (!result.changed) {
-          yield* Console.log(
-            `T3 Code service is already using t3@${packageJson.version} (${yield* resolveEntryPath}).`,
-          );
-          return;
-        }
-        yield* Console.log(formatServiceChange(result));
-      }),
+    Console.log("`t3 service update` is deprecated; using `t3 update`.").pipe(
+      Effect.andThen(
+        runUpdateCommand({
+          ...flags,
+          channel: Option.none(),
+          version: Option.none(),
+          check: false,
+          json: false,
+          yes: false,
+        }),
+      ),
     ),
   ),
 );

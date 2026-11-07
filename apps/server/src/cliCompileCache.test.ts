@@ -61,6 +61,15 @@ it.live("loads the CLI with its cache settings only when the command needs it", 
     expect(normal.stderr.replaceAll("\\", "/")).toContain(
       `CACHE=${root}/cache/t3code/compile-cache`.replaceAll("\\", "/"),
     );
+    const check = yield* run({}, ["update", "--check", "--json"]);
+    expect(check.exitCode).toBe(0);
+    expect(check.stderr).toContain("CACHE=disabled");
+    expect(JSON.parse(check.stdout)).toMatchObject({
+      schema: "t3.update-check.v1",
+      owner: "standalone",
+      coordinated: false,
+    });
+    expect(yield* fs.exists(`${root}/home`)).toBe(false);
     const launcher = yield* run({ T3CODE_HOME: "" }, ["__service-launcher"]);
     expect(launcher.exitCode).toBe(1);
     expect(launcher.stderr).toContain("[service-launcher] T3CODE_HOME is required");

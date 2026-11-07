@@ -129,3 +129,10 @@ export const RECEIVE_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:receive-provider-
 export const CANCEL_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:cancel-provider-auth-callback";
 export const TAKE_LEGACY_LOCAL_STORAGE_CHANNEL = "desktop:take-legacy-local-storage";
 export const COMPLETE_LEGACY_LOCAL_STORAGE_CHANNEL = "desktop:complete-legacy-local-storage";
+
+export const UPDATE_COMMAND_READY_CHANNEL = "desktop:update-command-ready";
+export const UPDATE_COMMAND_REQUEST_CHANNEL = "desktop:update-command-request";
+export const UPDATE_COMMAND_COMPLETE_CHANNEL = "desktop:update-command-complete";
+export const UPDATE_COMMAND_RUN_CHANNEL = "desktop:update-command-run";
+export const UPDATE_COMMAND_RESERVE_CHANNEL = "desktop:update-command-reserve";
+export const UPDATE_COMMAND_FINISH_CHANNEL = "desktop:update-command-finish";

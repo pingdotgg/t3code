@@ -18,6 +18,8 @@ import { KeybindingShortcut, type PreviewForwardedShortcut } from "./keybindings
 
 import type {
   DesktopAppActivationRequest,
+  DesktopUpdateCommandRequest,
+  DesktopUpdateCommandResponse,
   DesktopAppActivationResponse,
 } from "./desktopAppActivation.ts";
 
@@ -1140,6 +1142,14 @@ export interface DesktopBridge {
     getState: () => Promise<DesktopCliCommandState>;
     install: () => Promise<DesktopCliCommandState>;
     uninstall: () => Promise<DesktopCliCommandState>;
+  };
+  updateCommand: {
+    setReady: (ready: boolean, rendererId: string) => Promise<void>;
+    onRequest: (listener: (request: DesktopUpdateCommandRequest) => void) => () => void;
+    complete: (response: DesktopUpdateCommandResponse) => Promise<boolean>;
+    request: () => Promise<DesktopUpdateCommandResponse>;
+    reserve: () => Promise<string | null>;
+    finish: (reservation: string) => Promise<void>;
   };
   webLinks: {
     setReady: (ready: boolean) => Promise<void>;
