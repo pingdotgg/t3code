@@ -1202,6 +1202,10 @@ interface ActiveCodexTurnContext {
   readonly subagent: CodexSubagentThreadContext | null;
   readonly startedAt: DateTime.Utc;
   readonly runningCompactionItemIds: Set<string>;
+  readonly assistantMessagePhases: Map<
+    string,
+    "commentary" | "pending_final_answer" | "final_answer"
+  >;
   // Modern approval requests omit paths; keep the kinds without retaining patch bodies.
   readonly fileChangeKindsByItem: Map<string, CodexFileChangeKinds>;
   readonly itemPositions: Map<
@@ -2127,6 +2131,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             subagent: null,
             startedAt: input.startedAt,
             itemPositions: new Map(),
+            assistantMessagePhases: new Map(),
             fileChangeKindsByItem: new Map(),
             runningCompactionItemIds: new Set(),
           };
@@ -2733,6 +2738,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               subagent,
               startedAt: turn.startedAt,
               itemPositions: new Map(),
+              assistantMessagePhases: new Map(),
               fileChangeKindsByItem: new Map(),
               runningCompactionItemIds: new Set(),
             };
@@ -3395,6 +3401,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             createdAt: startedAt,
             updatedAt,
           };
+          const phase = context.assistantMessagePhases.get(item.id);
           const turnItem: OrchestrationV2TurnItem = {
             id: turnItemId,
             threadId: context.projectionThreadId,
@@ -3411,6 +3418,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             completedAt,
             updatedAt,
             type: "assistant_message",
+            phase: phase === "pending_final_answer" ? "commentary" : phase,
             messageId,
             text: item.text,
             streaming: !completed,
@@ -3514,13 +3522,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           emit:
             /* Provider events include streaming deltas; avoid a span for each update. */
             Effect.fnUntraced(function* (update) {
-              const context = yield* awaitActiveTurn(update.turnId);
+              const context = update.completed
+                ? (yield* resolveItemEventContext(update.turnId))?.context
+                : yield* awaitActiveTurn(update.turnId);
               if (context === undefined) {
                 return;
               }
-              const finalAnswerItem = (yield* Ref.get(finalAnswerItemIdsByTurn))
-                .get(update.turnId)
-                ?.has(update.itemId);
+              const finalAnswerItem =
+                (yield* Ref.get(finalAnswerItemIdsByTurn)).get(update.turnId)?.has(update.itemId) &&
+                (!update.completed ||
+                  context.assistantMessagePhases.get(update.itemId) !== "pending_final_answer");
               if (finalAnswerItem) {
                 const finalAnswerItemIds = (yield* Ref.get(finalAnswerItemIdsByTurn)).get(
                   update.turnId,
@@ -4901,6 +4912,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             if (payload.item.type === "agentMessage") {
+              if (payload.item.phase != null) {
+                context.assistantMessagePhases.set(
+                  payload.item.id,
+                  payload.item.phase === "final_answer" ? "pending_final_answer" : "commentary",
+                );
+              }
               if (payload.item.phase == null || payload.item.phase === "final_answer") {
                 yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
                   const updated = new Map(current);
@@ -5265,6 +5282,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             const finalAnswer = payload.item.phase == null || payload.item.phase === "final_answer";
+            // Turn cleanup also flushes text, so only item/completed confirms an answer.
+            if (
+              payload.item.phase != null ||
+              context.assistantMessagePhases.get(payload.item.id) === "pending_final_answer"
+            ) {
+              context.assistantMessagePhases.set(
+                payload.item.id,
+                payload.item.phase == null || payload.item.phase === "final_answer"
+                  ? "final_answer"
+                  : "commentary",
+              );
+            }
             if (finalAnswer) {
               yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
                 const updated = new Map(current);
@@ -6619,6 +6648,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             subagent: null,
             startedAt: now,
             itemPositions: new Map(),
+            assistantMessagePhases: new Map(),
             fileChangeKindsByItem: new Map(),
             runningCompactionItemIds: new Set(),
           };

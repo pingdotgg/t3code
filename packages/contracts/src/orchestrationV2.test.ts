@@ -35,6 +35,44 @@ const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
 );
 
 describe("orchestration V2 contracts", () => {
+  it.each(["final_answer", "commentary", undefined] as const)(
+    "retains assistant phase %s through storage and wire codecs",
+    (phase) => {
+      const stored = {
+        id: "answer",
+        threadId: "thread-1",
+        runId: "run-1",
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: "2026-04-20T00:00:00.000Z",
+        completedAt: "2026-04-20T00:00:00.000Z",
+        updatedAt: "2026-04-20T00:00:00.000Z",
+        type: "assistant_message",
+        messageId: "answer",
+        text: "Answer",
+        streaming: false,
+        ...(phase === undefined ? {} : { phase }),
+      };
+      for (const codec of [
+        OrchestrationV2TurnItemJson,
+        Schema.toCodecJson(OrchestrationV2TurnItem),
+      ]) {
+        const decode = Schema.decodeUnknownSync(codec);
+        const encode = Schema.encodeSync(codec);
+        const item = decode(stored);
+        const encoded = JSON.parse(JSON.stringify(encode(item)));
+        expect(encoded).toEqual(stored);
+        expect(decode(encoded)).toEqual(item);
+      }
+    },
+  );
+
   it("decodes thread event types from a newer server as skippable items", () => {
     const decodeWireItems = Schema.decodeUnknownSync(
       Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),
