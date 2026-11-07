@@ -4627,14 +4627,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE latest.thread_id = ${threadId}
                     ORDER BY latest.ordinal DESC LIMIT 1
                   )
-                  -- Retain the latest run for each provider thread with lost
-                  -- background work, including owners used before a handoff.
+                  -- Retain the latest ended run for each provider thread with lost
+                  -- background work, including owners used before a handoff. An
+                  -- unfinished run is read above and may prove never started.
                   OR run.run_id IN (
                     SELECT (
                       SELECT ended.run_id FROM orchestration_v2_projection_runs AS ended
                       WHERE ended.thread_id = ${threadId}
                         AND ended.provider_thread_id = roster.provider_thread_id
-                        AND ended.status NOT IN ('queued', 'rolled_back')
+                        AND ended.status NOT IN (
+                          'queued', 'preparing', 'starting', 'running', 'waiting', 'rolled_back'
+                        )
                         -- A run that never started (see neverStarted) owns no work.
                         AND NOT (
                           json_type(ended.payload_json, '$.startedAt') = 'null'
