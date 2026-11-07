@@ -2,9 +2,11 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import {
+  ACP_REGISTRY_ICON_URL_MAX_LENGTH,
   AcpRegistryManagedBinaryUninstallInput,
   AcpRegistryManagedBinaryUninstallResult,
   officialAcpRegistryIconUrlForAgentId,
+  resolveAcpRegistryIconUrl,
   resolveOfficialAcpRegistryIconUrl,
 } from "./acpRegistry.ts";
 
@@ -30,6 +32,25 @@ describe("ACP Registry contracts", () => {
     expect(
       resolveOfficialAcpRegistryIconUrl(
         "https://user@cdn.agentclientprotocol.com/registry/v1/latest/pi-acp.svg",
+      ),
+    ).toBeNull();
+  });
+
+  it("accepts small inline SVG and PNG icons alongside official Registry URLs", () => {
+    const svg = "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=";
+    expect(resolveAcpRegistryIconUrl(svg)).toBe(svg);
+    expect(resolveAcpRegistryIconUrl("data:image/png;base64,iVBORw0KGgo=")).toBe(
+      "data:image/png;base64,iVBORw0KGgo=",
+    );
+    expect(
+      resolveAcpRegistryIconUrl("https://cdn.agentclientprotocol.com/registry/v1/latest/pi.svg"),
+    ).toBe("https://cdn.agentclientprotocol.com/registry/v1/latest/pi.svg");
+    expect(resolveAcpRegistryIconUrl("data:text/html;base64,PGgxPg==")).toBeNull();
+    expect(resolveAcpRegistryIconUrl("data:image/svg+xml,<svg></svg>")).toBeNull();
+    expect(resolveAcpRegistryIconUrl("https://example.com/icon.svg")).toBeNull();
+    expect(
+      resolveAcpRegistryIconUrl(
+        `data:image/svg+xml;base64,${"A".repeat(ACP_REGISTRY_ICON_URL_MAX_LENGTH)}`,
       ),
     ).toBeNull();
   });

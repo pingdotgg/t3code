@@ -41,6 +41,28 @@ export function resolveOfficialAcpRegistryIconUrl(icon: string | null | undefine
   }
 }
 
+/** Largest icon file a local ACP instance may use; it travels inline in every provider snapshot. */
+export const ACP_REGISTRY_ICON_FILE_MAX_BYTES = 8 * 1_024;
+const ACP_REGISTRY_ICON_DATA_URL_PATTERN =
+  /^data:image\/(?:svg\+xml|png);base64,[A-Za-z0-9+/]+={0,2}$/;
+export const ACP_REGISTRY_ICON_URL_MAX_LENGTH =
+  "data:image/svg+xml;base64,".length + Math.ceil(ACP_REGISTRY_ICON_FILE_MAX_BYTES / 3) * 4;
+
+/**
+ * An icon a client may render for an ACP instance: an official Registry URL, or the inline
+ * SVG or PNG data URL the server built from the instance's icon file.
+ */
+export function resolveAcpRegistryIconUrl(icon: string | null | undefined): string | null {
+  if (
+    icon &&
+    icon.length <= ACP_REGISTRY_ICON_URL_MAX_LENGTH &&
+    ACP_REGISTRY_ICON_DATA_URL_PATTERN.test(icon)
+  ) {
+    return icon;
+  }
+  return resolveOfficialAcpRegistryIconUrl(icon);
+}
+
 export const AcpRegistryDistribution = Schema.Literals(["binary", "npx", "uvx"]);
 export type AcpRegistryDistribution = typeof AcpRegistryDistribution.Type;
 

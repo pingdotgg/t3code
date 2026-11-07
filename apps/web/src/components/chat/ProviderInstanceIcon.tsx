@@ -15,7 +15,7 @@ import { ProviderPackageIcon } from "./ProviderPackageIcon";
 import {
   AcpRegistryAgentIcon,
   officialAcpRegistryIconUrlForAgentId,
-  resolveOfficialAcpRegistryIconUrl,
+  resolveAcpRegistryIconUrl,
 } from "../settings/AcpRegistryIcon";
 
 const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
@@ -52,7 +52,7 @@ export function resolveProviderInstanceAcpRegistryIconUrl(input: {
 }): string | null {
   if (input.driverKind !== "acpRegistry") return null;
   return (
-    resolveOfficialAcpRegistryIconUrl(input.iconUrl ?? null) ??
+    resolveAcpRegistryIconUrl(input.iconUrl ?? null) ??
     officialAcpRegistryIconUrlForAgentId(input.agentId?.trim() || null)
   );
 }

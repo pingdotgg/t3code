@@ -7,7 +7,7 @@ import {
   providerInstanceInitials,
 } from "@t3tools/client-runtime/state/provider-instance-display";
 import { useId, useState } from "react";
-import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
+import { resolveAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { AppText as Text } from "./ui/AppText";
 import { cn } from "../lib/cn";
@@ -35,7 +35,7 @@ function AcpRegistryProviderIcon(props: {
   readonly iconUrl: string | null | undefined;
   readonly size: number;
 }) {
-  const iconUrl = resolveOfficialAcpRegistryIconUrl(props.iconUrl);
+  const iconUrl = resolveAcpRegistryIconUrl(props.iconUrl);
   const [image, setImage] = useState<{
     readonly iconUrl: string;
     readonly status: "loaded" | "failed";

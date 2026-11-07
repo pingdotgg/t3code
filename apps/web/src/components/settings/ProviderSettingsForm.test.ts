@@ -34,6 +34,16 @@ describe("ProviderSettingsForm helpers", () => {
     ]);
   });
 
+  it("offers an icon file only for local ACP commands", () => {
+    const acp = providerClients.get(ProviderDriverKind.make("acpRegistry"));
+    expect(acp).toBeDefined();
+    const keys = (source: string) =>
+      deriveProviderSettingsFields(acp!, { source }).map(({ key }) => key);
+
+    expect(keys("local")).toEqual(["source", "commandPath", "iconPath"]);
+    expect(keys("registry")).not.toContain("iconPath");
+  });
+
   it("preserves unknown config keys while omitting empty configurable fields", () => {
     const opencode = providerClients.get(ProviderDriverKind.make("opencode"));
     expect(opencode).toBeDefined();
