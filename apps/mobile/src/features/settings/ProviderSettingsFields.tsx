@@ -3,6 +3,8 @@ import {
   nextProviderConfigWithFieldValue,
   readProviderConfigFieldBoolean,
   readProviderConfigFieldString,
+  reconcileRowsDraft,
+  seedRowsDraft,
   type ProviderSettingsFieldModel,
   type SettingsFormDefinition,
 } from "@t3tools/client-runtime/settings/provider-form-fields";
@@ -11,6 +13,7 @@ import { useState } from "react";
 import { TextInput, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { Button } from "../../components/ui/Button";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsSection } from "./components/SettingsSection";
@@ -23,7 +26,10 @@ export function ProviderSettingsFields(props: {
   readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
 }) {
   const fields = deriveProviderSettingsFields(props.definition, props.value);
-  if (fields.length === 0) return null;
+  const isLocalAcp =
+    props.definition.driverKind === "acpRegistry" &&
+    readProviderConfigFieldString(props.value, "source") === "local";
+  if (fields.length === 0 && !isLocalAcp) return null;
   return (
     <SettingsSection title="Runtime">
       {fields.map((field) => (
@@ -35,7 +41,112 @@ export function ProviderSettingsFields(props: {
           onChange={props.onChange}
         />
       ))}
+      {isLocalAcp ? (
+        <ProviderCommandArguments
+          value={props.value}
+          disabled={props.disabled}
+          onChange={props.onChange}
+        />
+      ) : null}
     </SettingsSection>
+  );
+}
+
+let commandArgumentDraftId = 0;
+
+const makeCommandArgumentDraftRow = (value: string) => ({
+  id: `provider-argument-${commandArgumentDraftId++}`,
+  value,
+});
+
+const toCommandArgumentRows = (args: ReadonlyArray<string>) =>
+  args.map(makeCommandArgumentDraftRow);
+
+function commandArgumentsEqual(left: ReadonlyArray<string>, right: ReadonlyArray<string>) {
+  return left.length === right.length && left.every((argument, index) => argument === right[index]);
+}
+
+function configuredCommandArgs(value: unknown): ReadonlyArray<string> {
+  const configured =
+    value !== null && typeof value === "object"
+      ? (value as Record<string, unknown>).commandArgs
+      : undefined;
+  return Array.isArray(configured)
+    ? configured.filter((argument): argument is string => typeof argument === "string")
+    : [];
+}
+
+function ProviderCommandArguments(props: {
+  readonly value: unknown;
+  readonly disabled?: boolean;
+  readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
+}) {
+  const args = configuredCommandArgs(props.value);
+  const [storedDraft, setDraft] = useState(() => seedRowsDraft(args, toCommandArgumentRows));
+  const draft = reconcileRowsDraft(storedDraft, args, commandArgumentsEqual, toCommandArgumentRows);
+  if (draft !== storedDraft) setDraft(draft);
+  const rows = draft.rows;
+
+  const updateArguments = (nextRows: typeof rows) => {
+    const next = nextRows.map((row) => row.value);
+    setDraft({ rows: nextRows, seen: draft.seen, lastPublished: next });
+    const config =
+      props.value !== null && typeof props.value === "object"
+        ? { ...(props.value as Record<string, unknown>) }
+        : {};
+    props.onChange({ ...config, commandArgs: next });
+  };
+
+  return (
+    <View className="gap-2 border-b border-border-subtle px-4 py-3">
+      <Text className="text-base text-foreground">Arguments</Text>
+      <Text className="text-sm text-foreground-muted">
+        One literal argument per row, in launch order.
+      </Text>
+      {rows.map((argument, index) => (
+        <View key={argument.id} className="flex-row items-center gap-2">
+          <TextInput
+            accessibilityLabel={`Argument ${index + 1}`}
+            className="min-w-0 flex-1 rounded-lg border border-border-subtle px-3 py-2 font-mono text-base text-foreground"
+            placeholderTextColorClassName="accent-foreground-muted"
+            autoCapitalize="none"
+            autoCorrect={false}
+            editable={!props.disabled}
+            value={argument.value}
+            onChangeText={(next) =>
+              setDraft({
+                rows: rows.map((current) =>
+                  current.id === argument.id ? { ...current, value: next } : current,
+                ),
+                seen: draft.seen,
+                lastPublished: draft.lastPublished,
+              })
+            }
+            onEndEditing={() => {
+              const next = rows.map((row) => row.value);
+              if (commandArgumentsEqual(next, args)) return;
+              updateArguments(rows);
+            }}
+          />
+          {!props.disabled ? (
+            <Button
+              label="Remove"
+              tone="text"
+              size="compact"
+              onPress={() => updateArguments(rows.filter((current) => current.id !== argument.id))}
+            />
+          ) : null}
+        </View>
+      ))}
+      {!props.disabled ? (
+        <Button
+          label="Add argument"
+          tone="secondary"
+          size="compact"
+          onPress={() => updateArguments([...rows, makeCommandArgumentDraftRow("")])}
+        />
+      ) : null}
+    </View>
   );
 }
 
