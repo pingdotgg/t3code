@@ -12,7 +12,7 @@ import * as Cause from "effect/Cause";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import * as Haptics from "expo-haptics";
 import { Accelerometer } from "expo-sensors";
-import { Pressable, StatusBar, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -45,6 +45,9 @@ import {
   type ThreadDevicePreview,
 } from "./threadDevicePreviews";
 import { createShakeDetector } from "./shakeDetector";
+
+/** Clears the form-sheet grabber; the sheet starts below the status bar. */
+const SHEET_CONTROLS_TOP = Platform.OS === "android" ? 20 : 16;
 
 const OVERLAY_ENTERING = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
 const OVERLAY_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
@@ -267,7 +270,6 @@ export function DevicePreviewScreen({
   ];
   return (
     <View className="flex-1" style={{ backgroundColor: themeVariables["--color-sheet-solid"] }}>
-      {!embedded ? <StatusBar hidden animated /> : null}
       {embedded ? (
         <>
           <AppBar
@@ -282,6 +284,11 @@ export function DevicePreviewScreen({
           />
           <View style={{ height: barOverlap }} />
         </>
+      ) : Platform.OS === "android" ? (
+        <View
+          pointerEvents="none"
+          className="absolute top-1 z-10 h-1 w-8 self-center rounded-full bg-header-foreground/40"
+        />
       ) : null}
       {preview && focused && foreground ? (
         <OpenDevicePreview
@@ -334,7 +341,7 @@ export function DevicePreviewScreen({
               onPress={() => setControlsVisible(false)}
             />
           ) : null}
-          <View className="px-3" style={{ paddingTop: Math.max(insets.top, 12) }}>
+          <View className="px-3" style={{ paddingTop: SHEET_CONTROLS_TOP }}>
             <GlassSurface className="flex-row items-center gap-1 p-1">
               <SheetCloseButton accessibilityLabel="Close device preview" onClose={onClose} />
               <AppText numberOfLines={1} className="flex-1 text-center font-t3-medium text-base">
@@ -355,7 +362,7 @@ export function DevicePreviewScreen({
           pointerEvents="box-none"
           className="absolute self-center"
           style={{
-            top: Math.max(insets.top, 12),
+            top: SHEET_CONTROLS_TOP,
             transform: [{ translateX: (handleBounds.left - handleBounds.right) / 2 }],
           }}
         >
