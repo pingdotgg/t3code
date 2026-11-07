@@ -37,7 +37,10 @@ import type {
 } from "@t3tools/contracts";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
-import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
+import {
+  dedupeChecks,
+  rollupCheckStatuses,
+} from "@t3tools/source-control-core/server/pullRequestChecks";
 import type { ProviderChangeRequestSummary } from "@t3tools/source-control-core/server/PullRequestProvider";
 
 import type * as GitHubSchema from "../../schema/github.graphql.ts";
@@ -632,14 +635,10 @@ function toCheckEntries(raw: ReadonlyArray<CheckFields> | null | undefined): Rea
 function rollupChecksState(
   raw: ReadonlyArray<CheckFields> | null | undefined,
 ): PullRequestChecksState | null {
-  const statuses = [
+  return rollupCheckStatuses([
     ...toChecks(raw).map((check) => check.status),
     ...(raw ?? []).filter(isNamelessCheck).map((check) => toCheckStatus(check)),
-  ];
-  if (statuses.length === 0) return null;
-  if (statuses.includes("failure") || statuses.includes("cancelled")) return "failing";
-  if (statuses.includes("pending") || statuses.includes("action-required")) return "pending";
-  return statuses.includes("success") ? "passing" : null;
+  ]);
 }
 
 function toChecks(

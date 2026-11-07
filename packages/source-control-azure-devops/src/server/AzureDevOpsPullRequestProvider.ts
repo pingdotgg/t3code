@@ -1,6 +1,7 @@
 import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
+import { rollupCheckStatuses } from "@t3tools/source-control-core/server/pullRequestChecks";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
@@ -185,6 +186,13 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  const readChecks = (input: { readonly cwd: string }, pullRequest: AzureDevOpsPullRequest) =>
+    cli.listPolicyChecks({
+      cwd: input.cwd,
+      number: pullRequest.number,
+      isDraft: pullRequest.isDraft,
+    });
+
   const diffScope = Effect.fn("AzureDevOpsPullRequestProvider.diffScope")(function* (input: {
     readonly cwd: string;
     readonly number: number;
@@ -307,10 +315,30 @@ export const make = Effect.gen(function* () {
         })),
       ),
 
-    getChangeRequestSummary: (input) =>
-      cli
-        .getPullRequest({ cwd: input.cwd, number: input.number })
-        .pipe(Effect.mapError(fail("getChangeRequestSummary")), Effect.map(toSummary)),
+    getChangeRequestChecks: Effect.fn("AzureDevOpsPullRequestProvider.getChangeRequestChecks")(
+      function* (input) {
+        const pullRequest = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
+        const checks = yield* readChecks(input, pullRequest);
+        return { state: pullRequest.state, checks };
+      },
+      Effect.mapError(fail("getChangeRequestChecks")),
+    ),
+
+    getChangeRequestSummary: Effect.fn("AzureDevOpsPullRequestProvider.getChangeRequestSummary")(
+      function* (input) {
+        const pullRequest = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
+        // Undefined keeps the last known state; null would claim no checks exist.
+        const checksState = yield* readChecks(input, pullRequest).pipe(
+          Effect.map((checks) => rollupCheckStatuses(checks.map((check) => check.status))),
+          Effect.orElseSucceed(() => undefined),
+        );
+        return {
+          ...toSummary(pullRequest),
+          ...(checksState === undefined ? {} : { checksState }),
+        };
+      },
+      Effect.mapError(fail("getChangeRequestSummary")),
+    ),
 
     getChangeRequest: Effect.fn("AzureDevOpsPullRequestProvider.getChangeRequest")(
       function* (input) {
@@ -336,6 +364,7 @@ export const make = Effect.gen(function* () {
                 Effect.map((listed) => listed.changes.length),
                 Effect.orElseSucceed(() => 0),
               );
+        const checks = yield* readChecks(input, pullRequest).pipe(Effect.orElseSucceed(() => []));
         const detail: ProviderChangeRequestDetail = {
           ...toChangeRequest(pullRequest),
           body: pullRequest.body,
@@ -344,7 +373,7 @@ export const make = Effect.gen(function* () {
           mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
           closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
           reviewers: pullRequest.reviewers,
-          checks: [],
+          checks,
           mergeCapabilities: { merge: true, squash: true, rebase: false },
           viewerPermissions: AZURE_DEVOPS_VIEWER_PERMISSIONS,
           autoMergeEnabled: pullRequest.autoMergeEnabled,

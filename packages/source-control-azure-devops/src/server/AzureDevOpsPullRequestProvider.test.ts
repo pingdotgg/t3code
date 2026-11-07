@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import type { PullRequestCheck, PullRequestCheckStatus } from "@t3tools/contracts";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import {
@@ -129,6 +130,7 @@ describe("getChangeRequest", () => {
         Effect.provide(
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
             getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            listPolicyChecks: () => Effect.succeed([]),
             listIterations: () =>
               Effect.succeed([ITERATION, { ...ITERATION, id: 4, headCommit: "new-head" }]),
             listIterationChanges: () =>
@@ -163,6 +165,7 @@ describe("getChangeRequest", () => {
           Effect.provide(
             Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
               getPullRequest: () => Effect.succeed(PULL_REQUEST),
+              listPolicyChecks: () => Effect.succeed([]),
               listIterations: () =>
                 state === "missing"
                   ? Effect.succeed([])
@@ -186,6 +189,107 @@ describe("getChangeRequest", () => {
         expect(detail.headSha).toBeUndefined();
         expect(detail.changedFiles).toBe(0);
       }),
+  );
+});
+
+describe("policy checks", () => {
+  const REPOSITORY = {
+    cwd: "/w",
+    repository: "acme/web",
+    host: "dev.azure.com",
+    number: 7,
+  };
+  const check = (status: PullRequestCheckStatus): PullRequestCheck => ({
+    name: "PR validation",
+    status,
+    description: null,
+    url: null,
+    required: true,
+  });
+  const readFailure = new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
+    command: "az",
+    cwd: "/w",
+    operation: "listPolicyChecks",
+    cause: "unavailable",
+  });
+
+  const provide = (
+    listPolicyChecks: AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli["Service"]["listPolicyChecks"],
+    pullRequest = PULL_REQUEST,
+  ) =>
+    make.pipe(
+      Effect.provide(
+        Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+          getPullRequest: () => Effect.succeed(pullRequest),
+          listIterations: () => Effect.succeed([ITERATION]),
+          listIterationChanges: () => Effect.succeed({ changes: [], truncated: false }),
+          listPolicyChecks,
+        }),
+      ),
+    );
+
+  it.effect("puts the pipeline on the detail, so a watch hears about it", () =>
+    Effect.gen(function* () {
+      const provider = yield* provide(() => Effect.succeed([check("failure")]));
+      const detail = yield* provider.getChangeRequest(REPOSITORY);
+      expect(detail.checks).toEqual([check("failure")]);
+    }),
+  );
+
+  it.effect("keeps the detail readable when the policies are not", () =>
+    Effect.gen(function* () {
+      const provider = yield* provide(() => Effect.fail(readFailure));
+      const detail = yield* provider.getChangeRequest(REPOSITORY);
+      expect(detail.checks).toEqual([]);
+    }),
+  );
+
+  it.effect("answers a checks poll with the pull request's state", () =>
+    Effect.gen(function* () {
+      const provider = yield* provide(() => Effect.succeed([check("pending")]));
+      expect(yield* provider.getChangeRequestChecks!(REPOSITORY)).toEqual({
+        state: "open",
+        checks: [check("pending")],
+      });
+    }),
+  );
+
+  it.effect.each([
+    { statuses: ["success"], expected: "passing" },
+    { statuses: ["success", "pending"], expected: "pending" },
+    { statuses: ["pending", "failure"], expected: "failing" },
+    { statuses: ["action-required"], expected: "pending" },
+    { statuses: ["neutral"], expected: null },
+    { statuses: [], expected: null },
+  ] as const)("summarizes $statuses as $expected", ({ statuses, expected }) =>
+    Effect.gen(function* () {
+      const provider = yield* provide(() => Effect.succeed(statuses.map(check)));
+      const summary = yield* provider.getChangeRequestSummary!(REPOSITORY);
+      expect(summary.checksState).toBe(expected);
+    }),
+  );
+
+  it.effect("leaves the last known state alone when the policies cannot be read", () =>
+    Effect.gen(function* () {
+      const provider = yield* provide(() => Effect.fail(readFailure));
+      const summary = yield* provider.getChangeRequestSummary!(REPOSITORY);
+      expect(summary.checksState).toBeUndefined();
+    }),
+  );
+
+  it.effect("tells the policy read whether the pull request is a draft", () =>
+    Effect.gen(function* () {
+      const drafts: Array<boolean> = [];
+      const provider = yield* provide(
+        (input) => {
+          drafts.push(input.isDraft);
+          return Effect.succeed([]);
+        },
+        { ...PULL_REQUEST, isDraft: true },
+      );
+      yield* provider.getChangeRequestSummary!(REPOSITORY);
+      expect(drafts).toEqual([true]);
+    }),
   );
 });
 

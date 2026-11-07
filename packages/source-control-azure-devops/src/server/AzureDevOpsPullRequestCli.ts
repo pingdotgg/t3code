@@ -5,17 +5,21 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
   PullRequestAction,
+  PullRequestCheck,
   PullRequestComment,
   PullRequestInvolvement,
   PullRequestListState,
   PullRequestMergeMethod,
 } from "@t3tools/contracts";
 
+import { sortChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
+
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import {
   decodeItemContentJson,
   decodeIterationChangesJson,
   decodeIterationsJson,
+  decodePolicyChecksJson,
   decodePullRequestJson,
   decodePullRequestListJson,
   decodeThreadsJson,
@@ -111,6 +115,9 @@ const ITEM_CONTENT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 /** Review history is unpaged and independent of diff size. */
 const REVIEW_HISTORY_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
+const POLICY_EVALUATIONS_PER_PAGE = 100;
+const MAX_POLICY_EVALUATIONS = 1000;
+
 /** Azure's iteration-change page limit. */
 const CHANGE_ENTRIES_PER_PAGE = 2000;
 
@@ -156,6 +163,13 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly cwd: string;
       readonly number: number;
     }) => Effect.Effect<AzureDevOpsPullRequest, AzureDevOpsPullRequestCliError>;
+
+    readonly listPolicyChecks: (input: {
+      readonly cwd: string;
+      readonly number: number;
+      /** Azure holds builds back on a draft, which reads the same as a build about to start. */
+      readonly isDraft: boolean;
+    }) => Effect.Effect<ReadonlyArray<PullRequestCheck>, AzureDevOpsPullRequestCliError>;
 
     readonly listThreads: (input: {
       readonly cwd: string;
@@ -543,6 +557,41 @@ export const make = Effect.gen(function* () {
           },
         ),
       );
+    }),
+
+    listPolicyChecks: Effect.fn("AzureDevOpsPullRequestCli.listPolicyChecks")(function* (input) {
+      const unreadable = (cause: unknown) =>
+        new AzureDevOpsPullRequestReadError({
+          command: "az",
+          cwd: input.cwd,
+          operation: "listPolicyChecks",
+          cause,
+        });
+      const checks: PullRequestCheck[] = [];
+      for (let skip = 0; skip < MAX_POLICY_EVALUATIONS; skip += POLICY_EVALUATIONS_PER_PAGE) {
+        const result = yield* executeJson({
+          cwd: input.cwd,
+          args: [
+            "repos",
+            "pr",
+            "policy",
+            "list",
+            ...detectArgs,
+            "--id",
+            String(input.number),
+            "--top",
+            String(POLICY_EVALUATIONS_PER_PAGE),
+            "--skip",
+            String(skip),
+          ],
+        });
+        if (result.stdoutTruncated) return yield* unreadable("Policy output was truncated");
+        const page = decodePolicyChecksJson(result.stdout.trim(), { isDraft: input.isDraft });
+        if (!Result.isSuccess(page)) return yield* unreadable(page.failure);
+        checks.push(...page.success.checks);
+        if (page.success.rawCount < POLICY_EVALUATIONS_PER_PAGE) return sortChecks(checks);
+      }
+      return yield* unreadable("Policy evaluations exceeded the read limit");
     }),
 
     listThreads: Effect.fn("AzureDevOpsPullRequestCli.listThreads")(function (input) {

@@ -136,7 +136,8 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
             ),
           ),
         )
-        .mockReturnValueOnce(Effect.succeed(output(json({ changeEntries: [] }))));
+        .mockReturnValueOnce(Effect.succeed(output(json({ changeEntries: [] }))))
+        .mockReturnValueOnce(Effect.succeed(output("[]")));
       const provider = yield* AzureDevOpsPullRequestProvider.make;
       const detail = yield* provider.getChangeRequest({
         cwd: "/w",
@@ -147,7 +148,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
       expect(detail.headSha).toBe(latestHead);
       expect(argsOfCall(2)).toContain("iterationId=2");
-      expect(mockedExecute).toHaveBeenCalledTimes(3);
+      expect(mockedExecute).toHaveBeenCalledTimes(4);
     }),
   );
 
@@ -323,6 +324,59 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       const error = yield* Effect.flip(cli.getViewer({ cwd: "/w" }));
 
       assert.strictEqual(error._tag, "AzureDevOpsCliAuthenticationError");
+    }),
+  );
+
+  const policyRow = (name: string, status: string) => ({
+    status,
+    configuration: {
+      url: "https://dev.azure.com/acme/platform/_apis/policy/configurations/54",
+      isBlocking: true,
+      type: { id: "0609b952-1397-4640-95ec-e00a01b2c241" },
+      settings: { displayName: name },
+    },
+  });
+
+  it.effect("follows every page of policies and puts failures first", () =>
+    Effect.gen(function* () {
+      const fullPage = Array.from({ length: 100 }, () => policyRow("Lint", "approved"));
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify(fullPage))))
+        .mockReturnValueOnce(
+          Effect.succeed(output(JSON.stringify([policyRow("Tests", "rejected")]))),
+        );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const checks = yield* cli.listPolicyChecks({ cwd: "/w", number: 42, isDraft: false });
+      assert.deepStrictEqual(argsOfCall(1).slice(0, 12), [
+        "repos",
+        "pr",
+        "policy",
+        "list",
+        "--detect",
+        "true",
+        "--id",
+        "42",
+        "--top",
+        "100",
+        "--skip",
+        "100",
+      ]);
+      assert.strictEqual(checks.length, 101);
+      assert.strictEqual(checks[0]?.name, "Tests");
+    }),
+  );
+
+  it.effect.each([
+    { name: "cut off", result: { ...output("[]"), stdoutTruncated: true } },
+    { name: "unreadable", result: output(JSON.stringify([{ status: 7 }])) },
+  ])("fails rather than report a $name policy page as complete", ({ result }) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(result));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const error = yield* Effect.flip(
+        cli.listPolicyChecks({ cwd: "/w", number: 42, isDraft: false }),
+      );
+      assert.strictEqual(error._tag, "AzureDevOpsPullRequestReadError");
     }),
   );
 
