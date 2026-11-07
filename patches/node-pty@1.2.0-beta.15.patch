@@ -17,7 +17,18 @@ diff --git a/lib/windowsConoutConnection.js b/lib/windowsConoutConnection.js
 diff --git a/lib/windowsPtyAgent.js b/lib/windowsPtyAgent.js
 --- a/lib/windowsPtyAgent.js
 +++ b/lib/windowsPtyAgent.js
-@@ -218,13 +218,31 @@
+@@ -20,7 +20,9 @@ var conptyNative;
+  * shutting down the socket. The timer will be reset if a new data event comes in after the timer
+  * has started.
+  */
+-var FLUSH_DATA_INTERVAL = 1000;
++// ConPTY never closes the output pipe on its own after the shell exits, so wait this long for the last
++// screen update. Trailing output follows the exit within about 20 ms; 1000 ms made every exit report 1 s late.
++var FLUSH_DATA_INTERVAL = 100;
+ var CONNECTION_TIMEOUT = 5000;
+ var defaultWindowsPtyAgentOptions = {
+     connectionTimeout: CONNECTION_TIMEOUT,
+@@ -218,13 +220,31 @@
              return Promise.resolve([]);
          }
          return new Promise(function (resolve) {
@@ -53,3 +64,23 @@ diff --git a/lib/windowsPtyAgent.js b/lib/windowsPtyAgent.js
 -                resolve([_this._innerPid]);
 +                finish([_this._innerPid]);
              }, 5000);
+@@ -259,7 +279,18 @@ var WindowsPtyAgent = /** @class */ (function () {
+         if (this._closeTimeout) {
+             clearTimeout(this._closeTimeout);
+         }
+-        this._closeTimeout = setTimeout(function () { return _this._cleanUpProcess(); }, FLUSH_DATA_INTERVAL);
++        // Timers run before the poll phase. After a main-thread stall longer than the interval, output that is already
++        // buffered in the pipe would be dropped by the cleanup, so give the poll phase one turn to read it first; every
++        // chunk it reads re-arms this timer.
++        this._flushDataSeq = (this._flushDataSeq || 0) + 1;
++        this._closeTimeout = setTimeout(function () {
++            var seq = _this._flushDataSeq;
++            setImmediate(function () {
++                if (_this._flushDataSeq === seq) {
++                    _this._cleanUpProcess();
++                }
++            });
++        }, FLUSH_DATA_INTERVAL);
+     };
+     WindowsPtyAgent.prototype._cleanUpProcess = function () {
+         if (this._useConptyDll) {
