@@ -451,6 +451,13 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadAttachmentIds: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
+  /**
+   * Every file of this thread's fork family (threads sharing `lineage.rootThreadId`) once no
+   * member is live, else none: forks show their source's history without copying its files.
+   */
+  readonly getDeletableAttachmentIds: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
   readonly getThreadHistoryPage: (
     threadId: ThreadId,
     cursor: string,
@@ -5621,6 +5628,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
       );
 
+    const getDeletableAttachmentIds = Effect.fn("ProjectionStore.getDeletableAttachmentIds")(
+      function* (threadId: ThreadId) {
+        const members = yield* sql<{ thread_id: string }>`
+          WITH members AS (
+            SELECT member.thread_id, member.deleted_at
+            FROM orchestration_v2_projection_threads AS member
+            WHERE json_extract(member.payload_json, '$.lineage.rootThreadId') = (
+              SELECT json_extract(thread.payload_json, '$.lineage.rootThreadId')
+              FROM orchestration_v2_projection_threads AS thread
+              WHERE thread.thread_id = ${threadId}
+            )
+          )
+          SELECT thread_id FROM members
+          WHERE NOT EXISTS (SELECT 1 FROM members WHERE deleted_at IS NULL)
+        `.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
+        const ids = yield* Effect.forEach(members, (member) =>
+          getThreadAttachmentIds(ThreadId.make(member.thread_id)),
+        );
+        return [...new Set(ids.flat())];
+      },
+    );
+
     const getMessagesById = Effect.fn("ProjectionStore.getMessagesById")(
       function* (threadId: ThreadId, messageIds: ReadonlyArray<MessageId>) {
         if (messageIds.length === 0)
@@ -7525,6 +7554,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       searchThread: readOnReader(searchThread),
       searchThreadStream,
       getThreadAttachmentIds: readOnReader(getThreadAttachmentIds),
+      getDeletableAttachmentIds: readOnReader(getDeletableAttachmentIds),
     } satisfies ProjectionStoreV2Shape;
   }),
 );

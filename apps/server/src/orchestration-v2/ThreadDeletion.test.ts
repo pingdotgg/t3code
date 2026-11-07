@@ -182,9 +182,6 @@ it.effect("cancels active work without reviving a run while disposing delegated 
     const plan = yield* planThreadDeletion({
       command,
       projection,
-      attachmentIds: projection.messages.flatMap((message) =>
-        message.attachments.map((attachment) => attachment.id),
-      ),
       now: deletedAt,
       idAllocator: yield* IdAllocator.IdAllocatorV2,
     });
@@ -243,35 +240,10 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
         updatedAt: createdAt,
         lastError: null,
       })),
-      messages: [0, 1].map((index) => ({
-        id: MessageId.make(`message:attachment:${index}`),
-        threadId,
-        createdBy: "user",
-        creationSource: "web",
-        runId: null,
-        nodeId: null,
-        role: "user",
-        text: "Inspect this file",
-        attachments: [
-          {
-            type: "file",
-            id: "shared_file",
-            name: "input.txt",
-            mimeType: "text/plain",
-            sizeBytes: 10,
-          },
-        ],
-        streaming: false,
-        createdAt,
-        updatedAt: createdAt,
-      })),
     };
     const plan = yield* planThreadDeletion({
       command,
       projection,
-      attachmentIds: projection.messages.flatMap((message) =>
-        message.attachments.map((attachment) => attachment.id),
-      ),
       now: deletedAt,
       idAllocator: yield* IdAllocator.IdAllocatorV2,
     });
@@ -293,7 +265,7 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
         { type: "scheduled-tasks.cleanup" },
         { type: "terminal.cleanup" },
         { type: "preview.cleanup" },
-        { type: "attachment.cleanup", attachmentIds: ["shared_file"] },
+        { type: "thread-attachments.cleanup" },
       ],
     );
   }).pipe(Effect.provide(IdAllocator.layer)),

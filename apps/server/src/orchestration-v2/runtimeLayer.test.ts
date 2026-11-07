@@ -40,6 +40,7 @@ import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -48,6 +49,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { createAttachmentId } from "../attachmentStore.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ServerConfig from "../config.ts";
@@ -342,6 +344,7 @@ const layerScheduledTasksTest = ScheduledTaskService.layer.pipe(
 );
 const layerResourceCleanupTest = ResourceCleanupService.layer.pipe(
   Layer.provideMerge(layerScheduledTasksTest),
+  Layer.provide(ProjectionStore.layer),
   Layer.provide(
     Layer.mergeAll(
       Layer.mock(PreviewManager.PreviewManager)({ close: () => Effect.void }),
@@ -383,11 +386,11 @@ const layerProjectDeletionTest = Layer.mergeAll(
   Layer.provide(McpProviderSessions.layer),
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStoreTest),
-  Layer.provide(layerServerConfig),
+  Layer.provideMerge(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerGitWorkflowTest),
-  Layer.provide(layerPlatformTest),
+  Layer.provideMerge(layerPlatformTest),
 );
 
 it.layer(layerProjectDeletionTest)("project deletion during thread commands", (it) => {
@@ -622,34 +625,15 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
     "deletes a side chat with its parent only after the side chat's in-flight command",
     () =>
       Effect.gen(function* () {
-        const projects = yield* ProjectService.ProjectService;
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const eventSink = yield* EventSink.EventSinkV2;
         const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-        const projectId = ProjectId.make("runtime-side-chat-delete");
-        const parentId = ThreadId.make("runtime-side-chat-delete-parent");
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const parent = yield* seedPageThread("side-chat-cascade");
+        const parentId = parent.threadId;
         const sideChatId = ThreadId.make("runtime-side-chat-delete-child");
         const updateCommandId = CommandId.make("runtime-side-chat-delete-update");
-        yield* projects.create({
-          commandId: CommandId.make("runtime-side-chat-delete-project"),
-          projectId,
-          title: "Side chat deletion",
-          workspaceRoot: "/work/side-chat-deletion",
-        });
-        yield* orchestrator.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make("runtime-side-chat-delete-create"),
-          createdBy: "user",
-          creationSource: "web",
-          threadId: parentId,
-          projectId,
-          title: "Parent",
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-        });
         yield* orchestrator.dispatch({
           type: "thread.fork",
           commandId: CommandId.make("runtime-side-chat-delete-fork"),
@@ -723,6 +707,9 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
           const sideChat = yield* orchestrator.getThreadProjection(sideChatId);
           assert.isNotNull(sideChat.thread.deletedAt);
           assert.equal(sideChat.thread.title, "Updated before deletion");
+          // Deleted in the same commit, the side chat no longer keeps its parent's page.
+          yield* worker.drain();
+          assert.isFalse(yield* fileSystem.exists(parent.pagePath));
         }).pipe(
           Effect.ensuring(
             Effect.sync(() => {
@@ -831,6 +818,275 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
       }).pipe(Effect.ensuring(Effect.sync(() => lockSpy.mockRestore())));
     }),
   );
+
+  it.effect("keeps a deleted thread's pages until the last member of its fork family goes", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const source = yield* seedPageThread("keep");
+      const forkId = ThreadId.make("page-family-fork:keep");
+      yield* orchestrator.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("page-family-fork:keep"),
+        sourceThreadId: source.threadId,
+        targetThreadId: forkId,
+        sourcePoint: { type: "run", runId: source.runId },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("page-family-delete-source:keep"),
+        threadId: source.threadId,
+      });
+      yield* worker.drain();
+      assert.isTrue(yield* fileSystem.exists(source.pagePath));
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("page-family-delete-fork:keep"),
+        threadId: forkId,
+      });
+      yield* worker.drain();
+      assert.isFalse(yield* fileSystem.exists(source.pagePath));
+    }),
+  );
+
+  // Each deletion plans under its own lock and sees the other member live.
+  it.effect("removes a family's pages when its last two members are deleted together", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const source = yield* seedPageThread("together");
+      const forkId = ThreadId.make("page-family-fork:together");
+      yield* orchestrator.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("page-family-fork:together"),
+        sourceThreadId: source.threadId,
+        targetThreadId: forkId,
+        sourcePoint: { type: "run", runId: source.runId },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const deletions = [source.threadId, forkId].map((threadId) => ({
+        type: "thread.delete" as const,
+        commandId: CommandId.make(`page-family-delete:together:${threadId}`),
+        threadId,
+      }));
+      const planned = yield* Effect.forEach(deletions, () => Deferred.make<void>());
+      const commitCommand = eventSink.commitCommand;
+      const commitSpy = vi.spyOn(eventSink, "commitCommand").mockImplementation((input) => {
+        const index = deletions.findIndex((deletion) => deletion.commandId === input.commandId);
+        return index === -1
+          ? commitCommand(input)
+          : Deferred.succeed(planned[index]!, undefined).pipe(
+              Effect.andThen(Effect.forEach(planned, Deferred.await)),
+              Effect.andThen(commitCommand(input)),
+            );
+      });
+      yield* Effect.forEach(deletions, (deletion) => orchestrator.dispatch(deletion), {
+        concurrency: "unbounded",
+      }).pipe(Effect.ensuring(Effect.sync(() => commitSpy.mockRestore())));
+      yield* worker.drain();
+      assert.isFalse(yield* fileSystem.exists(source.pagePath));
+    }),
+  );
+
+  it.effect.each(["fork", "delete"] as const)(
+    "a fork racing its source's deletion either keeps the pages or is refused: %s first",
+    (first) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const source = yield* seedPageThread(`race:${first}`);
+        const forkId = ThreadId.make(`page-family-fork:race:${first}`);
+        const forkCommandId = CommandId.make(`page-family-fork:race:${first}`);
+        const deleteCommandId = CommandId.make(`page-family-delete:race:${first}`);
+        const firstReady = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const secondQueued = yield* Deferred.make<void>();
+        const commitCommand = eventSink.commitCommand;
+        const commitSpy = vi
+          .spyOn(eventSink, "commitCommand")
+          .mockImplementation((input) =>
+            input.commandId === (first === "fork" ? forkCommandId : deleteCommandId)
+              ? Deferred.succeed(firstReady, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseFirst)),
+                  Effect.andThen(commitCommand(input)),
+                )
+              : commitCommand(input),
+          );
+        const withLock = executor.withLock;
+        let sourceLockRuns = 0;
+        // Dispatch builds locks it may not run, so count when one runs.
+        const observeLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
+          key,
+          effect,
+        ) =>
+          key !== source.threadId
+            ? withLock(key, effect)
+            : Effect.suspend(() =>
+                ++sourceLockRuns === 2
+                  ? Deferred.succeed(secondQueued, undefined).pipe(
+                      Effect.andThen(withLock(key, effect)),
+                    )
+                  : withLock(key, effect),
+              );
+        const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
+        yield* Effect.gen(function* () {
+          const fork = orchestrator
+            .dispatch({
+              type: "thread.fork",
+              commandId: forkCommandId,
+              sourceThreadId: source.threadId,
+              targetThreadId: forkId,
+              sourcePoint: { type: "run", runId: source.runId },
+              createdBy: "user",
+              creationSource: "web",
+            })
+            .pipe(Effect.result);
+          const deletion = orchestrator
+            .dispatch({
+              type: "thread.delete",
+              commandId: deleteCommandId,
+              threadId: source.threadId,
+            })
+            .pipe(Effect.result);
+          const firstFiber = yield* (first === "fork" ? fork : deletion).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Effect.raceFirst(
+            Deferred.await(firstReady),
+            Fiber.join(firstFiber).pipe(Effect.andThen(Effect.die("Missing commit barrier"))),
+          );
+          const secondFiber = yield* (first === "fork" ? deletion : fork).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Effect.raceFirst(Deferred.await(secondQueued), Fiber.await(secondFiber));
+          yield* Deferred.succeed(releaseFirst, undefined);
+          assert.equal((yield* Fiber.join(firstFiber))._tag, "Success");
+          const second = yield* Fiber.join(secondFiber);
+          yield* worker.drain();
+          if (first === "fork") {
+            assert.equal(second._tag, "Success");
+            assert.isTrue(yield* fileSystem.exists(source.pagePath));
+            assert.isNull((yield* orchestrator.getThreadProjection(forkId)).thread.deletedAt);
+          } else {
+            assert.equal(second._tag, "Failure");
+            assert.isFalse(yield* fileSystem.exists(source.pagePath));
+            assert.equal(
+              (yield* orchestrator.getThreadProjection(forkId).pipe(Effect.result))._tag,
+              "Failure",
+            );
+          }
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              commitSpy.mockRestore();
+              lockSpy.mockRestore();
+            }),
+          ),
+        );
+      }),
+  );
+});
+
+/** A thread with one completed run that published an html_render page. */
+const seedPageThread = Effect.fn("runtimeLayerTest.seedPageThread")(function* (key: string) {
+  const projects = yield* ProjectService.ProjectService;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const eventSink = yield* EventSink.EventSinkV2;
+  const now = yield* DateTime.now;
+  const projectId = ProjectId.make(`page-family-project:${key}`);
+  const threadId = ThreadId.make(`page-family-source:${key}`);
+  const runId = RunId.make(`page-family-run:${key}`);
+  const attachmentId = createAttachmentId(threadId, "html")!;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+  const pagePath = (yield* Path.Path).join(attachmentsDir, `${attachmentId}.html`);
+  yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+  yield* fileSystem.writeFileString(pagePath, "<p>Shared page</p>");
+  yield* projects.create({
+    commandId: CommandId.make(`page-family-project:${key}`),
+    projectId,
+    title: "Page family",
+    workspaceRoot: `/work/page-family/${key}`,
+  });
+  yield* orchestrator.dispatch({
+    type: "thread.create",
+    commandId: CommandId.make(`page-family-create:${key}`),
+    createdBy: "user",
+    creationSource: "web",
+    threadId,
+    projectId,
+    title: "Page source",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+  });
+  yield* eventSink.write({
+    events: [
+      {
+        id: EventId.make(`page-family-run:${key}`),
+        type: "run.created",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId: modelSelection.instanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make(`page-family-message:${key}`),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      },
+      {
+        id: EventId.make(`page-family-page:${key}`),
+        type: "turn-item.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`page-family-page:${key}`),
+          threadId,
+          runId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "completed",
+          title: "Shared page",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "dynamic_tool",
+          toolName: "mcp__t3-code__html_render",
+          input: {},
+          output: { htmlRender: { attachmentId, title: "Shared page", height: 300 } },
+        },
+      },
+    ],
+  });
+  return { threadId, runId, pagePath };
 });
 
 const layerSharedApplicationDataPlaneTest = Layer.mergeAll(

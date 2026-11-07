@@ -206,6 +206,7 @@ it.effect("retries a partial project deletion without repeating child events or 
           [firstThreadId, "preview.cleanup"],
           [firstThreadId, "scheduled-tasks.cleanup"],
           [firstThreadId, "terminal.cleanup"],
+          [firstThreadId, "thread-attachments.cleanup"],
         ],
       );
 
@@ -228,7 +229,7 @@ it.effect("retries a partial project deletion without repeating child events or 
       assert.deepEqual(finalEvents[0], partialEvents[0]);
       assert.equal(finalEvents[2]?.command_id, commandId);
       const finalCleanup = yield* readCleanup;
-      assert.lengthOf(finalCleanup, 6);
+      assert.lengthOf(finalCleanup, 8);
       assert.deepEqual(
         finalCleanup.filter((effect) => effect.thread_id === firstThreadId),
         partialCleanup,
@@ -255,6 +256,12 @@ it.effect("retries a partial project deletion without repeating child events or 
               thread_id: threadId,
               command_id: expectedCommandId,
               effect_type: "terminal.cleanup",
+            },
+            {
+              effect_id: `effect:${expectedCommandId}:thread-attachments.cleanup`,
+              thread_id: threadId,
+              command_id: expectedCommandId,
+              effect_type: "thread-attachments.cleanup",
             },
           ],
         );
@@ -362,16 +369,16 @@ it.effect(
         }>`
         SELECT command_id, payload_json, status
         FROM orchestration_v2_effect_outbox
-        WHERE thread_id = ${threadId} AND effect_type = 'attachment.cleanup'
+        WHERE thread_id = ${threadId} AND effect_type = 'thread-attachments.cleanup'
       `;
         assert.lengthOf(cleanup, 1);
         assert.equal(cleanup[0]?.command_id, `${commandId}:delete-thread:${threadId}`);
         assert.equal(cleanup[0]?.status, "pending");
         const request = yield* decodeEffectRequest(cleanup[0]?.payload_json);
-        assert.deepEqual(request, {
-          type: "attachment.cleanup",
-          attachmentIds: ["legacy_screenshot"],
-        });
+        assert.deepEqual(request, { type: "thread-attachments.cleanup" });
+        assert.deepEqual(yield* projections.getDeletableAttachmentIds(threadId), [
+          "legacy_screenshot",
+        ]);
       }).pipe(Effect.provide(layerServices));
     }).pipe(Effect.provide(layerDatabase)),
 );
@@ -474,7 +481,6 @@ it.effect("deletes a project without force once its imported threads were delete
           "subagents",
           "providerSessions",
         ]),
-        attachmentIds: [],
         now,
         idAllocator,
       });

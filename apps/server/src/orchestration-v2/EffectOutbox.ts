@@ -108,6 +108,10 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("attachment.cleanup"),
     attachmentIds: Schema.Array(Schema.String),
   }),
+  // Decided when it runs: concurrent deletions each see the other live while planning.
+  Schema.Struct({
+    type: Schema.Literal("thread-attachments.cleanup"),
+  }),
   Schema.Struct({
     type: Schema.Literal("thread-title.generate"),
     kind: Schema.Union([
@@ -131,6 +135,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "terminal.cleanup",
   "preview.cleanup",
   "attachment.cleanup",
+  "thread-attachments.cleanup",
   "thread-title.generate",
   "delegated-tasks.stop",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;

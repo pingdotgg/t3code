@@ -96,23 +96,30 @@ const layerCleanup = Layer.effect(
   Effect.gen(function* () {
     const { attachmentsDir } = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const cleanupAttachments = (attachmentIds: ReadonlyArray<string>) =>
+      Effect.forEach(
+        attachmentIds,
+        (attachmentId) => {
+          const path = resolveAttachmentPathById({ attachmentsDir, attachmentId });
+          return path === null ? Effect.void : fileSystem.remove(path).pipe(Effect.orDie);
+        },
+        { discard: true },
+      );
     return {
       cleanupScheduledTasks: () => Effect.void,
+      cleanupThreadAttachments: (threadId) =>
+        projections
+          .getDeletableAttachmentIds(threadId)
+          .pipe(Effect.orDie, Effect.flatMap(cleanupAttachments)),
       cleanupTerminals: () => Effect.void,
       cleanupPreviews: () => Effect.void,
-      cleanupAttachments: (attachmentIds) =>
-        Effect.forEach(
-          attachmentIds,
-          (attachmentId) => {
-            const path = resolveAttachmentPathById({ attachmentsDir, attachmentId });
-            return path === null ? Effect.void : fileSystem.remove(path).pipe(Effect.orDie);
-          },
-          { discard: true },
-        ),
+      cleanupAttachments,
     };
   }),
 ).pipe(
   Layer.provide(layerConfig),
+  Layer.provide(ProjectionStore.layer.pipe(Layer.provide(layerDatabase))),
   Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 class RecordedAnalytics extends Context.Service<
