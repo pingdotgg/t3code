@@ -546,6 +546,14 @@
     "./provider-instance-ids": {
       "types": "./src/providerInstanceIds.ts",
       "default": "./src/providerInstanceIds.ts"
+    },
+    "./settings/catalog": {
+      "types": "./src/settings/catalog.ts",
+      "default": "./src/settings/catalog.ts"
+    },
+    "./settings/provider-form-fields": {
+      "types": "./src/settings/providerFormFields.ts",
+      "default": "./src/settings/providerFormFields.ts"
     }
   },
   "scripts": {

@@ -1,7 +1,4 @@
-import {
-  navigationCustomizationAvailable,
-  overflowNavigationTabs,
-} from "../layout/workspace/navigation-tab-order";
+import { overflowNavigationTabs } from "../layout/workspace/navigation-tab-order";
 import {
   NAVIGATION_TAB_ICONS,
   WORKSPACE_TAB_LABELS,
@@ -16,6 +13,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { EmptyState } from "../../components/ui/EmptyState";
 import { useAuth, useUser } from "@clerk/expo";
 import { useNavigation, useNavigationState } from "@react-navigation/native";
+import Constants from "expo-constants";
 import { use, type ComponentProps } from "react";
 import { Platform, View } from "react-native";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
@@ -31,6 +29,7 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import type { SettingsPageTarget } from "./components/settings-page-targets";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+import { mobileSettingsIndexGroups } from "./settings-catalog";
 import { filterSettingsSections } from "./settings-search";
 import { usePaneRole } from "../../components/ui/Pane";
 
@@ -107,11 +106,38 @@ interface SettingsListSection {
   readonly rows: readonly SettingsListRow[];
 }
 
+function useConnectionExtraRows(): SettingsListRow[] {
+  const { selectedTargets } = useSettingsEnvironmentFilter();
+  const noServerTargets = selectedTargets.length === 0;
+  const secretsFeatureEnabled = Constants.expoConfig?.extra?.secretsFeatureEnabled === true;
+  return [
+    {
+      id: "access",
+      icon: "exclamationmark.shield",
+      label: "Sharing & access",
+      target: "SettingsAccess",
+      disabled: noServerTargets,
+    },
+    ...(secretsFeatureEnabled
+      ? [
+          {
+            id: "secrets",
+            icon: "exclamationmark.shield",
+            label: "Secrets",
+            target: "SettingsSecrets" as const,
+            disabled: noServerTargets,
+          } satisfies SettingsListRow,
+        ]
+      : []),
+  ];
+}
+
 function ConfiguredSettingsRouteScreen() {
   const navigation = useNavigation();
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { user } = useUser();
   const { savedConnectionsById } = useSavedRemoteConnections();
+  const connectionExtras = useConnectionExtraRows();
   const accountLabel = !isLoaded
     ? "Checking"
     : !isSignedIn
@@ -136,6 +162,7 @@ function ConfiguredSettingsRouteScreen() {
           label: "Notifications",
           target: "SettingsNotifications",
         },
+        ...connectionExtras,
       ]}
     />
   );
@@ -143,7 +170,12 @@ function ConfiguredSettingsRouteScreen() {
 
 function LocalSettingsRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
-  return <SettingsList connections={[environmentsRow(Object.keys(savedConnectionsById).length)]} />;
+  const connectionExtras = useConnectionExtraRows();
+  return (
+    <SettingsList
+      connections={[environmentsRow(Object.keys(savedConnectionsById).length), ...connectionExtras]}
+    />
+  );
 }
 
 function environmentsRow(count: number): SettingsListRow {
@@ -228,58 +260,21 @@ function useSettingsIndexSections(): SettingsListSection[] {
           members: scopedProjectMembers,
         })
       : (selectedProject?.label ?? "Unavailable project");
-  const page = (
-    target: SettingsPageTarget,
-    icon: SettingsListRow["icon"],
-    label: string,
-    extra?: Pick<SettingsListRow, "disabled" | "value">,
-  ): SettingsListRow => ({ id: target, icon, label, target, ...extra });
-  const serverPage = (target: SettingsPageTarget, icon: SettingsListRow["icon"], label: string) =>
-    page(target, icon, label, { disabled: noServerTargets });
-  // The same pages and groups as Settings on web, minus what mobile has no setting for.
-  return [
-    {
-      rows: [
-        page("SettingsOrganization", "gearshape", "General"),
-        page("SettingsAppearance", "paintbrush", "Appearance"),
-        page("SettingsFollowUp", "bubble.left.and.bubble.right", "Chat"),
-        ...(navigationCustomizationAvailable()
-          ? [page("SettingsNavigation", "line.3.horizontal", "Navigation tabs")]
-          : []),
-        page("SettingsKeyboard", "keyboard", "Keyboard"),
-        page("SettingsVoice", "mic", "Voice"),
-      ],
-    },
-    {
-      title: "Agents",
-      rows: [
-        serverPage("SettingsProviderAccounts", "person.crop.circle", "Providers"),
-        serverPage("SettingsThreads", "text.bubble", "Threads"),
-        page("SettingsScheduledTasks", "clock", "Scheduled tasks"),
-      ],
-    },
-    {
-      title: "Code",
-      rows: [
-        page(
-          "SettingsProjectOverview",
-          "folder",
-          "Projects",
-          selectedProjectKey !== null ? { value: projectLabel } : undefined,
-        ),
-        serverPage("SettingsEnvironmentSourceControl", "arrow.triangle.branch", "Source control"),
-        serverPage("SettingsWorktrees", "square.on.square", "Worktrees"),
-      ],
-    },
-    {
-      rows: [
-        serverPage("SettingsEnvironmentMaintenance", "arrow.clockwise", "Maintenance"),
-        page("SettingsLabs", "sparkles", "Labs"),
-        page("SettingsAbout", "info.circle", "About"),
-        page("SettingsArchive", "archivebox", "Archive"),
-      ],
-    },
-  ];
+  const secretsFeatureEnabled = Constants.expoConfig?.extra?.secretsFeatureEnabled === true;
+
+  return mobileSettingsIndexGroups({ secretsFeatureEnabled }).map((group) => ({
+    title: group.title,
+    rows: group.rows.map((row) => ({
+      id: row.id,
+      icon: row.icon as SettingsListRow["icon"],
+      label: row.label,
+      target: row.target as SettingsPageTarget,
+      ...(row.serverOwned ? { disabled: noServerTargets } : {}),
+      ...(row.target === "SettingsProjectOverview" && selectedProjectKey !== null
+        ? { value: projectLabel }
+        : {}),
+    })),
+  }));
 }
 
 function useOverflowRows(): SettingsListRow[] {

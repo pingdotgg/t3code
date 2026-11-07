@@ -76,6 +76,11 @@ const SETTINGS_SEARCH_TERMS = {
     "thread behavior",
   ],
   SettingsFollowUp: ["follow-ups", "queue", "steer", "while the agent is running"],
+  SettingsDiffs: ["diff", "pull request", "merge", "test files", "review"],
+  SettingsBrowser: ["agent browser", "preview browser", "browser access"],
+  SettingsDevices: ["simulator", "emulator", "device hub", "ios", "android"],
+  SettingsAccess: ["sharing", "permissions", "routes", "pairing", "authorized clients"],
+  SettingsSecrets: ["credentials", "secret providers", "1password", "vault"],
   SettingsArchive: ["archive", "archived", "restore", "unarchive"],
   SettingsProviderAccounts: [
     "provider accounts",
@@ -86,6 +91,9 @@ const SETTINGS_SEARCH_TERMS = {
     "sign in",
     "login",
     "auth",
+    "binary",
+    "runtime",
+    "models",
   ],
   SettingsEnvironmentSourceControl: [
     "git",
