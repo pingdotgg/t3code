@@ -1,3 +1,4 @@
+import type { JSONContent } from "@tiptap/core";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
@@ -25,6 +26,21 @@ it("numbers only citation nodes in document order, including repeated sources", 
     citation,
   ]);
   const markers = draftCitationMarkers(doc);
+  const composerDoc = structuredClone(doc);
+  let nodeIndex = 0;
+  const assignKeys = (node: JSONContent) => {
+    if (node.type === "composer-citation")
+      node.attrs = { ...node.attrs, citeKey: `chip-${nodeIndex++}` };
+    for (const child of node.content ?? []) assignKeys(child);
+  };
+  assignKeys(composerDoc);
+  const chips = draftCitationMarkers(composerDoc, true);
+  for (const index of [0, 1]) {
+    const chip = chips.find((marker) => marker.nodeKey === `chip-${index}`);
+    expect(chip?.number).toBe(markers[index]?.number);
+    expect(chip?.number).toBe(index + 1);
+    expect(chip?.key).toBe(markers[index]?.key);
+  }
   expect(new Set(markers.map(({ key }) => key)).size).toBe(3);
   expect(
     draftCitationMarkers(

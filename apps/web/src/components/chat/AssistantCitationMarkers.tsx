@@ -9,6 +9,17 @@ import {
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
 
+export function updateCitationHighlight(event: { currentTarget: HTMLElement }) {
+  const element = event.currentTarget;
+  const key = element.dataset.citationLinkKey;
+  if (!key) return;
+  const matches = element.ownerDocument.querySelectorAll<HTMLElement>(
+    `[data-citation-link-key="${CSS.escape(key)}"]`,
+  );
+  const active = Array.from(matches).some((match) => match.matches(":hover, :focus-within"));
+  for (const match of matches) match.toggleAttribute("data-citation-highlight", active);
+}
+
 export function AssistantCitationMarkers({
   viewport,
   prompt,
@@ -151,14 +162,19 @@ function CitationMarkers({
       className="pointer-events-none absolute inset-0 z-10 overflow-hidden"
       aria-label="Draft citation markers"
     >
-      {citations.map(({ citation, key }, index) => (
+      {citations.map(({ citation, key, number }) => (
         <Badge
           key={key}
           data-citation-marker-key={key}
+          data-citation-link-key={key}
+          onPointerEnter={updateCitationHighlight}
+          onPointerLeave={updateCitationHighlight}
+          onFocus={updateCitationHighlight}
+          onBlur={updateCitationHighlight}
           render={<button type="button" />}
           hidden={!viewport}
-          className="pointer-events-auto absolute"
-          aria-label={`Edit citation ${index + 1} comment`}
+          className="pointer-events-auto absolute data-[citation-highlight]:ring-2 data-[citation-highlight]:ring-ring"
+          aria-label={`Edit citation ${number} comment`}
           onPointerDown={(event) => event.preventDefault()}
           onClick={() => {
             if (!viewport) return;
@@ -170,7 +186,7 @@ function CitationMarkers({
             onOpen(key, anchor);
           }}
         >
-          {index + 1}
+          {number}
         </Badge>
       ))}
     </div>

@@ -1,3 +1,4 @@
+import { updateCitationHighlight } from "./chat/AssistantCitationMarkers";
 import { draftCitationMarkers } from "./chat/assistantCitationMarkers.logic";
 import { documentChipKindForFileName } from "~/pierre-icons";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
@@ -49,7 +50,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
-import { EditorContent, useEditor } from "@tiptap/react";
+import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 
 import {
   clampCollapsedComposerCursor,
@@ -396,6 +397,13 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   const commentContext = use(ComposerCitationCommentContext);
   const citation = node.attrs.citation as AssistantCitation;
   const citeKey = node.attrs.citeKey as string;
+  const marker = useEditorState({
+    editor,
+    selector: ({ editor }) =>
+      draftCitationMarkers(editor.state.doc.toJSON(), true).find(
+        (marker) => marker.nodeKey === citeKey,
+      ),
+  });
   const commentTarget =
     commentContext.openComment?.key === citeKey ? commentContext.openComment : null;
 
@@ -456,9 +464,14 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   return (
     <NodeViewWrapper
       as="span"
-      className={CHIP_NODE_SELECTION_CLASS_NAME}
+      className={`${CHIP_NODE_SELECTION_CLASS_NAME} data-[citation-highlight]:ring-2 data-[citation-highlight]:ring-ring`}
       contentEditable={false}
       spellCheck={false}
+      data-citation-link-key={marker?.key}
+      onPointerEnter={updateCitationHighlight}
+      onPointerLeave={updateCitationHighlight}
+      onFocus={updateCitationHighlight}
+      onBlur={updateCitationHighlight}
       data-composer-citation-chip="true"
       onKeyDown={(event: ReactKeyboardEvent<HTMLElement>) => {
         if (
@@ -479,6 +492,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     >
       <AssistantCitationChip
         citation={citation}
+        citationNumber={marker?.number}
         composer
         commentEditor={{
           open: commentTarget !== null,

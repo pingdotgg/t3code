@@ -140,7 +140,7 @@ delete it like other inline context. Copying, reloading, and restoring a
 with its quote, and sending tells the agent which words were quoted and which comment you wrote.
 The quoted text and comment count toward the message limit.
 
-Citations in the active draft show numbered markers beside their quoted passages in the conversation. Select a marker to reopen its comment at the source. Numbers follow the order of citations in the draft.
+Citations in the active draft show numbered markers beside their quoted passages in the conversation. Select a marker to reopen its comment at the source. Numbers follow the order of citations in the draft and match the badges on composer chips.
 
 Mobile displays saved quotes and comments, but does not create citations or
 navigate to their sources.

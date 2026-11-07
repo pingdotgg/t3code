@@ -23,6 +23,7 @@ import {
 import { cn } from "~/lib/utils";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
 import { ContextChipPopover } from "../contextChipParts";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
@@ -36,10 +37,12 @@ import { textDirection } from "~/textDirection";
 export function AssistantCitationChip({
   citation,
   composer = false,
+  citationNumber,
   commentEditor,
 }: {
   citation: AssistantCitation;
   composer?: boolean;
+  citationNumber?: number | undefined;
   commentEditor?: {
     open: boolean;
     sourceAnchor?: AssistantCitationSourceAnchor | undefined;
@@ -165,6 +168,7 @@ export function AssistantCitationChip({
       data-assistant-citation-chip="true"
       data-markdown-copy={serializeAssistantCitation(citation)}
     >
+      {composer && citationNumber !== undefined ? <Badge>{citationNumber}</Badge> : null}
       {composerSourceLink}
       {commentEditor ? (
         <Popover
