@@ -1384,7 +1384,7 @@ function AgentMessageFoldHeader(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${label}: ${props.summary}`}
+      accessibilityLabel={props.expanded ? label : `${label}: ${props.summary}`}
       accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the message.`}
       accessibilityState={{ expanded: props.expanded }}
       hitSlop={4}
@@ -1403,13 +1403,19 @@ function AgentMessageFoldHeader(props: {
       />
       <Text
         numberOfLines={1}
-        className="max-w-[50%] shrink-0 font-t3-medium text-sm text-user-bubble-foreground-muted"
+        className={cn(
+          "font-t3-medium text-sm text-user-bubble-foreground-muted",
+          props.expanded ? "min-w-0 shrink" : "max-w-[50%] shrink-0",
+        )}
       >
         {label}
       </Text>
-      <Text numberOfLines={1} className="min-w-0 shrink text-sm text-user-bubble-foreground">
-        {props.summary}
-      </Text>
+      {/* Expanded, the first line is already the top of the body. */}
+      {props.expanded ? null : (
+        <Text numberOfLines={1} className="min-w-0 shrink text-sm text-user-bubble-foreground">
+          {props.summary}
+        </Text>
+      )}
       <ThreadDisclosureChevron
         expanded={props.expanded}
         collapsedDirection="down"
@@ -1481,7 +1487,9 @@ function ThreadAutomationMessageRow(props: {
       >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Automation: ${summary}`}
+          accessibilityLabel={
+            props.expanded && taskTitle === undefined ? "Automation" : `Automation: ${summary}`
+          }
           accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the prompt.`}
           accessibilityState={{ expanded: props.expanded }}
           hitSlop={4}
@@ -1501,9 +1509,12 @@ function ThreadAutomationMessageRow(props: {
           <Text className="font-t3-medium text-sm text-user-bubble-foreground-muted">
             Automation
           </Text>
-          <Text numberOfLines={1} className="min-w-0 shrink text-sm text-user-bubble-foreground">
-            {summary}
-          </Text>
+          {/* Expanded, the prompt's first line is already the top of the body. */}
+          {props.expanded && taskTitle === undefined ? null : (
+            <Text numberOfLines={1} className="min-w-0 shrink text-sm text-user-bubble-foreground">
+              {summary}
+            </Text>
+          )}
           <ThreadDisclosureChevron
             expanded={props.expanded}
             collapsedDirection="down"

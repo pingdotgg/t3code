@@ -282,10 +282,9 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   const [expanded, setExpanded] = useState(false);
   const revealRef = findRevealRef(() => setExpanded(true));
   const { text, scheduledTaskId } = resolveUserMessagePresentation(row.message);
-  const summary =
-    useScheduledTaskTitle(ctx.activeThreadEnvironmentId, scheduledTaskId) ??
-    text.trim().split(/\r?\n/, 1)[0] ??
-    "";
+  const taskTitle = useScheduledTaskTitle(ctx.activeThreadEnvironmentId, scheduledTaskId);
+  // Expanded, the prompt's first line is already the top of the body.
+  const summary = taskTitle ?? (expanded ? "" : (text.trim().split(/\r?\n/, 1)[0] ?? ""));
 
   const revertTurnCount = row.revertTurnCount;
   const promptLink = promptLinkFor(text);
@@ -391,8 +390,15 @@ export function FoldedMessageHeader(props: {
       className="flex w-full min-w-0 items-center gap-1.5 rounded-2xl px-3 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring"
     >
       <Icon className="size-4 shrink-0 stroke-2 text-muted-foreground" />
-      <span className="max-w-1/2 shrink-0 truncate text-muted-foreground">{props.label}</span>
-      <span className="min-w-0 flex-1 truncate">{props.summary}</span>
+      <span
+        className={cn(
+          "truncate text-muted-foreground",
+          props.summary ? "max-w-1/2 shrink-0" : "min-w-0 flex-1",
+        )}
+      >
+        {props.label}
+      </span>
+      {props.summary ? <span className="min-w-0 flex-1 truncate">{props.summary}</span> : null}
       <ChevronDownIcon
         className={cn(
           "size-3.5 shrink-0 text-muted-foreground transition-transform",
@@ -881,7 +887,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           <FoldedMessageHeader
             icon={MessagesSquareIcon}
             label={senderLabel}
-            summary={foldSummary}
+            summary={expanded ? "" : foldSummary}
             expanded={expanded}
             onToggle={() => setExpanded((value) => !value)}
           />

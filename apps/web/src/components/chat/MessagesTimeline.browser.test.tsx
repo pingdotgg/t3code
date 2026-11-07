@@ -756,6 +756,7 @@ describe("MessagesTimeline automation prompts", () => {
 
     await click(row);
     expect(screen.text()).toContain("Label every new issue and close duplicates.");
+    expect(screen.button(/^Automation/).textContent).toContain("Nightly triage");
     const link = [...screen.container.querySelectorAll("a")].find(
       (anchor) => anchor.textContent === "Open automation",
     );
@@ -769,6 +770,9 @@ describe("MessagesTimeline automation prompts", () => {
       message(AUTOMATION_PROMPT, { scheduledTaskId: TASK_ID }),
     ]);
     expect(screen.button(/^Automation/).textContent).toContain("Triage the inbox");
+
+    await click(screen.button(/^Automation/));
+    expect(screen.button(/^Automation/).textContent).not.toContain("Triage the inbox");
   });
 
   it("leaves ordinary user messages as full bubbles", async () => {
@@ -852,6 +856,7 @@ describe("MessagesTimeline agent messages", () => {
 
     await click(row);
     expect(screen.text()).toContain("The migration drops the index before backfilling it.");
+    expect(screen.button(/^Agent/).textContent).not.toContain("Review finished");
     await click(screen.button("Open thread"));
     expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID);
 

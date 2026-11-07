@@ -430,13 +430,15 @@ function QueuedMessage(props: {
       ? {
           icon: CalendarClockIcon,
           label: "Automation",
-          summary: taskTitle ?? props.previewText.split(/\r?\n/, 1)[0] ?? "",
+          summary: taskTitle ?? (expanded ? "" : (props.previewText.split(/\r?\n/, 1)[0] ?? "")),
         }
       : attribution === "agent"
         ? {
             icon: MessagesSquareIcon,
             label: senderShell?.title.trim() || "Agent",
-            summary: props.previewText.split(/\r?\n/).find((line) => line.trim()) ?? "",
+            summary: expanded
+              ? ""
+              : (props.previewText.split(/\r?\n/).find((line) => line.trim()) ?? ""),
           }
         : null;
   const bodyVisible = fold === null || expanded;
