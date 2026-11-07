@@ -671,6 +671,8 @@ function delegatedTasksStopEffect(command: {
 }
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
+/** How long automatic settlement waits for a queued turn to start. */
+export const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 const RUNTIME_REQUEST_DELIVERY_FAILED_MESSAGE =
   "T3 Code could not confirm that your answer reached the agent. If the run stays stuck, stop it and try again.";
 
@@ -13400,6 +13402,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             commandId: command.commandId,
             commandType: command.type,
             cause: `Thread ${command.threadId} changed before automatic settlement.`,
+          });
+        }
+        // The completion reaction starts or holds the queue just after a run ends; settling
+        // first would cancel an automatic wake it was about to start.
+        const { runs } = yield* loadProjectionForCommand(command, ["runs"]);
+        const endedAt = latestExecutedRun(runs)?.completedAt;
+        if (
+          endedAt != null &&
+          runs.some((run) => run.status === "queued") &&
+          Math.abs(DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(endedAt)) <
+            QUEUED_TURN_START_GRACE_MS
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} has a queued run that may still start.`,
           });
         }
         yield* dispatchThreadMutation(
