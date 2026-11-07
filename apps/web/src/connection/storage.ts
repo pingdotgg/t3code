@@ -574,12 +574,21 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
     return catalog;
   });
 
+  // Other tabs save the same document. A stored copy this tab cannot read keeps the cached one.
+  const reloadUnlocked = Effect.gen(function* () {
+    const cached = yield* Ref.get(state);
+    if (Option.isNone(cached)) return yield* loadUnlocked();
+    const raw = yield* backend.read;
+    const stored = raw === null ? Option.none() : yield* Effect.option(decodeCatalog(raw));
+    return Option.getOrElse(stored, () => cached.value);
+  });
+
   const read = lock.withPermits(1)(loadUnlocked());
   const update: CatalogStore["update"] = Effect.fn("web.connectionStorage.updateCatalog")(
     function* (transform) {
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
-          const next = transform(yield* loadUnlocked());
+          const next = transform(yield* reloadUnlocked);
           yield* backend.write(yield* encodeCatalog(next));
           yield* Ref.set(state, Option.some(next));
         }),

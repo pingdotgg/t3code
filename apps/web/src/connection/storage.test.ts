@@ -1,4 +1,5 @@
 import {
+  BearerConnectionTarget,
   ConnectionTransientError,
   PrimaryConnectionTarget,
 } from "@t3tools/client-runtime/connection";
@@ -60,6 +61,42 @@ describe("ConnectionStorage.makeCatalogStore", () => {
       });
 
       expect(yield* Effect.flip(store.read)).toBe(failure);
+    }),
+  );
+
+  it.effect("keeps another tab's save when a stale tab updates the catalog", () =>
+    Effect.gen(function* () {
+      let stored: string | null = null;
+      const backend = {
+        read: Effect.sync(() => stored),
+        write: (raw: string) =>
+          Effect.sync(() => {
+            stored = raw;
+          }),
+      };
+      const target = new BearerConnectionTarget({
+        environmentId: EnvironmentId.make("added-in-first-tab"),
+        label: "Added",
+        connectionId: "added",
+      });
+      const firstTab = yield* ConnectionStorage.makeCatalogStore(backend);
+      const staleTab = yield* ConnectionStorage.makeCatalogStore(backend);
+      yield* staleTab.read;
+
+      yield* firstTab.update((document) => ({ ...document, targets: [target] }));
+      yield* staleTab.update((document) => ({
+        ...document,
+        disabledEnvironmentIds: [EnvironmentId.make("other")],
+      }));
+      const saved = { ...emptyCatalog, targets: [target], disabledEnvironmentIds: ["other"] };
+      expect(decodeCatalog(stored)).toEqual(saved);
+
+      // A stored copy the tab cannot read must not replace the catalog it already holds.
+      for (const unreadable of [null, "{"]) {
+        stored = unreadable;
+        yield* staleTab.update((document) => document);
+        expect(decodeCatalog(stored)).toEqual(saved);
+      }
     }),
   );
 });
