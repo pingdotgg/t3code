@@ -9,6 +9,7 @@ VENDOR_DIR="${MODULE_DIR}/Vendor/libghostty"
 GHOSTTY_SOURCE_DIR="${GHOSTTY_SOURCE_DIR:-${HOME}/ghostty}"
 GHOSTTY_ZIG_VERSION="${GHOSTTY_ZIG_VERSION:-0.16.0}"
 GHOSTTY_ZIG="${GHOSTTY_ZIG:-}"
+GHOSTTY_ZIG_SHA256="${GHOSTTY_ZIG_SHA256:-}"
 
 log() {
   printf '[libghostty-ios16] %s\n' "$*"
@@ -48,12 +49,37 @@ ensure_zig() {
     return
   fi
 
+  local actual_sha256
+  if [[ -z "${GHOSTTY_ZIG_SHA256}" ]]; then
+    # From https://ziglang.org/download/index.json.
+    case "${GHOSTTY_ZIG_VERSION}-${archive_arch}" in
+      0.16.0-x86_64) GHOSTTY_ZIG_SHA256="0387557ed1877bc6a2e1802c8391953baddba76081876301c522f52977b52ba7" ;;
+      0.16.0-aarch64) GHOSTTY_ZIG_SHA256="b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489" ;;
+      *) die "no pinned SHA-256 for Zig ${GHOSTTY_ZIG_VERSION} (${archive_arch}-macos); set GHOSTTY_ZIG_SHA256" ;;
+    esac
+  fi
+
   require_cmd curl
   require_cmd tar
-  mkdir -p "${cache_dir}"
+  require_cmd shasum
+  mkdir -p "${cache_dir%/*}"
+  zig_download_dir="$(mktemp -d "${cache_dir}.XXXXXX")"
+  trap 'rm -rf "${zig_download_dir}"' EXIT
   log "downloading Zig ${GHOSTTY_ZIG_VERSION}"
-  curl -fsSL "https://ziglang.org/download/${GHOSTTY_ZIG_VERSION}/zig-${archive_arch}-macos-${GHOSTTY_ZIG_VERSION}.tar.xz" \
-    | tar -xJ --strip-components=1 -C "${cache_dir}"
+  curl -fsSL -o "${zig_download_dir}/zig.tar.xz" \
+    "https://ziglang.org/download/${GHOSTTY_ZIG_VERSION}/zig-${archive_arch}-macos-${GHOSTTY_ZIG_VERSION}.tar.xz"
+  actual_sha256="$(shasum -a 256 "${zig_download_dir}/zig.tar.xz")"
+  actual_sha256="${actual_sha256%% *}"
+  [[ "${actual_sha256}" == "${GHOSTTY_ZIG_SHA256}" ]] || \
+    die "Zig ${GHOSTTY_ZIG_VERSION} checksum mismatch: expected ${GHOSTTY_ZIG_SHA256}, got ${actual_sha256}"
+
+  mkdir "${zig_download_dir}/zig"
+  tar -xJf "${zig_download_dir}/zig.tar.xz" --strip-components=1 -C "${zig_download_dir}/zig"
+  # A cache dir without an executable zig would make mv nest into it.
+  rm -rf "${cache_dir}"
+  mv "${zig_download_dir}/zig" "${cache_dir}"
+  rm -rf "${zig_download_dir}"
+  trap - EXIT
 }
 
 require_cmd git

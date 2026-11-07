@@ -12,6 +12,7 @@ GHOSTTY_REVISION="$(tr -d '[:space:]' < "${CANONICAL_VENDOR_DIR}/VERSION")"
 GHOSTTY_SOURCE_DIR="${GHOSTTY_SOURCE_DIR:-${HOME}/.cache/t3code/ghostty-${GHOSTTY_REVISION:0:8}}"
 GHOSTTY_ZIG_VERSION="${GHOSTTY_ZIG_VERSION:-0.15.2}"
 GHOSTTY_ZIG="${GHOSTTY_ZIG:-}"
+GHOSTTY_ZIG_SHA256="${GHOSTTY_ZIG_SHA256:-}"
 
 log() {
   printf '[libghostty-vt-wasm] %s\n' "$*"
@@ -56,13 +57,43 @@ ensure_zig() {
     return
   fi
 
+  local actual_sha256
+  if [[ -z "${GHOSTTY_ZIG_SHA256}" ]]; then
+    # From https://ziglang.org/download/index.json.
+    case "${GHOSTTY_ZIG_VERSION}-${host_arch}-${host_os}" in
+      0.15.2-x86_64-linux) GHOSTTY_ZIG_SHA256="02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239" ;;
+      0.15.2-aarch64-linux) GHOSTTY_ZIG_SHA256="958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b0ff26498f667f" ;;
+      0.15.2-x86_64-macos) GHOSTTY_ZIG_SHA256="375b6909fc1495d16fc2c7db9538f707456bfc3373b14ee83fdd3e22b3d43f7f" ;;
+      0.15.2-aarch64-macos) GHOSTTY_ZIG_SHA256="3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b" ;;
+      *) die "no pinned SHA-256 for Zig ${GHOSTTY_ZIG_VERSION} (${host_arch}-${host_os}); set GHOSTTY_ZIG_SHA256" ;;
+    esac
+  fi
+
   require_cmd curl
   require_cmd tar
-  mkdir -p "${cache_dir}"
+  mkdir -p "${cache_dir%/*}"
+  zig_download_dir="$(mktemp -d "${cache_dir}.XXXXXX")"
+  trap 'rm -rf "${zig_download_dir}"' EXIT
   log "downloading Zig ${GHOSTTY_ZIG_VERSION}"
-  curl -fsSL \
-    "https://ziglang.org/download/${GHOSTTY_ZIG_VERSION}/zig-${host_arch}-${host_os}-${GHOSTTY_ZIG_VERSION}.tar.xz" \
-    | tar -xJ --strip-components=1 -C "${cache_dir}"
+  curl -fsSL -o "${zig_download_dir}/zig.tar.xz" \
+    "https://ziglang.org/download/${GHOSTTY_ZIG_VERSION}/zig-${host_arch}-${host_os}-${GHOSTTY_ZIG_VERSION}.tar.xz"
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual_sha256="$(sha256sum "${zig_download_dir}/zig.tar.xz")"
+  else
+    require_cmd shasum
+    actual_sha256="$(shasum -a 256 "${zig_download_dir}/zig.tar.xz")"
+  fi
+  actual_sha256="${actual_sha256%% *}"
+  [[ "${actual_sha256}" == "${GHOSTTY_ZIG_SHA256}" ]] || \
+    die "Zig ${GHOSTTY_ZIG_VERSION} checksum mismatch: expected ${GHOSTTY_ZIG_SHA256}, got ${actual_sha256}"
+
+  mkdir "${zig_download_dir}/zig"
+  tar -xJf "${zig_download_dir}/zig.tar.xz" --strip-components=1 -C "${zig_download_dir}/zig"
+  # A cache dir without an executable zig would make mv nest into it.
+  rm -rf "${cache_dir}"
+  mv "${zig_download_dir}/zig" "${cache_dir}"
+  rm -rf "${zig_download_dir}"
+  trap - EXIT
 }
 
 ensure_ghostty_source() {
