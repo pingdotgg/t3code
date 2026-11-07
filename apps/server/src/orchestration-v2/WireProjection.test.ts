@@ -4,6 +4,7 @@ import {
   CheckpointScopeId,
   MessageId,
   ContextHandoffId,
+  ProviderSessionId,
   ProviderThreadId,
   NodeId,
   EventId,
@@ -17,6 +18,7 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
   OrchestrationV2TurnItem,
@@ -32,6 +34,7 @@ import {
   projectTurnItemForWire,
   projectTurnItemForDetail,
   projectDomainEventForWire,
+  projectStoredEventForWire,
 } from "./WireProjection.ts";
 import { threadShellFromProjection } from "./ProjectionStore.ts";
 import { MAX_TOOL_OUTPUT_IMAGES, toolOutputImages } from "@t3tools/shared/toolOutput";
@@ -368,6 +371,38 @@ describe("orchestration V2 wire projection", () => {
     expect(JSON.stringify(projected)).not.toContain("PRIVATE_BODY");
     expect(event.payload.output).toBe(output);
     expect(projectDomainEventForWire(projected)).toEqual(projected);
+  });
+
+  it("shares one wire projection per stored event", () => {
+    const tool: OrchestrationV2StoredEvent = {
+      sequence: 1,
+      commandId: null,
+      event: {
+        id: EventId.make("shared-tool-event"),
+        type: "turn-item.updated",
+        threadId: base.threadId,
+        occurredAt: base.updatedAt,
+        payload: { ...base, output: { content: [{ type: "text", text: "PRIVATE_BODY" }] } },
+      },
+    };
+    const projected = projectStoredEventForWire(tool);
+    expect(projected).toEqual({ ...tool, event: projectDomainEventForWire(tool.event) });
+    expect(projectStoredEventForWire(tool)).toBe(projected);
+    const detached: OrchestrationV2StoredEvent = {
+      sequence: 2,
+      commandId: null,
+      event: {
+        id: EventId.make("detached-event"),
+        type: "provider-session.detached",
+        threadId: base.threadId,
+        occurredAt: base.updatedAt,
+        payload: {
+          providerSessionId: ProviderSessionId.make("session"),
+          detachedAt: base.updatedAt,
+        },
+      },
+    };
+    expect(projectStoredEventForWire(detached)).toBe(detached);
   });
 });
 

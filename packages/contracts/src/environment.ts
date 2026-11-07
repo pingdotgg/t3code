@@ -157,6 +157,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   lessonSideChats: Schema.optionalKey(Schema.Boolean),
   /** Server-backed learner knowledge map. */
   knowledgeMap: Schema.optionalKey(Schema.Boolean),
+  /** Server creates unrelated lessons in their own projects. */
+  lessonProjects: Schema.optionalKey(Schema.Boolean),
   courses: Schema.optionalKey(Schema.Boolean),
   /** Server links to other environments (`PeerLink`) and its agents can work
       in them. Absent on servers from before linking, which clients must not
@@ -174,6 +176,12 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   triage: Schema.optionalKey(Schema.Boolean),
   /** Server accepts `{ type: "once" }` scheduled tasks; older servers reject them on save. */
   oneTimeSchedules: Schema.optionalKey(Schema.Boolean),
+  /** Server honors `freshContext` on sends; older servers ignore it and keep the old context. */
+  freshContext: Schema.optionalKey(Schema.Boolean),
+  /** Server saves and runs scheduled task `threadMode`; older servers ignore it. */
+  scheduledTaskThreadModes: Schema.optionalKey(Schema.Boolean),
+  /** Server can transcribe 16 kHz mono PCM audio on the environment machine. */
+  voiceTranscription: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
@@ -204,6 +212,12 @@ export function supportsLessons(
   environment: Pick<ExecutionEnvironmentDescriptor, "capabilities">,
 ): boolean {
   return environment.capabilities.knowledgeMap === true;
+}
+
+export function supportsLessonProjects(
+  environment: Pick<ExecutionEnvironmentDescriptor, "capabilities">,
+): boolean {
+  return environment.capabilities.lessonProjects === true;
 }
 
 /** Upstream side chats. Released T3 Learn servers sent `sideChats` for T3 Learn side chats only. */

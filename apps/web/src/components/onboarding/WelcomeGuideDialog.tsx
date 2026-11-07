@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { supportsLessonSideChats } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
+import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowUpIcon,
   BookOpenIcon,
@@ -10,7 +11,7 @@ import {
   MessageCircleQuestionIcon,
   QuoteIcon,
 } from "lucide-react";
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -22,9 +23,10 @@ import { primaryServerKeybindingsAtom } from "~/state/server";
 import { Button } from "../ui/button";
 import { Dialog, DialogDescription } from "../ui/dialog";
 import { Kbd } from "../ui/kbd";
+import { Popover, PopoverPopup } from "../ui/popover";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
 
-export const WELCOME_GUIDE_SEEN_STORAGE_KEY = "t3learn:welcome-guide-seen:v1";
+export const WELCOME_GUIDE_SEEN_STORAGE_KEY = "t3learn:welcome-guide-seen:v2";
 const WelcomeGuideSeenSchema = Schema.NullOr(Schema.String);
 
 const useWelcomeGuideRequest = create<{ requested: boolean }>(() => ({ requested: false }));
@@ -44,7 +46,7 @@ if (typeof window !== "undefined") {
 }
 
 // The host sits at the app root, so it reads one boolean instead of every environment's config.
-const sideChatsAvailableAtom = Atom.make((get) => {
+export const sideChatsAvailableAtom = Atom.make((get) => {
   for (const config of get(environmentPresentations.serverConfigsAtom).values()) {
     if (supportsLessonSideChats(config.environment)) return true;
   }
@@ -79,84 +81,189 @@ export function WelcomeGuideHost({ hostedStatic }: { readonly hostedStatic: bool
 function WelcomeGuideDialog({ onClose }: { readonly onClose: () => void }) {
   const [step, setStep] = useState(0);
   const nextRef = useRef<HTMLButtonElement>(null);
+  const navigate = useNavigate();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const steps = guideSteps(
     shortcutLabelForCommand(keybindings, "sideChat.askSelection"),
     shortcutLabelForCommand(keybindings, "sideChat.toggleMap"),
   );
-  const last = step === steps.length - 1;
+  const [targetElement, setTargetElement] = useState<HTMLElement | null>(null);
+  // Remounting after a route change opens the fallback dialog above the page it moved to (Settings).
+  const [routeChanges, setRouteChanges] = useState(0);
+  const activeTarget = steps[step]?.target;
+  const targetSelector = activeTarget?.selector;
+  const targetRoute = activeTarget?.route;
 
-  return (
-    <Dialog
+  // Target steps follow route changes and may not exist, or sit offscreen, on some layouts. The last
+  // anchor stays until the next lookup settles, so moving between targets keeps the card up.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the target is DOM state outside React.
+  useEffect(() => {
+    if (!targetSelector) return;
+    let cancelled = false;
+    const resolveTarget = async () => {
+      const from = window.location.href;
+      if (targetRoute) await navigate({ to: targetRoute });
+      if (window.location.href !== from) setRouteChanges((count) => count + 1);
+      if (cancelled) return;
+      const element = document.querySelector<HTMLElement>(targetSelector);
+      element?.scrollIntoView({ block: "center" });
+      // Covered (Settings or its backdrop over the sidebar) or off screen (collapsed sidebar): stay
+      // centred. The tour's own layers (card, dialog, backdrop) share a Base UI portal with the card.
+      const rect = element?.getBoundingClientRect();
+      const top =
+        rect &&
+        document
+          .elementsFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+          .find((hit) => !hit.closest("[data-base-ui-portal]")?.querySelector("[data-tour-card]"));
+      const visible = element && top && element.contains(top) ? element : null;
+      visible?.setAttribute("data-tour-target", "true");
+      setTargetElement(visible);
+    };
+    void resolveTarget();
+    return () => {
+      cancelled = true;
+      document
+        .querySelector<HTMLElement>("[data-tour-target]")
+        ?.removeAttribute("data-tour-target");
+    };
+  }, [navigate, targetRoute, targetSelector]);
+
+  const last = step === steps.length - 1;
+  const resolvedTarget = targetSelector ? targetElement : null;
+  const showDialog = resolvedTarget === null;
+
+  const goTo = (next: number) => {
+    // A stale anchor would carry the next target step's card until its lookup settles.
+    if (!steps[next]?.target) setTargetElement(null);
+    setStep(next);
+  };
+  const advance = () => goTo(step + 1);
+  const goBack = () => goTo(step - 1);
+
+  const targetCard = resolvedTarget ? (
+    // Only Esc ends the tour here; a stray click on the page should not.
+    <Popover
       open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
+      onOpenChange={(open, { reason }) => !open && reason === "escape-key" && onClose()}
     >
-      <WizardPopup size="wide" initialFocus={nextRef}>
-        <WizardHeader
-          title="Welcome guide"
-          identity={<span className="text-2xl font-medium tracking-tight">OminaX</span>}
-        >
-          <WizardSteps
-            label="Guide progress"
-            steps={steps.map((item) => item.label)}
-            currentStep={step}
-            onStepChange={setStep}
-          />
-        </WizardHeader>
-        <WizardPanel>
-          <div className="space-y-4">
-            {steps[step]?.illustration}
-            {/* Every step's text shares one cell, so the panel keeps the tallest step's height at
-                any width. Focus opens on Next, so the description is how a screen reader hears
-                the first step, and the live region how it hears the rest. */}
-            <DialogDescription render={<div />} aria-live="polite" className="grid">
-              {steps.map((item, index) => (
-                <div
-                  key={item.label}
-                  className={cn(
-                    "col-start-1 row-start-1 space-y-1.5",
-                    index !== step && "invisible",
-                  )}
-                >
-                  <h3 className="text-lg font-semibold tracking-tight text-foreground">
-                    {item.title}
-                  </h3>
-                  <p className="text-sm leading-relaxed text-muted-foreground">{item.body}</p>
-                  {item.footnote ? (
-                    <p className="pt-1 text-xs text-muted-foreground">{item.footnote}</p>
-                  ) : null}
-                </div>
-              ))}
-            </DialogDescription>
+      <PopoverPopup
+        anchor={resolvedTarget}
+        side="right"
+        width="md"
+        initialFocus={nextRef}
+        padding="none"
+        aria-label={steps[step]?.title}
+        data-tour-card
+      >
+        <div className="space-y-3 p-4">
+          <p className="text-xs font-medium text-muted-foreground">
+            {step + 1} of {steps.length}
+          </p>
+          <div className="space-y-1.5">
+            <h3 className="text-lg font-semibold tracking-tight text-foreground">
+              {steps[step]?.title}
+            </h3>
+            <p className="text-sm leading-relaxed text-muted-foreground">{steps[step]?.body}</p>
+            {steps[step]?.footnote ? (
+              <p className="pt-1 text-xs text-muted-foreground">{steps[step]?.footnote}</p>
+            ) : null}
           </div>
-        </WizardPanel>
-        {/* Hidden rather than removed at either end, so the footer keeps its size. */}
-        <WizardFooter
-          leading={
+          <div className="flex items-center justify-between gap-2 pt-1">
             <Button variant="ghost" className={last ? "invisible" : undefined} onClick={onClose}>
               Skip
             </Button>
-          }
-        >
-          <Button
-            variant="outline"
-            className={step === 0 ? "invisible" : undefined}
-            onClick={() => {
-              // Back hides on the first step and would drop keyboard focus onto the popup.
-              if (step === 1) nextRef.current?.focus();
-              setStep(step - 1);
-            }}
-          >
-            Back
-          </Button>
-          <Button ref={nextRef} onClick={last ? onClose : () => setStep(step + 1)}>
-            {last ? "Start learning" : "Next"}
-          </Button>
-        </WizardFooter>
-      </WizardPopup>
-    </Dialog>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className={step === 0 ? "invisible" : undefined}
+                onClick={goBack}
+              >
+                Back
+              </Button>
+              <Button ref={nextRef} onClick={last ? onClose : advance}>
+                {last ? "Start learning" : "Next"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </PopoverPopup>
+    </Popover>
+  ) : null;
+
+  return (
+    <>
+      {targetCard}
+      {showDialog ? (
+        <Dialog key={routeChanges} open onOpenChange={(open) => !open && onClose()}>
+          <WizardPopup size="wide" initialFocus={nextRef} data-tour-card>
+            <WizardHeader
+              title="Welcome guide"
+              identity={<span className="text-2xl font-medium tracking-tight">OminaX</span>}
+            >
+              <WizardSteps
+                label="Guide progress"
+                steps={steps.map((item) => item.label)}
+                currentStep={step}
+                onStepChange={goTo}
+                currentLabelOnly
+              />
+            </WizardHeader>
+            <WizardPanel>
+              <div className="space-y-4">
+                {steps[step]?.illustration}
+                {/* Every step's text shares one cell, so the panel keeps the tallest step's height at
+                    any width. Focus opens on Next, so the description is how a screen reader hears
+                    the first step, and the live region how it hears the rest. */}
+                <DialogDescription render={<div />} aria-live="polite" className="grid">
+                  {steps.map((item, index) => (
+                    <div
+                      key={item.label}
+                      className={cn(
+                        "col-start-1 row-start-1 space-y-1.5",
+                        index !== step && "invisible",
+                      )}
+                    >
+                      <h3 className="text-lg font-semibold tracking-tight text-foreground">
+                        {item.title}
+                      </h3>
+                      <p className="text-sm leading-relaxed text-muted-foreground">{item.body}</p>
+                      {item.footnote ? (
+                        <p className="pt-1 text-xs text-muted-foreground">{item.footnote}</p>
+                      ) : null}
+                    </div>
+                  ))}
+                </DialogDescription>
+              </div>
+            </WizardPanel>
+            <WizardFooter
+              leading={
+                <Button
+                  variant="ghost"
+                  className={last ? "invisible" : undefined}
+                  onClick={onClose}
+                >
+                  Skip
+                </Button>
+              }
+            >
+              <Button
+                variant="outline"
+                className={step === 0 ? "invisible" : undefined}
+                onClick={() => {
+                  if (step === 1) nextRef.current?.focus();
+                  goBack();
+                }}
+              >
+                Back
+              </Button>
+              <Button ref={nextRef} onClick={last ? onClose : advance}>
+                {last ? "Start learning" : "Next"}
+              </Button>
+            </WizardFooter>
+          </WizardPopup>
+        </Dialog>
+      ) : null}
+    </>
   );
 }
 
@@ -167,6 +274,12 @@ function guideSteps(askShortcut: string | null, mapShortcut: string | null) {
       illustration: <LessonMock />,
       title: "Welcome to OminaX",
       body: "Every chat is a lesson. When a reply uses something you don't know yet, you can dig into it on the side while the lesson stays on track.",
+    },
+    {
+      label: "New lesson",
+      target: { selector: '[aria-label="New lesson"]' },
+      title: "Start a new lesson",
+      body: "Start a lesson here. Say what you want to learn, how deep, and why; the lesson takes it from there.",
     },
     {
       label: "Highlight",
@@ -203,7 +316,8 @@ function guideSteps(askShortcut: string | null, mapShortcut: string | null) {
       title: "See it all on the Map",
       body: (
         <>
-          The side-chat header's map toggle shows every side chat in the lesson.
+          The side-chat header's map toggle shows every side chat in the lesson, grouped under its
+          sections (Lesson 1, Lesson 2…).
           {mapShortcut === null ? null : (
             <>
               {" "}
@@ -216,7 +330,37 @@ function guideSteps(askShortcut: string | null, mapShortcut: string | null) {
             : null}
         </>
       ),
-      footnote: "You can open this guide again from Settings.",
+    },
+    {
+      label: "Practice",
+      title: "Quiz cards and practice",
+      body: "Lessons check in with quiz cards: pick an answer, say how sure you are, and the lesson adjusts. Ask for practice when you want problems to work through.",
+    },
+    {
+      label: "Courses",
+      target: { selector: "#courses", route: "/settings/threads" },
+      title: "Build a course",
+      body: "Add a course and lessons follow it.",
+    },
+    {
+      label: "What you know",
+      target: { selector: "#knowledge-map", route: "/settings/threads" },
+      title: "See what you know",
+      body: "See what the lessons have learned you know, which you can review.",
+    },
+    {
+      label: "Sync",
+      target: { selector: "#chat-sync", route: "/settings/threads" },
+      title: "Sync from T3 Code",
+      body: "Have chats in T3 Code on this computer? Sync from T3 Code, in Settings → Threads, brings them over.",
+    },
+    {
+      label: "Updates",
+      target: { selector: "#about", route: "/settings/about" },
+      title: "Keep OminaX up to date",
+      body: "OminaX updates itself; the sidebar shows a pill when an update is ready.",
+      footnote:
+        "Open this tour again from Settings → About, Help → Welcome Guide, or the command palette.",
     },
   ];
 }

@@ -28,7 +28,7 @@ it.each([1])("blocks legacy launcher protocol %i with exact recovery steps", (la
   expect(reason).toMatch(new RegExp(`\\b${launcherProtocol}\\b`));
   expect(reason).toMatch(new RegExp(`\\b${SERVICE_LAUNCHER_PROTOCOL}\\b`));
   expect(reason).toContain("install.sh | T3LEARN_VERSION=9.8.7 sh");
-  expect(reason).toContain("`t3-learn service install`");
+  expect(reason).toContain("`ominax service install`");
 });
 
 it.layer(NodeServices.layer)("service preflight database", (it) => {

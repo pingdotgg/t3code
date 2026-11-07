@@ -14,6 +14,7 @@ import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { T3_LEARN_APP_ID } from "@t3tools/shared/t3LearnIdentity";
 
 const defaultEnvironmentInput = {
   dirname: "/repo/apps/desktop/dist-electron",
@@ -21,9 +22,9 @@ const defaultEnvironmentInput = {
   platform: "darwin",
   processArch: "arm64",
   appVersion: "1.2.3",
-  appPath: "/Applications/T3 Learn.app/Contents/Resources/app.asar",
+  appPath: "/Applications/OminaX.app/Contents/Resources/app.asar",
   isPackaged: true,
-  resourcesPath: "/Applications/T3 Learn.app/Contents/Resources",
+  resourcesPath: "/Applications/OminaX.app/Contents/Resources",
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
@@ -33,6 +34,8 @@ type TestEnvironmentInput = Partial<DesktopEnvironment.MakeDesktopEnvironmentInp
 
 interface ElectronAppCalls {
   readonly setAboutPanelOptions: Array<Electron.AboutPanelOptionsOptions>;
+  readonly setAppUserModelId: string[];
+  readonly setAsDefaultProtocolClient: string[];
   readonly setDockIcon: string[];
   readonly setName: string[];
 }
@@ -40,7 +43,7 @@ interface ElectronAppCalls {
 const layerElectronApp = (calls: ElectronAppCalls) =>
   Layer.succeed(ElectronApp.ElectronApp, {
     metadata: Effect.die("unexpected metadata read"),
-    name: Effect.succeed("T3 Learn"),
+    name: Effect.succeed("OminaX"),
     systemLocale: Effect.succeed("en-US"),
     whenReady: Effect.void,
     requestSingleInstanceLock: Effect.succeed(true),
@@ -56,9 +59,16 @@ const layerElectronApp = (calls: ElectronAppCalls) =>
       Effect.sync(() => {
         calls.setAboutPanelOptions.push(options);
       }),
-    setAppUserModelId: () => Effect.void,
+    setAppUserModelId: (id) =>
+      Effect.sync(() => {
+        calls.setAppUserModelId.push(id);
+      }),
     getAppMetrics: Effect.succeed([]),
-    setAsDefaultProtocolClient: () => Effect.succeed(true),
+    setAsDefaultProtocolClient: (protocol) =>
+      Effect.sync(() => {
+        calls.setAsDefaultProtocolClient.push(protocol);
+        return true;
+      }),
     setDesktopName: () => Effect.void,
     setDockIcon: (iconPath) =>
       Effect.sync(() => {
@@ -119,6 +129,8 @@ const withIdentity = <A, E, R>(
 ) => {
   const calls: ElectronAppCalls = input.calls ?? {
     setAboutPanelOptions: [],
+    setAppUserModelId: [],
+    setAsDefaultProtocolClient: [],
     setDockIcon: [],
     setName: [],
   };
@@ -155,12 +167,12 @@ describe("DesktopAppIdentity", () => {
     {
       platform: "darwin",
       environment: {},
-      userDataPath: "/Users/alice/Library/Application Support/t3learn",
+      userDataPath: "/Users/alice/Library/Application Support/ominax",
     },
     {
       platform: "win32",
       environment: { platform: "win32", env: { APPDATA: "/Users/alice/AppData/Roaming" } },
-      userDataPath: "/Users/alice/AppData/Roaming/t3learn",
+      userDataPath: "/Users/alice/AppData/Roaming/ominax",
     },
   ] as const)(
     "uses its own $platform profile without reading T3 Code's profiles",
@@ -206,6 +218,8 @@ describe("DesktopAppIdentity", () => {
   ])("uses a valid native User-Agent product name for $stage", ({ stage, environment }) => {
     const calls: ElectronAppCalls = {
       setAboutPanelOptions: [],
+      setAppUserModelId: [],
+      setAsDefaultProtocolClient: [],
       setDockIcon: [],
       setName: [],
     };
@@ -217,11 +231,34 @@ describe("DesktopAppIdentity", () => {
 
         const runtimeName = calls.setName[0];
         assert.isDefined(runtimeName);
-        assert.equal(runtimeName, `T3 Learn ${stage}`);
+        assert.equal(runtimeName, `OminaX ${stage}`);
         assert.match(runtimeName.replaceAll(" ", ""), /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/);
         assert.equal(calls.setAboutPanelOptions[0]?.applicationName, `OminaX (${stage})`);
       }),
       { calls, environment },
+    );
+  });
+
+  it.effect("uses the OminaX app-user-model identity on Windows", () => {
+    const calls: ElectronAppCalls = {
+      setAboutPanelOptions: [],
+      setAppUserModelId: [],
+      setAsDefaultProtocolClient: [],
+      setDockIcon: [],
+      setName: [],
+    };
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        yield* identity.configure;
+
+        assert.deepEqual(calls.setAppUserModelId, [T3_LEARN_APP_ID]);
+        assert.deepEqual(calls.setAsDefaultProtocolClient, ["ominax", "t3learn"]);
+        assert.equal(calls.setName[0], "OminaX Beta");
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "OminaX (Beta)");
+      }),
+      { calls, environment: { platform: "win32" } },
     );
   });
 });

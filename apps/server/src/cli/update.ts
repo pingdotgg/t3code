@@ -325,7 +325,12 @@ const belongsToBootService = Effect.fn("cli.update.belongs_to_boot_service")(fun
   const runner = yield* ProcessRunner.ProcessRunner;
   if (platform === "linux") {
     const cgroup = yield* fs.readFileString(`/proc/${pid}/cgroup`).pipe(Effect.option);
-    return Option.isSome(cgroup) && cgroup.value.includes(`/${BootService.BOOT_SERVICE_UNIT_FILE}`);
+    return (
+      Option.isSome(cgroup) &&
+      [BootService.BOOT_SERVICE_UNIT_FILE, BootService.LEGACY_BOOT_SERVICE_UNIT_FILE].some((unit) =>
+        cgroup.value.includes(`/${unit}`),
+      )
+    );
   }
   if (platform === "darwin") {
     const parent = yield* runner

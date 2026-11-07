@@ -262,6 +262,7 @@ describe("DesktopLifecycle", () => {
           "/opt/T3 Code/t3code",
           "--no-sandbox",
           "T3LEARN://pair?token=spent",
+          "ominax://new?prompt=hello",
           "t3learn://new?prompt=hello",
           "t3code://new?prompt=hello",
         ]),

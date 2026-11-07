@@ -1,9 +1,9 @@
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 
-const FALLBACK_TRIAGE_COMMAND = "t3-learn triage";
-// Runs before the app bundle loads, so these stay literal instead of importing T3 Learn's identity.
-const DOWNLOAD_URL = "https://github.com/aabdel0181/t3-learn/releases/latest";
-const ISSUE_URL = "https://github.com/aabdel0181/t3-learn/issues/new";
+const FALLBACK_TRIAGE_COMMAND = "ominax triage";
+// Runs before the app bundle loads, so these stay literal instead of importing OminaX's identity.
+const DOWNLOAD_URL = "https://github.com/aabdel0181/ominax/releases/latest";
+const ISSUE_URL = "https://github.com/aabdel0181/ominax/issues/new";
 const LAST_FAILURE_KEY = "t3code:boot-failed-at";
 const REPEAT_FAILURE_MS = 5 * 60_000;
 const MAX_CAUSES = 3;
@@ -24,7 +24,7 @@ function launcherCommand(launcherPath: string) {
     : `'${launcherPath.replaceAll("'", `'"'"'`)}'`;
 }
 
-/** Desktop can run its bundled launcher without Node; everything else assumes t3-learn is on PATH. */
+/** Desktop can run its bundled launcher without Node; everything else assumes ominax is on PATH. */
 export async function resolveTriageCommand(bridge: DesktopBridge | undefined) {
   try {
     const state = await bridge?.cliCommand.getState();

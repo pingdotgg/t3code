@@ -25,6 +25,7 @@ import { DevReplayHost } from "../components/DevReplayHost";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
 import { WelcomeGuideHost } from "../components/onboarding/WelcomeGuideDialog";
+import { WhatsNewHost } from "../components/onboarding/WhatsNewDialog";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
@@ -207,6 +208,7 @@ function RootRouteBranch() {
         <RelayClientInstallDialog />
         <ConnectOnboardingDialog />
         <WelcomeGuideHost hostedStatic={authGateState.status === "hosted-static"} />
+        <WhatsNewHost hostedStatic={authGateState.status === "hosted-static"} />
         <SshPasswordPromptDialog />
         <SnapShotCoordinator />
         <ReopenClosedViewShortcut />

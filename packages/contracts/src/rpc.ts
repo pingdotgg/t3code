@@ -210,6 +210,7 @@ import {
   PullRequestLinkedThreadsResult,
   PullRequestSummary,
   PullRequestReviewerCandidateList,
+  PullRequestReviewerCandidatesInput,
   PullRequestReviewerRequestInput,
   PullRequestLabelCandidateList,
   PullRequestLabelChangeInput,
@@ -526,6 +527,7 @@ export const WS_METHODS = {
   serverGetChatSyncStatus: "server.getChatSyncStatus",
   knowledgeList: "knowledge.list",
   knowledgeRemove: "knowledge.remove",
+  learnFeatureUsed: "learn.featureUsed",
   coursesList: "courses.list",
   coursesRemove: "courses.remove",
   visualsClear: "visuals.clear",
@@ -677,6 +679,8 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
     workspaceSnapshotsOnDemand: Schema.optional(Schema.Boolean),
     /** As on `subscribeServerConfig`: add /usage-limits to the replied snapshot. */
     usageLimitsCommand: Schema.optional(Schema.Boolean),
+    /** As on `subscribeServerConfig`: a failed cwd scan replies with the machine catalog as a pending snapshot. */
+    providerCatalogsOnDemand: Schema.optional(Schema.Boolean),
   }),
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([EnvironmentAuthorizationError, ProviderSetupError]),
@@ -819,7 +823,7 @@ const WsServerStartChatSyncRpc = Rpc.make(WS_METHODS.serverStartChatSync, {
 const WsLessonCreateRpc = Rpc.make(WS_METHODS.lessonCreate, {
   payload: Schema.Struct({
     commandId: CommandId,
-    projectId: ProjectId,
+    projectId: Schema.optionalKey(ProjectId),
     lesson: OrchestrationV2Lesson,
     modelSelection: ModelSelection,
     runtimeMode: RuntimeMode,
@@ -842,6 +846,24 @@ const WsKnowledgeRemoveRpc = Rpc.make(WS_METHODS.knowledgeRemove, {
   payload: KnowledgeMapRemoveInput,
   success: KnowledgeMapEntries,
   error: Schema.Union([KnowledgeMapError, EnvironmentAuthorizationError]),
+});
+// Client-only feature use for analytics; closed enums only, so no text can reach it.
+const WsLearnFeatureUsedRpc = Rpc.make(WS_METHODS.learnFeatureUsed, {
+  payload: Schema.Union([
+    Schema.Struct({
+      feature: Schema.Literal("whats_new.action"),
+      variant: Schema.Literals([
+        "new-lesson",
+        "side-chats",
+        "what-you-know",
+        "quiz-cards",
+        "courses",
+        "chat-sync",
+      ]),
+    }),
+    Schema.Struct({ feature: Schema.Literal("knowledge_map.view") }),
+  ]),
+  error: EnvironmentAuthorizationError,
 });
 const WsCoursesListRpc = Rpc.make(WS_METHODS.coursesList, {
   payload: Schema.Struct({}),
@@ -1188,7 +1210,8 @@ const WsPullRequestsSetFilesViewedRpc = Rpc.make(WS_METHODS.pullRequestsSetFiles
 
 const WsPullRequestsRunActionRpc = Rpc.make(WS_METHODS.pullRequestsRunAction, {
   payload: PullRequestActionInput,
-  success: Schema.Void,
+  // Undefined unless asked for with replyWithSummary, or when the host's reply lacked it.
+  success: Schema.UndefinedOr(PullRequestSummary),
   error: PullRequestRpcError,
 });
 
@@ -1255,7 +1278,7 @@ const WsPullRequestsSubscribeRefreshesRpc = Rpc.make(WS_METHODS.pullRequestsSubs
 
 // Fetch reviewer candidates only when the menu opens to avoid unused host requests.
 const WsPullRequestsReviewerCandidatesRpc = Rpc.make(WS_METHODS.pullRequestsReviewerCandidates, {
-  payload: PullRequestRef,
+  payload: PullRequestReviewerCandidatesInput,
   success: PullRequestReviewerCandidateList,
   error: PullRequestRpcError,
 });
@@ -1963,6 +1986,8 @@ export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerCon
     usageLimitsCommand: Schema.optional(Schema.Boolean),
     /** Omit per-cwd provider snapshots; the client fetches its cwd through `server.refreshProviders`. */
     workspaceSnapshotsOnDemand: Schema.optional(Schema.Boolean),
+    /** With on-demand snapshots, also omit machine slash commands and skills a cwd snapshot replaces. */
+    providerCatalogsOnDemand: Schema.optional(Schema.Boolean),
   }),
   success: ServerConfigStreamEvent,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
@@ -2097,6 +2122,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetChatSyncStatusRpc,
   WsKnowledgeListRpc,
   WsKnowledgeRemoveRpc,
+  WsLearnFeatureUsedRpc,
   WsCoursesListRpc,
   WsCoursesRemoveRpc,
   WsVisualsClearRpc,

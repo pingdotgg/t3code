@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.aabdel0181.ominax</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>OminaX</name>
+  <summary>Learn with coding agents, one side chat at a time</summary>
+  <developer id="io.github.aabdel0181">
+    <name>aabdel0181</name>
+  </developer>
+  <description>
+    <p>
+      OminaX is a fork of T3 Code for learning with AI. Highlight anything in a
+      reply and ask about it in a side chat that opens next to the lesson.
+    </p>
+    <p>
+      It installs next to T3 Code and keeps its own projects and settings.
+    </p>
+  </description>
+  <launchable type="desktop-id">ominax.desktop</launchable>
+  <icon type="stock">ominax</icon>
+  <replaces>
+    <id>io.github.aabdel0181.t3learn</id>
+  </replaces>
+  <provides>
+    <binary>ominax</binary>
+  </provides>
+  <categories>
+    <category>Development</category>
+  </categories>
+  <url type="homepage">https://github.com/aabdel0181/ominax</url>
+  <url type="bugtracker">https://github.com/aabdel0181/ominax/issues</url>
+  <url type="vcs-browser">https://github.com/aabdel0181/ominax</url>
+</component>

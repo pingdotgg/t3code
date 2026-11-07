@@ -14,7 +14,13 @@ import {
   type ThreadQueueWorkflowState,
 } from "./threadWorkflows.ts";
 import { deriveThreadTurnSubagents, type ThreadTurnSubagents } from "./threadSubagents.ts";
-import { presentRunStop, type RunStopPresentation } from "./threadExecution.ts";
+import {
+  deriveUsageLimitNoticeRows,
+  presentRunStop,
+  withoutUsageLimitNoticeRows,
+  type RunStopPresentation,
+  type UsageLimitNoticeRows,
+} from "./threadExecution.ts";
 import {
   deriveThreadCheckpointSummaries,
   type ThreadCheckpointSummary,
@@ -298,11 +304,37 @@ export function createEnvironmentThreadDetailAtoms<E>(
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-quiet-thread:${key}`));
   });
 
+  // Read from the structure so streamed text does not rescan runs and turn items.
+  const usageLimitNoticeRowsAtomFamily = Atom.family((key: string) => {
+    let previous: EnvironmentThreadStructure | null = null;
+    let value: UsageLimitNoticeRows | null = null;
+    return Atom.make((get) => {
+      const thread = get(quietThreadAtomFamily(key));
+      if (thread !== previous) {
+        previous = thread;
+        value = thread === null ? null : deriveUsageLimitNoticeRows(thread.projection);
+      }
+      return value;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-usage-limit-notice:${key}`));
+  });
+
+  // Presentation only: the projection keeps every row for other readers.
   const visibleTurnItemsAtomFamily = Atom.family((key: string) => {
     const projectQuestionHistory = createQuestionHistoryProjector();
+    let previousRows: OrchestrationV2ThreadProjection["visibleTurnItems"] | null = null;
+    let previousNotice: UsageLimitNoticeRows | null = null;
+    let previous = EMPTY_VISIBLE_TURN_ITEMS;
     return Atom.make((get): OrchestrationV2ThreadProjection["visibleTurnItems"] => {
       const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
-      return projection === null ? EMPTY_VISIBLE_TURN_ITEMS : projectQuestionHistory(projection);
+      if (projection === null) return EMPTY_VISIBLE_TURN_ITEMS;
+      const rows = projectQuestionHistory(projection);
+      const notice = get(usageLimitNoticeRowsAtomFamily(key));
+      if (rows !== previousRows || notice !== previousNotice) {
+        previousRows = rows;
+        previousNotice = notice;
+        previous = withoutUsageLimitNoticeRows(rows, notice);
+      }
+      return previous;
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-visible-turn-items:${key}`));
   });
 

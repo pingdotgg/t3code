@@ -2,7 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   type OrchestrationV2SideChatOpening,
   RunId,
-  SIDE_CHAT_WAIT_CAP_MS,
+  SIDE_CHAT_OPENING_WAIT_CAP_MS,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -18,10 +18,10 @@ import {
 import { buildSideChatLateSummaryText, buildSideChatOpeningSummaryText } from "./sideChatText.ts";
 
 describe("awaitWithinSideChatWaitCap", () => {
-  it.effect("stops waiting for a side-chat opening at SIDE_CHAT_WAIT_CAP_MS", () =>
+  it.effect("stops waiting for a side-chat opening at SIDE_CHAT_OPENING_WAIT_CAP_MS", () =>
     Effect.gen(function* () {
       const waiter = yield* awaitWithinSideChatWaitCap(Effect.never).pipe(Effect.forkChild);
-      yield* TestClock.adjust(SIDE_CHAT_WAIT_CAP_MS - 1);
+      yield* TestClock.adjust(SIDE_CHAT_OPENING_WAIT_CAP_MS - 1);
       assert.isUndefined(waiter.pollUnsafe());
 
       yield* TestClock.adjust(1);

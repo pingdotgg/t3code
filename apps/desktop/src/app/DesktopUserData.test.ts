@@ -29,7 +29,7 @@ it.effect.each(["win32", "darwin", "linux"] as const)(
         platform,
       });
 
-      assert.equal(userDataPath, path.join(directory, "t3learn"));
+      assert.equal(userDataPath, path.join(directory, "ominax"));
       assert.isFalse(yield* fs.exists(userDataPath));
       assert.deepEqual((yield* fs.readDirectory(directory)).toSorted(), t3CodeProfiles);
       for (const name of t3CodeProfiles) {

@@ -1,7 +1,7 @@
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { providerAuthReturnUrl } from "./providerAuthReturnUrl.ts";
-import { T3_LEARN_DESKTOP_SCHEME } from "./t3LearnIdentity.ts";
+import { T3_LEARN_LINK_SCHEME, T3_LEARN_LINK_SCHEMES } from "./t3LearnIdentity.ts";
 
 export const CodexAuthHandoff = Schema.Struct({
   authorizationUrl: Schema.String.check(Schema.isMaxLength(16_384)),
@@ -88,7 +88,7 @@ export function codexCallbackUrl(value: string, redirectUri: string, state: stri
 }
 
 export function codexAuthHandoffUrl(input: CodexAuthHandoff, development = false) {
-  const url = new URL(`${development ? "t3code-dev" : T3_LEARN_DESKTOP_SCHEME}://auth/codex`);
+  const url = new URL(`${development ? "t3code-dev" : T3_LEARN_LINK_SCHEME}://auth/codex`);
   url.searchParams.set("request", encodeHandoff(input));
   return url.toString();
 }
@@ -96,9 +96,12 @@ export function codexAuthHandoffUrl(input: CodexAuthHandoff, development = false
 export function readCodexAuthHandoff(value: string, development: boolean) {
   try {
     const url = new URL(value);
+    const isProductionScheme = T3_LEARN_LINK_SCHEMES.some(
+      (scheme) => url.protocol === `${scheme}:`,
+    );
     if (
       value.length > 32_768 ||
-      url.protocol !== (development ? "t3code-dev:" : `${T3_LEARN_DESKTOP_SCHEME}:`) ||
+      (development ? url.protocol !== "t3code-dev:" : !isProductionScheme) ||
       url.host !== "auth" ||
       url.pathname !== "/codex" ||
       url.username ||

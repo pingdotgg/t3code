@@ -6,11 +6,13 @@ import {
   type MessageId,
   type OrchestrationV2SideChatAnchor,
   type OrchestrationV2SideChatOpening,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import {
   splitsSurrogatePair,
   truncateGraphemes,
 } from "@t3tools/provider-core/server/textGenerationUtils";
+import { summarizeTurnItems } from "../ContextHandoffService.ts";
 
 const ELLIPSIS = "…";
 const MARKDOWN_MARKER = /[*_`]/;
@@ -28,6 +30,97 @@ export function deriveSideChatLabel(excerpt: string): string {
     return collapsed;
   }
   return `${truncateGraphemes(collapsed, SIDE_CHAT_LABEL_MAX_CHARS - ELLIPSIS.length).trimEnd()}${ELLIPSIS}`;
+}
+
+const LESSON_SECTION_HEADING = /^#{1,3}\s+Lesson\s+\d+\b/i;
+const CODE_SECTION_HEADING = /^#{1,3}\s+[A-Z]{1,3}\d+[A-Za-z]?:/;
+// Only a line that is all one bold span: quiz feedback and D items carry text after the bold.
+const BOLD_SECTION_TITLE = /^\*\*(?:[Ll]esson\s+\d+\b|[A-Z]{1,3}\d+[A-Za-z]?:)[^*]*\*\*\s*$/;
+
+/**
+ * The last section heading at or above the highlight, or undefined when the anchor message is
+ * missing. An embed highlight (`embedTitle`) covers its whole reply.
+ */
+export function lessonSectionAt(
+  messages: ReadonlyArray<{ readonly id: string; readonly role: string; readonly text: string }>,
+  anchor: {
+    readonly messageId: string;
+    readonly start: number;
+    readonly embedTitle?: string | undefined;
+  },
+): string | undefined {
+  let section: string | undefined;
+  for (const message of messages) {
+    const isAnchor = message.id === anchor.messageId;
+    if (message.role === "assistant") {
+      // A heading counts when its line starts before the highlight, even if the highlight is inside it.
+      const lineEnd = message.text.indexOf("\n", anchor.start);
+      const text =
+        isAnchor && anchor.embedTitle === undefined && lineEnd !== -1
+          ? message.text.slice(0, lineEnd)
+          : message.text;
+      for (const line of text.split("\n")) {
+        if (
+          LESSON_SECTION_HEADING.test(line) ||
+          CODE_SECTION_HEADING.test(line) ||
+          BOLD_SECTION_TITLE.test(line)
+        ) {
+          section = truncateGraphemes(
+            line.replace(/^#{1,3}|\*\*/g, "").trim(),
+            SIDE_CHAT_LABEL_MAX_CHARS,
+          );
+        }
+      }
+    }
+    if (isAnchor) return section;
+  }
+  return undefined;
+}
+
+export interface SideChatSectionBackfillInput {
+  readonly lessons: ReadonlyMap<
+    string,
+    ReadonlyArray<{ readonly id: string; readonly role: string; readonly text: string }>
+  >;
+  readonly sideChats: ReadonlyArray<{
+    readonly threadId: string;
+    readonly createdAt: string;
+    readonly lessonThreadId: string;
+    readonly anchor: {
+      readonly threadId: string;
+      readonly messageId: string;
+      readonly start: number;
+      readonly embedTitle?: string | undefined;
+    };
+    readonly section: string | null | undefined;
+  }>;
+}
+
+/** Resolves missing section fields in creation order so nested chats inherit their parent. */
+export function backfillSideChatSections(
+  input: SideChatSectionBackfillInput,
+): ReadonlyArray<{ readonly threadId: string; readonly section: string | null }> {
+  const resolved = new Map<string, string | null>();
+  const sideChats = [...input.sideChats].toSorted(
+    (left, right) =>
+      left.createdAt.localeCompare(right.createdAt) || left.threadId.localeCompare(right.threadId),
+  );
+  for (const sideChat of sideChats) {
+    let section = sideChat.section;
+    if (section === undefined) {
+      section = resolved.get(sideChat.anchor.threadId);
+      if (section === undefined) {
+        section =
+          lessonSectionAt(input.lessons.get(sideChat.lessonThreadId) ?? [], sideChat.anchor) ??
+          null;
+      }
+    }
+    resolved.set(sideChat.threadId, section ?? null);
+  }
+  return sideChats.map((sideChat) => ({
+    threadId: sideChat.threadId,
+    section: resolved.get(sideChat.threadId) ?? null,
+  }));
 }
 
 interface PlainText {
@@ -336,6 +429,8 @@ export function readySideChatSummary(opening: OrchestrationV2SideChatOpening): s
 }
 
 const SUMMARY_HEADER = "Summary of the lesson so far:";
+const BUSY_LESSON_DIGEST_MAX_CHARS = 4_000;
+const BUSY_LESSON_HEADER = "The lesson is still answering. So far:";
 
 /** A lesson summary that was not ready for the opening context, sent on its own later. */
 export function buildSideChatLateSummaryText(summary: string): string {
@@ -358,10 +453,18 @@ export function buildSideChatOpeningSummaryText(input: {
   readonly embedTitle?: string | undefined;
   readonly lessonTopic: string | null;
   readonly parentOpeningText: string | null;
+  readonly runningTurnItems?: ReadonlyArray<OrchestrationV2TurnItem> | null;
   readonly sideChatInstructions?: string;
 }): string {
-  const { opening, excerpt, excerptContext, lessonTopic, parentOpeningText, sideChatInstructions } =
-    input;
+  const {
+    opening,
+    excerpt,
+    excerptContext,
+    lessonTopic,
+    parentOpeningText,
+    runningTurnItems,
+    sideChatInstructions,
+  } = input;
   const sections = [sideChatOpeningFraming(sideChatInstructions)];
   if (parentOpeningText !== null) {
     sections.push(`Context from the side chat this one was opened from:\n${parentOpeningText}`);
@@ -370,6 +473,16 @@ export function buildSideChatOpeningSummaryText(input: {
   sections.push(
     summary === null ? lessonSummaryUnavailable(lessonTopic) : `${SUMMARY_HEADER}\n${summary}`,
   );
+  if (runningTurnItems !== undefined && runningTurnItems !== null) {
+    const truncated = "- Earlier items truncated.";
+    const { lines, omitted } = summarizeTurnItems(
+      runningTurnItems,
+      BUSY_LESSON_DIGEST_MAX_CHARS - [BUSY_LESSON_HEADER, truncated].join("\n").length,
+    );
+    if (lines.length > 0) {
+      sections.push([BUSY_LESSON_HEADER, ...(omitted ? [truncated] : []), ...lines].join("\n"));
+    }
+  }
   sections.push(
     referenceBlock(
       input.embedTitle === undefined

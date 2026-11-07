@@ -34,7 +34,7 @@ const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {
     isPackaged: true,
     isDevelopment: false,
     displayName: "OminaX (Alpha)",
-    linuxDesktopEntryName: "io.github.aabdel0181.T3Learn.desktop",
+    linuxDesktopEntryName: "io.github.aabdel0181.OminaX.desktop",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
     desktopLauncherPath: Option.none(),
     appImagePath: Option.some("/home/alice/Applications/T3-Learn.AppImage"),
@@ -169,7 +169,7 @@ describe("DesktopLinuxUrlHandler", () => {
     const entry = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
       displayName: "T3 Code (Nightly)",
       execTarget: '/home/al ice/Apps/T3 "100%" $HOME\\x.AppImage',
-      scheme: "t3code",
+      scheme: ["t3code"],
       iconPath: "/home/al ice/icons/T3\\x.png",
     });
 
@@ -197,13 +197,16 @@ describe("DesktopLinuxUrlHandler", () => {
         assert.equal(recorded.files.length, 1);
         assert.equal(
           recorded.files[0]?.path,
-          "/home/alice/.local/share/applications/io.github.aabdel0181.T3Learn.desktop",
+          "/home/alice/.local/share/applications/io.github.aabdel0181.OminaX.desktop",
         );
         assert.include(
           recorded.files[0]?.content,
           "Exec=/home/alice/Applications/T3-Learn.AppImage %U",
         );
-        assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/t3learn;");
+        assert.include(
+          recorded.files[0]?.content,
+          "MimeType=x-scheme-handler/ominax;x-scheme-handler/t3learn;",
+        );
         assert.deepEqual(recorded.commands, [
           {
             command: "update-desktop-database",
@@ -211,7 +214,12 @@ describe("DesktopLinuxUrlHandler", () => {
           },
           {
             command: "xdg-mime",
-            args: ["default", "io.github.aabdel0181.T3Learn.desktop", "x-scheme-handler/t3learn"],
+            args: [
+              "default",
+              "io.github.aabdel0181.OminaX.desktop",
+              "x-scheme-handler/ominax",
+              "x-scheme-handler/t3learn",
+            ],
           },
         ]);
       });
@@ -229,8 +237,8 @@ describe("DesktopLinuxUrlHandler", () => {
         DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
           displayName: "OminaX (Alpha)",
           execTarget: process.execPath,
-          scheme: "t3learn",
-          iconPath: "/home/alice/.local/share/icons/io.github.aabdel0181.T3Learn.desktop.png",
+          scheme: ["ominax", "t3learn"],
+          iconPath: "/home/alice/.local/share/icons/io.github.aabdel0181.OminaX.desktop.png",
         }),
       );
     });
@@ -256,8 +264,8 @@ describe("DesktopLinuxUrlHandler", () => {
         existingEntry: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
           displayName: "OminaX (Alpha)",
           execTarget: "/home/alice/Applications/T3-Learn.AppImage",
-          scheme: "t3learn",
-          iconPath: "/home/alice/.local/share/icons/io.github.aabdel0181.T3Learn.desktop.png",
+          scheme: ["ominax", "t3learn"],
+          iconPath: "/home/alice/.local/share/icons/io.github.aabdel0181.OminaX.desktop.png",
         }),
       });
 
@@ -270,7 +278,12 @@ describe("DesktopLinuxUrlHandler", () => {
         },
         {
           command: "xdg-mime",
-          args: ["default", "io.github.aabdel0181.T3Learn.desktop", "x-scheme-handler/t3learn"],
+          args: [
+            "default",
+            "io.github.aabdel0181.OminaX.desktop",
+            "x-scheme-handler/ominax",
+            "x-scheme-handler/t3learn",
+          ],
         },
       ]);
     });
@@ -278,14 +291,14 @@ describe("DesktopLinuxUrlHandler", () => {
 
   it.effect("installs a persistent icon even when the desktop entry is already current", () => {
     const recorded = emptyRecording();
-    const iconPath = "/home/alice/.local/share/icons/io.github.aabdel0181.T3Learn.desktop.png";
+    const iconPath = "/home/alice/.local/share/icons/io.github.aabdel0181.OminaX.desktop.png";
     return Effect.gen(function* () {
       yield* runRegister(recorded, {
         iconSource: "/tmp/.mount_T3/resources/icon.png",
         existingEntry: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
           displayName: "OminaX (Alpha)",
           execTarget: "/home/alice/Applications/T3-Learn.AppImage",
-          scheme: "t3learn",
+          scheme: ["ominax", "t3learn"],
           iconPath,
         }),
       });
@@ -354,7 +367,7 @@ describe("DesktopLinuxUrlHandler", () => {
           method: "writeFileString",
           description: "read-only filesystem",
           pathOrDescriptor:
-            "/home/alice/.local/share/applications/io.github.aabdel0181.T3Learn.desktop",
+            "/home/alice/.local/share/applications/io.github.aabdel0181.OminaX.desktop",
         }),
       });
 
@@ -426,7 +439,9 @@ describe("DesktopLinuxUrlHandler", () => {
           }
           assert.deepEqual(
             recorded.commands.map(({ command }) => command),
-            ["update-desktop-database", "xdg-mime"],
+            stalledHelper === "update-desktop-database"
+              ? ["update-desktop-database", "xdg-mime"]
+              : ["update-desktop-database", "xdg-mime"],
           );
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
@@ -569,17 +584,17 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
 
       yield* registerWithRealFileSystem(run);
       assert.deepEqual([...(yield* fileSystem.readDirectory(fixture.appsDir))].sort(), [
-        "io.github.aabdel0181.T3Learn.png",
-        "io.github.aabdel0181.t3learn.png",
+        "io.github.aabdel0181.OminaX.png",
+        "io.github.aabdel0181.ominax.png",
       ]);
-      for (const name of ["io.github.aabdel0181.t3learn", "io.github.aabdel0181.T3Learn"]) {
+      for (const name of ["io.github.aabdel0181.ominax", "io.github.aabdel0181.OminaX"]) {
         const target = path.join(fixture.appsDir, `${name}.png`);
         assert.deepEqual([...(yield* fileSystem.readFile(target))], [...icon]);
         yield* fileSystem.utimes(target, fixture.pastSeconds, fixture.pastSeconds);
       }
 
       yield* registerWithRealFileSystem(run);
-      for (const name of ["io.github.aabdel0181.t3learn", "io.github.aabdel0181.T3Learn"]) {
+      for (const name of ["io.github.aabdel0181.ominax", "io.github.aabdel0181.OminaX"]) {
         const info = yield* fileSystem.stat(path.join(fixture.appsDir, `${name}.png`));
         assert.equal(Option.getOrThrow(info.mtime).getTime(), fixture.pastSeconds * 1000);
       }
@@ -594,8 +609,8 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
       const path = yield* Path.Path;
       const fixture = yield* themeIconFixture(new Uint8Array([1, 2, 3]));
       yield* fixture.seedCache;
-      const lower = path.join(fixture.appsDir, "io.github.aabdel0181.t3learn.png");
-      const upper = path.join(fixture.appsDir, "io.github.aabdel0181.T3Learn.png");
+      const lower = path.join(fixture.appsDir, "io.github.aabdel0181.ominax.png");
+      const upper = path.join(fixture.appsDir, "io.github.aabdel0181.OminaX.png");
       yield* fileSystem.writeFile(lower, new Uint8Array([3, 2, 1]));
       yield* fileSystem.writeFile(upper, new Uint8Array([1, 2, 3]));
       for (const target of [lower, upper]) {
@@ -637,7 +652,7 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
       yield* registerWithRealFileSystem(run);
 
       assert.isTrue(
-        yield* fileSystem.exists(path.join(fixture.appsDir, "io.github.aabdel0181.T3Learn.png")),
+        yield* fileSystem.exists(path.join(fixture.appsDir, "io.github.aabdel0181.OminaX.png")),
       );
       assert.equal(iconCacheRuns(run), 1);
     }).pipe(Effect.scoped),

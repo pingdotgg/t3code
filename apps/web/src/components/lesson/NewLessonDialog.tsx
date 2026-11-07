@@ -6,6 +6,7 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
   type ScopedProjectRef,
+  supportsLessonProjects,
 } from "@t3tools/contracts";
 import { create } from "zustand";
 import { useId, useState } from "react";
@@ -73,6 +74,9 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
   const [topic, setTopic] = useState(request.source?.excerpt ?? "");
   const [depth, setDepth] = useState<"overview" | "working" | "deep">("working");
   const [purpose, setPurpose] = useState<"outcome" | "prerequisite">("outcome");
+  const [location, setLocation] = useState<"project" | "new">(
+    request.source === undefined ? "new" : "project",
+  );
   const [goal, setGoal] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +84,8 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
   const id = useId();
   const project = useProject(request.projectRef);
   const serverConfig = useServerConfigs().get(request.projectRef.environmentId);
+  const lessonProjectsSupported =
+    serverConfig !== undefined && supportsLessonProjects(serverConfig.environment);
   const providers = useEnvironmentProviders().get(request.projectRef.environmentId) ?? [];
   const projectSettings = resolveProjectSettings(
     serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
@@ -103,7 +109,9 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
       environmentId: request.projectRef.environmentId,
       input: {
         commandId,
-        projectId: request.projectRef.projectId,
+        ...(lessonProjectsSupported && location === "new"
+          ? {}
+          : { projectId: request.projectRef.projectId }),
         lesson: {
           topic: trimmed,
           depth,
@@ -150,6 +158,21 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
           </DialogHeader>
           <DialogPanel>
             <div className="flex flex-col gap-5">
+              {lessonProjectsSupported ? (
+                <ChoiceGroup
+                  label="Where?"
+                  value={location}
+                  options={[
+                    [
+                      "project",
+                      `In ${project?.title ?? "this project"}`,
+                      "Keep it with this project's chats",
+                    ],
+                    ["new", "A new, unrelated lesson", "Gets its own project"],
+                  ]}
+                  onChange={setLocation}
+                />
+              ) : null}
               <div className="flex flex-col gap-2">
                 <Label htmlFor={`${id}-topic`}>What do you want to learn?</Label>
                 <Textarea

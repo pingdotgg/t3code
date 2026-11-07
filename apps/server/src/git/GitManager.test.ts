@@ -291,6 +291,8 @@ function createTextGeneration(
       }),
     generateReviewGuide: () => Effect.succeed({ stops: [] }),
     generateSideChatText: () => Effect.succeed({ text: null }),
+    generateTranscriptionPostProcessing: () =>
+      Effect.succeed({ transcription: "processed transcript" }),
     ...overrides,
   };
 
@@ -341,6 +343,8 @@ function createTextGeneration(
       ),
     generateReviewGuide: (input) => implementation.generateReviewGuide(input),
     generateSideChatText: (input) => implementation.generateSideChatText(input),
+    generateTranscriptionPostProcessing: (input) =>
+      implementation.generateTranscriptionPostProcessing(input),
   };
 }
 
@@ -2569,6 +2573,62 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(status.refName).toBe("feature/from-main");
       expect(status.pr).toBeNull();
       expect(listed(providerCalls).length > 0).toBe(false);
+    }),
+  );
+
+  it.effect("branch PR lookup ignores the PR of a local branch the branch tracks", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "develop"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "develop"]);
+      // `--track` from a local branch, or `branch.autoSetupMerge=always`, records remote ".".
+      yield* runGit(repoDir, ["checkout", "-b", "feature/local-base", "--track", "develop"]);
+
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: {
+          prListByHeadSelector: {
+            develop: [
+              {
+                number: 61,
+                title: "Release develop",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/61",
+                baseRefName: "main",
+                headRefName: "develop",
+                state: "open",
+                updatedAt: "2026-05-01T10:00:00Z",
+              },
+            ],
+            // Someone else's branch of the same name; this one was never pushed.
+            "feature/local-base": [
+              {
+                number: 62,
+                title: "Another local base",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/62",
+                baseRefName: "main",
+                headRefName: "feature/local-base",
+                state: "open",
+                updatedAt: "2026-05-01T10:00:00Z",
+              },
+            ],
+          },
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+      expect(status.refName).toBe("feature/local-base");
+      expect(status.pr).toBeNull();
+      expect(listedSelectors(providerCalls).includes("develop")).toBe(false);
+
+      const branchPullRequest = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/local-base",
+      });
+      expect(branchPullRequest).toBeNull();
     }),
   );
 

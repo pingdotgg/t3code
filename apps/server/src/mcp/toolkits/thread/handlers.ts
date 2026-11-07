@@ -115,7 +115,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               input.clientRequestId === undefined
                 ? yield* newCommandId()
                 : yield* launchCommandId(scope.requestNamespace, input.clientRequestId),
-            projectId: projection.thread.projectId,
+            ...(input.newProject === true ? {} : { projectId: projection.thread.projectId }),
             lesson,
             modelSelection: projection.thread.modelSelection,
             runtimeMode,

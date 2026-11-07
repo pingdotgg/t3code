@@ -9,15 +9,21 @@ import {
 
 import {
   SIDE_CHAT_OPENING_FRAMING,
+  backfillSideChatSections,
   buildSideChatOpeningSummaryText,
   buildSideChatSummarizerInput,
   deriveSideChatLabel,
   extractExcerptContext,
+  lessonSectionAt,
 } from "./sideChatText.ts";
 
-const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
-
 // Long enough that two of these can never share one 1500-character context.
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+const lessonMessage = (id: string, role: "user" | "assistant", text: string) => ({
+  id: MessageId.make(`message:${id}`),
+  role,
+  text,
+});
 const filler = "lorem ".repeat(140).trim();
 
 it("collapses whitespace and caps the label", () => {
@@ -26,6 +32,128 @@ it("collapses whitespace and caps the label", () => {
   const label = deriveSideChatLabel("word ".repeat(40));
   assert.isAtMost(label.length, SIDE_CHAT_LABEL_MAX_CHARS);
   assert.isTrue(label.endsWith("…"));
+});
+
+it.each([
+  {
+    name: "heading in an earlier message",
+    messages: [
+      lessonMessage("a1", "assistant", "# Lesson 1: big picture"),
+      lessonMessage("a2", "assistant", "details"),
+    ],
+    anchor: { messageId: MessageId.make("message:a2"), start: 2 },
+    expected: "Lesson 1: big picture",
+  },
+  {
+    name: "heading before the anchor offset counts",
+    messages: [lessonMessage("a1", "assistant", "## Lesson 2: before\nbody\n## Lesson 3: after")],
+    anchor: { messageId: MessageId.make("message:a1"), start: 21 },
+    expected: "Lesson 2: before",
+  },
+  {
+    name: "a highlight inside a heading keeps the whole heading",
+    messages: [lessonMessage("a1", "assistant", "## S1T: design a whole board\nbody")],
+    anchor: { messageId: MessageId.make("message:a1"), start: 10 },
+    expected: "S1T: design a whole board",
+  },
+  {
+    name: "code heading counts",
+    messages: [
+      lessonMessage("a1", "assistant", "## U2: copy a schematic\n### S1T: design a board"),
+    ],
+    anchor: { messageId: MessageId.make("message:a1"), start: 100 },
+    expected: "S1T: design a board",
+  },
+  {
+    name: "a line that is all one bold code title counts",
+    messages: [
+      lessonMessage("a1", "assistant", '## L1: route\n**L3: "lay out this board"**\nbody'),
+    ],
+    anchor: { messageId: MessageId.make("message:a1"), start: 100 },
+    expected: 'L3: "lay out this board"',
+  },
+  {
+    name: "other headings do not count",
+    messages: [
+      lessonMessage(
+        "a1",
+        "assistant",
+        "## Part 1: x\n## 1. Anchor trial\n## Terms\n## KiCad, part 1\n**Q2: right facts.** Then why\n**S3T: find the bug** (10 runs)\n**v2: draft notes**",
+      ),
+    ],
+    anchor: { messageId: MessageId.make("message:a1"), start: 200 },
+    expected: undefined,
+  },
+  {
+    name: "headings after the anchor message and in user messages do not count",
+    messages: [
+      lessonMessage("a1", "assistant", "## Lesson 1: intro"),
+      lessonMessage("u1", "user", "## Lesson 7: mine"),
+      lessonMessage("a2", "assistant", "body"),
+      lessonMessage("a3", "assistant", "## Lesson 2: later"),
+    ],
+    anchor: { messageId: MessageId.make("message:a2"), start: 0 },
+    expected: "Lesson 1: intro",
+  },
+  {
+    name: "an embed highlight covers its whole reply",
+    messages: [
+      lessonMessage("a1", "assistant", "## Lesson 1: intro"),
+      lessonMessage("a2", "assistant", "intro\n## Lesson 2: Ohm\n<embed>"),
+    ],
+    anchor: { messageId: MessageId.make("message:a2"), start: 0, embedTitle: "Ohm" },
+    expected: "Lesson 2: Ohm",
+  },
+  {
+    name: "a missing anchor message has no section",
+    messages: [lessonMessage("a1", "assistant", "## Lesson 9: last")],
+    anchor: { messageId: MessageId.make("message:gone"), start: 0 },
+    expected: undefined,
+  },
+  {
+    name: "no heading",
+    messages: [lessonMessage("a1", "assistant", "details")],
+    anchor: { messageId: MessageId.make("message:a1"), start: 2 },
+    expected: undefined,
+  },
+])("lessonSectionAt: $name", ({ messages, anchor, expected }) => {
+  assert.strictEqual(lessonSectionAt(messages, anchor), expected);
+});
+
+it("backfills lesson sections and nested chats inherit them", () => {
+  const result = backfillSideChatSections({
+    lessons: new Map([
+      ["lesson", [{ id: "a1", role: "assistant", text: "Intro\n## Lesson 1: basics\nAnswer" }]],
+    ]),
+    sideChats: [
+      {
+        threadId: "side",
+        createdAt: "2026-01-01",
+        lessonThreadId: "lesson",
+        anchor: { threadId: "lesson", messageId: "a1", start: 30 },
+        section: undefined,
+      },
+      {
+        threadId: "nested",
+        createdAt: "2026-01-02",
+        lessonThreadId: "lesson",
+        anchor: { threadId: "side", messageId: "a1", start: 0 },
+        section: undefined,
+      },
+      {
+        threadId: "none",
+        createdAt: "2026-01-03",
+        lessonThreadId: "lesson",
+        anchor: { threadId: "lesson", messageId: "a1", start: 0 },
+        section: undefined,
+      },
+    ],
+  });
+  assert.deepStrictEqual(result, [
+    { threadId: "side", section: "Lesson 1: basics" },
+    { threadId: "nested", section: "Lesson 1: basics" },
+    { threadId: "none", section: null },
+  ]);
 });
 
 it("returns the highlighted paragraph with its neighbours when they fit", () => {
@@ -125,11 +253,6 @@ it("never splits an emoji when truncating labels or context", () => {
   assert.isAtMost(context.length, SIDE_CHAT_EXCERPT_CONTEXT_MAX_CHARS);
 });
 
-const lessonMessage = (id: string, role: "user" | "assistant", text: string) => ({
-  id: MessageId.make(`message:${id}`),
-  role,
-  text,
-});
 const filled = (marker: string) => `${marker} ${"x".repeat(4990)}`;
 const LESSON = [
   lessonMessage("u1", "user", "U1-TOPIC teach me RL environments"),

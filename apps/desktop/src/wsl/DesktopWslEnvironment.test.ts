@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { afterAll, expect } from "vite-plus/test";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 
 import { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
 
@@ -140,9 +141,9 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
       archivePath,
       archiveSha,
       runtimeId,
-      runtimeParent: `${work}/home/.t3-learn/wsl-runtime`,
-      runtimeRoot: `${work}/home/.t3-learn/wsl-runtime/${runtimeId}`,
-      serverEntry: `${work}/home/.t3-learn/wsl-runtime/${runtimeId}/t3`,
+      runtimeParent: `${work}/home/.ominax/wsl-runtime`,
+      runtimeRoot: `${work}/home/.ominax/wsl-runtime/${runtimeId}`,
+      serverEntry: `${work}/home/.ominax/wsl-runtime/${runtimeId}/t3`,
       installScript,
       install: (archive?: string, sha?: string) => runShell(installScript(archive, sha)),
     };
@@ -165,6 +166,16 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         buildWslRuntimeProbeScript(fixture.runtimeRoot),
       ].join("\n"),
     );
+
+  it("links ~/.ominax to a pre-rename ~/.t3-learn home", () => {
+    const fixture = createFixture();
+    expect(runShell(`mkdir -p ${sh(`${fixture.work}/home/.t3-learn/userdata`)}`).status).toBe(0);
+    const result = fixture.install();
+    expect(result.status, result.stderr).toBe(0);
+    expect(NodeFS.realpathSync(`${fixture.work}/home/.ominax`)).toBe(
+      NodeFS.realpathSync(`${fixture.work}/home/.t3-learn`),
+    );
+  });
 
   it("discovers version-managed Node for providers with a standalone runtime", () => {
     const fixture = createFixture();
@@ -386,7 +397,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         "set -eu",
         "work=$(mktemp -d)",
         'home="$work/home"',
-        'runtime_parent="$home/.t3-learn/wsl-runtime"',
+        'runtime_parent="$home/.ominax/wsl-runtime"',
         // T3 Code's own WSL cache sits beside this one and is never ours to prune.
         't3code_parent="$home/.t3/wsl-runtime"',
         'mkdir -p "$runtime_parent" "$t3code_parent/sha256-old"',

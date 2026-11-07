@@ -443,6 +443,8 @@ export const SIDE_CHAT_DEFAULT_TEACHING_LINE =
   "Answer at their level, briefly and clearly, and stay on the highlighted topic; the lesson continues elsewhere.";
 export const SIDE_CHAT_SUMMARY_MAX_CHARS = 2_000;
 export const SIDE_CHAT_WAIT_CAP_MS = 15_000;
+/** The opening waits longer than Done and notes: a late summary leaves the first answer blind. */
+export const SIDE_CHAT_OPENING_WAIT_CAP_MS = 25_000;
 export const SIDE_CHAT_SUMMARIZER_INPUT_BUDGET_CHARS = 24_000;
 
 /** Titles of the handoff turn items that carry side chat text. The server writes them, the web renders them. */
@@ -489,6 +491,10 @@ export type OrchestrationV2SideChatOutcome = typeof OrchestrationV2SideChatOutco
 export const OrchestrationV2SideChat = Schema.Struct({
   lessonThreadId: ThreadId,
   anchor: OrchestrationV2SideChatAnchor,
+  /** The lesson's "Lesson N" heading in effect at the anchor. */
+  section: Schema.optional(
+    Schema.NullOr(Schema.String.check(Schema.isMaxLength(SIDE_CHAT_LABEL_MAX_CHARS))),
+  ),
   excerpt: Schema.String.check(
     Schema.isNonEmpty(),
     Schema.isMaxLength(SIDE_CHAT_EXCERPT_MAX_CHARS),
@@ -508,6 +514,7 @@ export type OrchestrationV2SideChat = typeof OrchestrationV2SideChat.Type;
 export const OrchestrationV2ThreadShellSideChat = Schema.Struct({
   lessonThreadId: ThreadId,
   anchor: OrchestrationV2SideChatAnchor,
+  section: OrchestrationV2SideChat.fields.section,
   label: OrchestrationV2SideChat.fields.label,
   state: Schema.Literals(["open", "done"]),
   noteStatus: Schema.NullOr(OrchestrationV2SideChatOutcome.fields.status),
@@ -541,6 +548,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   lesson: Schema.optional(OrchestrationV2Lesson),
+  t3CodeCopiedAt: Schema.optional(IsoDateTime),
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -647,6 +655,7 @@ export function threadShellSideChatOf(
   return {
     lessonThreadId: sideChat.lessonThreadId,
     anchor: sideChat.anchor,
+    ...(sideChat.section === undefined ? {} : { section: sideChat.section }),
     label: sideChat.label,
     state: sideChat.done === null ? "open" : "done",
     noteStatus: sideChat.done?.outcome.status ?? null,
@@ -835,6 +844,8 @@ export const OrchestrationV2Run = Schema.Struct({
   ),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  /** Starts a new provider conversation; earlier runs stay visible but never reach the provider. */
+  freshContext: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -1081,6 +1092,14 @@ export const OrchestrationV2ProviderSession = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   model: Schema.NullOr(TrimmedNonEmptyString),
   capabilities: OrchestrationV2ProviderCapabilities,
+  extensionStatuses: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        key: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+        text: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+      }),
+    ).check(Schema.isMaxLength(32)),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   lastError: Schema.NullOr(Schema.String),
@@ -1738,6 +1757,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     senderThreadId: Schema.optional(ThreadId),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
+    freshContext: OrchestrationV2Run.fields.freshContext,
     inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
     /** Same as the text of message `messageId`. */
@@ -2221,6 +2241,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: Schema.String,
+  t3CodeCopiedAt: Schema.optional(IsoDateTime),
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -2595,6 +2616,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     senderThreadId: Schema.optional(ThreadId),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
+    freshContext: OrchestrationV2Run.fields.freshContext,
     inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
     context: Schema.optional(OrchestrationMessageContext),
@@ -3116,6 +3138,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.settle"),
     commandId: CommandId,
     threadId: ThreadId,
+    expectedLatestRunId: Schema.optional(RunId),
     settledAt: Schema.optional(Schema.DateTimeUtc),
   }),
   /** Rejects changes since snapshotAt or any explicit settled override to preserve user actions. */
@@ -3305,6 +3328,8 @@ export const OrchestrationV2Command = Schema.Union([
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
+    /** Start a new provider session without the thread's earlier context. Never steers. */
+    freshContext: Schema.optional(Schema.Boolean),
     commandId: CommandId,
     threadId: ThreadId,
     messageId: MessageId,

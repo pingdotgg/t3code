@@ -5,6 +5,9 @@ machine. That machine must stay running and reachable while you work.
 
 ## T3 Connect
 
+OminaX does not include T3 Connect yet, so its Connect settings are hidden. [Pair over a LAN or
+private network](#pair-over-a-lan-or-private-network) instead.
+
 T3 Connect makes an environment available to your other devices without setting
 up router forwarding. In the desktop app on the host, open **Settings →
 Sharing & access**, sign in, and enable **T3 Connect** for that environment.
@@ -12,17 +15,17 @@ Sharing & access**, sign in, and enable **T3 Connect** for that environment.
 For a command-line host, run:
 
 ```bash
-t3-learn up
+ominax up
 ```
 
 It asks how your other devices reach the machine: T3 Connect, the local network,
 or both. Choose T3 Connect and follow the sign-in instructions. On Linux and
 macOS, it then runs T3 Code as a [background service](./background-service.md).
 `t3 connect` is the same as `t3 up --connect`. Run `t3 up` again to change your
-choice, and `t3-learn status` to see it.
+choice, and `ominax status` to see it.
 
-The background service is not available on Windows, so there `t3-learn up` prints the
-`t3-learn serve` command to keep running in a terminal. You can also keep the desktop
+The background service is not available on Windows, so there `ominax up` prints the
+`ominax serve` command to keep running in a terminal. You can also keep the desktop
 app running with its local environment enabled. Closing the desktop app's last
 window stops its local server. Saving your sign-in alone does not start a server
 or make the machine reachable.
@@ -41,15 +44,15 @@ disconnect an otherwise healthy conversation.
 
 ### Scripts and agents
 
-`t3-learn up` asks nothing when you name a choice: `--connect`, `--lan`, or their
+`ominax up` asks nothing when you name a choice: `--connect`, `--lan`, or their
 `--no-` forms. Choices you do not name keep their settings, and `--yes` takes
 the defaults. Without a terminal:
 
 - T3 Connect sign-in prints a URL and a code. Approve it on any device.
 - A needed restart runs without asking, and stops running agent turns.
-- With nothing set up and no choice named, `t3-learn up` stops and names the flags.
+- With nothing set up and no choice named, `ominax up` stops and names the flags.
 
-`t3-learn status --json` prints the settings. `t3-learn up --help` lists every flag with
+`ominax status --json` prints the settings. `ominax up --help` lists every flag with
 examples.
 
 ### More machines with T3 Chat
@@ -72,20 +75,20 @@ On a desktop host, open **Settings → Sharing & access**, enable **Network acce
 then create a pairing link using an address the other device can reach. Changing
 network access restarts the desktop app. You can turn it off in the same place.
 
-For a command-line host, choose the local network in `t3-learn up`, or run:
+For a command-line host, choose the local network in `ominax up`, or run:
 
 ```bash
-t3-learn up --lan
+ominax up --lan
 ```
 
-For a server in a terminal, run `t3-learn serve --lan`. Either way, T3 Code then
+For a server in a terminal, run `ominax serve --lan`. Either way, T3 Code then
 accepts connections from your local network and tailnet, so a pairing code is
 all that keeps other devices on them out.
 
 If a server is already running, generate a fresh link without restarting it:
 
 ```bash
-t3-learn pair
+ominax pair
 ```
 
 Scan the QR code on your phone or paste the pairing URL into **Add environment**
@@ -93,7 +96,7 @@ in the receiving app. Connection settings are under **Settings → Environments*
 on web and desktop and **Settings → Environments** on mobile. A loopback address
 such as `127.0.0.1` reaches only the device opening the link.
 
-On a computer with the desktop app, you can open the printed `t3learn://pair`
+On a computer with the desktop app, you can open the printed `ominax://pair`
 app link instead. The desktop app asks you to confirm the server address, then
 adds it.
 
@@ -125,7 +128,7 @@ pairing once through T3 Connect is enough to use the LAN at home. When the
 machine's LAN address changes, for example after it joins another Wi-Fi network,
 the learned route follows it. The machine must allow network access for its LAN
 address to be learned: **Network access** in the desktop app, or the
-[local network](./background-service.md#local-network-access) choice in `t3-learn up`.
+[local network](./background-service.md#local-network-access) choice in `ominax up`.
 You can reorder a learned route, but not remove it; it
 goes away with the route it was learned through, or when the machine stops
 reporting that address.
@@ -175,13 +178,13 @@ HTTPS** in **Settings → Sharing & access**. Turn it off there to remove that r
 To start a command-line server with Tailscale HTTPS:
 
 ```bash
-t3-learn serve --tailscale-serve
+ominax serve --tailscale-serve
 ```
 
 For an already-running server:
 
 ```bash
-t3-learn pair --tailscale
+ominax pair --tailscale
 ```
 
 The pairing link uses an address such as `https://machine.tailnet.ts.net/`.
@@ -193,7 +196,7 @@ tailscale serve --https=8443 --set-path=/ off
 ```
 
 If that port is already in use, choose another with
-`--tailscale-serve-port`. See `t3-learn pair --help` for other pairing options.
+`--tailscale-serve-port`. See `ominax pair --help` for other pairing options.
 
 ### Hosted web app
 
@@ -229,8 +232,8 @@ running is left alone.
 
 Each desktop app keeps one session on the host for its SSH connection and reuses
 it when it reconnects. Revoke sessions you no longer use in **Settings →
-Sharing & access** on the host, or on a headless host with `t3-learn auth session list` and
-`t3-learn auth session revoke <id>`. A desktop that can still sign in over SSH pairs
+Sharing & access** on the host, or on a headless host with `ominax auth session list` and
+`ominax auth session revoke <id>`. A desktop that can still sign in over SSH pairs
 again on its next connect.
 
 For Antigravity's Google callback on a remote host, see
@@ -285,11 +288,11 @@ the server says so at startup, and browser tabs and HTML previews show the
 command to run on the host:
 
 ```sh
-sudo t3-learn browser setup
+sudo ominax browser setup
 ```
 
 The server shows the exact line for how you started it, and keeps your `PATH`
-when Node is installed only for your user. Where `t3-learn` is not on your
+when Node is installed only for your user. Where `ominax` is not on your
 `PATH`, it names the full path of the app's own launcher instead. It allows Chrome's sandbox with an AppArmor profile and installs
 any missing libraries and system fonts with apt; pages that load without text
 can mean the host has no fonts. It is safe to run again. Without `sudo`, it only
@@ -297,14 +300,14 @@ reports what it would change.
 
 The browser runs in Chrome's sandbox by default. Chrome cannot start that sandbox
 as root. If your T3 server runs as root, run it as a nonroot user to keep
-sandboxing enabled. `t3-learn browser setup` does not fix this root restriction.
+sandboxing enabled. `ominax browser setup` does not fix this root restriction.
 
 If you need to run as root, or cannot enable the sandbox on your host, set
 `T3CODE_SERVER_BROWSER_SANDBOX=0` in the **T3 server's environment** and restart
 the server. This disables Chrome's sandbox. For a manual launch:
 
 ```sh
-T3CODE_SERVER_BROWSER_SANDBOX=0 t3-learn serve
+T3CODE_SERVER_BROWSER_SANDBOX=0 ominax serve
 ```
 
 For a systemd service, add `Environment=T3CODE_SERVER_BROWSER_SANDBOX=0` under
@@ -336,7 +339,7 @@ holds the machines this app knows and those on your T3 Connect account. If this
 app is connected to that machine with a session that manages access there, it
 makes the pairing code itself; otherwise paste one from that machine's
 **Settings → Sharing & access**. From a terminal, use
-`t3-learn environment link <address> --pairing-code <code> --access <mode>`.
+`ominax environment link <address> --pairing-code <code> --access <mode>`.
 
 You can also ask an agent to link a machine by name, such as "delegate this to
 my vps". It shows a card in the thread where you pick the machine the same way
@@ -366,7 +369,7 @@ fails with that reason.
 On the host, **Settings → Sharing & access** lets authorized administrators create
 pairing links and revoke client sessions. Revoking an unused link prevents new
 pairings; revoke a device's session to remove its existing access. Command-line
-management is available through `t3-learn auth --help`.
+management is available through `ominax auth --help`.
 
 When the app connects to more than one environment, choose one at the top of the
 page. A desktop app with **Local environment** off can manage a background
@@ -378,11 +381,11 @@ expires.
 To choose a token's permissions, pass `--scope` once for each scope you want:
 
 ```sh
-t3-learn pair --scope orchestration:read --scope relay:read
+ominax pair --scope orchestration:read --scope relay:read
 ```
 
 The selected scopes replace the default permissions. The same option works with
-`t3-learn auth pairing create` and `t3-learn auth session issue`; each command's
+`ominax auth pairing create` and `ominax auth session issue`; each command's
 `--help` lists the available scopes. Without `--scope`, pairing tokens and issued
 bearer sessions get every permission, including managing access and T3 Connect.
 A terminal or a full-access agent on the host can reach those as well, so a

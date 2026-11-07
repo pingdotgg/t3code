@@ -14,20 +14,36 @@ import { autoUpdater, type UpdateDownloadedEvent } from "electron-updater";
 
 type AutoUpdater = typeof autoUpdater;
 
-// T3 Learn's macOS builds are not signed, and Squirrel.Mac refuses to install
+// OminaX's macOS builds are not signed, and Squirrel.Mac refuses to install
 // over an unsigned app. Once the app has quit, this swaps the bundle for the
-// verified download and reopens it. The old bundle is deleted only once the
-// new one is in place.
-const MAC_BUNDLE_SWAP_SCRIPT = `
+// verified download, under the download's own name (T3 Learn.app becomes
+// OminaX.app), and reopens it. The old bundle is deleted only once the new one is in place.
+export const MAC_BUNDLE_SWAP_SCRIPT = `
 pid=$1 zip=$2 app=$3
 while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
-staging=$(mktemp -d "$(dirname "$app")/.t3-learn-update.XXXXXX") || { open "$app"; exit 1; }
+staging=$(mktemp -d "$(dirname "$app")/.ominax-update.XXXXXX") || { open "$app"; exit 1; }
 if ditto -x -k "$zip" "$staging/new"; then
   new=$(ls -d "$staging"/new/*.app 2>/dev/null | head -n 1)
-  if [ -n "$new" ] && mv "$app" "$staging/previous.app"; then
-    xattr -dr com.apple.quarantine "$new" 2>/dev/null
-    mv "$new" "$app" || mv "$staging/previous.app" "$app"
-  fi
+  dest="$(dirname "$app")/$(basename "$new")"
+  stale=
+    if [ -n "$new" ] && mv "$app" "$staging/previous.app"; then
+      if [ "$dest" != "$app" ] && [ -e "$dest" ]; then
+        if mv "$dest" "$staging/stale.app"; then
+          stale=1
+        else
+          mv "$staging/previous.app" "$app"
+        fi
+      fi
+      if [ ! -e "$app" ] && [ -n "$new" ] && { [ -z "$stale" ] || [ -e "$staging/stale.app" ]; }; then
+        xattr -dr com.apple.quarantine "$new" 2>/dev/null
+        if mv "$new" "$dest"; then
+          app=$dest
+        else
+          mv "$staging/previous.app" "$app"
+          [ -n "$stale" ] && mv "$staging/stale.app" "$dest"
+        fi
+      fi
+    fi
 fi
 [ -d "$app" ] && rm -rf "$staging"
 open "$app"
@@ -48,7 +64,7 @@ function swapMacBundleAfterQuit(zipPath: string): void {
   }
   NodeChildProcess.spawn(
     "/bin/sh",
-    ["-c", MAC_BUNDLE_SWAP_SCRIPT, "t3-learn-update", String(process.pid), zipPath, bundlePath],
+    ["-c", MAC_BUNDLE_SWAP_SCRIPT, "ominax-update", String(process.pid), zipPath, bundlePath],
     { detached: true, stdio: "ignore" },
   ).unref();
   Electron.app.quit();

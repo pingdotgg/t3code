@@ -30,6 +30,7 @@ const rows: ReadonlyArray<SideChatTreeRow> = [
     label: "Learning RL environments",
     state: "lesson",
     noteStatus: null,
+    section: null,
   },
   {
     threadId: side1,
@@ -38,8 +39,17 @@ const rows: ReadonlyArray<SideChatTreeRow> = [
     label: "observation space",
     state: "open",
     noteStatus: null,
+    section: null,
   },
-  { threadId: nested1, parentId: side1, depth: 2, label: "Box", state: "open", noteStatus: null },
+  {
+    threadId: nested1,
+    parentId: side1,
+    depth: 2,
+    label: "Box",
+    state: "open",
+    noteStatus: null,
+    section: null,
+  },
   {
     threadId: side2,
     parentId: lessonId,
@@ -47,6 +57,7 @@ const rows: ReadonlyArray<SideChatTreeRow> = [
     label: "reward",
     state: "open",
     noteStatus: null,
+    section: null,
   },
 ];
 
@@ -73,6 +84,7 @@ describe("sideChatPath", () => {
         label: "a",
         state: "open",
         noteStatus: null,
+        section: null,
       },
     ];
     expect(sideChatPath(orphaned, side1).map((row) => row.threadId)).toEqual([side1]);
@@ -80,8 +92,24 @@ describe("sideChatPath", () => {
 
   it("terminates on rows whose parents form a cycle", () => {
     const cyclic: ReadonlyArray<SideChatTreeRow> = [
-      { threadId: side1, parentId: nested1, depth: 1, label: "a", state: "open", noteStatus: null },
-      { threadId: nested1, parentId: side1, depth: 2, label: "b", state: "open", noteStatus: null },
+      {
+        threadId: side1,
+        parentId: nested1,
+        depth: 1,
+        label: "a",
+        state: "open",
+        noteStatus: null,
+        section: null,
+      },
+      {
+        threadId: nested1,
+        parentId: side1,
+        depth: 2,
+        label: "b",
+        state: "open",
+        noteStatus: null,
+        section: null,
+      },
     ];
     expect(sideChatPath(cyclic, side1).map((row) => row.threadId)).toEqual([nested1, side1]);
   });

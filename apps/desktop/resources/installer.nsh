@@ -40,3 +40,10 @@
     ${EndIf}
   !endif
 !macroend
+
+!macro customUnInstall
+  ${IfNot} ${isUpdated}
+    DeleteRegKey HKCU "Software\Classes\ominax"
+    DeleteRegKey HKCU "Software\Classes\t3learn"
+  ${EndIf}
+!macroend

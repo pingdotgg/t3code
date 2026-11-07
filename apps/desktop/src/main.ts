@@ -12,7 +12,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Version output must flush before Electron exits, without acquiring the runtime.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The migration runs synchronously before Effect services are assembled.
+import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
@@ -39,6 +42,7 @@ import * as DesktopAppActivation from "./app/DesktopAppActivation.ts";
 import * as DesktopWebLinks from "./app/DesktopWebLinks.ts";
 import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
 import * as DesktopConnectionCatalogStore from "./app/DesktopConnectionCatalogStore.ts";
+import * as DesktopLegacySecretKey from "./app/DesktopLegacySecretKey.ts";
 import * as DesktopClerk from "./app/DesktopClerk.ts";
 import * as DesktopCliCommand from "./app/DesktopCliCommand.ts";
 import * as DesktopApplicationMenu from "./window/DesktopApplicationMenu.ts";
@@ -48,6 +52,9 @@ import * as DesktopBackendPool from "./backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "./backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopNetworkInterfaces from "./backend/DesktopNetworkInterfaces.ts";
 import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
+import { resolveT3LearnHomeFromEnv } from "./app/DesktopConfig.ts";
+import { migrateDesktopRename } from "./app/DesktopRenameMigration.ts";
+import { T3_LEARN_HOME_DIRECTORY } from "@t3tools/shared/t3LearnIdentity";
 import * as DesktopManagedPolicy from "./app/DesktopManagedPolicy.ts";
 import * as DesktopLifecycle from "./app/DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./app/DesktopLinuxUrlHandler.ts";
@@ -87,6 +94,28 @@ if (process.argv.includes("--version")) {
     if (!(error instanceof Error) || !("code" in error) || error.code !== "EPIPE") throw error;
   }
   Electron.app.exit(0);
+}
+
+const earlyIsDevelopment = (process.env.VITE_DEV_SERVER_URL?.trim().length ?? 0) > 0;
+const earlyExplicitHomeRaw = earlyIsDevelopment
+  ? process.env.T3CODE_HOME
+  : resolveT3LearnHomeFromEnv(process.env);
+const earlyExplicitHome = earlyExplicitHomeRaw?.trim() || undefined;
+const earlyMigration = earlyIsDevelopment
+  ? undefined
+  : Effect.runSync(
+      migrateDesktopRename({
+        homeDirectory: NodeOS.homedir(),
+        explicitHome: Option.fromUndefinedOr(earlyExplicitHome),
+      }).pipe(Effect.provideService(FileSystem.FileSystem, DesktopPreReadyFileSystem.make)),
+    );
+// Only when the old home couldn't move: pin it so this launch doesn't start empty in ~/.ominax.
+if (
+  earlyMigration !== undefined &&
+  earlyExplicitHome === undefined &&
+  earlyMigration.homePath !== NodePath.join(NodeOS.homedir(), T3_LEARN_HOME_DIRECTORY)
+) {
+  process.env.OMINAX_HOME = earlyMigration.homePath;
 }
 
 const layerDesktopEnvironment = Layer.unwrap(
@@ -150,7 +179,10 @@ const layerDesktopFoundation = Layer.mergeAll(
   DesktopLegacyLocalStorage.layer,
   DesktopAppSettings.layer,
   DesktopClientSettings.layer,
-  DesktopConnectionCatalogStore.layer.pipe(Layer.provideMerge(DesktopSavedEnvironments.layer)),
+  DesktopConnectionCatalogStore.layer.pipe(
+    Layer.provideMerge(DesktopSavedEnvironments.layer),
+    Layer.provideMerge(DesktopLegacySecretKey.layer),
+  ),
   DesktopAssets.layer,
   DesktopObservability.layer,
   DesktopRendererHistory.layer,

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   fitSideChatMapScale,
+  groupSideChatMapRows,
   resolveSideChatMapKeyTarget,
   sideChatMapNodeDescription,
   sideChatMapNodeStatus,
@@ -15,6 +16,7 @@ function row(
   depth: number,
   state: SideChatTreeRow["state"] = depth === 0 ? "lesson" : "open",
   noteStatus: SideChatTreeRow["noteStatus"] = null,
+  section: string | null = null,
 ): SideChatTreeRow {
   return {
     threadId: ThreadId.make(id),
@@ -23,6 +25,7 @@ function row(
     label: id,
     state,
     noteStatus,
+    section,
   };
 }
 
@@ -65,6 +68,50 @@ describe("resolveSideChatMapKeyTarget", () => {
     expect(keyTarget("a", "Enter")).toBeNull();
     expect(keyTarget("a", "Tab")).toBeNull();
     expect(keyTarget("gone", "ArrowRight")).toBeNull();
+  });
+});
+
+describe("groupSideChatMapRows", () => {
+  it("keeps unsectioned chats first, groups sections in order, and shifts subtrees", () => {
+    const input = [
+      row("lesson", null, 0),
+      row("plain", "lesson", 1),
+      row("a", "lesson", 1, "open", null, "Lesson 1: first"),
+      row("a1", "a", 2),
+      row("b", "lesson", 1, "open", null, "U2: second"),
+    ];
+    expect(
+      groupSideChatMapRows(input).map(({ threadId, parentId, depth, label }) => [
+        threadId,
+        parentId,
+        depth,
+        label,
+      ]),
+    ).toEqual([
+      [ThreadId.make("lesson"), null, 0, "lesson"],
+      [ThreadId.make("plain"), ThreadId.make("lesson"), 1, "plain"],
+      [ThreadId.make("section:Lesson 1: first"), ThreadId.make("lesson"), 1, "Lesson 1: first"],
+      [ThreadId.make("a"), ThreadId.make("section:Lesson 1: first"), 2, "a"],
+      [ThreadId.make("a1"), ThreadId.make("a"), 3, "a1"],
+      [ThreadId.make("section:U2: second"), ThreadId.make("lesson"), 1, "U2: second"],
+      [ThreadId.make("b"), ThreadId.make("section:U2: second"), 2, "b"],
+    ]);
+  });
+
+  it("leaves a no-section input unchanged and hides a collapsed subtree", () => {
+    const input = [row("lesson", null, 0), row("a", "lesson", 1)];
+    expect(groupSideChatMapRows(input)).toEqual(input);
+    const section = row("a", "lesson", 1, "open", null, "Lesson 1: first");
+    const child = row("a1", "a", 2);
+    const collapsed = groupSideChatMapRows(
+      [row("lesson", null, 0), section, child],
+      new Set([ThreadId.make("section:Lesson 1: first")]),
+    );
+    expect(collapsed.map((entry) => entry.threadId)).toEqual([
+      ThreadId.make("lesson"),
+      ThreadId.make("section:Lesson 1: first"),
+    ]);
+    expect(collapsed[1]?.label).toBe("Lesson 1: first (2)");
   });
 });
 

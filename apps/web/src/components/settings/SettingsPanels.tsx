@@ -39,6 +39,7 @@ import {
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { openWelcomeGuide } from "../onboarding/WelcomeGuideDialog";
+import { openWhatsNew } from "../onboarding/WhatsNewDialog";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
@@ -2024,10 +2025,19 @@ export function AboutSettingsPanel() {
         )}
         <SettingsRow
           {...searchableSetting("welcome-guide")}
-          description="A short tour of side chats, notes and the Map."
+          description="A walk through OminaX: lessons, side chats, quizzes, courses and more."
           control={
             <Button size="sm" variant="outline" onClick={openWelcomeGuide}>
-              Show guide
+              Take the tour
+            </Button>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("whats-new")}
+          description="Short guides for features added in recent updates."
+          control={
+            <Button size="sm" variant="outline" onClick={openWhatsNew}>
+              Show
             </Button>
           }
         />
@@ -2039,7 +2049,7 @@ export function AboutSettingsPanel() {
           {...searchableSetting("privacy-policy")}
           description={
             telemetryOff === undefined
-              ? "How T3 Code handles your data. By default, OminaX sends no usage data to T3 Code's analytics."
+              ? "How T3 Code handles your data. OminaX never sends usage data to T3 Code, and sends none at all unless you set up your own analytics server."
               : `How T3 Code handles your data. ${telemetryOff}`
           }
           control={

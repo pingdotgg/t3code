@@ -69,6 +69,7 @@ function planForkTargetThread(input: {
   const {
     sideChat: _sideChat,
     sideChatNoteDeliveries: _sideChatNoteDeliveries,
+    t3CodeCopiedAt: _t3CodeCopiedAt,
     // The remote parent delegated the source thread, not its forks.
     delegatedFrom: _delegatedFrom,
     ...sourceThread
@@ -83,8 +84,6 @@ function planForkTargetThread(input: {
     title: input.title,
     // The source's title job completes only on the source thread.
     titleRegeneration: null,
-    // Side chats share the parent's worktree, so they start supervised.
-    ...(input.sideChat ? { runtimeMode: "approval-required" as const } : {}),
     activeProviderThreadId: null,
     lineage: {
       parentThreadId: sourceThread.id,

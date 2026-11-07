@@ -223,6 +223,27 @@ function summarizeDeltaItem(item: OrchestrationV2TurnItem): string | null {
   }
 }
 
+export function summarizeTurnItems(
+  items: ReadonlyArray<string | OrchestrationV2TurnItem>,
+  charBudget: number,
+): { readonly lines: ReadonlyArray<string>; readonly omitted: boolean } {
+  const kept: Array<string> = [];
+  let omitted = false;
+  let remaining = charBudget;
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index]!;
+    const line = typeof item === "string" ? item : summarizeDeltaItem(item);
+    if (line === null) continue;
+    if (line.length + 1 > remaining) {
+      omitted = true;
+      break;
+    }
+    kept.unshift(line);
+    remaining -= line.length + 1;
+  }
+  return { lines: kept, omitted };
+}
+
 function makeForkDeltaSummary(input: {
   readonly sourceThreadId: ThreadId;
   readonly targetThreadId: ThreadId;
@@ -256,22 +277,11 @@ export function makeSideChatContext(input: {
   const header = "Main thread activity since this side chat's starting point:";
   const truncated = "- Earlier items truncated.";
   const footer = `Use t3_thread_read on thread ${input.parentThreadId} to see the main thread's live state.`;
-  const kept: Array<string> = [];
-  let omitted = false;
   // The cap covers the whole block, so the fixed lines are reserved before any digest line.
-  let remaining =
-    SIDE_CHAT_CONTEXT_MAX_CHARS - [framing, "", header, truncated, "", footer].join("\n").length;
-  for (let index = input.digest.length - 1; index >= 0; index--) {
-    const item = input.digest[index]!;
-    const line = typeof item === "string" ? item : summarizeDeltaItem(item);
-    if (line === null) continue;
-    if (line.length + 1 > remaining) {
-      omitted = true;
-      break;
-    }
-    kept.unshift(line);
-    remaining -= line.length + 1;
-  }
+  const { lines: kept, omitted } = summarizeTurnItems(
+    input.digest,
+    SIDE_CHAT_CONTEXT_MAX_CHARS - [framing, "", header, truncated, "", footer].join("\n").length,
+  );
   return [
     framing,
     ...(kept.length === 0 ? [] : ["", header, ...(omitted ? [truncated] : []), ...kept]),

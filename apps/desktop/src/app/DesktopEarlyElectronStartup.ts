@@ -1,5 +1,5 @@
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
-import { T3_LEARN_HOME_ENV, T3_LEARN_LINUX_DESKTOP_ENTRY } from "@t3tools/shared/t3LearnIdentity";
+import { T3_LEARN_LEGACY, T3_LEARN_LINUX_DESKTOP_ENTRY } from "@t3tools/shared/t3LearnIdentity";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -15,6 +15,7 @@ import {
   resolveDesktopStateDir,
   type JoinPath,
 } from "./DesktopStatePaths.ts";
+import { resolveT3LearnHomeFromEnv } from "./DesktopConfig.ts";
 
 interface EarlyDesktopSettingsInput {
   readonly env: NodeJS.ProcessEnv;
@@ -39,6 +40,24 @@ const trimNonEmpty = (value: string | undefined): string | null => {
   return trimmed && trimmed.length > 0 ? trimmed : null;
 };
 
+export const isOwnedLegacyLinuxDesktopEntry = (input: {
+  readonly content: string;
+  readonly executableTargets: ReadonlyArray<string>;
+}): boolean => {
+  const execLine = input.content.split("\n").find((line) => line.startsWith("Exec="));
+  if (execLine === undefined) return false;
+  const execTarget = execLine.slice("Exec=".length).trim();
+  const matches = (target: string) =>
+    execTarget === target ||
+    execTarget.startsWith(`${target} `) ||
+    execTarget.startsWith(`"${target}"`);
+  return input.executableTargets.some((target) => {
+    if (matches(target)) return true;
+    const directory = target.slice(0, target.lastIndexOf("/"));
+    return matches(`${directory}/${T3_LEARN_LEGACY.executableName}`);
+  });
+};
+
 const EarlyDesktopSettingsJson = fromLenientJson(
   Schema.Struct({
     linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
@@ -55,7 +74,9 @@ function resolveEarlyDesktopSettingsPath(input: {
   readonly joinPath: JoinPath;
 }): string {
   const t3Home = Option.fromUndefinedOr(
-    isDevelopmentEnvironment(input.env) ? input.env.T3CODE_HOME : input.env[T3_LEARN_HOME_ENV],
+    isDevelopmentEnvironment(input.env)
+      ? input.env.T3CODE_HOME
+      : resolveT3LearnHomeFromEnv(input.env),
   );
   const baseDir = resolveDesktopBaseDir({
     homeDirectory: input.homeDirectory,

@@ -12,7 +12,7 @@ import {
   SIDE_CHAT_CONTEXT_FALLBACK_HANDOFF_TITLE,
   SIDE_CHAT_CONTEXT_HANDOFF_TITLE,
   SIDE_CHAT_SUMMARY_HANDOFF_TITLE,
-  SIDE_CHAT_WAIT_CAP_MS,
+  SIDE_CHAT_OPENING_WAIT_CAP_MS,
   type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
@@ -42,11 +42,14 @@ export function pendingSideChatOpeningEffect(
   };
 }
 
-/** Waits at most `SIDE_CHAT_WAIT_CAP_MS` for `settled`; `true` when it finished in time. */
+/** Waits at most `SIDE_CHAT_OPENING_WAIT_CAP_MS` for `settled`; `true` when it finished in time. */
 export function awaitWithinSideChatWaitCap<E>(
   settled: Effect.Effect<void, E>,
 ): Effect.Effect<boolean, E> {
-  return settled.pipe(Effect.timeoutOption(SIDE_CHAT_WAIT_CAP_MS), Effect.map(Option.isSome));
+  return settled.pipe(
+    Effect.timeoutOption(SIDE_CHAT_OPENING_WAIT_CAP_MS),
+    Effect.map(Option.isSome),
+  );
 }
 
 /** The opening context handed to the provider thread that `runId` starts fresh. */
@@ -241,10 +244,20 @@ export const loadSideChatOpeningSources = Effect.fn("loadSideChatOpeningSources"
       : ((yield* projectionStore.getThreadRecords(sideChat.lessonThreadId, ["messages"], {
           messageRoles: ["user"],
         })).messages[0]?.text ?? null);
+  const activeRuns = yield* projectionStore.getThreadRecords(sideChat.lessonThreadId, ["runs"], {
+    runStatuses: ["preparing", "starting", "running", "waiting"],
+  });
+  const runningRun = activeRuns.runs.at(-1);
+  const runningTurnItems =
+    runningRun === undefined
+      ? null
+      : (yield* projectionStore.getThreadRecords(sideChat.lessonThreadId, ["turnItems"], {
+          turnItemRunId: runningRun.id,
+        })).turnItems;
   const parentOpeningText =
     sideChat.anchor.threadId === sideChat.lessonThreadId
       ? null
       : ((yield* projectionStore.getThreadRecords(sideChat.anchor.threadId, [])).thread.sideChat
           ?.opening.text ?? null);
-  return { lessonTopic, parentOpeningText };
+  return { lessonTopic, parentOpeningText, runningTurnItems };
 });

@@ -7,6 +7,11 @@
 /* Window Controls Overlay: active when Electron exposes native titlebar control geometry. */
 @custom-variant wco (&:is(.wco, .wco *));
 
+[data-tour-target] {
+  outline: 2px solid var(--primary);
+  outline-offset: 4px;
+}
+
 /* Secondary hovering pointers reveal sidebar actions on touch-primary devices. */
 @custom-variant any-hover {
   @media (any-hover: hover) {

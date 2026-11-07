@@ -39,6 +39,8 @@ export interface IngestOptions {
 }
 
 const MAX_ZIP_BYTES = 300 * 1024 * 1024;
+const MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES = 20 * 1024 * 1024;
+const MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = 200 * 1024 * 1024;
 const MAX_PDF_TEXT = 2 * 1024 * 1024;
 const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"]);
 
@@ -280,10 +282,17 @@ export const parseOcwZip = (zipPath: string, source: string) =>
         (detail) => new CourseIngestError({ message: detail }),
       );
       const entries = new Map<string, Uint8Array>();
+      let totalUncompressed = 0;
       while (true) {
         const entry = yield* archive.next;
         if (!entry) break;
         if (!/(?:^|\/)data\.json$|\.(?:vtt|srt)$/i.test(entry.fileName)) continue;
+        if (entry.uncompressedSize > MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES) continue;
+        totalUncompressed += entry.uncompressedSize;
+        if (totalUncompressed > MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES)
+          return yield* new CourseIngestError({
+            message: "The OCW archive contains too much uncompressed course data.",
+          });
         const stream = yield* archive.streamEntry(entry);
         const bytes = yield* tryIo("Could not read the OCW zip", () => readStream(stream));
         entries.set(entry.fileName, bytes);
@@ -296,6 +305,7 @@ const boundedDownload = (url: string, destination: string) =>
   Effect.tryPromise({
     try: async (signal) => {
       const response = await fetch(url, {
+        redirect: "error",
         signal: AbortSignal.any([signal, AbortSignal.timeout(5 * 60_000)]),
       });
       if (!response.ok || !response.body)
@@ -325,8 +335,8 @@ const boundedDownload = (url: string, destination: string) =>
 const ocwDownloadUrl = (source: string) =>
   Effect.tryPromise({
     try: async (signal) => {
-      const fetchPage = (url: URL) =>
-        fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) });
+      const fetchPage = (url: URL, redirect: "follow" | "error" = "follow") =>
+        fetch(url, { redirect, signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) });
       // Every URL we fetch stays on OCW: the source can come from a YouTube description.
       const onOcw = (url: URL) => {
         if (url.hostname !== "ocw.mit.edu" || !/^https?:$/.test(url.protocol))
@@ -342,7 +352,7 @@ const ocwDownloadUrl = (source: string) =>
       }
       const page = new URL(parsed.origin);
       page.pathname = `${parsed.pathname.replace(/\/$/, "")}/download/`;
-      const response = await fetchPage(page);
+      const response = await fetchPage(page, "error");
       if (!response.ok) throw new Error(`OCW download page returned HTTP ${response.status}.`);
       const html = await response.text();
       const match = html.match(/href=["']([^"']+\.zip(?:\?[^"']*)?)["']/i);

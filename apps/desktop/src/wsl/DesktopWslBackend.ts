@@ -128,7 +128,7 @@ export const layer = Layer.effect(
                 Ref.set(
                   preflightErrorRef,
                   Option.some(
-                    "Another OminaX server is using this distro's T3 home, or an older background service is set up for it. Stop that server or pair with it, or try `t3-learn update` in the distro. If the older launcher cannot update, run `t3-learn service uninstall` and optionally reinstall with `t3-learn service install` from a current CLI in the distro. Pass `--base-dir` with the service's T3 home to each command.",
+                    "Another OminaX server is using this distro's T3 home, or an older background service is set up for it. Stop that server or pair with it, or try `ominax update` in the distro. If the older launcher cannot update, run `ominax service uninstall` and optionally reinstall with `ominax service install` from a current CLI in the distro. Pass `--base-dir` with the service's T3 home to each command.",
                   ),
                 ),
               ),

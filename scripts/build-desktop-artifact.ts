@@ -21,8 +21,9 @@ import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/rela
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   T3_LEARN_APP_ID,
-  T3_LEARN_DESKTOP_SCHEME,
   T3_LEARN_EXECUTABLE_NAME,
+  T3_LEARN_LINK_SCHEMES,
+  T3_LEARN_LEGACY,
   T3_LEARN_PRODUCT_NAME,
 } from "@t3tools/shared/t3LearnIdentity";
 import rootPackageJson from "../package.json" with { type: "json" };
@@ -1020,14 +1021,15 @@ export const LINUX_FILE_EXCLUSIONS = [
   "!**/node_modules/node-pty/prebuilds/darwin-*/**/*",
 ] as const;
 
-// node-pty bundles both Darwin architectures; only universal apps need both.
+// Native packages (node-pty, objc-js) ship prebuilds for both Darwin architectures; only universal
+// apps need both. macOS 27 warns that an arm64 app holding x64-only code won't open on macOS 28.
 export function resolveMacFileExclusions(arch?: typeof BuildArch.Type) {
   if (arch === undefined || arch === "universal") {
     return [...MAC_FILE_EXCLUSIONS];
   }
 
   const unusedArch = arch === "arm64" ? "x64" : "arm64";
-  return [...MAC_FILE_EXCLUSIONS, `!**/node_modules/node-pty/prebuilds/darwin-${unusedArch}/**/*`];
+  return [...MAC_FILE_EXCLUSIONS, `!**/node_modules/**/prebuilds/darwin-${unusedArch}/**/*`];
 }
 // Large ASAR sidecars avoid NSIS extracting thousands of loose files during installs and updates.
 export const WINDOWS_SERVER_ASAR_RESOURCE = "server.asar";
@@ -2814,7 +2816,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // Disable smart unpack so native packages' JS/metadata stay archived and avoid slowing NSIS with loose files.
     ...(platform === "win"
       ? { asar: { smartUnpack: false }, asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB] }
-      : {}),
+      : { asarUnpack: ["**/node_modules/@transcribe-cpp/**/*.{dylib,so,so.*}"] }),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
@@ -2872,7 +2874,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       protocols: [
         {
           name: T3_LEARN_PRODUCT_NAME,
-          schemes: [T3_LEARN_DESKTOP_SCHEME],
+          schemes: [...T3_LEARN_LINK_SCHEMES],
         },
         {
           name: "Web site URL",
@@ -2929,7 +2931,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       protocols: [
         {
           name: T3_LEARN_PRODUCT_NAME,
-          schemes: [T3_LEARN_DESKTOP_SCHEME],
+          schemes: [...T3_LEARN_LINK_SCHEMES],
         },
       ],
       desktop: {
@@ -2941,6 +2943,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.deb = {
       // FPM runs outside the staged app directory, so source paths must be absolute.
       fpm: [
+        "--replaces",
+        T3_LEARN_LEGACY.executableName,
+        "--conflicts",
+        T3_LEARN_LEGACY.executableName,
+        "--provides",
+        T3_LEARN_LEGACY.executableName,
         `${path.join(repoRoot, `apps/desktop/resources/linux/${T3_LEARN_APP_ID}.metainfo.xml`)}=/usr/share/metainfo/${T3_LEARN_APP_ID}.metainfo.xml`,
         `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/${T3_LEARN_EXECUTABLE_NAME}/copyright`,
       ],
@@ -2966,6 +2974,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.nsis = {
       differentialPackage: true,
       include: "apps/desktop/resources/installer.nsh",
+      // electron-builder's default UUID v5 for the old appId keeps N-1 installs in place.
+      guid: "40162e00-5906-5533-875e-8e4966029d67",
     };
     const winConfig: Record<string, unknown> = {
       target: [target],
@@ -3893,7 +3903,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     description:
       "OminaX is a fork of T3 Code for learning with AI. Highlight anything in a reply and ask about it in a side chat next to the lesson. It installs next to T3 Code and keeps its own data.",
     license: "MIT",
-    homepage: "https://github.com/aabdel0181/t3-learn",
+    homepage: "https://github.com/aabdel0181/ominax",
     author: "aabdel0181",
     main: "apps/desktop/dist-electron/boot.cjs",
     build: yield* createBuildConfig(

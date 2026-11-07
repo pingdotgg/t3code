@@ -1,6 +1,23 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseChatSyncStatus } from "./chatSync.ts";
+import { parseChatSyncStatus, selectChatSyncUnit } from "./chatSync.ts";
+
+describe("selectChatSyncUnit", () => {
+  it("prefers the new unit and falls back to the legacy unit", () => {
+    expect(selectChatSyncUnit({ ominaxLoaded: true })).toBe("ominax-chat-sync.service");
+    expect(selectChatSyncUnit({ ominaxLoaded: false })).toBe("t3-learn-chat-sync.service");
+  });
+
+  it("lets the new override win over the legacy override", () => {
+    expect(
+      selectChatSyncUnit({
+        ominaxLoaded: false,
+        ominaxOverride: "new.service",
+        legacyOverride: "old.service",
+      }),
+    ).toBe("new.service");
+  });
+});
 
 describe("parseChatSyncStatus", () => {
   it.each([

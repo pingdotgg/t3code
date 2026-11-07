@@ -43,7 +43,7 @@ summary. The cache is in memory, so a server restart writes a new one.
 ## Context in
 
 [ProviderTurnStartService](../../apps/server/src/orchestration-v2/ProviderTurnStartService.ts) hands a
-new provider thread the opening context. It waits up to `SIDE_CHAT_WAIT_CAP_MS` for the summary before
+new provider thread the opening context. It waits up to `SIDE_CHAT_OPENING_WAIT_CAP_MS` (25 s) for the summary before
 taking the workspace lease, which the side chat shares with the lesson. A context sent without the
 summary gets the fallback title, and the summary rides the next turn on its own once it lands. It is
 owed only while no handoff of the side chat contains its text
@@ -55,9 +55,10 @@ fallback opening.
 
 A new side chat, including nested ones, starts with `sideChatModelSelection` when that instance is
 enabled; otherwise it uses the anchor's model. It may use another provider than the lesson, and that
-provider receives the opening: the lesson summary, the highlight and the text around it. Summaries
-and notes still use the lesson's text model described above. Skills are appended as `$name` after the
-user text, in provider text only, on the turn that delivers the opening (the first turn or a later
+provider receives the opening: the lesson summary, the highlight and the text around it. If the
+lesson is answering while the opening is built, it also receives that turn's latest items, capped at
+4,000 characters. Summaries and notes still use the lesson's text model described above. Skills are
+appended as `$name` after the user text, in provider text only, on the turn that delivers the opening (the first turn or a later
 fresh native thread), when the run's provider lists them in its cached catalog (the run's cwd snapshot
 if a client warmed it, otherwise the machine list); nothing is scanned at turn start. A
 first message that is a slash command, `/goal` or `/compact` gets none. After `/goal` or `/compact`,
@@ -109,10 +110,11 @@ ancestors, and empty ones stay open because their composer may hold an unsent dr
 
 ## Downgrade safety and the capability gate
 
-T3 Learn installs beside T3 Code with its own home, `~/.t3-learn`, so an official build opens a
-T3 Learn database only when pointed at it: upstream `t3` or the T3 Code desktop app with
-`T3CODE_HOME=~/.t3-learn`, or `t3 --base-dir ~/.t3-learn`. The user guides tell people to export
-that variable for T3 Learn's plain CLI, so an upstream `t3` run from the same shell lands there.
+OminaX installs beside T3 Code with its own home, `~/.ominax` (older installs move there from
+`~/.t3-learn` and keep a link back), so an official build opens an OminaX database only when
+pointed at it: upstream `t3` or the T3 Code desktop app with `T3CODE_HOME=~/.ominax`, or
+`t3 --base-dir ~/.ominax`. The user guides tell people to export that variable for OminaX's plain
+CLI, so an upstream `t3` run from the same shell lands there.
 
 Side chats create no `fork` or `merge_back` transfer, which an official server would replay in full:
 a fork of a side chat drops `sideChat`, and merge-back from one is refused. The database is then safe

@@ -1,6 +1,7 @@
 import * as NodeOS from "node:os";
 
 import { ChatSyncError, type ChatSyncStatus } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -8,13 +9,23 @@ import * as Layer from "effect/Layer";
 
 import * as ProcessRunner from "./processRunner.ts";
 
-const unit = process.env.T3_LEARN_CHAT_SYNC_UNIT ?? "t3-learn-chat-sync.service";
+const CHAT_SYNC_UNIT = "ominax-chat-sync.service";
+const LEGACY_CHAT_SYNC_UNIT = "t3-learn-chat-sync.service";
+
+export const selectChatSyncUnit = (input: {
+  readonly ominaxLoaded: boolean;
+  readonly ominaxOverride?: string;
+  readonly legacyOverride?: string;
+}) =>
+  input.ominaxOverride ??
+  input.legacyOverride ??
+  (input.ominaxLoaded ? CHAT_SYNC_UNIT : LEGACY_CHAT_SYNC_UNIT);
 
 export function parseChatSyncStatus(
   activeState: string,
   result: string,
   journal: string,
-  unitName = unit,
+  unitName = CHAT_SYNC_UNIT,
 ): ChatSyncStatus {
   const running = activeState === "activating" || activeState === "deactivating";
   const lines = journal.split(/\r?\n/);
@@ -28,7 +39,9 @@ export function parseChatSyncStatus(
         !line.startsWith("Starting ") &&
         !line.startsWith("Finished ") &&
         !line.startsWith("Failed to start ") &&
-        !line.startsWith(`${unitName}:`),
+        !line.startsWith(`${unitName}:`) &&
+        !line.startsWith(`${CHAT_SYNC_UNIT}:`) &&
+        !line.startsWith(`${LEGACY_CHAT_SYNC_UNIT}:`),
     );
   const message = runLines.at(-1)?.replace(/^\d{2}:\d{2}:\d{2} /, "") ?? null;
   const added = runLines
@@ -75,15 +88,23 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const runner = yield* ProcessRunner.ProcessRunner;
     const fs = yield* FileSystem.FileSystem;
+    const env = yield* HostProcess.Environment;
     const run = (input: ProcessRunner.ProcessRunInput) =>
       runner
         .run(input)
         .pipe(Effect.mapError((error) => new ChatSyncError({ message: String(error) })));
     const databasePath = `${NodeOS.homedir()}/.t3/userdata/statev2.sqlite`;
-    const loadState = yield* run({
-      command: "systemctl",
-      args: ["--user", "show", unit, "-p", "LoadState"],
-    }).pipe(Effect.orElseSucceed(() => ({ stdout: "", stderr: "", code: null }) as const));
+    const loadUnit = (name: string) =>
+      run({ command: "systemctl", args: ["--user", "show", name, "-p", "LoadState"] }).pipe(
+        Effect.orElseSucceed(() => ({ stdout: "", stderr: "", code: null }) as const),
+      );
+    const ominaxState = yield* loadUnit(CHAT_SYNC_UNIT);
+    const unit = selectChatSyncUnit({
+      ominaxLoaded: ominaxState.code === 0 && ominaxState.stdout.trim() === "LoadState=loaded",
+      ...(env.OMINAX_CHAT_SYNC_UNIT ? { ominaxOverride: env.OMINAX_CHAT_SYNC_UNIT } : {}),
+      ...(env.T3_LEARN_CHAT_SYNC_UNIT ? { legacyOverride: env.T3_LEARN_CHAT_SYNC_UNIT } : {}),
+    });
+    const loadState = unit === CHAT_SYNC_UNIT ? ominaxState : yield* loadUnit(unit);
     const available =
       loadState.code === 0 &&
       loadState.stdout.trim() === "LoadState=loaded" &&
@@ -113,6 +134,7 @@ export const layer = Layer.effect(
         values.Job ? "activating" : (values.ActiveState ?? ""),
         values.Result ?? "",
         journalOutput.stdout,
+        unit,
       );
     }).pipe(Effect.withSpan("ChatSync.status"));
 

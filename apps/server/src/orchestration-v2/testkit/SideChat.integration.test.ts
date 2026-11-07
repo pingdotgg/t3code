@@ -11,7 +11,7 @@ import {
   SIDE_CHAT_CONTEXT_HANDOFF_TITLE,
   SIDE_CHAT_EXCERPT_MAX_CHARS,
   SIDE_CHAT_SUMMARY_HANDOFF_TITLE,
-  SIDE_CHAT_WAIT_CAP_MS,
+  SIDE_CHAT_OPENING_WAIT_CAP_MS,
   TextGenerationError,
   ThreadId,
   type ServerProvider,
@@ -179,6 +179,7 @@ describe("thread.side_chat.open", () => {
         assert.deepEqual(opened.thread.sideChat, {
           lessonThreadId: LESSON_THREAD_ID,
           anchor,
+          section: null,
           excerpt: OBSERVATION_EXCERPT,
           excerptContext,
           label: OBSERVATION_EXCERPT,
@@ -228,8 +229,18 @@ describe("thread.side_chat.open", () => {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const sideChatReplyId = MessageId.make("message:side-chat:a1");
       const nestedThreadId = ThreadId.make("thread:side-chat:nested");
-      yield* createLesson();
+      yield* createLesson({
+        messages: LESSON_MESSAGES.map((message) =>
+          message.id === LESSON_ANCHOR_MESSAGE_ID
+            ? { ...message, text: `## Lesson 1: big picture\n${message.text}` }
+            : message,
+        ),
+      });
       yield* openOnObservation;
+      assert.equal(
+        (yield* readThread(SIDE_CHAT_THREAD_ID)).sideChat?.section,
+        "Lesson 1: big picture",
+      );
       yield* seedThreadMessages(SIDE_CHAT_THREAD_ID, [
         {
           id: sideChatReplyId,
@@ -256,6 +267,7 @@ describe("thread.side_chat.open", () => {
 
       const nested = yield* readThread(nestedThreadId);
       assert.equal(nested.sideChat?.lessonThreadId, LESSON_THREAD_ID);
+      assert.equal(nested.sideChat?.section, "Lesson 1: big picture");
       assert.equal(nested.lineage.parentThreadId, SIDE_CHAT_THREAD_ID);
     }).pipe(Effect.provide(openHarness())),
   );
@@ -729,6 +741,7 @@ describe("side chat opening context", () => {
             assert.isDefined(prompt);
             assert.include(prompt, SIDE_CHAT_OPENING_FRAMING);
             assert.include(prompt, LESSON_SUMMARY);
+            assert.notInclude(prompt, "The lesson is still answering. So far:");
             assert.notInclude(prompt, "Historical material is context");
             assert.include(prompt, OBSERVATION_PARAGRAPH);
             assert.include(prompt, "User message:\nWhat is an observation space?");
@@ -751,6 +764,38 @@ describe("side chat opening context", () => {
           }).pipe(Effect.provide(layer));
         }),
       ),
+  );
+
+  it.effect("includes the lesson's latest items when its turn is still running", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeSideChatHarness("side-chat-opening-busy-lesson");
+        yield* Effect.gen(function* () {
+          const lesson = yield* harness.createLesson(LESSON_TOPIC);
+          yield* harness.send(lesson, "[hold] Explain reward shaping.");
+          const sideChat = yield* harness.openSideChat({
+            parentThreadId: lesson,
+            label: "observation space",
+          });
+          const afterSideChat = yield* harness.mark;
+          const sideChatMessage = yield* harness.send(sideChat, "What is an observation space?", {
+            await: "none",
+          });
+          yield* harness.awaitRun(afterSideChat, sideChatMessage, "running");
+          yield* harness.awaitEvent(
+            afterSideChat,
+            (event) => event.type === "provider-turn.updated" && event.threadId === sideChat,
+          );
+
+          const prompt = harness.prompts(sideChat).at(-1);
+          assert.isDefined(prompt);
+          assert.include(prompt, "The lesson is still answering. So far:");
+          assert.include(prompt, "- User: [hold] Explain reward shaping.");
+
+          yield* harness.finishHeldTurn(lesson);
+        }).pipe(Effect.provide(harness.layer));
+      }),
+    ),
   );
 
   it.effect.each([
@@ -1065,7 +1110,7 @@ describe("side chat opening context", () => {
         const question = yield* harness.send(space, "What is an observation space?", {
           await: "none",
         });
-        yield* TestClock.adjust(Duration.millis(SIDE_CHAT_WAIT_CAP_MS));
+        yield* TestClock.adjust(Duration.millis(SIDE_CHAT_OPENING_WAIT_CAP_MS));
         yield* harness.awaitRun(afterAsk, question, "completed");
 
         const afterSummary = yield* harness.mark;
@@ -1129,7 +1174,7 @@ describe("side chat opening context", () => {
           const turnStart = yield* worker.runOnce.pipe(
             Effect.forkChild({ startImmediately: true }),
           );
-          yield* TestClock.adjust(Duration.millis(SIDE_CHAT_WAIT_CAP_MS));
+          yield* TestClock.adjust(Duration.millis(SIDE_CHAT_OPENING_WAIT_CAP_MS));
           assert.isTrue(yield* Fiber.join(turnStart));
           yield* Deferred.succeed(gate, undefined);
           yield* Fiber.join(opening);

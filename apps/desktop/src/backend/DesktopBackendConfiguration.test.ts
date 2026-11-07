@@ -736,7 +736,7 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(config.executablePath, "wsl.exe");
         assert.equal(config.bootstrap.port, 5050);
         assert.equal(config.bootstrap.host, "0.0.0.0");
-        assert.equal(config.bootstrap.t3Home, "~/.t3-learn");
+        assert.equal(config.bootstrap.t3Home, "~/.ominax");
         assert.equal(config.bootstrap.tailscaleServeEnabled, false);
         assert.notProperty(config.bootstrap, "desktopTelemetryFd");
         assert.notProperty(config.bootstrap, "resourceMonitorPath");

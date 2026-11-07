@@ -423,14 +423,53 @@ it("plans a side chat from its anchor without pins, title regeneration, limit re
   assert.isTrue(DateTime.Equivalence(thread.updatedAt, forkCreatedAt));
 });
 
-it.effect("marks only requested forks as supervised side chats", () =>
+it.effect("does not carry the T3 Code copy marker into a fork", () =>
+  Effect.gen(function* () {
+    const sourceRun = makeSourceRun("completed");
+    const source = makeSourceProjection(sourceRun);
+    const service = yield* ThreadForkService.ThreadForkServiceV2;
+    const result = yield* service.plan({
+      sourceProjection: {
+        thread: { ...source.thread, t3CodeCopiedAt: "2026-11-05T00:00:00.000Z" },
+      },
+      sourceRun,
+      sourceProviderThread: source.providerThreads[0],
+      canonicalSourcePoint: { threadId: source.thread.id, runId: sourceRun.id },
+      transferId: ContextTransferId.make("context-transfer:copy-marker"),
+      targetThreadId: ThreadId.make("thread:copy-marker-fork"),
+      createdBy: "user",
+      creationSource: "web",
+      createdAt: forkCreatedAt,
+    });
+    assert.isFalse("t3CodeCopiedAt" in result.targetThread);
+  }).pipe(Effect.provide(ThreadForkService.layer)),
+);
+
+it.effect("marks only requested forks as side chats and inherits parent permissions", () =>
   Effect.gen(function* () {
     const sourceRun = makeSourceRun("completed");
     const sideChat = yield* planFork(sourceRun, makeSourceProjection(sourceRun), {
       sideChat: true,
     });
     assert.isTrue(sideChat.targetThread.lineage.sideChat);
-    assert.equal(sideChat.targetThread.runtimeMode, "approval-required");
+    assert.equal(sideChat.targetThread.runtimeMode, "full-access");
+    for (const runtimeMode of [
+      "approval-required",
+      "auto-accept-edits",
+      "auto",
+      "full-access",
+    ] as const) {
+      const source = makeSourceProjection(sourceRun);
+      const inherited = yield* planFork(
+        sourceRun,
+        {
+          ...source,
+          thread: { ...source.thread, runtimeMode },
+        },
+        { sideChat: true },
+      );
+      assert.equal(inherited.targetThread.runtimeMode, runtimeMode);
+    }
 
     const sideChatSource = makeSourceProjection(sourceRun);
     const sideChatProjection = {

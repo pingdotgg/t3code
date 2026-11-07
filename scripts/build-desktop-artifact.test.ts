@@ -38,6 +38,7 @@ import {
   packWindowsServerAsar,
   preflightWindowsDesktopBuild,
   renderMacPasskeyEntitlements,
+  resolveMacFileExclusions,
   resolveMacWebAuthnEntitlements,
   resolveMacPasskeySigningConfiguration,
   resolveMergedStageDependencies,
@@ -588,13 +589,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
         undefined,
       );
-      assert.equal(mac.appId, "io.github.aabdel0181.t3learn");
+      assert.equal(mac.appId, "io.github.aabdel0181.ominax");
       assert.equal(mac.productName, "OminaX");
       assert.equal(mac.artifactName, "OminaX-${version}-${arch}.${ext}");
       const unsignedMac = mac.mac as Record<string, unknown>;
       assert.deepStrictEqual((unsignedMac.protocols as unknown[])[0], {
         name: "OminaX",
-        schemes: ["t3learn"],
+        schemes: ["ominax", "t3learn"],
       });
       assert.equal(unsignedMac.identity, "-");
       assert.isFalse(unsignedMac.hardenedRuntime);
@@ -622,15 +623,25 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
       );
       const linuxConfig = linux.linux as Record<string, unknown>;
-      assert.equal(linuxConfig.executableName, "t3learn");
-      assert.deepStrictEqual(linuxConfig.protocols, [{ name: "OminaX", schemes: ["t3learn"] }]);
-      assert.deepStrictEqual(linuxConfig.desktop, { entry: { StartupWMClass: "t3learn" } });
-      const [metainfo, copyright] = (linux.deb as { fpm: string[] }).fpm.map((entry) =>
-        entry.split("="),
-      );
-      assert.equal(metainfo?.[1], "/usr/share/metainfo/io.github.aabdel0181.t3learn.metainfo.xml");
+      assert.equal(linuxConfig.executableName, "ominax");
+      assert.deepStrictEqual(linuxConfig.protocols, [
+        { name: "OminaX", schemes: ["ominax", "t3learn"] },
+      ]);
+      assert.deepStrictEqual(linuxConfig.desktop, { entry: { StartupWMClass: "ominax" } });
+      const fpm = (linux.deb as { fpm: string[] }).fpm;
+      // The ominax deb upgrades the pre-rename t3learn package instead of installing beside it.
+      assert.deepStrictEqual(fpm.slice(0, 6), [
+        "--replaces",
+        "t3learn",
+        "--conflicts",
+        "t3learn",
+        "--provides",
+        "t3learn",
+      ]);
+      const [metainfo, copyright] = fpm.slice(6).map((entry) => entry.split("="));
+      assert.equal(metainfo?.[1], "/usr/share/metainfo/io.github.aabdel0181.ominax.metainfo.xml");
       assert.isTrue(yield* fs.exists(metainfo?.[0] ?? ""));
-      assert.equal(copyright?.[1], "/usr/share/doc/t3learn/copyright");
+      assert.equal(copyright?.[1], "/usr/share/doc/ominax/copyright");
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
@@ -751,6 +762,30 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }),
     ),
   );
+
+  it("drops the other architecture's Darwin prebuilds from single-architecture Mac builds", () => {
+    const excludes = (arch: "arm64" | "x64" | "universal", file: string) =>
+      resolveMacFileExclusions(arch).some((glob) => NodePath.matchesGlob(file, glob.slice(1)));
+    const x64 = [
+      "node_modules/node-pty/prebuilds/darwin-x64/pty.node",
+      "node_modules/objc-js/prebuilds/darwin-x64/node.napi.node",
+    ];
+    const arm64 = [
+      "node_modules/node-pty/prebuilds/darwin-arm64/pty.node",
+      "node_modules/objc-js/prebuilds/darwin-arm64/node.napi.armv8.node",
+    ];
+
+    for (const file of x64) {
+      assert.isTrue(excludes("arm64", file), file);
+      assert.isFalse(excludes("x64", file), file);
+      assert.isFalse(excludes("universal", file), file);
+    }
+    for (const file of arm64) {
+      assert.isTrue(excludes("x64", file), file);
+      assert.isFalse(excludes("arm64", file), file);
+      assert.isFalse(excludes("universal", file), file);
+    }
+  });
 
   it.effect("unpacks target Windows natives while excluding the other architecture", () =>
     Effect.scoped(
@@ -1481,7 +1516,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     });
 
     assert.deepStrictEqual(configuration, {
-      appId: "io.github.aabdel0181.t3learn",
+      appId: "io.github.aabdel0181.ominax",
       teamId: "ABC1234567",
       rpDomains: ["example.clerk.accounts.dev"],
       provisioningProfilePath: "/tmp/t3code.provisionprofile",
@@ -1504,7 +1539,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "clerk.example.com",
       "example.clerk.accounts.dev",
     ]);
-    assert.include(entitlements, "<string>ABC1234567.io.github.aabdel0181.t3learn</string>");
+    assert.include(entitlements, "<string>ABC1234567.io.github.aabdel0181.ominax</string>");
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
@@ -1515,7 +1550,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   });
 
   it("grants in-app browser passkey entitlements only when the provisioning profile does", () => {
-    const configuration = { appId: "io.github.aabdel0181.t3learn", teamId: "ABC1234567" };
+    const configuration = { appId: "io.github.aabdel0181.ominax", teamId: "ABC1234567" };
     const profile = (entitlements: string, outside = "") =>
       `0\x82\x1f\x9a\x06\t*\x86H<?xml version="1.0"?><plist version="1.0"><dict>${outside}<key>Entitlements</key><dict>${entitlements}</dict></dict></plist>\x00\x01`;
     const teamWildcardGroups = `<key>keychain-access-groups</key>
@@ -1557,7 +1592,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         configuration,
       ),
       {
-        touchIdKeychainAccessGroup: "ABC1234567.io.github.aabdel0181.t3learn.webauthn",
+        touchIdKeychainAccessGroup: "ABC1234567.io.github.aabdel0181.ominax.webauthn",
         browserPasskeys: true,
       },
     );
@@ -1573,7 +1608,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
     assert.match(
       entitlements,
-      /<key>keychain-access-groups<\/key>\s*<array>\s*<string>ABC1234567\.io\.github\.aabdel0181\.t3learn\.webauthn<\/string>\s*<\/array>/u,
+      /<key>keychain-access-groups<\/key>\s*<array>\s*<string>ABC1234567\.io\.github\.aabdel0181\.ominax\.webauthn<\/string>\s*<\/array>/u,
     );
     assert.match(
       entitlements,
