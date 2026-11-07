@@ -296,6 +296,7 @@ keeps the explicit flush needed when Windows force-kills the backend.
 
 Build on Linux because the browser-secret helper links against the host's libsecret. Install
 Rust, C/C++ build tools, libsecret development headers, pkg-config, and ImageMagick.
+The packaged ELF compatibility check uses binutils’ `readelf`, included by the C/C++ toolchain.
 
 Ubuntu and Debian:
 
