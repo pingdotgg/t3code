@@ -54,7 +54,10 @@ const PermissionResponse = jsonRpcResponse(AcpSchema.RequestPermissionResponse);
 const ErrorResponse = Schema.Struct({ id: Schema.String, error: Schema.Unknown });
 const DieResponse = Schema.Struct({
   id: Schema.String,
-  error: Schema.TaggedStruct("Cause", { data: Schema.Tuple([Schema.TaggedStruct("Die", {})]) }),
+  error: Schema.Struct({
+    code: Schema.Literal(-32603),
+    message: Schema.Literal("Internal error"),
+  }),
 });
 const decodePromptRequestLine = Schema.decodeEffect(Schema.fromJsonString(PromptRequest));
 const XAiPromptCompleteNotification = jsonRpcNotification(
