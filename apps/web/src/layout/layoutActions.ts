@@ -17,7 +17,7 @@ import {
 } from "./layoutModel";
 import { readThreadLineage } from "../state/entities";
 import type { ThreadRouteTarget } from "../threadRoutes";
-import { useLayoutStore, type LayoutNewTabRequest } from "./layoutStore";
+import { useLayoutStore } from "./layoutStore";
 import type { LauncherSurfaceKind } from "../components/SurfaceLauncher";
 import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
 import { threadlessSurfacesRef } from "../threadlessSurfaces";
@@ -79,28 +79,6 @@ export function closeLayoutProject(
     drafts.clearDraftThread(DraftId.make(draftId));
   }
   closeLayoutThread(threadlessSurfacesRef(projectRef.environmentId, projectRef.projectId));
-}
-
-type NewThreadAction = (request: LayoutNewTabRequest) => void;
-let newThreadAction: NewThreadAction | null = null;
-
-/**
- * The chat routes register how a new thread starts (a fresh draft in the
- * focused chat's project), so the keyboard and other callers outside React
- * can open one.
- */
-export function registerLayoutNewThreadAction(action: NewThreadAction): () => void {
-  newThreadAction = action;
-  return () => {
-    if (newThreadAction === action) newThreadAction = null;
-  };
-}
-
-/** Start a new thread as a tab of the focused pane (cmd+N on a thread). */
-export function openLayoutNewThreadTab(request: LayoutNewTabRequest = "active-pane"): boolean {
-  if (!newThreadAction) return false;
-  newThreadAction(request);
-  return true;
 }
 
 /**
