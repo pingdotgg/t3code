@@ -27,6 +27,7 @@ import {
   EnvironmentId,
   ClaudeSettings,
   CodexSettings,
+  DEFAULT_CODEX_PROBE_TIMEOUTS,
   DEFAULT_SERVER_SETTINGS,
   PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
   ProviderDriverKind,
@@ -414,6 +415,24 @@ it.layer(
         ]);
       }),
     );
+
+    it.effect("passes configured probe timeouts to the Codex probe", () => {
+      let seen: unknown;
+      return Effect.gen(function* () {
+        yield* checkCodexProviderStatus(
+          defaultCodexSettings,
+          (input) => {
+            seen = input.timeouts;
+            return Effect.succeed(makeCodexProbeSnapshot());
+          },
+          undefined,
+          undefined,
+          { ...DEFAULT_CODEX_PROBE_TIMEOUTS, startup: 90_000 },
+        );
+
+        assert.deepStrictEqual(seen, { ...DEFAULT_CODEX_PROBE_TIMEOUTS, startup: 90_000 });
+      });
+    });
 
     it.effect("labels the plan the usage read reports over the cached login plan", () =>
       Effect.gen(function* () {

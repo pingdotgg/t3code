@@ -737,6 +737,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "codex-probe-timeouts",
+    title: "Codex probe timeouts",
+    to: "/settings/maintenance",
+    scope: "environment-defaults",
+    searchTerms: [
+      "codex app-server startup skills probe timeout slow auth catalog rate limits reset credit",
+    ],
+  },
+  {
     id: "new-threads",
     title: "New threads",
     to: "/settings/threads",

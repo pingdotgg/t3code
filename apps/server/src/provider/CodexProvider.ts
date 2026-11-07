@@ -18,6 +18,7 @@ import * as CodexSchema from "effect-codex-app-server/schema";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
 import type {
+  CodexProbeTimeouts,
   CodexSettings,
   CustomModelSetting,
   ServerProvider,
@@ -27,7 +28,11 @@ import type {
   ServerProviderModel,
   ServerProviderSkill,
 } from "@t3tools/contracts";
-import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
+import {
+  DEFAULT_CODEX_PROBE_TIMEOUTS,
+  PREFERRED_DEFAULT_CODEX_MODELS,
+  ServerSettingsError,
+} from "@t3tools/contracts";
 
 import {
   codexModelFamily,
@@ -53,9 +58,9 @@ import {
   type CodexResetCreditsSummary,
 } from "./codexUsageLimits.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import packageJson from "../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
-const RATE_LIMITS_PROBE_TIMEOUT_MS = 3_000;
 
 type CodexRateLimitsProbe =
   | {
@@ -70,16 +75,20 @@ type CodexRateLimitsProbe =
   | { readonly failure: string };
 
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
-const CODEX_CATALOG_REFRESH_TIMEOUT_MS = 3_000;
-const CODEX_CONFIG_PROBE_TIMEOUT_MS = 3_000;
 const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
 const CODEX_CLIENT_NAME = "T3 Code";
-// Handshake plus account/models/skills requests can exceed the shared 10s probe budget.
-const CODEX_AUTH_PROBE_TIMEOUT_MS = 20_000;
 const CODEX_DISCOVERY_MARGIN_MS = 250;
 // `codex-cli 0.159.0`, `codex-cli 0.160.0-alpha.1` or the npm CLI's bare `0.1.4161006`.
 // Keep a prerelease suffix so compatibility stays unknown for it, as it does for `initialize`.
 const CODEX_CLI_VERSION_PATTERN = /(?:^|\s)v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?=\s|$)/u;
+
+/** Server settings are the source of truth; tests and non-server callers get the defaults. */
+export const readCodexProbeTimeouts = Effect.fn("readCodexProbeTimeouts")(function* () {
+  const host = yield* Effect.serviceOption(ProviderHost.ProviderHost);
+  if (Option.isNone(host)) return DEFAULT_CODEX_PROBE_TIMEOUTS;
+  const settings = yield* host.value.settings.get.pipe(Effect.orElseSucceed(() => undefined));
+  return settings?.codexProbeTimeouts ?? DEFAULT_CODEX_PROBE_TIMEOUTS;
+});
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",
@@ -420,6 +429,7 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
   readonly codexHome: string;
   readonly spawnedAtMs: number;
   readonly deadlineMs: number;
+  readonly catalogRefreshMs: number;
 }) {
   const models = yield* withCodexDiscoveryDeadline(
     requestAllCodexModels(input.client),
@@ -434,7 +444,7 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
       }),
     ),
     input.deadlineMs,
-    CODEX_CATALOG_REFRESH_TIMEOUT_MS,
+    input.catalogRefreshMs,
   );
   if (refreshed === undefined) {
     yield* Effect.logWarning(
@@ -532,7 +542,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   readonly cwd: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly skipNativeUsage?: boolean;
+  readonly timeouts?: CodexProbeTimeouts;
 }) {
+  const timeouts = input.timeouts ?? (yield* readCodexProbeTimeouts());
   const spawnedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
   const { client, initialize } = yield* withCodexAppServerClient(input);
 
@@ -550,7 +562,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   }
 
   // Optional discovery must finish before the outer timeout can discard the account result.
-  const deadlineMs = spawnedAtMs + CODEX_AUTH_PROBE_TIMEOUT_MS - CODEX_DISCOVERY_MARGIN_MS;
+  const deadlineMs = spawnedAtMs + timeouts.startup - CODEX_DISCOVERY_MARGIN_MS;
   const [skillsResponse, models, serviceTier, rateLimits] = yield* Effect.all(
     [
       withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
@@ -560,13 +572,14 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
             codexHome: initialize.codexHome,
             spawnedAtMs,
             deadlineMs,
+            catalogRefreshMs: timeouts.catalogRefresh,
           })
         : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs),
       // The shared catalog must exclude config from the server's launch project.
       withCodexDiscoveryDeadline(
         client.request("config/read", { includeLayers: false }),
         deadlineMs,
-        CODEX_CONFIG_PROBE_TIMEOUT_MS,
+        timeouts.config,
       ).pipe(
         Effect.map((response) => response?.config.service_tier ?? undefined),
         Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined))),
@@ -578,7 +591,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
         : withCodexDiscoveryDeadline(
             client.request("account/rateLimits/read", null),
             deadlineMs,
-            RATE_LIMITS_PROBE_TIMEOUT_MS,
+            timeouts.rateLimits,
           ).pipe(
             Effect.map((response): CodexRateLimitsProbe =>
               response
@@ -649,10 +662,14 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
   readonly launchArgs?: string;
   readonly cwd: string;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly timeouts?: CodexProbeTimeouts;
 }) {
-  const { client } = yield* withCodexAppServerClient(input);
-  const skillsResponse = yield* client.request("skills/list", { cwds: [input.cwd] });
-  return parseCodexSkillsListResponse(skillsResponse, input.cwd);
+  const timeouts = input.timeouts ?? (yield* readCodexProbeTimeouts());
+  return yield* Effect.gen(function* () {
+    const { client } = yield* withCodexAppServerClient(input);
+    const skillsResponse = yield* client.request("skills/list", { cwds: [input.cwd] });
+    return parseCodexSkillsListResponse(skillsResponse, input.cwd);
+  }).pipe(Effect.timeout(Duration.millis(timeouts.skills)));
 });
 
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] =>
@@ -741,6 +758,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     readonly cwd: string;
     readonly environment?: NodeJS.ProcessEnv;
     readonly skipNativeUsage?: boolean;
+    readonly timeouts?: CodexProbeTimeouts;
   }) => Effect.Effect<
     CodexAppServerProviderSnapshot,
     CodexErrors.CodexAppServerError,
@@ -748,11 +766,13 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   > = probeCodexAppServerProvider,
   environment?: NodeJS.ProcessEnv,
   managedAuth?: ServerProvider["auth"],
+  timeouts?: CodexProbeTimeouts,
 ): Effect.fn.Return<
   ServerProviderDraft,
   ServerSettingsError,
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
+  const resolvedTimeouts = timeouts ?? (yield* readCodexProbeTimeouts());
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const emptyModels = emptyCodexModelsFromSettings(codexSettings);
@@ -781,9 +801,10 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     cwd: process.cwd(),
     environment: resolvedEnvironment,
     ...(managedAuth ? { skipNativeUsage: true } : {}),
+    timeouts: resolvedTimeouts,
   }).pipe(
     // Process teardown can outlast the work budget without discarding a completed snapshot.
-    Effect.timeoutOption(Duration.millis(CODEX_AUTH_PROBE_TIMEOUT_MS)),
+    Effect.timeoutOption(Duration.millis(resolvedTimeouts.startup)),
     Effect.scoped,
     Effect.result,
   );

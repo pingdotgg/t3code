@@ -84,6 +84,15 @@ reported accounts, refresh provider status, and confirm the second instance has
 its own shadow path and login. A shadow-home conflict usually means the directory
 contains a copied Codex setup. Use a fresh shadow directory and sign in again.
 
+## Codex is slow to start
+
+If Codex briefly shows as unavailable while its app-server starts, raise
+**Settings → Maintenance → Codex probe timeouts**. Startup and skills scans
+default to 60 seconds; catalog, config, and rate-limit reads default to 3
+seconds. The setting is stored on each environment, so select **All
+environments** to apply one value across your T3 Connect machines. Lower the
+values if you want a stalled app-server reported sooner.
+
 ## Answer questions while Codex works
 
 Codex can ask a question and keep working. Answer it in the thread's question

@@ -738,6 +738,43 @@ export const CodexSettings = makeProviderSettingsSchema(
 );
 export type CodexSettings = typeof CodexSettings.Type;
 
+export const CODEX_PROBE_TIMEOUT_MIN_MS = 1_000;
+export const CODEX_PROBE_TIMEOUT_MAX_MS = 10 * 60_000;
+
+const CODEX_PROBE_TIMEOUT_DEFAULTS = {
+  startup: 60_000,
+  skills: 60_000,
+  catalogRefresh: 3_000,
+  config: 3_000,
+  rateLimits: 3_000,
+  resetCredit: 20_000,
+} as const;
+
+const CodexProbeTimeoutMs = Schema.Int.check(
+  Schema.isBetween({
+    minimum: CODEX_PROBE_TIMEOUT_MIN_MS,
+    maximum: CODEX_PROBE_TIMEOUT_MAX_MS,
+  }),
+);
+
+const codexProbeTimeout = (defaultMs: number) =>
+  CodexProbeTimeoutMs.pipe(Schema.withDecodingDefault(Effect.succeed(defaultMs)));
+
+/**
+ * Environment-wide timeouts for the Codex app-server probes. They are server settings so the
+ * existing "All environments" scope can apply one value across a T3 Connect network.
+ */
+export const CodexProbeTimeouts = Schema.Struct({
+  startup: codexProbeTimeout(CODEX_PROBE_TIMEOUT_DEFAULTS.startup),
+  skills: codexProbeTimeout(CODEX_PROBE_TIMEOUT_DEFAULTS.skills),
+  catalogRefresh: codexProbeTimeout(CODEX_PROBE_TIMEOUT_DEFAULTS.catalogRefresh),
+  config: codexProbeTimeout(CODEX_PROBE_TIMEOUT_DEFAULTS.config),
+  rateLimits: codexProbeTimeout(CODEX_PROBE_TIMEOUT_DEFAULTS.rateLimits),
+  resetCredit: codexProbeTimeout(CODEX_PROBE_TIMEOUT_DEFAULTS.resetCredit),
+}).pipe(Schema.withDecodingDefault(Effect.succeed(CODEX_PROBE_TIMEOUT_DEFAULTS)));
+export type CodexProbeTimeouts = typeof CodexProbeTimeouts.Type;
+export const DEFAULT_CODEX_PROBE_TIMEOUTS: CodexProbeTimeouts = CODEX_PROBE_TIMEOUT_DEFAULTS;
+
 const CLAUDE_AUTO_COMPACT_WINDOW_PATTERN = /^(?:|[1-9]\d{5}|1000000)$/;
 
 export const IDLE_COMPACTION_MODES = [
@@ -1438,6 +1475,7 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  codexProbeTimeouts: CodexProbeTimeouts,
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   sourceControlHosts: Schema.Record(Schema.String, SourceControlHostSettings).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -1799,6 +1837,16 @@ export const ServerSettingsPatch = Schema.Struct({
   sourceControlHosts: Schema.optionalKey(Schema.Record(Schema.String, SourceControlHostSettings)),
   // Replace whole maps to avoid half-merged driver configs.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  codexProbeTimeouts: Schema.optionalKey(
+    Schema.Struct({
+      startup: Schema.optionalKey(CodexProbeTimeoutMs),
+      skills: Schema.optionalKey(CodexProbeTimeoutMs),
+      catalogRefresh: Schema.optionalKey(CodexProbeTimeoutMs),
+      config: Schema.optionalKey(CodexProbeTimeoutMs),
+      rateLimits: Schema.optionalKey(CodexProbeTimeoutMs),
+      resetCredit: Schema.optionalKey(CodexProbeTimeoutMs),
+    }),
+  ),
   // Merge per source to avoid racing other edits; null removes an entry.
   usageLimitSources: Schema.optionalKey(
     Schema.Record(UsageLimitSourceId, Schema.NullOr(UsageLimitSourceConfig)),

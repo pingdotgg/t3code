@@ -1,4 +1,5 @@
 import {
+  DEFAULT_CODEX_PROBE_TIMEOUTS,
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
   ProviderDriverKind,
@@ -680,6 +681,19 @@ describe("serverSettings helpers", () => {
     expect(Duration.toMillis(next.providerHealthRefreshInterval)).toBe(
       Duration.toMillis(Duration.minutes(15)),
     );
+  });
+
+  it("merges partial Codex probe timeout patches without losing other timeouts", () => {
+    expect(DEFAULT_SERVER_SETTINGS.codexProbeTimeouts).toEqual(DEFAULT_CODEX_PROBE_TIMEOUTS);
+
+    const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      codexProbeTimeouts: { startup: 90_000 },
+    });
+
+    expect(next.codexProbeTimeouts).toEqual({
+      ...DEFAULT_CODEX_PROBE_TIMEOUTS,
+      startup: 90_000,
+    });
   });
 
   it("turns legacy interval patches into custom background activity overrides", () => {
