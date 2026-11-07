@@ -415,6 +415,13 @@ export function resolveDiffReviewAnchor(
     : { position: last };
 }
 
+/** The file's diff lines in unified order, without markers or collapsed context. */
+export function buildDiffFileText(fileDiff: FileDiffMetadata): string {
+  return buildDiffReviewLines(fileDiff, false)
+    .map((line) => line.content)
+    .join("\n");
+}
+
 function getDiffRange(
   lines: ReadonlyArray<DiffReviewLine>,
   key: "oldLineNumber" | "newLineNumber",
