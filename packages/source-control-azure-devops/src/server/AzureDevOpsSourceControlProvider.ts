@@ -1,8 +1,11 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import type { NormalizedAzureDevOpsPullRequestRecord } from "./azureDevOpsPullRequests.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
@@ -73,6 +76,28 @@ function toChangeRequest(summary: NormalizedAzureDevOpsPullRequestRecord): Chang
 
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
+  const pullRequests = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+  /** Branch lookups date a pull request the same way the pull request panel does. */
+  const dated = (cwd: string) => (record: NormalizedAzureDevOpsPullRequestRecord) =>
+    pullRequests
+      .activityAt({
+        cwd,
+        pullRequest: {
+          ...record,
+          updatedAt: Option.getOrNull(Option.map(record.updatedAt, DateTime.formatIso)),
+        },
+        maxAge: AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
+      })
+      .pipe(
+        Effect.map((updatedAt) => ({
+          ...record,
+          updatedAt: Option.orElse(
+            Option.flatMap(Option.fromNullishOr(updatedAt), DateTime.make),
+            () => record.updatedAt,
+          ),
+        })),
+      );
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("azure-devops"),
@@ -84,36 +109,45 @@ export const make = Effect.gen(function* () {
     listChangeRequests: Effect.fn("AzureDevOpsSourceControlProvider.listChangeRequests")(
       function (input) {
         const source = SourceControlProvider.sourceControlRefFromInput(input);
-        return azure
-          .listPullRequests({
-            cwd: input.cwd,
-            headSelector: input.headSelector,
-            ...(source !== undefined ? { source } : {}),
-            state: input.state,
-            ...(input.limit !== undefined ? { limit: input.limit } : {}),
-          })
-          .pipe(
-            Effect.map((items) => items.map(toChangeRequest)),
-            Effect.mapError(
-              (error) =>
-                new SourceControlProviderError({
-                  provider: SourceControlProviderKind.make("azure-devops"),
-                  operation: "listChangeRequests",
-                  command: error.command,
-                  cwd: input.cwd,
-                  reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                    input.headSelector,
-                  ),
-                  detail: error.detail,
-                  cause: error,
-                }),
-            ),
-          );
+        const listed = azure.listPullRequests({
+          cwd: input.cwd,
+          headSelector: input.headSelector,
+          ...(source !== undefined ? { source } : {}),
+          state: input.state,
+          ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        });
+        // Branch status dates every state; an open-only lookup just asks whether one exists.
+        return (
+          input.state === "open"
+            ? listed
+            : listed.pipe(
+                Effect.flatMap((items) =>
+                  Effect.forEach(items, dated(input.cwd), { concurrency: "unbounded" }),
+                ),
+              )
+        ).pipe(
+          Effect.map((items) => items.map(toChangeRequest)),
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: SourceControlProviderKind.make("azure-devops"),
+                operation: "listChangeRequests",
+                command: error.command,
+                cwd: input.cwd,
+                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.headSelector,
+                ),
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
+        );
       },
     ),
     getChangeRequest: Effect.fn("AzureDevOpsSourceControlProvider.getChangeRequest")(
       function (input) {
         return azure.getPullRequest(input).pipe(
+          Effect.flatMap(dated(input.cwd)),
           Effect.map(toChangeRequest),
           Effect.mapError(
             (error) =>

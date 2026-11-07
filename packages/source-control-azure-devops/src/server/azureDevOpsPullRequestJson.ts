@@ -16,7 +16,11 @@ import type {
 import { TrimmedNonEmptyString } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
-import { azureDevOpsPullRequestWebUrl } from "./azureDevOpsPullRequests.ts";
+import {
+  azureDevOpsActivityRevision,
+  azureDevOpsPullRequestWebUrl,
+  latestAzureDevOpsTime,
+} from "./azureDevOpsPullRequests.ts";
 
 // CLI fields vary by command; unknown enum values must not fail the payload.
 const RawIdentitySchema = Schema.Struct({
@@ -24,6 +28,15 @@ const RawIdentitySchema = Schema.Struct({
   uniqueName: Schema.optional(Schema.NullOr(Schema.String)),
   imageUrl: Schema.optional(Schema.NullOr(Schema.String)),
 });
+
+const RawReviewerSchema = Schema.Struct({
+  ...RawIdentitySchema.fields,
+  vote: Schema.optional(Schema.NullOr(Schema.Number)),
+});
+
+const RawCommitSchema = Schema.optional(
+  Schema.NullOr(Schema.Struct({ commitId: Schema.optional(Schema.NullOr(Schema.String)) })),
+);
 
 const RawPullRequestSchema = Schema.Struct({
   pullRequestId: Schema.Int,
@@ -43,7 +56,8 @@ const RawPullRequestSchema = Schema.Struct({
   ),
   mergeStatus: Schema.optional(Schema.NullOr(Schema.String)),
   createdBy: Schema.optional(Schema.NullOr(RawIdentitySchema)),
-  reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawIdentitySchema))),
+  reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawReviewerSchema))),
+  lastMergeSourceCommit: RawCommitSchema,
   sourceRefName: TrimmedNonEmptyString,
   targetRefName: TrimmedNonEmptyString,
   creationDate: TrimmedNonEmptyString,
@@ -74,6 +88,8 @@ const RawPullRequestSchema = Schema.Struct({
 const RawThreadSchema = Schema.Struct({
   id: Schema.Int,
   isDeleted: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  publishedDate: Schema.optional(Schema.NullOr(Schema.String)),
+  lastUpdatedDate: Schema.optional(Schema.NullOr(Schema.String)),
   threadContext: Schema.optional(
     Schema.NullOr(Schema.Struct({ filePath: Schema.optional(Schema.NullOr(Schema.String)) })),
   ),
@@ -85,6 +101,8 @@ const RawThreadSchema = Schema.Struct({
           content: Schema.optional(Schema.NullOr(Schema.String)),
           author: Schema.optional(Schema.NullOr(RawIdentitySchema)),
           publishedDate: Schema.optional(Schema.NullOr(Schema.String)),
+          lastUpdatedDate: Schema.optional(Schema.NullOr(Schema.String)),
+          lastContentUpdatedDate: Schema.optional(Schema.NullOr(Schema.String)),
           isDeleted: Schema.optional(Schema.NullOr(Schema.Boolean)),
           commentType: Schema.optional(Schema.NullOr(Schema.String)),
         }),
@@ -119,6 +137,7 @@ export interface AzureDevOpsPullRequest {
   readonly isDraft: boolean;
   readonly mergeability: PullRequestMergeability;
   readonly createdAt: string;
+  /** The row's own times only; open pull requests are dated by their threads on top. */
   readonly updatedAt: string;
   readonly closedAt: string | null;
   readonly body: string;
@@ -127,6 +146,7 @@ export interface AzureDevOpsPullRequest {
   readonly location: AzureDevOpsRepositoryLocation | null;
   readonly autoMergeEnabled: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
+  readonly revision: string;
 }
 
 /** Logins must match the email from `az account show`. */
@@ -209,6 +229,7 @@ function toPullRequest(
   const headBranch = trimmed(normalizeRefName(raw.sourceRefName));
   const baseBranch = trimmed(normalizeRefName(raw.targetRefName));
   if (url === null || headBranch === null || baseBranch === null) return null;
+  const state = toState(raw);
   return {
     number: raw.pullRequestId,
     title: raw.title,
@@ -216,11 +237,11 @@ function toPullRequest(
     author: toActor(raw.createdBy),
     headBranch,
     baseBranch,
-    state: toState(raw),
+    state,
     isDraft: raw.isDraft ?? false,
     mergeability: toMergeability(raw.mergeStatus),
     createdAt: raw.creationDate,
-    updatedAt: closedAt ?? raw.creationDate,
+    updatedAt: latestAzureDevOpsTime([raw.creationDate, closedAt]) ?? raw.creationDate,
     closedAt,
     body: raw.description ?? "",
     reviewRequestLogins: reviewers.map((reviewer) => reviewer.login),
@@ -228,6 +249,12 @@ function toPullRequest(
     location: toLocation(raw),
     autoMergeEnabled: (raw.autoCompleteSetBy ?? null) !== null,
     ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
+    revision: azureDevOpsActivityRevision({
+      state,
+      isDraft: raw.isDraft,
+      sourceCommit: raw.lastMergeSourceCommit?.commitId,
+      votes: (raw.reviewers ?? []).map((reviewer) => reviewer.vote),
+    }),
   };
 }
 
@@ -285,18 +312,27 @@ export function decodeViewerJson(raw: string): Result.Result<string | null, Deco
     : Result.fail(decoded.failure);
 }
 
-export function decodeThreadsJson(
-  raw: string,
-): Result.Result<ReadonlyArray<PullRequestComment>, DecodeFailure> {
+export interface AzureDevOpsThreads {
+  readonly comments: ReadonlyArray<PullRequestComment>;
+  /** Every thread counts, including the system ones Azure adds for pushes and votes. */
+  readonly activityAt: string | null;
+}
+
+export function decodeThreadsJson(raw: string): Result.Result<AzureDevOpsThreads, DecodeFailure> {
   const decoded = decodeThreadPage(raw);
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
   }
   const comments: PullRequestComment[] = [];
+  const times: Array<string | null | undefined> = [];
   for (const entry of decoded.success.value) {
     const decodedThread = decodeThreadEntry(entry);
     if (Exit.isFailure(decodedThread)) continue;
     const thread = decodedThread.value;
+    times.push(thread.publishedDate, thread.lastUpdatedDate);
+    for (const comment of thread.comments ?? []) {
+      times.push(comment.publishedDate, comment.lastUpdatedDate, comment.lastContentUpdatedDate);
+    }
     if (thread.isDeleted === true) continue;
     const path = toRepositoryPath(thread.threadContext?.filePath);
     for (const comment of thread.comments ?? []) {
@@ -321,19 +357,18 @@ export function decodeThreadsJson(
       });
     }
   }
-  return Result.succeed(
-    comments.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
-  );
+  return Result.succeed({
+    comments: comments.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+    activityAt: latestAzureDevOpsTime(times),
+  });
 }
 
 const RawIterationSchema = Schema.Struct({
   id: Schema.Int,
-  sourceRefCommit: Schema.optional(
-    Schema.NullOr(Schema.Struct({ commitId: Schema.optional(Schema.NullOr(Schema.String)) })),
-  ),
-  commonRefCommit: Schema.optional(
-    Schema.NullOr(Schema.Struct({ commitId: Schema.optional(Schema.NullOr(Schema.String)) })),
-  ),
+  sourceRefCommit: RawCommitSchema,
+  commonRefCommit: RawCommitSchema,
+  createdDate: Schema.optional(Schema.NullOr(Schema.String)),
+  updatedDate: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 const RawIterationPageSchema = Schema.Struct({ value: Schema.Array(Schema.Unknown) });
@@ -371,6 +406,12 @@ export interface AzureDevOpsIteration {
   readonly id: number;
   readonly headCommit: string;
   readonly mergeBaseCommit: string;
+}
+
+interface AzureDevOpsIterations {
+  readonly iterations: ReadonlyArray<AzureDevOpsIteration>;
+  /** Counts pushes that cannot be diffed too. */
+  readonly activityAt: string | null;
 }
 
 export interface AzureDevOpsChangeEntry {
@@ -423,20 +464,25 @@ function toChangeKind(
 
 export function decodeIterationsJson(
   raw: string,
-): Result.Result<ReadonlyArray<AzureDevOpsIteration>, DecodeFailure> {
+): Result.Result<AzureDevOpsIterations, DecodeFailure> {
   const decoded = decodeIterationPage(raw);
   if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
   const iterations: AzureDevOpsIteration[] = [];
+  const times: Array<string | null | undefined> = [];
   for (const entry of decoded.success.value) {
     const decodedIteration = decodeIterationEntry(entry);
     if (Exit.isFailure(decodedIteration)) continue;
     const iteration = decodedIteration.value;
+    times.push(iteration.createdDate, iteration.updatedDate);
     const headCommit = trimmed(iteration.sourceRefCommit?.commitId);
     const mergeBaseCommit = trimmed(iteration.commonRefCommit?.commitId);
     if (headCommit === null || mergeBaseCommit === null) continue;
     iterations.push({ id: iteration.id, headCommit, mergeBaseCommit });
   }
-  return Result.succeed(iterations.toSorted((left, right) => left.id - right.id));
+  return Result.succeed({
+    iterations: iterations.toSorted((left, right) => left.id - right.id),
+    activityAt: latestAzureDevOpsTime(times),
+  });
 }
 
 export function decodeIterationChangesJson(

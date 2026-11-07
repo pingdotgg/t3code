@@ -25,6 +25,7 @@ import {
   PullRequestSummary,
   type VcsStatusResult,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { persistPullRequestStats } from "./pullRequestStatsPersistence.ts";
@@ -43,6 +44,7 @@ import {
   type QueryAnswerHandler,
 } from "./runtime.ts";
 import { createPullRequestRouter } from "./pullRequestRouting.ts";
+import { request } from "../rpc/client.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -137,6 +139,13 @@ interface ActionReplyPatch {
     reply: PullRequestSummary | undefined,
     readsBeforeSend: ReadonlySet<object>,
   ) => Effect.Effect<void>;
+  /** Shows a newer read of the pull request itself, without reading again. */
+  readonly observe?: (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    reference: PullRequestRef,
+    summary: PullRequestSummary,
+  ) => Effect.Effect<void>;
 }
 
 // Module-wide so readers built by separate factories, such as linked summaries, are patched too.
@@ -171,6 +180,20 @@ function listAccepts(input: PullRequestListInput, state: string, isDraft: boolea
   );
 }
 
+const listedFields = [
+  "title",
+  "url",
+  "author",
+  "headBranch",
+  "baseBranch",
+  "state",
+  "isDraft",
+  "mergeability",
+  "updatedAt",
+  "updatedAtState",
+] as const;
+type ListedSummary = Pick<PullRequestSummary, (typeof listedFields)[number] | "observedAt">;
+
 /**
  * Listing rows with an action's reply applied, the same array when it changes none, and `refresh`
  * when the reply adds the pull request to a listing, which only a read can place.
@@ -179,7 +202,7 @@ export function patchPullRequestListEntries<Entry extends PullRequestListEntry>(
   input: PullRequestListInput,
   entries: ReadonlyArray<Entry>,
   reference: PullRequestRef,
-  reply: PullRequestSummary,
+  reply: ListedSummary,
 ): ReadonlyArray<Entry> | "refresh" {
   let found = false;
   let changed = false;
@@ -188,20 +211,11 @@ export function patchPullRequestListEntries<Entry extends PullRequestListEntry>(
     found = true;
     if (isStalePullRequestReply(entry, reply)) return [entry];
     changed = true;
+    const { updatedAtState: _replaced, ...held } = entry;
     const next = {
-      ...entry,
-      ...pickDefined(reply, [
-        "title",
-        "url",
-        "author",
-        "headBranch",
-        "baseBranch",
-        "state",
-        "isDraft",
-        "mergeability",
-        "updatedAt",
-      ]),
-    };
+      ...held,
+      ...pickDefined(reply, listedFields),
+    } as Entry;
     return listAccepts(input, next.state, next.isDraft) ? [next] : [];
   });
   if (!found) {
@@ -214,11 +228,23 @@ export function patchPullRequestListEntries<Entry extends PullRequestListEntry>(
     : entries;
 }
 
+// Rows carry no account scope, so a reply read through another account leaves them alone.
+function listConcerns(input: PullRequestListInput, reference: PullRequestRef) {
+  return (
+    reference.expectedAccountId === undefined &&
+    (input.projectId === undefined || input.projectId === reference.projectId) &&
+    (input.projectIds === undefined || input.projectIds.includes(reference.projectId)) &&
+    (input.host === undefined ||
+      reference.host === undefined ||
+      input.host.toLowerCase() === reference.host.toLowerCase())
+  );
+}
+
 function patchListWithReply(
   input: PullRequestListInput,
   value: PullRequestListResult,
   reference: PullRequestRef,
-  reply: PullRequestSummary,
+  reply: ListedSummary,
 ): PullRequestListResult | "refresh" {
   const entries = patchPullRequestListEntries(input, value.entries, reference, reply);
   if (entries === "refresh") return entries;
@@ -252,6 +278,8 @@ function actionPatchedQuery<Input, A, E>(
     readonly rereadWithoutReply?: boolean;
     /** False for reads the refresh stream does not restart; defaults to true. */
     readonly refreshedByServer?: (input: Input) => boolean;
+    /** Also shows detail reads, so a refresh of one pull request reaches its loaded rows. */
+    readonly observesDetail?: boolean;
   },
 ) {
   const writable = Atom.family((atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>) =>
@@ -267,6 +295,24 @@ function actionPatchedQuery<Input, A, E>(
       ) as AsyncResult.AsyncResult<A, E> | undefined;
       return result?.waiting === true ? result : undefined;
     };
+    const shownValue = (registry: AtomRegistry.AtomRegistry) =>
+      Option.flatMap(
+        registry.getNodes().get(atom)?.valueOption() ?? Option.none(),
+        (current: AsyncResult.AsyncResult<A, E>) => AsyncResult.value(current),
+      );
+    const show = Effect.fnUntraced(function* (registry: AtomRegistry.AtomRegistry, next: A) {
+      registry.update(
+        atom,
+        AsyncResult.map(() => next),
+      );
+      if (options.persistence !== undefined) {
+        yield* options.persistence.save(
+          target.environmentId,
+          queryPersistenceKey(options.label, target.input),
+          next,
+        );
+      }
+    });
     actionReplyPatches.set(atom, {
       pendingRead,
       apply: Effect.fnUntraced(
@@ -284,10 +330,7 @@ function actionPatchedQuery<Input, A, E>(
           if (reply === undefined) {
             return options.rereadWithoutReply === true ? reread() : undefined;
           }
-          const shown = Option.flatMap(
-            registry.getNodes().get(atom)?.valueOption() ?? Option.none(),
-            (current: AsyncResult.AsyncResult<A, E>) => AsyncResult.value(current),
-          );
+          const shown = shownValue(registry);
           if (Option.isNone(shown)) return reread();
           const patched = options.patch(target.input, shown.value, reference, reply);
           if (patched === "refresh") return reread();
@@ -299,19 +342,29 @@ function actionPatchedQuery<Input, A, E>(
           const mounted = (registry.getNodes().get(atom)?.listeners.size ?? 0) > 0;
           if (!freshRead && (pending !== undefined || lacking || (unrefreshed && mounted)))
             registry.refresh(atom);
-          registry.update(
-            atom,
-            AsyncResult.map(() => next),
-          );
-          if (options.persistence !== undefined) {
-            yield* options.persistence.save(
-              environmentId,
-              queryPersistenceKey(options.label, target.input),
-              next,
-            );
-          }
+          yield* show(registry, next);
         },
       ),
+      ...(options.observesDetail !== true
+        ? {}
+        : {
+            // Rows the read does not hold, or a stale read, wait for the listing's own refresh.
+            observe: Effect.fnUntraced(function* (registry, environmentId, reference, summary) {
+              if (
+                environmentId !== target.environmentId ||
+                !options.concerns(target.input, reference)
+              )
+                return;
+              const shown = shownValue(registry);
+              if (Option.isNone(shown)) return;
+              const patched = options.patch(target.input, shown.value, reference, summary);
+              if (patched === "refresh") return;
+              const next = reuseUnchanged(shown.value, patched);
+              if (next === shown.value) return;
+              yield* options.onAnswer?.(target, next, registry) ?? Effect.void;
+              yield* show(registry, next);
+            }),
+          }),
     });
     return atom;
   };
@@ -369,17 +422,18 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
       idleTtlMs: LINKED_PULL_REQUEST_IDLE_TTL_MS,
       concerns: samePullRequest,
       // A routed action replies with the destination's project and repository names.
-      patch: (_input, value, _reference, reply) =>
-        isStalePullRequestReply(value, reply)
-          ? value
-          : {
-              ...value,
-              ...reply,
-              projectId: value.projectId,
-              repository: value.repository,
-              number: value.number,
-              ...(value.observedAt === undefined ? {} : { observedAt: value.observedAt }),
-            },
+      patch: (_input, value, _reference, reply) => {
+        if (isStalePullRequestReply(value, reply)) return value;
+        const { updatedAtState: _replaced, ...held } = value;
+        return {
+          ...held,
+          ...reply,
+          projectId: value.projectId,
+          repository: value.repository,
+          number: value.number,
+          ...(value.observedAt === undefined ? {} : { observedAt: value.observedAt }),
+        };
+      },
     },
   );
 }
@@ -391,8 +445,11 @@ export interface PullRequestAnswerHandlers {
   readonly detail?: QueryAnswerHandler<PullRequestRef, PullRequestDetail>;
   readonly checks?: QueryAnswerHandler<PullRequestRef, PullRequestChecks | null>;
   readonly reviewGuide?: QueryAnswerHandler<PullRequestRef, PullRequestReviewGuideResult>;
-  /** Once per action reply, after the loaded readers show it; unscoped references only. */
-  readonly actionReply?: QueryAnswerHandler<PullRequestRef, PullRequestSummary>;
+  /**
+   * Once per action reply or detail read, after the loaded lists show it; unscoped references
+   * only. It can be older than what a reader shows.
+   */
+  readonly summary?: QueryAnswerHandler<PullRequestRef, PullRequestSummary>;
 }
 
 export function createPullRequestStackAtomFamily<R, E>(
@@ -475,7 +532,10 @@ export function createPullRequestEnvironmentAtoms<R, E>(
               value,
               version: (previous?.version ?? 0) + 1,
             }));
-          }).pipe(Effect.andThen(() => onAnswer.detail?.(target, value, registry) ?? Effect.void)),
+          }).pipe(
+            Effect.andThen(() => onAnswer.detail?.(target, value, registry) ?? Effect.void),
+            Effect.andThen(() => showDetailInLists(registry, target, value)),
+          ),
       }),
       {
         label: detailLabel,
@@ -683,6 +743,64 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     });
   const readsInFlight = (registry: AtomRegistry.AtomRegistry): ReadonlySet<object> =>
     new Set(actionReplyReaders(registry).flatMap((reader) => reader.pendingRead(registry) ?? []));
+  // The server's listing cache can answer with rows older than a detail read or an action's reply,
+  // so for five minutes after one, each list answer shows what it said unless it holds newer.
+  const shownSummaryTtlMs = 5 * 60_000;
+  type ShownSummary = {
+    readonly reference: PullRequestRef;
+    readonly summary: ListedSummary;
+    readonly expiresAt: number;
+  };
+  const shownSummaryAtoms = Atom.family((_environmentId: string) =>
+    Atom.make<ReadonlyMap<string, ShownSummary>>(new Map()).pipe(
+      Atom.setIdleTTL(shownSummaryTtlMs),
+    ),
+  );
+  const unexpired = (shown: ReadonlyMap<string, ShownSummary>, now: number) => {
+    const kept = [...shown].filter(([, held]) => held.expiresAt > now);
+    return kept.length === shown.size ? shown : new Map(kept);
+  };
+  const retainSummary = (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    reference: PullRequestRef,
+    summary: PullRequestSummary,
+    now: number,
+  ) => {
+    if (reference.expectedAccountId !== undefined) return;
+    const { projectId, host, repository, number } = reference;
+    const key = JSON.stringify([projectId, host?.toLowerCase(), repository.toLowerCase(), number]);
+    registry.update(shownSummaryAtoms(environmentId), (previous) => {
+      const shown = unexpired(previous, now);
+      const held = shown.get(key);
+      if (held !== undefined && isStalePullRequestReply(held.summary, summary)) return shown;
+      const listed = pickDefined(summary, [...listedFields, "observedAt"]) as ListedSummary;
+      return new Map(shown).set(key, {
+        reference,
+        summary: listed,
+        expiresAt: now + shownSummaryTtlMs,
+      });
+    });
+  };
+  const withShownSummaries = (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    input: PullRequestListInput,
+    value: PullRequestListResult,
+    now: number,
+  ) => {
+    const atom = shownSummaryAtoms(environmentId);
+    const held = registry.get(atom);
+    const shown = unexpired(held, now);
+    if (shown !== held) registry.set(atom, shown);
+    let patched = value;
+    for (const { reference, summary } of shown.values()) {
+      if (!listConcerns(input, reference)) continue;
+      const next = patchListWithReply(input, patched, reference, summary);
+      if (next !== "refresh") patched = next;
+    }
+    return patched;
+  };
   const applyActionReply = Effect.fn("PullRequests.applyActionReply")(function* (
     registry: AtomRegistry.AtomRegistry,
     environmentId: EnvironmentId,
@@ -690,14 +808,31 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     reply: PullRequestSummary | undefined,
     readsBeforeSend: ReadonlySet<object>,
   ) {
+    if (reply !== undefined) {
+      retainSummary(registry, environmentId, reference, reply, yield* Clock.currentTimeMillis);
+    }
     for (const reader of actionReplyReaders(registry)) {
       yield* reader.apply(registry, environmentId, reference, reply, readsBeforeSend);
     }
     if (reply !== undefined && reference.expectedAccountId === undefined) {
       yield* (
-        onAnswer.actionReply?.({ environmentId, input: reference }, reply, registry) ?? Effect.void
+        onAnswer.summary?.({ environmentId, input: reference }, reply, registry) ?? Effect.void
       );
     }
+  });
+  // A detail refresh reaches only the host's read of that pull request; listings stay cached.
+  const showDetailInLists = Effect.fn("PullRequests.showDetailInLists")(function* (
+    registry: AtomRegistry.AtomRegistry,
+    target: { readonly environmentId: EnvironmentId; readonly input: PullRequestRef },
+    value: PullRequestDetail,
+  ) {
+    if (target.input.expectedAccountId !== undefined) return;
+    const now = yield* Clock.currentTimeMillis;
+    retainSummary(registry, target.environmentId, target.input, value, now);
+    for (const reader of actionReplyReaders(registry)) {
+      yield* reader.observe?.(registry, target.environmentId, target.input, value) ?? Effect.void;
+    }
+    yield* onAnswer.summary?.(target, value, registry) ?? Effect.void;
   });
   const listLabel = "environment-data:pull-requests:list";
   const listPersistence = persistQuery(PullRequestListResult);
@@ -725,6 +860,13 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         label: listLabel,
         persistence: listPersistence,
         tag: WS_METHODS.pullRequestsList,
+        execute: Effect.fn("PullRequests.list")(function* (input: PullRequestListInput) {
+          const value = yield* request(WS_METHODS.pullRequestsList, input);
+          const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+          const registry = yield* AtomRegistry.AtomRegistry;
+          const now = yield* Clock.currentTimeMillis;
+          return withShownSummaries(registry, supervisor.target.environmentId, input, value, now);
+        }),
         staleTimeMs: 30_000,
         refreshTrigger: ({ environmentId, input }) =>
           input.cursors === undefined ? refreshes({ environmentId, input: {} }) : undefined,
@@ -734,15 +876,9 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         label: listLabel,
         persistence: listPersistence,
         onAnswer: onAnswer.list,
-        // Rows carry no account scope, so a reply read through another account leaves them alone.
-        concerns: (input, reference) =>
-          reference.expectedAccountId === undefined &&
-          (input.projectId === undefined || input.projectId === reference.projectId) &&
-          (input.projectIds === undefined || input.projectIds.includes(reference.projectId)) &&
-          (input.host === undefined ||
-            reference.host === undefined ||
-            input.host.toLowerCase() === reference.host.toLowerCase()),
+        concerns: listConcerns,
         refreshedByServer: (input) => input.cursors === undefined,
+        observesDetail: true,
         patch: patchListWithReply,
       },
     ),

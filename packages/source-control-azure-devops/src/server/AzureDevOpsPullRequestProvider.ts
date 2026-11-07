@@ -1,4 +1,5 @@
 import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
@@ -160,6 +161,25 @@ export const make = Effect.gen(function* () {
 
   const EMPTY_DIFF_SLICE: ProviderDiffSlice = { patch: "", truncated: false, nextCursor: null };
 
+  // Someone is looking at this pull request, so its read skips the queue listed rows wait in.
+  const dated =
+    (input: { readonly cwd: string; readonly repository: string }, maxAge: Duration.Duration) =>
+    (pullRequest: AzureDevOpsPullRequest) =>
+      cli
+        .activityAt({
+          cwd: input.cwd,
+          repository: input.repository,
+          pullRequest,
+          maxAge,
+          immediate: true,
+        })
+        .pipe(
+          Effect.map((updatedAt) => ({
+            ...pullRequest,
+            updatedAt: updatedAt ?? pullRequest.updatedAt,
+          })),
+        );
+
   // PR locations are immutable; caching avoids full PR reads for viewed-file checks.
   const locations = new Map<string, AzureDevOpsRepositoryLocation>();
 
@@ -284,13 +304,51 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
-          Effect.map((batch) => ({
-            items: batch.items.map(toChangeRequest),
-            truncated: batch.truncated,
-            cursorAdvance: batch.cursorAdvance,
-            // Azure's ordering is stable across offset-based pages.
-            continues: true,
-          })),
+          Effect.flatMap((batch) =>
+            // Each row's date is a process of its own, so the page is answered before they run.
+            Effect.forEach(batch.items, (pullRequest) =>
+              cli
+                .listedActivity({
+                  cwd: input.cwd,
+                  repository: input.repository,
+                  pullRequest,
+                  maxAge: AzureDevOpsPullRequestCli.LISTED_ACTIVITY_MAX_AGE,
+                })
+                .pipe(
+                  Effect.map((activity) => ({
+                    item: {
+                      ...toChangeRequest({
+                        ...pullRequest,
+                        updatedAt: activity.at ?? pullRequest.updatedAt,
+                      }),
+                      ...(activity.state === undefined ? {} : { updatedAtState: activity.state }),
+                    },
+                    settle: activity.settle,
+                  })),
+                ),
+            ).pipe(
+              Effect.map((rows) => {
+                const settling = rows.flatMap(({ settle }) =>
+                  settle === undefined ? [] : [settle],
+                );
+                return {
+                  items: rows.map(({ item }) => item),
+                  truncated: batch.truncated,
+                  cursorAdvance: batch.cursorAdvance,
+                  // Azure's ordering is stable across offset-based pages.
+                  continues: true,
+                  ...(settling.length === 0
+                    ? {}
+                    : {
+                        // The CLI bounds how many of these reads run at once.
+                        settleUpdatedAt: Effect.all(settling, { concurrency: "unbounded" }).pipe(
+                          Effect.map((changed) => changed.includes(true)),
+                        ),
+                      }),
+                };
+              }),
+            ),
+          ),
         ),
 
     getChangeRequestPreview: (input) =>
@@ -310,32 +368,39 @@ export const make = Effect.gen(function* () {
     getChangeRequestSummary: (input) =>
       cli
         .getPullRequest({ cwd: input.cwd, number: input.number })
-        .pipe(Effect.mapError(fail("getChangeRequestSummary")), Effect.map(toSummary)),
+        .pipe(
+          Effect.mapError(fail("getChangeRequestSummary")),
+          Effect.flatMap(dated(input, AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE)),
+          Effect.map(toSummary),
+        ),
 
     getChangeRequest: Effect.fn("AzureDevOpsPullRequestProvider.getChangeRequest")(
       function* (input) {
-        const pullRequest = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
-        const location = pullRequest.location;
-        const iterations =
-          location === null
-            ? []
-            : yield* cli
-                .listIterations({ cwd: input.cwd, location, number: input.number })
-                .pipe(Effect.orElseSucceed(() => []));
+        const read = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
+        const location = read.location;
+        const pushes = Effect.gen(function* () {
+          if (location === null) return { iterations: [], changedFiles: 0 };
+          const iterations = yield* cli
+            .listIterations({ cwd: input.cwd, location, number: input.number })
+            .pipe(Effect.orElseSucceed(() => []));
+          const changedFiles = yield* listLatestChanges({
+            cwd: input.cwd,
+            location,
+            number: input.number,
+            iterations,
+          }).pipe(
+            Effect.map((listed) => listed.changes.length),
+            Effect.orElseSucceed(() => 0),
+          );
+          return { iterations, changedFiles };
+        });
+        const [{ iterations, changedFiles }] = yield* Effect.all(
+          [pushes, dated(input, AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE)(read)],
+          { concurrency: "unbounded" },
+        );
+        const pullRequest = yield* dated(input, AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE)(read);
         // The trial merge's lastMergeSourceCommit can lag behind a new source push.
         const headSha = iterations.at(-1)?.headCommit;
-        const changedFiles =
-          location === null
-            ? 0
-            : yield* listLatestChanges({
-                cwd: input.cwd,
-                location,
-                number: input.number,
-                iterations,
-              }).pipe(
-                Effect.map((listed) => listed.changes.length),
-                Effect.orElseSucceed(() => 0),
-              );
         const detail: ProviderChangeRequestDetail = {
           ...toChangeRequest(pullRequest),
           body: pullRequest.body,
@@ -386,6 +451,8 @@ export const make = Effect.gen(function* () {
       ),
 
     getViewerPermissions: () => Effect.succeed(AZURE_DEVOPS_VIEWER_PERMISSIONS),
+
+    forgetChangeRequestReads: (scope) => cli.forgetActivity(scope),
 
     // `input.commit` is deliberately dropped: Azure states no commit list on a pull request, so
     // the Code tab has nothing to scope itself to and always asks for the whole change.
@@ -542,15 +609,29 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(fail("runAction")),
-          Effect.map(
-            (pullRequest) =>
-              pullRequest && {
-                ...toSummary(pullRequest),
-                autoMergeEnabled: pullRequest.autoMergeEnabled,
-                ...(pullRequest.autoMergeMethod === undefined
-                  ? {}
-                  : { autoMergeMethod: pullRequest.autoMergeMethod }),
-              },
+          Effect.flatMap((reply) =>
+            reply === undefined
+              ? Effect.void
+              : Effect.gen(function* () {
+                  const pullRequest = yield* dated(
+                    input,
+                    AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
+                  )(reply);
+                  const activity = yield* cli.listedActivity({
+                    cwd: input.cwd,
+                    repository: input.repository,
+                    pullRequest,
+                    maxAge: AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
+                  });
+                  return {
+                    ...toSummary(pullRequest),
+                    ...(activity.state === undefined ? {} : { updatedAtState: activity.state }),
+                    autoMergeEnabled: pullRequest.autoMergeEnabled,
+                    ...(pullRequest.autoMergeMethod === undefined
+                      ? {}
+                      : { autoMergeMethod: pullRequest.autoMergeMethod }),
+                  };
+                }),
           ),
         ),
 

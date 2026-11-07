@@ -1,5 +1,6 @@
 import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
+import { isStalePullRequestReply } from "@t3tools/client-runtime/pull-request-reply";
 import {
   ProjectId,
   resolvePullRequestAuthorFilter,
@@ -191,6 +192,7 @@ export function pullRequestListRowsAreEqual(
       previous.mergeability === next.mergeability &&
       previous.baseBranch === next.baseBranch &&
       previous.updatedAt === next.updatedAt &&
+      previous.updatedAtState === next.updatedAtState &&
       previous.additions === next.additions &&
       previous.deletions === next.deletions &&
       previous.checksState === next.checksState &&
@@ -240,7 +242,8 @@ export function mergePullRequestListEntries(
   for (const entry of incoming) {
     const key = pullRequestListKey(entry);
     const held = entries.get(key);
-    if (!held || (entry.observedAt ?? 0) >= (held.observedAt ?? 0)) entries.set(key, entry);
+    // A held row can carry a newer date than its own read, from a detail read or an action.
+    if (!held || !isStalePullRequestReply(held, entry)) entries.set(key, entry);
   }
   return [...entries.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
@@ -252,6 +255,8 @@ export interface PullRequestListPages {
   readonly truncated: boolean;
   readonly limit: number;
   readonly continued: boolean;
+  /** The reads that loaded the rows past the head, which no refresh re-reads on its own. */
+  readonly continuations: readonly PullRequestListInput[];
 }
 
 export function pullRequestListHead(
@@ -268,6 +273,7 @@ export function pullRequestListHead(
         truncated: head.truncated,
         limit: PR_LIST_PAGE_SIZE,
         continued: false,
+        continuations: [],
       };
 }
 
@@ -337,7 +343,20 @@ export function appendPullRequestListPage(
     truncated: page.truncated,
     limit: input.limit ?? PR_LIST_PAGE_SIZE,
     continued: true,
+    continuations: [...previous.continuations, input],
   };
+}
+
+/** Takes a continuation's newer rows, keeping the cursors and breadth already loaded. */
+export function withRevalidatedPullRequestListPage(
+  pages: PullRequestListPages,
+  input: PullRequestListInput,
+  page: PullRequestListResult,
+): PullRequestListPages {
+  // A refresh since the read went out dropped the pages it loaded.
+  const key = JSON.stringify(input);
+  if (!pages.continuations.some((loaded) => JSON.stringify(loaded) === key)) return pages;
+  return { ...pages, entries: mergePullRequestListEntries(pages.entries, page.entries) };
 }
 
 /**

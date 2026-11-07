@@ -196,9 +196,13 @@ function PullRequestIdentity(props: {
         <Text className="min-w-0 flex-1 text-xs font-t3-medium" numberOfLines={1}>
           {pr.author?.login ?? "Unknown author"}
         </Text>
-        <Text className="shrink text-right text-2xs text-foreground-muted" numberOfLines={1}>
-          Updated <RelativeTime timestamp={pr.updatedAt} /> ago
-        </Text>
+        {"updatedAtState" in pr && pr.updatedAtState !== undefined ? (
+          <View className="h-3 w-16 rounded bg-subtle-strong" />
+        ) : (
+          <Text className="shrink text-right text-2xs text-foreground-muted" numberOfLines={1}>
+            Updated <RelativeTime timestamp={pr.updatedAt} /> ago
+          </Text>
+        )}
       </View>
       <View className="flex-row items-start gap-1.5">
         <Pressable
