@@ -195,6 +195,43 @@ describe("checkCursorProviderStatus", () => {
     }),
   );
 
+  it.effect.each([
+    {
+      name: "publishes the team id of a browser sign-in",
+      teamId: undefined,
+      team: { id: 42, name: "Secondary team" },
+      expected: { status: "ready", auth: { workspaceId: "42" } },
+    },
+    {
+      name: "warns about an invalid CURSOR_TEAM_ID",
+      teamId: "abc",
+      team: undefined,
+      expected: {
+        status: "warning",
+        message: 'CURSOR_TEAM_ID "abc" is not a Cursor team id. Runs fail until it is fixed.',
+      },
+    },
+  ])("$name", ({ teamId, team, expected }) =>
+    Effect.gen(function* () {
+      const provider = yield* checkCursorProviderStatus(
+        baseCursorSettings,
+        { CURSOR_API_KEY: "browser-key", ...(teamId ? { CURSOR_TEAM_ID: teamId } : {}) },
+        { type: "browser", team },
+      ).pipe(
+        Effect.provide(
+          CursorSdkCatalog.layerTest(() =>
+            Effect.succeed({
+              user: { apiKeyName: "T3 Code", createdAt: "2026-01-01T00:00:00.000Z" },
+              models: [sdkParameterizedModel],
+            }),
+          ),
+        ),
+      );
+
+      expect(provider).toMatchObject(expected);
+    }),
+  );
+
   it.effect("surfaces SDK authentication failures", () =>
     Effect.gen(function* () {
       const provider = yield* checkCursorProviderStatus(baseCursorSettings, {
@@ -238,7 +275,7 @@ describe("checkCursorProviderStatus", () => {
         const provider = yield* checkCursorProviderStatus(
           baseCursorSettings,
           { CURSOR_API_KEY: "free-plan-key" },
-          authenticationType,
+          { type: authenticationType },
         ).pipe(
           Effect.provide(
             CursorSdkCatalog.layerTest(() =>

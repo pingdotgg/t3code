@@ -60,12 +60,18 @@ describe("Cursor usage limits", () => {
         const limits = yield* readCursorUsageLimits(
           { apiEndpoint: "" },
           token ? { CURSOR_AUTH_TOKEN: token } : {},
+          42,
         ).pipe(
           Effect.provideService(
             HttpClient.HttpClient,
             HttpClient.make((request) => {
               expect(token).toBe("explicit-token");
               expect(request.headers.authorization).toBe("Bearer explicit-token");
+              expect(
+                request.body._tag === "Uint8Array"
+                  ? new TextDecoder().decode(request.body.body)
+                  : "",
+              ).toBe('{"teamId":42}');
               return Effect.succeed(
                 HttpClientResponse.fromWeb(
                   request,

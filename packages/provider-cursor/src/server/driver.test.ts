@@ -109,10 +109,13 @@ it.layer(layerTest)("CursorDriver", (it) => {
           instanceId: ProviderInstanceId.make("cursor-browser-persisted"),
           displayName: "Personal Cursor",
           enabled: true,
-          environment: [{ name: "CURSOR_API_KEY", value: "", sensitive: true }],
+          environment: [
+            { name: "CURSOR_API_KEY", value: "", sensitive: true },
+            { name: "CURSOR_TEAM_ID", value: "42", sensitive: false },
+          ],
           config: CursorDriver.defaultConfig(),
         };
-        const openedKeys: Array<string | undefined> = [];
+        const openedKeys: Array<readonly [string | undefined, number | undefined]> = [];
         let closed = 0;
         const instance = yield* CursorDriver.create(input).pipe(
           Effect.provideService(HttpClient.HttpClient, client),
@@ -120,7 +123,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
             assertComplete: Effect.void,
             open: (request) =>
               Effect.sync(() => {
-                openedKeys.push(request.options.apiKey);
+                openedKeys.push([request.options.apiKey, request.options.teamId]);
                 return {
                   agentId: "browser-auth-agent",
                   listMessages: Effect.succeed([]),
@@ -167,7 +170,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
           runtimePolicy,
         });
         yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
-        expect(openedKeys).toEqual(["instance-browser-key"]);
+        expect(openedKeys).toEqual([["instance-browser-key", 42]]);
         expect(closed).toBe(0);
         const recreated = yield* CursorDriver.create(input).pipe(
           Effect.provideService(HttpClient.HttpClient, client),
@@ -181,7 +184,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
           (yield* Effect.exit(runtime.ensureThread({ threadId, modelSelection, runtimePolicy })))
             ._tag,
         ).toBe("Failure");
-        expect(openedKeys).toEqual(["instance-browser-key"]);
+        expect(openedKeys).toEqual([["instance-browser-key", 42]]);
         expect(closed).toBe(1);
       }).pipe(Effect.scoped),
   );

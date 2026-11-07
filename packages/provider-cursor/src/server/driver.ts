@@ -33,7 +33,7 @@ import {
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
 import { probeCursorSkills } from "./skills.ts";
-import { makeCursorAuth } from "./auth.ts";
+import { isInvalidCursorTeamId, makeCursorAuth } from "./auth.ts";
 import * as CursorCredentialStore from "./credentialStore.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as CursorSdk from "./CursorSdk.ts";
@@ -134,6 +134,7 @@ export const CursorDriver: ProviderDriver<
       displayName: displayName ?? "Cursor",
       enabled,
       ...(processEnv.CURSOR_API_KEY ? { apiKey: processEnv.CURSOR_API_KEY } : {}),
+      ...(processEnv.CURSOR_TEAM_ID ? { teamId: processEnv.CURSOR_TEAM_ID } : {}),
       store: credentials.store,
       credentialBinding: credentials.binding,
       onChanged: (signedIn): Effect.Effect<void, ProviderSetupError> =>
@@ -170,11 +171,18 @@ export const CursorDriver: ProviderDriver<
       Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
         ...sdkRunner,
         open: (input) =>
-          auth.requireApiKey.pipe(
-            Effect.flatMap((apiKey) =>
+          auth.requireAccess.pipe(
+            Effect.flatMap(({ apiKey, team }) =>
               Effect.acquireRelease(
                 sdkRunner
-                  .open({ ...input, options: { ...input.options, apiKey } })
+                  .open({
+                    ...input,
+                    options: {
+                      ...input.options,
+                      apiKey,
+                      ...(team ? { teamId: team.id } : {}),
+                    },
+                  })
                   .pipe(
                     Effect.flatMap((session) =>
                       Effect.cached(session.close).pipe(
@@ -206,33 +214,35 @@ export const CursorDriver: ProviderDriver<
     const textGeneration = yield* makeCursorTextGeneration(
       effectiveConfig,
       processEnv,
-      auth.requireApiKey,
+      auth.requireAccess,
       auth.withAccess,
     );
 
-    const checkProvider = auth.readApiKey.pipe(
+    const checkProvider = auth.readAccess.pipe(
       Effect.orElseSucceed(() => undefined),
-      Effect.flatMap((apiKey) =>
+      Effect.flatMap((access) =>
         checkCursorProviderStatus(
           effectiveConfig,
           {
             ...processEnv,
-            CURSOR_API_KEY: apiKey,
+            CURSOR_API_KEY: access?.apiKey,
           },
-          auth.usesApiKey ? "api-key" : "browser",
+          { type: auth.usesApiKey ? "api-key" : "browser", team: access?.team },
         ).pipe(
           Effect.filterOrElse(
             (snapshot) =>
               !(
                 effectiveConfig.enabled &&
                 snapshot.installed &&
-                snapshot.auth.status === "authenticated"
+                snapshot.auth.status === "authenticated" &&
+                !isInvalidCursorTeamId(processEnv.CURSOR_TEAM_ID)
               ),
             (snapshot) =>
-              readCursorUsageLimits(effectiveConfig, {
-                ...processEnv,
-                CURSOR_API_KEY: apiKey,
-              }).pipe(Effect.map((usageLimits) => ({ ...snapshot, usageLimits }))),
+              readCursorUsageLimits(
+                effectiveConfig,
+                { ...processEnv, CURSOR_API_KEY: access?.apiKey },
+                access?.team?.id,
+              ).pipe(Effect.map((usageLimits) => ({ ...snapshot, usageLimits }))),
           ),
         ),
       ),

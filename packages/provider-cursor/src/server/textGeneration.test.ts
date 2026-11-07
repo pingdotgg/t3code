@@ -81,10 +81,11 @@ describe("CursorTextGeneration", () => {
   it.effect("resolves the browser credential for every request after an account change", () =>
     Effect.gen(function* () {
       let apiKey = "first-browser-key";
+      let team = { id: 42, name: undefined };
       const generation = yield* makeCursorTextGeneration(
         cursorSettings,
         {},
-        Effect.sync(() => apiKey),
+        Effect.sync(() => ({ apiKey, team })),
       );
       const input = {
         cwd: process.cwd(),
@@ -95,12 +96,13 @@ describe("CursorTextGeneration", () => {
       };
       yield* generation.generateCommitMessage(input);
       expect(cursorSdkMock.create).toHaveBeenLastCalledWith(
-        expect.objectContaining({ apiKey: "first-browser-key" }),
+        expect.objectContaining({ apiKey: "first-browser-key", teamId: 42 }),
       );
       apiKey = "second-browser-key";
+      team = { id: 7, name: undefined };
       yield* generation.generateCommitMessage(input);
       expect(cursorSdkMock.create).toHaveBeenLastCalledWith(
-        expect.objectContaining({ apiKey: "second-browser-key" }),
+        expect.objectContaining({ apiKey: "second-browser-key", teamId: 7 }),
       );
     }).pipe(Effect.provide(layerTest)),
   );

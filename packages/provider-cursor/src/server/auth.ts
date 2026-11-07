@@ -29,10 +29,21 @@ interface AuthFlow {
   fiber?: Fiber.Fiber<void>;
 }
 
+/** Absent means the account's default team. */
+export interface CursorTeam {
+  readonly id: number;
+  readonly name: string | undefined;
+}
+
+export interface CursorAccess {
+  readonly apiKey: string;
+  readonly team: CursorTeam | undefined;
+}
+
 export interface CursorAuth {
   readonly controller: ProviderAuthController;
-  readonly readApiKey: Effect.Effect<string | undefined, ProviderSetupError>;
-  readonly requireApiKey: Effect.Effect<string, ProviderSetupError>;
+  readonly readAccess: Effect.Effect<CursorAccess | undefined, ProviderSetupError>;
+  readonly requireAccess: Effect.Effect<CursorAccess, ProviderSetupError>;
   readonly usesApiKey: boolean;
   readonly withAccess: <A, E, R>(
     task: Effect.Effect<A, E, R>,
@@ -44,11 +55,19 @@ export interface CursorAuthOptions {
   readonly displayName: string;
   readonly enabled: boolean;
   readonly apiKey?: string;
+  /** Raw `CURSOR_TEAM_ID`; a valid id scopes both connection types to that team. */
+  readonly teamId?: string;
   readonly store: SdkCredentialStore;
   readonly credentialBinding?: NonNullable<ProviderAuthController["credentialBinding"]>;
   readonly onChanged: (signedIn: boolean) => Effect.Effect<void, ProviderSetupError>;
   readonly login?: (options: SdkLoginOptions) => Promise<SdkLoginResult>;
 }
+
+/** Cursor team ids are positive int32 values; a blank setting means the default team. */
+export const isInvalidCursorTeamId = (raw: string | undefined): boolean => {
+  const text = raw?.trim();
+  return !!text && !(/^[1-9]\d{0,9}$/.test(text) && Number(text) <= 2 ** 31 - 1);
+};
 
 export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: CursorAuthOptions) {
   const scope = yield* Scope.Scope;
@@ -74,8 +93,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
       state: { ...current.state, ...patch },
     }));
 
-  const readApiKey = Effect.gen(function* () {
-    if (configuredKey) return configuredKey;
+  const loadAccess = Effect.gen(function* () {
     const credentials = yield* Effect.tryPromise({
       try: () => options.store.load(),
       catch: (cause) =>
@@ -87,13 +105,32 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
         }),
     });
     const now = yield* Clock.currentTimeMillis;
-    return credentials &&
-      (credentials.apiKeyExpiresAtMs === undefined || credentials.apiKeyExpiresAtMs > now)
-      ? credentials.apiKey
-      : undefined;
+    if (
+      !credentials ||
+      (credentials.apiKeyExpiresAtMs !== undefined && credentials.apiKeyExpiresAtMs <= now)
+    )
+      return undefined;
+    return { apiKey: credentials.apiKey, team: undefined } satisfies CursorAccess;
   });
 
-  const requireApiKey = Effect.gen(function* () {
+  const teamIdText = options.teamId?.trim();
+  const teamId = teamIdText && !isInvalidCursorTeamId(teamIdText) ? Number(teamIdText) : undefined;
+  const readAccess: CursorAuth["readAccess"] = Effect.map(
+    configuredKey ? Effect.succeed({ apiKey: configuredKey, team: undefined }) : loadAccess,
+    (access) =>
+      access && teamId !== undefined
+        ? { ...access, team: { id: teamId, name: undefined } }
+        : access,
+  );
+
+  const requireAccess = Effect.gen(function* () {
+    if (isInvalidCursorTeamId(teamIdText)) {
+      return yield* new ProviderSetupError({
+        instanceId: options.instanceId,
+        operation: "credentials",
+        detail: `CURSOR_TEAM_ID "${teamIdText}" is not a Cursor team id. Enter the team's number or clear it.`,
+      });
+    }
     if (operation !== "idle") {
       return yield* new ProviderSetupError({
         instanceId: options.instanceId,
@@ -101,15 +138,15 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
         detail: "Cursor sign-in or sign-out is in progress. Try again after it finishes.",
       });
     }
-    const apiKey = yield* readApiKey;
-    if (!apiKey) {
+    const access = yield* readAccess;
+    if (!access) {
       return yield* new ProviderSetupError({
         instanceId: options.instanceId,
         operation: "credentials",
         detail: "Sign in with Cursor or add CURSOR_API_KEY in provider settings.",
       });
     }
-    return apiKey;
+    return access;
   });
 
   // Closing admission before draining these scopes prevents cached credentials surviving sign-out.
@@ -506,8 +543,8 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
 
   return {
     controller,
-    readApiKey,
-    requireApiKey,
+    readAccess,
+    requireAccess,
     withAccess,
     usesApiKey: configuredKey !== undefined,
   } satisfies CursorAuth;
