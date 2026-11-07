@@ -1767,8 +1767,8 @@ function ThreadDetailBody(
                             ? { paddingBottom: composerBottomInset }
                             : undefined
                         }
-                        entering={FadeInDown.duration(220)}
-                        exiting={FadeOut.duration(140)}
+                        entering={reduceMotion ? undefined : FadeInDown.duration(220)}
+                        exiting={reduceMotion ? undefined : FadeOut.duration(140)}
                       >
                         {props.activePendingApproval ? (
                           <Animated.ScrollView
