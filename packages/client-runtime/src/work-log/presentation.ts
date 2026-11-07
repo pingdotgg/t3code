@@ -21,6 +21,7 @@ import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { classifyToolActivity } from "@t3tools/shared/toolActivity";
 import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
 
@@ -683,4 +684,10 @@ export function liveThoughtLine(markdown: string): string {
   if (heading !== undefined) return text;
   const end = /[.?!]["'”’)]?(?=\s)/.exec(text);
   return end ? text.slice(0, end.index + end[0].length) : text;
+}
+
+/** A running command's time so far, in whole seconds so the ticking label never shows tenths. */
+export function formatRunningFor(elapsedMs: number): string {
+  const seconds = Math.max(0, Math.floor(elapsedMs / 1_000));
+  return `for ${seconds < 60 ? `${seconds}s` : formatDuration(seconds * 1_000)}`;
 }
