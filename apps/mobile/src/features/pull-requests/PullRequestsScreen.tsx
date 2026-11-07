@@ -322,7 +322,12 @@ export function PullRequestsScreen(
         ListHeaderComponentStyle={{ zIndex: 1 }}
         ListHeaderComponent={
           <>
-            <PullRequestListFilters sidebar={sidebar} filters={filters} />
+            <PullRequestListFilters
+              sidebar={sidebar}
+              filters={filters}
+              matchedCount={result.isPending && entries.length === 0 ? null : entries.length}
+              matchedIncomplete={result.hasMore && entries.length > 0}
+            />
             {result.data?.errors.length ? (
               <View key={JSON.stringify(targets)}>
                 {result.data.errors.map((error) => (

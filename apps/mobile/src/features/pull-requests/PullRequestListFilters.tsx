@@ -9,7 +9,12 @@ import { environmentProjects } from "../../state/projects";
 import { environmentThreadShells } from "../../state/threads";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import { buildHomeProjectScopes, sortHomeProjectScopes } from "../home/homeThreadList";
-import { DEFAULT_PR_LIST_CONTROLS, type PullRequestListControls } from "./pullRequestList";
+import {
+  DEFAULT_PR_LIST_CONTROLS,
+  formatPullRequestMatchedCount,
+  pullRequestMatchedCountAccessibilityLabel,
+  type PullRequestListControls,
+} from "./pullRequestList";
 
 const STATES = { open: "Open", closed: "Closed", merged: "Merged", all: "All states" } as const;
 const INVOLVEMENT = { all: "All PRs", reviewing: "Your review", authored: "By you" } as const;
@@ -351,8 +356,35 @@ export function PullRequestListFilters(props: {
   /** Android sidebar rows sit further in than full-width rows; the pills follow them. */
   readonly sidebar?: boolean;
   readonly filters: ReturnType<typeof usePullRequestListFilters>;
+  /** Matched rows for the current filters; omit while the first page is still loading. */
+  readonly matchedCount?: number | null;
+  /** True when more matching pages may still load. */
+  readonly matchedIncomplete?: boolean;
 }) {
   const { count, more, reset, select, author, selectedLabelCount } = props.filters;
+  const matchedCount = props.matchedCount;
+  const matchedIncomplete = props.matchedIncomplete === true;
+  const matchedLabel =
+    matchedCount == null ? null : formatPullRequestMatchedCount(matchedCount, matchedIncomplete);
+  const matchedAccessibility =
+    matchedCount == null
+      ? null
+      : pullRequestMatchedCountAccessibilityLabel(matchedCount, matchedIncomplete);
+  // Matched total replaces the old "Filters" label next to the icon; active filters
+  // still light the chip. Icon-only while the first page is loading.
+  const filtersLabel = matchedLabel ?? (count ? String(count) : "");
+  const filtersAccessibility =
+    matchedAccessibility == null
+      ? count
+        ? `Filters, ${count} active`
+        : "More filters"
+      : count
+        ? `${matchedAccessibility}, ${count} filters active`
+        : matchedAccessibility;
+  const rowStyle =
+    props.sidebar && Platform.OS === "android"
+      ? { ...ROW_STYLE, paddingHorizontal: 20 }
+      : ROW_STYLE;
   return (
     <ScrollView
       horizontal
@@ -360,18 +392,14 @@ export function PullRequestListFilters(props: {
       style={{ overflow: "visible" }}
       // In the Android sidebar the first pill lines up with the rows' content instead
       // (8dp row margin + 12dp padding).
-      contentContainerStyle={
-        props.sidebar && Platform.OS === "android"
-          ? { ...ROW_STYLE, paddingHorizontal: 20 }
-          : ROW_STYLE
-      }
+      contentContainerStyle={rowStyle}
     >
       {Platform.OS === "android" ? null : (
         <ListFilterMenu
-          label={count ? String(count) : "Filters"}
+          label={filtersLabel}
           icon
           active={count > 0}
-          accessibilityLabel={count ? `Filters, ${count} active` : "More filters"}
+          accessibilityLabel={filtersAccessibility}
           actions={[...more, reset(false)]}
           onSelect={select}
         />

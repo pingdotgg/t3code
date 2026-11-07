@@ -35,18 +35,20 @@ export function Chip(props: {
       {props.icon ? (
         <SymbolView name={props.icon} size={15} tintColorClassName={iconColor} />
       ) : null}
-      <AppText
-        textRole={small ? "caption" : "footnote"}
-        numberOfLines={small ? undefined : 1}
-        className={cn(
-          "shrink",
-          !small && "max-w-[180px]",
-          !small && "font-t3-medium",
-          props.selected ? "text-primary-foreground" : "text-foreground-muted",
-        )}
-      >
-        {props.label}
-      </AppText>
+      {props.label ? (
+        <AppText
+          textRole={small ? "caption" : "footnote"}
+          numberOfLines={small ? undefined : 1}
+          className={cn(
+            "shrink",
+            !small && "max-w-[180px]",
+            !small && "font-t3-medium",
+            props.selected ? "text-primary-foreground" : "text-foreground-muted",
+          )}
+        >
+          {props.label}
+        </AppText>
+      ) : null}
       {props.trailingIcon ? (
         <SymbolView name={props.trailingIcon} size={11} tintColorClassName={iconColor} />
       ) : null}
