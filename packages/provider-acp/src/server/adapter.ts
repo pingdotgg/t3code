@@ -205,6 +205,13 @@ export interface AcpAdapterV2ExtensionContext {
     readonly sessionId: string;
     readonly failure: OrchestrationV2ProviderFailure;
   }) => Effect.Effect<void>;
+  /** Starts a subagent the agent announced without a spawn tool call. */
+  readonly startSubagent: (notice: {
+    readonly sessionId: string;
+    readonly childSessionId: string;
+    readonly title: string;
+    readonly model: string | null;
+  }) => Effect.Effect<void>;
   readonly finishSubagent: (notice: {
     readonly sessionId: string;
     readonly childSessionId: string;
@@ -6049,6 +6056,30 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return true;
         });
 
+        const startSubagentFromNotice = Effect.fnUntraced(function* (notice: {
+          readonly childSessionId: string;
+          readonly title: string;
+          readonly model: string | null;
+        }) {
+          const context = yield* Ref.get(activeTurn);
+          if (context === null || context.finalized) return;
+          if (context.subagentsBySessionId.has(notice.childSessionId)) return;
+          // A spawn tool's subagent learns its child session only from the tool result.
+          for (const subagent of context.subagents.values()) {
+            if (subagent.childSessionId === null && subagent.task.title === notice.title) return;
+          }
+          yield* emitSubagent(context, {
+            nativeTaskId: notice.childSessionId,
+            prompt: notice.title,
+            title: notice.title,
+            model: notice.model,
+            status: "running",
+            childSessionId: notice.childSessionId,
+            result: null,
+            suppressNormalTool: true,
+          });
+        });
+
         const finishSubagentFromNotice = Effect.fnUntraced(function* (notice: {
           readonly childSessionId: string;
           readonly status: "completed" | "failed" | "cancelled";
@@ -6766,6 +6797,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               requestUserInput,
               captureProposedPlan,
               lastProposedPlanMarkdown,
+              startSubagent: (notice) =>
+                runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  Effect.gen(function* () {
+                    if (yield* Ref.get(stoppedRunQuarantine)) return;
+                    if ((yield* Ref.get(activeSessionId)) !== notice.sessionId) return;
+                    yield* startSubagentFromNotice(notice);
+                  }),
+                ).pipe(Effect.asVoid),
               finishSubagent: (notice) =>
                 runRuntimeCallbackAtGeneration(
                   handlerGeneration,
