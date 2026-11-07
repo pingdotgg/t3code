@@ -25,6 +25,8 @@ import {
   type ComposerPromptEditorProps,
 } from "./ComposerPromptEditorTiptap";
 
+import { importPastedComposerText, markPlainTextPaste } from "./composerInlineTokenPaste";
+
 const babysit: ServerProviderSkill = {
   name: "babysit",
   path: "/skills/babysit/SKILL.md",
@@ -242,6 +244,169 @@ it("lets composition replace selected text without surrounding it", async () => 
     typeText(editor, 1, 5, '"');
   });
   expect(serializeEditorDoc(editor.state.doc).value).toBe('"');
+});
+
+it.each([
+  {
+    name: "a titled browser link",
+    plain: "Example report",
+    html: '<a href="https://example.com/report">Example report</a>',
+    expected: "https://example.com/report",
+    richText: true,
+  },
+  {
+    name: "a titled link with surrounding whitespace",
+    plain: " Example report ",
+    html: '<a href="https://example.com/report">Example report</a>',
+    expected: " https://example.com/report ",
+    richText: true,
+  },
+  {
+    name: "a titled link with Paste as Text",
+    plain: "Example report",
+    html: '<a href="https://example.com/report">Example report</a>',
+    expected: "Example report",
+    richText: true,
+    asText: true,
+  },
+  {
+    name: "a titled link in plain mode",
+    plain: "Example report",
+    html: '<a href="https://example.com/report">Example report</a>',
+    expected: "https://example.com/report",
+    richText: false,
+  },
+  {
+    name: "a browser HTML fragment with nested label formatting",
+    plain: "Example report",
+    html: '<html><body><!--StartFragment--><p><a href="https://example.com/report?q=one&amp;page=2"><strong>Example report</strong></a></p><!--EndFragment--></body></html>',
+    expected: "https://example.com/report?q=one&page=2",
+    richText: true,
+  },
+  {
+    name: "a destination containing Markdown and composer syntax",
+    plain: "Example report",
+    html: '<a href="https://example.com/_report_/$HOME?q=**value**">Example report</a>',
+    expected: "https://example.com/_report_/$HOME?q=**value**",
+    richText: true,
+  },
+  {
+    name: "an explicit plain-text URL",
+    plain: "https://example.com/original",
+    html: '<a href="https://example.com/other">https://example.com/original</a>',
+    expected: "https://example.com/original",
+    richText: true,
+  },
+  {
+    name: "an explicit non-HTTP URL",
+    plain: "ftp://example.com/file",
+    html: '<a href="https://example.com/other">ftp://example.com/file</a>',
+    expected: "ftp://example.com/file",
+    richText: true,
+  },
+  {
+    name: "an explicit mailto URL",
+    plain: "mailto:user@example.com",
+    html: '<a href="https://example.com/other">mailto:user@example.com</a>',
+    expected: "mailto:user@example.com",
+    richText: true,
+  },
+  {
+    name: "a title containing a colon",
+    plain: "Review: update",
+    html: '<a href="https://example.com/review">Review: update</a>',
+    expected: "https://example.com/review",
+    richText: true,
+  },
+  {
+    name: "text surrounding a link",
+    plain: "Read Example report now",
+    html: '<p>Read <a href="https://example.com/report">Example report</a> now</p>',
+    expected: "Read Example report now",
+    richText: true,
+  },
+  {
+    name: "multiple links",
+    plain: "First Second",
+    html: '<a href="https://example.com/first">First</a> <a href="https://example.com/second">Second</a>',
+    expected: "First Second",
+    richText: true,
+  },
+  {
+    name: "a non-web destination",
+    plain: "Example report",
+    html: '<a href="javascript:alert(1)">Example report</a>',
+    expected: "Example report",
+    richText: true,
+  },
+  {
+    name: "an unrelated HTML label",
+    plain: "Original clipboard text",
+    html: '<a href="https://example.com/report">Example report</a>',
+    expected: "Original clipboard text",
+    richText: true,
+  },
+  {
+    name: "T3 context clipboard HTML",
+    plain: "Example report",
+    html: '<div data-t3-context-fragment="context"><a href="https://example.com/report">Example report</a></div>',
+    expected: "Example report",
+    richText: true,
+  },
+  {
+    name: "an invalid web destination",
+    plain: "Example report",
+    html: '<a href="https://">Example report</a>',
+    expected: "Example report",
+    richText: true,
+  },
+])("preserves the destination or original text when pasting $name", async (fixture) => {
+  await using screen = await mountEditor("", fixture.richText);
+  const { editor } = screen;
+  await act(async () => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", fixture.plain);
+    clipboardData.setData("text/html", fixture.html);
+    if (fixture.asText) markPlainTextPaste(clipboardData);
+    expect(importPastedComposerText(clipboardData)).toBe(fixture.expected);
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(fixture.expected);
+  expect(editor.state.doc.textContent).toBe(fixture.expected);
+});
+
+it.each([
+  { value: "", disabled: false },
+  { value: "```text\nexisting\n```", disabled: false },
+  { value: "", disabled: true },
+])("preserves pasted link text when redirected to the end of %j", async ({ value, disabled }) => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  await using screen = await render(
+    <ComposerPromptEditor
+      editorRef={editorRef}
+      value={value}
+      cursor={0}
+      richTextEnabled
+      contextRecords={new Map()}
+      skills={[]}
+      disabled={disabled}
+      placeholder=""
+      onChange={() => {}}
+      onPaste={() => {}}
+    />,
+  );
+  const url = "https://example.com/_report_/$HOME?q=**value**";
+  await act(async () => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", "Example report");
+    clipboardData.setData("text/html", `<a href="${url}">Example report</a>`);
+    expect(editorRef.current?.pasteAtEnd(clipboardData)).toBe(!disabled);
+  });
+  const editor = editorIn(screen.container);
+  expect(editor.state.doc.textContent).toBe(disabled ? "" : value ? "existingExample report" : url);
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(
+    disabled ? "" : value ? "```text\nexistingExample report\n```" : url,
+  );
 });
 
 it.each([
