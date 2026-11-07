@@ -792,6 +792,26 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("browse", () => {
+    it.effect("finds nested folders with fuzzy queries across roots", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-folder-search-" });
+        const other = yield* makeTempDir({ prefix: "t3code-folder-search-other-" });
+        yield* writeTextFile(cwd, "team/hello-world/package.json", "{}");
+        yield* writeTextFile(cwd, "node_modules/hello-world/package.json", "{}");
+        yield* writeTextFile(other, "hello-web/package.json", "{}");
+        const result = yield* workspaceEntries.browse({
+          partialPath: `${cwd}${path.sep}`,
+          searchQuery: "hlw",
+          searchRoots: [cwd, other, cwd],
+        });
+        expect(result.entries.map((entry) => entry.fullPath).toSorted()).toEqual(
+          [path.join(cwd, "team/hello-world"), path.join(other, "hello-web")].toSorted(),
+        );
+      }),
+    );
+
     it.effect("shows dot directories in directory mode and hidden-prefix mode", () =>
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;

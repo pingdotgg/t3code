@@ -758,6 +758,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["new worktrees start remote origin latest fetched branch local"],
   },
   {
+    id: "project-search-directories",
+    title: "Project search folders",
+    to: "/settings/threads",
+    scope: "environment-defaults",
+    searchTerms: ["fuzzy recursive base directories local folder search"],
+  },
+  {
     id: "add-project-starts-in",
     title: "Add project starts in",
     to: "/settings/threads",

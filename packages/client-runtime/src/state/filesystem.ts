@@ -15,6 +15,7 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   canNavigateUp,
   getBrowseDirectoryPath,
+  ensureBrowseDirectoryPath,
   getBrowseLeafPathSegment,
   getBrowseParentPath,
   hasTrailingPathSeparator,
@@ -54,11 +55,28 @@ export function resolveFilesystemReadAccess(input: {
   };
 }
 
-export function getFilesystemBrowsePath(query: string, platform = "", enabled = true) {
-  const isBrowsing = enabled && isFilesystemBrowseQuery(query, platform);
-  const directoryPath = isBrowsing ? getBrowseDirectoryPath(query) : "";
-  const filterQuery =
-    isBrowsing && !hasTrailingPathSeparator(query) ? getBrowseLeafPathSegment(query) : "";
+export function getFilesystemBrowsePath(
+  query: string,
+  platform = "",
+  enabled = true,
+  searchBaseDirectory?: string,
+) {
+  const isSearch =
+    enabled &&
+    searchBaseDirectory !== undefined &&
+    query.trim().length > 0 &&
+    !isFilesystemBrowseQuery(query, platform);
+  const isBrowsing = enabled && (isSearch || isFilesystemBrowseQuery(query, platform));
+  const directoryPath = isSearch
+    ? ensureBrowseDirectoryPath(searchBaseDirectory || "~/")
+    : isBrowsing
+      ? getBrowseDirectoryPath(query)
+      : "";
+  const filterQuery = isSearch
+    ? query.trim()
+    : isBrowsing && !hasTrailingPathSeparator(query)
+      ? getBrowseLeafPathSegment(query)
+      : "";
   const parentPath = isBrowsing ? getBrowseParentPath(directoryPath) : null;
 
   return {

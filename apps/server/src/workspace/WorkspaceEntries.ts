@@ -2,6 +2,7 @@
 import * as NodeFSP from "node:fs/promises";
 
 import * as Context from "effect/Context";
+import * as Cache from "effect/Cache";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -23,7 +24,7 @@ import type {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
-import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
+import { scoreSubsequenceMatch, normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -205,9 +206,65 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const folderIndex = yield* Cache.make({
+    capacity: 32,
+    timeToLive: "30 seconds",
+    lookup: (root: string) =>
+      Effect.promise(async () => {
+        const folders: string[] = [];
+        const queue = [root];
+        // Bound scans of broad roots and never follow directory symlinks.
+        for (let index = 0; index < queue.length && index < 20_000; index += 1) {
+          const parent = queue[index]!;
+          const entries = await NodeFSP.readdir(parent, { withFileTypes: true }).catch(() => []);
+          for (const entry of entries) {
+            if (
+              !entry.isDirectory() ||
+              entry.name.startsWith(".") ||
+              entry.name === "node_modules" ||
+              entry.name === "vendor" ||
+              queue.length >= 20_000
+            )
+              continue;
+            const fullPath = path.join(parent, entry.name);
+            folders.push(fullPath);
+            queue.push(fullPath);
+          }
+        }
+        return folders;
+      }),
+  });
+
   const browse: WorkspaceEntries["Service"]["browse"] = Effect.fn("WorkspaceEntries.browse")(
     function* (input) {
       const resolvedInputPath = yield* resolveBrowseTarget(input, path);
+      if (input.searchQuery) {
+        const roots = [
+          ...new Set(input.searchRoots?.length ? input.searchRoots : [resolvedInputPath]),
+        ];
+        const home = yield* HostProcess.HomeDirectory;
+        const folders = yield* Effect.forEach(
+          roots,
+          (root) => Cache.get(folderIndex, path.resolve(expandHomePath(root, home))),
+          { concurrency: 2 },
+        );
+        const query = input.searchQuery.toLowerCase();
+        const ranked = [...new Set(folders.flat())]
+          .flatMap((fullPath) => {
+            const score = scoreSubsequenceMatch(path.basename(fullPath).toLowerCase(), query);
+            return score === null ? [] : [{ fullPath, score }];
+          })
+          .sort((a, b) => a.score - b.score || a.fullPath.localeCompare(b.fullPath));
+        return {
+          parentPath: resolvedInputPath,
+          recursive: true,
+          entries: ranked.slice(0, 100).map(({ fullPath }) => ({
+            name: path.relative(resolvedInputPath, fullPath),
+            fullPath,
+          })),
+        };
+      }
+
       const endsWithSeparator = /[\\/]$/.test(input.partialPath) || input.partialPath === "~";
       const parentPath = endsWithSeparator ? resolvedInputPath : path.dirname(resolvedInputPath);
       const prefix = endsWithSeparator ? "" : path.basename(resolvedInputPath);

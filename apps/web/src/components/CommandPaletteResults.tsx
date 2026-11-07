@@ -26,7 +26,7 @@ import { ProjectPinButton } from "./ProjectPinButton";
 import { SearchMatchHintLine, ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
 
 interface CommandPaletteResultsProps {
-  emptyStateMessage?: string;
+  emptyStateMessage?: ReactNode;
   groups: ReadonlyArray<CommandPaletteGroup>;
   highlightedItemValue?: string | null;
   isActionsOnly: boolean;
@@ -34,7 +34,10 @@ interface CommandPaletteResultsProps {
   onExecuteItem: (item: CommandPaletteActionItem | CommandPaletteSubmenuItem) => void;
 }
 
-function CommandPaletteEmptyState(props: { emptyStateMessage?: string; isActionsOnly: boolean }) {
+function CommandPaletteEmptyState(props: {
+  emptyStateMessage?: ReactNode;
+  isActionsOnly: boolean;
+}) {
   return (
     <div className="py-10 text-center text-sm text-muted-foreground">
       {props.emptyStateMessage ??
