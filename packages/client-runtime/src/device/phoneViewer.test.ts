@@ -80,9 +80,9 @@ vi.mock("./modelScene.ts", async () => {
   };
 });
 
-import { Group, Quaternion } from "three";
+import { Box3, Group, Quaternion, Vector3 } from "three";
 import { createPhoneViewer } from "./phoneViewer.ts";
-import { type DeviceShapeProfile } from "./shapeProfile.ts";
+import { ANDROID_PHONE_SHAPE, type DeviceShapeProfile } from "./shapeProfile.ts";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -91,7 +91,7 @@ afterEach(() => {
   models.pending.length = 0;
 });
 
-function fixture(profile?: DeviceShapeProfile) {
+function fixture(profile?: DeviceShapeProfile, foldAngle?: number) {
   const pending = new Map<number, FrameRequestCallback>();
   let id = 0;
   let now = 0;
@@ -111,6 +111,7 @@ function fixture(profile?: DeviceShapeProfile) {
     onUnavailable,
     onFramingAspect,
     ...(profile ? { profile } : {}),
+    ...(foldAngle === undefined ? {} : { foldAngle }),
   });
   const draw = (time = now) => {
     now = time;
@@ -150,5 +151,45 @@ it("rejects incompatible accessories and releases an accessory that finishes aft
   await Promise.resolve();
   expect(asset.parent).toBeNull();
   expect(dispose).toHaveBeenCalledOnce();
+  viewer.dispose();
+});
+
+it("uses the fold model only for an inner display frame, whatever the hinge angle", () => {
+  const { viewer, draw, source, state } = fixture(ANDROID_PHONE_SHAPE, 0);
+  let time = 0;
+  const shown = () => {
+    draw((time += 1000));
+    const phone = state.frames.at(-1)!.phone!;
+    const size = new Box3().setFromObject(phone).getSize(new Vector3());
+    return {
+      fold: phone.getObjectByName("continuous-inner-screen") !== undefined,
+      fitsFrame: Math.abs(Math.log(size.x / size.y / (source.width / source.height))) < 0.1,
+    };
+  };
+  const showFrame = (width: number, height: number) => {
+    source.width = width;
+    source.height = height;
+    viewer.setScreen({
+      width,
+      height,
+      orientation: width > height ? "landscape_left" : "portrait",
+    });
+    viewer.frameUpdated();
+    return shown();
+  };
+  const phoneModel = { fold: false, fitsFrame: true };
+  expect(shown()).toEqual(phoneModel);
+  viewer.setFoldAngle(180);
+  expect(shown()).toEqual(phoneModel);
+  viewer.frameUpdated();
+  expect(shown()).toEqual(phoneModel);
+  expect(showFrame(2076, 2152)).toEqual({ fold: true, fitsFrame: true });
+  viewer.setFoldAngle(0);
+  expect(shown().fold).toBe(true);
+  expect(showFrame(1920, 1200)).toEqual(phoneModel);
+  viewer.setFoldAngle(180);
+  expect(shown()).toEqual(phoneModel);
+  expect(showFrame(2076, 2152)).toEqual({ fold: true, fitsFrame: true });
+  expect(showFrame(1080, 2400)).toEqual(phoneModel);
   viewer.dispose();
 });
