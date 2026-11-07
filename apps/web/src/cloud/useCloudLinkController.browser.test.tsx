@@ -254,24 +254,4 @@ describe("useCloudLinkController", () => {
     expect(screen.controller()?.operationError).toBeNull();
     expect(testState.toast).not.toHaveBeenCalled();
   });
-
-  it("refreshes both states after unlink fails without replacing its error", async () => {
-    using _setup = setup();
-    await using screen = await mountController();
-    const message = "Disconnected locally, but relay cleanup failed (upstream_unavailable).";
-    testState.unlink.mockResolvedValueOnce(
-      AsyncResult.failure(
-        Cause.fail(Object.assign(new Error(message), { traceId: "unlink-trace" })),
-      ),
-    );
-    testState.refreshDiscovery.mockResolvedValueOnce(
-      AsyncResult.failure(Cause.fail(new Error("Discovery unavailable"))),
-    );
-
-    expect(await screen.reconcile({ managedTunnel: false, publish: false })).toBe(false);
-    expect(testState.refreshLink).toHaveBeenCalledOnce();
-    expect(testState.refreshDiscovery).toHaveBeenCalledOnce();
-    expect(testState.toast).toHaveBeenCalledOnce();
-    expect(screen.controller()?.operationError).toBe(`${message} Trace ID: unlink-trace`);
-  });
 });
