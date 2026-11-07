@@ -4,8 +4,9 @@ import { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
+import "~/index.css";
 import { AppRoot } from "~/AppRoot";
 // The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
 // takes 6-11s; importing it here keeps that out of the test's timeout.
@@ -17,6 +18,7 @@ import {
   ENVIRONMENT_ID,
   PROJECT_ID,
   installFakeEnvironment,
+  threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { render } from "../../test/render";
@@ -29,6 +31,50 @@ vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (i
     import("effect/Layer"),
   ]);
   return { ...actual, layer: Layer.succeed(actual.ConnectionDriver, fakeDriver) };
+});
+
+it.each(["sid", "btw"])("opens and focuses a side chat on selecting /%s once", async (command) => {
+  const thread = threadWithHistory(`side-menu-${command}`, 1);
+  using _environment = installFakeEnvironment([thread], { sideChats: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  await page.viewport(1400, 900);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  const container = document.createElement("div");
+  container.style.cssText = "height: 900px; width: 1400px;";
+  await using screen = await render(<AppRoot router={router} />, {
+    container,
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const mainInput = screen.getByRole("textbox", { name: `Message ${thread.title}` });
+  const sideInput = screen.getByRole("textbox", { name: "Message Side chat" });
+  const sideOption = page.getByRole("option", {
+    name: command === "sid" ? /^\/side / : /^\/btw /,
+  });
+  await expect.element(mainInput).toBeVisible();
+  await userEvent.type(mainInput, `/${command} keep this question`);
+  await userEvent.keyboard("{Home}{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}");
+  await sideOption.click();
+  await expect
+    .element(mainInput)
+    .toHaveTextContent(`/${command === "sid" ? "side" : "btw"} keep this question`);
+  await expect.element(sideInput).not.toBeInTheDocument();
+
+  await mainInput.fill("");
+  await userEvent.type(mainInput, `/${command}`);
+  await expect.element(sideOption).toBeVisible();
+  await userEvent.keyboard("{Enter}");
+
+  await expect.element(sideInput, { timeout: 2000 }).toHaveFocus();
+  await userEvent.keyboard("a side question");
+  await expect.element(sideInput).toHaveTextContent("a side question");
+  await expect.element(mainInput).toHaveTextContent("");
 });
 
 vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
