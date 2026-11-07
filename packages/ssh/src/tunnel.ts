@@ -51,14 +51,18 @@ const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const TUNNEL_STDERR_TAIL_CHARS = 16_384;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
-const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
+// A launch may wait behind another launch on the same host, which can spend a
+// full readiness period. SSH must outlast that wait plus this launch's readiness.
+const REMOTE_LAUNCH_LOCK_WAIT_SECONDS = 120;
+const REMOTE_LAUNCH_TIMEOUT_MS = 240_000;
 // Cold archive launches download and extract ~70 MB and may wait on an install lock.
-// Lock waits must outlast both downloads and extraction; SSH must outlast install or wait plus readiness.
+// Lock waits must outlast both downloads and extraction. SSH must outlast install or
+// wait, then the launch lock wait and readiness.
 // Leave slack for verification and extraction, which have no timeout.
 const REMOTE_ARCHIVE_CHECKSUMS_SECONDS = 30;
 const REMOTE_ARCHIVE_DOWNLOAD_SECONDS = 240;
 const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 360;
-const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 900_000;
+const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 1_050_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
 
 export interface RemoteT3RunnerOptions {
@@ -535,26 +539,29 @@ MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
-mkdir -p "$STATE_DIR"
-cleanup_runner_next() {
+LOCK_DIR="$HOME/.t3/ssh-launch/.launch-lock"
+LOCK_ENTRY=""
+mkdir -p "$STATE_DIR" "$LOCK_DIR"
+cleanup_launch() {
   rm -f "$RUNNER_NEXT"
+  if [ -n "$LOCK_ENTRY" ]; then
+    rm -f "$LOCK_ENTRY"
+  fi
 }
-trap cleanup_runner_next EXIT
+trap cleanup_launch EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 cat >"$RUNNER_NEXT" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
-RUNNER_CHANGED=0
-if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
-  RUNNER_CHANGED=1
-fi
-mv "$RUNNER_NEXT" "$RUNNER_FILE"
-chmod 700 "$RUNNER_FILE"
+chmod 700 "$RUNNER_NEXT"
 T3_ARCHIVE_MODE=@@T3_ARCHIVE_MODE@@
 if [ "$T3_ARCHIVE_MODE" = "1" ]; then
   # The archive ships the helpers below inside the executable; the remote
-  # needs no Node at all. Resolving the runner once here also downloads the
-  # archive before the port and readiness probes rely on it.
-  "$RUNNER_FILE" --version >/dev/null
+  # needs no Node at all. Resolving the staged runner here downloads the
+  # archive before the launch lock, so a lock holder never waits on a download.
+  "$RUNNER_NEXT" --version >/dev/null
 elif ! ensure_remote_node_path; then
   printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
   exit 1
@@ -619,6 +626,59 @@ try {
 }
 NODE
 }
+# Launches for this home share one server and one set of records, so they run
+# one at a time from here to exit. A launch announces itself with a uniquely
+# named entry and proceeds only while no other live launch has one. Names are
+# never reused, so removing a dead launch's entry cannot remove a successor's.
+scan_launch_lock() {
+  LOCK_BUSY=0
+  LOCK_YIELD=0
+  for LOCK_OTHER in "$LOCK_DIR"/*; do
+    [ "$LOCK_OTHER" != "$LOCK_ENTRY" ] && [ -f "$LOCK_OTHER" ] || continue
+    LOCK_OWNER="\${LOCK_OTHER##*/}"
+    LOCK_OWNER="\${LOCK_OWNER%%.*}"
+    case "$LOCK_OWNER" in
+      '' | 0* | *[!0-9]*) continue ;;
+    esac
+    # Another entry with this shell's PID belongs to a launch that exited.
+    if [ "$LOCK_OWNER" = "$$" ] || ! server_running "$LOCK_OWNER"; then
+      rm -f "$LOCK_OTHER"
+      continue
+    fi
+    LOCK_BUSY=1
+    if [ "$LOCK_OWNER" -lt "$$" ]; then
+      LOCK_YIELD=1
+    fi
+  done
+}
+# Launches that announce together yield to the lowest PID. The rest wait
+# unannounced until the lock is free, so the lowest one ends up alone.
+LOCK_WAITED=0
+while :; do
+  scan_launch_lock
+  if [ -n "$LOCK_ENTRY" ] && [ "$LOCK_BUSY" -eq 0 ]; then
+    break
+  fi
+  if [ -z "$LOCK_ENTRY" ] && [ "$LOCK_BUSY" -eq 0 ]; then
+    LOCK_ENTRY="$(mktemp "$LOCK_DIR/$$.XXXXXX")"
+    continue
+  fi
+  if [ -n "$LOCK_ENTRY" ] && [ "$LOCK_YIELD" -eq 1 ]; then
+    rm -f "$LOCK_ENTRY"
+    LOCK_ENTRY=""
+  fi
+  if [ "$LOCK_WAITED" -ge @@T3_LAUNCH_LOCK_WAIT_SECONDS@@ ]; then
+    printf 'Another connection is still starting T3 on this host. Retry the connection.\\n' >&2
+    exit 1
+  fi
+  sleep 1
+  LOCK_WAITED=$((LOCK_WAITED + 1))
+done
+RUNNER_CHANGED=0
+if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
+  RUNNER_CHANGED=1
+fi
+mv "$RUNNER_NEXT" "$RUNNER_FILE"
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
@@ -837,6 +897,7 @@ function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
     T3_REUSE_READY_TIMEOUT_MS: String(REMOTE_REUSE_READY_TIMEOUT_MS),
     T3_READY_PROBE_TIMEOUT_MS: String(SSH_READY_PROBE_TIMEOUT_MS),
+    T3_LAUNCH_LOCK_WAIT_SECONDS: String(REMOTE_LAUNCH_LOCK_WAIT_SECONDS),
   });
 }
 
