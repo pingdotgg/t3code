@@ -8,7 +8,9 @@ which models and account access are available through this agent.
 
 On web or desktop, open **Settings > Providers**, choose the environment that runs
 your project, and enable Antigravity. Install its runtime there, then choose
-**Sign in** and complete the browser sign-in. Wait for T3 Code to confirm
+**Sign in** and complete the browser sign-in. The desktop app opens your browser right
+away, and the page continues to Google once the runtime is ready, which can take about
+a minute. On web, choose **Open browser** when the link appears. Wait for T3 Code to confirm
 account access and load models before starting a thread. Once the runtime is installed,
 you can also sign in from **Settings > Providers** in the mobile app.
 

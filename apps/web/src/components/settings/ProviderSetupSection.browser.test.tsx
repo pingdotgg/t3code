@@ -25,6 +25,11 @@ const setup = vi.hoisted(() => ({
   cancelInstall: vi.fn(),
   removeInstall: vi.fn(),
   confirm: vi.fn(),
+  watchSignInLink: vi.fn(),
+}));
+
+vi.mock(import("../../providerSignInLink"), () => ({
+  watchProviderSignInLink: setup.watchSignInLink,
 }));
 
 vi.mock(import("../../state/server"), async (original) => {
@@ -214,6 +219,71 @@ describe("Antigravity setup", () => {
     await expect
       .element(screen.getByRole("status").filter({ hasText: "Downloading 1.0 MB of 2.0 MB." }))
       .toBeVisible();
+  });
+
+  it("on desktop, opens the browser at Sign in and forwards it when the link arrives", async () => {
+    const link = "https://accounts.google.com/o/oauth2/v2/auth?state=flow-2";
+    for (const desktop of [false, true]) {
+      resetSetup();
+      setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
+      setup.startAuth.mockResolvedValueOnce({
+        _tag: "Success",
+        value: authState({ phase: "starting", flowId: "flow-2", authorizationUrl: null }),
+      });
+      const bridge = {
+        openPendingSignIn: vi.fn().mockResolvedValue("page-1"),
+        settlePendingSignIn: vi.fn().mockResolvedValue(undefined),
+      };
+      if (desktop) window.desktopBridge = bridge as never;
+      try {
+        await using screen = await renderSetup();
+        await screen.click("Sign in");
+      } finally {
+        delete window.desktopBridge;
+      }
+
+      if (!desktop) {
+        expect(bridge.openPendingSignIn).not.toHaveBeenCalled();
+        expect(setup.watchSignInLink).not.toHaveBeenCalled();
+        continue;
+      }
+      expect(bridge.openPendingSignIn).toHaveBeenCalledOnce();
+      expect(setup.watchSignInLink).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ atom: "auth", flowId: "flow-2" }),
+      );
+      const watch = setup.watchSignInLink.mock.calls[0]![0] as {
+        open: (url: string) => void;
+        onEnd: () => void;
+      };
+      watch.open(link);
+      watch.onEnd();
+      expect(bridge.settlePendingSignIn.mock.calls).toEqual([
+        ["page-1", link],
+        ["page-1", null],
+      ]);
+    }
+  });
+
+  it("does not open a sign-in page for API key connections", async () => {
+    resetSetup();
+    setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
+    setup.startAuth.mockResolvedValueOnce({
+      _tag: "Success",
+      value: authState({ phase: "starting", flowId: "flow-2", authorizationUrl: null }),
+    });
+    const bridge = { openPendingSignIn: vi.fn().mockResolvedValue("page-1") };
+    window.desktopBridge = bridge as never;
+    try {
+      await using screen = await renderSetup({
+        provider: { ...provider, auth: { status: "unauthenticated", type: "gemini-api-key" } },
+      });
+      await screen.click("Connect");
+    } finally {
+      delete window.desktopBridge;
+    }
+    expect(setup.startAuth).toHaveBeenCalledOnce();
+    expect(bridge.openPendingSignIn).not.toHaveBeenCalled();
+    expect(setup.watchSignInLink).not.toHaveBeenCalled();
   });
 
   it("waits for verified auth after submitting a callback to the selected environment", async () => {

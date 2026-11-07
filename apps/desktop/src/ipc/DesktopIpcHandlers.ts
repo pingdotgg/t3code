@@ -1,6 +1,11 @@
 import * as Effect from "effect/Effect";
 
-import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
+import {
+  receiveProviderAuthCallback,
+  cancelProviderAuthCallback,
+  openPendingSignIn,
+  settlePendingSignIn,
+} from "./methods/providerAuth.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
 import { installNotificationBadge } from "./methods/notificationBadge.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
@@ -147,6 +152,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(readMedia);
   yield* ipc.handle(receiveProviderAuthCallback);
   yield* ipc.handle(cancelProviderAuthCallback);
+  yield* ipc.handle(openPendingSignIn);
+  yield* ipc.handle(settlePendingSignIn);
   yield* ipc.handle(openSystemSettings);
   yield* ipc.handle(checkSystemPermission);
   yield* ipc.handle(pasteAsText);
