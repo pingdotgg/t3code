@@ -10,6 +10,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as WindowsSpawn from "./process/WindowsSpawn.ts";
 import {
   collectUint8StreamText,
   decodeUtf8,
@@ -263,8 +264,16 @@ function finalizeRunProcess<R>(
 
 const commandName = (command: string) => command.replace(/^.*[\\/]/, "");
 
+type Spawn = (
+  command: ChildProcess.StandardCommand,
+) => Effect.Effect<
+  Pick<ChildProcessSpawner.ChildProcessHandle, "stdin" | "stdout" | "stderr" | "exitCode">,
+  PlatformError.PlatformError,
+  Scope.Scope
+>;
+
 const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
-  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  spawn: Spawn,
   input: ProcessRunInput,
 ): Effect.fn.Return<ProcessRunOutput, ProcessRunError, Scope.Scope> {
   yield* Effect.annotateCurrentSpan("process.command", commandName(input.command));
@@ -290,25 +299,23 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
       cause,
     });
 
-  const child = yield* spawner
-    .spawn(
-      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        ...((input.spawnCwd ?? input.cwd) ? { cwd: input.spawnCwd ?? input.cwd } : {}),
-        ...(input.env !== undefined
-          ? {
-              env: input.env,
-              extendEnv,
-            }
-          : {}),
-        shell: spawnCommand.shell,
-        forceKillAfter: FORCE_KILL_AFTER,
-      }),
-    )
-    .pipe(
-      Effect.mapError(toSpawnError),
-      // Synchronous spawn throws arrive as defects; recover them too so callers see typed spawn failures.
-      Effect.catchDefect((cause) => Effect.fail(toSpawnError(cause))),
-    );
+  const child = yield* spawn(
+    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+      ...((input.spawnCwd ?? input.cwd) ? { cwd: input.spawnCwd ?? input.cwd } : {}),
+      ...(input.env !== undefined
+        ? {
+            env: input.env,
+            extendEnv,
+          }
+        : {}),
+      shell: spawnCommand.shell,
+      forceKillAfter: FORCE_KILL_AFTER,
+    }),
+  ).pipe(
+    Effect.mapError(toSpawnError),
+    // Synchronous spawn throws arrive as defects; recover them too so callers see typed spawn failures.
+    Effect.catchDefect((cause) => Effect.fail(toSpawnError(cause))),
+  );
 
   const stdin = input.stdin;
   const onStdoutChunk = input.onStdoutChunk;
@@ -389,13 +396,15 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
 /** @public */
 export const make = Effect.fn("ProcessRunner.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const spawn = (yield* WindowsSpawn.WindowsSpawn) ?? spawner.spawn;
 
-  const run: ProcessRunner["Service"]["run"] = (input) =>
-    finalizeRunProcess(runProcessCore(spawner, input), input);
+  const run = Effect.fn("ProcessRunner.run")((input: ProcessRunInput) =>
+    finalizeRunProcess(runProcessCore(spawn, input), input),
+  );
 
   return ProcessRunner.of({
     run,
   });
 });
 
-export const layer = Layer.effect(ProcessRunner, make());
+export const layer = Layer.effect(ProcessRunner, make()).pipe(Layer.provide(WindowsSpawn.layer));

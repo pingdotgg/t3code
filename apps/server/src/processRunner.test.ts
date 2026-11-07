@@ -11,6 +11,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import * as ProcessRunner from "./processRunner.ts";
+import { probeProcessCreation } from "./process/processCreationProbe.ts";
 
 type ChildProcessCommand = {
   readonly command: string;
@@ -70,13 +71,60 @@ const runWith =
         }),
       ),
       Effect.provide(
-        ProcessRunner.layer.pipe(
+        Layer.effect(ProcessRunner.ProcessRunner, ProcessRunner.make()).pipe(
           Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
         ),
       ),
     );
 
 describe("runProcess", () => {
+  for (const failure of [
+    undefined,
+    { at: "disposing", mode: "error" },
+    { at: "disposing", mode: "exit" },
+    { at: "child-exited", mode: "error" },
+    { at: "child-exited", mode: "exit" },
+  ] as const) {
+    // quarantine: #25245 this regression exercises Windows child ownership during native creation.
+    it.live.skipIf(HostProcess.Platform.defaultValue() !== "win32")(
+      `cleans up a child cancelled during Windows native creation (${JSON.stringify(failure)})`,
+      () =>
+        Effect.promise(async () => {
+          const probe = probeProcessCreation(false, true, failure);
+          if (failure) {
+            await expect(probe).rejects.toThrow(
+              failure.mode === "error"
+                ? `Fixture worker failed at ${failure.at}`
+                : "Fixture worker exited unexpectedly (17)",
+            );
+            return;
+          }
+          const result = await probe;
+          expect(result).toEqual({
+            serverThread: false,
+            gateClosed: true,
+            stdout: "cancelled",
+            code: null,
+          });
+        }),
+    );
+  }
+  // quarantine: #25245 this regression exercises the Windows process-creation boundary.
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "win32")(
+    "answers requests while Windows native process creation is blocked",
+    () =>
+      Effect.promise(() => probeProcessCreation()).pipe(
+        Effect.map((result) => {
+          expect(result).toEqual({
+            serverThread: false,
+            gateClosed: true,
+            stdout: "finished",
+            code: 0,
+          });
+        }),
+      ),
+  );
+
   it.effect("resolves and escapes Windows command shims before spawning", () => {
     const spawner = makeSpawner((command) =>
       Effect.sync(() => {
