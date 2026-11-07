@@ -64,6 +64,7 @@ import {
 import { closeLayoutTabByUser, closeOtherLayoutTabsByUser, splitLayoutTab } from "./layoutActions";
 import { beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
+import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { useLayoutStore } from "./layoutStore";
 import { setWheelScroller, wheelDeltaPx } from "../motion/gesture";
 import { observeResize } from "../lib/observeResize";
@@ -198,7 +199,7 @@ export function buildLayoutTabMenuItems(
   if (hasSiblings || paneCount > 1) {
     items.push({ id: "layout:new-column", label: "Move to a new column", icon: "columns-2" });
   }
-  if (countLayoutTabs(layout) > 1) {
+  if (isScrollingWorkspacesEnabled() && countLayoutTabs(layout) > 1) {
     items.push({ id: "layout:new-workspace", label: "Move to a new workspace", icon: "layers-2" });
   }
   if (paneCount > 1) {
@@ -266,6 +267,7 @@ export function runLayoutTabMenuAction(action: LayoutTabMenuId, tabId: string): 
       return;
     }
     case "layout:new-workspace": {
+      if (!isScrollingWorkspacesEnabled()) return;
       const index = store.layout.workspaces.indexOf(location.workspace);
       store.moveTabToNewWorkspace(tabId, index + 1);
       return;
