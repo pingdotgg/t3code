@@ -626,7 +626,8 @@ export default function ChatView(props: ChatViewProps) {
     sourceAnchor: AssistantCitationSourceAnchor,
   ) => {
     const inserted = composerRef.current?.citeAssistantText(citation, sourceAnchor) ?? false;
-    if (!inserted) {
+    // A declined type-to-cite request falls back to typing into the composer, so it isn't a failure.
+    if (!inserted && !sourceAnchor.commentInput) {
       toastManager.add({
         type: "warning",
         title: "The composer is not ready",
