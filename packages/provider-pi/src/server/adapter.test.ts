@@ -579,15 +579,71 @@ const startTurn = Effect.fnUntraced(function* (
 });
 
 describe("PiAdapterV2", () => {
+  const thinkingBlock = (thinking: string) => ({ type: "thinking", thinking });
+  const textBlock = (text: string) => ({ type: "text", text });
   it.effect.each([
-    { streamed: "draft", final: "final answer", ended: true, removedThinking: false },
-    { streamed: "draft", final: "final answer", ended: true, removedThinking: true },
-    { streamed: "draft", final: "final answer", ended: false },
-    { streamed: undefined, final: "final answer", ended: false },
-    { streamed: "draft", final: "draft", ended: true },
-    { streamed: "draft", final: "", ended: true },
-    { streamed: "draft", final: undefined, ended: true },
-  ])("uses authoritative assistant blocks: %j", ({ streamed, final, ended, removedThinking }) =>
+    {
+      name: "replaces ended blocks",
+      streamed: "draft",
+      ended: true,
+      content: [thinkingBlock("final"), textBlock("final")],
+      items: [
+        ["reasoning", "final"],
+        ["assistant_message", "final"],
+      ],
+    },
+    {
+      name: "replaces open blocks",
+      streamed: "draft",
+      ended: false,
+      content: [thinkingBlock("final"), textBlock("final")],
+      items: [
+        ["reasoning", "final"],
+        ["assistant_message", "final"],
+      ],
+    },
+    {
+      name: "adds final-only blocks",
+      streamed: undefined,
+      ended: false,
+      content: [thinkingBlock("final"), textBlock("final")],
+      items: [
+        ["reasoning", "final"],
+        ["assistant_message", "final"],
+      ],
+    },
+    {
+      name: "clears removed blocks and adds a block whose index changed kind",
+      streamed: "draft",
+      ended: true,
+      content: [textBlock("final")],
+      items: [
+        ["reasoning", ""],
+        ["assistant_message", ""],
+        ["assistant_message", "final"],
+      ],
+    },
+    {
+      name: "clears empty blocks",
+      streamed: "draft",
+      ended: true,
+      content: [thinkingBlock(""), textBlock("")],
+      items: [
+        ["reasoning", ""],
+        ["assistant_message", ""],
+      ],
+    },
+    {
+      name: "clears blocks missing from final content",
+      streamed: "draft",
+      ended: true,
+      content: [],
+      items: [
+        ["reasoning", ""],
+        ["assistant_message", ""],
+      ],
+    },
+  ])("uses authoritative assistant content: $name", ({ streamed, ended, content, items }) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -612,22 +668,10 @@ describe("PiAdapterV2", () => {
           });
         }
       }
-      yield* fake.emit({
-        type: "message_end",
-        message: {
-          role: "assistant",
-          content:
-            final === undefined
-              ? []
-              : [
-                  ...(removedThinking ? [] : [{ type: "thinking", thinking: final }]),
-                  { type: "text", text: final },
-                ],
-        },
-      });
+      yield* fake.emit({ type: "message_end", message: { role: "assistant", content } });
       yield* fake.emit({ type: "agent_settled" });
       const messages = new Map<string, { text: string; streaming: boolean }>();
-      const items = new Map<string, { type: string; text: string; streaming: boolean }>();
+      const turnItems = new Map<string, { type: string; text: string; streaming: boolean }>();
       yield* takeEvent((event) => {
         if (event.type === "message.updated") {
           messages.set(event.message.id, event.message);
@@ -636,27 +680,19 @@ describe("PiAdapterV2", () => {
           event.type === "turn_item.updated" &&
           (event.turnItem.type === "assistant_message" || event.turnItem.type === "reasoning")
         ) {
-          items.set(event.turnItem.id, event.turnItem);
+          turnItems.set(event.turnItem.id, event.turnItem);
         }
         return event.type === "provider_turn.updated" && event.providerTurn.status === "completed";
       });
       assert.deepEqual(
-        [...messages.values()].map(({ text, streaming }) => ({ text, streaming })),
-        (removedThinking ? ["", final] : [final ?? ""]).map((text) => ({ text, streaming: false })),
+        [...turnItems.values()].map(({ type, text, streaming }) => ({ type, text, streaming })),
+        items.map(([type, text]) => ({ type, text, streaming: false })),
       );
       assert.deepEqual(
-        [...items.values()].map(({ type, text, streaming }) => ({ type, text, streaming })),
-        [
-          { type: "reasoning", text: removedThinking ? "" : (final ?? ""), streaming: false },
-          {
-            type: "assistant_message",
-            text: removedThinking ? "" : (final ?? ""),
-            streaming: false,
-          },
-          ...(removedThinking
-            ? [{ type: "assistant_message", text: final, streaming: false }]
-            : []),
-        ],
+        [...messages.values()].map(({ text, streaming }) => ({ text, streaming })),
+        items
+          .filter(([type]) => type === "assistant_message")
+          .map(([, text]) => ({ text, streaming: false })),
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );

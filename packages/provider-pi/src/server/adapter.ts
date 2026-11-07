@@ -313,6 +313,7 @@ const PI_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "
 interface PiStreamItemState {
   readonly nativeItemId: string;
   readonly kind: "assistant_message" | "reasoning";
+  readonly messageOrdinal: number;
   text: string;
   completed: boolean;
   flushScheduled: boolean;
@@ -1124,6 +1125,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       ) {
         const blockId = `${turn.providerTurn.id}:m${turn.messageOrdinal}:c${contentIndex}`;
         const previous = turn.streamItems.get(blockId);
+        // Pi's final content can put a different block kind at a streamed index.
         const nativeItemId =
           previous === undefined || previous.kind === kind ? blockId : `${blockId}:${kind}`;
         const existing = turn.streamItems.get(nativeItemId);
@@ -1132,6 +1134,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const item: PiStreamItemState = {
           nativeItemId,
           kind,
+          messageOrdinal: turn.messageOrdinal,
           text: "",
           completed: false,
           flushScheduled: false,
@@ -1144,8 +1147,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       const completeStreamItem = (turn: ActivePiTurn, item: PiStreamItemState, text?: string) =>
         Effect.suspend(() => {
-          const changed = text !== undefined && text !== item.text;
-          if (item.completed && !changed) return Effect.void;
+          if (item.completed && (text === undefined || text === item.text)) return Effect.void;
           const hadText = item.text.length > 0;
           item.completed = true;
           if (text !== undefined) item.text = text;
@@ -1975,7 +1977,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (recordString(message, "role") !== "assistant") return;
             const content = recordField(message, "content");
             if (Array.isArray(content)) {
-              const finalized = new Set<string>();
+              const finalized = new Set<PiStreamItemState>();
               for (const [index, block] of content.entries()) {
                 const type = recordString(block, "type");
                 if (type !== "text" && type !== "thinking") continue;
@@ -1984,12 +1986,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   type === "text" ? "assistant_message" : "reasoning",
                   index,
                 );
-                finalized.add(item.nativeItemId);
+                finalized.add(item);
                 yield* completeStreamItem(turn, item, recordString(block, type) ?? "");
               }
-              const prefix = `${turn.providerTurn.id}:m${turn.messageOrdinal}:`;
               for (const item of turn.streamItems.values()) {
-                if (item.nativeItemId.startsWith(prefix) && !finalized.has(item.nativeItemId)) {
+                if (item.messageOrdinal === turn.messageOrdinal && !finalized.has(item)) {
                   yield* completeStreamItem(turn, item, "");
                 }
               }
