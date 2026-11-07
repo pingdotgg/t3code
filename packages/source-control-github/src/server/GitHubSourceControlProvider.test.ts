@@ -552,6 +552,54 @@ describe("GitHubSourceControlProvider writes", () => {
     }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)), Effect.scoped);
   });
 
+  it.effect.each([
+    { host: "github.com", status: 422, field: "base", rejectedBase: true },
+    { host: "code.example.test", status: 422, field: "base", rejectedBase: true },
+    { host: "github.com", status: 422, field: "head", rejectedBase: false },
+    { host: "github.com", status: 500, field: "base", rejectedBase: false },
+  ])(
+    "explains a rejected PR base without replacing other API failures: $host $status $field",
+    ({ host, status, field, rejectedBase }) => {
+      const cause = new GitHubRequestPolicy.GitHubApiResponseError({
+        host,
+        operation: "createPullRequest",
+        status,
+        githubErrors: ["Validation Failed", `${field} invalid`],
+      });
+      const { layer } = harness({
+        remotes: remotesOutput(
+          ["origin", `git@${host}:me/web.git`],
+          ["upstream", `git@${host}:acme/web.git`],
+        ),
+        api: { rest: () => Effect.fail(cause) },
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const bodyFile = yield* fs.makeTempFileScoped({ suffix: ".md" });
+        yield* fs.writeFileString(bodyFile, "Body");
+        const gh = yield* GitHubSourceControlProvider.make;
+        const error = yield* gh
+          .createChangeRequest({
+            cwd: "/repo",
+            context: githubContext(host),
+            baseRefName: "stack/parent",
+            headSelector: "me:child",
+            title: "Title",
+            bodyFile,
+          })
+          .pipe(Effect.flip);
+        assert.strictEqual(error.operation, "createChangeRequest");
+        assert.strictEqual(error.cause, cause);
+        assert.strictEqual(
+          error.detail,
+          rejectedBase
+            ? `GitHub rejected base branch "stack/parent" for ${host}/acme/web. Push the intended base branch to that repository, or choose an existing base branch and retry.`
+            : cause.message,
+        );
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    },
+  );
+
   it.effect("creates a repository under an organization the viewer is not", () => {
     const requests: Array<string> = [];
     const { layer } = harness({
