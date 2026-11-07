@@ -439,6 +439,11 @@ function useFileLineReveal(
   revealRequestId: number,
 ): FilePostRender {
   const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
+  // Virtualized post-renders reuse the same contents string; avoid re-parsing marks each frame.
+  const marksCacheRef = useRef<{
+    contents: string;
+    marks: ReturnType<typeof collectXcodeMarks>;
+  } | null>(null);
 
   return (fileContainer, instance, phase) => {
     if (relativePath === null) return;
@@ -469,10 +474,17 @@ function useFileLineReveal(
     const targetLine =
       revealLine === null || contents === undefined ? null : clampFileLine(contents, revealLine);
     updateFileLinkReveal(fileContainer, targetLine);
-    updateXcodeMarkDecorations(
-      fileContainer,
-      contents === undefined ? [] : collectXcodeMarks(contents),
-    );
+    const marks =
+      contents === undefined
+        ? []
+        : marksCacheRef.current?.contents === contents
+          ? marksCacheRef.current.marks
+          : (() => {
+              const next = collectXcodeMarks(contents);
+              marksCacheRef.current = { contents, marks: next };
+              return next;
+            })();
+    updateXcodeMarkDecorations(fileContainer, marks);
 
     if (!(instance instanceof VirtualizedFile)) return;
 

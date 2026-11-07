@@ -93,6 +93,7 @@ export default function ReadOnlySourcePreview(props: {
   const marks = collectXcodeMarks(props.text);
   const showMarksMenu = props.marksMenu === true && marks.length > 0;
   const [reveal, setReveal] = useState<{ line: number; requestId: number } | null>(null);
+  const handledRevealRequestIdRef = useRef<number | null>(null);
   const surfaceRef = useRef<{
     fileContainer: HTMLElement;
     instance: SourceFileInstance;
@@ -101,10 +102,12 @@ export default function ReadOnlySourcePreview(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- jumps to a mark after the Pierre surface reports its container
   useLayoutEffect(() => {
     if (reveal === null) return;
+    if (handledRevealRequestIdRef.current === reveal.requestId) return;
     const surface = surfaceRef.current;
     if (!surface) return;
     const line = clampLine(props.text, reveal.line);
     scrollFileToLine(surface.fileContainer, surface.instance, line);
+    handledRevealRequestIdRef.current = reveal.requestId;
   }, [props.text, reveal]);
 
   const handlePostRender: SourcePostRender = (fileContainer, instance, phase) => {
@@ -117,7 +120,14 @@ export default function ReadOnlySourcePreview(props: {
     surfaceRef.current = { fileContainer, instance };
     updateXcodeMarkDecorations(fileContainer, marks);
     if (reveal !== null) {
-      scrollFileToLine(fileContainer, instance, clampLine(props.text, reveal.line));
+      const line = clampLine(props.text, reveal.line);
+      // Keep the reveal highlight on later virtualized ranges, but scroll only once per jump.
+      if (handledRevealRequestIdRef.current === reveal.requestId) {
+        updateFileLinkReveal(fileContainer, line);
+      } else {
+        scrollFileToLine(fileContainer, instance, line);
+        handledRevealRequestIdRef.current = reveal.requestId;
+      }
     } else {
       updateFileLinkReveal(fileContainer, null);
     }
