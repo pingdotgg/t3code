@@ -193,6 +193,7 @@ interface ExecuteGitOptions {
   env?: NodeJS.ProcessEnv | undefined;
   maxOutputBytes?: number | undefined;
   appendTruncationMarker?: boolean | undefined;
+  keepLineCallbacksAfterTruncation?: boolean | undefined;
   progress?: GitVcsDriver.ExecuteGitProgress | undefined;
   writesSharedConfig?: boolean | undefined;
 }
@@ -1163,6 +1164,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ...(options.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
       ...(options.appendTruncationMarker !== undefined
         ? { appendTruncationMarker: options.appendTruncationMarker }
+        : {}),
+      ...(options.keepLineCallbacksAfterTruncation !== undefined
+        ? { keepLineCallbacksAfterTruncation: options.keepLineCallbacksAfterTruncation }
         : {}),
       ...(options.progress ? { progress: options.progress } : {}),
       ...(options.writesSharedConfig ? { writesSharedConfig: true } : {}),
@@ -4279,6 +4283,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
       {
         fallbackErrorDetail: "git worktree add failed",
+        // Hook output is diagnostic; reaching the capture limit must not abort the checkout.
+        appendTruncationMarker: true,
+        keepLineCallbacksAfterTruncation: true,
         // Large checkouts and post-checkout hooks can legitimately run for many
         // minutes; a fixed deadline kills them and leaves an orphaned worktree.
         timeoutMs: null,

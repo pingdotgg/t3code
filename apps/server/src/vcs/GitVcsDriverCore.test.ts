@@ -1658,6 +1658,86 @@ it.effect("lets a worktree checkout that is still working run past five minutes"
   ),
 );
 
+it.effect.each([
+  { exitCode: 0, reportProgress: true },
+  { exitCode: 0, reportProgress: false },
+  { exitCode: 1, reportProgress: true },
+])(
+  "finishes a noisy worktree checkout using its exit status (%j)",
+  ({ exitCode, reportProgress }) =>
+    Effect.gen(function* () {
+      const updates: Array<{ percent: number; completed: number; total: number }> = [];
+      const outputDrained = yield* Deferred.make<void>();
+      const noise = `${"x".repeat(1_000_001)}\n`;
+      const spawner = ChildProcessSpawner.make((command) => {
+        if (!ChildProcess.isStandardCommand(command) || !command.args.includes("worktree")) {
+          return Effect.succeed(makeSuccessfulHandle(""));
+        }
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            ...makeSuccessfulHandle(""),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+            stdout: Stream.encodeText(
+              Stream.concat(
+                Stream.make(noise),
+                Stream.fromEffect(
+                  Deferred.succeed(outputDrained, undefined).pipe(Effect.as("hook finished\n")),
+                ),
+              ),
+            ),
+            stderr: Stream.encodeText(Stream.make(noise, "Updating files: 100% (10/10), done.\r")),
+          }),
+        );
+      });
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const path = yield* Path.Path;
+      const cwd = yield* makeTmpDir();
+      const worktreePath = path.join(cwd, "worktree");
+
+      const result = yield* driver
+        .createWorktree(
+          { cwd, refName: "main", path: worktreePath },
+          reportProgress
+            ? {
+                progress: {
+                  onCheckoutProgress: (update) =>
+                    Effect.sync(() => {
+                      updates.push(update);
+                    }),
+                },
+              }
+            : {},
+        )
+        .pipe(Effect.result);
+
+      assert.isTrue(yield* Deferred.isDone(outputDrained));
+      assert.deepStrictEqual(
+        updates,
+        reportProgress ? [{ percent: 100, completed: 10, total: 10 }] : [],
+      );
+      if (exitCode === 0) {
+        assert.isTrue(Result.isSuccess(result));
+        if (Result.isSuccess(result)) assert.equal(result.success.worktree.path, worktreePath);
+      } else {
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.equal(result.failure.exitCode, exitCode);
+          assert.equal(result.failure.detail, "git worktree add failed");
+          assert.equal(result.failure.stdoutLength, 1_000_000);
+          assert.equal(result.failure.stderrLength, 1_000_000);
+        }
+      }
+    }).pipe(
+      Effect.provide(
+        layerServerConfig.pipe(
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
+);
+
 it.effect("cancels a slow submodule checkout without reporting best-effort success", () =>
   Effect.gen(function* () {
     const updateStarted = yield* Deferred.make<void>();
