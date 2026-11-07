@@ -175,6 +175,8 @@ export class SourceControlProvider extends Context.Service<
       readonly headSelector: string;
       readonly state: ChangeRequestState | "all";
       readonly limit?: number;
+      /** Background reads may reuse complete results for up to one minute. */
+      readonly allowCached?: boolean;
     }) => Effect.Effect<ReadonlyArray<ChangeRequest>, SourceControlProviderError>;
     readonly getChangeRequest: (input: {
       readonly cwd: string;
