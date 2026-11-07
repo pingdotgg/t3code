@@ -10,7 +10,9 @@ import {
   revealInFileExplorerLabelForKind,
   revealInFileExplorerLabelForOs,
 } from "~/components/preview/fileExplorerLabel";
+import { canUseMarkdownFileShellActions } from "~/components/chat/MarkdownFileLink.logic";
 import { readLocalApi } from "./localApi";
+import { useRemoteOpenResolution } from "./remoteOpen";
 import { serverEnvironment } from "./state/server";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
@@ -89,12 +91,19 @@ function buildFileContextMenuItems(input: {
 export function useFileContextMenu(environmentId: EnvironmentId | null) {
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const remoteOpen = useRemoteOpenResolution(environmentId);
+  // Every action runs on the server host, which is only the user's machine in local-exec.
+  const canUseShellActions = canUseMarkdownFileShellActions(
+    environmentId,
+    remoteOpen.state.mode,
+    remoteOpen.isResolved,
+  );
 
-  const availableEditors = serverConfig?.availableEditors ?? [];
+  const availableEditors = canUseShellActions ? (serverConfig?.availableEditors ?? []) : [];
   const capabilities: FileContextMenuCapabilities = {
     // WSL can reveal in Windows Explorer despite reporting Linux; use server wording.
     revealLabel:
-      environmentId !== null &&
+      canUseShellActions &&
       serverConfig?.shellRevealInFileManager === true &&
       serverConfig.availableEditors.includes("file-manager")
         ? serverConfig.shellRevealInFileManagerKind === undefined
@@ -110,7 +119,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
     target: FileContextMenuTarget,
   ): Promise<void> => {
     const absolutePath = resolveFileContextMenuAbsolutePath(target);
-    if (absolutePath === null || environmentId === null) return;
+    if (absolutePath === null || environmentId === null || !canUseShellActions) return;
 
     const reveal = action === "reveal-in-folder";
     const editor =
