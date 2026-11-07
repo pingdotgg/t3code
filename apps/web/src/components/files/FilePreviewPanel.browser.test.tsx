@@ -1,6 +1,8 @@
 import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
+import { isMacPlatform } from "~/lib/utils";
 import { act, fakeTimers, render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
@@ -95,11 +97,11 @@ function setup() {
   };
 }
 
-function markdownPreview(truncated: boolean) {
+function markdownPreview(truncated: boolean, contents = "- [ ] Keep the rest of this file\n") {
   state.file = {
     relativePath: "tasks.md",
-    contents: "- [ ] Keep the rest of this file\n",
-    byteLength: truncated ? 1_200_000 : 32,
+    contents,
+    byteLength: truncated ? 1_200_000 : contents.length,
     truncated,
   };
   return (
@@ -158,5 +160,42 @@ describe("rendered Markdown task saves", () => {
         contents: "- [x] Keep the rest of this file\n",
       },
     });
+  });
+});
+
+describe("rendered Markdown select all", () => {
+  const selectAll = () =>
+    userEvent.keyboard(
+      isMacPlatform(navigator.platform) ? "{Meta>}a{/Meta}" : "{Control>}a{/Control}",
+    );
+
+  it("selects only the rendered file content", async () => {
+    using _settings = setup();
+    await using screen = await render(
+      <>
+        <p>Transcript text from the chat thread.</p>
+        {markdownPreview(false, "# Notes\n\nRendered file body.\n")}
+      </>,
+    );
+    await userEvent.click(screen.getByText("Rendered file body."));
+    await selectAll();
+    const selection = window.getSelection()?.toString() ?? "";
+    expect(selection).toContain("Rendered file body.");
+    expect(selection).not.toContain("Transcript text from the chat thread.");
+  });
+
+  it("stays scoped to the file after toggling a task checkbox", async () => {
+    using _settings = setup();
+    await using screen = await render(
+      <>
+        <p>Transcript text from the chat thread.</p>
+        {markdownPreview(false, "- [ ] Task item\n\nRendered file body.\n")}
+      </>,
+    );
+    await userEvent.click(screen.getByRole("checkbox"));
+    await selectAll();
+    const selection = window.getSelection()?.toString() ?? "";
+    expect(selection).toContain("Rendered file body.");
+    expect(selection).not.toContain("Transcript text from the chat thread.");
   });
 });
