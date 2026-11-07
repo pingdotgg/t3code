@@ -55,12 +55,14 @@ export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
   return [effectiveEditor, setLastEditor] as const;
 }
 
+// These targets are files, which a terminal cannot show, so a stored terminal choice is skipped and kept.
 function resolveAndPersistPreferredEditor(availableEditors: readonly EditorId[]): EditorId | null {
   const availableEditorIds = new Set(availableEditors);
+  availableEditorIds.delete("terminal");
   const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
   if (stored && availableEditorIds.has(stored)) return stored;
   const editor = EDITORS.find((editor) => availableEditorIds.has(editor.id))?.id ?? null;
-  if (editor) setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
+  if (editor && stored !== "terminal") setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
   return editor ?? null;
 }
 

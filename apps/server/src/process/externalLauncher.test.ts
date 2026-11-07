@@ -257,6 +257,113 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+// Needs POSIX stubs; the Windows PowerShell stub is one file named with backslashes.
+it.effect.skipIf(windowsHost)("opens the terminal in the target's folder on each platform", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3 it's a repo-" });
+    const script = path.join(workspace, "run.sh");
+    yield* fileSystem.writeFileString(script, "#!/bin/sh\n");
+    const stub = path.join(binDir, "x-terminal-emulator");
+    yield* fileSystem.writeFileString(stub, "#!/bin/sh\n");
+    yield* fileSystem.chmod(stub, 0o755);
+
+    const launch = (
+      cwd: string,
+      platform: NodeJS.Platform,
+      env: Record<string, string>,
+      display?: string,
+    ) =>
+      Effect.gen(function* () {
+        const spawned: ChildProcess.StandardCommand[] = [];
+        const editors = yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          const editors = yield* launcher.resolveAvailableEditors();
+          if (editors.includes("terminal")) {
+            yield* launcher.launchEditor({ editor: "terminal", cwd });
+          }
+          return editors;
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform,
+              env,
+              onSpawn: (command) => spawned.push(command),
+              spawnResult: (command) =>
+                command.command === "busctl"
+                  ? { stdout: JSON.stringify({ data: display ? [`DISPLAY=${display}`] : [] }) }
+                  : undefined,
+            }),
+          ),
+          Effect.provideService(HostProcess.Environment, env),
+        );
+        return { available: editors.includes("terminal"), spawned: spawned.at(-1) };
+      });
+
+    for (const cwd of [workspace, script]) {
+      const mac = yield* launch(cwd, "darwin", { PATH: "/usr/bin" });
+      assert.equal(mac.available, true);
+      assert.equal(mac.spawned?.command, "open");
+      assert.deepEqual(mac.spawned?.args, ["-a", "Terminal", workspace]);
+
+      const linux = yield* launch(cwd, "linux", { PATH: binDir, DISPLAY: ":0" });
+      assert.equal(linux.spawned?.command, "x-terminal-emulator");
+      assert.deepEqual(linux.spawned?.args, [
+        "-e",
+        "/bin/sh",
+        "-c",
+        'cd -- "$1" && exec "${SHELL:-/bin/sh}"',
+        "sh",
+        workspace,
+      ]);
+      assert.equal(linux.spawned?.options.cwd, workspace);
+    }
+
+    const headless = yield* launch(workspace, "linux", { PATH: binDir });
+    assert.equal(headless.available, false);
+    const recovered = yield* launch(workspace, "linux", { PATH: binDir }, ":0");
+    assert.equal(recovered.available, true);
+    assert.equal(recovered.spawned?.options.env?.DISPLAY, ":0");
+    const noTerminal = yield* launch(workspace, "linux", { PATH: "/nonexistent", DISPLAY: ":0" });
+    assert.equal(noTerminal.available, false);
+
+    for (const [command, args] of [
+      ["xdg-terminal-exec", [`--dir=${workspace}`]],
+      ["konsole", ["--workdir", workspace]],
+      ["kitty", ["--directory", workspace]],
+      ...["gnome-terminal", "kgx", "xfce4-terminal", "alacritty", "foot"].map(
+        (command) => [command, [`--working-directory=${workspace}`]] as const,
+      ),
+    ] as const) {
+      const terminalBin = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-terminal-" });
+      const executable = path.join(terminalBin, command);
+      yield* fileSystem.writeFileString(executable, "#!/bin/sh\n");
+      yield* fileSystem.chmod(executable, 0o755);
+      const linux = yield* launch(workspace, "linux", { PATH: terminalBin, DISPLAY: ":0" });
+      assert.equal(linux.spawned?.command, command);
+      assert.deepEqual(linux.spawned?.args, args);
+    }
+
+    const systemRoot = path.join(binDir, "Windows");
+    yield* fileSystem.writeFileString(
+      `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
+      "",
+    );
+    const windows = yield* launch("C:/it's a repo’;calc;#/src/index.ts", "win32", {
+      PATH: binDir,
+      PATHEXT: ".EXE",
+      SYSTEMROOT: systemRoot,
+    });
+    assert.equal(windows.spawned?.options.detached, false);
+    assert.equal(
+      Buffer.from(String(windows.spawned?.args.at(-1)), "base64").toString("utf16le"),
+      `$ProgressPreference = 'SilentlyContinue'; Start-Process 'powershell.exe' -WorkingDirectory ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${Buffer.from("C:\\it's a repo’;calc;#\\src", "utf16le").toString("base64")}')))`,
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect.skipIf(windowsHost)(
   "reveals a WSL file in Windows File Explorer through its UNC path",
   () =>
