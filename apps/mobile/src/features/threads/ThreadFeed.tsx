@@ -294,7 +294,8 @@ const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
 } as const;
 
-const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+// A formatter pins the default zone when built; rebuild when the device zone changes.
+let messageTimeFormatter = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
   minute: "2-digit",
 });
@@ -303,7 +304,15 @@ function formatMessageTime(input: string): string {
   if (Number.isNaN(timestamp)) {
     return "";
   }
-  return MESSAGE_TIME_FORMATTER.format(timestamp);
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (messageTimeFormatter.resolvedOptions().timeZone !== timeZone) {
+    messageTimeFormatter = new Intl.DateTimeFormat(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone,
+    });
+  }
+  return messageTimeFormatter.format(timestamp);
 }
 
 const TURN_FOLD_HEIGHT = 42;

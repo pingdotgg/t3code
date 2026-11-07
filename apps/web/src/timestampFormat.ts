@@ -68,25 +68,35 @@ function resolveWeekStartsOn(locale: string | undefined): WeekdayIndex | undefin
 
 export const weekStartsOn = resolveWeekStartsOn(timestampLocale);
 
-const timestampFormatterCache = new Map<string, Intl.DateTimeFormat>();
+const formatterCache = new Map<string, Intl.DateTimeFormat>();
+
+// A formatter pins the default zone when built, so key on the current one to follow OS zone changes.
+function getCachedFormatter(
+  name: string,
+  options: Intl.DateTimeFormatOptions,
+  timeZone: string = Intl.DateTimeFormat().resolvedOptions().timeZone,
+): Intl.DateTimeFormat {
+  const cacheKey = `${name}:${timeZone}`;
+  const cachedFormatter = formatterCache.get(cacheKey);
+  if (cachedFormatter) {
+    return cachedFormatter;
+  }
+
+  const formatter = new Intl.DateTimeFormat(timestampLocale, { ...options, timeZone });
+  formatterCache.set(cacheKey, formatter);
+  return formatter;
+}
 
 function getTimestampFormatter(
   timestampFormat: TimestampFormat,
   includeSeconds: boolean,
   timeZone?: string,
 ): Intl.DateTimeFormat {
-  const cacheKey = `${timestampFormat}:${includeSeconds ? "seconds" : "minutes"}:${timeZone ?? ""}`;
-  const cachedFormatter = timestampFormatterCache.get(cacheKey);
-  if (cachedFormatter) {
-    return cachedFormatter;
-  }
-
-  const formatter = new Intl.DateTimeFormat(timestampLocale, {
-    ...getTimestampFormatOptions(timestampFormat, includeSeconds),
-    ...(timeZone ? { timeZone } : {}),
-  });
-  timestampFormatterCache.set(cacheKey, formatter);
-  return formatter;
+  return getCachedFormatter(
+    `${timestampFormat}:${includeSeconds ? "seconds" : "minutes"}`,
+    getTimestampFormatOptions(timestampFormat, includeSeconds),
+    timeZone,
+  );
 }
 
 export function resolveHour12(timestampFormat: TimestampFormat): boolean {
@@ -142,11 +152,6 @@ const numericDateWithYearOptions: Intl.DateTimeFormatOptions = {
   ...numericDateOptions,
   year: "numeric",
 };
-const numericDateFormatter = new Intl.DateTimeFormat(timestampLocale, numericDateOptions);
-const numericDateWithYearFormatter = new Intl.DateTimeFormat(
-  timestampLocale,
-  numericDateWithYearOptions,
-);
 
 interface CalendarDay {
   year: number;
@@ -172,13 +177,11 @@ function calendarDay(date: Date, timeZone: string | undefined): CalendarDay {
 }
 
 function formatNumericDate(date: Date, sameYear: boolean, timeZone: string | undefined): string {
-  if (!timeZone) {
-    return (sameYear ? numericDateFormatter : numericDateWithYearFormatter).format(date);
-  }
-  return new Intl.DateTimeFormat(timestampLocale, {
-    ...(sameYear ? numericDateOptions : numericDateWithYearOptions),
-    timeZone,
-  }).format(date);
+  return (
+    sameYear
+      ? getCachedFormatter("numericDate", numericDateOptions, timeZone)
+      : getCachedFormatter("numericDateWithYear", numericDateWithYearOptions, timeZone)
+  ).format(date);
 }
 
 export function formatDayAwareTimestamp(
@@ -200,7 +203,7 @@ export function formatDayAwareTimestamp(
   return `${formatNumericDate(date, messageDay.year === today.year, timeZone)} ${time}`;
 }
 
-/** `timeZone` overrides the zone the formatters cached when they were built. */
+/** `timeZone` overrides the system time zone. */
 export function formatUpcomingTimestamp(
   isoDate: string,
   timestampFormat: TimestampFormat,
