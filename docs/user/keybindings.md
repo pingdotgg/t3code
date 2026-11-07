@@ -118,8 +118,9 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 ## When conditions
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
-`previewOpen`, `rightPanelOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`,
-`draftThreadRoute`, `turnRunning`, `editableFocus`, `isWeb`, and `isDesktop`.
+`previewOpen`, `rightPanelOpen`, `modelPickerOpen`, `usagePageOpen`,
+`threadNotificationOpen`, `composerFocus`, `draftThreadRoute`, `turnRunning`,
+`editableFocus`, `isWeb`, and `isDesktop`.
 `rightPanelOpen` applies only to `rightPanel.new` and is true while the right panel is
 open; the default `mod+t` uses it to open the panel's new-tab menu.
 `draftThreadRoute` is true on a draft thread, including a restored draft, until it is first sent.
@@ -165,6 +166,10 @@ actions of the same kind undo together. The notice remains available for five
 seconds after the latest action. Right after an action, the shortcut works even
 in a text field such as the composer. Once you type or press another key, the
 field gets its own undo back. Terminals always keep their native shortcut.
+
+`thread.openNotification` (`mod+alt+o` by default) opens the thread from the newest
+thread notification, and keeps working for two seconds after the notification closes.
+It works while you type in the composer.
 
 `navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
 through the pages you have visited, like a browser's back and forward buttons.

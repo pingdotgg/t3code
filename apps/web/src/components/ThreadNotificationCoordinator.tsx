@@ -19,6 +19,7 @@ import {
 
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
 import { isWindowsPlatform } from "../lib/utils";
+import { registerCommands } from "../shortcuts/dispatcher";
 import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
@@ -37,6 +38,8 @@ import {
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
 import { toastManager } from "./ui/toast";
+
+const OPEN_NOTIFICATION_GRACE_MS = 2000;
 
 interface NotificationState extends ThreadNotificationObservation {
   readonly raw: OrchestrationV2ThreadShell;
@@ -79,7 +82,13 @@ export function startThreadNotifications(
   };
   // Toast ids by thread key, so hiding a thread can close its open toasts.
   const openToasts = new Map<string, Array<ToastId>>();
+  const recentToasts: Array<{ toastId: ToastId; open: () => void }> = [];
+  const dropRecentToast = (toastId: ToastId) => {
+    const index = recentToasts.findIndex((entry) => entry.toastId === toastId);
+    if (index !== -1) recentToasts.splice(index, 1);
+  };
   const forgetToast = (key: string, toastId: ToastId) => {
+    setTimeout(() => dropRecentToast(toastId), OPEN_NOTIFICATION_GRACE_MS);
     const remaining = (openToasts.get(key) ?? []).filter((id) => id !== toastId);
     if (remaining.length === 0) openToasts.delete(key);
     else openToasts.set(key, remaining);
@@ -94,7 +103,10 @@ export function startThreadNotifications(
     const shouldClose = (key: string) => hidden.has(key) || (live !== null && !live.has(key));
     for (const [key, toastIds] of openToasts) {
       if (!shouldClose(key)) continue;
-      for (const toastId of toastIds) toastManager.close(toastId);
+      for (const toastId of toastIds) {
+        dropRecentToast(toastId);
+        toastManager.close(toastId);
+      }
       openToasts.delete(key);
     }
     const count = pending.size;
@@ -152,6 +164,14 @@ export function startThreadNotifications(
       (active.environmentId !== environmentId || active.threadId !== thread.id)
     ) {
       const toastKey = threadKey({ environmentId, threadId: thread.id });
+      const openThread = () => {
+        dropRecentToast(toastId);
+        toastManager.close(toastId);
+        void router.navigate({
+          to: "/$environmentId/$threadId",
+          params: { environmentId, threadId: thread.id },
+        });
+      };
       const toastId: ToastId = toastManager.add({
         onRemove: (): void => forgetToast(toastKey, toastId),
         type: kind === "completion" ? "success" : status === "failed" ? "error" : "warning",
@@ -174,16 +194,11 @@ export function startThreadNotifications(
         },
         actionProps: {
           children: "Open thread",
-          onClick: () => {
-            toastManager.close(toastId);
-            void router.navigate({
-              to: "/$environmentId/$threadId",
-              params: { environmentId, threadId: thread.id },
-            });
-          },
+          onClick: openThread,
         },
       });
       openToasts.set(toastKey, [...(openToasts.get(toastKey) ?? []), toastId]);
+      recentToasts.push({ toastId, open: openThread });
       return;
     }
     if (
@@ -389,6 +404,18 @@ export function startThreadNotifications(
     };
   };
 
+  const unregisterCommands = registerCommands(
+    {
+      "thread.openNotification": (event) => {
+        const latest = recentToasts.at(-1);
+        if (!latest) return false;
+        event.preventDefault();
+        latest.open();
+      },
+    },
+    { context: () => ({ threadNotificationOpen: recentToasts.length > 0 }) },
+  );
+
   const onSettings = () => {
     applyMode();
     syncEnvironments();
@@ -409,6 +436,7 @@ export function startThreadNotifications(
   onSettings();
 
   return () => {
+    unregisterCommands();
     unsubscribeSettings();
     unsubscribeEnvironmentIds();
     for (const unsubscribe of unsubscribeHidden) unsubscribe();

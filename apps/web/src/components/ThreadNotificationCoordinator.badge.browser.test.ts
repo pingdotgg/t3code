@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
-import { stubGlobal } from "../../test/render";
+import { fakeTimers, stubGlobal } from "../../test/render";
 
 const state = vi.hoisted(() => ({
   mode: "notifications",
@@ -316,3 +316,52 @@ it.each([false, true])(
     expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
   },
 );
+
+it("opens the newest toast's thread from the shortcut until shortly after it closes", async () => {
+  await using app = setup();
+  state.mode = "off";
+  state.inApp = true;
+  focused = true;
+  const toasts: Array<{ onRemove: () => void }> = [];
+  state.toast.mockImplementation((options: { onRemove: () => void }) => {
+    toasts.push(options);
+    return `toast-${toasts.length}`;
+  });
+  app.start();
+  using _timers = fakeTimers();
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+  const pressShortcut = () =>
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "o",
+        altKey: true,
+        ctrlKey: !mac,
+        metaKey: mac,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  const complete = (environmentId: string) =>
+    state.shells.set(
+      environmentId,
+      shell({
+        latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
+      }),
+    );
+  const opened = (environmentId: string) => ({
+    to: "/$environmentId/$threadId",
+    params: { environmentId: EnvironmentId.make(environmentId), threadId: "thread" },
+  });
+
+  complete("one");
+  complete("two");
+  expect(toasts).toHaveLength(2);
+  toasts[1]!.onRemove();
+  pressShortcut();
+  expect(state.navigate).toHaveBeenCalledExactlyOnceWith(opened("two"));
+
+  toasts[0]!.onRemove();
+  vi.advanceTimersByTime(2_000);
+  pressShortcut();
+  expect(state.navigate).toHaveBeenCalledOnce();
+});
