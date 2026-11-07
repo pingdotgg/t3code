@@ -67,6 +67,10 @@
       "types": "./src/secretRequest.ts",
       "default": "./src/secretRequest.ts"
     },
+    "./secret-delivery": {
+      "types": "./src/secretDelivery.ts",
+      "default": "./src/secretDelivery.ts"
+    },
     "./link-request": {
       "types": "./src/linkRequest.ts",
       "default": "./src/linkRequest.ts"

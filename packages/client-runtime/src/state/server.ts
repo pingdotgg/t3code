@@ -1586,6 +1586,14 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:guest-share:create",
       tag: WS_METHODS.guestShareCreate,
     }),
+    readSecretDelivery: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:secrets:read-delivery",
+      tag: WS_METHODS.secretsReadDelivery,
+    }),
+    deleteSecretDelivery: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:secrets:delete-delivery",
+      tag: WS_METHODS.secretsDeleteDelivery,
+    }),
     // Off the config lane: answering a card must not queue behind settings
     // edits. One answer per card at a time.
     answerSecretRequest: createEnvironmentRpcCommand(runtime, {

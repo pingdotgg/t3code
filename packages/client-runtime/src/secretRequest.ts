@@ -160,13 +160,17 @@ export function secretRequestAnswerInput(
   return { threadId: item.threadId, turnItemId: item.id, answer: { type: "save", secret } };
 }
 
-const USER_FACING_FAILURE_TAGS = new Set(["SecretRequestError", "EnvironmentAuthorizationError"]);
+const USER_FACING_FAILURE_TAGS = new Set([
+  "SecretRequestError",
+  "SecretDeliveryError",
+  "EnvironmentAuthorizationError",
+]);
 
 /**
  * Only known server errors pass their message through: anything else (transport or encoding
- * failures) gets the generic copy, so the typed value can never surface in the UI.
+ * failures) gets `fallback`, so a typed or delivered value can never surface in the UI.
  */
-export function secretRequestFailureMessage(failure: unknown): string {
+export function secretFailureMessage(failure: unknown, fallback: string): string {
   if (
     typeof failure === "object" &&
     failure !== null &&
@@ -179,5 +183,8 @@ export function secretRequestFailureMessage(failure: unknown): string {
   ) {
     return failure.message;
   }
-  return "Could not answer the request. Try again.";
+  return fallback;
 }
+
+export const secretRequestFailureMessage = (failure: unknown) =>
+  secretFailureMessage(failure, "Could not answer the request. Try again.");

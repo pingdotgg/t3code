@@ -1,3 +1,4 @@
+import { SecretDeliveryStatus } from "./secretDelivery.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
@@ -1558,6 +1559,13 @@ export type OrchestrationV2SecretRequestStatus = typeof OrchestrationV2SecretReq
 /** `file`: the value goes to an owner-only file the agent's shell commands can read. */
 export const OrchestrationV2SecretRequestDelivery = Schema.Literal("file");
 
+const OrchestrationV2SecretDeliveryFields = {
+  type: Schema.Literal("secret_delivery"),
+  label: TrimmedNonEmptyString,
+  secretStatus: SecretDeliveryStatus,
+  expiresAt: Schema.Number,
+} as const;
+
 const OrchestrationV2SecretRequestFields = {
   type: Schema.Literal("secret_request"),
   label: TrimmedNonEmptyString,
@@ -1792,6 +1800,10 @@ export const OrchestrationV2TurnItem = Schema.Union([
     targetRunId: Schema.NullOr(RunId),
     targetProviderInstanceId: ProviderInstanceId,
     targetModel: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    ...OrchestrationV2SecretDeliveryFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2622,6 +2634,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     targetRunId: Schema.NullOr(RunId),
     targetProviderInstanceId: ProviderInstanceId,
     targetModel: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    ...OrchestrationV2SecretDeliveryFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -3538,6 +3554,17 @@ const OrchestrationV2InternalCommand = Schema.Union([
    * Internal so no client can mark a request saved without the value being
    * stored.
    */
+  Schema.Struct({
+    type: Schema.Literal("secret_delivery.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+    turnItemId: TurnItemId,
+    label: TrimmedNonEmptyString,
+    secretStatus: SecretDeliveryStatus,
+    expiresAt: Schema.Number,
+  }),
   Schema.Struct({
     type: Schema.Literal("secret_request.record"),
     commandId: CommandId,

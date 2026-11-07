@@ -30,6 +30,7 @@ export class CopyTextHapticFeedbackError extends Schema.TaggedError<CopyTextHapt
 interface CopyTextWithHapticOptions {
   readonly target?: string;
   readonly feedback?: "light-impact" | "selection";
+  readonly isSensitive?: boolean;
 }
 
 export async function tryCopyTextWithHaptic(
@@ -41,7 +42,9 @@ export async function tryCopyTextWithHaptic(
 
   const clipboardWrite = (async () => {
     try {
-      await Clipboard.setStringAsync(value);
+      await Clipboard.setStringAsync(value, {
+        android: { isSensitive: options.isSensitive ?? false },
+      });
       return true;
     } catch (cause) {
       const error = new CopyTextClipboardWriteError({ target, cause });

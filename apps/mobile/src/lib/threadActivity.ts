@@ -392,6 +392,13 @@ export function isSecretRequestActivityGroup(entry: ThreadFeedActivityGroup): bo
   );
 }
 
+export function isSecretDeliveryActivityGroup(entry: ThreadFeedActivityGroup): boolean {
+  return (
+    entry.activities.length === 1 &&
+    entry.activities[0]?.projectedItem.item.type === "secret_delivery"
+  );
+}
+
 export function isLinkRequestActivityGroup(entry: ThreadFeedActivityGroup): boolean {
   return (
     entry.activities.length === 1 && entry.activities[0]?.projectedItem.item.type === "link_request"
@@ -440,6 +447,7 @@ function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
     item.type === "system_notice" ||
     item.type === "proposed_plan" ||
     item.type === "secret_request" ||
+    item.type === "secret_delivery" ||
     item.type === "link_request"
   );
 }
@@ -561,6 +569,7 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
     case "thread_created":
       return "zap";
     case "secret_request":
+    case "secret_delivery":
       return "lock";
     case "link_request":
       return "globe";
@@ -622,6 +631,7 @@ function itemSummary(
     case "thread_created":
       return "Thread created";
     case "secret_request":
+    case "secret_delivery":
       return item.label;
     case "link_request":
       return `Link ${item.label ?? item.url ?? "an environment"}`;
@@ -685,6 +695,8 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
     case "secret_request":
     case "link_request":
       return item.reason || null;
+    case "secret_delivery":
+      return null;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":

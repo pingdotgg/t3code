@@ -23,6 +23,8 @@ import {
   type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpDelegateTaskResult,
   type OrchestratorMcpDeleteScheduledTaskInput,
+  type SendSecretInput,
+  type SecretDeliveryReceipt,
   type OrchestratorMcpRequestSecretInput,
   type OrchestratorMcpRequestSecretResult,
   type OrchestratorMcpDeleteScheduledTaskResult,
@@ -125,6 +127,7 @@ import {
   taskPrompt,
 } from "./delegatedTaskModes.ts";
 import { isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
+import * as SecretDeliveries from "../secrets/SecretDeliveries.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -192,6 +195,10 @@ export interface OrchestratorMcpServiceShape {
     input: OrchestratorMcpDeleteScheduledTaskInput,
   ) => Effect.Effect<OrchestratorMcpDeleteScheduledTaskResult, OrchestratorMcpFailure>;
   /** Only status reaches the agent, never this value. */
+  readonly sendSecret: (
+    scope: McpInvocationScope,
+    input: SendSecretInput,
+  ) => Effect.Effect<SecretDeliveryReceipt, OrchestratorMcpFailure>;
   readonly requestSecret: (
     scope: McpInvocationScope,
     input: OrchestratorMcpRequestSecretInput,
@@ -950,6 +957,8 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return `Forked to thread ${item.targetThreadId}.`;
     case "thread_created":
       return `Created thread ${item.targetThreadId} with ${item.targetProviderInstanceId} (${item.targetModel}).`;
+    case "secret_delivery":
+      return `Sent ${item.label}: ${item.secretStatus}.`;
     case "secret_request":
       return `Asked the user for ${item.label}: ${item.secretStatus}.`;
     case "link_request":
@@ -1050,6 +1059,7 @@ const make = Effect.gen(function* () {
           ),
         )
       : Effect.succeed(project.defaultModelSelection);
+  const secretDeliveries = yield* SecretDeliveries.SecretDeliveries;
   const secretRequests = yield* SecretRequests.SecretRequests;
 
   const requireCapability = (scope: McpInvocationScope) =>
@@ -2156,6 +2166,28 @@ const make = Effect.gen(function* () {
         return { scheduledTaskId: existing.id, deleted: true };
       },
     ),
+    sendSecret: Effect.fn("OrchestratorMcpService.sendSecret")(function* (scope, input) {
+      const { scope: caller, parent } = yield* loadThreadCaller(scope, "send_secret");
+      const run = ThreadManagementService.latestActiveRun(parent);
+      if (
+        run === undefined ||
+        run.rootNodeId === null ||
+        run.providerInstanceId !== caller.thread.providerInstanceId
+      ) {
+        return yield* failure(
+          "parent_not_active",
+          "Sending a secret requires an active run owned by this MCP session.",
+        );
+      }
+      return yield* secretDeliveries
+        .publish({
+          ...input,
+          threadId: caller.thread.threadId,
+          runId: run.id,
+          nodeId: run.rootNodeId,
+        })
+        .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
+    }),
     requestSecret: Effect.fn("OrchestratorMcpService.requestSecret")(function* (scope, input) {
       const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "request_secret");
       const threadId = threadScope.thread.threadId;
@@ -3341,6 +3373,7 @@ export const layer: Layer.Layer<
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2
   | ScheduledTaskService.ScheduledTaskService
   | ProjectService.ProjectService
+  | SecretDeliveries.SecretDeliveries
   | SecretRequests.SecretRequests
   | ServerSettings.ServerSettingsService
   | RemoteDelegation.RemoteDelegation

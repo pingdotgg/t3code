@@ -49,6 +49,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as SecretDeliveries from "../secrets/SecretDeliveries.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
@@ -163,7 +164,12 @@ const makeLaptop = Effect.gen(function* () {
     Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
     Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
     Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
-    Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+    Layer.provide(
+      Layer.merge(
+        Layer.mock(SecretDeliveries.SecretDeliveries)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+      ),
+    ),
     Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
     Layer.provide(
