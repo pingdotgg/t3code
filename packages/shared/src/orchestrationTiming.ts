@@ -35,3 +35,8 @@ export function formatDuration(durationMs: number): string {
   if (seconds > 0) parts.push(`${seconds}s`);
   return parts.join(" ");
 }
+
+export function formatLiveDuration(durationMs: number): string {
+  const seconds = Number.isFinite(durationMs) ? Math.max(0, Math.floor(durationMs / 1_000)) : 0;
+  return seconds === 0 ? "0s" : formatDuration(seconds * 1_000);
+}
