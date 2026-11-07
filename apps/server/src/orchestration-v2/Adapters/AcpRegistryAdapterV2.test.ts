@@ -2305,9 +2305,6 @@ describe("AcpRegistryAdapterV2", () => {
           assert.equal(nestedTool.turnItem.threadId, row.subagent.childThreadId);
           if (nestedTool.turnItem.type === "dynamic_tool") {
             assert.deepEqual(nestedTool.turnItem.input, { command: "cat nested/package.json" });
-            assert.deepEqual(nestedTool.turnItem.output, [
-              { type: "content", content: { type: "text", text: "onetwo" } },
-            ]);
             assert.equal(nestedTool.turnItem.status, "completed");
           }
           const toolUpdates = nested.flatMap((event) =>

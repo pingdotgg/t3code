@@ -5314,14 +5314,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               return;
             }
+            if (update.sessionUpdate === "tool_call_content_chunk") {
+              if (subagent !== undefined)
+                yield* projectSubagentTool(
+                  subagent,
+                  notification.sessionId,
+                  update,
+                  undefined,
+                  context,
+                );
+              return;
+            }
             const isDisplayableAssistantUpdate =
               (update.sessionUpdate === "agent_message_chunk" &&
                 acpContentBlockDisplayText(update.content) !== undefined) ||
               (update.sessionUpdate === "agent_message" && update.content !== undefined);
-            if (
-              !isDisplayableAssistantUpdate &&
-              !(subagent !== undefined && update.sessionUpdate === "tool_call_content_chunk")
-            ) {
+            if (!isDisplayableAssistantUpdate) {
               return;
             }
             if (subagent !== undefined) {
