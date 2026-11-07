@@ -4786,6 +4786,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       yield* orchestrator.dispatch({
         type: "thread.create",
+        background: true,
         createdBy: "user",
         creationSource: "web",
         commandId: CommandId.make("settle-automatic-create"),
@@ -4930,6 +4931,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const threadId = ThreadId.make("runtime-layer-archive-preparing-thread");
       yield* orchestrator.dispatch({
         type: "thread.create",
+        background: true,
         createdBy: "user",
         creationSource: "web",
         commandId: CommandId.make("archive-preparing-create"),

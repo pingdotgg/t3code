@@ -503,3 +503,15 @@ it("dismisses a wake at its timestamp without hiding a later wake", () => {
   expect(isThreadWokeUnseen({ ...state, lastVisitedAt: firstWake })).toBe(false);
   expect(isThreadWokeUnseen({ ...state, lastVisitedAt: firstWake, wokeAt: NOW })).toBe(true);
 });
+
+it("a new background report wakes a snooze, while an explicit later snooze defers that report", () => {
+  const shell = {
+    ...makeShell({ snoozedUntil: FUTURE_WAKE }),
+    source: {
+      pendingRuntimeRequest: null,
+      background: { acknowledgedAt: SNOOZED_AT, reportedAt: "2026-04-10T11:00:00.000Z" },
+    },
+  };
+  expect(effectiveSnoozed(shell, { now: NOW })).toBe(false);
+  expect(effectiveSnoozed({ ...shell, snoozedAt: NOW }, { now: NOW })).toBe(true);
+});

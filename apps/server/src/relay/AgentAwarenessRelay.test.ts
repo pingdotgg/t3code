@@ -130,11 +130,22 @@ describe("startup agent activity", () => {
           status: "failed",
           latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:00:01.000Z"),
         }),
+        shell({
+          id: ThreadId.make("fresh-report"),
+          status: "idle",
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T11:59:00.000Z"),
+          background: { acknowledgedAt: NOW, reportedAt: "2026-09-04T12:00:01.000Z" },
+        }),
         shell({ id: ThreadId.make("idle"), status: "idle" }),
         shell({ id: ThreadId.make("missing-project"), projectId: ProjectId.make("missing") }),
       ],
     });
-    assert.deepStrictEqual(ids, [THREAD_ID, newCompleted, newFailed]);
+    assert.deepStrictEqual(ids, [
+      THREAD_ID,
+      newCompleted,
+      newFailed,
+      ThreadId.make("fresh-report"),
+    ]);
   });
 });
 

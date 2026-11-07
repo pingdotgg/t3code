@@ -1428,6 +1428,46 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } as Event;
     });
 
+  const withBackgroundReports = Effect.fn("Orchestrator.withBackgroundReports")(function* (
+    events: ReadonlyArray<OrchestrationV2DomainEvent>,
+  ) {
+    const reports: Array<OrchestrationV2DomainEvent> = [];
+    const reported = new Set<ThreadId>();
+    for (const event of events) {
+      if (
+        event.type !== "run.updated" ||
+        !["failed", "interrupted", "cancelled"].includes(event.payload.status) ||
+        reported.has(event.threadId) ||
+        events.some(
+          (candidate) =>
+            candidate.type === "run.created" &&
+            candidate.payload.restartContinuationOfRunId === event.payload.id,
+        )
+      )
+        continue;
+      reported.add(event.threadId);
+      const pending = events.findLast(
+        (candidate) => candidate.threadId === event.threadId && "lineage" in candidate.payload,
+      );
+      const thread =
+        pending !== undefined && "lineage" in pending.payload
+          ? pending.payload
+          : yield* projectionStore.getThread(event.threadId);
+      if (thread.background == null || thread.background.reportedAt != null) continue;
+      reports.push({
+        ...event,
+        id: yield* idAllocator.allocate.event({ threadId: event.threadId }),
+        type: "thread.metadata-updated",
+        payload: {
+          ...thread,
+          background: { ...thread.background, reportedAt: DateTime.formatIso(event.occurredAt) },
+          updatedAt: event.occurredAt,
+        },
+      });
+    }
+    return [...events, ...reports];
+  });
+
   const writeSystemEvents =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
     Effect.fnUntraced(function* (
@@ -1436,7 +1476,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       options: { readonly updateDelegatedCompletionOnly?: boolean } = {},
     ) {
       const withIds = yield* Effect.forEach(events, (event) => makeSystemEvent(event));
-      yield* eventSink.writeWithEffects({ events: withIds, effects, ...options });
+      yield* eventSink.writeWithEffects({
+        events: yield* withBackgroundReports(withIds),
+        effects,
+        ...options,
+      });
     });
 
   const completionDeliveryRun = (
@@ -2969,6 +3013,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         rootThreadId: command.threadId,
       },
       forkedFrom: null,
+      ...(command.background
+        ? { background: { acknowledgedAt: DateTime.formatIso(now), reportedAt: null } }
+        : {}),
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
@@ -3674,14 +3721,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         );
       const latestRunCompletedAt = shell?.latestRunCompletedAt ?? null;
-      if (latestRunCompletedAt === null) {
+      if (latestRunCompletedAt === null && thread.background == null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
           cause: `Thread ${command.threadId} has no completed run to mark unread.`,
         });
       }
-      markUnreadVisitedAt = DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 });
+      markUnreadVisitedAt =
+        latestRunCompletedAt === null
+          ? null
+          : DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 });
     }
     const updatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {
@@ -3817,6 +3867,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             lastVisitedAt: markUnreadVisitedAt,
+            ...(thread.background == null
+              ? {}
+              : {
+                  background: {
+                    ...thread.background,
+                    reportedAt: thread.background.reportedAt ?? DateTime.formatIso(now),
+                  },
+                }),
             ...(snoozeExpired
               ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: thread.snoozedUntil }
               : {}),
@@ -3842,6 +3900,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   };
           return {
             ...thread,
+            ...(command.background === undefined && !command.acknowledgeBackground
+              ? {}
+              : {
+                  background:
+                    command.background === false
+                      ? null
+                      : command.acknowledgeBackground
+                        ? thread.background == null
+                          ? null
+                          : {
+                              acknowledgedAt: DateTime.formatIso(now),
+                              reportedAt: null,
+                            }
+                        : (thread.background ?? {
+                            acknowledgedAt: DateTime.formatIso(now),
+                            reportedAt: null,
+                          }),
+                }),
             ...(command.title === undefined ? {} : { title: command.title }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
             ...(command.limitRecovery !== undefined &&
@@ -13968,14 +14044,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         storedEvents: [],
       } satisfies OrchestratorV2DispatchResult;
     }
-    const acceptedAt = plan.events.at(-1)?.occurredAt ?? (yield* DateTime.now);
+    const eventsWithReports = yield* withBackgroundReports(plan.events).pipe(
+      mapDispatchError(command),
+    );
+    const acceptedAt = eventsWithReports.at(-1)?.occurredAt ?? (yield* DateTime.now);
     const committed = yield* eventSink
       .commitCommand({
         commandId: command.commandId,
         threadId: commandThreadId(command),
         commandType: command.type,
         acceptedAt,
-        events: plan.events,
+        events: eventsWithReports,
         effects: plan.effects,
         ...(plan.cancelUnsettledEffects === undefined
           ? {}

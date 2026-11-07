@@ -148,6 +148,24 @@ choice.
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
 
+### Keep recurring work in the background
+
+Choose **Run in background** from a thread's menu to keep routine activity in a collapsed
+**Background** section, including between scheduled runs. The agent and its scheduled work
+continue running. Background works with either sidebar layout and with Working turned off.
+Pinned threads remain pinned.
+
+Questions, approvals, failures, and results the agent reports bring the thread back to Active.
+Opening it does not dismiss the result. Choose **Acknowledge and return to Background** when
+you have reviewed it, or **Move to Active** to remove the policy. Agents report a result with
+`t3_thread_organize` using `mark_unread`; they can also use `background`, `foreground`, and
+`acknowledge_background`.
+
+In **Settings → Scheduled tasks**, enable **Run in background** to apply this to every run,
+including tasks that create a fresh thread each time. **Open latest run** opens the newest run
+that still exists. Turning the task option off stops applying it to future runs; an existing
+thread keeps its own policy until you choose **Move to Active**.
+
 ### Group threads by project (beta)
 
 Turn on **Settings → Labs → Boring sidebar (group by project)** on web and desktop to put active

@@ -62,6 +62,7 @@ export interface DraftState {
   readonly title: string;
   readonly prompt: string;
   readonly enabled: boolean;
+  readonly runInBackground?: boolean;
   readonly scheduleMode: ScheduleMode;
   readonly intervalMinutes: string;
   readonly timeOfDay: string;
@@ -248,6 +249,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     title: task.title,
     prompt: task.prompt,
     enabled: task.enabled,
+    runInBackground: task.runInBackground ?? false,
     scheduleMode: schedule.type === "fixed_time" ? "fixed" : schedule.type,
     intervalMinutes:
       schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",

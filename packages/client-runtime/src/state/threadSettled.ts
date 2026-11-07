@@ -69,7 +69,7 @@ export function hasQueuedTurnStart(
 }
 
 export interface ThreadSnoozeShell extends QueuedThreadShell {
-  readonly source?: Pick<EnvironmentThreadShell["source"], "pendingRuntimeRequest">;
+  readonly source?: Pick<EnvironmentThreadShell["source"], "pendingRuntimeRequest" | "background">;
   readonly snoozedUntil?: string | null;
   readonly snoozedAt?: string | null;
   readonly hasPendingApprovals: boolean;
@@ -106,6 +106,8 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
   ) {
     return true;
   }
+  const report = shell.source?.background?.reportedAt;
+  if (report != null && (shell.snoozedAt == null || report > shell.snoozedAt)) return true;
   if (shell.pendingSubagentRequest != null) return true;
   if ((shell.pendingGuestMessageCount ?? 0) > 0) return true;
   const failedAt = failureEdgeAt(shell);
@@ -410,4 +412,37 @@ export function isThreadWokeUnseen(input: {
     .map((value) => (value ? Date.parse(value) : NaN))
     .filter((ms) => !Number.isNaN(ms));
   return seenAt.every((ms) => ms < wokeAtMs);
+}
+
+/** Opening a background thread does not acknowledge its result. */
+export function isQuietBackgroundThread(
+  shell: Pick<
+    EnvironmentThreadShell,
+    | "source"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "pendingSubagentRequest"
+    | "pendingGuestMessageCount"
+    | "runtime"
+    | "latestRun"
+  >,
+): boolean {
+  const policy = shell.source.background;
+  if (policy == null || policy.reportedAt != null) return false;
+  if (
+    shell.hasPendingApprovals ||
+    shell.hasPendingUserInput ||
+    shell.source.pendingRuntimeRequest != null ||
+    shell.pendingSubagentRequest != null ||
+    (shell.pendingGuestMessageCount ?? 0) > 0
+  )
+    return false;
+  const run = shell.latestRun;
+  if (run != null && ["failed", "interrupted", "cancelled"].includes(run.status)) {
+    return run.completedAt != null && run.completedAt <= policy.acknowledgedAt;
+  }
+  if (shell.runtime?.status === "failed" || shell.runtime?.status === "interrupted") {
+    return shell.runtime.updatedAt != null && shell.runtime.updatedAt <= policy.acknowledgedAt;
+  }
+  return true;
 }

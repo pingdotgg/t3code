@@ -434,3 +434,10 @@ export function useThreadRelationshipShells(
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
   return useAtomValue(relationshipShellsAtomFamily(threadKey(ref)));
 }
+
+export function readEnvironmentSupportsThreadBackground(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadBackground === true
+  );
+}

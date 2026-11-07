@@ -43,6 +43,8 @@ export interface ProjectThreadAwarenessV2Input {
   readonly project: Pick<Project, "title">;
   readonly thread: Pick<
     OrchestrationV2ThreadShell,
+    | "background"
+    | "latestRunCompletedAt"
     | "activityRunStatus"
     | "id"
     | "lineage"
@@ -62,11 +64,28 @@ export function projectThreadAwarenessV2(
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
   if (!isListedThreadLineage(thread.lineage)) return null;
-  const phase = resolveThreadAwarenessPhaseV2(thread);
+  const executionPhase = resolveThreadAwarenessPhaseV2(thread);
+  const report = thread.background?.reportedAt;
+  const reportsResult =
+    report != null &&
+    executionPhase !== "failed" &&
+    executionPhase !== "waiting_for_approval" &&
+    executionPhase !== "waiting_for_input";
+  const phase = reportsResult ? "completed" : executionPhase;
   if (phase === null) {
     return null;
   }
-  if (phase === "completed" && thread.latestRunStopRequested === true) return null;
+  if (!reportsResult && phase === "completed" && thread.latestRunStopRequested === true)
+    return null;
+  if (
+    thread.background != null &&
+    thread.background.reportedAt == null &&
+    (phase === "completed" ||
+      (phase === "failed" &&
+        thread.latestRunCompletedAt != null &&
+        DateTime.formatIso(thread.latestRunCompletedAt) <= thread.background.acknowledgedAt))
+  )
+    return null;
   // Resolve the phase first so live or waiting work stays visible after settlement.
   if (
     thread.settledOverride === "settled" &&
@@ -77,7 +96,9 @@ export function projectThreadAwarenessV2(
   }
   const detail =
     phase === "completed"
-      ? "Review the completed task."
+      ? reportsResult
+        ? "Review the reported result. Work may still be running."
+        : "Review the completed task."
       : phase === "failed"
         ? "The agent run failed."
         : undefined;
@@ -87,10 +108,10 @@ export function projectThreadAwarenessV2(
     projectTitle: project.title,
     threadTitle: thread.title,
     phase,
-    headline: headlineForPhase(phase),
+    headline: reportsResult ? "Result reported" : headlineForPhase(phase),
     ...(detail === undefined ? {} : { detail }),
     modelTitle: thread.modelSelection.model,
-    updatedAt: DateTime.formatIso(thread.updatedAt),
+    updatedAt: reportsResult ? report : DateTime.formatIso(thread.updatedAt),
     deepLink: buildAgentAwarenessDeepLink({ environmentId, threadId: thread.id }),
   };
 }

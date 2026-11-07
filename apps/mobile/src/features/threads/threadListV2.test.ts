@@ -1798,6 +1798,62 @@ describe("Working section beta", () => {
   });
 });
 
+describe("background thread placement", () => {
+  const base = makeThread({ id: ThreadId.make("background-monitor"), title: "Monitor" });
+  const quiet = {
+    ...base,
+    source: { ...base.source, background: { acknowledgedAt: NOW, reportedAt: null } },
+  };
+  const build = (
+    thread: EnvironmentThreadShell,
+    overrides: Partial<Parameters<typeof buildThreadListV2Items>[0]> = {},
+  ) =>
+    buildThreadListV2Items({
+      threads: [thread],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      workingShelfEnabled: true,
+      isWorking: () => true,
+      ...overrides,
+    });
+
+  it("keeps quiet checks folded independently of Working and accessible by search or expansion", () => {
+    for (const workingShelfEnabled of [true, false]) {
+      const collapsed = build(quiet, { workingShelfEnabled });
+      expect(collapsed.backgroundCount).toBe(1);
+      expect(collapsed.items).toEqual([]);
+      const expanded = build(quiet, { workingShelfEnabled, backgroundShelfExpanded: true });
+      expect(expanded.items.map((item) => item.thread.id)).toEqual([quiet.id]);
+      const rows = buildThreadListV2ListItems({
+        ...expanded,
+        pendingTasks: [],
+        backgroundShelfExpanded: true,
+      });
+      expect(rows.map((item) => item.type)).toEqual(["v2-background-shelf", "v2-thread"]);
+      expect(build(quiet, { workingShelfEnabled, searchQuery: "Monitor" }).items).toHaveLength(1);
+    }
+  });
+
+  it("surfaces reports and questions in Active while retaining pinned placement", () => {
+    const reported = {
+      ...quiet,
+      source: { ...quiet.source, background: { acknowledgedAt: NOW, reportedAt: NOW } },
+    };
+    for (const thread of [
+      reported,
+      { ...quiet, hasPendingApprovals: true },
+      { ...quiet, hasPendingUserInput: true },
+    ]) {
+      const layout = build(thread);
+      expect(layout.backgroundCount).toBe(0);
+      expect(layout.workingCount).toBe(0);
+      expect(layout.items.map((item) => item.thread.id)).toEqual([quiet.id]);
+    }
+    expect(build({ ...quiet, pinnedAt: NOW }).items[0]?.pinned).toBe(true);
+  });
+});
+
 describe("queued messages keep a settled thread active", () => {
   const threads = [
     makeThread({ id: ThreadId.make("active"), title: "Active" }),

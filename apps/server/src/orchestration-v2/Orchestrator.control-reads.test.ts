@@ -1667,3 +1667,130 @@ it.effect("dispatch records the command outcome and its duration", () =>
     assert.strictEqual((yield* durations).count - durationsBefore, 1);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect(
+  "background reports survive visits and automatic turns until explicitly acknowledged",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:background-policy");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("background:create"),
+        threadId,
+        projectId: ProjectId.make("project:background-policy"),
+        title: "Monitor",
+        background: true,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const initial = (yield* projections.getThreadShell(threadId))!.background;
+      assert.ok(initial);
+      assert.strictEqual(initial.reportedAt, null);
+      // A monitor can report during its first turn, before any completed run exists.
+      yield* orchestrator.dispatch({
+        type: "thread.mark-unread",
+        commandId: CommandId.make("background:report"),
+        threadId,
+      });
+      const reported = (yield* projections.getThreadShell(threadId))!.background;
+      assert.ok(reported?.reportedAt);
+      yield* orchestrator.dispatch({
+        type: "thread.visit",
+        commandId: CommandId.make("background:visit"),
+        threadId,
+        visitedAt: DateTime.formatIso(yield* DateTime.now),
+        opened: true,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("background:auto"),
+        threadId,
+        messageId: MessageId.make("background:auto"),
+        text: "Routine check",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "agent",
+        creationSource: "server",
+      });
+      assert.deepStrictEqual((yield* projections.getThreadShell(threadId))!.background, reported);
+      yield* orchestrator.dispatch({
+        type: "thread.mark-unread",
+        commandId: CommandId.make("background:repeat"),
+        threadId,
+      });
+      assert.deepStrictEqual((yield* projections.getThreadShell(threadId))!.background, reported);
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("background:ack"),
+        threadId,
+        acknowledgeBackground: true,
+      });
+      assert.strictEqual(
+        (yield* projections.getThreadShell(threadId))!.background?.reportedAt,
+        null,
+      );
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("background:off"),
+        threadId,
+        background: false,
+      });
+      assert.strictEqual(
+        (yield* projections.getThreadProjection(threadId)).thread.background,
+        null,
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("background failures stay reported when another automated run starts", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const { threadId } = yield* completeAndSnoozeThread("background-failure", 30);
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("background-failure:enable"),
+      threadId,
+      background: true,
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("background-failure:run"),
+      threadId,
+      messageId: MessageId.make("background-failure:run"),
+      text: "Check",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "agent",
+      creationSource: "server",
+    });
+    const runId = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!.id;
+    yield* orchestrator.dispatch({
+      type: "run.interrupt",
+      commandId: CommandId.make("background-failure:stop"),
+      threadId,
+      runId,
+    });
+    const reported = (yield* projections.getThreadShell(threadId))!.background;
+    assert.ok(reported?.reportedAt);
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("background-failure:next"),
+      threadId,
+      messageId: MessageId.make("background-failure:next"),
+      text: "Check again",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "agent",
+      creationSource: "server",
+    });
+    assert.deepStrictEqual((yield* projections.getThreadShell(threadId))!.background, reported);
+  }).pipe(Effect.provide(layerTest)),
+);

@@ -519,6 +519,8 @@ describe("sidebar drag projection", () => {
       thread("a2", "active"),
       marker("working-header"),
       thread("w", "working"),
+      marker("background-header"),
+      thread("b", "background"),
       settledHeader,
       marker("settled-placeholder"),
     ];
@@ -528,6 +530,8 @@ describe("sidebar drag projection", () => {
     expect(byTime.get("a2")?.y).toBe(-83);
     expect(byTime.get(sidebarMarkerId("working-header"))).toEqual(stationary);
     expect(byTime.get("w")).toEqual(stationary);
+    expect(byTime.get(sidebarMarkerId("background-header"))).toEqual(stationary);
+    expect(byTime.get("b")).toEqual(stationary);
   });
 
   it("updates the projection when the target or measured geometry changes", () => {

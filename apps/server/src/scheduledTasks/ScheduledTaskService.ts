@@ -211,6 +211,8 @@ interface ScheduledTaskRow {
   readonly title: string;
   readonly prompt: string;
   readonly enabled: number;
+  readonly run_in_background: number;
+  readonly last_run_thread_id?: string | null;
   readonly schedule_json: string;
   readonly project_id: string;
   readonly thread_id: string | null;
@@ -385,6 +387,8 @@ const decodeRow = Effect.fnUntraced(
       title: row.title,
       prompt: row.prompt,
       enabled: row.enabled === 1,
+      runInBackground: row.run_in_background === 1,
+      lastRunThreadId: row.thread_id ?? row.last_run_thread_id ?? null,
       schedule,
       projectId: row.project_id,
       threadId: row.thread_id,
@@ -505,9 +509,14 @@ export const layer = Layer.effect(
       sql<ScheduledTaskRow>`
       SELECT
         task_id,
+        COALESCE(thread_id, (SELECT r.thread_id FROM scheduled_task_run_threads r
+          JOIN orchestration_v2_projection_threads t ON t.thread_id = r.thread_id
+          WHERE r.task_id = scheduled_tasks.task_id AND t.deleted_at IS NULL
+          ORDER BY r.created_at DESC, r.thread_id DESC LIMIT 1)) AS last_run_thread_id,
         title,
         prompt,
         enabled,
+        run_in_background,
         schedule_json,
         project_id,
         thread_id,
@@ -547,9 +556,14 @@ export const layer = Layer.effect(
       sql<ScheduledTaskRow>`
       SELECT
         task_id,
+        COALESCE(thread_id, (SELECT r.thread_id FROM scheduled_task_run_threads r
+          JOIN orchestration_v2_projection_threads t ON t.thread_id = r.thread_id
+          WHERE r.task_id = scheduled_tasks.task_id AND t.deleted_at IS NULL
+          ORDER BY r.created_at DESC, r.thread_id DESC LIMIT 1)) AS last_run_thread_id,
         title,
         prompt,
         enabled,
+        run_in_background,
         schedule_json,
         project_id,
         thread_id,
@@ -628,6 +642,7 @@ export const layer = Layer.effect(
           title,
           prompt,
           enabled,
+          run_in_background,
           schedule_json,
           project_id,
           thread_id,
@@ -653,6 +668,7 @@ export const layer = Layer.effect(
           ${task.title},
           ${task.prompt},
           ${task.enabled ? 1 : 0},
+          ${task.runInBackground ? 1 : 0},
           ${JSON.stringify(task.schedule)},
           ${task.projectId},
           ${task.threadId},
@@ -679,6 +695,7 @@ export const layer = Layer.effect(
           title = excluded.title,
           prompt = excluded.prompt,
           enabled = excluded.enabled,
+          run_in_background = excluded.run_in_background,
           schedule_json = excluded.schedule_json,
           project_id = excluded.project_id,
           -- A first run may bind the thread while this save is in flight; only a
@@ -931,17 +948,27 @@ export const layer = Layer.effect(
             : `${active.id}:webhook:${webhook.deliveryId}`;
         const commandId = CommandId.make(`scheduled-task:${fireKey}`);
         const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
+        const freshThreadId = ThreadId.make(`scheduled-run:${fireKey}`);
         const prompt = webhook?.prompt ?? active.prompt;
         const threadMode = scheduledTaskThreadMode(active);
 
         // A bound thread can move to another project (No project to a project) while
         // this fires. Follow it; one move needs at most two retries. Same ids replay safely.
-        const sendBound = (
+        const sendBound: (
           threadId: ThreadId,
           projectId: ProjectId,
           retries: number,
-        ): ReturnType<typeof threadManagement.sendToThread> =>
-          threadManagement
+        ) => ReturnType<typeof threadManagement.sendToThread> = Effect.fn(
+          "ScheduledTaskService.sendBound",
+        )(function* (threadId: ThreadId, projectId: ProjectId, retries: number) {
+          if (active.runInBackground)
+            yield* threadManagement.dispatch({
+              type: "thread.metadata.update",
+              threadId,
+              commandId: CommandId.make(`${commandId}:background`),
+              background: true,
+            });
+          return yield* threadManagement
             .sendToThread({
               projectId,
               commandId,
@@ -970,35 +997,48 @@ export const layer = Layer.effect(
                       ),
               }),
             );
+        });
 
         // Capture defects and interrupts too so dispatch failures still reach markCompleted.
         const result =
           active.threadId === null
             ? yield* Effect.exit(
-                threadLaunch
-                  .launch({
-                    commandId,
-                    projectId: active.projectId,
-                    title: active.title,
-                    modelSelection: active.modelSelection,
-                    runtimeMode: active.runtimeMode,
-                    interactionMode: active.interactionMode,
-                    workspaceStrategy: active.workspaceStrategy,
-                    initialMessage: {
-                      messageId,
-                      scheduledTaskId: active.id,
-                      text: prompt,
-                      attachments: [],
-                    },
-                    createdBy: active.createdBy,
-                    creationSource: active.creationSource,
-                  })
-                  .pipe(
-                    Effect.map((launched) => launched.threadId),
-                    Effect.tap((threadId) =>
-                      threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
+                Effect.gen(function* () {
+                  yield* sql`INSERT INTO scheduled_task_run_threads(task_id, thread_id, created_at)
+                    SELECT ${active.id}, ${freshThreadId}, ${iso(startedAt)}
+                    WHERE EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_id = ${active.id})
+                    ON CONFLICT(thread_id) DO NOTHING`.pipe(
+                    Effect.mapError((cause) =>
+                      taskError("Could not record scheduled run.", { taskId: active.id, cause }),
                     ),
-                  ),
+                  );
+                  return yield* threadLaunch
+                    .launch({
+                      threadId: freshThreadId,
+                      commandId,
+                      projectId: active.projectId,
+                      title: active.title,
+                      background: active.runInBackground ?? false,
+                      modelSelection: active.modelSelection,
+                      runtimeMode: active.runtimeMode,
+                      interactionMode: active.interactionMode,
+                      workspaceStrategy: active.workspaceStrategy,
+                      initialMessage: {
+                        messageId,
+                        scheduledTaskId: active.id,
+                        text: prompt,
+                        attachments: [],
+                      },
+                      createdBy: active.createdBy,
+                      creationSource: active.creationSource,
+                    })
+                    .pipe(
+                      Effect.map((launched) => launched.threadId),
+                      Effect.tap((threadId) =>
+                        threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
+                      ),
+                    );
+                }),
               )
             : yield* Effect.exit(
                 // The stored selection only seeds fresh threads. A bound run
@@ -1386,6 +1426,7 @@ export const layer = Layer.effect(
         title: input.title,
         prompt: input.prompt,
         enabled: input.enabled,
+        runInBackground: input.runInBackground ?? existingTask?.runInBackground ?? false,
         schedule,
         projectId: input.projectId,
         threadId,

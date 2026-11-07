@@ -42,6 +42,7 @@ describe("projectThreadAwarenessV2", () => {
     title: "Integrate orchestration",
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     status: "running" as const,
+    latestRunCompletedAt: null as DateTime.Utc | null,
     pendingRuntimeRequest: null,
     settledOverride: null,
     updatedAt,
@@ -216,5 +217,48 @@ describe("projectThreadAwarenessV2", () => {
         }),
       }),
     ).toMatchObject({ phase: "running", headline: "Agent is working" });
+  });
+  it("keeps quiet background completions silent and publishes explicit reports", () => {
+    const background = { acknowledgedAt: NOW, reportedAt: null };
+    const input = {
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: { ...v2Thread({ status: "completed" }), background },
+    };
+    expect(projectThreadAwarenessV2(input)).toBeNull();
+    expect(
+      projectThreadAwarenessV2({
+        ...input,
+        thread: { ...input.thread, background: { ...background, reportedAt: NOW } },
+      })?.phase,
+    ).toBe("completed");
+    for (const status of ["running", "idle"] as const) {
+      const reportedAt = "2026-09-04T12:01:00.000Z";
+      expect(
+        projectThreadAwarenessV2({
+          ...input,
+          thread: { ...input.thread, status, background: { ...background, reportedAt } },
+        }),
+      ).toMatchObject({ phase: "completed", headline: "Result reported", updatedAt: reportedAt });
+      expect(
+        projectThreadAwarenessV2({
+          ...input,
+          thread: { ...input.thread, status, background },
+        })?.phase ?? null,
+      ).toBe(status === "running" ? "running" : null);
+    }
+    expect(
+      projectThreadAwarenessV2({ ...input, thread: { ...input.thread, status: "failed" } })?.phase,
+    ).toBe("failed");
+    expect(
+      projectThreadAwarenessV2({
+        ...input,
+        thread: {
+          ...input.thread,
+          status: "failed",
+          background: { ...background, reportedAt: NOW },
+        },
+      })?.phase,
+    ).toBe("failed");
   });
 });
