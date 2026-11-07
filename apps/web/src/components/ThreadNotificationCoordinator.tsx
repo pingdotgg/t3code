@@ -7,6 +7,7 @@ import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import type { AnyRouter } from "@tanstack/react-router";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import { monitorHoldsWakeCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
 import type { AtomRegistry } from "effect/reactivity";
@@ -260,8 +261,11 @@ export function startThreadNotifications(
         status === "limited"
           ? `${thread.latestRun?.runId ?? ""}:${status}`
           : null;
-      const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
-      const settled = status === "ready" && thread.latestRun?.status === "completed";
+      const completed = status === "ready" && thread.latestRun?.status === "completed";
+      const held = completed && monitorHoldsWakeCompletion(rawThread);
+      const settled = completed && !held;
+      const parsedCompletedAt = Date.parse(thread.latestRun?.completedAt ?? "");
+      const completedAt = Number.isFinite(parsedCompletedAt) ? parsedCompletedAt : null;
       const state = {
         raw: rawThread,
         subagentRequest,
@@ -269,7 +273,8 @@ export function startThreadNotifications(
         status,
         attention,
         settled,
-        completedAt: settled && Number.isFinite(completedAt) ? completedAt : null,
+        completedAt: settled ? completedAt : null,
+        heldAt: held ? completedAt : null,
       };
       next.set(thread.id, state);
       changed.push([prior, state]);

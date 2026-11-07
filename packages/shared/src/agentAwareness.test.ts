@@ -24,6 +24,7 @@ describe("projectThreadAwarenessV2", () => {
       Pick<
         OrchestrationV2ThreadShell,
         | "activityRunStatus"
+        | "latestRunBackgroundWake"
         | "latestRunStopRequested"
         | "status"
         | "pendingBackgroundTasks"
@@ -61,6 +62,29 @@ describe("projectThreadAwarenessV2", () => {
         thread: { ...input.thread, latestRunStopRequested: true },
       }),
     ).toBeNull();
+  });
+
+  it.each([
+    ["holds a wake run", true, [{ taskId: "watch", kind: "monitor" as const }], "running"],
+    ["completes a wake run once its monitor ends", true, [], "completed"],
+    [
+      "completes a run the user started",
+      false,
+      [{ taskId: "watch", kind: "monitor" as const }],
+      "completed",
+    ],
+  ] as const)("%s while a monitor wakes the thread", (_, latestRunBackgroundWake, tasks, phase) => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          status: "completed",
+          latestRunBackgroundWake,
+          pendingBackgroundTasks: [...tasks],
+        }),
+      })?.phase,
+    ).toBe(phase);
   });
 
   it.each([

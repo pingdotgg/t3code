@@ -7,7 +7,10 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { backgroundWorkHoldsCompletion } from "./orchestrationV2PendingBackgroundWork.ts";
+import {
+  backgroundWorkHoldsCompletion,
+  monitorHoldsWakeCompletion,
+} from "./orchestrationV2PendingBackgroundWork.ts";
 
 export type AgentAwarenessPhase =
   | "starting"
@@ -46,6 +49,7 @@ export interface ProjectThreadAwarenessV2Input {
     | "activityRunStatus"
     | "id"
     | "lineage"
+    | "latestRunBackgroundWake"
     | "latestRunStopRequested"
     | "modelSelection"
     | "pendingBackgroundTasks"
@@ -113,7 +117,8 @@ function resolveThreadAwarenessPhaseV2(
     case "waiting":
       return "running";
     case "completed":
-      return backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+      return backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) ||
+        monitorHoldsWakeCompletion(thread)
         ? "running"
         : "completed";
     case "failed":
