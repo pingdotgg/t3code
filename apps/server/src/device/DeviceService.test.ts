@@ -23,6 +23,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -42,6 +43,7 @@ import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 import * as DeviceService from "./DeviceService.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
 import { agentDeviceSession, releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
+import { AGENT_DEVICE_VERSION } from "./DeviceToolchain.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
@@ -326,6 +328,7 @@ const fixture = Effect.fn("fixture")(function* (
     booted = false;
   };
   return {
+    host,
     service,
     host,
     starts,
@@ -344,6 +347,80 @@ const fixture = Effect.fn("fixture")(function* (
     endDevice,
   };
 });
+
+it.effect.each([false, true])("keeps a failed launcher close retryable (timeout: %s)", (timedOut) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const config = yield* ServerConfig.ServerConfig;
+    const path = yield* Path.Path;
+    const fixtureState = yield* fixture();
+    const deviceId = DeviceId.make("mock-physical-phone");
+    const threadId = ThreadId.make("close-retry");
+    fixtureState.devices.push({
+      id: deviceId,
+      name: "Mock phone",
+      platform: "android",
+      version: "17",
+      physical: true,
+      booted: true,
+    });
+    const installDir = path.join(config.baseDir, "tools", "agent-device", AGENT_DEVICE_VERSION);
+    const binDir = path.join(installDir, "node_modules", "agent-device", "bin");
+    yield* fs.makeDirectory(binDir, { recursive: true });
+    yield* fs.writeFileString(path.join(binDir, "agent-device.mjs"), "");
+    yield* fs.writeFileString(path.join(installDir, ".install-complete"), AGENT_DEVICE_VERSION);
+    let retry = false;
+    const service = yield* DeviceService.make.pipe(
+      Effect.provideService(DeviceHost.DeviceHost, fixtureState.host),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("Launcher cleanup must not make HTTP requests")),
+      ),
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () =>
+          Effect.succeed({
+            code:
+              !retry && timedOut ? null : ChildProcessSpawner.ExitCode(retry && !timedOut ? 0 : 1),
+            stdout: "",
+            stderr:
+              retry && timedOut ? "Error (SESSION_NOT_FOUND): No active session" : "private output",
+            timedOut: !retry && timedOut,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          }),
+      }),
+    );
+    yield* service.open({ threadId, deviceId, platform: "android" });
+    const launcher = yield* service.agentLauncher({
+      threadId,
+      hostId: LOCAL_DEVICE_HOST_ID,
+      deviceId,
+      targetArgs: [],
+    });
+    expect(Option.isSome(launcher)).toBe(true);
+    if (Option.isNone(launcher)) return;
+    const error = yield* service.close({ threadId, deviceId }).pipe(Effect.flip);
+    expect(error.message).not.toContain("private output");
+    expect((yield* service.state).sessions).toHaveLength(1);
+    expect(yield* fs.exists(launcher.value)).toBe(true);
+    retry = true;
+    yield* service.close({ threadId, deviceId });
+    expect((yield* service.state).sessions).toEqual([]);
+    expect(yield* fs.exists(launcher.value)).toBe(false);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.layerTest({ enableDeviceSupport: true }),
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-close-retry-" }),
+        NodeCrypto.layer,
+        NetService.layer,
+      ).pipe(Layer.provideMerge(NodeServices.layer)),
+    ),
+    Effect.scoped,
+  ),
+);
 
 describe("device setup consent", () => {
   it.effect("exposes daemon startup diagnostics through agent readiness and host status", () =>
@@ -1024,6 +1101,10 @@ it.effect.each(["shutdown", "close"] as const)(
       let booted = true;
       let capture: number | null = null;
       let generation = 0;
+      let shutdownFails = false;
+      const secondDeviceId = DeviceId.make("22222222-2222-2222-2222-222222222222");
+      let secondDevice = false;
+      let secondShutdownFails = false;
       const http = HttpClient.make((request) =>
         Effect.sync(() => {
           const path = new URL(request.url).pathname;
@@ -1033,6 +1114,18 @@ it.effect.each(["shutdown", "close"] as const)(
               Response.json({
                 emulators: [],
                 simulators: [
+                  ...(secondDevice
+                    ? [
+                        {
+                          id: secondDeviceId,
+                          name: "Second iPhone",
+                          platform: "ios",
+                          version: "26",
+                          physical: false,
+                          booted: true,
+                        },
+                      ]
+                    : []),
                   {
                     id: deviceId,
                     name: "iPhone",
@@ -1048,9 +1141,22 @@ it.effect.each(["shutdown", "close"] as const)(
           if (path === "/vendor/serve-sim/grid/api/start") capture ??= ++generation;
           else if (path === "/vendor/serve-sim/grid/api/shutdown") {
             if (request.body._tag !== "Uint8Array") throw new Error("Missing shutdown body");
-            expect(decodeJson(new TextDecoder().decode(request.body.body))).toEqual({
+            const body = decodeJson(new TextDecoder().decode(request.body.body));
+            if (JSON.stringify(body) === JSON.stringify({ udid: secondDeviceId }))
+              return HttpClientResponse.fromWeb(
+                request,
+                secondShutdownFails
+                  ? Response.json({ error: "offline" }, { status: 500 })
+                  : Response.json({ ok: true }),
+              );
+            expect(body).toEqual({
               udid: deviceId,
             });
+            if (shutdownFails)
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({ error: "offline" }, { status: 500 }),
+              );
             capture = null;
             booted = false;
           } else if (path === "/api/devices/shutdown") {
@@ -1094,11 +1200,18 @@ it.effect.each(["shutdown", "close"] as const)(
         stop: Effect.void,
       };
       const launchers = new Set(["t3-from-a-previous-run"]);
+      const claims = new Set<string>();
       const released: Array<[string, boolean]> = [];
+      let releaseError: DeviceOperationError | undefined;
+      let failingLauncher: string | undefined;
       // Whether the device was still on when each session was released.
       const releasedWhileBooted: Array<boolean> = [];
       let pauseBind: { entered: Deferred.Deferred<void>; proceed: Deferred.Deferred<void> } | null =
         null;
+      let pauseRelease: {
+        entered: Deferred.Deferred<void>;
+        proceed: Deferred.Deferred<void>;
+      } | null = null;
       const service = yield* DeviceService.makeWithHosts(
         new Map([[host.id, host]]),
         undefined,
@@ -1120,9 +1233,16 @@ it.effect.each(["shutdown", "close"] as const)(
             }),
           // Records whether the launcher still existed, since its close runs through it.
           release: (launcher) =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
+              if (releaseError && (!failingLauncher || failingLauncher === launcher))
+                return yield* releaseError;
+              if (pauseRelease) {
+                yield* Deferred.succeed(pauseRelease.entered, undefined);
+                yield* Deferred.await(pauseRelease.proceed);
+              }
               released.push([launcher, launchers.has(launcher)]);
               releasedWhileBooted.push(booted);
+              claims.delete(launcher);
             }),
         },
       ).pipe(Effect.provide(NodeCrypto.layer));
@@ -1137,30 +1257,60 @@ it.effect.each(["shutdown", "close"] as const)(
       const bind = Effect.fnUntraced(function* (open: typeof input) {
         yield* service.open(open);
         yield* service.agentLauncher({ ...target(open.threadId), targetArgs: [] });
-        return yield* agentDeviceSession(open.threadId, LOCAL_DEVICE_HOST_ID, deviceId);
+        const name = yield* agentDeviceSession(open.threadId, LOCAL_DEVICE_HOST_ID, deviceId);
+        claims.add(name);
+        return name;
       }, Effect.provide(NodeCrypto.layer));
       const session = yield* bind(input);
-      yield* bind(other);
+      const firstOther = yield* bind(other);
       expect(capture).toBe(1);
       expect(launchers.size).toBe(2);
+      releaseError = new DeviceOperationError({
+        operation: "close",
+        reason: "command_failed",
+        cause: new Error("Device host is unavailable"),
+      });
+      failingLauncher = firstOther;
+      const failed = yield* Effect.result(
+        operation === "shutdown"
+          ? service.shutdown(input)
+          : service.close({ threadId, deviceId, shutdown: true }),
+      );
+      expect(failed._tag).toBe("Failure");
+      expect((yield* service.state).sessions).toHaveLength(2);
+      expect(launchers).toEqual(new Set([session, firstOther]));
+      expect(capture).toBe(1);
+      expect(booted).toBe(true);
+      // The first release succeeded, but its retained command can start the session again.
+      claims.add(session);
+      releaseError = undefined;
+      shutdownFails = true;
+      expect(
+        (yield* Effect.result(
+          operation === "shutdown"
+            ? service.shutdown(input)
+            : service.close({ threadId, deviceId, shutdown: true }),
+        ))._tag,
+      ).toBe("Failure");
+      expect((yield* service.state).sessions).toHaveLength(2);
+      expect(launchers).toEqual(new Set([session, firstOther]));
+      expect(booted).toBe(true);
+      claims.add(session);
+      shutdownFails = false;
       if (operation === "shutdown") yield* service.shutdown(input);
       else yield* service.close({ threadId, deviceId, shutdown: true });
       expect(capture).toBeNull();
       expect((yield* service.state).sessions).toEqual([]);
       expect(launchers).toEqual(new Set());
+      expect(claims).toEqual(new Set());
       // Retiring a session ends its agent-device session too, which releases the device claim.
       // Powering the device off retires the other thread's session on it as well.
-      const firstOther = yield* agentDeviceSession(
-        other.threadId,
-        LOCAL_DEVICE_HOST_ID,
-        deviceId,
-      ).pipe(Effect.provide(NodeCrypto.layer));
       expect(new Set(released.map(([launcher]) => launcher))).toEqual(
         new Set([session, firstOther]),
       );
       expect(released.every(([, existed]) => existed)).toBe(true);
       // agent-device can close the session's app only while the device is on.
-      expect(releasedWhileBooted).toEqual([true, true]);
+      expect(releasedWhileBooted).toEqual([true, true, true, true, true]);
       // A device_open that was still preparing when the close landed.
       expect(yield* service.agentLauncher({ ...target(threadId), targetArgs: [] })).toEqual(
         Option.none(),
@@ -1168,32 +1318,92 @@ it.effect.each(["shutdown", "close"] as const)(
       expect(launchers).toEqual(new Set());
       expect(yield* bind(input)).toBe(session);
       // Reopening the same device ends nothing.
-      expect(released).toHaveLength(2);
+      expect(released).toHaveLength(5);
       expect(capture).toBe(2);
       expect((yield* service.state).sessions).toHaveLength(1);
       const otherSession = yield* bind(other);
       yield* service.close({ threadId: other.threadId });
       expect(launchers).toEqual(new Set([session]));
-      expect(released.slice(2)).toEqual([[otherSession, true]]);
+      expect(released.slice(5)).toEqual([[otherSession, true]]);
       expect(otherSession).not.toBe(session);
-      // A caller interrupted after retirement committed, while a bind holds the launcher lock.
+      // Cancelling cleanup retains the session and launcher for a later retry.
       pauseBind = { entered: yield* Deferred.make<void>(), proceed: yield* Deferred.make<void>() };
+      pauseRelease = {
+        entered: yield* Deferred.make<void>(),
+        proceed: yield* Deferred.make<void>(),
+      };
       const binding = yield* Effect.forkChild(
         service.agentLauncher({ ...target(threadId), targetArgs: [] }),
       );
       yield* Deferred.await(pauseBind.entered);
-      const updates = yield* service.subscribe;
       const retiring = yield* Effect.forkChild(
         operation === "shutdown" ? service.shutdown(input) : service.close({ threadId }),
       );
-      expect((yield* PubSub.take(updates)).sessions).toEqual([]);
-      yield* service.refreshHosts;
-      expect((yield* service.state).sessions).toEqual([]);
-      yield* Effect.sync(() => retiring.interruptUnsafe());
       yield* Deferred.succeed(pauseBind.proceed, undefined);
       yield* Fiber.join(binding);
-      yield* Fiber.await(retiring);
+      yield* Deferred.await(pauseRelease.entered);
+      expect((yield* service.state).sessions).toHaveLength(1);
+      yield* service.inspect;
+      yield* Fiber.interrupt(retiring);
+      expect((yield* service.state).sessions).toHaveLength(1);
+      expect(launchers).toEqual(new Set([session]));
+      yield* Deferred.succeed(pauseRelease.proceed, undefined);
+      if (operation === "shutdown") yield* service.shutdown(input);
+      else yield* service.close({ threadId });
+      expect((yield* service.state).sessions).toEqual([]);
       expect(launchers).toEqual(new Set());
+      yield* bind(input);
+      failingLauncher = undefined;
+      releaseError = new DeviceOperationError({
+        operation: "close",
+        reason: "command_failed",
+        cause: new Error("Device host is unavailable"),
+      });
+      yield* service.configure({ enabled: false });
+      expect((yield* service.state).sessions).toEqual([]);
+      expect(launchers).toEqual(new Set([session]));
+      releaseError = undefined;
+      yield* service.configure({ enabled: true });
+      yield* bind(other);
+      yield* service.close({ threadId: other.threadId });
+      expect(launchers).toEqual(new Set());
+      if (operation === "close") {
+        pauseBind = null;
+        pauseRelease = null;
+        secondDevice = true;
+        const first = yield* bind(input);
+        const secondInput = { ...input, deviceId: secondDeviceId };
+        yield* service.open(secondInput);
+        const second = yield* agentDeviceSession(
+          threadId,
+          LOCAL_DEVICE_HOST_ID,
+          secondDeviceId,
+        ).pipe(Effect.provide(NodeCrypto.layer));
+        yield* service.agentLauncher({
+          ...target(threadId),
+          deviceId: secondDeviceId,
+          targetArgs: [],
+        });
+        claims.add(second);
+        secondShutdownFails = true;
+        expect((yield* Effect.result(service.close({ threadId, shutdown: true })))._tag).toBe(
+          "Failure",
+        );
+        expect((yield* service.state).sessions.map((entry) => entry.deviceId)).toEqual([
+          secondDeviceId,
+        ]);
+        expect(launchers).toEqual(new Set([second]));
+        failingLauncher = first;
+        releaseError = new DeviceOperationError({
+          operation: "close",
+          reason: "command_failed",
+          cause: new Error("Stopped device daemon"),
+        });
+        secondShutdownFails = false;
+        yield* service.close({ threadId, shutdown: true });
+        expect((yield* service.state).sessions).toEqual([]);
+        expect(launchers).toEqual(new Set());
+      }
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
 );
 
