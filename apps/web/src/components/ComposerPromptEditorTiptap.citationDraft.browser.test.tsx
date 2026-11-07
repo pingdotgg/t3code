@@ -106,6 +106,32 @@ function TrayComposer({ question = false }: { question?: boolean }) {
   const [tray, setTray] = useState<ReadonlyArray<AssistantCitation>>([]);
   return (
     <>
+      <div data-assistant-citation-viewport="">
+        <p
+          data-assistant-citation-source={citation.messageId}
+          data-assistant-citation-environment={citation.environmentId}
+          data-assistant-citation-thread={citation.threadId}
+        >
+          hello world
+        </p>
+      </div>
+      <button
+        onClick={() => {
+          const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
+          if (!sourceAnchor) throw new Error("Citation source did not resolve");
+          setPrompt(promptBefore);
+          editorRef.current?.requestCitationComment({
+            previousValue: "See ",
+            value: promptBefore,
+            citationStart: 4,
+            sourceAnchor,
+            insertedSpaces: { before: false, after: true },
+            destination: "tray",
+          });
+        }}
+      >
+        Cite to tray
+      </button>
       <output data-tray-count={tray.length} data-prompt={prompt} />
       <AssistantCitationTray
         citations={tray}
@@ -135,11 +161,12 @@ function TrayComposer({ question = false }: { question?: boolean }) {
   );
 }
 
-it("moves a citation and its edited comment from inline to tray and back", async () => {
+it("opens a source comment for tray citations and preserves saved and cancelled citations", async () => {
   await using screen = await render(<TrayComposer />);
-  await page.getByLabelText("Add comment to citation").click();
+  await page.getByRole("button", { name: "Cite to tray", exact: true }).click();
+  await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
   await page.getByLabelText("Comment on selected text").fill("Keep this comment");
-  await page.getByRole("button", { name: "Move to tray", exact: true }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   const state = () => screen.container.querySelector("output")?.dataset;
   expect(state()?.trayCount).toBe("1");
   expect(state()?.prompt).not.toContain("t3-citation");
@@ -155,4 +182,14 @@ it("moves a citation and its edited comment from inline to tray and back", async
   expect(state()?.prompt).toContain(
     serializeAssistantCitation(withAssistantCitationComment(citation, "Keep this comment")),
   );
+  await page.getByRole("button", { name: "Cite to tray", exact: true }).click();
+  await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
+  await page.getByLabelText("Comment on selected text").fill("Discard this comment");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(state()?.trayCount).toBe("1");
+  expect(state()?.prompt).toBe("See ");
+  await page.getByRole("button", { name: "1 annotation", exact: true }).click();
+  await page.getByRole("button", { name: "Insert annotation 1 inline", exact: true }).click();
+  expect(state()?.prompt).toContain(serializeAssistantCitation(citation));
+  expect(state()?.prompt).not.toContain("Discard this comment");
 });

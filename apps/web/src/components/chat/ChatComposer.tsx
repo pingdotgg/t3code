@@ -1768,6 +1768,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         start: number;
         sourceAnchor: AssistantCitationSourceAnchor;
         insertedSpaces: ComposerCitationCommentRequest["insertedSpaces"];
+        destination?: "inline" | "tray" | undefined;
       };
     },
   ): boolean => {
@@ -1804,6 +1805,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         citationStart: options.citationComment.start,
         sourceAnchor: options.citationComment.sourceAnchor,
         insertedSpaces: options.citationComment.insertedSpaces,
+        destination: options.citationComment.destination,
       });
     }
     promptRef.current = next.text;
@@ -2528,6 +2530,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     options?: {
       ensureLeadingBoundary?: boolean;
       citationCommentAnchor?: AssistantCitationSourceAnchor;
+      citationDestination?: "inline" | "tray" | undefined;
       clipboardData?: DataTransfer;
     },
   ): boolean => {
@@ -2559,6 +2562,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             citationComment: {
               start: cursor + (needsLeadingSpace ? 1 : 0),
               sourceAnchor: options.citationCommentAnchor,
+              destination: options.citationDestination,
               insertedSpaces: { before: needsLeadingSpace, after: rangeEnd === cursor },
             },
             focusEditorAfterReplace: false,
@@ -2982,14 +2986,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return true;
       },
       citeAssistantText: (citation, sourceAnchor) => {
-        if (citationDestination === "tray") {
-          appendTrayCitation(citation);
-          return true;
-        }
         return insertComposerTextStable(
           formatAssistantCitationForComposer(citation, citation.comment),
           "cursor",
-          { ensureLeadingBoundary: true, citationCommentAnchor: sourceAnchor },
+          { ensureLeadingBoundary: true, citationCommentAnchor: sourceAnchor, citationDestination },
         );
       },
       openModelPicker: openModelPickerStable,

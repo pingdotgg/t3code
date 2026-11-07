@@ -189,6 +189,7 @@ export interface ComposerPromptEditorProps {
 }
 
 export type ComposerCitationCommentRequest = {
+  destination?: "inline" | "tray" | undefined;
   previousValue: string;
   value: string;
   citationStart: number;
@@ -200,6 +201,7 @@ type CitationInsertedSpaces = { before: boolean; after: boolean };
 
 type OpenCitationComment = {
   key: string;
+  destination?: "inline" | "tray" | undefined;
   sourceAnchor?: AssistantCitationSourceAnchor;
   removeOnCancel?: CitationInsertedSpaces;
 };
@@ -411,6 +413,11 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     if (!current || current.type.name !== "composer-citation") return false;
     const currentCitation = current.attrs.citation as AssistantCitation;
     const next = withAssistantCitationComment(currentCitation, comment);
+    if (commentTarget?.destination === "tray" && commentContext.onMoveToTray) {
+      commentContext.onMoveToTray(next);
+      onRemove();
+      return true;
+    }
     const tr = editor.state.tr.setNodeMarkup(pos, undefined, {
       ...current.attrs,
       citation: next,
@@ -475,9 +482,25 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
           sourceAnchor: commentTarget?.sourceAnchor,
           onOpenChange: (open) => {
             if (open && !editor.isEditable) return;
+            if (!open && commentTarget?.destination === "tray") {
+              const pos = nodePos();
+              const current = pos === null ? null : editor.state.doc.nodeAt(pos);
+              if (current?.type.name === "composer-citation" && current.attrs.citeKey === citeKey) {
+                commentContext.onMoveToTray?.(current.attrs.citation as AssistantCitation);
+                onRemove();
+              }
+            }
             commentContext.onOpenChange(citeKey, open);
           },
-          ...(removeOnCancel ? { onCancel: onRemove } : {}),
+          ...(removeOnCancel
+            ? {
+                onCancel: () => {
+                  if (commentTarget?.destination === "tray")
+                    commentContext.onMoveToTray?.(citation);
+                  onRemove();
+                },
+              }
+            : {}),
           onMoveToTray: commentContext.onMoveToTray
             ? (comment) => {
                 const pos = nodePos();
@@ -1559,6 +1582,7 @@ function ComposerPromptEditorTiptapInner(
             key: citeKey,
             sourceAnchor: pendingCitation.sourceAnchor,
             removeOnCancel: pendingCitation.insertedSpaces,
+            destination: pendingCitation.destination,
           });
         }
       }
@@ -1675,6 +1699,7 @@ function ComposerPromptEditorTiptapInner(
             key: citeKey,
             sourceAnchor: request.sourceAnchor,
             removeOnCancel: request.insertedSpaces,
+            destination: request.destination,
           });
         }
       },

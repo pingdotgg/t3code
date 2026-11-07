@@ -10,7 +10,7 @@ export function CitationDestinationSetting() {
       }}
     >
       <SelectTrigger aria-label="New citations go">
-        <SelectValue />
+        <SelectValue>{destination === "inline" ? "Inline (default)" : "In the tray"}</SelectValue>
       </SelectTrigger>
       <SelectPopup>
         <SelectItem value="inline">Inline (default)</SelectItem>
