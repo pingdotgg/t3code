@@ -17,7 +17,10 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
 import type { SpeechModel } from "./model.ts";
 
-type ModelFile = Pick<SpeechModel, "id" | "filename" | "revision" | "size" | "sha256">;
+export type ModelFile = Pick<SpeechModel, "id" | "filename" | "revision" | "size" | "sha256"> & {
+  /** Groups a multi-file model's repository paths under one local directory. */
+  readonly directory?: string;
+};
 
 class SpeechModelDownloadError extends Schema.TaggedError<SpeechModelDownloadError>()(
   "SpeechModelDownloadError",
@@ -57,7 +60,7 @@ export class SpeechModelStore extends Context.Service<
 
 const DOWNLOAD_ATTEMPTS = 3;
 const PARTIAL_FILENAME =
-  /\.gguf\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.part$/i;
+  /\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.part$/i;
 
 const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -72,7 +75,8 @@ const make = Effect.gen(function* () {
       yield* fs.remove(path.join(directory, name), { force: true }).pipe(Effect.ignore);
     }
   }
-  const modelPath = (model: ModelFile) => path.join(directory, model.filename);
+  const modelPath = (model: ModelFile) =>
+    path.join(directory, model.directory ?? "", model.filename);
   // Files whose digest failed, by identity, so status polls stop calling them ready.
   const corrupt = new Map<string, string>();
 
@@ -183,9 +187,13 @@ const make = Effect.gen(function* () {
     function* (model, progress = {}) {
       yield* Effect.annotateCurrentSpan({ modelId: model.id });
       const finalPath = modelPath(model);
-      yield* fs.makeDirectory(directory, { recursive: true });
+      yield* fs.makeDirectory(path.dirname(finalPath), { recursive: true });
       if (yield* verifiedPath(model, finalPath, progress.onVerificationStart)) return finalPath;
-      const partialPath = `${finalPath}.${yield* random.uuidV4()}.part`;
+      // Partials stay at the top level, where startup cleanup looks for them.
+      const partialPath = path.join(
+        directory,
+        `${path.basename(model.filename)}.${yield* random.uuidV4()}.part`,
+      );
       const url = `https://huggingface.co/${model.id}/resolve/${model.revision}/${model.filename}`;
       return yield* Effect.gen(function* () {
         for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {

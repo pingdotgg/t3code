@@ -168,3 +168,18 @@ it.effect("cleans only download partials on cancellation or restart", () =>
     ]);
   }).pipe(Effect.provide(dependencies)),
 );
+
+it.effect("installs a multi-file model's repository path under its directory", () =>
+  Effect.gen(function* () {
+    const h = yield* harness;
+    h.bodies.current = () => Stream.succeed(bytes);
+    const model = { ...h.model, directory: "fixture-tts", filename: "onnx/model.onnx" };
+    const installed = yield* h.store.download(model);
+    expect(installed).toBe(`${h.directory}/fixture-tts/onnx/model.onnx`);
+    expect(h.requests.map((request) => request.url)).toEqual([
+      `https://huggingface.co/${model.id}/resolve/${model.revision}/onnx/model.onnx`,
+    ]);
+    expect((yield* h.fs.readDirectory(h.directory)).sort()).toEqual(["fixture-tts", "model.gguf"]);
+    expect(yield* h.store.installedPath(model)).toBe(installed);
+  }).pipe(Effect.provide(dependencies)),
+);

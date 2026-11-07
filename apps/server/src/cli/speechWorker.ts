@@ -1,15 +1,18 @@
 import * as Effect from "effect/Effect";
 import { Argument, Command } from "effect/cli";
+import { runKokoroWorker } from "../speech/kokoro.ts";
 import { runNativeSpeechWorker } from "../speech/native.ts";
 
 export const speechWorkerCommand = Command.make("__speech-worker", {
-  mode: Argument.Literals("mode", ["discover", "model"]),
+  mode: Argument.Literals("mode", ["discover", "model", "tts"]),
   moduleUrl: Argument.String("module-url").pipe(Argument.optional),
 }).pipe(
   Command.unlisted,
   Command.withHandler(({ mode, moduleUrl }) =>
     Effect.promise(() =>
-      runNativeSpeechWorker(mode, moduleUrl._tag === "Some" ? moduleUrl.value : undefined),
+      mode === "tts"
+        ? runKokoroWorker()
+        : runNativeSpeechWorker(mode, moduleUrl._tag === "Some" ? moduleUrl.value : undefined),
     ),
   ),
 );

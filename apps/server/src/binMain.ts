@@ -27,9 +27,13 @@ export async function runCliCommand() {
     await runAcpMcpCliFastPath(command, process.argv.slice(3));
   } else if (command === "__speech-worker") {
     const mode = process.argv[3];
-    if (mode !== "discover" && mode !== "model") throw new Error("Unknown speech worker mode.");
-    const { runNativeSpeechWorker } = await import("./speech/native.ts");
-    await runNativeSpeechWorker(mode, process.argv[4]);
+    if (mode === "tts") {
+      const { runKokoroWorker } = await import("./speech/kokoro.ts");
+      await runKokoroWorker();
+    } else if (mode === "discover" || mode === "model") {
+      const { runNativeSpeechWorker } = await import("./speech/native.ts");
+      await runNativeSpeechWorker(mode, process.argv[4]);
+    } else throw new Error("Unknown speech worker mode.");
   } else {
     enableCliCompileCache();
     // Windows desktop launches without stdin; attach before reading, except on fast paths using pipes.
