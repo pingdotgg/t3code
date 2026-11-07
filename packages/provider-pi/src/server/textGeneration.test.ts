@@ -155,6 +155,22 @@ it.effect("reports Pi's turn error when the reply is empty", () =>
 
     assert.equal(error._tag, "TextGenerationError");
     assert.equal(error.detail, "Pi could not generate text: the model provider returned HTTP 401.");
+
+    // Pi's errorMessage for a 429 from its Gemini and Mistral providers.
+    for (const errorMessage of [
+      '{"error":{"code":429,"message":"Quota exceeded for key AIzaSECRET123","status":"RESOURCE_EXHAUSTED"}}',
+      'Mistral API error (429): {"object":"error","message":"Rate limit exceeded for SECRET123"}',
+    ]) {
+      const providerError = yield* generateCommitMessage([failedTurnWith(errorMessage)]).pipe(
+        Effect.flip,
+      );
+
+      assert.equal(
+        providerError.detail,
+        "Pi could not generate text: the model provider returned HTTP 429.",
+      );
+      assert.notInclude(providerError.message, "SECRET123");
+    }
   }),
 );
 
