@@ -699,6 +699,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     runtime.kind === "executable"
       ? [runtime.entryPath]
       : [runtime.nodePath, runtime.linuxEntryPath];
+  const certificateEnv = yield* wslEnvironment.readCertificateEnvironment(runningDistro);
 
   return {
     ...baseConfig,
@@ -707,6 +708,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
       "--exec",
       "env",
       `PATH=${launchPath}`,
+      ...Object.entries(certificateEnv).map(([name, value]) => `${name}=${value}`),
       ...command,
       "--bootstrap-fd",
       "0",

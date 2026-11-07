@@ -16,6 +16,8 @@ import {
   buildWslRuntimeInvalidateScript,
   buildWslRuntimePruneScript,
   buildWslRuntimeProbeScript,
+  buildWslCertificateEnvironmentScript,
+  parseWslCertificateEnvironment,
   parseResolvedPath,
   parseWslRuntimeRoot,
 } from "./DesktopWslEnvironment.ts";
@@ -203,6 +205,41 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
 
     expect(probe.status, probe.stderr).toBe(0);
     expect(parseResolvedPath(probe.stdout)).toBe("/fixture/bin:/usr/bin:/bin");
+  });
+
+  it("captures explicit CA exports from the distro's interactive login shell", () => {
+    const fixture = createFixture();
+    const shellPath = `${fixture.work}/login shell`;
+    const rcPath = `${fixture.work}/home/.bashrc`;
+    const certificateEnv = {
+      NODE_EXTRA_CA_CERTS: "/home/test user's/company=CA.pem",
+      SSL_CERT_FILE: "/etc/ssl/company\nSSL_CERT_DIR=not-another-variable.pem",
+      SSL_CERT_DIR: "/etc/ssl/certs:/home/test user/certs",
+    };
+    const rc = [
+      ...Object.entries(certificateEnv).map(([name, value]) => `export ${name}=${sh(value)}`),
+      "export NODE_OPTIONS=unrelated",
+      "printf 'NODE_EXTRA_CA_CERTS=startup-noise\\n'",
+    ].join("\n");
+    const shell = [
+      "#!/bin/sh",
+      '[ "$1" = "-ilc" ] || exit 2',
+      `exec /bin/bash --noprofile --rcfile ${sh(rcPath)} -ic "$2"`,
+    ].join("\n");
+    const probe = runShell(
+      [
+        "set -eu",
+        `printf '%s' ${sh(rc)} > ${sh(rcPath)}`,
+        `printf '%s' ${sh(shell)} > ${sh(shellPath)}`,
+        `chmod +x ${sh(shellPath)}`,
+        `getent() { printf '%s\\n' ${sh(`test:x:0:0::${fixture.work}/home:${shellPath}`)}; }`,
+        "unset NODE_EXTRA_CA_CERTS SSL_CERT_FILE SSL_CERT_DIR",
+        buildWslCertificateEnvironmentScript(),
+      ].join("\n"),
+    );
+
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(parseWslCertificateEnvironment(probe.stdout)).toEqual(certificateEnv);
   });
 
   it("reuses a warm cache without touching the archive", () => {
@@ -431,6 +468,16 @@ describe("parseResolvedPath", () => {
     expect(parseResolvedPath("resolvedPath:/usr/local/bin:/usr/bin\r\n")).toBe(
       "/usr/local/bin:/usr/bin",
     );
+  });
+});
+
+describe("parseWslCertificateEnvironment", () => {
+  it("ignores unrelated, empty, oversized and incomplete environment records", () => {
+    expect(
+      parseWslCertificateEnvironment(
+        `NODE_EXTRA_CA_CERTS=noise\n\0NODE_OPTIONS=--unrelated\0\0SSL_CERT_DIR=\0\0SSL_CERT_FILE=${"x".repeat(4097)}\0\0NODE_EXTRA_CA_CERTS=unterminated`,
+      ),
+    ).toEqual({});
   });
 });
 

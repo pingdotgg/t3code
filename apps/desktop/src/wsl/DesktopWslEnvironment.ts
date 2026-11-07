@@ -29,6 +29,7 @@ const RUNTIME_INSTALL_TIMEOUT = Duration.minutes(2);
 const RUNTIME_PRUNE_TIMEOUT = Duration.seconds(30);
 const RUNTIME_INVALIDATE_TIMEOUT = Duration.seconds(15);
 const USER_HOME_TIMEOUT = Duration.seconds(5);
+const CERTIFICATE_ENV_TIMEOUT = Duration.seconds(5);
 const TOOLCHAIN_TRANSPORT_RETRY_LIMIT = 12;
 const BUILD_TRANSPORT_RETRY_LIMIT = 2;
 
@@ -100,6 +101,9 @@ export class DesktopWslEnvironment extends Context.Service<
       windowsPath: string,
     ) => Effect.Effect<Option.Option<string>>;
     readonly getUserHome: (distro: string | null) => Effect.Effect<Option.Option<string>>;
+    readonly readCertificateEnvironment: (
+      distro: string | null,
+    ) => Effect.Effect<Readonly<Record<string, string>>>;
     // Use the distro IP to avoid unreliable wslhost localhost forwarding.
     readonly getDistroIp: (distro: string | null) => Effect.Effect<Option.Option<string>>;
     readonly prepareRuntime: (
@@ -250,6 +254,50 @@ const runWslShell = (
 };
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
+
+const CERTIFICATE_ENV_NAMES = ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR"] as const;
+const MAX_CERTIFICATE_ENV_LENGTH = 4096;
+
+export const buildWslCertificateEnvironmentScript = () => {
+  const capture = CERTIFICATE_ENV_NAMES.map(
+    (name) =>
+      `if [ "\${#${name}}" -le ${MAX_CERTIFICATE_ENV_LENGTH} ] && [ -n "$${name}" ]; then printf '\\0${name}=%s\\0' "$${name}"; fi`,
+  ).join("\n");
+  return [
+    'login_shell=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f7)',
+    "login_shell=${login_shell:-${SHELL:-/bin/bash}}",
+    `"$login_shell" -ilc ${shellQuote(`/bin/sh -c ${shellQuote(capture)}`)} </dev/null 2>/dev/null`,
+  ].join("\n");
+};
+
+export const parseWslCertificateEnvironment = (
+  stdout: string,
+): Readonly<Record<string, string>> => {
+  // Only complete NUL-delimited records count; shell startup output and embedded newlines are opaque.
+  const fields = stdout.split("\0").slice(1, -1);
+  const environment: Record<string, string> = {};
+  for (const name of CERTIFICATE_ENV_NAMES) {
+    const prefix = `${name}=`;
+    const field = fields.find((candidate) => candidate.startsWith(prefix));
+    const value = field?.slice(prefix.length);
+    if (value !== undefined && value.length > 0 && value.length <= MAX_CERTIFICATE_ENV_LENGTH) {
+      environment[name] = value;
+    }
+  }
+  return environment;
+};
+
+const readCertificateEnvironmentImpl = Effect.fn("desktop.wsl.readCertificateEnvironmentImpl")(
+  function* (distro: string | null) {
+    const result = yield* runWslShell(
+      distro,
+      buildWslCertificateEnvironmentScript(),
+      CERTIFICATE_ENV_TIMEOUT,
+      { resolveNode: false },
+    );
+    return result.exitCode === 0 ? parseWslCertificateEnvironment(result.stdout) : {};
+  },
+);
 
 const WSL_RUNTIME_READY_MARKER = ".t3code-wsl-runtime-ready";
 const WSL_RUNTIME_SELECTED_MARKER = ".t3code-wsl-runtime-selected";
@@ -1057,6 +1105,7 @@ export interface DesktopWslEnvironmentTestStub {
   readonly distroListError?: DesktopWslDistroListError;
   readonly windowsToWslPath?: (distro: string | null, windowsPath: string) => Option.Option<string>;
   readonly getUserHome?: (distro: string | null) => Option.Option<string>;
+  readonly readCertificateEnvironment?: (distro: string | null) => Readonly<Record<string, string>>;
   readonly getDistroIp?: (distro: string | null) => Option.Option<string>;
   readonly prepareRuntime?: (
     distro: string | null,
@@ -1092,6 +1141,11 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
       getUserHome: Effect.fn("DesktopWslEnvironment.getUserHome")(function (distro) {
         return Effect.succeed(stub.getUserHome?.(distro) ?? Option.none<string>());
       }),
+      readCertificateEnvironment: Effect.fn("DesktopWslEnvironment.readCertificateEnvironment")(
+        function (distro) {
+          return Effect.succeed(stub.readCertificateEnvironment?.(distro) ?? {});
+        },
+      ),
       getDistroIp: Effect.fn("DesktopWslEnvironment.getDistroIp")(function (distro) {
         return Effect.succeed(stub.getDistroIp?.(distro) ?? Option.none<string>());
       }),
@@ -1196,6 +1250,11 @@ export const layer = Layer.effect(
       }),
       windowsToWslPath,
       getUserHome,
+      readCertificateEnvironment: Effect.fn("desktop.wsl.readCertificateEnvironment")(
+        function (distro) {
+          return provideSpawner(readCertificateEnvironmentImpl(distro));
+        },
+      ),
       getDistroIp,
       prepareRuntime: Effect.fn("desktop.wsl.prepareRuntime")(function (distro, archive) {
         return provideSpawner(prepareWslRuntimeImpl(distro, archive, windowsToWslPath));

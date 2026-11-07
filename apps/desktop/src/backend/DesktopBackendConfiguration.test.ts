@@ -384,6 +384,7 @@ describe("DesktopBackendConfiguration", () => {
     let legacyCleanupCount = 0;
     const linuxAppRoot = "/home/test/.t3/wsl-runtime/1.2.3-x64";
     const resolvedPath = "/home/test/.local/bin:/usr/bin:/bin";
+    const certificateEnv = { NODE_EXTRA_CA_CERTS: "/home/test/corporate CA.pem" };
 
     return withPackagedWslHarness(
       {
@@ -405,6 +406,7 @@ describe("DesktopBackendConfiguration", () => {
             observedProbeRoots.push(root);
             return { ok: true, resolvedPath };
           },
+          readCertificateEnvironment: () => certificateEnv,
           ensureNodePty: () => {
             throw new Error("the staged runtime must not probe for node-pty");
           },
@@ -434,6 +436,7 @@ describe("DesktopBackendConfiguration", () => {
             "--exec",
             "env",
             `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${resolvedPath}`,
+            `NODE_EXTRA_CA_CERTS=${certificateEnv.NODE_EXTRA_CA_CERTS}`,
             `${linuxAppRoot}/t3`,
             "--bootstrap-fd",
             "0",
@@ -610,6 +613,11 @@ describe("DesktopBackendConfiguration", () => {
         const linuxAppRoot = "/tmp/t3 code's launch";
         const linuxEntryPath = `${linuxAppRoot}/apps/server/dist/bin.mjs`;
         const resolvedPath = "/home/test user/bin:/opt/test's tools/bin:/usr/bin:/bin";
+        const certificateEnv = {
+          NODE_EXTRA_CA_CERTS: "/home/test user's/corporate CA.pem",
+          SSL_CERT_FILE: "/etc/ssl/certs/company=CA.pem",
+          SSL_CERT_DIR: "/etc/ssl/certs:/home/test user/certs",
+        };
         const devServerUrl = "http://127.0.0.1:5733/dev%20assets/?label=hello%20world";
         const config = yield* Effect.gen(function* () {
           const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
@@ -626,6 +634,10 @@ describe("DesktopBackendConfiguration", () => {
                   distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
                   windowsToWslPath: () => Option.some(linuxAppRoot),
                   ensureNodePty: () => ({ ok: true, nodePath, resolvedPath }),
+                  readCertificateEnvironment: (distro) => {
+                    assert.equal(distro, "Ubuntu");
+                    return certificateEnv;
+                  },
                   getDistroIp: () => Option.some("172.27.0.99"),
                 }),
               ),
@@ -649,6 +661,7 @@ describe("DesktopBackendConfiguration", () => {
           "--exec",
           "env",
           "PATH=/home/test user's/.nvm/versions/node/v22.0.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/test user/bin:/opt/test's tools/bin:/usr/bin:/bin",
+          ...Object.entries(certificateEnv).map(([name, value]) => `${name}=${value}`),
           nodePath,
           linuxEntryPath,
           "--bootstrap-fd",
