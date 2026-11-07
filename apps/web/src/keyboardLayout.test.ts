@@ -13,33 +13,40 @@ function pendingLayout() {
   return { promise, resolve };
 }
 
-it("records Option symbols using the current layout and updates after a layout change", async () => {
-  let layout = new Map([["KeyQ", "a"]]);
-  const keyboard = Object.assign(new EventTarget(), {
-    getLayoutMap: () => Promise.resolve(layout),
-  });
-  stop = trackKeyboardLayout(keyboard);
-  await keyboard.getLayoutMap();
-  const event = {
-    key: "Æ",
-    code: "KeyQ",
-    metaKey: true,
-    ctrlKey: false,
-    altKey: true,
-    shiftKey: true,
-  };
-  assert.strictEqual(keybindingFromKeyboardEvent(event, "MacIntel"), "mod+alt+shift+a");
-  assert.strictEqual(
-    keybindingFromKeyboardEvent(event, "MacIntel", { layoutCharacter: true }),
-    "mod+alt+shift+a",
-  );
-  layout = new Map([["KeyQ", "q"]]);
-  keyboard.dispatchEvent(new Event("layoutchange"));
-  await keyboard.getLayoutMap();
-  assert.strictEqual(keybindingFromKeyboardEvent(event, "MacIntel"), "mod+alt+shift+q");
-  stop();
-  assert.strictEqual(getKeyboardLayoutMap(), undefined);
-});
+it.each([true, false])(
+  "records Option symbols and refreshes the current layout (keyboard events: %s)",
+  async (supportsEvents) => {
+    let layout = new Map([["KeyQ", "a"]]);
+    const keyboard = Object.assign(supportsEvents ? new EventTarget() : {}, {
+      getLayoutMap: () => Promise.resolve(layout),
+    });
+    const focusTarget = new EventTarget();
+    stop = trackKeyboardLayout(keyboard, focusTarget);
+    await keyboard.getLayoutMap();
+    const event = {
+      key: "Æ",
+      code: "KeyQ",
+      metaKey: true,
+      ctrlKey: false,
+      altKey: true,
+      shiftKey: true,
+    };
+    assert.strictEqual(keybindingFromKeyboardEvent(event, "MacIntel"), "mod+alt+shift+a");
+    assert.strictEqual(
+      keybindingFromKeyboardEvent(event, "MacIntel", { layoutCharacter: true }),
+      "mod+alt+shift+a",
+    );
+    layout = new Map([["KeyQ", "q"]]);
+    if (keyboard instanceof EventTarget) keyboard.dispatchEvent(new Event("layoutchange"));
+    else focusTarget.dispatchEvent(new Event("focus"));
+    await keyboard.getLayoutMap();
+    assert.strictEqual(keybindingFromKeyboardEvent(event, "MacIntel"), "mod+alt+shift+q");
+    stop();
+    focusTarget.dispatchEvent(new Event("focus"));
+    await keyboard.getLayoutMap();
+    assert.strictEqual(getKeyboardLayoutMap(), undefined);
+  },
+);
 
 it("ignores an obsolete layout result and clears the map when access fails", async () => {
   const pending = pendingLayout();

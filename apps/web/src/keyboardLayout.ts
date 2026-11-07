@@ -1,6 +1,8 @@
 import type { ShortcutKeyboardLayoutMap } from "@t3tools/shared/keybindings";
 
-interface KeyboardLayoutSource extends EventTarget {
+interface KeyboardLayoutSource extends Partial<
+  Pick<EventTarget, "addEventListener" | "removeEventListener">
+> {
   getLayoutMap(): Promise<ShortcutKeyboardLayoutMap>;
 }
 
@@ -14,6 +16,7 @@ export function getKeyboardLayoutMap() {
 // letter printed on that key without assuming a US physical layout.
 export function trackKeyboardLayout(
   keyboard = (navigator as Navigator & { keyboard?: KeyboardLayoutSource }).keyboard,
+  focusTarget: EventTarget | undefined = typeof window === "undefined" ? undefined : window,
 ) {
   let revision = 0;
   const refresh = async () => {
@@ -27,10 +30,12 @@ export function trackKeyboardLayout(
     }
   };
   void refresh();
-  keyboard?.addEventListener("layoutchange", refresh);
+  keyboard?.addEventListener?.("layoutchange", refresh);
+  focusTarget?.addEventListener("focus", refresh);
   return () => {
     revision++;
     keyboardLayoutMap = undefined;
-    keyboard?.removeEventListener("layoutchange", refresh);
+    keyboard?.removeEventListener?.("layoutchange", refresh);
+    focusTarget?.removeEventListener("focus", refresh);
   };
 }

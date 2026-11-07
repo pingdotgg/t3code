@@ -121,4 +121,3 @@ export function matchesKeybindingShortcut(
     isMacPlatform(platform) && event.altKey ? keyboardLayoutMap : undefined,
   ).has(shortcut.key);
 }
-
