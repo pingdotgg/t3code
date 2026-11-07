@@ -42,10 +42,12 @@ export function MiddleTruncate({
       {split ? (
         <>
           {/* The tail carries the ellipsis so it sits flush; a CSS ellipsis leaves a ragged gap. */}
-          <span ref={headRef} className="peer min-w-0 overflow-hidden">
+          <span ref={headRef} className="peer min-w-0 overflow-hidden whitespace-pre">
             {split.head}
           </span>
-          <span className="shrink-0 peer-data-overflow:before:content-['…']">{split.tail}</span>
+          <span className="shrink-0 whitespace-pre peer-data-overflow:before:content-['…']">
+            {split.tail}
+          </span>
         </>
       ) : (
         // Keyed so React does not reuse the head node and its imperative clip.
@@ -92,14 +94,14 @@ function fitHead(head: HTMLElement) {
 const DEFAULT_TAIL = 10;
 const MAX_SEGMENT_TAIL = 16;
 const MIN_WORD_TAIL = 4;
-const WORD_BREAK = /[-_./]/;
+const WORD_BREAK = /[-_./\s]/;
 
 export function splitForMiddleTruncate(
   value: string,
   tail?: number,
 ): { head: string; tail: string } | null {
   // Split by code point to avoid cutting surrogate pairs into broken glyphs.
-  const chars = Array.from(value);
+  const chars = Array.from(value.replace(/[\r\n]+/g, " "));
   let keep = tail ?? DEFAULT_TAIL;
   if (tail === undefined) {
     const slash = chars.lastIndexOf("/");

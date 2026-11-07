@@ -1008,6 +1008,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     isActive: props.isActive,
   });
 
+  const titleDirection = textDirection(thread.title);
   const title = isRenaming ? (
     <ThreadRenameInput
       title={renamingTitle}
@@ -1042,9 +1043,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             ),
         isRegeneratingTitle && "opacity-55",
       )}
-      dir={textDirection(thread.title)}
+      dir={titleDirection}
     >
-      {thread.title}
+      {/* The measured cut assumes left-to-right text, so RTL titles keep their end ellipsis. */}
+      <MiddleTruncate
+        value={thread.title}
+        {...(titleDirection === "rtl" ? { tail: 0 } : {})}
+        showTitle={false}
+        className="flex"
+      />
     </span>
   );
   const accessibleTitle = isRenaming ? null : <span className="sr-only">{thread.title}</span>;
@@ -1740,7 +1747,12 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
                   thread.titleRegeneration != null && "opacity-55",
                 )}
               >
-                {thread.title}
+                <MiddleTruncate
+                  value={thread.title}
+                  {...(textDirection(thread.title) === "rtl" ? { tail: 0 } : {})}
+                  showTitle={false}
+                  className="flex"
+                />
               </span>
               <span id={`${props.resultId}-pr`} className="contents">
                 <ThreadSearchPullRequestNumber
