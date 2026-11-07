@@ -352,6 +352,7 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
       derived.sidebarRowActive,
     sidebarRowSelected:
       solidOver(sidebar, "list.activeSelectionBackground") ?? derived.sidebarRowSelected,
+    sidebarRowPinned: derived.sidebarRowPinned,
     terminalBackground: terminalHex,
     terminalForeground: readableOn(terminalHex, derived.terminalForeground, "terminal.foreground"),
     terminalCursor:
