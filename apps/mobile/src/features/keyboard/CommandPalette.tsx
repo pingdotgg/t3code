@@ -620,8 +620,7 @@ export function CommandPalette(props: {
             />
             <GlassSurface
               accessibilityViewIsModal
-              className="bg-sheet"
-              tintColorClassName="accent-sheet/20"
+              fallbackClassName="bg-sheet"
               fallbackColor={themeVariables["--color-sheet"]}
               style={{
                 width: Math.min(600, width - 32 - bounds.left - bounds.right),
