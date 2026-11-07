@@ -74,4 +74,12 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });
+
+  it("includes open-to-side action item", () => {
+    const items = buildThreadActionMenuItems(baseState);
+    const openToSide = items.find((item) => item.id === "open-to-side");
+    expect(openToSide).toBeDefined();
+    expect(openToSide?.label).toBe("Open to the side");
+    expect(openToSide?.disabled).toBeFalsy();
+  });
 });

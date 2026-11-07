@@ -70,6 +70,17 @@ describe("DesktopEnvironment", () => {
 
       assert.equal(development.stateDir, "/Users/alice/.t3/dev");
       assert.equal(production.stateDir, "/Users/alice/.t3/userdata");
+      assert.equal(production.appDataDirectory, "/Users/alice/Library/Application Support");
+
+      const isolated = yield* makeEnvironment(
+        {},
+        {
+          T3CODE_HOME: "/isolated/t3",
+          T3CODE_DESKTOP_APP_DATA_DIR: "/isolated/electron",
+        },
+      );
+      assert.equal(isolated.stateDir, "/isolated/t3/userdata");
+      assert.equal(isolated.appDataDirectory, "/isolated/electron");
     }),
   );
 });
