@@ -2,13 +2,13 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   type AssetUrlState as RuntimeAssetUrlState,
   assetUrlStateFromResult,
+  makeRevisionedAssetUrlFamily,
   blockedAssetUrlState,
   EMPTY_ASSET_URL_ATOM,
-  makeRevisionedAssetUrlFamily,
   resolveAssetUrl,
 } from "@t3tools/client-runtime/state/assets";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { AssetResource, EnvironmentId } from "@t3tools/contracts";
+import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 
 import { assetEnvironment } from "~/state/assets";

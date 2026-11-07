@@ -2,11 +2,11 @@ import { useAtomMount, useAtomSubscribe, useAtomValue } from "@effect/atom-react
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import {
   assetUrlStateFromResult,
+  makeRevisionedAssetUrlFamily,
   blockedAssetUrlState,
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
   EMPTY_ASSET_URL_ATOM,
-  makeRevisionedAssetUrlFamily,
 } from "@t3tools/client-runtime/state/assets";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
@@ -29,6 +29,7 @@ import { useAtomQueryRunner } from "./use-atom-query-runner";
 export type { AssetUrlFailureReason, AssetUrlState } from "./asset-url-state";
 
 export const assetEnvironment = createAssetEnvironmentAtoms(connectionAtomRuntime);
+const revisionedAssetUrl = makeRevisionedAssetUrlFamily(assetEnvironment.createUrl);
 
 export const projectFaviconUrlAtom = createProjectFaviconUrlAtomFamily({
   imageCache: projectFaviconDatabaseCache,
@@ -36,8 +37,6 @@ export const projectFaviconUrlAtom = createProjectFaviconUrlAtomFamily({
   preparedConnection: environmentSession.preparedConnectionValueAtom,
   projectClones: environmentProjectCloneListAtom,
 });
-
-const revisionedAssetUrl = makeRevisionedAssetUrlFamily(assetEnvironment.createUrl);
 
 /**
  * Pass `revision` for a host file whose bytes can change under the same path; each new

@@ -2,8 +2,8 @@ import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../../test/render";
-import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
+import { act, render, stubGlobal } from "../../../test/render";
+import { ChatMarkdownAssetImage, WorkspaceMutationIdContext } from "./ChatMarkdownMedia";
 
 // Every evaluation of the URL query is one mint: the first read, then one per refresh.
 const assetQuery = vi.hoisted(() => ({ mints: 0 }));
@@ -13,9 +13,11 @@ vi.mock(import("~/state/assets"), async (original) => {
     Atom.make(() => {
       assetQuery.mints += 1;
       return AsyncResult.success({
-        relativeUrl:
-          "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+        relativeUrl: _key.includes(".mp4")
+          ? `/asset/clip.mp4#${assetQuery.mints}`
+          : `data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7#${assetQuery.mints}`,
         expiresAt: Number.MAX_SAFE_INTEGER,
+        fileRevision: String(assetQuery.mints),
       });
     }).pipe(Atom.keepAlive),
   );
@@ -56,9 +58,77 @@ vi.mock(import("~/state/filesystem"), async (original) => ({
   useFilesystemReadAccess: () => ({ canReadFiles: true, isPending: false, error: null }),
 }));
 
+function setup() {
+  assetQuery.mints = 0;
+}
+
 describe("ChatMarkdownAssetImage", () => {
+  it.each(["image", "video"] as const)(
+    "refreshes repeated local %s embeds together after a new chat revision",
+    async (kind) => {
+      setup();
+      using _observer = stubGlobal(
+        "IntersectionObserver",
+        class {
+          observe() {}
+          unobserve() {}
+          disconnect() {}
+        },
+      );
+      const images = (revision: string) => (
+        <WorkspaceMutationIdContext value={revision}>
+          {["first", "second"].map((alt) => (
+            <ChatMarkdownAssetImage
+              key={alt}
+              kind={kind}
+              environmentId={EnvironmentId.make("environment-1")}
+              resource={{
+                _tag: "media-file",
+                threadId: ThreadId.make("thread-1"),
+                path: `/tmp/render.${kind === "video" ? "mp4" : "png"}`,
+              }}
+              alt={alt}
+            />
+          ))}
+        </WorkspaceMutationIdContext>
+      );
+      await using screen = await render(images("message-1"));
+      using errors = vi.spyOn(console, "error");
+      await vi.waitFor(() => expect(assetQuery.mints).toBe(2));
+      const previousSrc = (
+        kind === "image"
+          ? screen.getByRole("img", { name: "first" })
+          : screen.getByLabelText("first", { exact: true })
+      )
+        .element()
+        .getAttribute("src");
+
+      if (kind === "video") {
+        await act(() => {
+          for (const video of document.querySelectorAll("video")) {
+            video.dispatchEvent(new Event("loadedmetadata"));
+          }
+        });
+      }
+
+      await screen.rerender(images("message-2"));
+      await vi.waitFor(() => expect(assetQuery.mints).toBe(3));
+      const first =
+        kind === "image"
+          ? screen.getByRole("img", { name: "first" })
+          : screen.getByLabelText("first", { exact: true });
+      const second =
+        kind === "image"
+          ? screen.getByRole("img", { name: "second" })
+          : screen.getByLabelText("second", { exact: true });
+      await expect.element(first).not.toHaveAttribute("src", previousSrc);
+      await expect.element(second).toHaveAttribute("src", first.element().getAttribute("src"));
+      expect(errors).not.toHaveBeenCalled();
+    },
+  );
+
   it("does not re-mint an unchanged workspace image's URL on remount", async () => {
-    assetQuery.mints = 0;
+    setup();
     const image = (
       <ChatMarkdownAssetImage
         environmentId={EnvironmentId.make("environment-1")}

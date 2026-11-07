@@ -72,7 +72,10 @@ const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
   CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME,
 );
 export const MarkdownLinkContext = createContext(false);
-/** The thread's workspace mutation id, so a host image the agent rewrites gets a fresh URL. */
+/**
+ * A surface's workspace mutation id, for markdown that does not receive one as a prop.
+ * Read only by host-file media, so a change re-mints their URLs without re-rendering rows.
+ */
 export const WorkspaceMutationIdContext = createContext<string | null | undefined>(undefined);
 
 function expandableMarkdownImageProps(
@@ -283,6 +286,7 @@ export function ChatMarkdownVideo(props: {
   readonly sourceFailed?: boolean | undefined;
   readonly style?: CSSProperties | undefined;
   readonly mediaIdentity?: string | undefined;
+  readonly revision?: string | null | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
   readonly onRetry?: (() => Promise<unknown>) | undefined;
 }) {
@@ -290,6 +294,7 @@ export function ChatMarkdownVideo(props: {
     <MediaVideoPlayer
       key={props.mediaIdentity ?? props.copyMarkdown ?? props.src}
       src={props.src}
+      revision={props.revision}
       sourceFailed={props.sourceFailed}
       label={props.alt}
       originalUrl={props.originalUrl}
@@ -342,16 +347,17 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   const resource = props.resource;
-  const threadWorkspaceMutationId = use(WorkspaceMutationIdContext);
-  const workspaceMutationId = props.workspaceMutationId ?? threadWorkspaceMutationId;
+  const mutableMedia = resource._tag === "media-file" || resource._tag === "workspace-file";
+  const workspaceMutationId =
+    props.workspaceMutationId !== undefined
+      ? props.workspaceMutationId
+      : mutableMedia
+        ? use(WorkspaceMutationIdContext)
+        : undefined;
   const assetUrl = useAssetUrlState(
     props.environmentId,
     resource,
-    workspaceMutationId !== undefined &&
-      props.kind !== "video" &&
-      (resource._tag === "media-file" || resource._tag === "workspace-file")
-      ? workspaceMutationId
-      : undefined,
+    mutableMedia ? workspaceMutationId : undefined,
   );
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const path =
@@ -413,6 +419,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         originalUrl={props.originalUrl}
         style={props.style}
         mediaIdentity={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
+        revision={mutableMedia && assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined}
         onRetry={refreshAssetUrl}
         actionsSource={actionsSource}
       />

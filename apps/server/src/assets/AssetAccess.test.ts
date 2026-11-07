@@ -857,7 +857,7 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("versions media by file changes rather than by re-signing", () =>
+  it.effect("versions media URLs by file changes rather than by re-signing", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -872,17 +872,20 @@ describe("AssetAccess", () => {
           path: filePath,
         },
       };
+      yield* TestClock.adjust("1 minute");
       const original = yield* issueAssetUrl(input);
       expect(original.fileRevision).toEqual(expect.any(String));
 
       yield* TestClock.adjust("1 minute");
       const renewed = yield* issueAssetUrl(input);
-      expect(renewed.relativeUrl).not.toBe(original.relativeUrl);
+      expect(renewed.relativeUrl).toBe(original.relativeUrl);
       expect(renewed.fileRevision).toBe(original.fileRevision);
 
+      // Same size, so only the timestamps tell the rewrite apart.
       yield* fs.writeFileString(filePath, "modified");
       yield* Effect.promise(() => NodeFSP.utimes(filePath, 2_000, 2_000));
       const edited = yield* issueAssetUrl(input);
+      expect(edited.relativeUrl).not.toBe(renewed.relativeUrl);
       expect(edited.fileRevision).not.toBe(original.fileRevision);
 
       const replacement = path.join(root, "replacement.mp4");

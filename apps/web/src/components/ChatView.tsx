@@ -3420,7 +3420,13 @@ export default function ChatView(props: ChatViewProps) {
               {...conversationArea}
               className="relative flex min-h-0 flex-1 flex-col bg-background"
             >
-              <WorkspaceMutationIdContext value={workspaceMutationId}>
+              <WorkspaceMutationIdContext
+                value={JSON.stringify([
+                  workspaceMutationId,
+                  serverVisibleTurnItems.findLast((row) => row.item.type === "assistant_message")
+                    ?.item.id,
+                ])}
+              >
                 <ThreadTimeline
                   pendingApprovals={pendingApprovals}
                   heldApprovalRequestIds={heldApprovalRequestIds}

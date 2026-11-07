@@ -292,7 +292,10 @@ vi.mock("../features/threads/thread-workflow-opening", () => ({ useWorkflowOpeni
 vi.mock("../features/threads/useFileChipShare", () => ({ useFileChipShare: () => vi.fn() }));
 vi.mock("../features/threads/ThreadMarkdownImage", async () => {
   const { createContext } = await import("react");
-  return { MarkdownImageAvailableWidthContext: createContext(390) };
+  return {
+    MarkdownImageAvailableWidthContext: createContext(390),
+    MarkdownImageRevisionContext: createContext<string | undefined>(undefined),
+  };
 });
 vi.mock("../features/review/ReviewCommentCard", () => ({ useReviewCommentColors: () => ({}) }));
 vi.mock("../features/prompt-links/prompt-link-actions", () => ({}));

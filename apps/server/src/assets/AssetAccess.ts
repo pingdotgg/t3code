@@ -67,7 +67,7 @@ export const ASSET_ROUTE_PREFIX = "/api/assets";
 
 const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const PROJECT_FAVICON_TOKEN_BUCKET_MS = 30 * 60 * 1000;
-const HTML_ATTACHMENT_TOKEN_BUCKET_MS = 30 * 60 * 1000;
+const STABLE_ASSET_TOKEN_BUCKET_MS = 30 * 60 * 1000;
 const PROJECT_FAVICON_VERSION_PREFIX = "v";
 const PROJECT_FAVICON_ICNS_MIN_SIZE = 96;
 const INLINE_VIDEO_MIME_TYPE_PATTERN = /^video\/[\w!#$&^.+-]+$/i;
@@ -124,6 +124,8 @@ const AssetClaimsSchema = Schema.Union([
     download: Schema.optionalKey(Schema.Boolean),
     device: Schema.String,
     inode: Schema.String,
+    // Only varies the URL when the file is rewritten in place; responses still read the file.
+    revision: Schema.optionalKey(Schema.String),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -402,7 +404,11 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
                 ? readImageDimensionsFromOpenFile(canonicalFile, file)
                 : Effect.succeed(null),
               (dimensions) => ({
-                identity: { device: file.info.dev.toString(), inode: file.info.ino.toString() },
+                identity: {
+                  device: file.info.dev.toString(),
+                  inode: file.info.ino.toString(),
+                  revision: `${file.info.size}:${file.info.mtimeNs}:${file.info.ctimeNs}`,
+                },
                 fileRevision: `${file.info.dev}:${file.info.ino}:${file.info.size}:${file.info.mtimeNs}:${file.info.ctimeNs}`,
                 dimensions,
               }),
@@ -852,10 +858,13 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       PROJECT_FAVICON_TOKEN_BUCKET_MS;
     claims = { ...claims, expiresAt };
   }
-  if (claims.kind === "attachment" && claims.mimeType === "text/html") {
-    // Stable URLs let immutable HTML reloads hit the cache; image retries need fresh URLs.
-    expiresAt =
-      Math.ceil(expiresAt / HTML_ATTACHMENT_TOKEN_BUCKET_MS) * HTML_ATTACHMENT_TOKEN_BUCKET_MS;
+  if (
+    claims.kind === "media-file-exact" ||
+    (claims.kind === "attachment" && claims.mimeType === "text/html")
+  ) {
+    // Stable URLs let re-mints of unchanged host files and immutable HTML hit the cache;
+    // attachment image retries need fresh URLs.
+    expiresAt = Math.ceil(expiresAt / STABLE_ASSET_TOKEN_BUCKET_MS) * STABLE_ASSET_TOKEN_BUCKET_MS;
     claims = { ...claims, expiresAt };
   }
   const encodedPayload = base64UrlEncode(encodeAssetClaims(claims));

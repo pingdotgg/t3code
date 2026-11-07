@@ -26,9 +26,9 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type * as RpcSession from "../rpc/session.ts";
 import {
   ASSET_URL_MAX_IN_FLIGHT,
+  makeRevisionedAssetUrlFamily,
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
-  makeRevisionedAssetUrlFamily,
 } from "./assets.ts";
 
 describe("project favicon URL cache", () => {
@@ -237,8 +237,8 @@ describe("asset URL requests", () => {
   );
 });
 
-const revisionedEnvironmentId = EnvironmentId.make("environment-1");
-const revisionedResource: AssetResource = {
+const environmentId = EnvironmentId.make("environment-1");
+const resource: AssetResource = {
   _tag: "workspace-file",
   threadId: ThreadId.make("thread-1"),
   path: "docs/diagram.png",
@@ -282,52 +282,76 @@ function setup(initial: MintResult) {
     () => query,
     () => 0,
   );
-  const atom = (revision: string | null) =>
-    revisioned({
-      environmentId: revisionedEnvironmentId,
-      input: { resource: revisionedResource },
-      revision,
-    });
   const mount = (revision: string | null) => {
-    const release = registry.mount(atom(revision));
+    const release = registry.mount(revisioned({ environmentId, input: { resource }, revision }));
     return () => {
       release();
       for (const task of scheduled.splice(0)) task();
     };
   };
+  const flush = () => {
+    for (const task of scheduled.splice(0)) task();
+  };
   const settle = (fileRevision?: string) => registry.set(server, minted(mints + 1, fileRevision));
   const url = (revision: string | null) => {
-    const result = registry.get(atom(revision));
+    const result = registry.get(revisioned({ environmentId, input: { resource }, revision }));
     return result._tag === "Success" ? result.value.relativeUrl : null;
   };
-  return { mount, settle, url, mints: () => mints };
+  return { mount, settle, flush, url, reset: () => registry.reset(), mints: () => mints };
 }
 
 describe("makeRevisionedAssetUrlFamily", () => {
-  it("re-mints a settled URL on first read and on each new revision, not on remount", () => {
-    const { mount, settle, mints } = setup(minted(0));
+  it("defers a shared URL refresh until after reads and discards a disposed read", () => {
+    const { mount, flush, reset, mints } = setup(minted(0));
 
-    mount("mutation-1")();
+    mount("mutation-1");
+    expect(mints()).toBe(0);
+    reset();
+    flush();
+    expect(mints()).toBe(0);
+
+    const release = mount("mutation-1");
+    const releaseDuplicate = mount("mutation-1");
+    expect(mints()).toBe(0);
+    flush();
+    expect(mints()).toBe(1);
+    release();
+    releaseDuplicate();
+  });
+
+  it("re-mints a settled URL on first read and on each new revision, not on remount", () => {
+    const { mount, settle, flush, mints } = setup(minted(0));
+
+    const releaseFirst = mount("mutation-1");
+    flush();
+    releaseFirst();
     expect(mints()).toBe(1);
     settle();
 
     mount("mutation-1")();
     expect(mints()).toBe(1);
 
-    mount("mutation-2")();
+    const releaseSecond = mount("mutation-2");
+    flush();
+    releaseSecond();
     expect(mints()).toBe(2);
   });
 
   it("re-mints when a revert returns to an earlier revision", () => {
-    const { mount, settle, mints } = setup(minted(0));
+    const { mount, settle, flush, mints } = setup(minted(0));
 
-    mount("mutation-a")();
+    const releaseA = mount("mutation-a");
+    flush();
+    releaseA();
     settle();
-    mount("mutation-b")();
+    const releaseB = mount("mutation-b");
+    flush();
+    releaseB();
     settle();
     expect(mints()).toBe(2);
 
     const reverted = mount("mutation-a");
+    flush();
     expect(mints()).toBe(3);
     reverted();
   });
@@ -340,11 +364,13 @@ describe("makeRevisionedAssetUrlFamily", () => {
   });
 
   it("re-mints after a mint that was in flight when the revision changed", () => {
-    const { mount, settle, mints } = setup(minted(0));
+    const { mount, settle, flush, mints } = setup(minted(0));
 
     const before = mount("mutation-1");
+    flush();
     settle();
     const edited = mount("mutation-2");
+    flush();
     expect(mints()).toBe(2);
     before();
 
@@ -353,32 +379,37 @@ describe("makeRevisionedAssetUrlFamily", () => {
     expect(mints()).toBe(2);
 
     settle();
+    flush();
     expect(mints()).toBe(3);
     settle();
+    flush();
     expect(mints()).toBe(3);
     stillMinting();
   });
-
   it("keeps the URL while the file is unchanged and swaps it once the file changes", () => {
-    const { mount, settle, url } = setup(minted(0, "file-a"));
+    const { mount, settle, flush, url } = setup(minted(0, "file-a"));
 
     const first = mount("mutation-1");
+    flush();
     settle("file-a");
     first();
 
     const unchanged = mount("mutation-2");
+    flush();
     settle("file-a");
     expect(url("mutation-2")).toBe("/a/0");
     unchanged();
 
     // The query now holds /a/3; a later revision must still keep the URL on screen.
     const stillUnchanged = mount("mutation-3");
+    flush();
     expect(url("mutation-3")).toBe("/a/0");
     settle("file-a");
     expect(url("mutation-3")).toBe("/a/0");
     stillUnchanged();
 
     const edited = mount("mutation-4");
+    flush();
     settle("file-b");
     expect(url("mutation-4")).toBe("/a/5");
     edited();

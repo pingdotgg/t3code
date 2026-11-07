@@ -204,11 +204,32 @@ export function makeRevisionedAssetUrlFamily(
         const firstRead = !minted.has(resourceKey);
         let pending = minted.get(resourceKey) !== revision;
         const current = get.once(query);
-        if (pending && (firstRead || isSettled(current))) {
+        if (pending && firstRead && !isSettled(current)) {
           pending = false;
           minted.set(resourceKey, revision);
-          if (isSettled(current)) get.refresh(query);
         }
+        let active = true;
+        let scheduled = false;
+        get.addFinalizer(() => {
+          active = false;
+        });
+        const scheduleRefresh = () => {
+          if (!pending || scheduled) return;
+          scheduled = true;
+          // A React render can read this atom while another image subscribes to the query.
+          get.registry.schedulerAsync.makeDispatcher().scheduleTask(() => {
+            scheduled = false;
+            if (!active || !pending) return;
+            if (minted.get(resourceKey) === revision) {
+              pending = false;
+              return;
+            }
+            if (!isSettled(get.once(query))) return;
+            pending = false;
+            minted.set(resourceKey, revision);
+            get.refresh(query);
+          }, 0);
+        };
         let shownByResource = shownUnder.get(get.registry);
         if (shownByResource === undefined) {
           shownByResource = new Map();
@@ -222,11 +243,9 @@ export function makeRevisionedAssetUrlFamily(
         };
         get.subscribe(query, (value) => {
           get.setSelf(show(value));
-          if (!pending || !isSettled(value)) return;
-          pending = false;
-          minted.set(resourceKey, revision);
-          get.refresh(query);
+          if (isSettled(value)) scheduleRefresh();
         });
+        scheduleRefresh();
         return show(get.once(query));
       },
       { initialValueTarget: query },
