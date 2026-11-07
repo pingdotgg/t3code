@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - cleanup uses Node's retrying rm, which the FileSystem service does not expose.
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeSettings, type ServerProvider } from "@t3tools/contracts";
 import { vi } from "vite-plus/test";
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
@@ -34,6 +35,33 @@ it("drops strict MCP mode, and only that, next to an administrator's managed-mcp
   assert.deepEqual(options.mcpServers, {});
   assert.equal(options.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
 });
+
+it.effect("keeps custom commands with non-string initialization metadata", () =>
+  Effect.gen(function* () {
+    using _query = vi.spyOn(ClaudeSdk, "query").mockReturnValue({
+      initializationResult: async () => ({
+        commands: [
+          { name: "understand", description: "Understand the code", argumentHint: ["[path]"] },
+          { name: "review", description: "Review changes", argumentHint: " [branch] " },
+          { name: "minimal", description: null },
+        ],
+      }),
+    } as unknown as ReturnType<typeof ClaudeSdk.query>);
+
+    const capabilities = yield* probeClaudeCapabilities(
+      yield* decodeClaudeSettings({}),
+      { HOME: "/nonexistent/t3-home" },
+      undefined,
+      false,
+    );
+
+    assert.deepEqual(capabilities.slashCommands, [
+      { name: "understand", description: "Understand the code" },
+      { name: "review", description: "Review changes", input: { hint: "[branch]" } },
+      { name: "minimal" },
+    ]);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.effect("reports a deleted worktree's scan as finished, not pending", () =>
   Effect.gen(function* () {

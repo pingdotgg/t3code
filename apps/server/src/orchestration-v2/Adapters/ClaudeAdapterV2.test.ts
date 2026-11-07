@@ -264,19 +264,24 @@ function makeClaudeTestTurnInput(input: {
 
 describe("ClaudeAdapterV2 runtime query policy", () => {
   it.each([
-    "-- --thinking-display omitted",
-    "--thinking-display summarized -- --thinking-display omitted",
-  ])("does not treat operands after -- as SDK flags: %s", (launchArgs) => {
-    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
-      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-      nativeThreadId: "thinking-thread",
-      resume: false,
-      cwd: "/workspace",
-      settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs },
-    });
-    assert.deepEqual(options.thinking, { type: "adaptive", display: "summarized" });
-    assert.equal(options.extraArgs?.["thinking-display"], "summarized");
-  });
+    ["", undefined],
+    ["-- --thinking-display omitted", undefined],
+    ["--thinking-display summarized -- --thinking-display omitted", "summarized"],
+  ] as const)(
+    "only forwards explicitly requested thinking-display flags: %s",
+    (launchArgs, display) => {
+      const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        nativeThreadId: "thinking-thread",
+        resume: false,
+        cwd: "/workspace",
+        settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs },
+      });
+      assert.deepEqual(options.thinking, { type: "adaptive" });
+      assert.propertyVal(options.settings, "showThinkingSummaries", true);
+      assert.equal(options.extraArgs?.["thinking-display"], display);
+    },
+  );
 
   it.each([
     ["--permission-mode acceptEdits", "acceptEdits"],

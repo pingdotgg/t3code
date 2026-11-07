@@ -245,8 +245,8 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   };
 }
 
-function nonEmptyProbeString(value: string): string | undefined {
-  const candidate = value.trim();
+function nonEmptyProbeString(value: unknown): string | undefined {
+  const candidate = typeof value === "string" ? value.trim() : "";
   return candidate ? candidate : undefined;
 }
 
