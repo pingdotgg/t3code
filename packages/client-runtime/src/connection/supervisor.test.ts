@@ -2048,6 +2048,13 @@ describe("EnvironmentSupervisor routes", () => {
         );
         expect(yield* Ref.get(harness.releaseCount)).toBe(1);
 
+        // The LAN route still answers, but no later check moves back to it.
+        yield* harness.wake("network-changed");
+        for (let minute = 0; minute < 3; minute += 1) {
+          yield* TestClock.adjust("60 seconds");
+        }
+        expect((yield* SubscriptionRef.get(supervisor.state)).generation).toBe(2);
+
         // A replacement connection goes straight to the route that grants more.
         yield* harness.closeLatestSession();
         yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
