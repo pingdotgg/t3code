@@ -352,6 +352,30 @@ export function summarizeT3ToolCalls(
     case "environment-read":
       label = phrase("Checked", "check", `environment preferences ${times}`);
       break;
+    case "theme-list":
+      label = phrase("Listed", "list", `environment themes ${times}`);
+      break;
+    case "theme-read":
+      label = phrase("Read", "read", `an environment theme ${times}`);
+      break;
+    case "theme-create":
+      label = phrase("Published", "publish", `an environment theme ${times}`);
+      break;
+    case "theme-update":
+      label = phrase("Updated", "update", `an environment theme ${times}`);
+      break;
+    case "theme-delete":
+      label = phrase("Deleted", "delete", `an environment theme ${times}`);
+      break;
+    case "theme-duplicate":
+      label = phrase("Duplicated", "duplicate", `an environment theme ${times}`);
+      break;
+    case "theme-apply":
+      label = phrase("Applied", "apply", `the environment theme default ${times}`);
+      break;
+    case "theme-clear-default":
+      label = phrase("Cleared", "clear", `the environment theme default ${times}`);
+      break;
     case "environment-update":
       label = phrase("Updated", "update", `environment preferences ${times}`);
       break;

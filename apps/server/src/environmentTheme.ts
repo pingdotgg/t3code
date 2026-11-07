@@ -11,11 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { BUILT_IN_THEMES, UNPUBLISHABLE_THEME_IDS } from "@t3tools/shared/themePalettes";
 import { parseThemeColor } from "@t3tools/shared/themeColor";
-import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
-import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
-import * as DateTime from "effect/DateTime";
 import * as Path from "effect/Path";
-import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -30,6 +26,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import * as Settings from "./serverSettings.ts";
 import * as ServerConfig from "./config.ts";
 
 const decodeEnvironmentThemeFileJsonExit = Schema.decodeUnknownExit(
@@ -61,21 +58,35 @@ export class ThemeLibraryError extends Schema.TaggedError<ThemeLibraryError>()(
       "collision",
       "default_in_use",
       "storage",
+      "limit",
+      "managed",
     ]),
+    detail: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
+    if (this.detail !== undefined) return this.detail;
     return this.reason === "default_in_use"
       ? "Clear or change the environment default before deleting its theme."
       : `Theme library operation refused: ${this.reason}.`;
   }
 }
 
+const isThemeLibraryError = Schema.is(ThemeLibraryError);
+
 export class EnvironmentThemeService extends Context.Service<
   EnvironmentThemeService,
   {
-    readonly list: Effect.Effect<ReadonlyArray<EnvironmentTheme>, ThemeLibraryError>;
+    readonly list: Effect.Effect<
+      ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly appearance: "light" | "dark";
+        readonly builtin: boolean;
+      }>,
+      ThemeLibraryError
+    >;
     readonly read: (id: string) => Effect.Effect<EnvironmentTheme, ThemeLibraryError>;
     readonly save: (input: {
       readonly id: string;
@@ -132,6 +143,43 @@ export const readThemeFileGuarded = (filePath: string, maxBytes: number): string
   }
 };
 
+/** The CLI, MCP and watcher accept the same partial v1 palettes. */
+export const validateThemeFile = Effect.fn("EnvironmentTheme.validateFile")(function* (
+  raw: string,
+) {
+  if (Buffer.byteLength(raw) > MAX_THEME_FILE_BYTES)
+    return yield* new ThemeLibraryError({
+      reason: "invalid",
+      detail: "Theme definition exceeds 32 KiB.",
+    });
+  const decoded = decodeEnvironmentThemeFileJsonExit(raw);
+  if (decoded._tag === "Failure")
+    return yield* new ThemeLibraryError({
+      reason: "invalid",
+      detail: "Theme is not a valid theme file: check name, appearance, colors and variants.",
+    });
+  const theme = decoded.value;
+  if (!environmentThemeFileHasColors(theme))
+    return yield* new ThemeLibraryError({
+      reason: "invalid",
+      detail: "Theme must contain at least one color.",
+    });
+  for (const [variant, palette] of Object.entries({
+    colors: theme.colors,
+    light: theme.variants?.light,
+    dark: theme.variants?.dark,
+  })) {
+    for (const [key, color] of Object.entries(palette ?? {})) {
+      if (parseThemeColor(color) === null)
+        return yield* new ThemeLibraryError({
+          reason: "invalid",
+          detail: `Invalid theme color at ${variant}.${key}. Use a supported CSS color literal.`,
+        });
+    }
+  }
+  return theme;
+});
+
 export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
   const fs = yield* FileSystem.FileSystem;
   const entries = yield* fs
@@ -168,19 +216,15 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
     }
     if (raw.trim().length === 0) continue;
 
-    const decoded = decodeEnvironmentThemeFileJsonExit(raw);
-    if (decoded._tag === "Failure") {
+    const validated = yield* validateThemeFile(raw).pipe(Effect.result);
+    if (validated._tag === "Failure") {
       yield* Effect.logWarning("ignoring invalid environment theme", {
         path: filePath,
-        detail: Cause.pretty(decoded.cause),
+        detail: validated.failure.message,
       });
       continue;
     }
-    const file = decoded.value;
-    if (!environmentThemeFileHasColors(file)) {
-      yield* Effect.logWarning("ignoring environment theme without colors", { path: filePath });
-      continue;
-    }
+    const file = validated.success;
 
     totalBytes += Buffer.byteLength(raw);
     if (totalBytes > MAX_THEME_TOTAL_BYTES) {
@@ -196,46 +240,6 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
   return themes;
 });
 
-const SparseSettings = Schema.Record(Schema.String, Schema.Unknown);
-const decodeSettingsJson = Schema.decodeUnknownEffect(fromLenientJson(SparseSettings));
-const encodeSettingsJson = Schema.encodeEffect(fromJsonStringPretty(SparseSettings));
-
-class ThemeSettingsUnreadableError extends Schema.TaggedError<ThemeSettingsUnreadableError>()(
-  "ThemeSettingsUnreadableError",
-  { settingsPath: Schema.String, cause: Schema.Defect() },
-) {
-  override get message(): string {
-    return `Could not read ${this.settingsPath}. Fix its permissions, then run this again.`;
-  }
-}
-
-class ThemeSettingsMalformedError extends Schema.TaggedError<ThemeSettingsMalformedError>()(
-  "ThemeSettingsMalformedError",
-  { settingsPath: Schema.String, cause: Schema.Defect() },
-) {
-  override get message(): string {
-    return `${this.settingsPath} is not a JSON object. Fix or remove it, then run this again.`;
-  }
-}
-
-class ThemeSettingsBusyError extends Schema.TaggedError<ThemeSettingsBusyError>()(
-  "ThemeSettingsBusyError",
-  { settingsPath: Schema.String, attempts: Schema.Number },
-) {
-  override get message(): string {
-    return `${this.settingsPath} kept changing while writing (gave up after ${this.attempts} attempts). Try again.`;
-  }
-}
-
-class ThemeSettingsWriteError extends Schema.TaggedError<ThemeSettingsWriteError>()(
-  "ThemeSettingsWriteError",
-  { settingsPath: Schema.String, cause: Schema.Defect() },
-) {
-  override get message(): string {
-    return `Could not write ${this.settingsPath}.`;
-  }
-}
-
 class ThemePublishError extends Schema.TaggedError<ThemePublishError>()("ThemePublishError", {
   themesDir: Schema.String,
   cause: Schema.Defect(),
@@ -245,80 +249,12 @@ class ThemePublishError extends Schema.TaggedError<ThemePublishError>()("ThemePu
   }
 }
 
-/** Propagate read errors to avoid overwriting unread settings with a sparse file. */
-export const readSettingsObject = Effect.fn("EnvironmentTheme.readSettings")(function* (
-  settingsPath: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const exists = yield* fs
-    .exists(settingsPath)
-    .pipe(Effect.mapError((cause) => new ThemeSettingsUnreadableError({ settingsPath, cause })));
-  if (!exists) return { raw: "", settings: {} };
-
-  const raw = yield* fs
-    .readFileString(settingsPath)
-    .pipe(Effect.mapError((cause) => new ThemeSettingsUnreadableError({ settingsPath, cause })));
-  if (raw.trim().length === 0) return { raw, settings: {} };
-
-  const settings = yield* decodeSettingsJson(raw).pipe(
-    Effect.mapError((cause) => new ThemeSettingsMalformedError({ settingsPath, cause })),
-  );
-  return { raw, settings };
-});
-
-/** CLI writes can come from other processes, outside the service semaphore. */
-const CONCURRENT_WRITE_ATTEMPTS = 5;
-
-export const writeDefaultTheme = Effect.fn("EnvironmentTheme.writeDefault")(function* (input: {
-  readonly settingsPath: string;
-  readonly themeId: string;
-}) {
-  const fs = yield* FileSystem.FileSystem;
-
-  for (let attempt = 1; ; attempt++) {
-    const { raw, settings } = yield* readSettingsObject(input.settingsPath);
-    const setAt = DateTime.formatIso(yield* DateTime.now);
-    const next =
-      input.themeId.length > 0
-        ? // The timestamp lets clients reapply the same theme.
-          { ...settings, defaultTheme: input.themeId, defaultThemeSetAt: setAt }
-        : Object.fromEntries(
-            Object.entries(settings).filter(
-              ([key]) => key !== "defaultTheme" && key !== "defaultThemeSetAt",
-            ),
-          );
-
-    const contents = yield* encodeSettingsJson(next);
-    const current = yield* fs
-      .readFileString(input.settingsPath)
-      .pipe(Effect.orElseSucceed(() => ""));
-    if (current !== raw) {
-      if (attempt >= CONCURRENT_WRITE_ATTEMPTS) {
-        return yield* new ThemeSettingsBusyError({
-          settingsPath: input.settingsPath,
-          attempts: CONCURRENT_WRITE_ATTEMPTS,
-        });
-      }
-      continue;
-    }
-
-    yield* writeFileStringAtomically({
-      filePath: input.settingsPath,
-      contents: `${contents}\n`,
-    }).pipe(
-      Effect.mapError(
-        (cause) => new ThemeSettingsWriteError({ settingsPath: input.settingsPath, cause }),
-      ),
-    );
-    return;
-  }
-});
-
 /** Stages and renames into the watched directory; callers run `cleanup` on success or `revert` to undo. */
 export const publishThemeContents = Effect.fn("EnvironmentTheme.publish")(function* (input: {
   readonly themesDir: string;
   readonly themeId: string;
   readonly raw: string;
+  readonly overwrite?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -348,7 +284,11 @@ export const publishThemeContents = Effect.fn("EnvironmentTheme.publish")(functi
     Buffer.byteLength(raw),
   );
   if (others.length >= MAX_THEME_FILES || totalBytes > MAX_THEME_TOTAL_BYTES)
-    return yield* publishFailure("Publication limit exceeded");
+    return yield* new ThemeLibraryError({
+      reason: "limit",
+      detail:
+        "Theme library limit reached (32 files, 192 KiB total). Delete unused published themes first.",
+    });
 
   const destinationPath = path.join(input.themesDir, `${themeId}${THEME_FILE_SUFFIX}`);
   // Non-JSON suffixes hide staging and rollback entries from the watcher.
@@ -375,11 +315,12 @@ export const publishThemeContents = Effect.fn("EnvironmentTheme.publish")(functi
     catch: publishFailure,
   });
 
-  // Atomic rename avoids a check/replace race and preserves the exact entry for rollback.
+  // Keep the destination visible while retaining its inode for rollback.
   const hadPrevious = yield* Effect.try({
     try: () => {
       try {
-        NodeFS.renameSync(destinationPath, backupPath);
+        if (input.overwrite === false) return false;
+        NodeFS.linkSync(destinationPath, backupPath);
         return true;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
@@ -420,21 +361,34 @@ export const publishThemeContents = Effect.fn("EnvironmentTheme.publish")(functi
   });
 
   yield* Effect.try({
-    try: () => NodeFS.renameSync(stagingPath, destinationPath),
-    catch: publishFailure,
+    try: () => {
+      if (input.overwrite === false) {
+        NodeFS.linkSync(stagingPath, destinationPath);
+        NodeFS.unlinkSync(stagingPath);
+      } else NodeFS.renameSync(stagingPath, destinationPath);
+    },
+    catch: (cause) =>
+      input.overwrite === false && (cause as NodeJS.ErrnoException).code === "EEXIST"
+        ? new ThemeLibraryError({ reason: "collision" })
+        : publishFailure(cause),
   }).pipe(Effect.onError(() => revert));
 
   // A concurrent writer outside this process can still fill the directory after the check above.
   const visible = yield* readPublishedThemes(input.themesDir);
   if (!visible.some((theme) => theme.id === themeId)) {
     yield* revert;
-    return yield* publishFailure("Publication limit exceeded");
+    return yield* new ThemeLibraryError({
+      reason: "limit",
+      detail:
+        "Theme library limit reached (32 files, 192 KiB total). Delete unused published themes first.",
+    });
   }
   return { themeId, revert, cleanup };
 });
 
 const make = Effect.gen(function* () {
-  const { environmentThemesDir, settingsPath } = yield* ServerConfig.ServerConfig;
+  const settings = yield* Settings.ServerSettingsService;
+  const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   // Sequence numbers let subscribers drop queued events older than their initial snapshot.
@@ -487,7 +441,15 @@ const make = Effect.gen(function* () {
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
-  const storageError = (cause: unknown) => new ThemeLibraryError({ reason: "storage", cause });
+  const storageError = (cause: unknown) =>
+    isThemeLibraryError(cause)
+      ? cause
+      : new ThemeLibraryError({
+          reason: "storage",
+          detail:
+            "Could not access theme storage. Check file permissions and available disk space.",
+          cause,
+        });
   const builtins: ReadonlyArray<EnvironmentTheme> = BUILT_IN_THEMES.map((theme) => ({
     id: theme.id,
     version: 1,
@@ -496,9 +458,17 @@ const make = Effect.gen(function* () {
     colors: theme.colors,
     ...(theme.variants ? { variants: theme.variants } : {}),
   }));
-  const list = Effect.map(refresh, (state) => [...builtins, ...state.themes]);
+  const definitions = Effect.map(refresh, (state) => [...builtins, ...state.themes]);
+  const list = Effect.map(definitions, (themes) =>
+    themes.map(({ id, name, appearance }) => ({
+      id,
+      name,
+      appearance,
+      builtin: UNPUBLISHABLE_THEME_IDS.has(id),
+    })),
+  );
   const read = Effect.fn("EnvironmentTheme.read")(function* (id: string) {
-    const theme = (yield* list).find((theme) => theme.id === id);
+    const theme = (yield* definitions).find((theme) => theme.id === id);
     if (!theme) return yield* new ThemeLibraryError({ reason: "not_found" });
     return theme;
   });
@@ -511,21 +481,16 @@ const make = Effect.gen(function* () {
     if (UNPUBLISHABLE_THEME_IDS.has(input.id))
       return yield* new ThemeLibraryError({ reason: "builtin" });
     const theme = yield* decodeThemeFile(input.theme).pipe(
-      Effect.mapError(() => new ThemeLibraryError({ reason: "invalid" })),
+      Effect.mapError(
+        () =>
+          new ThemeLibraryError({
+            reason: "invalid",
+            detail: "Invalid theme name, appearance, colors or variants.",
+          }),
+      ),
     );
-    // Clients render these values as CSS, so reject anything the web palette parser cannot read.
-    const colors = [theme.colors, theme.variants?.light, theme.variants?.dark].flatMap((palette) =>
-      Object.values(palette ?? {}),
-    );
-    const raw = yield* encodeThemeFile(theme).pipe(
-      Effect.mapError(() => new ThemeLibraryError({ reason: "invalid" })),
-    );
-    if (
-      !environmentThemeFileHasColors(theme) ||
-      colors.some((color) => parseThemeColor(color) === null) ||
-      Buffer.byteLength(raw) > MAX_THEME_FILE_BYTES
-    )
-      return yield* new ThemeLibraryError({ reason: "invalid" });
+    const raw = yield* encodeThemeFile(theme).pipe(Effect.mapError(storageError));
+    yield* validateThemeFile(raw);
     const destination = path.join(environmentThemesDir, `${input.id}${THEME_FILE_SUFFIX}`);
     const exists = yield* Effect.try({
       try: () => {
@@ -548,6 +513,7 @@ const make = Effect.gen(function* () {
       themesDir: environmentThemesDir,
       themeId: input.id,
       raw,
+      overwrite: input.overwrite,
     }).pipe(Effect.mapError(storageError));
     yield* published.cleanup;
     yield* refresh;
@@ -563,20 +529,40 @@ const make = Effect.gen(function* () {
   });
   const remove = Effect.fn("EnvironmentTheme.remove")(function* (id: string) {
     if (UNPUBLISHABLE_THEME_IDS.has(id)) return yield* new ThemeLibraryError({ reason: "builtin" });
-    yield* read(id);
-    const { settings } = yield* readSettingsObject(settingsPath).pipe(
-      Effect.mapError(storageError),
-    );
-    if (settings.defaultTheme === id)
-      return yield* new ThemeLibraryError({ reason: "default_in_use" });
-    yield* fs
-      .remove(path.join(environmentThemesDir, `${id}${THEME_FILE_SUFFIX}`))
+    if (!isEnvironmentThemeId(id)) return yield* new ThemeLibraryError({ reason: "invalid" });
+    yield* settings
+      .withSettingsSnapshot((current) =>
+        Effect.gen(function* () {
+          if (current.defaultTheme === id)
+            return yield* new ThemeLibraryError({ reason: "default_in_use" });
+          yield* Effect.try({
+            try: () =>
+              NodeFS.unlinkSync(path.join(environmentThemesDir, `${id}${THEME_FILE_SUFFIX}`)),
+            catch: (cause) =>
+              (cause as NodeJS.ErrnoException).code === "ENOENT"
+                ? new ThemeLibraryError({ reason: "not_found" })
+                : storageError(cause),
+          });
+        }),
+      )
       .pipe(Effect.mapError(storageError));
     yield* refresh;
   });
   const setDefault = Effect.fn("EnvironmentTheme.setDefault")(function* (id: string) {
     if (id !== "") yield* read(id);
-    yield* writeDefaultTheme({ settingsPath, themeId: id }).pipe(Effect.mapError(storageError));
+    yield* settings.setDefaultTheme(id).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ThemeLibraryError({
+            reason: cause.operation === "write-managed-setting" ? "managed" : "storage",
+            detail:
+              cause.operation === "write-managed-setting"
+                ? "The environment theme default is locked by managed policy."
+                : "Could not update settings. Check settings.json syntax, permissions and disk space.",
+            cause,
+          }),
+      ),
+    );
   });
 
   return {

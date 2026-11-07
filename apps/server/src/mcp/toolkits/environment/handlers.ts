@@ -53,6 +53,17 @@ const themeFailure = (error: Themes.ThemeLibraryError) =>
     code: error.reason === "storage" ? "orchestration_error" : "invalid_request",
     message: error.message,
   });
+const lockedEnvironmentWrite = Effect.fn("EnvironmentMcp.lockedWrite")(function* <A, E, R>(
+  check: Effect.Effect<void, E, R>,
+  operation: Effect.Effect<A, E, R>,
+) {
+  const scope = yield* McpInvocationContext.McpInvocationContext;
+  const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+  const update = check.pipe(Effect.andThen(operation));
+  return yield* scope.thread === undefined
+    ? update
+    : executor.withLock(scope.thread.threadId, update);
+});
 const themeWrite = <P, A>(
   operation: (
     service: Themes.EnvironmentThemeService["Service"],
@@ -60,18 +71,13 @@ const themeWrite = <P, A>(
   ) => Effect.Effect<A, Themes.ThemeLibraryError>,
 ) =>
   McpToolAccess.writesEnvironment((input: P, check) =>
-    Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-      const update = Effect.gen(function* () {
-        yield* check;
+    lockedEnvironmentWrite(
+      check,
+      Effect.gen(function* () {
         const service = yield* themes;
         return yield* operation(service, input).pipe(Effect.mapError(themeFailure));
-      });
-      return yield* scope.thread === undefined
-        ? update
-        : executor.withLock(scope.thread.threadId, update);
-    }),
+      }),
+    ),
   );
 export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
   t3_theme_list: McpToolAccess.reads(() =>
@@ -110,20 +116,14 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
     }),
   ),
   t3_environment_preferences_update: McpToolAccess.writesEnvironment((patch, check) =>
-    Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-      const update = Effect.gen(function* () {
-        // The turn may have ended, or the thread's modes changed, while this waited for the lock.
-        yield* check;
+    lockedEnvironmentWrite(
+      check,
+      Effect.gen(function* () {
         const { settings } = yield* access;
         return preferences(
           yield* settings.updateSettings(patch).pipe(Effect.mapError(unavailable)),
         );
-      });
-      return yield* scope.thread === undefined
-        ? update
-        : executor.withLock(scope.thread.threadId, update);
-    }),
+      }),
+    ),
   ),
 });

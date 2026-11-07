@@ -542,6 +542,14 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "project-update":
     case "project-delete":
     case "project-clone":
+    case "theme-list":
+    case "theme-read":
+    case "theme-create":
+    case "theme-update":
+    case "theme-delete":
+    case "theme-duplicate":
+    case "theme-apply":
+    case "theme-clear-default":
     case "environment-update":
     case "attachment-prepare":
     case "attachment-discard":

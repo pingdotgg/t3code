@@ -112,48 +112,80 @@ it.effect.each([
   }),
 );
 
-it.effect("rejects theme reads with a credential bound to another environment", () =>
-  Effect.gen(function* () {
-    const toolkit = yield* EnvironmentToolkit;
-    const result = yield* toolkit
-      .handle("t3_theme_read", { id: "ocean" })
-      .pipe(Stream.unwrap, Stream.runCollect);
-    expect(result.at(-1)?.result).toMatchObject({ code: "capability_denied" });
-  }).pipe(
-    Effect.provide(
-      McpToolAccess.HandlersLayer.layer(EnvironmentHandlers.layer).pipe(
-        Layer.provideMerge(
-          Layer.mergeAll(
-            Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
-            ThreadCommandExecutor.layer,
-            Layer.succeed(McpInvocationContext.McpInvocationContext, {
-              environmentId: EnvironmentId.make("environment:foreign"),
-              requestNamespace: "foreign",
-              thread: {
-                threadId,
-                providerSessionId: "foreign",
-                providerInstanceId: ProviderInstanceId.make("codex"),
-              },
-              client: undefined,
-              capabilities: new Set(["orchestration" as const]),
-              issuedAt: 0,
-            }),
-            Layer.mock(ThreadManagement.ThreadManagementService)({
-              getThreadShell: () => Effect.succeed(liveThreadShell(threadId)),
-            }),
-            Layer.mock(Settings.ServerSettingsService)({}),
-            Layer.mock(Environment.ServerEnvironment)({
-              getDescriptor: Effect.succeed({
-                environmentId,
-                label: "Test",
-                platform: { os: "linux", arch: "x64" },
-                serverVersion: "0.0.0",
-                capabilities: { repositoryIdentity: false },
+it.effect.each([
+  {
+    foreign: true,
+    reason: "storage" as const,
+    detail: "Check permissions",
+    code: "capability_denied",
+  },
+  {
+    foreign: false,
+    reason: "storage" as const,
+    detail: "Check settings.json syntax and permissions.",
+    code: "orchestration_error",
+  },
+  {
+    foreign: false,
+    reason: "default_in_use" as const,
+    detail: "Clear or change the environment default before deleting its theme.",
+    code: "invalid_request",
+  },
+  {
+    foreign: false,
+    reason: "limit" as const,
+    detail: "Delete unused themes: 32 files, 192 KiB total.",
+    code: "invalid_request",
+  },
+])(
+  "guards theme reads and preserves safe failure advice (%j)",
+  ({ foreign, reason, detail, code }) =>
+    Effect.gen(function* () {
+      const toolkit = yield* EnvironmentToolkit;
+      const result = yield* toolkit
+        .handle("t3_theme_read", { id: "ocean" })
+        .pipe(Stream.unwrap, Stream.runCollect);
+      expect(result.at(-1)?.result).toMatchObject({
+        code,
+        ...(foreign ? {} : { message: detail }),
+      });
+    }).pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(EnvironmentHandlers.layer).pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
+                read: () => Effect.fail(new EnvironmentTheme.ThemeLibraryError({ reason, detail })),
               }),
-            }),
+              ThreadCommandExecutor.layer,
+              Layer.succeed(McpInvocationContext.McpInvocationContext, {
+                environmentId: foreign ? EnvironmentId.make("environment:foreign") : environmentId,
+                requestNamespace: "foreign",
+                thread: {
+                  threadId,
+                  providerSessionId: "foreign",
+                  providerInstanceId: ProviderInstanceId.make("codex"),
+                },
+                client: undefined,
+                capabilities: new Set(["orchestration" as const]),
+                issuedAt: 0,
+              }),
+              Layer.mock(ThreadManagement.ThreadManagementService)({
+                getThreadShell: () => Effect.succeed(liveThreadShell(threadId)),
+              }),
+              Layer.mock(Settings.ServerSettingsService)({}),
+              Layer.mock(Environment.ServerEnvironment)({
+                getDescriptor: Effect.succeed({
+                  environmentId,
+                  label: "Test",
+                  platform: { os: "linux", arch: "x64" },
+                  serverVersion: "0.0.0",
+                  capabilities: { repositoryIdentity: false },
+                }),
+              }),
+            ),
           ),
         ),
       ),
     ),
-  ),
 );

@@ -1,9 +1,8 @@
-import {
-  EnvironmentThemeFile,
-  EnvironmentThemeId,
-  environmentThemeFileHasColors,
-} from "@t3tools/contracts";
+import { EnvironmentThemeId } from "@t3tools/contracts";
 import { BUILT_IN_THEME_IDS, UNPUBLISHABLE_THEME_IDS } from "@t3tools/shared/themePalettes";
+import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import * as DateTime from "effect/DateTime";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -18,16 +17,121 @@ import {
   MAX_THEME_FILE_BYTES,
   publishThemeContents,
   readPublishedThemes,
-  readSettingsObject,
   readThemeFileGuarded,
-  writeDefaultTheme,
+  validateThemeFile,
 } from "../environmentTheme.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag } from "./config.ts";
 
-const decodeThemeFileJsonExit = Schema.decodeUnknownExit(
-  Schema.fromJsonString(EnvironmentThemeFile),
-);
+const SparseSettings = Schema.Record(Schema.String, Schema.Unknown);
+const decodeSettingsJson = Schema.decodeUnknownEffect(fromLenientJson(SparseSettings));
+const encodeSettingsJson = Schema.encodeEffect(fromJsonStringPretty(SparseSettings));
+
+class ThemeSettingsUnreadableError extends Schema.TaggedError<ThemeSettingsUnreadableError>()(
+  "ThemeSettingsUnreadableError",
+  { settingsPath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not read ${this.settingsPath}. Fix its permissions, then run this again.`;
+  }
+}
+
+class ThemeSettingsMalformedError extends Schema.TaggedError<ThemeSettingsMalformedError>()(
+  "ThemeSettingsMalformedError",
+  { settingsPath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `${this.settingsPath} is not a JSON object. Fix or remove it, then run this again.`;
+  }
+}
+
+class ThemeSettingsBusyError extends Schema.TaggedError<ThemeSettingsBusyError>()(
+  "ThemeSettingsBusyError",
+  { settingsPath: Schema.String, attempts: Schema.Number },
+) {
+  override get message(): string {
+    return `${this.settingsPath} kept changing while writing (gave up after ${this.attempts} attempts). Try again.`;
+  }
+}
+
+class ThemeSettingsWriteError extends Schema.TaggedError<ThemeSettingsWriteError>()(
+  "ThemeSettingsWriteError",
+  { settingsPath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not write ${this.settingsPath}.`;
+  }
+}
+
+/** Propagate read errors to avoid overwriting unread settings with a sparse file. */
+const readSettingsObject = Effect.fn("EnvironmentTheme.readSettings")(function* (
+  settingsPath: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const exists = yield* fs
+    .exists(settingsPath)
+    .pipe(Effect.mapError((cause) => new ThemeSettingsUnreadableError({ settingsPath, cause })));
+  if (!exists) return { raw: "", settings: {} };
+
+  const raw = yield* fs
+    .readFileString(settingsPath)
+    .pipe(Effect.mapError((cause) => new ThemeSettingsUnreadableError({ settingsPath, cause })));
+  if (raw.trim().length === 0) return { raw, settings: {} };
+
+  const settings = yield* decodeSettingsJson(raw).pipe(
+    Effect.mapError((cause) => new ThemeSettingsMalformedError({ settingsPath, cause })),
+  );
+  return { raw, settings };
+});
+
+/** CLI writes can come from other processes, outside the service semaphore. */
+const CONCURRENT_WRITE_ATTEMPTS = 5;
+
+const writeDefaultTheme = Effect.fn("EnvironmentTheme.writeDefault")(function* (input: {
+  readonly settingsPath: string;
+  readonly themeId: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+
+  for (let attempt = 1; ; attempt++) {
+    const { raw, settings } = yield* readSettingsObject(input.settingsPath);
+    const setAt = DateTime.formatIso(yield* DateTime.now);
+    const next =
+      input.themeId.length > 0
+        ? // The timestamp lets clients reapply the same theme.
+          { ...settings, defaultTheme: input.themeId, defaultThemeSetAt: setAt }
+        : Object.fromEntries(
+            Object.entries(settings).filter(
+              ([key]) => key !== "defaultTheme" && key !== "defaultThemeSetAt",
+            ),
+          );
+
+    const contents = yield* encodeSettingsJson(next);
+    const current = yield* fs
+      .readFileString(input.settingsPath)
+      .pipe(Effect.orElseSucceed(() => ""));
+    if (current !== raw) {
+      if (attempt >= CONCURRENT_WRITE_ATTEMPTS) {
+        return yield* new ThemeSettingsBusyError({
+          settingsPath: input.settingsPath,
+          attempts: CONCURRENT_WRITE_ATTEMPTS,
+        });
+      }
+      continue;
+    }
+
+    yield* writeFileStringAtomically({
+      filePath: input.settingsPath,
+      contents: `${contents}\n`,
+    }).pipe(
+      Effect.mapError(
+        (cause) => new ThemeSettingsWriteError({ settingsPath: input.settingsPath, cause }),
+      ),
+    );
+    return;
+  }
+});
+
 const isEnvironmentThemeId = Schema.is(EnvironmentThemeId);
 
 export class ThemeFileUnreadableError extends Schema.TaggedError<ThemeFileUnreadableError>()(
@@ -39,30 +143,12 @@ export class ThemeFileUnreadableError extends Schema.TaggedError<ThemeFileUnread
   }
 }
 
-export class ThemeFileInvalidError extends Schema.TaggedError<ThemeFileInvalidError>()(
-  "ThemeFileInvalidError",
-  { filePath: Schema.String, cause: Schema.Defect() },
-) {
-  override get message(): string {
-    return `${this.filePath} is not a valid theme file. Use a theme exported from T3 Code, or a seeded file with name, appearance, canvas, and accent.`;
-  }
-}
-
 export class ThemeFileTooLargeError extends Schema.TaggedError<ThemeFileTooLargeError>()(
   "ThemeFileTooLargeError",
   { filePath: Schema.String, limit: Schema.Number },
 ) {
   override get message(): string {
     return `${this.filePath} is larger than ${this.limit} bytes, which is more than a theme can publish.`;
-  }
-}
-
-export class ThemeFileColorlessError extends Schema.TaggedError<ThemeFileColorlessError>()(
-  "ThemeFileColorlessError",
-  { filePath: Schema.String },
-) {
-  override get message(): string {
-    return `${this.filePath} has no colors to publish.`;
   }
 }
 
@@ -152,13 +238,7 @@ const publishThemeFile = Effect.fn(function* (input: {
     return yield* new ThemeFileUnreadableError({ filePath: input.filePath });
   }
 
-  const decoded = decodeThemeFileJsonExit(raw);
-  if (decoded._tag === "Failure") {
-    return yield* new ThemeFileInvalidError({ filePath: input.filePath, cause: decoded.cause });
-  }
-  if (!environmentThemeFileHasColors(decoded.value)) {
-    return yield* new ThemeFileColorlessError({ filePath: input.filePath });
-  }
+  yield* validateThemeFile(raw);
 
   const fileBasename = path.basename(input.filePath, ".json");
   const themeId = Option.getOrElse(input.explicitId, () => fileBasename);

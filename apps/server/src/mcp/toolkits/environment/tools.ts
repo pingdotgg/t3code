@@ -79,7 +79,14 @@ const ThemeList = Tool.make("t3_theme_list", {
   description:
     "List built-in and environment-published themes. Personal client-local themes are inaccessible.",
   parameters: Schema.Struct(themeTarget),
-  success: Schema.Array(EnvironmentTheme),
+  success: Schema.Array(
+    Schema.Struct({
+      id: EnvironmentThemeId,
+      name: EnvironmentThemeFile.fields.name,
+      appearance: EnvironmentThemeFile.fields.appearance,
+      builtin: Schema.Boolean,
+    }),
+  ),
 }).annotate(Tool.Readonly, true);
 const ThemeRead = Tool.make("t3_theme_read", {
   ...shared,
@@ -91,21 +98,21 @@ const ThemeRead = Tool.make("t3_theme_read", {
 const ThemeCreate = Tool.make("t3_theme_create", {
   ...shared,
   description:
-    "Publish a new custom theme in this environment. Does not apply it or set the default. IDs must be unique; built-ins are protected.",
+    "Publish a new theme in this environment. Does not apply it or set the default. IDs must be unique; built-ins are protected.",
   parameters: Schema.Struct({ ...themeId, theme: EnvironmentThemeFile }),
   success: EnvironmentTheme,
 });
 const ThemeUpdate = Tool.make("t3_theme_update", {
   ...shared,
   description:
-    "Replace an environment-published custom theme's definition. Does not apply it or set the default. Send the complete definition; omitted palette fields remain absent.",
+    "Replace an environment-published theme's definition. Does not apply it or set the default. Send the complete definition; omitted palette fields remain absent.",
   parameters: Schema.Struct({ ...themeId, theme: EnvironmentThemeFile }),
   success: EnvironmentTheme,
 }).annotate(Tool.Destructive, true);
 const ThemeDuplicate = Tool.make("t3_theme_duplicate", {
   ...shared,
   description:
-    "Copy a built-in or published theme to a new custom ID and name. Does not apply it or set the default.",
+    "Copy a built-in or published theme to a new ID and name. Does not apply it or set the default.",
   parameters: Schema.Struct({
     ...themeId,
     sourceId: EnvironmentThemeId,
@@ -116,14 +123,14 @@ const ThemeDuplicate = Tool.make("t3_theme_duplicate", {
 const ThemeDelete = Tool.make("t3_theme_delete", {
   ...shared,
   description:
-    "Delete a published custom theme. Clear or change the environment default first if it names this theme. Clients resolve removed themes using their existing fallback behavior.",
+    "Delete a published theme. Clear or change the environment default first if it names this theme. Clients resolve removed themes using their existing fallback behavior.",
   parameters: Schema.Struct(themeId),
   success: Schema.Void,
 }).annotate(Tool.Destructive, true);
 const ThemeApply = Tool.make("t3_theme_apply", {
   ...shared,
   description:
-    "Apply a built-in or published theme by setting the environment default with a fresh timestamp. Connected web and desktop clients follow existing default semantics. Cannot select a personal client-local theme.",
+    "Apply a built-in or published theme by setting the environment default with a fresh timestamp. Only web clients served by this server and desktop clients using their local environment follow this default. Cannot select a personal client-local theme.",
   parameters: Schema.Struct(themeId),
   success: Schema.Void,
 }).annotate(Tool.Destructive, true);

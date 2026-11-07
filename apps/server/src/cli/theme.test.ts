@@ -98,17 +98,20 @@ describe("t3 theme", () => {
     }),
   );
 
-  it.effect("rejects a file that is not a theme and sets nothing", () =>
+  it.effect.each([
+    JUNK_THEME_JSON,
+    JSON.stringify({ name: "Unsupported", appearance: "dark", colors: { accent: "var(--x)" } }),
+  ])("rejects an invalid published definition and sets nothing (%s)", (raw) =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
       const themeFile = NodePath.join(baseDir, "junk.json");
-      NodeFS.writeFileSync(themeFile, JUNK_THEME_JSON);
+      NodeFS.writeFileSync(themeFile, raw);
 
       const failure = yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(
         Effect.flip,
       );
 
-      assert.include(String(failure), "not a valid theme file");
+      assert.match(String(failure), /not a valid theme file|Invalid theme color at colors.accent/);
       assert.equal(NodeFS.existsSync(NodePath.join(baseDir, "userdata", "themes")), false);
       assert.equal(NodeFS.existsSync(settingsPathFor(baseDir)), false);
     }),

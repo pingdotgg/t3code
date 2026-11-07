@@ -1,7 +1,10 @@
 import { EnvironmentThemeFile } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -10,6 +13,10 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import * as Settings from "./serverSettings.ts";
+import * as Secrets from "./auth/ServerSecretStore.ts";
+import * as Persistence from "./persistence/Sqlite.ts";
+import * as Policy from "./policy/ManagedPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -35,12 +42,14 @@ const withEnvironmentThemes = <A, E>(
   body: Effect.Effect<
     A,
     E,
+    | Settings.ServerSettingsService
     | EnvironmentTheme.EnvironmentThemeService
     | ServerConfig.ServerConfig
     | FileSystem.FileSystem
     | Path.Path
     | Scope.Scope
   >,
+  policy?: import("@t3tools/contracts").ManagedPolicyDocument,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -55,6 +64,13 @@ const withEnvironmentThemes = <A, E>(
     return yield* body.pipe(
       Effect.provide(
         EnvironmentTheme.layer.pipe(
+          Layer.provideMerge(
+            Settings.layer.pipe(
+              Layer.provide(Secrets.layer),
+              Layer.provide(Policy.layerTest(policy)),
+              Layer.provide(Persistence.layerMemory),
+            ),
+          ),
           Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
         ),
       ),
@@ -66,7 +82,7 @@ const currentThemes = Effect.gen(function* () {
   return yield* environmentTheme.current;
 });
 
-it.layer(NodeServices.layer)("environment theme", (it) => {
+it.layer(Layer.merge(NodeServices.layer, NodeCrypto.layer))("environment theme", (it) => {
   it.effect(
     "publishes CRUD changes without implicitly applying, and protects defaults and built-ins",
     () =>
@@ -101,7 +117,19 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
             (yield* service.read("ocean-copy")).colors,
             (yield* service.read("ocean")).colors,
           );
+          assert.equal(
+            (yield* (yield* Settings.ServerSettingsService).getSettings).defaultTheme,
+            "",
+          );
+          assert.deepEqual(Object.keys((yield* service.list)[0]!).sort(), [
+            "appearance",
+            "builtin",
+            "id",
+            "name",
+          ]);
           yield* service.setDefault("nightfall");
+          const settings = yield* Settings.ServerSettingsService;
+          assert.equal((yield* settings.getSettings).defaultTheme, "nightfall");
           const before = yield* fs.readFileString(settingsPath);
           yield* service.save({ id: "nightfall", theme: partial, overwrite: true });
           assert.equal(yield* fs.readFileString(settingsPath), before);
@@ -113,14 +141,96 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
             "builtin",
           );
           yield* service.setDefault("");
-          assert.equal(
-            (yield* EnvironmentTheme.readSettingsObject(settingsPath)).settings.defaultTheme,
-            undefined,
-          );
+          assert.equal((yield* settings.getSettings).defaultTheme, "");
           yield* service.remove("nightfall");
           assert.equal((yield* Effect.flip(service.read("nightfall"))).reason, "not_found");
         }),
       ),
+  );
+
+  it.effect("protects an effective managed default and refuses apply and clear", () =>
+    withEnvironmentThemes(
+      { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
+      Effect.gen(function* () {
+        const service = yield* EnvironmentTheme.EnvironmentThemeService;
+        assert.equal((yield* Effect.flip(service.remove("nightfall"))).reason, "default_in_use");
+        assert.equal((yield* Effect.flip(service.setDefault("ocean"))).reason, "managed");
+        assert.equal((yield* Effect.flip(service.setDefault(""))).reason, "managed");
+        assert.equal(
+          (yield* (yield* Settings.ServerSettingsService).getSettings).defaultTheme,
+          "nightfall",
+        );
+      }),
+      {
+        schemaVersion: 1,
+        organization: "Acme",
+        settings: { defaultTheme: { value: "nightfall", locked: true } },
+      },
+    ),
+  );
+
+  it.effect("keeps a preference save overlapping an apply", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const committing = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let held = false;
+      const gated = FileSystem.FileSystem.of({
+        ...fs,
+        rename: (from, to) => {
+          if (!held && to.endsWith("settings.json")) {
+            held = true;
+            return Deferred.succeed(committing, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.andThen(fs.rename(from, to)),
+            );
+          }
+          return fs.rename(from, to);
+        },
+      });
+      yield* withEnvironmentThemes(
+        {},
+        Effect.gen(function* () {
+          const settings = yield* Settings.ServerSettingsService;
+          const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+          const save = yield* settings
+            .updateSettings({ newWorktreesStartFromOrigin: false })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(committing);
+          const apply = yield* themes
+            .setDefault("ocean")
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(save);
+          yield* Fiber.join(apply);
+          const current = yield* settings.getSettings;
+          assert.equal(current.defaultTheme, "ocean");
+          assert.equal(current.newWorktreesStartFromOrigin, false);
+        }),
+      ).pipe(Effect.provideService(FileSystem.FileSystem, gated));
+    }),
+  );
+
+  it.effect("never replaces another publisher during create", () =>
+    withEnvironmentThemes(
+      { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
+      Effect.gen(function* () {
+        const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+        const error = yield* Effect.flip(
+          EnvironmentTheme.publishThemeContents({
+            themesDir: environmentThemesDir,
+            themeId: "nightfall",
+            raw: encodeThemeFile(SHARED_THEME),
+            overwrite: false,
+          }),
+        );
+        assert.equal(error._tag, "ThemeLibraryError");
+        assert.deepEqual(
+          yield* (yield* EnvironmentTheme.EnvironmentThemeService).read("nightfall"),
+          { id: "nightfall", ...NIGHTFALL_THEME },
+        );
+      }),
+    ),
   );
 
   it.effect(
@@ -170,7 +280,7 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
             "invalid",
           );
           const colors = Object.fromEntries(
-            Array.from({ length: 600 }, (_, i) => [`color${i}`, "#123456".repeat(8)]),
+            Array.from({ length: 600 }, (_, i) => [`color${i}${"x".repeat(50)}`, "#123456"]),
           );
           assert.equal(
             (yield* Effect.flip(
@@ -204,7 +314,7 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
           (yield* Effect.flip(
             service.save({ id: "aaa", theme: NIGHTFALL_THEME, overwrite: false }),
           )).reason,
-          "storage",
+          "limit",
         );
         assert.equal((yield* service.current).length, count);
         assert.equal((yield* Effect.flip(service.read("aaa"))).reason, "not_found");
@@ -274,6 +384,11 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
         "unresolved.json":
           '{ "name": "X", "appearance": "dark", "canvas": "{{ background }}", "accent": "#7aa2f7" }',
         "malformed.json": "{ not json",
+        "css-var.json": JSON.stringify({
+          name: "Unsupported",
+          appearance: "dark",
+          colors: { accent: "var(--x)" },
+        }),
         "no-colors.json": '{ "name": "Empty", "appearance": "dark" }',
         "Bad Name.json": encodeThemeFile(SHARED_THEME),
         "ocean.json": encodeThemeFile(SHARED_THEME),
@@ -285,6 +400,9 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
           (yield* currentThemes).map((theme) => theme.id),
           ["nightfall", "notepad"],
         );
+        const service = yield* EnvironmentTheme.EnvironmentThemeService;
+        yield* service.remove("malformed");
+        yield* service.remove("css-var");
       }),
     ),
   );

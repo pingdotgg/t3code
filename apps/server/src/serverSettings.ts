@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  isManagedSettingPath,
   ModelSelection,
   ProjectId,
   ProjectScript,
@@ -25,6 +26,7 @@ import {
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
@@ -262,6 +264,8 @@ export class ServerSettingsService extends Context.Service<
 
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    readonly setDefaultTheme: (id: string) => Effect.Effect<ServerSettings, ServerSettingsError>;
+
     readonly updateSettings: (
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
@@ -324,6 +328,7 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
     start: Effect.void,
     ready: Effect.void,
     getSettings,
+    setDefaultTheme: (id) => updateTestSettings((current) => defaultThemeSettings(current, id)),
     updateSettings: (patch) =>
       updateTestSettings((currentSettings) =>
         Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
@@ -666,6 +671,17 @@ function foldLegacyProjectSettings(
     ...deriveLegacyProjectOverrides({ projectSettingsOverrides }),
   };
 }
+
+const defaultThemeSettings = Effect.fn("ServerSettings.defaultTheme")(function* (
+  current: ServerSettings,
+  id: string,
+) {
+  return {
+    ...current,
+    defaultTheme: id,
+    defaultThemeSetAt: id === "" ? "" : DateTime.formatIso(yield* DateTime.now),
+  };
+});
 
 const make = Effect.gen(function* () {
   const { settingsPath } = yield* ServerConfig.ServerConfig;
@@ -1342,6 +1358,22 @@ const make = Effect.gen(function* () {
     start,
     ready: Deferred.await(startedDeferred),
     getSettings: getMaterializedSettings,
+    setDefaultTheme: (id) =>
+      updateAndPersistSettings({}, (current) => {
+        const locked = ["defaultTheme", "defaultThemeSetAt"].find((key) =>
+          isManagedSettingPath(managedPolicy, key),
+        );
+        return locked === undefined
+          ? defaultThemeSettings(current, id)
+          : Effect.fail(
+              new ServerSettingsError({
+                settingsPath,
+                operation: "write-managed-setting",
+                managedSetting: locked,
+                managedBy: managedPolicy?.organization,
+              }),
+            );
+      }),
     updateSettings: (patch) =>
       updateAndPersistSettings(patch, (current) =>
         ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(

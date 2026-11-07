@@ -55,6 +55,14 @@ export type T3McpToolSummaryAction =
   | "environment-link"
   | "environment-unlink"
   | "environment-update"
+  | "theme-list"
+  | "theme-read"
+  | "theme-create"
+  | "theme-update"
+  | "theme-delete"
+  | "theme-duplicate"
+  | "theme-apply"
+  | "theme-clear-default"
   | "attachment-prepare"
   | "attachment-discard"
   | "attachment-send"
@@ -353,6 +361,26 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_environment_preferences_update: tool(
     ["Update", "Updating", "Updated", "environment preferences"],
     "environment-update",
+  ),
+  t3_theme_list: tool(["List", "Listing", "Listed", "environment themes"], "theme-list"),
+  t3_theme_read: tool(["Read", "Reading", "Read", "an environment theme"], "theme-read"),
+  t3_theme_create: tool(
+    ["Publish", "Publishing", "Published", "an environment theme"],
+    "theme-create",
+  ),
+  t3_theme_update: tool(["Update", "Updating", "Updated", "an environment theme"], "theme-update"),
+  t3_theme_delete: tool(["Delete", "Deleting", "Deleted", "an environment theme"], "theme-delete"),
+  t3_theme_duplicate: tool(
+    ["Duplicate", "Duplicating", "Duplicated", "an environment theme"],
+    "theme-duplicate",
+  ),
+  t3_theme_apply: tool(
+    ["Apply", "Applying", "Applied", "the environment theme default"],
+    "theme-apply",
+  ),
+  t3_theme_clear_default: tool(
+    ["Clear", "Clearing", "Cleared", "the environment theme default"],
+    "theme-clear-default",
   ),
   t3_thread_launch: tool(["Launch", "Launching", "Launched", "a project thread"], "thread-create"),
   t3_project_list: tool(["List", "Listing", "Listed", "projects"], "project-list"),
