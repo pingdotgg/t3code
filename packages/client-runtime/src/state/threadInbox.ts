@@ -59,6 +59,18 @@ type WorkingSortInput = Pick<
   "id" | "environmentId" | "createdAt" | "latestRun" | "latestUserAuthoredMessageAt"
 >;
 
+type SnoozedSortInput = Pick<EnvironmentThreadShell, "id" | "environmentId" | "snoozedUntil">;
+
+/** Best available stand-in for when a thread entered Working, before a live enter stamp. */
+function deriveWorkingEnterTimestamp(thread: WorkingSortInput): number {
+  return Math.max(
+    toSortableTimestamp(thread.createdAt) ?? 0,
+    toSortableTimestamp(thread.latestUserAuthoredMessageAt ?? undefined) ?? 0,
+    toSortableTimestamp(thread.latestRun?.requestedAt ?? undefined) ?? 0,
+    toSortableTimestamp(thread.latestRun?.startedAt ?? undefined) ?? 0,
+  );
+}
+
 export function sortWorkingThreadsBySend<T extends WorkingSortInput>(threads: readonly T[]): T[] {
   const timestamps = new Map(
     threads.map((thread) => [
@@ -76,6 +88,31 @@ export function sortWorkingThreadsBySend<T extends WorkingSortInput>(threads: re
   return sortNewestFirst(threads, timestamps);
 }
 
+/** Newest entry into Working first. Prefer a live enter stamp so wakes do not reshuffle. */
+export function sortWorkingThreadsByEnter<T extends WorkingSortInput>(
+  threads: readonly T[],
+  observedEnterAt?: (thread: T) => number | undefined,
+): T[] {
+  const timestamps = new Map(
+    threads.map((thread) => [
+      thread,
+      observedEnterAt?.(thread) ?? deriveWorkingEnterTimestamp(thread),
+    ]),
+  );
+  return sortNewestFirst(threads, timestamps);
+}
+
+/** Soonest unsnooze first. */
+export function sortSnoozedThreadsByWake<T extends SnoozedSortInput>(threads: readonly T[]): T[] {
+  const timestamps = new Map(
+    threads.map((thread) => [
+      thread,
+      toSortableTimestamp(thread.snoozedUntil ?? undefined) ?? Number.POSITIVE_INFINITY,
+    ]),
+  );
+  return sortOldestFirst(threads, timestamps);
+}
+
 function sortNewestFirst<T extends Pick<EnvironmentThreadShell, "id" | "environmentId">>(
   threads: readonly T[],
   timestamps: ReadonlyMap<T, number>,
@@ -83,6 +120,18 @@ function sortNewestFirst<T extends Pick<EnvironmentThreadShell, "id" | "environm
   return [...threads].sort(
     (left, right) =>
       timestamps.get(right)! - timestamps.get(left)! ||
+      left.id.localeCompare(right.id) ||
+      left.environmentId.localeCompare(right.environmentId),
+  );
+}
+
+function sortOldestFirst<T extends Pick<EnvironmentThreadShell, "id" | "environmentId">>(
+  threads: readonly T[],
+  timestamps: ReadonlyMap<T, number>,
+): T[] {
+  return [...threads].sort(
+    (left, right) =>
+      timestamps.get(left)! - timestamps.get(right)! ||
       left.id.localeCompare(right.id) ||
       left.environmentId.localeCompare(right.environmentId),
   );
@@ -102,6 +151,7 @@ type TrackedInboxThread = WorkingThreadInput &
       | "snoozedUntil"
       | "activeOrderKey"
       | "pendingGuestMessageCount"
+      | "latestUserAuthoredMessageAt"
     >
   >;
 
@@ -126,6 +176,7 @@ export function createInboxReturnTracker() {
     { working: boolean; deadline: number | null; placement: string | null }
   >();
   const returns = new Map<string, number>();
+  const entries = new Map<string, number>();
   const listeners = new Set<() => void>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let version = 0;
@@ -149,6 +200,7 @@ export function createInboxReturnTracker() {
             state.working = false;
             state.deadline = null;
             returns.set(key, at);
+            entries.delete(key);
           }
         }
         schedule();
@@ -169,13 +221,19 @@ export function createInboxReturnTracker() {
     observe(threads: readonly TrackedInboxThread[] | null): {
       readonly isWorking: (thread: WorkingThreadInput & ThreadKeyInput) => boolean;
       readonly returnedAt: (thread: ThreadKeyInput) => number | undefined;
+      readonly enteredAt: (thread: ThreadKeyInput) => number | undefined;
     } {
       if (threads === null) {
         clearTimeout(timer);
         timer = undefined;
         states.clear();
         returns.clear();
-        return { isWorking: isThreadWorking, returnedAt: () => undefined };
+        entries.clear();
+        return {
+          isWorking: isThreadWorking,
+          returnedAt: () => undefined,
+          enteredAt: () => undefined,
+        };
       }
       const present = new Set<string>();
       const at = now();
@@ -220,6 +278,19 @@ export function createInboxReturnTracker() {
             ? (previous.deadline ?? at + WORKING_EXIT_GRACE_MS)
             : null;
         const working = actual || (deadline !== null && deadline > at);
+        if (working) {
+          if (!previous?.working) {
+            // Cold load seeds from the shell; a live enter also takes wall-clock so new work rises.
+            entries.set(
+              key,
+              previous === undefined
+                ? deriveWorkingEnterTimestamp(thread)
+                : Math.max(deriveWorkingEnterTimestamp(thread), at),
+            );
+          }
+        } else {
+          entries.delete(key);
+        }
         if (previous?.working && !working) returns.set(key, at);
         states.set(key, { working, deadline: working ? deadline : null, placement });
       }
@@ -227,19 +298,23 @@ export function createInboxReturnTracker() {
         if (!present.has(key)) {
           states.delete(key);
           returns.delete(key);
+          entries.delete(key);
         }
       }
       schedule();
       const observedWorking = new Map<string, boolean>();
       states.forEach((state, key) => observedWorking.set(key, state.working));
       const observedReturns = new Map(returns);
+      const observedEntries = new Map(entries);
       return {
         isWorking: (thread) => observedWorking.get(keyOf(thread)) ?? isThreadWorking(thread),
         returnedAt: (thread) => observedReturns.get(keyOf(thread)),
+        enteredAt: (thread) => observedEntries.get(keyOf(thread)),
       };
     },
     isWorking: (thread: WorkingThreadInput & ThreadKeyInput) =>
       states.get(keyOf(thread))?.working ?? isThreadWorking(thread),
     returnedAt: (thread: ThreadKeyInput) => returns.get(keyOf(thread)),
+    enteredAt: (thread: ThreadKeyInput) => entries.get(keyOf(thread)),
   };
 }

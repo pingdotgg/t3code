@@ -5,6 +5,8 @@ import {
   createInboxReturnTracker,
   isThreadWorking,
   sortInboxThreadsByReturn,
+  sortSnoozedThreadsByWake,
+  sortWorkingThreadsByEnter,
   sortWorkingThreadsBySend,
 } from "./threadInbox.ts";
 
@@ -239,5 +241,101 @@ describe("sortWorkingThreadsBySend", () => {
     expect(
       sortWorkingThreadsBySend([launched, sentFirst, sentLast]).map((thread) => thread.id),
     ).toEqual(["sent-last", "sent-first", "launched"]);
+  });
+});
+
+describe("sortWorkingThreadsByEnter", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("keeps enter order when a later run wakes the same working thread", () => {
+    const enteredFirst = {
+      ...thread("entered-first", true),
+      latestUserAuthoredMessageAt: "2026-06-01T01:00:00.000Z",
+      latestRun: {
+        runId: RunId.make("run:first"),
+        status: "running" as const,
+        requestedAt: "2026-06-01T01:00:00.000Z",
+        startedAt: "2026-06-01T01:00:00.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    };
+    const enteredLast = {
+      ...thread("entered-last", true),
+      latestUserAuthoredMessageAt: "2026-06-01T02:00:00.000Z",
+      latestRun: {
+        runId: RunId.make("run:later"),
+        status: "running" as const,
+        requestedAt: "2026-06-01T02:00:00.000Z",
+        startedAt: "2026-06-01T02:00:00.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    };
+    const tracker = createInboxReturnTracker();
+    tracker.observe([enteredFirst, enteredLast]);
+    const woken = {
+      ...enteredFirst,
+      latestRun: {
+        ...enteredFirst.latestRun,
+        runId: RunId.make("run:wake"),
+        requestedAt: "2026-06-01T04:00:00.000Z",
+        startedAt: "2026-06-01T04:00:00.000Z",
+      },
+    };
+    tracker.observe([woken, enteredLast]);
+    expect(
+      sortWorkingThreadsByEnter([woken, enteredLast], tracker.enteredAt).map((entry) => entry.id),
+    ).toEqual(["entered-last", "entered-first"]);
+    expect(sortWorkingThreadsByEnter([woken, enteredLast]).map((entry) => entry.id)).toEqual([
+      "entered-first",
+      "entered-last",
+    ]);
+  });
+
+  it("puts a live re-enter above an older working thread", () => {
+    vi.setSystemTime(Date.parse("2026-06-01T01:00:00.000Z"));
+    const tracker = createInboxReturnTracker();
+    const older = {
+      ...thread("older", true),
+      createdAt: "2026-06-01T00:00:00.000Z",
+      latestUserAuthoredMessageAt: "2026-06-01T01:00:00.000Z",
+    };
+    const newer = {
+      ...thread("newer", false),
+      createdAt: "2026-06-01T00:00:00.000Z",
+      latestUserAuthoredMessageAt: "2026-06-01T00:30:00.000Z",
+    };
+    tracker.observe([older, newer]);
+    vi.setSystemTime(Date.parse("2026-06-01T03:00:00.000Z"));
+    const workingNewer = { ...newer, runtime: thread("newer", true).runtime };
+    tracker.observe([older, workingNewer]);
+    expect(
+      sortWorkingThreadsByEnter([older, workingNewer], tracker.enteredAt).map((entry) => entry.id),
+    ).toEqual(["newer", "older"]);
+  });
+});
+
+describe("sortSnoozedThreadsByWake", () => {
+  it("orders by soonest unsnooze first", () => {
+    const wakesLater = {
+      ...thread("wakes-later", false),
+      snoozedUntil: "2099-01-03T00:00:00.000Z",
+    };
+    const wakesSooner = {
+      ...thread("wakes-sooner", false),
+      snoozedUntil: "2099-01-01T00:00:00.000Z",
+    };
+    expect(sortSnoozedThreadsByWake([wakesLater, wakesSooner]).map((entry) => entry.id)).toEqual([
+      "wakes-sooner",
+      "wakes-later",
+    ]);
   });
 });
