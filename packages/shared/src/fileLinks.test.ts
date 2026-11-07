@@ -43,7 +43,7 @@ describe("resolvePathLinkTarget", () => {
     [
       String.raw`src\index.ts:12:7`,
       String.raw`C:\Users\Jane Doe\project`,
-      String.raw`C:\Users\Jane Doe\project\src\index.ts:12:7`,
+      "C:/Users/Jane Doe/project/src/index.ts:12:7",
     ],
     [
       String.raw`.\src\index.ts:12`,
@@ -63,8 +63,8 @@ describe("resolvePathLinkTarget", () => {
 
   // regression: #19627 Windows home paths match case-insensitively
   it.each([
-    ["C:\\users\\alice\\project", "C:\\users\\alice\\notes.md:3"],
-    ["C:/uSeRs/alice/project", "C:/uSeRs/alice\\notes.md:3"],
+    ["C:\\users\\alice\\project", "C:/users/alice/notes.md:3"],
+    ["C:/uSeRs/alice/project", "C:/uSeRs/alice/notes.md:3"],
   ])("resolves home paths against the Windows cwd %s", (cwd, expected) => {
     expect(resolvePathLinkTarget("~/notes.md:3", cwd)).toBe(expected);
   });

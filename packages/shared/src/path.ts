@@ -19,6 +19,11 @@ export function isWindowsAbsolutePath(value: string): boolean {
   return isUncPath(value) || isWindowsDrivePath(value);
 }
 
+/** Drive paths use `/`. UNC stays `\\server\share`, which is not a slash path. */
+export function slashWindowsDrivePath(value: string): string {
+  return isWindowsDrivePath(value) ? value.replaceAll("\\", "/") : value;
+}
+
 export function isExplicitRelativePath(value: string): boolean {
   return (
     value === "." ||
@@ -161,8 +166,14 @@ export function resolvePastedPath(previous: string, next: string): string {
 
 export function resolveWorkspaceFilePath(path: string, workspaceRoot: string): string {
   if (isAbsolutePath(path) || path.startsWith("~/") || path.startsWith("~\\")) return path;
-  const base = workspaceRoot.replace(/[/\\]+$/, "");
-  return isWindowsAbsolutePath(workspaceRoot)
-    ? `${base}\\${path.replaceAll("/", "\\")}`
-    : `${base}/${path}`;
+  if (isWindowsDrivePath(workspaceRoot)) {
+    const base = slashWindowsDrivePath(workspaceRoot).replace(/\/+$/, "");
+    return `${base}/${path.replaceAll("\\", "/")}`;
+  }
+  if (isUncPath(workspaceRoot)) {
+    const base = workspaceRoot.replace(/[\\/]+$/, "");
+    return `${base}\\${path.replaceAll("/", "\\")}`;
+  }
+  const base = workspaceRoot.replace(/[/]+$/, "");
+  return `${base}/${path}`;
 }

@@ -22,7 +22,11 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
+import {
+  isExplicitRelativePath,
+  isWindowsAbsolutePath,
+  slashWindowsDrivePath,
+} from "@t3tools/shared/path";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -248,8 +252,10 @@ export const make = Effect.gen(function* () {
       }
 
       return {
-        parentPath,
-        entries: entries.toSorted((left, right) => left.name.localeCompare(right.name)),
+        parentPath: slashWindowsDrivePath(parentPath),
+        entries: entries
+          .toSorted((left, right) => left.name.localeCompare(right.name))
+          .map((entry) => ({ ...entry, fullPath: slashWindowsDrivePath(entry.fullPath) })),
       };
     },
   );

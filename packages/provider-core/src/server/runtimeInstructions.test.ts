@@ -11,6 +11,8 @@ describe("buildRuntimeInstructions", () => {
     });
 
     assert.include(instructions, "through the Antigravity harness, as gemini-3.8-flash.");
+    assert.include(instructions, "Write Windows drive paths with `/`");
+    assert.include(instructions, "<C:/Users/First Last/shot.png>");
     assert.notInclude(instructions, "<pull_request_linking>");
   });
 

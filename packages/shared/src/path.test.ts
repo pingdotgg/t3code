@@ -12,7 +12,7 @@ describe("path helpers", () => {
   // regression: #17923 literal colons in names are kept, not parsed as positions
   it.each([
     ["report:123", "/workspace", "/workspace/report:123"],
-    ["src/file", "C:\\Workspace\\", "C:\\Workspace\\src\\file"],
+    ["src/file", "C:\\Workspace\\", "C:/Workspace/src/file"],
     ["~/report:123", "/workspace", "~/report:123"],
   ])("resolves literal path %s within %s", (path, root, expected) => {
     expect(resolveWorkspaceFilePath(path, root)).toBe(expected);
