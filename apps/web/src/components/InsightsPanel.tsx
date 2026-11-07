@@ -43,7 +43,6 @@ import {
 
 import { useNowSecond } from "~/hooks/useNowSecond";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { formatContextWindowTokens } from "~/lib/contextWindow";
 import { cn } from "~/lib/utils";
 import { useQuietThreadProjection } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
@@ -219,22 +218,20 @@ export function InsightsPanel({
   const headerBits = [
     trace !== null ? formatDuration(trace.totalMs) : null,
     trace !== null ? `${trace.turns.length} ${trace.turns.length === 1 ? "turn" : "turns"}` : null,
-    tokenUsage?.totalTokens != null
-      ? `${formatContextWindowTokens(tokenUsage.totalTokens)} tokens`
-      : null,
+    tokenUsage?.totalTokens != null ? `${formatTokens(tokenUsage.totalTokens)} tokens` : null,
     costLabel,
   ].filter((bit): bit is string => bit !== null);
 
   return (
-    <div className="flex h-full min-w-0 flex-col bg-background">
+    <div className="@container flex h-full min-w-0 flex-col bg-background">
       <div
         className="flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3"
         data-surface-subheader
       >
         <ChartNoAxesGantt className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-        <h2 className="min-w-0 truncate text-sm font-medium">Insights</h2>
+        <h2 className="shrink-0 text-sm font-medium">Insights</h2>
         {headerBits.length > 0 ? (
-          <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
+          <span className="ml-auto min-w-0 truncate text-xs tabular-nums text-muted-foreground">
             {headerBits.join(" · ")}
           </span>
         ) : null}
@@ -251,20 +248,20 @@ export function InsightsPanel({
         </div>
       ) : trace === null ? (
         <ScrollArea className="min-h-0 flex-1">
-          <div className="flex flex-col gap-3 p-3">
+          <div className="flex flex-col gap-4 p-3">
             <TokenUsageSummary
               usage={tokenUsage}
               cost={threadCost}
               pricingPending={pricingPending}
               pricingError={pricingError}
             />
+            <ContextOccupancyChart series={occupancy} selectedRunId={null} />
             <TurnTokenBreakdown
               rows={turnRows}
               costs={costs}
               selectedRunId={null}
               onSelect={() => undefined}
             />
-            <ContextOccupancyChart series={occupancy} selectedRunId={null} />
             <p className="text-2xs text-muted-foreground">
               Timing appears after the first turn starts. Token totals update as the provider
               reports them.
@@ -385,53 +382,45 @@ function FlameChartPanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-1 border-b border-border/40 px-3 py-1.5">
-        <p className="mr-auto text-2xs text-muted-foreground">
-          Scroll to zoom · drag to pan · click for detail · double-click to focus
-          {axis.breaks.length > 0 ? " · torn edges mark collapsed idle" : ""}
-        </p>
-        <Button
-          type="button"
-          variant="ghost-muted"
-          size="icon-xs"
-          aria-label="Zoom out"
-          onClick={() => zoomBy(0.7)}
-        >
-          <Minus />
-        </Button>
-        <span className="min-w-10 text-center text-2xs tabular-nums text-muted-foreground">
-          {zoomFactor.toFixed(zoomFactor >= 10 ? 0 : 1)}×
-        </span>
-        <Button
-          type="button"
-          variant="ghost-muted"
-          size="icon-xs"
-          aria-label="Zoom in"
-          onClick={() => zoomBy(1.4)}
-        >
-          <Plus />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost-muted"
-          size="icon-xs"
-          aria-label="Fit timeline"
-          onClick={() => commitView(fitView)}
-        >
-          <Scan />
-        </Button>
-      </div>
-
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-3 p-3">
-          <Summary
-            trace={trace}
-            collapsedIdleMs={axis.collapsedIdleMs}
-            tokenUsage={tokenUsage}
-            threadCost={threadCost}
-            pricingPending={pricingPending}
-            pricingError={pricingError}
-          />
+      {/* Flame stays outside the scroller so wheel zoom never fights panel scroll. */}
+      <div className="flex max-h-[45%] shrink-0 flex-col gap-2 overflow-y-auto border-b border-border/40 p-3">
+        <section aria-label="Timeline" className="flex min-h-0 flex-col gap-1.5">
+          <div className="flex min-w-0 items-center gap-1">
+            <h3 className="shrink-0 text-sm font-medium text-foreground">Timeline</h3>
+            <p className="mr-auto min-w-0 truncate text-2xs text-muted-foreground">
+              Scroll to zoom · drag to pan · click for detail
+            </p>
+            <Button
+              type="button"
+              variant="ghost-muted"
+              size="icon-xs"
+              aria-label="Zoom out"
+              onClick={() => zoomBy(0.7)}
+            >
+              <Minus />
+            </Button>
+            <span className="min-w-9 text-center text-2xs tabular-nums text-muted-foreground">
+              {zoomFactor.toFixed(zoomFactor >= 10 ? 0 : 1)}×
+            </span>
+            <Button
+              type="button"
+              variant="ghost-muted"
+              size="icon-xs"
+              aria-label="Zoom in"
+              onClick={() => zoomBy(1.4)}
+            >
+              <Plus />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost-muted"
+              size="icon-xs"
+              aria-label="Fit timeline"
+              onClick={() => commitView(fitView)}
+            >
+              <Scan />
+            </Button>
+          </div>
           <FlameViewport
             trace={trace}
             axis={axis}
@@ -443,32 +432,46 @@ function FlameChartPanel({
             onSelect={setSelection}
             onFocusRange={focusRange}
           />
+        </section>
+        {selection !== null && selectedTurn !== null ? (
+          <DetailCard
+            turn={selectedTurn}
+            span={selectedSpan}
+            item={selectedItem}
+            usage={selectedUsage}
+            cost={costs.get(selectedTurn.runId) ?? null}
+            onClear={() => setSelection(null)}
+            onFocus={() => {
+              if (selectedSpan !== null) focusRange(selectedSpan.startMs, selectedSpan.endMs);
+              else focusRange(selectedTurn.requestedAtMs, selectedTurn.endMs);
+            }}
+          />
+        ) : (
+          <p className="text-2xs text-muted-foreground">
+            Click a turn or span to inspect it.
+            {axis.collapsedIdleMs > 0
+              ? ` Idle between turns collapsed: ${formatDuration(axis.collapsedIdleMs)}.`
+              : ""}
+          </p>
+        )}
+      </div>
+
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="flex flex-col gap-4 p-3">
+          <Summary
+            trace={trace}
+            tokenUsage={tokenUsage}
+            threadCost={threadCost}
+            pricingPending={pricingPending}
+            pricingError={pricingError}
+          />
+          <ContextOccupancyChart series={occupancy} selectedRunId={selection?.runId ?? null} />
           <TurnTokenBreakdown
             rows={turnRows}
             costs={costs}
             selectedRunId={selection?.runId ?? null}
             onSelect={(runId) => setSelection({ type: "turn", runId })}
           />
-          <ContextOccupancyChart series={occupancy} selectedRunId={selection?.runId ?? null} />
-          {selection !== null && selectedTurn !== null ? (
-            <DetailCard
-              turn={selectedTurn}
-              span={selectedSpan}
-              item={selectedItem}
-              usage={selectedUsage}
-              cost={costs.get(selectedTurn.runId) ?? null}
-              onClear={() => setSelection(null)}
-              onFocus={() => {
-                if (selectedSpan !== null) focusRange(selectedSpan.startMs, selectedSpan.endMs);
-                else focusRange(selectedTurn.requestedAtMs, selectedTurn.endMs);
-              }}
-            />
-          ) : (
-            <p className="text-2xs text-muted-foreground">
-              Click a turn or span to inspect it. Torn edges mark long idle gaps collapsed between
-              turns.
-            </p>
-          )}
         </div>
       </ScrollArea>
     </div>
@@ -477,11 +480,11 @@ function FlameChartPanel({
 
 const OCCUPANCY_CHART = {
   width: 320,
-  height: 112,
-  padLeft: 36,
-  padRight: 8,
-  padTop: 10,
-  padBottom: 22,
+  height: 64,
+  padLeft: 4,
+  padRight: 4,
+  padTop: 6,
+  padBottom: 6,
 } as const;
 
 function ContextOccupancyChart({
@@ -491,7 +494,8 @@ function ContextOccupancyChart({
   readonly series: ContextOccupancySeries | null;
   readonly selectedRunId: RunId | null;
 }) {
-  if (series === null || series.points.length === 0) return null;
+  // One point is a lone dot, not a series — skip until compaction or another turn exists.
+  if (series === null || series.points.length < 2) return null;
 
   const { width, height, padLeft, padRight, padTop, padBottom } = OCCUPANCY_CHART;
   const plotWidth = width - padLeft - padRight;
@@ -501,13 +505,10 @@ function ContextOccupancyChart({
     series.peakUsedTokens,
     ...series.points.map((point) => point.usedTokens),
   );
-  // Scale to observed fill. Using the model window as the ceiling flattens
-  // the line whenever peak << window (e.g. 262k on a 1M model).
   const windowMax = series.maxTokens;
-  const ceiling =
-    windowMax !== null && windowMax > 0 && dataPeak >= windowMax * 0.5 ? windowMax : dataPeak;
+  // Prefer window ceiling when known so fill reads as % of context, not a full chart.
+  const ceiling = windowMax !== null && windowMax > 0 ? Math.max(windowMax, dataPeak) : dataPeak;
   const lastIndex = Math.max(0, series.points.length - 1);
-  // Equal point spacing: wall-clock idle would crush rises/drops into a spike.
   const xForIndex = (index: number) =>
     padLeft + (lastIndex === 0 ? 0 : (index / lastIndex) * plotWidth);
   const yFor = (tokens: number) => padTop + (1 - tokens / ceiling) * plotHeight;
@@ -522,48 +523,37 @@ function ContextOccupancyChart({
     `L ${xForIndex(lastIndex).toFixed(2)} ${yFor(0).toFixed(2)}`,
     "Z",
   ].join(" ");
-  const maxY = windowMax !== null && windowMax <= ceiling ? yFor(windowMax) : null;
-  const geometry = { linePoints, areaPath, maxY, xForIndex, yFor, ceiling };
-  const peakLabel = formatContextWindowTokens(series.peakUsedTokens);
-  const maxLabel = series.maxTokens === null ? null : formatContextWindowTokens(series.maxTokens);
-  const durationLabel = formatDuration(
-    Math.max(0, (series.points.at(-1)?.atMs ?? 0) - (series.points[0]?.atMs ?? 0)),
-  );
+  const peakLabel = formatTokens(series.peakUsedTokens);
+  const maxLabel = series.maxTokens === null ? null : formatTokens(series.maxTokens);
+  const fillPct =
+    windowMax !== null && windowMax > 0
+      ? Math.round((series.peakUsedTokens / windowMax) * 100)
+      : null;
+  const meta =
+    maxLabel === null
+      ? `Peak ${peakLabel}`
+      : fillPct === null
+        ? `Peak ${peakLabel} of ${maxLabel}`
+        : `Peak ${peakLabel} of ${maxLabel} · ${fillPct}%`;
 
   return (
-    <section aria-label="Context over time" className="flex min-w-0 shrink-0 flex-col gap-1.5">
+    <section aria-label="Context over time" className="flex min-w-0 shrink-0 flex-col gap-1">
       <div className="flex items-baseline justify-between gap-3">
-        <h3 className="text-sm font-medium text-foreground">Context over time</h3>
-        <span className="text-2xs tabular-nums text-muted-foreground">
-          Peak {peakLabel}
-          {maxLabel === null ? "" : ` · window ${maxLabel}`}
-          {` · ${durationLabel}`}
-        </span>
+        <h3 className="text-sm font-medium text-foreground">Context</h3>
+        <span className="min-w-0 truncate text-2xs tabular-nums text-muted-foreground">{meta}</span>
       </div>
       <svg
         role="img"
-        aria-label={`Context occupancy rose to ${peakLabel} tokens over ${durationLabel}`}
+        aria-label={`Context occupancy peaked at ${meta}`}
         viewBox={`0 0 ${width} ${height}`}
-        className="h-28 w-full overflow-visible rounded-md border border-border/50 bg-muted/20"
+        className="h-16 w-full bg-muted/15"
         preserveAspectRatio="none"
       >
-        <path d={geometry.areaPath} className="fill-foreground/10" />
-        {geometry.maxY !== null ? (
-          <line
-            x1={padLeft}
-            x2={width - OCCUPANCY_CHART.padRight}
-            y1={geometry.maxY}
-            y2={geometry.maxY}
-            className="stroke-muted-foreground/40"
-            strokeWidth={1}
-            strokeDasharray="3 3"
-            vectorEffect="non-scaling-stroke"
-          />
-        ) : null}
+        <path d={areaPath} className="fill-foreground/10" />
         <polyline
-          points={geometry.linePoints}
+          points={linePoints}
           fill="none"
-          className="stroke-foreground/75"
+          className="stroke-foreground/70"
           strokeWidth={1.5}
           strokeLinejoin="round"
           strokeLinecap="round"
@@ -572,12 +562,12 @@ function ContextOccupancyChart({
         {series.points.map((point, index) => {
           const selected = selectedRunId !== null && point.runId === selectedRunId;
           const isCompaction = point.kind !== "turn";
-          const radius = selected ? 3.2 : isCompaction ? 2.6 : 2;
+          const radius = selected ? 2.8 : isCompaction ? 2.2 : 1.6;
           return (
             <circle
               key={`${point.kind}:${point.atMs}:${point.usedTokens}:${point.runId ?? ""}`}
-              cx={geometry.xForIndex(index)}
-              cy={geometry.yFor(point.usedTokens)}
+              cx={xForIndex(index)}
+              cy={yFor(point.usedTokens)}
               r={radius}
               className={
                 selected
@@ -593,27 +583,7 @@ function ContextOccupancyChart({
             />
           );
         })}
-        <text x={4} y={padTop + 3} className="fill-muted-foreground text-4xs">
-          {formatContextWindowTokens(geometry.ceiling)}
-        </text>
-        <text x={4} y={height - padBottom + 3} className="fill-muted-foreground text-4xs">
-          0
-        </text>
-        <text x={padLeft} y={height - 6} className="fill-muted-foreground text-4xs">
-          start
-        </text>
-        <text
-          x={width - 4}
-          y={height - 6}
-          textAnchor="end"
-          className="fill-muted-foreground text-4xs"
-        >
-          now
-        </text>
       </svg>
-      <p className="text-2xs text-muted-foreground">
-        Per-turn context fill. Compaction marks the drop when the window is compacted.
-      </p>
     </section>
   );
 }
@@ -634,14 +604,12 @@ function timingPhaseSegments(trace: ThreadTimingTrace): readonly ShareSegment[] 
 
 function Summary({
   trace,
-  collapsedIdleMs,
   tokenUsage,
   threadCost,
   pricingPending,
   pricingError,
 }: {
   readonly trace: ThreadTimingTrace;
-  readonly collapsedIdleMs: number;
   readonly tokenUsage: ThreadTurnTokenUsageSummary | null;
   readonly threadCost: TurnCostEstimate | null;
   readonly pricingPending: boolean;
@@ -656,8 +624,13 @@ function Summary({
       (tokenUsage.cacheCreationTokens ?? 0) > 0 ||
       (tokenUsage.outputTokens ?? 0) > 0);
   return (
-    <div className={cn("grid shrink-0 gap-4", showTokens ? "lg:grid-cols-2" : "grid-cols-1")}>
-      <TimingSummary trace={trace} collapsedIdleMs={collapsedIdleMs} />
+    <div
+      className={cn(
+        "grid shrink-0 gap-4",
+        showTokens ? "grid-cols-1 @[28rem]:grid-cols-2" : "grid-cols-1",
+      )}
+    >
+      <TimingSummary trace={trace} />
       {showTokens ? (
         <TokenUsageSummary
           usage={tokenUsage}
@@ -670,13 +643,7 @@ function Summary({
   );
 }
 
-function TimingSummary({
-  trace,
-  collapsedIdleMs,
-}: {
-  readonly trace: ThreadTimingTrace;
-  readonly collapsedIdleMs: number;
-}) {
+function TimingSummary({ trace }: { readonly trace: ThreadTimingTrace }) {
   const segments = timingPhaseSegments(trace);
   const phaseTotal = segments.reduce((sum, segment) => sum + segment.value, 0);
   return (
@@ -703,11 +670,6 @@ function TimingSummary({
           <p className="text-xs text-muted-foreground">No working, waiting, or queue time yet.</p>
         </>
       )}
-      {collapsedIdleMs > 0 ? (
-        <p className="text-2xs text-muted-foreground">
-          Idle between turns collapsed: {formatDuration(collapsedIdleMs)}
-        </p>
-      ) : null}
     </section>
   );
 }
@@ -792,32 +754,25 @@ function TokenUsageSummary({
     </>
   );
 
+  const pricingNote =
+    cost !== null ||
+    ((usage.totalTokens ?? 0) <= 0 &&
+      (usage.uncachedInputTokens ?? 0) <= 0 &&
+      (usage.cachedInputTokens ?? 0) <= 0 &&
+      (usage.cacheCreationTokens ?? 0) <= 0 &&
+      (usage.outputTokens ?? 0) <= 0)
+      ? null
+      : pricingPending
+        ? "Estimating API cost…"
+        : pricingError !== null
+          ? "Could not estimate API cost."
+          : null;
+
   return (
     <section aria-label="Thread token usage" className="flex min-w-0 flex-col gap-2">
       {bar}
-      {usage.usageStatus === "partial" ? (
-        <p className="text-2xs text-muted-foreground">
-          Some turns are still running or missing counts; totals may grow.
-        </p>
-      ) : null}
-      {cost?.incomplete === true ? (
-        <p className="text-2xs text-muted-foreground">
-          Cost can be partial when turns are still reporting, mixed, or unpriced.
-        </p>
-      ) : null}
-      {cost === null &&
-      ((usage.totalTokens ?? 0) > 0 ||
-        (usage.uncachedInputTokens ?? 0) > 0 ||
-        (usage.cachedInputTokens ?? 0) > 0 ||
-        (usage.cacheCreationTokens ?? 0) > 0 ||
-        (usage.outputTokens ?? 0) > 0) ? (
-        <p className="text-2xs text-muted-foreground">
-          {pricingPending
-            ? "Estimating API cost…"
-            : pricingError !== null
-              ? "Could not estimate API cost."
-              : "Estimated API cost appears when Usage has rates for the models in this thread."}
-        </p>
+      {pricingNote !== null ? (
+        <p className="text-2xs text-muted-foreground">{pricingNote}</p>
       ) : null}
     </section>
   );
@@ -848,7 +803,7 @@ function TurnTokenBreakdown({
         <h3 className="text-sm font-medium text-foreground">By turn</h3>
         <span className="text-2xs text-muted-foreground">Estimated API cost</span>
       </div>
-      <ul className="max-h-40 divide-y divide-border/40 overflow-x-hidden overflow-y-auto rounded-md border border-border/50">
+      <ul className="divide-y divide-border/40 overflow-x-hidden rounded-md border border-border/50">
         {visible.map((row) => {
           const cost = formatCostEstimate(costs.get(row.runId) ?? null);
           const tokens =
@@ -1021,13 +976,13 @@ function FlameViewport({
   );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2">
+    <div className="flex shrink-0 flex-col gap-2">
       <div
         ref={attachViewport}
         role="application"
         aria-label="Thread timing flame chart"
-        className="relative min-h-40 flex-1 cursor-grab overflow-hidden rounded-lg border border-border/60 bg-muted/25 active:cursor-grabbing"
-        style={{ minHeight: chartHeight }}
+        className="relative cursor-grab overflow-hidden rounded-lg border border-border/60 bg-muted/25 active:cursor-grabbing"
+        style={{ height: chartHeight }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -1095,7 +1050,7 @@ function FlameViewport({
                 "cursor-pointer hover:brightness-110",
                 node.kind === "turn"
                   ? "border-foreground/40 bg-card/90 font-medium text-foreground"
-                  : cn("border-black/10 text-white", SPAN_BAR_CLASS[node.kind]),
+                  : cn("border-black/10 text-background", SPAN_BAR_CLASS[node.kind]),
                 selected && "ring-2 ring-ring ring-offset-1 ring-offset-background",
               )}
               style={{
@@ -1370,7 +1325,7 @@ function DetailCard({
       </header>
 
       {span === null ? (
-        <div className="grid grid-cols-2 gap-2 text-2xs sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-2 text-2xs @[22rem]:grid-cols-3">
           <span className="text-muted-foreground">
             Duration{" "}
             <span className="tabular-nums text-foreground/80">
@@ -1402,7 +1357,7 @@ function DetailCard({
           ) : null}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-2xs sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-2xs @[22rem]:grid-cols-3">
           {facts?.map((fact) => (
             <div key={fact.label} className="min-w-0">
               <p className="text-muted-foreground">{fact.label}</p>
@@ -1413,25 +1368,26 @@ function DetailCard({
       )}
 
       {preview !== null ? (
-        <pre className="max-h-28 overflow-auto rounded-md bg-muted/40 px-2 py-1.5 font-mono text-2xs leading-4.5 whitespace-pre-wrap text-muted-foreground">
+        <pre className="line-clamp-6 overflow-hidden rounded-md bg-muted/40 px-2 py-1.5 font-mono text-2xs leading-4.5 whitespace-pre-wrap text-muted-foreground">
           {preview}
         </pre>
       ) : null}
 
       {span === null ? (
-        <ScrollArea className="max-h-36">
-          <ol className="flex flex-col gap-1 pr-2" aria-label={`Spans in turn ${turn.ordinal}`}>
-            {turn.spans.map((entry) => (
-              <li
-                key={entry.id}
-                className="flex items-center justify-between gap-2 text-xs text-muted-foreground"
-              >
-                <span className="min-w-0 truncate">{entry.label}</span>
-                <span className="shrink-0 tabular-nums">{formatDuration(entry.durationMs)}</span>
-              </li>
-            ))}
-          </ol>
-        </ScrollArea>
+        <ol
+          className="flex max-h-28 flex-col gap-1 overflow-y-auto"
+          aria-label={`Spans in turn ${turn.ordinal}`}
+        >
+          {turn.spans.map((entry) => (
+            <li
+              key={entry.id}
+              className="flex items-center justify-between gap-2 text-xs text-muted-foreground"
+            >
+              <span className="min-w-0 truncate">{entry.label}</span>
+              <span className="shrink-0 tabular-nums">{formatDuration(entry.durationMs)}</span>
+            </li>
+          ))}
+        </ol>
       ) : null}
     </section>
   );
