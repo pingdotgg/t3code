@@ -257,6 +257,45 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect.skipIf(windowsHost)("opens Emacs targets through emacsclient line syntax", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-emacs-" });
+    const executable = path.join(binDir, "emacsclient");
+    yield* fileSystem.writeFileString(executable, "#!/bin/sh\n");
+    yield* fileSystem.chmod(executable, 0o755);
+
+    const spawned: ChildProcess.StandardCommand[] = [];
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      assert.include(yield* launcher.resolveAvailableEditors(), "emacs");
+      for (const cwd of ["/workspace/file.ts:12:4", "/workspace/file.ts:12", "/workspace"]) {
+        yield* launcher.launchEditor({ editor: "emacs", cwd });
+      }
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "linux",
+          env: { PATH: binDir },
+          onSpawn: (command) => {
+            spawned.push(command);
+          },
+        }),
+      ),
+    );
+
+    assert.deepEqual(
+      spawned.filter((command) => command.command === "emacsclient").map(({ args }) => args),
+      [
+        ["-n", "-a", "emacs", "+12:4", "/workspace/file.ts"],
+        ["-n", "-a", "emacs", "+12", "/workspace/file.ts"],
+        ["-n", "-a", "emacs", "/workspace"],
+      ],
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect.skipIf(windowsHost)(
   "reveals a WSL file in Windows File Explorer through its UNC path",
   () =>

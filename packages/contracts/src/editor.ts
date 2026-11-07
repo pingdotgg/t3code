@@ -1,7 +1,12 @@
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-export const EditorLaunchStyle = Schema.Literals(["direct-path", "goto", "line-column"]);
+export const EditorLaunchStyle = Schema.Literals([
+  "direct-path",
+  "goto",
+  "line-column",
+  "plus-line",
+]);
 export type EditorLaunchStyle = typeof EditorLaunchStyle.Type;
 
 type EditorDefinition = {
@@ -144,6 +149,14 @@ export const EDITORS = [
     commands: ["webstorm"],
     launchStyle: "line-column",
     jetbrainsProductCode: "WS",
+  },
+  {
+    id: "emacs",
+    label: "Emacs",
+    commands: ["emacsclient"],
+    // Reuse the running Emacs server without waiting on the buffer; start Emacs when none is running.
+    baseArgs: ["-n", "-a", "emacs"],
+    launchStyle: "plus-line",
   },
   { id: "file-manager", label: "File Manager", commands: null, launchStyle: "direct-path" },
 ] as const satisfies ReadonlyArray<EditorDefinition>;

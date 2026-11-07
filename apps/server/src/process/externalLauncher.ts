@@ -160,6 +160,14 @@ function resolveCommandEditorArgs(
           path,
         ],
       });
+    case "plus-line":
+      return Option.match(parsedTarget, {
+        onNone: () => [target],
+        onSome: ({ path, line, column }) => [
+          `+${line}${Option.match(column, { onNone: () => "", onSome: (value) => `:${value}` })}`,
+          path,
+        ],
+      });
   }
 }
 

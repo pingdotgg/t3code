@@ -36,6 +36,7 @@ import {
 import {
   AntigravityIcon,
   CursorIcon,
+  EmacsIcon,
   FileExplorerIcon,
   FinderIcon,
   Icon,
@@ -181,6 +182,11 @@ const resolveOpenInOptions = (platform: string, availableEditors: ReadonlyArray<
     {
       Icon: WebStormIcon,
       value: "webstorm",
+      kind: "brand",
+    },
+    {
+      Icon: EmacsIcon,
+      value: "emacs",
       kind: "brand",
     },
     {
