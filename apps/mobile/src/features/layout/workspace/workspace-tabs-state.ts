@@ -116,6 +116,11 @@ export function shouldRestoreNativeSearch(tab: WorkspaceTabState, keepsEmptySear
   return tab.searchMode === "active" || tab.query !== "" || keepsEmptySearchOpen;
 }
 
+/** Settings keeps a closed bar's query out of the list; threads and PRs share this shape. */
+export function settingsSearchQuery(tab: WorkspaceTabState) {
+  return tab.searchMode === "resting" ? "" : tab.query;
+}
+
 export const WORKSPACE_TOOLBAR = { height: 48, expandedGap: 10, edge: 16, gap: 8 };
 export const WORKSPACE_DOCK = { height: 48, tabsWidth: 176, gap: 12, bottomGap: 6 };
 
