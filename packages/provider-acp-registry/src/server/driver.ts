@@ -4,6 +4,7 @@ import {
   resolveOfficialAcpRegistryIconUrl,
   TextGenerationError,
   type AcpRegistryOperationError,
+  type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
@@ -32,6 +33,7 @@ import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
   type ProviderInstance,
+  type ProviderWorkspaceSnapshot,
 } from "@t3tools/provider-core/server/driver";
 import { providerModelsFromSettings } from "@t3tools/provider-core/server/snapshotProbe";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
@@ -433,6 +435,42 @@ export const checkAcpRegistryProviderStatus = Effect.fn("AcpRegistryDriver.check
   },
 );
 
+const WORKSPACE_PROBE_CACHE_MAX = 64;
+
+export const probeAcpRegistryWorkspaceForCwd = Effect.fn("AcpRegistryDriver.probeWorkspaceForCwd")(
+  function* <Requirements>(
+    input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly settings: AcpRegistrySettings;
+      readonly cwd: string;
+      readonly environment: NodeJS.ProcessEnv;
+      readonly machineSnapshot: ServerProvider;
+    },
+    probeConfiguration: AcpRegistryConfigurationProbe<Requirements>,
+  ): Effect.fn.Return<ProviderWorkspaceSnapshot, never, Requirements> {
+    const { machineSnapshot } = input;
+    if (!machineSnapshot.installed) {
+      return { ...machineSnapshot, slashCommandsPending: false };
+    }
+    const probed = yield* Effect.result(
+      probeConfiguration({
+        instanceId: input.instanceId,
+        settings: input.settings,
+        cwd: input.cwd,
+        environment: input.environment,
+      }),
+    );
+    return Result.isSuccess(probed)
+      ? {
+          ...machineSnapshot,
+          slashCommands: probed.success.slashCommands,
+          skills: probed.success.skills,
+          slashCommandsPending: probed.success.slashCommands.length > 0 ? false : undefined,
+        }
+      : { ...machineSnapshot, slashCommandsPending: true };
+  },
+);
+
 export const checkAcpRegistryProviderReadiness = Effect.fn(
   "AcpRegistryDriver.checkProviderReadiness",
 )(function* (
@@ -491,13 +529,27 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const runtimeCoordinator = yield* Effect.serviceOption(
       AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
     );
+    const workspaceProbeCache = yield* Ref.make<{
+      readonly generation: number;
+      readonly entries: ReadonlyMap<
+        string,
+        { readonly snapshot: ProviderWorkspaceSnapshot; readonly expiresAt: number }
+      >;
+    }>({ generation: 0, entries: new Map() });
+    const invalidateWorkspaceProbeCache = Ref.update(workspaceProbeCache, (current) => ({
+      generation: current.generation + 1,
+      entries: new Map(),
+    }));
     if (Option.isSome(runtimeCoordinator)) {
       yield* runtimeCoordinator.value.clearAvailableCommands(instanceId);
       yield* runtimeCoordinator.value.clearLiveConfiguration(instanceId);
       yield* Effect.addFinalizer(() =>
         runtimeCoordinator.value
           .clearAvailableCommands(instanceId)
-          .pipe(Effect.andThen(runtimeCoordinator.value.clearLiveConfiguration(instanceId))),
+          .pipe(
+            Effect.andThen(runtimeCoordinator.value.clearLiveConfiguration(instanceId)),
+            Effect.andThen(invalidateWorkspaceProbeCache),
+          ),
       );
     }
     const random = yield* SecureRandom.SecureRandom;
@@ -606,6 +658,42 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       } | null;
     }>({ generation: 0, entry: null });
     const liveSnapshotSemaphore = yield* Semaphore.make(1);
+    const workspaceProbePermits = yield* Semaphore.make(2);
+    const snapshotForCwd = Effect.fn("AcpRegistryDriver.snapshotForCwd")(function* (cwd: string) {
+      const machineSnapshot = yield* snapshot.getSnapshot;
+      if (!effectiveConfig.enabled || !machineSnapshot.installed) return machineSnapshot;
+      const now = yield* Clock.currentTimeMillis;
+      const cacheState = yield* Ref.get(workspaceProbeCache);
+      const cached = cacheState.entries.get(cwd);
+      if (cached && cached.expiresAt > now) return cached.snapshot;
+      const generation = cacheState.generation;
+      const probed = yield* workspaceProbePermits.withPermits(2)(
+        probeAcpRegistryWorkspaceForCwd(
+          {
+            instanceId,
+            settings: effectiveConfig,
+            cwd,
+            environment: processEnvironment,
+            machineSnapshot,
+          },
+          probeAcpRegistryConfiguration,
+        ).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(SecureRandom.SecureRandom, random),
+        ),
+      );
+      if (probed.slashCommandsPending !== true) {
+        yield* Ref.update(workspaceProbeCache, (state) => {
+          if (state.generation !== generation) return state;
+          const entries =
+            state.entries.size >= WORKSPACE_PROBE_CACHE_MAX ? new Map() : new Map(state.entries);
+          entries.set(cwd, { snapshot: probed, expiresAt: now + PROBE_SUCCESS_TTL_MS });
+          return { generation: state.generation, entries };
+        });
+      }
+      return probed;
+    });
     const invalidateEnrichmentCache = Ref.update(enrichmentCache, (current) => ({
       generation: current.generation + 1,
       entry: null,
@@ -780,6 +868,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           .clearLiveConfiguration(instanceId)
           .pipe(Effect.andThen(runtimeCoordinator.value.clearAvailableCommands(instanceId)))
       : Effect.void;
+    const clearWorkspaceState = clearLiveState.pipe(Effect.andThen(invalidateWorkspaceProbeCache));
     const controller = yield* AcpRegistryAuth.makeAcpRegistryAuth({
       instanceId,
       settings: effectiveConfig,
@@ -789,7 +878,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         confirmedAuthentication
           .set(authenticated)
           .pipe(
-            Effect.andThen(authenticated ? Effect.void : clearLiveState),
+            Effect.andThen(authenticated ? Effect.void : clearWorkspaceState),
             Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
             Effect.andThen(snapshot.refresh),
             Effect.asVoid,
@@ -803,7 +892,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       ...controller,
       invalidate: (controller.invalidate ?? Effect.void).pipe(
         Effect.andThen(confirmedAuthentication.set(false)),
-        Effect.andThen(clearLiveState),
+        Effect.andThen(clearWorkspaceState),
         Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
         Effect.andThen(snapshot.refresh),
         Effect.asVoid,
@@ -822,6 +911,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         ...snapshot,
         refresh: snapshot.refresh.pipe(Effect.tap(() => controller.refreshMethods ?? Effect.void)),
       },
+      snapshotForCwd,
+      invalidateCaches: invalidateEnrichmentCache.pipe(
+        Effect.andThen(invalidateWorkspaceProbeCache),
+      ),
       orchestrationAdapter,
       textGeneration: makeUnsupportedTextGeneration(),
       acpSessionManagement: {
