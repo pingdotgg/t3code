@@ -336,7 +336,10 @@ describe("CursorAdapterV2", () => {
         model: { id: "claude-fable-5" },
         durationMs: 1,
       }),
-      failure: { class: "transport_error", message: "Provider turn failed." },
+      failure: {
+        class: "transport_error",
+        message: "Error: RetriableError: WritableIterable is closed",
+      },
     },
     {
       reason: "no failure when Cursor's resume after the turn ended made no progress",
