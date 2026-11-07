@@ -126,6 +126,11 @@ export function useVoiceTranscriptionDestination() {
     cloud && (cloud.provider === "openrouter" || cloud.provider === "custom")
       ? cloud.model
       : undefined;
+  // A custom grant is bound to the exact endpoint it consented to; a server-side
+  // URL change voids it until the destination is chosen again.
+  const staleEndpoint =
+    cloud?.provider === "custom" &&
+    cloud.endpoint !== (environment?.serverConfig?.settings?.cloudSpeechCustomBaseUrl ?? "");
   const supported =
     environment?.serverConfig?.environment.capabilities[
       provider ? "cloudVoiceTranscription" : "voiceTranscription"
@@ -140,7 +145,7 @@ export function useVoiceTranscriptionDestination() {
       provider && environment
         ? `${CLOUD_SPEECH_LABELS[provider]} via ${environment.label}`
         : (environment?.label ?? null),
-    prepared: supported && canDictate ? connection : null,
+    prepared: supported && canDictate && !staleEndpoint ? connection : null,
   };
 }
 

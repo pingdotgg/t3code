@@ -390,6 +390,8 @@ export const VoiceTranscriptionDestination = Schema.Union([
     environmentId: EnvironmentId,
     provider: Schema.Literal("custom"),
     model: SpeechModelId,
+    /** The base URL this device consented to; a later server-side change voids the grant. */
+    endpoint: Schema.String,
   }),
 ]);
 export type VoiceTranscriptionDestination = typeof VoiceTranscriptionDestination.Type;

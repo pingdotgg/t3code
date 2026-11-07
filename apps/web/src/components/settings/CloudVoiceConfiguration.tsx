@@ -188,7 +188,7 @@ export function CloudVoiceConfiguration({
   const canManage = useEnvironmentScope(id, AuthSettingsWriteScope);
   const [presence, refresh] = useCloudRead(canUse ? prepared : null, getCloudSpeechKeys);
   const [models, refreshModels] = useCloudRead(
-    routed && canUse ? prepared : null,
+    provider === "openrouter" && canUse ? prepared : null,
     getCloudSpeechModels,
   );
   const choice = useAudioChoice();
@@ -249,7 +249,13 @@ export function CloudVoiceConfiguration({
   const modelChanged = model !== (currentModel ?? "");
   const destination = (): CloudDestination =>
     custom && customModelReady
-      ? { kind: "cloud", provider: "custom", environmentId: id, model: model.trim() }
+      ? {
+          kind: "cloud",
+          provider: "custom",
+          environmentId: id,
+          model: model.trim(),
+          endpoint: endpoint.trim(),
+        }
       : routed && isModelId(model)
       ? { kind: "cloud", provider: "openrouter", environmentId: id, model }
       : { kind: "cloud", provider: provider as "openai" | "xai", environmentId: id };
@@ -261,12 +267,11 @@ export function CloudVoiceConfiguration({
       (!active || modelChanged || keyChanged || endpointChanged)
     : credential !== undefined;
 
-  const saveKey = async (value: SettingsSecretValue | null, thenEnable: boolean) => {
+  const saveKey = async (value: SettingsSecretValue | null, commit: (() => void) | null) => {
     if (!connected || !canManage || busy) return;
     setError("");
     setBusy(true);
     try {
-      const commit = thenEnable ? pendingCloudAudioChoice(destination()) : null;
       await runEnvironmentSpeech(setCloudSpeechKey(prepared, provider, value));
       refresh();
       commit?.();
@@ -279,6 +284,9 @@ export function CloudVoiceConfiguration({
   const submit = async () => {
     if (!canSubmit || busy) return;
     const grantChanges = !active || modelChanged || endpointChanged;
+    // Created before the first await so an Off chosen elsewhere during the save
+    // is never overwritten by this submission's commit.
+    const commit = grantChanges ? pendingCloudAudioChoice(destination()) : null;
     if (endpointChanged) {
       setError("");
       setBusy(true);
@@ -299,9 +307,14 @@ export function CloudVoiceConfiguration({
       }
     }
     if (credential !== undefined && (!routed || keyChanged))
-      return void saveKey(credential, grantChanges);
+      return void saveKey(credential, commit);
     // Model-only changes never write to the environment.
-    if (grantChanges) enable();
+    if (commit) {
+      // The endpoint save awaited above, so this acknowledges the choice created
+      // before it; without that await, choosing directly is equally safe.
+      if (endpointChanged) commit();
+      else enable();
+    }
     close();
   };
 
@@ -428,7 +441,7 @@ export function CloudVoiceConfiguration({
                         aria-label="Endpoint base URL"
                         placeholder="https://example.com/v1"
                         value={endpoint}
-                        disabled={busy}
+                        disabled={busy || !canManage}
                         autoComplete="off"
                         spellCheck={false}
                         onChange={(event) => setEndpoint(event.target.value)}
@@ -540,7 +553,7 @@ export function CloudVoiceConfiguration({
                 size="sm"
                 variant="destructive"
                 disabled={busy}
-                onClick={() => void saveKey(null, false)}
+                onClick={() => void saveKey(null, null)}
               >
                 Remove key
               </Button>

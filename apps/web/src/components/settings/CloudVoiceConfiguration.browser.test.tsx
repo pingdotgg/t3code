@@ -12,10 +12,24 @@ import { SettingsScopeProvider } from "./SettingsScopeContext";
 
 vi.mock(import("../../state/session"), { spy: true });
 const persistedSettings: unknown[] = [];
+let configuredEndpoint = "";
 vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original<typeof import("../../state/use-atom-command")>()),
   useAtomCommand: (() => async (input: unknown) => {
     persistedSettings.push(input);
+    configuredEndpoint =
+      typeof input === "object" &&
+      input !== null &&
+      "input" in input &&
+      typeof input.input === "object" &&
+      input.input !== null &&
+      "patch" in input.input &&
+      typeof input.input.patch === "object" &&
+      input.input.patch !== null &&
+      "cloudSpeechCustomBaseUrl" in input.input.patch &&
+      typeof input.input.patch.cloudSpeechCustomBaseUrl === "string"
+        ? input.input.patch.cloudSpeechCustomBaseUrl
+        : configuredEndpoint;
     return { _tag: "Success" };
   }) as never,
 }));
@@ -37,6 +51,7 @@ vi.mock("../../state/environments", async (importOriginal) => ({
             secretProviders: {
               work: { kind: "one_password", label: "Work vault", config: { account: "work" } },
             },
+            cloudSpeechCustomBaseUrl: configuredEndpoint,
           },
           environment: {
             platform: { os: "linux", arch: "x64" },
@@ -313,6 +328,7 @@ it("configures a custom OpenAI-compatible endpoint with its URL, model, and key"
             provider: "custom",
             environmentId: "voice-host",
             model: "whisper-1",
+            endpoint: "https://stt.example.com/v1",
           });
         },
       );
