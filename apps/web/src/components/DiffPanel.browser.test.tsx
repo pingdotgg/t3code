@@ -331,7 +331,7 @@ it.each(["branch", "turn"] as const)(
     const panel = () => (
       <StrictMode>
         <RegistryContext.Provider value={context.registry}>
-          <div style={{ height: 500 }}>
+          <div className="h-[500px]">
             <DiffPanel
               mode="embedded"
               composerDraftTarget={context.threadRef}

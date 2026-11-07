@@ -3,7 +3,7 @@ import { useState } from "react";
 
 interface FileRevealHandle {
   getInstance(): { getHeight(): number; getScrollHeight(): number } | undefined;
-  getItem(id: string): object | undefined;
+  getItem(id: string): { type: string; fileDiff?: { cacheKey?: string } } | undefined;
   scrollTo(target: CodeViewScrollTarget): void;
 }
 
@@ -22,11 +22,13 @@ export function createCodeViewFileReveal(initialTarget?: CodeViewItemScrollTarge
     if (applied?.viewer === viewer) applied = null;
     if (pending === null || viewer === null) return;
     const instance = viewer.getInstance();
+    const item = viewer.getItem(pending.id);
     if (
       !instance ||
       instance.getHeight() === 0 ||
       instance.getScrollHeight() === 0 ||
-      viewer.getItem(pending.id) === undefined
+      item === undefined ||
+      (restoring && item.fileDiff?.cacheKey?.endsWith(":pending"))
     )
       return;
     const target = pending;

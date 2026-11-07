@@ -6,11 +6,16 @@ import { createCodeViewFileReveal } from "./useCodeViewFileReveal";
 function viewer(initialItems: ReadonlyArray<string>) {
   const items = new Set(initialItems);
   const scrolls: CodeViewScrollTarget[] = [];
+  const pendingItems = new Set<string>();
   return {
     items,
     scrolls,
+    pendingItems,
     getInstance: () => ({ getHeight: () => 500, getScrollHeight: () => 1000 }),
-    getItem: (id: string) => (items.has(id) ? {} : undefined),
+    getItem: (id: string) =>
+      items.has(id)
+        ? { type: "diff", fileDiff: { cacheKey: pendingItems.has(id) ? `${id}:pending` : id } }
+        : undefined,
     scrollTo: (target: CodeViewScrollTarget) => scrolls.push(target),
   };
 }
@@ -60,7 +65,11 @@ describe("createCodeViewFileReveal", () => {
     reveal.attach(viewer([]));
     reveal.attach(null);
     const loaded = viewer(["later"]);
+    loaded.pendingItems.add("later");
     reveal.attach(loaded);
+    reveal.flush();
+    expect(loaded.scrolls).toEqual([]);
+    loaded.pendingItems.delete("later");
     reveal.flush();
     expect(loaded.scrolls).toEqual([target]);
   });
