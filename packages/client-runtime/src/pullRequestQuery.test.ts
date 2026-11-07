@@ -53,6 +53,26 @@ describe("reading qualifiers out of a typed query", () => {
     ]);
   });
 
+  // regression: #30131 a query pasted from github.com lists nothing
+  it("ignores GitHub's own search qualifiers instead of reading them as labels", () => {
+    expect(
+      parsePullRequestQuery(
+        "is:pr state:open archived:false repo:org/repo org:org user:alice sort:updated-desc -repo:org/fork -state:closed fix",
+      ),
+    ).toEqual({ text: "fix", filters: {} });
+  });
+
+  it("reads a negated draft qualifier as the opposite value", () => {
+    expect(parsePullRequestQuery("-draft:true").filters).toEqual({ draft: "hide" });
+    expect(parsePullRequestQuery("-draft:false").filters).toEqual({ draft: "only" });
+  });
+
+  it("sets no author when the query names more than one", () => {
+    expect(parsePullRequestQuery("author:alice author:bob").filters).toEqual({});
+    expect(parsePullRequestQuery("author:alice author:alice").filters).toEqual({ author: "alice" });
+    expect(parsePullRequestQuery("author:me author:@me").filters).toEqual({ author: "me" });
+  });
+
   it("cuts a typed query back to what the contract carries", () => {
     const many = Array.from({ length: 14 }, (_, index) => `l${index}`).join(",");
     const long = "x".repeat(240);
