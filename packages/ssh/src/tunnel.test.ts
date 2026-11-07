@@ -454,6 +454,83 @@ describe("ssh tunnel scripts", () => {
         );
       }),
   );
+
+  it.effect.each([
+    { name: "rides a live ControlMaster", masterLive: true },
+    { name: "keeps the auth failure without a live ControlMaster", masterLive: false },
+  ])("when the tunnel cannot sign in again, $name", ({ masterLive }) =>
+    Effect.gen(function* () {
+      const denied = "julius@devbox: Permission denied (publickey,keyboard-interactive).\n";
+      const openedForwards: Array<string | undefined> = [];
+      const cancelledForwards: Array<string | undefined> = [];
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = commandArgs(command);
+          const forward = args.includes("-L") ? args[args.indexOf("-L") + 1] : undefined;
+          const muxCommand = args.includes("-O") ? args[args.indexOf("-O") + 1] : undefined;
+          const failed = (stderr: string) => ({
+            ...makeSuccessfulProcess(""),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(255)),
+            stderr: Stream.make(new TextEncoder().encode(stderr)),
+          });
+          if (args.includes("-G")) {
+            return makeSuccessfulProcess("hostname devbox\ncontrolpath /tmp/t3-cm\n");
+          }
+          if (muxCommand === "check") {
+            return masterLive
+              ? makeSuccessfulProcess("")
+              : failed("Control socket connect: ENOENT\n");
+          }
+          if (muxCommand === "cancel") {
+            cancelledForwards.push(forward);
+            return makeSuccessfulProcess("");
+          }
+          if (forward !== undefined) {
+            // Only the signed-in master can pass the host's one-time-code prompt.
+            if (!masterLive || args.includes("ControlPath=none")) return failed(denied);
+            openedForwards.push(forward);
+            return muxCommand === "forward"
+              ? makeSuccessfulProcess("")
+              : makeRunningProcess(() => undefined);
+          }
+          return makeSuccessfulProcess('{"remotePort":3773}\n');
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            openedForwards.length > 0 ? testHttpClient.execute(request) : Effect.never,
+          ),
+        ),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const result = yield* Effect.result(manager.ensureEnvironment(target));
+        if (!masterLive) {
+          assert.isTrue(Result.isFailure(result));
+          if (Result.isFailure(result)) {
+            assert.instanceOf(result.failure, SshCommandError);
+            assert.include(result.failure.message, "Permission denied");
+          }
+          assert.deepEqual(openedForwards, []);
+          return;
+        }
+        assert.equal(Result.isFailure(result) ? result.failure.message : "connected", "connected");
+        assert.lengthOf(openedForwards, 1);
+        yield* manager.disconnectEnvironment(target);
+        // The master keeps a forward after the client that asked for it exits.
+        assert.deepEqual(cancelledForwards, openedForwards);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
 });
 
 // On macOS, Node can bind 127.0.0.1:<port> while another process (such as the
