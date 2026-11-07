@@ -513,6 +513,59 @@ it.layer(Layer.merge(NodeServices.layer, NodeCrypto.layer))("environment theme",
     }).pipe(Effect.scoped),
   );
 
+  it.effect("a stale publisher cannot hide an intervening successful publication", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const themesDir = yield* fs.makeTempDirectoryScoped();
+      const raw = encodeThemeFile(NIGHTFALL_THEME);
+      for (let i = 0; i < 31; i++) {
+        yield* fs.writeFileString(path.join(themesDir, `z-${i}.json`), raw);
+      }
+      const captured = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let reads = 0;
+      const stale = yield* EnvironmentTheme.publishThemeContents({
+        themesDir,
+        themeId: "aaa",
+        raw,
+        overwrite: false,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          readDirectory: (directory) =>
+            Effect.gen(function* () {
+              const entries = yield* fs.readDirectory(directory);
+              if (++reads === 2) {
+                yield* Deferred.succeed(captured, undefined);
+                yield* Deferred.await(release);
+              }
+              return entries;
+            }),
+        }),
+        Effect.result,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(captured);
+      const winner = yield* EnvironmentTheme.publishThemeContents({
+        themesDir,
+        themeId: "zzz",
+        raw,
+        overwrite: false,
+      });
+      yield* winner.cleanup;
+      yield* Deferred.succeed(release, undefined);
+      const result = yield* Fiber.join(stale);
+      if (result._tag === "Success") yield* result.success.cleanup;
+      assert.isTrue(
+        (yield* EnvironmentTheme.readPublishedThemes(themesDir)).some(
+          (theme) => theme.id === "zzz",
+        ),
+      );
+      assert.equal(result._tag, "Failure");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("follows the directory rather than the set read at start", () =>
     withEnvironmentThemes(
       { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },

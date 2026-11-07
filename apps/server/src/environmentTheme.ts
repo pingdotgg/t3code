@@ -300,29 +300,33 @@ export const publishThemeContents = Effect.fn("EnvironmentTheme.publish")(functi
     .makeDirectory(input.themesDir, { recursive: true })
     .pipe(Effect.mapError(publishFailure));
   const previouslyPublished = yield* readPublishedThemes(input.themesDir);
-  // The watcher reads entries in name order up to its limits, so a new id must not push others out.
-  const others = (yield* fs.readDirectory(input.themesDir).pipe(Effect.mapError(publishFailure)))
-    .filter((entry) => entry !== `${themeId}${THEME_FILE_SUFFIX}`)
-    .filter((entry) => {
-      const id = entry.slice(0, -THEME_FILE_SUFFIX.length);
-      return (
-        entry.endsWith(THEME_FILE_SUFFIX) &&
-        isEnvironmentThemeId(id) &&
-        !UNPUBLISHABLE_THEME_IDS.has(id)
+  const checkCapacity = Effect.gen(function* () {
+    // The watcher reads entries in name order up to its limits, so a new id must not push others out.
+    const others = (yield* fs.readDirectory(input.themesDir).pipe(Effect.mapError(publishFailure)))
+      .filter((entry) => entry !== `${themeId}${THEME_FILE_SUFFIX}`)
+      .filter((entry) => {
+        const id = entry.slice(0, -THEME_FILE_SUFFIX.length);
+        return (
+          entry.endsWith(THEME_FILE_SUFFIX) &&
+          isEnvironmentThemeId(id) &&
+          !UNPUBLISHABLE_THEME_IDS.has(id)
+        );
+      });
+    let totalBytes = Buffer.byteLength(raw);
+    for (const entry of others) {
+      totalBytes += Buffer.byteLength(
+        (yield* readThemeFileGuarded(path.join(input.themesDir, entry), MAX_THEME_FILE_BYTES)) ??
+          "",
       );
-    });
-  let totalBytes = Buffer.byteLength(raw);
-  for (const entry of others) {
-    totalBytes += Buffer.byteLength(
-      (yield* readThemeFileGuarded(path.join(input.themesDir, entry), MAX_THEME_FILE_BYTES)) ?? "",
-    );
-  }
-  if (others.length >= MAX_THEME_FILES || totalBytes > MAX_THEME_TOTAL_BYTES)
-    return yield* new ThemeLibraryError({
-      reason: "limit",
-      detail:
-        "Theme library limit reached (32 files, 192 KiB total). Delete unused published themes first.",
-    });
+    }
+    if (others.length >= MAX_THEME_FILES || totalBytes > MAX_THEME_TOTAL_BYTES)
+      return yield* new ThemeLibraryError({
+        reason: "limit",
+        detail:
+          "Theme library limit reached (32 files, 192 KiB total). Delete unused published themes first.",
+      });
+  });
+  yield* checkCapacity;
 
   const destinationPath = path.join(input.themesDir, `${themeId}${THEME_FILE_SUFFIX}`);
   // Non-JSON suffixes hide staging and rollback entries from the watcher.
@@ -425,6 +429,7 @@ export const publishThemeContents = Effect.fn("EnvironmentTheme.publish")(functi
   }).pipe(Effect.onError(() => revert));
 
   // A concurrent writer outside this process can still fill the directory after the check above.
+  yield* checkCapacity.pipe(Effect.onError(() => revert));
   const visible = yield* readPublishedThemes(input.themesDir).pipe(Effect.onError(() => revert));
   const visibleIds = new Set(visible.map((theme) => theme.id));
   if (!visibleIds.has(themeId) || previouslyPublished.some((theme) => !visibleIds.has(theme.id))) {
