@@ -60,17 +60,21 @@ export function evaluatePullRequestWatch(
     const gate = required.length > 0 ? required : detail.checks;
     const passedNow = gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
     const gateNames = gate.map((check) => check.name);
+    // Pending reruns do not undo a pass already reported for this head; a failed gate does.
+    if (gate.some(isFailedCheck)) {
+      passed = false;
+      passedChecks = [];
+    }
     const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
     // Required checks can finish between sweeps; detect new names. With no required checks, ignore advisory gate growth.
     const gateGrew = required.length > 0 && gateNames.some((name) => !told.includes(name));
     // Other checks still pending when required ones passed are owed one wake when all settle.
     // Only those are owed, so later advisory churn never wakes. One turned required is gate news.
-    const owed =
-      passedNow && passed
-        ? detail.checks
-            .filter((check) => check.required !== true && owedChecks.includes(check.name))
-            .map((check) => check.name)
-        : [];
+    const owed = passed
+      ? detail.checks
+          .filter((check) => check.required !== true && owedChecks.includes(check.name))
+          .map((check) => check.name)
+      : [];
     const settled =
       failed.length === 0 && detail.checks.every((check) => check.status !== "pending");
     owedChecks = owed;
@@ -86,8 +90,10 @@ export function evaluatePullRequestWatch(
       changes.push({ kind: "checks-passed", count: detail.checks.length, required: false });
       owedChecks = [];
     }
-    passed = passedNow;
-    passedChecks = passedNow ? gateNames : [];
+    if (passedNow) {
+      passed = true;
+      passedChecks = gateNames;
+    }
   }
 
   // Only a head never read with checks waits for them: an empty read after checks were seen is

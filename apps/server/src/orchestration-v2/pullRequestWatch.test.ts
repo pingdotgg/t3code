@@ -145,6 +145,34 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
+  it.each([false, true])(
+    "does not repeat a passed gate after a pending read (required: %s)",
+    (required) => {
+      const green = detail({ checks: [{ ...check("test", "success"), required }] });
+      const first = evaluatePullRequestWatch(watch(), green, noRemarks);
+      assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 1, required }]);
+      const pending = detail({ checks: [{ ...check("test", "pending"), required }] });
+      const waiting = evaluatePullRequestWatch(first.next, pending, noRemarks);
+      assert.deepEqual(waiting.changes, []);
+      assert.deepEqual(evaluatePullRequestWatch(waiting.next, green, noRemarks).changes, []);
+
+      const pushed = detail({ ...green, headSha: "bbbbbbbbbb" });
+      assert.deepEqual(evaluatePullRequestWatch(waiting.next, pushed, noRemarks).changes, [
+        { kind: "checks-passed", count: 1, required },
+      ]);
+
+      for (const status of ["failure", "cancelled", "action-required"] as const) {
+        const failed = detail({ checks: [{ ...check("test", status), required }] });
+        const failure = evaluatePullRequestWatch(waiting.next, failed, noRemarks);
+        assert.deepEqual(failure.changes, [{ kind: "checks-failed", failed: failed.checks }]);
+        const rerun = evaluatePullRequestWatch(failure.next, pending, noRemarks);
+        const recovered = evaluatePullRequestWatch(rerun.next, green, noRemarks);
+        assert.deepEqual(recovered.changes, [{ kind: "checks-passed", count: 1, required }]);
+        assert.deepEqual(evaluatePullRequestWatch(recovered.next, green, noRemarks).changes, []);
+      }
+    },
+  );
+
   // regression: #23712 required checks woke the agent early and the rest finishing never did
   it("wakes again when the other checks finish after the required ones passed", () => {
     const required = (name: string, status: PullRequestCheck["status"]) => ({
@@ -157,14 +185,19 @@ describe("evaluatePullRequestWatch", () => {
     const first = evaluatePullRequestWatch(watch(), early, noRemarks);
     assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 1, required: true }]);
 
+    const rerun = evaluatePullRequestWatch(
+      first.next,
+      detail({ checks: [required("test", "pending"), check("e2e", "success")] }),
+      noRemarks,
+    );
+    assert.deepEqual(rerun.changes, []);
+    assert.deepEqual(rerun.next.owedChecks, ["e2e"]);
+
     const done = detail({
       checks: [required("test", "success"), check("e2e", "success")],
     });
-    const final = evaluatePullRequestWatch(first.next, done, noRemarks);
-    assert.deepEqual(
-      final.changes.map((change) => change.kind),
-      ["checks-passed"],
-    );
+    const final = evaluatePullRequestWatch(rerun.next, done, noRemarks);
+    assert.deepEqual(final.changes, [{ kind: "checks-passed", count: 2, required: false }]);
     assert.deepEqual(evaluatePullRequestWatch(final.next, done, noRemarks).changes, []);
     // A later advisory job running and passing is not more news.
     const botPending = detail({ checks: [...done.checks, check("bot", "pending")] });
