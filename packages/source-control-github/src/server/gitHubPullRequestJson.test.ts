@@ -6,6 +6,8 @@ import {
   buildReviewSubmission,
   buildReviewerRequest,
   pullRequestLookup,
+  referenceSearchQuery,
+  toRepositoryReferences,
   toPullRequestWatchFingerprint,
   decodePullRequestFilesJson,
   decodePullRequestStacksJson,
@@ -1628,6 +1630,40 @@ describe("host-native stack decoding", () => {
 const decodeWatchedResult = Schema.decodeUnknownSync(PullRequestWatchFingerprint.result);
 const decodeWatched = (pullRequest: object) =>
   decodeWatchedResult({ repository: { pullRequest } }).repository!.pullRequest!;
+
+describe("repository references", () => {
+  it.each([
+    [undefined, "repo:o/r sort:updated-desc"],
+    ["12", "repo:o/r sort:updated-desc"],
+    ['say "hi"', 'repo:o/r in:title "say \\"hi\\"" sort:updated-desc'],
+  ])("searches %j as %j", (query, q) => {
+    expect(referenceSearchQuery("o/r", query)).toBe(q);
+  });
+
+  it("puts the exact number first and maps issue and pull request states", () => {
+    const result = toRepositoryReferences({
+      search: {
+        pageInfo: { hasNextPage: true },
+        nodes: [
+          { __typename: "PullRequest", number: 3, title: "Merged", pullRequestState: "MERGED" },
+          { __typename: "Issue", number: 2, title: "Closed", issueState: "CLOSED" },
+          null,
+        ],
+      },
+      repository: {
+        issueOrPullRequest: { __typename: "Issue", number: 1, title: "Exact", issueState: "OPEN" },
+      },
+    });
+    expect(result).toEqual({
+      items: [
+        { reference: "#1", kind: "issue", number: 1, title: "Exact", state: "open" },
+        { reference: "#3", kind: "change-request", number: 3, title: "Merged", state: "merged" },
+        { reference: "#2", kind: "issue", number: 2, title: "Closed", state: "closed" },
+      ],
+      truncated: true,
+    });
+  });
+});
 
 describe("pull request lookups", () => {
   it("refuses what GitHub cannot name, so one bad row cannot fail a whole batch", () => {

@@ -6,6 +6,7 @@ import iconNightly from "../assets/icon-nightly.webp";
 import Layout from "../layouts/Layout.astro";
 import { RELEASES_URL } from "../lib/releases";
 import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../lib/site";
+import { breadcrumbJsonLd, softwareJsonLd } from "../lib/seo";
 
 const imageProps = {
   alt: "",
@@ -16,7 +17,17 @@ const imageProps = {
 } satisfies Partial<ComponentProps<typeof Image>>;
 ---
 
-<Layout title="Download | T3 Code" description="Download T3 Code for macOS, Windows, or Linux.">
+<Layout
+  title="Download T3 Code for macOS, Windows, and Linux | T3 Code"
+  description="Download the official T3 Code desktop app for macOS, Windows, or Linux, or get the iOS and Android apps. t3.codes is the only official download site."
+  jsonLd={[
+    softwareJsonLd(),
+    breadcrumbJsonLd([
+      { name: "T3 Code", path: "/" },
+      { name: "Download", path: "/download" },
+    ]),
+  ]}
+>
   <div class="download-page" id="download-page" data-channel="stable">
     <header class="download-head">
       <div class="sky" aria-hidden="true"></div>
