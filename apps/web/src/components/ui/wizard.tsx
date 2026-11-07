@@ -14,10 +14,14 @@ export function WizardPopup({
   readonly size?: "default" | "wide";
 }) {
   return (
-    <DialogPopup {...props} className={size === "wide" ? "max-w-3xl" : "max-w-xl"}>
-      <ScrollArea className="*:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4">
-        <div className="flex min-h-0 flex-col">{children}</div>
-      </ScrollArea>
+    <DialogPopup
+      {...props}
+      className={cn(
+        "overflow-y-auto overscroll-contain",
+        size === "wide" ? "max-w-3xl" : "max-w-xl",
+      )}
+    >
+      {children}
     </DialogPopup>
   );
 }
@@ -142,14 +146,14 @@ export function WizardPanel({
   readonly className?: string;
 }) {
   return (
-    <div
-      data-slot="dialog-panel"
-      className={cn(
-        "min-w-0 space-y-4 bg-background/80 px-6 py-5 ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5",
-        className,
-      )}
+    <ScrollArea
+      className="h-auto min-h-24 bg-background/80 ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5"
+      radius="none"
+      chainVerticalScroll
     >
-      <AnimatedHeight holdHeight={holdHeight}>{children}</AnimatedHeight>
-    </div>
+      <div data-slot="dialog-panel" className={cn("min-w-0 space-y-4 px-6 py-5", className)}>
+        <AnimatedHeight holdHeight={holdHeight}>{children}</AnimatedHeight>
+      </div>
+    </ScrollArea>
   );
 }
