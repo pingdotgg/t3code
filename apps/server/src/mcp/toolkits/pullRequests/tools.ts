@@ -64,7 +64,7 @@ export class PullRequestUrlInvalidError extends Schema.TaggedError<PullRequestUr
   {},
 ) {
   override get message(): string {
-    return "This is not a recognised pull request URL. Pass repository and number instead.";
+    return "This is not a recognised pull request URL. Pass host, repository and number instead.";
   }
 }
 

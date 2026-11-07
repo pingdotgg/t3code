@@ -21,6 +21,22 @@ describe("GitHub change request URLs", () => {
     });
   });
 
+  it.each(["my-awesome-company.ghe.com", "MY-AWESOME-COMPANY.GHE.COM"])(
+    "reads GitHub Enterprise Cloud URLs on %s",
+    (host) => {
+      expect(parse(`https://${host}/Owner/Repo/pull/9/files?w=1#diff`)).toMatchObject({
+        host: host.toLowerCase(),
+        repository: "owner/repo",
+        number: 9,
+      });
+      expect(
+        definition.changeRequestUrlFromReferenceAutolink(
+          new URL(`https://${host}/Owner/Repo/issues/9`),
+        ),
+      ).toBe(`https://${host.toLowerCase()}/Owner/Repo/pull/9`);
+    },
+  );
+
   it("claims only the two-segment pull route", () => {
     for (const url of [
       "https://github.com/t3tools/t3code/issues/123",
