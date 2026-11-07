@@ -10,12 +10,11 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { TextInput, View } from "react-native";
+import { Pressable, TextInput, View } from "react-native";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ControlPill } from "../../components/ui/ControlPill";
-import { ListActionRow } from "../../components/ui/ListActionRow";
 import { Menu } from "../../components/ui/Menu";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -59,9 +58,11 @@ function useProviderInstanceMutation(environment: SettingsTarget) {
 export function ClaudeAccount({
   environment,
   provider,
+  onOpenSettings,
 }: {
   readonly environment: SettingsTarget;
   readonly provider: ServerProvider;
+  readonly onOpenSettings: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const { run, pending, error } = useProviderInstanceMutation(environment);
@@ -84,6 +85,7 @@ export function ClaudeAccount({
       `providerInstances.${provider.instanceId}`,
     );
   const actions: MenuAction[] = [
+    { id: "settings", title: "Settings", image: "gearshape" },
     { id: "edit", title: "Edit", image: "pencil" },
     ...(removable
       ? [
@@ -115,14 +117,20 @@ export function ClaudeAccount({
   return (
     <View className="border-t border-border-subtle">
       <View className="min-h-16 flex-row items-center gap-3 px-4 py-3">
-        <View className="min-w-0 shrink grow gap-0.5">
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={[name, status].filter(Boolean).join(", ")}
+          accessibilityHint="Opens provider settings"
+          onPress={onOpenSettings}
+          className="min-w-0 shrink grow gap-0.5"
+        >
           <Text textRole="body" className="text-foreground" numberOfLines={1}>
             {name}
           </Text>
           <Text textRole="footnote" className="text-foreground-muted" numberOfLines={2}>
             {[status, configDir || "Default config folder"].filter(Boolean).join(" · ")}
           </Text>
-        </View>
+        </Pressable>
         {editing ? null : (
           <Menu
             accessible
@@ -132,7 +140,8 @@ export function ClaudeAccount({
             actions={actions}
             onPressAction={({ nativeEvent }) => {
               if (pending) return;
-              if (nativeEvent.event === "edit") setEditing(true);
+              if (nativeEvent.event === "settings") onOpenSettings();
+              else if (nativeEvent.event === "edit") setEditing(true);
               else if (nativeEvent.event === "remove") remove();
             }}
           >
@@ -160,30 +169,7 @@ export function ClaudeAccount({
   );
 }
 
-export function AddClaudeAccount({ environment }: { readonly environment: SettingsTarget }) {
-  const [adding, setAdding] = useState(false);
-  return (
-    <View className="border-t border-border-subtle">
-      {adding ? (
-        <ClaudeAccountForm
-          environment={environment}
-          instanceId={null}
-          initial={{ name: "", configDir: "" }}
-          onDone={() => setAdding(false)}
-        />
-      ) : (
-        <ListActionRow
-          icon="plus"
-          label="Add Claude account"
-          description="Use a Claude config folder that is already signed in on this server."
-          onPress={() => setAdding(true)}
-        />
-      )}
-    </View>
-  );
-}
-
-function ClaudeAccountForm({
+export function ClaudeAccountForm({
   environment,
   instanceId,
   initial,
@@ -192,7 +178,7 @@ function ClaudeAccountForm({
   readonly environment: SettingsTarget;
   readonly instanceId: ProviderInstanceId | null;
   readonly initial: ClaudeAccountDraft;
-  readonly onDone: () => void;
+  readonly onDone: (saved?: boolean) => void;
 }) {
   const [draft, setDraft] = useState(initial);
   const { run, pending, error, setError } = useProviderInstanceMutation(environment);
@@ -208,7 +194,7 @@ function ClaudeAccountForm({
       return;
     }
     void run(plan.mutation).then((saved) => {
-      if (saved) onDone();
+      if (saved) onDone(true);
     });
   }
   function field(key: keyof ClaudeAccountDraft, label: string, placeholder: string) {
@@ -239,7 +225,12 @@ function ClaudeAccountForm({
         </Text>
       ) : null}
       <View className="flex-row justify-end gap-2">
-        <ControlPill variant="pill" label="Cancel" disabled={pending} onPress={onDone} />
+        <ControlPill
+          variant="pill"
+          label="Cancel"
+          disabled={pending}
+          onPress={() => onDone(false)}
+        />
         <ControlPill
           variant="primary"
           label={instanceId === null ? "Add" : "Save"}

@@ -91,6 +91,7 @@ import { SettingsNavigationRouteScreen } from "./features/settings/SettingsNavig
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
+import { SettingsAddProviderRouteScreen } from "./features/settings/SettingsAddProviderRouteScreen";
 import { SettingsProviderAccountsRouteScreen } from "./features/settings/SettingsProviderAccountsRouteScreen";
 import { SettingsProviderInstanceRouteScreen } from "./features/settings/SettingsProviderInstanceRouteScreen";
 import {
@@ -215,6 +216,11 @@ const SETTINGS_SCREENS = {
     screen: SettingsProviderAccountsRouteScreen,
     linking: "settings/provider-accounts",
     options: settingsPage("Providers"),
+  }),
+  SettingsAddProvider: createNativeStackScreen({
+    screen: SettingsAddProviderRouteScreen,
+    linking: "settings/providers/add/:environmentId",
+    options: settingsPage("Add Claude"),
   }),
   SettingsProviderInstance: createNativeStackScreen({
     screen: SettingsProviderInstanceRouteScreen,

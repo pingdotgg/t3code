@@ -26,6 +26,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { MenuAction } from "@react-native-menu/menu";
 
+import type { AppBarMenu, AppBarMenuItem } from "../../components/ui/AppBar.types";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ControlPill } from "../../components/ui/ControlPill";
@@ -40,7 +41,7 @@ import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActi
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
-import { AddClaudeAccount, ClaudeAccount } from "./ClaudeAccounts";
+import { ClaudeAccount } from "./ClaudeAccounts";
 import { CLAUDE_DRIVER } from "./claude-accounts";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
@@ -50,8 +51,16 @@ export function SettingsProviderAccountsRouteScreen() {
   const permittedEnvironments = useEnvironmentsWithScope(selectedTargets, AuthProvidersManageScope);
   const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const insets = useSafeAreaInsets();
+  const addTargets = selectedTargets.filter((environment) =>
+    permittedEnvironments.has(environment.environmentId),
+  );
+  // Native toolbar + menu — same control family as Environments / Scheduled tasks / New chat.
+  const addMenu = useAddProviderMenu(addTargets, providersByEnvironment);
   return (
-    <SettingsScreen title="Providers" menus={[environmentMenu]}>
+    <SettingsScreen
+      title="Providers"
+      menus={addMenu ? [addMenu, environmentMenu] : [environmentMenu]}
+    >
       <ScreenScrollView
         className="flex-1"
         contentInsetAdjustmentBehavior="automatic"
@@ -92,20 +101,18 @@ function EnvironmentProviders({
   readonly providers: ReadonlyArray<ServerProvider>;
 }) {
   const navigation = useNavigation();
-  const accounts = providers.filter(canManageProvider);
+  // Turned-off instances stay out of the list; Add provider re-enables or creates them.
+  const activeProviders = providers.filter((provider) => provider.enabled);
+  const accounts = activeProviders.filter(canManageProvider);
   // Claude has no in-app sign-in; each account is its own instance on a signed-in config folder.
-  const claudeAccounts = providers.filter(
+  const claudeAccounts = activeProviders.filter(
     (provider) => provider.driver === CLAUDE_DRIVER && !canManageProvider(provider),
   );
-  const otherProviders = providers.filter(
+  const otherProviders = activeProviders.filter(
     (provider) =>
       provider.driver !== CLAUDE_DRIVER &&
       !canManageProvider(provider) &&
       !accounts.some((account) => account.instanceId === provider.instanceId),
-  );
-  const canAddClaude = isManagedDriverAllowed(
-    environment.serverConfig.managedPolicy,
-    CLAUDE_DRIVER,
   );
   function openInstance(provider: ServerProvider) {
     navigation.navigate("SettingsProviderInstance", {
@@ -115,103 +122,136 @@ function EnvironmentProviders({
   }
   return (
     <>
-      {providers.length === 0 ? (
+      {activeProviders.length === 0 ? (
         <Text className="p-4 text-foreground-muted">
-          No providers on this environment yet. Add one from web or desktop, or add a Claude account
-          below.
+          No providers enabled on this environment yet. Tap + in the toolbar to add one.
         </Text>
       ) : null}
       {accounts.map((provider, index) => (
-        <View key={provider.instanceId}>
-          <ProviderAccount environment={environment} provider={provider} divider={index > 0} />
-          <SettingsActionRow
-            label="Provider settings"
-            description="Runtime config, enable, and display name"
-            onPress={() => openInstance(provider)}
-          />
-        </View>
+        <ProviderAccount
+          key={provider.instanceId}
+          environment={environment}
+          provider={provider}
+          divider={index > 0}
+          onOpenSettings={() => openInstance(provider)}
+        />
       ))}
       {otherProviders.map((provider) => (
-        <SettingsActionRow
+        <ProviderInstanceRow
           key={provider.instanceId}
-          label={provider.displayName ?? provider.driver}
-          description={
-            !provider.enabled
-              ? "Turned off"
-              : !provider.installed
-                ? "Not installed"
-                : provider.driver
-          }
-          onPress={() => openInstance(provider)}
+          name={provider.displayName ?? provider.driver}
+          status={!provider.installed ? "Not installed" : provider.driver}
+          onOpenSettings={() => openInstance(provider)}
         />
       ))}
       {claudeAccounts.map((provider) => (
-        <View key={provider.instanceId}>
-          <ClaudeAccount environment={environment} provider={provider} />
-          <SettingsActionRow
-            label="Provider settings"
-            description="Runtime config, enable, and display name"
-            onPress={() => openInstance(provider)}
-          />
-        </View>
+        <ClaudeAccount
+          key={provider.instanceId}
+          environment={environment}
+          provider={provider}
+          onOpenSettings={() => openInstance(provider)}
+        />
       ))}
-      {canAddClaude ? <AddClaudeAccount environment={environment} /> : null}
-      <AddProviderInstance environment={environment} providers={providers} />
     </>
   );
 }
 
-function AddProviderInstance(props: {
-  readonly environment: SettingsTarget;
-  readonly providers: ReadonlyArray<ServerProvider>;
+function ProviderInstanceRow(props: {
+  readonly name: string;
+  readonly status: string;
+  readonly onOpenSettings: () => void;
 }) {
+  return (
+    <View className="border-t border-border-subtle">
+      <View className="min-h-16 flex-row items-center gap-3 px-4 py-3">
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${props.name}, ${props.status}`}
+          accessibilityHint="Opens provider settings"
+          onPress={props.onOpenSettings}
+          className="min-w-0 shrink grow gap-0.5"
+        >
+          <Text textRole="body" className="text-foreground" numberOfLines={1}>
+            {props.name}
+          </Text>
+          <Text textRole="footnote" className="text-foreground-muted" numberOfLines={2}>
+            {props.status}
+          </Text>
+        </Pressable>
+        <Menu
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel={`${props.name} options`}
+          title={props.name}
+          actions={[{ id: "settings", title: "Settings", image: "gearshape" }]}
+          onPressAction={({ nativeEvent }) => {
+            if (nativeEvent.event === "settings") props.onOpenSettings();
+          }}
+        >
+          <ControlPill icon="ellipsis" accessibilityLabel={`${props.name} options`} />
+        </Menu>
+      </View>
+    </View>
+  );
+}
+
+function useAddProviderMenu(
+  environments: ReadonlyArray<SettingsTarget>,
+  providersByEnvironment: ReadonlyMap<string, ReadonlyArray<ServerProvider>>,
+): AppBarMenu | null {
   const navigation = useNavigation();
   const mutate = useAtomCommand(serverEnvironment.mutateProviderInstance, {
     reportFailure: false,
     reportDefect: false,
   });
-  const [pending, setPending] = useState(false);
-  const drivers = providerClients.definitions.filter(
-    (definition) =>
-      definition.driverKind !== CLAUDE_DRIVER &&
-      definition.featured !== false &&
-      isManagedDriverAllowed(props.environment.serverConfig.managedPolicy, definition.driverKind),
-  );
-  const actions: MenuAction[] = drivers.map((definition) => ({
-    id: definition.driverKind,
-    title: definition.label,
-  }));
-  if (actions.length === 0) return null;
+  const pendingRef = useRef(false);
 
-  async function add(driver: ProviderDriverKind) {
-    if (pending) return;
-    const existing = new Set([
-      defaultInstanceIdForDriver(driver),
-      ...Object.keys(props.environment.serverConfig.settings.providerInstances),
-    ]);
-    const instanceId = ProviderInstanceId.make(
-      deriveAvailableInstanceId(
-        (label) => deriveInstanceId(driver, label) || driver,
-        providerClients.get(driver)?.label ?? driver,
-        existing,
-      ) || driver,
-    );
-    setPending(true);
+  async function add(environment: SettingsTarget, driver: ProviderDriverKind) {
+    if (pendingRef.current) return;
+    // Claude needs a config-folder form; other drivers open instance settings after create.
+    if (driver === CLAUDE_DRIVER) {
+      navigation.navigate("SettingsAddProvider", {
+        environmentId: environment.environmentId,
+      });
+      return;
+    }
+    const providers = managedProviders(environment, providersByEnvironment);
+    const disabled = providers.find((provider) => provider.driver === driver && !provider.enabled);
+    const instanceId =
+      disabled?.instanceId ??
+      ProviderInstanceId.make(
+        deriveAvailableInstanceId(
+          (label) => deriveInstanceId(driver, label) || driver,
+          providerClients.get(driver)?.label ?? driver,
+          new Set([
+            defaultInstanceIdForDriver(driver),
+            ...Object.keys(environment.serverConfig.settings.providerInstances),
+          ]),
+        ) || driver,
+      );
+    const existingInstance = environment.serverConfig.settings.providerInstances[instanceId] ?? {};
+    pendingRef.current = true;
     const result = await mutate({
-      environmentId: props.environment.environmentId,
+      environmentId: environment.environmentId,
       input: {
         patch: {},
-        providerInstanceMutation: {
-          operation: "create",
-          instanceId,
-          instance: { driver, enabled: true },
-        },
+        providerInstanceMutation: disabled
+          ? {
+              operation: "upsert",
+              instanceId,
+              instance: { ...existingInstance, driver, enabled: true },
+            }
+          : {
+              operation: "create",
+              instanceId,
+              instance: { driver, enabled: true },
+            },
       },
     });
-    setPending(false);
+    pendingRef.current = false;
     if (result._tag === "Success") {
       navigation.navigate("SettingsProviderInstance", {
-        environmentId: props.environment.environmentId,
+        environmentId: environment.environmentId,
         instanceId,
       });
       return;
@@ -225,22 +265,44 @@ function AddProviderInstance(props: {
     }
   }
 
-  return (
-    <View className="flex-row items-center justify-between gap-3 border-t border-border-subtle p-4">
-      <View className="min-w-0 flex-1 gap-1">
-        <Text className="text-base text-foreground">Add provider</Text>
-        <Text className="text-sm text-foreground-muted">Create another agent instance</Text>
-      </View>
-      <Menu
-        actions={actions}
-        onPressAction={({ nativeEvent }) => {
-          void add(nativeEvent.event as ProviderDriverKind);
-        }}
-      >
-        <ControlPill label="Add" disabled={pending} />
-      </Menu>
-    </View>
-  );
+  function driverItems(environment: SettingsTarget): AppBarMenuItem[] {
+    return providerClients.definitions
+      .filter(
+        (definition) =>
+          definition.featured !== false &&
+          isManagedDriverAllowed(environment.serverConfig.managedPolicy, definition.driverKind),
+      )
+      .map((definition) => ({
+        id: `${environment.environmentId}:${definition.driverKind}`,
+        title: definition.label,
+        onPress: () => {
+          void add(environment, definition.driverKind);
+        },
+      }));
+  }
+
+  const items: AppBarMenuItem[] =
+    environments.length === 1
+      ? driverItems(environments[0]!)
+      : environments.flatMap((environment) => {
+          const nested = driverItems(environment);
+          if (nested.length === 0) return [];
+          return [
+            {
+              id: environment.environmentId,
+              title: environment.label,
+              items: nested,
+            },
+          ];
+        });
+
+  if (items.length === 0) return null;
+  return {
+    title: "Add provider",
+    icon: "plus",
+    separateBackground: true,
+    items,
+  };
 }
 
 /** Providers the environment's managed policy allows; the rest cannot run or sign in. */
@@ -263,10 +325,12 @@ function ProviderAccount({
   environment,
   provider,
   divider,
+  onOpenSettings,
 }: {
   readonly environment: SettingsTarget;
   readonly provider: ServerProvider;
   readonly divider: boolean;
+  readonly onOpenSettings: () => void;
 }) {
   const environmentId = environment.environmentId;
   const instanceId = provider.instanceId;
@@ -428,18 +492,21 @@ function ProviderAccount({
     );
   }
   function onMenuAction(id: string) {
-    if (id === "signOut") signOut();
-    // iOS keeps a disabled submenu's children selectable, so sign-in guards here too.
-    else if (signInDisabled) return;
+    if (id === "settings") onOpenSettings();
+    else if (id === "signOut") signOut();
     else if (id.startsWith("remove:")) {
       if (active || !canRemoveMethod) return;
       const methodId = id.slice("remove:".length);
       if (!removableMethods.some((method) => method.id === methodId)) return;
       void run(() => removeMethod({ environmentId, input: { instanceId, methodId } }));
+    } else if (signInDisabled) {
+      // iOS keeps a disabled submenu's children selectable, so sign-in guards here too.
+      return;
     } else if (id.startsWith("method:")) startSignIn(id.slice("method:".length));
     else if (id === "change") startSignIn();
   }
-  const accountActions: MenuAction[] = [
+  const optionsActions: MenuAction[] = [
+    { id: "settings", title: "Settings", image: "gearshape" },
     ...removeActions,
     ...(canSignIn
       ? [
@@ -470,6 +537,18 @@ function ProviderAccount({
         ]
       : []),
   ];
+  const optionsMenu = (
+    <Menu
+      accessible
+      accessibilityRole="button"
+      accessibilityLabel={`${name} options`}
+      title={name}
+      actions={optionsActions}
+      onPressAction={({ nativeEvent }) => onMenuAction(nativeEvent.event)}
+    >
+      <ControlPill icon="ellipsis" accessibilityLabel={`${name} options`} />
+    </Menu>
+  );
   const trailing = pending ? (
     <View className="h-11 w-11 items-center justify-center">
       <AppActivityIndicator colorClassName="accent-icon" />
@@ -494,17 +573,6 @@ function ProviderAccount({
         void run(() => cancel({ environmentId, input: { instanceId, flowId: state.flowId! } }));
       }}
     />
-  ) : signedIn && !active && accountActions.length > 0 ? (
-    <Menu
-      accessible
-      accessibilityRole="button"
-      accessibilityLabel={`${name} account options`}
-      title={name}
-      actions={accountActions}
-      onPressAction={({ nativeEvent }) => onMenuAction(nativeEvent.event)}
-    >
-      <ControlPill icon="ellipsis" accessibilityLabel={`${name} account options`} />
-    </Menu>
   ) : canSignIn && !signedIn && methodActions.length > 1 && !signInDisabled ? (
     <Menu
       accessible
@@ -534,8 +602,17 @@ function ProviderAccount({
             : "min-h-16 flex-row items-center gap-3 px-4 py-3"
         }
       >
-        <ProviderAccountSummary key={email} name={name} status={status} email={email} />
-        {trailing}
+        <ProviderAccountSummary
+          key={email}
+          name={name}
+          status={status}
+          email={email}
+          onOpenSettings={onOpenSettings}
+        />
+        <View className="flex-row items-center gap-2">
+          {trailing}
+          {pending ? null : optionsMenu}
+        </View>
       </View>
       {interaction?.type === "deviceCode" ||
       interaction?.type === "terminal" ||
@@ -640,42 +717,35 @@ function ProviderAccountSummary({
   name,
   status,
   email,
+  onOpenSettings,
 }: {
   readonly name: string;
   readonly status: string | null | undefined;
   readonly email: string | undefined;
+  readonly onOpenSettings: () => void;
 }) {
   const [revealed, setRevealed] = useState(false);
-  const content = (
-    <>
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={[name, status, revealed && email ? email : null]
+        .filter(Boolean)
+        .join(", ")}
+      accessibilityHint={
+        email
+          ? "Opens provider settings. Long press reveals or hides the account email."
+          : "Opens provider settings"
+      }
+      onPress={onOpenSettings}
+      onLongPress={email ? () => setRevealed((value) => !value) : undefined}
+      className="min-w-0 shrink grow gap-0.5"
+    >
       <Text textRole="body" className="text-foreground" numberOfLines={1}>
         {name}
       </Text>
       <Text accessibilityLiveRegion="polite" textRole="footnote" className="text-foreground-muted">
         {email ? `${status} · ${revealed ? email : "••••••@••••••"}` : status}
       </Text>
-    </>
-  );
-  if (!email) {
-    return (
-      <View
-        accessible
-        accessibilityLabel={[name, status].filter(Boolean).join(", ")}
-        className="min-w-0 shrink grow gap-0.5"
-      >
-        {content}
-      </View>
-    );
-  }
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={[name, status, revealed ? email : null].filter(Boolean).join(", ")}
-      accessibilityHint={revealed ? "Hides the account email" : "Reveals the account email"}
-      onPress={() => setRevealed((value) => !value)}
-      className="min-w-0 shrink grow gap-0.5"
-    >
-      {content}
     </Pressable>
   );
 }

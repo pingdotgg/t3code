@@ -20,7 +20,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { AppText as Text } from "../../components/ui/AppText";
-import { Button } from "../../components/ui/Button";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
@@ -79,6 +78,7 @@ function ProviderInstanceEditor(props: {
     isManagedSettingPath(environment.serverConfig.managedPolicy, `providerInstances.${instanceId}`);
   const { run, pending, error } = useProviderInstanceMutation(environment);
   const [nameDraft, setNameDraft] = useState(provider.displayName ?? "");
+  const canRemove = permitted && !managed;
 
   async function upsert(next: ProviderInstanceConfig) {
     const ok = await run({
@@ -114,7 +114,22 @@ function ProviderInstanceEditor(props: {
   }
 
   return (
-    <SettingsScreen title={provider.displayName ?? definition?.label ?? provider.driver}>
+    <SettingsScreen
+      title={provider.displayName ?? definition?.label ?? provider.driver}
+      actions={
+        canRemove
+          ? [
+              {
+                accessibilityLabel: "Remove provider",
+                icon: "trash",
+                destructive: true,
+                disabled: pending,
+                onPress: remove,
+              },
+            ]
+          : undefined
+      }
+    >
       <ScreenScrollView
         className="flex-1"
         contentInsetAdjustmentBehavior="automatic"
@@ -160,9 +175,6 @@ function ProviderInstanceEditor(props: {
             disabled={!permitted || managed || pending}
             onChange={(config) => patchInstance({ config })}
           />
-        ) : null}
-        {permitted && !managed ? (
-          <Button tone="danger" label="Remove provider" onPress={remove} disabled={pending} />
         ) : null}
       </ScreenScrollView>
     </SettingsScreen>
