@@ -87,9 +87,14 @@ export const makeStderrTail = Effect.fn("makeStderrTail")(function* (
     Effect.ignore,
     Effect.forkScoped,
   );
+  // One bounded wait shared by every caller, so a later read never adds a second delay.
+  const awaitDrained = yield* Effect.cached(
+    Fiber.join(drain).pipe(Effect.timeout("250 millis"), Effect.ignore),
+  );
   return {
-    read: Ref.get(tail),
-    awaitDrained: Fiber.join(drain).pipe(Effect.timeout("250 millis"), Effect.ignore),
+    // The exit status can arrive before stderr finishes, so a read waits for the drain.
+    read: Effect.andThen(awaitDrained, Ref.get(tail)),
+    awaitDrained,
   };
 });
 

@@ -888,4 +888,42 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       assert.strictEqual(yield* Deferred.await(termination), exitError);
     }),
   );
+
+  it.effect("reports a process exit that follows a failed write", () =>
+    Effect.gen(function* () {
+      const { stdio: baseStdio } = yield* makeInMemoryStdio();
+      const writeFailure = PlatformError.systemError({
+        _tag: "Unknown",
+        module: "Stdio",
+        method: "stdout",
+        cause: new Error("EPIPE"),
+      });
+      const exitError = new CodexError.CodexAppServerProcessExitedError({ code: 1, pid: 123 });
+      const exited = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio: Stdio.make({
+          args: baseStdio.args,
+          stdin: baseStdio.stdin,
+          stdout: () => Sink.forEach(() => Effect.fail(writeFailure)),
+          stderr: baseStdio.stderr,
+        }),
+        terminationError: Deferred.await(exited),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      const pending = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
+      yield* TestClock.adjust("100 millis");
+      yield* Deferred.succeed(exited, exitError);
+
+      assert.strictEqual(yield* Deferred.await(termination), exitError);
+      const requestFailure = yield* Fiber.join(pending).pipe(
+        Effect.match({
+          onFailure: (error) => error,
+          onSuccess: () => assert.fail("Expected the pending request to fail"),
+        }),
+      );
+      assert.strictEqual(requestFailure, exitError);
+    }),
+  );
 });
