@@ -4,6 +4,7 @@ import {
   quizAnswerMessage,
   quizCardProblem,
   readQuizCard,
+  readQuestionCard,
   shuffledQuizOptions,
   type QuizCard,
 } from "./quizCard.ts";
@@ -20,6 +21,13 @@ const card: QuizCard = {
 };
 
 describe("quiz cards", () => {
+  it("reads bounded question cards", () => {
+    expect(readQuestionCard({ question: "  Explain this. " })).toEqual({
+      question: "Explain this.",
+    });
+    expect(readQuestionCard({ question: " " })).toBeUndefined();
+    expect(readQuestionCard({ question: "x".repeat(2001) })).toBeUndefined();
+  });
   it("validates options and bounds", () => {
     expect(quizCardProblem({ ...card, answer: "All of the above" })).toBeDefined();
     expect(quizCardProblem({ ...card, answer: "(Recommended) High" })).toBeDefined();

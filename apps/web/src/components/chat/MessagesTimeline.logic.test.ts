@@ -4715,3 +4715,21 @@ it("turns a completed quiz card into an answered row after a later user message"
     }).find((row) => row.kind === "quiz-card"),
   ).toMatchObject({ answered: true });
 });
+
+it("turns a question card into an unanswered quiz-card row", () => {
+  const at = "2026-01-01T00:00:00Z";
+  const question: TimelineEntry = {
+    kind: "quiz-card",
+    id: "question-1",
+    createdAt: at,
+    runId: null,
+    quizCard: { question: "Explain it." },
+  };
+  const row = deriveMessagesTimelineRows({
+    timelineEntries: [question],
+    isWorking: false,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  }).find((entry) => entry.kind === "quiz-card");
+  expect(row).toMatchObject({ quizCard: { question: "Explain it." }, answered: false });
+});

@@ -5,7 +5,7 @@ import {
   MAX_TOOL_OUTPUT_IMAGES,
   mcpToolResultOutput,
   toolOutputImages,
-  quizCardFromToolItem,
+  lessonCardFromToolItem,
   toolOutputIndicatesFailure,
 } from "./toolOutput.ts";
 
@@ -156,11 +156,17 @@ it("keeps valid quiz cards and drops invalid cards", () => {
   expect(
     compactDynamicToolOutput({ quizCard: { ...quizCard, wrongOptions: [{ option: "B" }] } }),
   ).toBeUndefined();
-  expect(quizCardFromToolItem({ toolName: "quiz_card", output: { quizCard } })).toEqual(quizCard);
+  expect(lessonCardFromToolItem({ toolName: "quiz_card", output: { quizCard } })).toEqual(quizCard);
   expect(
-    quizCardFromToolItem({ toolName: "mcp__t3-code__quiz_card", output: { quizCard } }),
+    lessonCardFromToolItem({ toolName: "mcp__t3-code__quiz_card", output: { quizCard } }),
   ).toEqual(quizCard);
-  expect(quizCardFromToolItem({ toolName: "html_render", output: { quizCard } })).toBeUndefined();
+  expect(lessonCardFromToolItem({ toolName: "html_render", output: { quizCard } })).toBeUndefined();
+  expect(
+    lessonCardFromToolItem({
+      toolName: "question_card",
+      output: { questionCard: { question: "Q" } },
+    }),
+  ).toEqual({ question: "Q" });
 });
 
 describe("toolOutputIndicatesFailure", () => {

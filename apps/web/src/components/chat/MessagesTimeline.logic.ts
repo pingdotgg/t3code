@@ -68,7 +68,7 @@ import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentation";
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
-import type { QuizCard } from "@t3tools/shared/quizCard";
+import type { LessonCard } from "@t3tools/shared/quizCard";
 import { mcpAppReferencesEqual, type McpAppReference } from "@t3tools/shared/mcpApp";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
@@ -641,7 +641,7 @@ type MessagesTimelineRowContent =
       kind: "quiz-card";
       id: string;
       createdAt: string;
-      quizCard: QuizCard;
+      quizCard: LessonCard;
       answered: boolean;
     }
   | {
