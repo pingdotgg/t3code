@@ -182,6 +182,19 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           entries: [{ path: "linkdir/nested.txt", kind: "file" }],
           truncated: false,
         });
+        expect(
+          (yield* workspaceEntries.list({ cwd, directoryPath: "", reportSkipped: true }))
+            .skippedPaths,
+        ).toEqual([".git", "dangling", "git-link", "outside-link"]);
+        yield* writeTextFile(cwd, ".agents/README.md", "# Local skills\n");
+        yield* fileSystem.symlink(outside, path.join(cwd, ".agents/skills"));
+        expect(
+          yield* workspaceEntries.list({ cwd, directoryPath: ".agents", reportSkipped: true }),
+        ).toEqual({
+          entries: [{ path: ".agents/README.md", kind: "file" }],
+          skippedPaths: [".agents/skills"],
+          truncated: false,
+        });
       }),
     );
 
@@ -413,15 +426,55 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("listIgnoredFiles", () => {
-    it.effect("lists ignored files with sizes and skips wholly ignored folders", () =>
+    it.effect("keeps ignored files selectable when folders fill the listing limit", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".gitignore", "node_modules/\n.env\n");
+        for (let index = 0; index < 200; index++) {
+          const packagePath = `packages/p${String(index).padStart(3, "0")}`;
+          yield* writeTextFile(cwd, `${packagePath}/package.json`, "{}");
+          yield* writeTextFile(cwd, `${packagePath}/node_modules/pkg/index.js`, "x");
+        }
+        yield* writeTextFile(cwd, "z-app/index.ts", "export {};");
+        yield* git(cwd, ["add", "packages", "z-app/index.ts"]);
+        yield* writeTextFile(cwd, "z-app/.env", "A=1");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const fileOnly = yield* workspaceEntries.listIgnoredFiles({ cwd });
+        const withFolders = yield* workspaceEntries.listIgnoredFiles({
+          cwd,
+          includeDirectories: true,
+        });
+
+        expect(fileOnly.files).toEqual([{ path: "z-app/.env", byteLength: 3 }]);
+        expect(withFolders.files).toContainEqual(fileOnly.files[0]);
+        expect(withFolders.files).toHaveLength(201);
+        expect(withFolders.truncated).toBe(false);
+
+        for (let index = 0; index < 200; index++) {
+          yield* writeTextFile(cwd, `z-app/.env.${index}`, "B=2");
+        }
         yield* writeTextFile(cwd, ".gitignore", "node_modules/\n.env*\n");
+        const fullFiles = yield* workspaceEntries.listIgnoredFiles({
+          cwd,
+          includeDirectories: true,
+        });
+        expect(fullFiles.files.filter((file) => !file.path.endsWith("/"))).toHaveLength(200);
+        expect(fullFiles.files.filter((file) => file.path.endsWith("/"))).toHaveLength(200);
+        expect(fullFiles.truncated).toBe(true);
+      }),
+    );
+
+    it.effect("lists ignored files with sizes and selectable folders without scanning them", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".gitignore", "node_modules/\n.env*\n.agents/\n");
         yield* writeTextFile(cwd, ".env", "A=1");
         yield* writeTextFile(cwd, "apps/web/index.ts", "y");
         yield* git(cwd, ["add", "apps/web/index.ts"]);
         yield* writeTextFile(cwd, "apps/web/.env.local", "B=22");
         yield* writeTextFile(cwd, "node_modules/pkg/index.js", "x");
+        yield* writeTextFile(cwd, ".agents/skills/example/SKILL.md", "# Example skill\n");
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         expect(yield* workspaceEntries.listIgnoredFiles({ cwd })).toEqual({
@@ -431,6 +484,17 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           ],
           truncated: false,
         });
+        expect(yield* workspaceEntries.listIgnoredFiles({ cwd, includeDirectories: true })).toEqual(
+          {
+            files: [
+              { path: ".agents/", byteLength: 0 },
+              { path: ".env", byteLength: 3 },
+              { path: "apps/web/.env.local", byteLength: 4 },
+              { path: "node_modules/", byteLength: 0 },
+            ],
+            truncated: false,
+          },
+        );
       }),
     );
   });

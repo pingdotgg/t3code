@@ -1,8 +1,4 @@
-import {
-  executeAtomQuery,
-  runAtomCommand,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type {
   EnvironmentId,
@@ -16,7 +12,9 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
 import { environmentProjectClonesAtom, silenceProjectCloneToasts } from "../state/projectClones";
 import { projectEnvironment } from "../state/projects";
+import { serverEnvironment } from "../state/server";
 import { sourceControlEnvironment } from "../state/sourceControl";
+import { readProjectFilesToCopy } from "./readProjectFilesToCopy";
 
 /** Matches the server's read cap: a larger file would arrive truncated. */
 export const COPYABLE_FILE_MAX_BYTES = 1024 * 1024;
@@ -104,21 +102,7 @@ export function dismissProjectFileCopy(ref: ScopedProjectRef) {
  */
 export async function addProjectToMachine(input: AddProjectToMachineInput): Promise<void> {
   // Read first, so the copy reflects the files as they were when the user asked.
-  const reads = await Promise.all(
-    input.files.map(async (relativePath) => {
-      const result = await executeAtomQuery(
-        appAtomRegistry,
-        projectEnvironment.readFile({
-          environmentId: input.source.environmentId,
-          input: { cwd: input.source.cwd, relativePath },
-        }),
-        { label: "Read file to copy", reportFailure: false, refresh: true },
-      );
-      if (result._tag === "Failure") return { relativePath, error: failureMessage(result) };
-      if (result.value.truncated) return { relativePath, error: "Too large to copy." };
-      return { relativePath, contents: result.value.contents };
-    }),
-  );
+  const reads = await readProjectFilesToCopy(input.source, input.files);
 
   const targetRef = { environmentId: input.target.environmentId, projectId: input.projectId };
   const copyKey = scopedProjectKey(targetRef);
@@ -159,6 +143,16 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         failed.push(`${read.relativePath}: ${read.error}`);
         continue;
       }
+      if (
+        read.mode !== undefined &&
+        appAtomRegistry.get(serverEnvironment.configValueAtom(input.target.environmentId))
+          ?.environment.capabilities.privateFileWrites !== true
+      ) {
+        failed.push(
+          `${read.relativePath}: The destination cannot safely copy files with POSIX permissions.`,
+        );
+        continue;
+      }
       const written = await runAtomCommand(
         appAtomRegistry,
         projectEnvironment.writeFile,
@@ -170,12 +164,21 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
               ? `${input.subdirectory}/${read.relativePath}`
               : read.relativePath,
             contents: read.contents,
+            ...(read.mode !== undefined ? { mode: read.mode } : {}),
           },
         },
         { label: "Copy file to machine", reportFailure: false },
       );
       if (written._tag === "Failure")
         failed.push(`${read.relativePath}: ${failureMessage(written)}`);
+      // Stricter destination permissions are safe if owner executability survives.
+      else if (
+        read.mode !== undefined &&
+        (written.value.mode === undefined ||
+          (written.value.mode & ~read.mode) !== 0 ||
+          (read.mode & ~written.value.mode & 0o100) !== 0)
+      )
+        failed.push(`${read.relativePath}: The destination could not preserve file permissions.`);
     }
     setFileCopy(
       copyKey,
