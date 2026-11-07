@@ -215,6 +215,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   makeProviderFailure,
   makeProviderRetryTurnItem,
+  PROVIDER_RETRY_BUDGET_MS,
 } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
@@ -4324,6 +4325,7 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
 }
 
 interface ActiveClaudeTurnContext {
+  retryBudgetFailure?: OrchestrationV2ProviderFailure;
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly autoCompactWindow: string;
@@ -7938,7 +7940,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           subagentToolCalls.clear();
         });
 
-        const finalizeActiveTurn = Effect.fnUntraced(function* (input: {
+        const finalizeActiveTurn = Effect.fnUntraced(function* (requested: {
           readonly context: ActiveClaudeTurnContext;
           readonly status: Extract<
             OrchestrationV2ProviderTurn["status"],
@@ -7949,6 +7951,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
         }) {
+          // A turn stopped by the retry budget settles as failed with the retry's error.
+          const retryBudgetFailure = requested.context.retryBudgetFailure;
+          const input =
+            requested.status === "interrupted" && retryBudgetFailure !== undefined
+              ? { ...requested, status: "failed" as const, failure: retryBudgetFailure }
+              : requested;
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           if (input.context.compaction?.status === "running") {
             const reason = input.result?.subtype === "success" ? input.result.result.trim() : "";
@@ -9353,12 +9361,64 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 updatedAt,
               }),
             });
+            if (previous === undefined) {
+              // A hung request can take many minutes per attempt; stop the turn once
+              // this retry window outlasts the budget, whatever the attempt count.
+              yield* Effect.sleep(PROVIDER_RETRY_BUDGET_MS).pipe(
+                Effect.andThen(
+                  Effect.gen(function* () {
+                    const current = (yield* Ref.get(providerRetries)).get(context.providerTurnId);
+                    // A user Stop already in flight keeps its interrupted outcome.
+                    if (
+                      current?.startedAt !== state.startedAt ||
+                      (yield* Ref.get(activeTurn)) !== context ||
+                      context.retryBudgetFailure !== undefined ||
+                      (yield* Ref.get(interruptedTurns)).has(context.providerTurnId)
+                    )
+                      return;
+                    context.retryBudgetFailure = current.failure;
+                    const liveQuery = yield* Ref.get(queryContext);
+                    yield* interruptTurn({
+                      providerThread: context.input.providerThread,
+                      providerTurnId: context.providerTurnId,
+                    }).pipe(
+                      Effect.timeoutOption("10 seconds"),
+                      Effect.catch((cause) =>
+                        Effect.logWarning("orchestration-v2.claude-retry-budget-stop-failed", {
+                          cause,
+                        }),
+                      ),
+                    );
+                    const currentAfterTimeout = (yield* Ref.get(providerRetries)).get(
+                      context.providerTurnId,
+                    );
+                    if (
+                      currentAfterTimeout?.startedAt !== state.startedAt ||
+                      (yield* Ref.get(activeTurn)) !== context ||
+                      liveQuery === null
+                    )
+                      return;
+                    const ownedLiveQuery = yield* Ref.modify(queryContext, (current) =>
+                      current?.query === liveQuery.query ? [true, null] : [false, current],
+                    );
+                    if (!ownedLiveQuery) return;
+                    liveQuery.stopping = true;
+                    yield* finalizeActiveTurnAfterQueryExit(liveQuery);
+                    yield* endSubagentCallsOfClosedQuery(liveQuery.nativeThreadId, "interrupted");
+                    yield* Deferred.succeed(liveQuery.closed, undefined);
+                  }),
+                ),
+                Effect.forkIn(sessionScope),
+              );
+            }
             return;
           }
 
           if (message.type === "assistant" && input.replayed !== true) {
-            const now = yield* DateTime.now;
-            yield* completeProviderRetry(context, now);
+            if (message.message.model !== "<synthetic>") {
+              const now = yield* DateTime.now;
+              yield* completeProviderRetry(context, now);
+            }
             // CLI-generated <synthetic> frames report zero usage, not context usage.
             if (
               message.parent_tool_use_id === null &&

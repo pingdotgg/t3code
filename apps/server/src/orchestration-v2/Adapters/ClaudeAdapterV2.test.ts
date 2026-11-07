@@ -9733,6 +9733,197 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         yield* harness.awaitTerminal(1);
+        yield* TestClock.adjust("10 minutes");
+        assert.lengthOf(harness.terminalEvents(), 1);
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each(["closed", "interrupt-hangs", "close-hangs", "unconfirmed", "synthetic"] as const)(
+    "fails a turn whose API retries outlast the retry budget: %s",
+    (response) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const interruptSent = yield* Deferred.make<void>();
+          const closeRequested = yield* Deferred.make<void>();
+          const releaseClose = yield* Deferred.make<void>();
+          const harness = yield* makeWakeHarnessWithOptions({
+            interrupt: Deferred.succeed(interruptSent, undefined).pipe(
+              Effect.andThen(response === "interrupt-hangs" ? Effect.never : Effect.void),
+            ),
+            close: (sdkMessages) =>
+              Deferred.succeed(closeRequested, undefined).pipe(
+                Effect.andThen(
+                  response === "close-hangs"
+                    ? Deferred.await(releaseClose).pipe(Effect.andThen(Queue.shutdown(sdkMessages)))
+                    : response === "unconfirmed"
+                      ? Effect.void
+                      : Queue.shutdown(sdkMessages),
+                ),
+              ),
+          });
+          yield* Effect.addFinalizer(() => Deferred.succeed(releaseClose, undefined));
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-claude-retry-budget"),
+              text: "Summarize the repo.",
+              attachments: [],
+            }),
+          );
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "system",
+              subtype: "api_retry",
+              attempt: 1,
+              max_retries: 10,
+              retry_delay_ms: 600,
+              error_status: 503,
+              error: "server_error",
+              uuid: "00000000-0000-4000-8000-000000000211",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* harness.until(() =>
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "error" &&
+                event.turnItem.status === "running",
+            ),
+          );
+          if (response === "synthetic") {
+            yield* Queue.offer(
+              harness.sdkMessages,
+              claudeSdkFrame({
+                type: "assistant",
+                message: {
+                  model: "<synthetic>",
+                  id: "retry-notice",
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "text", text: "Retrying after an API error" }],
+                  stop_reason: "end_turn",
+                  stop_sequence: null,
+                  usage: {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0,
+                  },
+                },
+                parent_tool_use_id: null,
+                uuid: "retry-notice",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            );
+            yield* harness.until(() =>
+              harness.events.some(
+                (event) =>
+                  event.type === "turn_item.updated" && event.turnItem.type === "assistant_message",
+              ),
+            );
+            const retryEvents = harness.events.filter(
+              (event) => event.type === "turn_item.updated" && event.turnItem.type === "error",
+            );
+            assert.nestedPropertyVal(retryEvents.at(-1), "turnItem.status", "running");
+          }
+          // The next attempt hangs: no frame arrives until the budget stops the turn.
+          yield* TestClock.adjust("9 minutes");
+          assert.lengthOf(harness.terminalEvents(), 0);
+          yield* TestClock.adjust("1 minute");
+          yield* Deferred.await(interruptSent);
+          if (response !== "closed") {
+            yield* TestClock.adjust("20 seconds");
+            assert.lengthOf(
+              harness.terminalEvents(),
+              1,
+              "an unresponsive query must settle the turn",
+            );
+          }
+          const terminal = yield* Queue.take(harness.terminalReceipts);
+          assert.equal(terminal.status, "failed");
+          if (terminal.status !== "failed") return;
+          assert.equal(terminal.failure.code, "api_error_503");
+          assert.equal(terminal.retry?.attempt, 1);
+          assert.lengthOf(harness.terminalEvents(), 1);
+          assert.isTrue(yield* Deferred.isDone(closeRequested), "the query must be closed");
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("keeps a user Stop interrupted when the retry budget passes before it settles", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-retry-budget-user-stop"),
+            text: "Summarize the repo.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "api_retry",
+            attempt: 1,
+            max_retries: 10,
+            retry_delay_ms: 600,
+            error_status: 503,
+            error: "server_error",
+            uuid: "00000000-0000-4000-8000-000000000212",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) => event.type === "turn_item.updated" && event.turnItem.type === "error",
+          ),
+        );
+        const active = harness.events.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+        );
+        if (active?.type !== "provider_turn.updated")
+          return yield* Effect.die("Missing running native turn");
+        // The CLI has not confirmed the Stop when the budget passes.
+        yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: active.providerTurn.id,
+          })
+          .pipe(Effect.ignore, Effect.forkScoped);
+        yield* TestClock.adjust("10 minutes");
+        yield* Queue.shutdown(harness.sdkMessages);
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+        assert.lengthOf(harness.terminalEvents(), 1);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

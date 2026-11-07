@@ -320,6 +320,13 @@ export function makeProviderFailureTurnItem(input: {
   };
 }
 
+/**
+ * Longest a turn may stay in provider retries before the adapter stops it as
+ * failed. Codex waits for the network without limit and a hung Claude request
+ * can take many minutes per attempt, so counting attempts alone never ends them.
+ */
+export const PROVIDER_RETRY_BUDGET_MS = 10 * 60 * 1000;
+
 export function makeProviderRetryTurnItem(input: {
   readonly driver: ProviderDriverKind;
   readonly threadId: ThreadId;
