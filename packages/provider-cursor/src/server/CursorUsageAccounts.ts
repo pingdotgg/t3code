@@ -2,7 +2,6 @@ import type { ProviderInstanceId } from "@t3tools/contracts";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type { ProviderUsageScan } from "@t3tools/provider-core/server/usage";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -44,7 +43,6 @@ export class CursorUsageAccounts extends Context.Service<
         readonly instanceId: ProviderInstanceId;
         readonly environment: NodeJS.ProcessEnv;
       }>;
-      readonly keychainUsageEnabled: boolean;
       readonly windowStartMs: number;
       readonly retentionCutoffMs: number;
       readonly awaitRefresh: boolean;
@@ -58,8 +56,6 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const host = yield* ProviderHost.ProviderHost;
   const accountReader = yield* CursorAccountReader.CursorAccountReader;
-  const hostEnvironment = yield* HostProcess.Environment;
-  const platform = yield* HostProcess.Platform;
   const digest = yield* Digest.Digest;
 
   const cachePath = path.join(host.paths.stateDir, CURSOR_ACCOUNT_CACHE_FILE_NAME);
@@ -190,34 +186,12 @@ const make = Effect.gen(function* () {
 
   const accountSource = Effect.fn("CursorUsageAccounts.accountSource")(function* (
     credential: CursorCredentialSource,
-    authPath: string,
     windowStartMs: number,
     retentionStartMs: number,
     awaitRefresh: boolean,
   ) {
-    // A Keychain login outlives an uninstalled Cursor, so it also needs Cursor's local directory.
-    const localLogin =
-      typeof credential === "string"
-        ? credential
-        : credential.kind === "keychain"
-          ? path.dirname(authPath)
-          : null;
-    if (
-      localLogin !== null &&
-      !(yield* fileSystem.exists(localLogin).pipe(Effect.orElseSucceed(() => true)))
-    ) {
-      return null;
-    }
     yield* ensureLoaded;
-    const credentialKey =
-      typeof credential === "string"
-        ? credential
-        : credential.kind === "apiKey"
-          ? // A fingerprint, so a replaced key never reads the previous account's cache.
-            `api-key:${Hex.encode(
-              yield* digest.digest(Digest.sha256, new TextEncoder().encode(credential.apiKey)),
-            )}`
-          : "keychain";
+    const credentialKey = `api-key:${Hex.encode(yield* digest.digest(Digest.sha256, new TextEncoder().encode(credential.apiKey)))}`;
     const nowMs = yield* Clock.currentTimeMillis;
     const recentFailure = failures.get(credentialKey);
     let refreshing = false;
@@ -236,8 +210,7 @@ const make = Effect.gen(function* () {
     if (failureMessage === null) return null;
     if (cache === undefined) {
       return {
-        dir: authPath,
-        // Never combine a local fallback with another server's account-wide history.
+        dir: "cursor-account",
         ...(refreshing
           ? { files: [], refreshing: true }
           : { files: null, message: failureMessage ?? CURSOR_ACCOUNT_READ_ERROR }),
@@ -263,30 +236,7 @@ const make = Effect.gen(function* () {
   });
 
   const scan: CursorUsageAccounts["Service"]["scan"] = Effect.fn("CursorUsageAccounts.scan")(
-    function* ({
-      instances,
-      keychainUsageEnabled,
-      windowStartMs,
-      retentionCutoffMs,
-      awaitRefresh,
-    }) {
-      const home = yield* HostProcess.HomeDirectory;
-      const userHome =
-        (platform === "win32" ? hostEnvironment["USERPROFILE"] : hostEnvironment["HOME"]) || home;
-      const configHome = hostEnvironment["XDG_CONFIG_HOME"]?.trim();
-      const cursorHome =
-        platform === "darwin"
-          ? path.join(userHome, "Library", "Application Support")
-          : platform === "win32"
-            ? hostEnvironment["APPDATA"] || path.join(userHome, "AppData", "Roaming")
-            : configHome && path.isAbsolute(configHome)
-              ? configHome
-              : path.join(userHome, ".config");
-      const authPath =
-        platform === "darwin"
-          ? path.join(userHome, ".cursor", "auth.json")
-          : path.join(cursorHome, platform === "win32" ? "Cursor" : "cursor", "auth.json");
-      // T3's Cursor sign-in and CURSOR_API_KEY name the account the agent uses, so they win.
+    function* ({ instances, windowStartMs, retentionCutoffMs, awaitRefresh }) {
       const apiKeys = yield* Effect.forEach(instances, ({ instanceId, environment }) =>
         environment.CURSOR_API_KEY?.trim()
           ? Effect.succeed(environment.CURSOR_API_KEY.trim())
@@ -302,7 +252,6 @@ const make = Effect.gen(function* () {
           (apiKey) =>
             accountSource(
               { kind: "apiKey", apiKey },
-              authPath,
               windowStartMs,
               retentionCutoffMs,
               awaitRefresh,
@@ -323,38 +272,7 @@ const make = Effect.gen(function* () {
         }
         return [...byAccount.values()];
       }
-      const credentialStore = hostEnvironment["AGENT_CLI_CREDENTIAL_STORE"];
-      const loginUnavailable =
-        Boolean(hostEnvironment["CURSOR_AUTH_TOKEN"]?.trim()) || credentialStore === "memory";
-      const useKeychain = platform === "darwin" && credentialStore !== "file";
-      if (useKeychain && !loginUnavailable && !keychainUsageEnabled) {
-        return [
-          {
-            dir: authPath,
-            volumeId: "",
-            files: null,
-            message: "Cursor account usage is off on this environment.",
-            action: "enableCursorKeychain",
-          },
-        ];
-      }
-      if (loginUnavailable) {
-        return [
-          {
-            dir: authPath,
-            files: null,
-            message: "Cursor account history needs a Cursor CLI login on this server.",
-          },
-        ];
-      }
-      const source = yield* accountSource(
-        useKeychain ? { kind: "keychain" } : authPath,
-        authPath,
-        windowStartMs,
-        retentionCutoffMs,
-        awaitRefresh,
-      );
-      return source === null ? [] : [source];
+      return [];
     },
   );
 
