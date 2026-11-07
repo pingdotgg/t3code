@@ -22,6 +22,8 @@ export interface TurnItemPositionStoreV2Shape {
     readonly turnItemId: TurnItemId;
     readonly runId: RunId | null;
     readonly runOrdinal?: number;
+    /** Moves a stored position that lies outside the item's run into that run. */
+    readonly keepWithinRun?: boolean;
   }) => Effect.Effect<number, TurnItemPositionStoreError>;
   readonly normalize: (
     item: OrchestrationV2TurnItem,
@@ -42,17 +44,26 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
     const allocate: TurnItemPositionStoreV2Shape["allocate"] =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(
-        function* ({ threadId, turnItemId, runId, runOrdinal: suppliedRunOrdinal }) {
+        function* ({
+          threadId,
+          turnItemId,
+          runId,
+          runOrdinal: suppliedRunOrdinal,
+          keepWithinRun = false,
+        }) {
           const existing = yield* sql<{ readonly ordinal: number }>`
           SELECT ordinal
           FROM orchestration_v2_turn_item_positions
           WHERE thread_id = ${threadId} AND turn_item_id = ${turnItemId}
           LIMIT 1
         `;
-          if (existing[0] !== undefined) return existing[0].ordinal;
+          const existingOrdinal = existing[0]?.ordinal;
+          if (existingOrdinal !== undefined && (!keepWithinRun || runId === null)) {
+            return existingOrdinal;
+          }
 
           const runRows =
-            runId === null
+            runId === null || suppliedRunOrdinal !== undefined
               ? []
               : yield* sql<{ readonly ordinal: number }>`
                 SELECT ordinal
@@ -63,6 +74,18 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           const runOrdinal = suppliedRunOrdinal ?? runRows[0]?.ordinal ?? null;
           const lowerBound = runOrdinal === null ? 0 : runOrdinal * 1_000_000;
           const upperBound = runOrdinal === null ? 999_999 : lowerBound + 999_999;
+          if (existingOrdinal !== undefined) {
+            if (
+              runOrdinal === null ||
+              (existingOrdinal >= lowerBound && existingOrdinal <= upperBound)
+            ) {
+              return existingOrdinal;
+            }
+            yield* sql`
+            DELETE FROM orchestration_v2_turn_item_positions
+            WHERE thread_id = ${threadId} AND turn_item_id = ${turnItemId}
+          `;
+          }
           yield* sql`
           INSERT INTO orchestration_v2_turn_item_positions (thread_id, turn_item_id, ordinal)
           SELECT
@@ -110,6 +133,10 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           turnItemId: item.id,
           runId: item.runId,
           ...(runOrdinal === undefined ? {} : { runOrdinal }),
+          // A user message keeps its id when it changes runs: a steer that
+          // missed its turn starts the next run, and a queued message is
+          // promoted into the running one. Its row follows the run it went to.
+          keepWithinRun: item.type === "user_message",
         }).pipe(Effect.map((ordinal) => (item.ordinal === ordinal ? item : { ...item, ordinal })));
       }),
     });
