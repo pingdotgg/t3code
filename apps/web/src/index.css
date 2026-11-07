@@ -144,8 +144,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   @variant dark {
     --appearance-contrast-target: white;
-    --app-scrollbar-thumb: rgb(255 255 255 / 8%);
-    --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
+    /* Keeps the idle thumb above 3:1 (WCAG 1.4.11) on #000; 35% renders as gray 89, just under. */
+    --app-scrollbar-thumb: rgb(255 255 255 / 36%);
+    --app-scrollbar-thumb-hover: rgb(255 255 255 / 45%);
     --glass-blur: 16px;
     --glass-saturation: 1.08;
   }
