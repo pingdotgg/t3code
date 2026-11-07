@@ -35,6 +35,8 @@ export class PreviewManager extends Context.Service<
     readonly open: (
       input: PreviewOpenInput & {
         readonly automationOwner?: string;
+        /** The desktop streams the tab from its first snapshot instead of hosting a webview. */
+        readonly headless?: boolean;
         /** Runs before the `opened` event publishes, so subscribers find state keyed by the tab. */
         readonly beforePublish?: (snapshot: PreviewSessionSnapshot) => void;
       },
@@ -42,7 +44,7 @@ export class PreviewManager extends Context.Service<
     readonly reportStatus: (
       input: PreviewReportStatusInput & { readonly serverControlled?: boolean },
     ) => Effect.Effect<void, PreviewError>;
-    /** Records that a server tab runs headless. It stays headless until it closes. */
+    /** Records that the desktop streams a server tab. It stays streamed until it closes. */
     readonly markHeadless: (
       input: PreviewCloseInput & { readonly tabId: string },
     ) => Effect.Effect<void, PreviewError>;
@@ -193,6 +195,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
           ? { automationOwner: input.automationOwner }
           : {}),
         ...(input.reveal === undefined ? {} : { reveal: input.reveal }),
+        ...(runtime === "server" && input.headless ? { headless: true } : {}),
         updatedAt,
       };
       yield* SynchronizedRef.modifyEffect(stateRef, (state) =>

@@ -14,7 +14,7 @@ import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(DesktopBrowserEvent));
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeCdpReply = Schema.decodeUnknownSync(
-  Schema.fromJsonString(Schema.Struct({ id: Schema.Number })),
+  Schema.fromJsonString(Schema.Struct({ id: Schema.optionalKey(Schema.Number) })),
 );
 const key = { threadId: "thread-1", tabId: "tab-1" };
 /** Sends a page command whose id the fake debugger records as it receives it. */
@@ -33,6 +33,7 @@ const command = (
 
 const makeDebuggee = (
   options: {
+    readonly targetId?: string;
     readonly deferFocus?: boolean;
     readonly refuse?: (method: string, sessionId: string | undefined) => boolean;
   } = {},
@@ -55,7 +56,7 @@ const makeDebuggee = (
           return;
         }
         if (method === "Target.getTargetInfo") {
-          resolve({ targetInfo: { targetId: "GUEST" } });
+          resolve({ targetInfo: { targetId: options.targetId ?? "GUEST" } });
           return;
         }
         if (method === "Emulation.setFocusEmulationEnabled") {
@@ -68,11 +69,26 @@ const makeDebuggee = (
         pending.push(() => resolve({ method }));
         sendWaiters.shift()?.();
       }),
+    attached: false,
+    isAttached: () => debuggee.attached,
+    attach: () => {
+      if (devToolsOpened) throw new Error("DevTools is open");
+      debuggee.attached = true;
+    },
+    detach: vi.fn(() => {
+      debuggee.attached = false;
+    }),
   });
+  let destroyed = false;
+  let devToolsOpened = false;
   const webContents = Object.assign(new NodeEvents.EventEmitter(), {
+    debugger: debuggee,
     getURL: () => "http://localhost/",
     getTitle: () => "Page",
     getUserAgent: () => "Electron",
+    isDestroyed: () => destroyed,
+    isDevToolsOpened: () => devToolsOpened,
+    close: vi.fn(),
   });
   return {
     tab: {
@@ -80,6 +96,20 @@ const makeDebuggee = (
       debugger: debuggee as unknown as Electron.Debugger,
     },
     emit: (method: string, params: unknown) => emitter.emit("message", {}, method, params, ""),
+    debuggee,
+    openDevTools: () => {
+      devToolsOpened = true;
+      debuggee.attached = false;
+      debuggee.emit("detach", {}, "replaced_with_devtools");
+    },
+    closeDevTools: () => {
+      devToolsOpened = false;
+      webContents.emit("devtools-closed");
+    },
+    destroy: () => {
+      destroyed = true;
+      webContents.emit("destroyed");
+    },
     navigate: () => webContents.emit("did-navigate"),
     /** Ids of the commands the debugger received, in order. */
     sent,
@@ -112,9 +142,11 @@ const watchReplies = (host: DesktopBrowserHost.DesktopBrowserHost["Service"]) =>
     const replies = yield* Queue.unbounded<number>();
     yield* host.events.pipe(
       Stream.map((line) => decodeEvent(new TextDecoder().decode(line))),
-      Stream.runForEach((event) =>
-        event.type === "cdp" ? Queue.offer(replies, decodeCdpReply(event.message).id) : Effect.void,
-      ),
+      Stream.runForEach((event) => {
+        if (event.type !== "cdp") return Effect.void;
+        const { id } = decodeCdpReply(event.message);
+        return id === undefined ? Effect.void : Queue.offer(replies, id);
+      }),
       Effect.forkScoped,
     );
     yield* Effect.yieldNow;
@@ -147,19 +179,25 @@ describe("DesktopBrowserHost", () => {
   it.effect("re-sends shown to a backend that starts later and when a tab attaches again", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
-      host.attach(key, makeDebuggee().tab);
+      const page = makeDebuggee();
+      const popup = makeDebuggee();
+      popup.openDevTools();
+      host.openedPopup(page.tab.webContents, popup.tab.webContents);
+      host.attach(key, page.tab);
       host.setShown(key, true);
-      const reader = yield* takeEvents(host, 5).pipe(Effect.forkScoped);
+      const reader = yield* takeEvents(host, 7).pipe(Effect.forkScoped);
 
       yield* Effect.yieldNow;
       host.detach(key);
-      host.attach(key, makeDebuggee().tab);
+      host.attach(key, page.tab);
 
       expect(yield* Fiber.join(reader)).toEqual([
         { type: "attached", ...key },
+        { type: "popupWindows", ...key, open: true },
         { type: "shown", ...key, shown: true },
         { type: "detached", ...key },
         { type: "attached", ...key },
+        { type: "popupWindows", ...key, open: true },
         { type: "shown", ...key, shown: true },
       ]);
     }),
@@ -169,13 +207,16 @@ describe("DesktopBrowserHost", () => {
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
       const other = { ...key, tabId: "tab-2" };
+      const page = makeDebuggee();
+      host.openedPopup(page.tab.webContents, makeDebuggee().tab.webContents);
       host.setShown(key, false);
-      host.attach(key, makeDebuggee().tab);
+      host.attach(key, page.tab);
       host.setShown(other, true);
       host.attach(other, makeDebuggee().tab);
 
-      expect(yield* takeEvents(host, 3)).toEqual([
+      expect(yield* takeEvents(host, 4)).toEqual([
         { type: "attached", ...key },
+        { type: "popupWindows", ...key, open: true },
         { type: "shown", ...key, shown: false },
         { type: "attached", ...other },
       ]);
@@ -698,6 +739,7 @@ describe("DesktopBrowserHost", () => {
       yield* settle;
       debuggee.release();
       expect(yield* Queue.take(replies)).toBe(1);
+      debuggee.emit("Target.attachedToTarget", { sessionId: "child-frame" });
       yield* raw({ id: 2, method: "Page.startScreencast", sessionId: "child-frame" });
       expect(yield* Queue.take(replies)).toBe(2);
       yield* TestClock.adjust("1 minute");
@@ -723,11 +765,13 @@ describe("DesktopBrowserHost", () => {
       });
       expect(yield* Queue.take(replies)).toBe(2);
       yield* raw({ id: 3, method: "Page.startScreencast", sessionId: "t3-preview-page-1" });
+      expect(yield* Queue.take(replies)).toBe(3);
       yield* settle;
       debuggee.release();
       yield* settle;
       yield* TestClock.adjust("1 minute");
-      expect(debuggee.focusEmulation).toEqual([true, false]);
+      expect(debuggee.focusEmulation).toEqual([]);
+      expect(debuggee.sent).toEqual([]);
     }).pipe(Effect.scoped),
   );
 
@@ -1007,11 +1051,261 @@ describe("DesktopBrowserHost", () => {
             id: 2,
             method: "Input.dispatchMouseEvent",
             params: { type: "mousePressed", x: 1, y: 1 },
+            sessionId: "t3-preview-page",
           }),
         }),
       );
       expect(host.humanStartedDownload(debuggee.tab.webContents)).toBe(false);
     }),
+  );
+
+  it.effect("drives an agent tab's popup windows through its relay, each on its own", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const page = makeDebuggee();
+      const early = makeDebuggee({ targetId: "EARLY" });
+      const late = makeDebuggee({ targetId: "LATE" });
+      const human = makeDebuggee();
+      const humanPopup = makeDebuggee({ targetId: "HUMAN-POPUP" });
+      const humanKey = { threadId: "thread-1", tabId: "tab-human" };
+      const events = yield* Queue.unbounded<DesktopBrowserEvent>();
+      yield* host.events.pipe(
+        Stream.runForEach((line) =>
+          Queue.offer(events, decodeEvent(new TextDecoder().decode(line))),
+        ),
+        Effect.forkScoped,
+      );
+      const cdp = (tabKey: typeof key, message: Record<string, unknown>) =>
+        host.handleCommandLine(
+          encodeJson({ type: "cdp", ...tabKey, message: encodeJson(message) }),
+        );
+      const nextCdp = Effect.gen(function* () {
+        let event = yield* Queue.take(events);
+        while (event.type !== "cdp") event = yield* Queue.take(events);
+        return JSON.parse(event.message) as Record<string, unknown>;
+      });
+      host.attach(key, page.tab);
+      host.attach(humanKey, human.tab);
+      yield* Queue.takeN(events, 2);
+      host.openedPopup(page.tab.webContents, early.tab.webContents);
+      host.openedPopup(human.tab.webContents, humanPopup.tab.webContents);
+
+      yield* host.handleCommandLine(encodeJson({ type: "popups", ...key }));
+      yield* cdp(key, { id: 1, method: "Target.setAutoAttach" });
+      yield* cdp(humanKey, { id: 1, method: "Target.setAutoAttach" });
+      const announced: Array<Record<string, unknown>> = [];
+      while (announced.length < 3) {
+        const message = yield* nextCdp;
+        if (message["method"] === "Target.attachedToTarget") announced.push(message);
+      }
+      host.openedPopup(page.tab.webContents, late.tab.webContents);
+      let lateAnnounced = yield* nextCdp;
+      while (lateAnnounced["method"] !== "Target.attachedToTarget") lateAnnounced = yield* nextCdp;
+      announced.push(lateAnnounced);
+      const popups = announced
+        .map((message) => message["params"] as { sessionId: string; targetInfo: object })
+        .filter((params) => params.sessionId !== "t3-preview-page");
+      expect(popups.map((params) => params.targetInfo)).toEqual([
+        expect.objectContaining({ targetId: "EARLY", openerId: "GUEST" }),
+        expect.objectContaining({ targetId: "LATE", openerId: "GUEST" }),
+      ]);
+      // A person's tab keeps its popups to itself.
+      expect(humanPopup.debuggee.attached).toBe(false);
+      expect(early.debuggee.attached).toBe(true);
+
+      const [earlySession, lateSession] = popups.map((params) => params.sessionId);
+      yield* cdp(key, {
+        id: 2,
+        method: "Page.captureScreenshot",
+        params: { id: 2 },
+        sessionId: earlySession,
+      });
+      yield* cdp(key, {
+        id: 3,
+        method: "Page.captureScreenshot",
+        params: { id: 3 },
+        sessionId: lateSession,
+      });
+      yield* settle;
+      // The early popup's pending screenshot neither blocks the late one's nor focuses the page.
+      expect([early.sent, late.sent, page.sent]).toEqual([[2], [3], []]);
+      expect([early.focusEmulation, late.focusEmulation, page.focusEmulation]).toEqual([
+        [true],
+        [true],
+        [],
+      ]);
+
+      yield* cdp(key, {
+        id: 4,
+        method: "Browser.setDownloadBehavior",
+        params: { behavior: "allowAndName", downloadPath: "/srv/downloads" },
+      });
+      yield* settle;
+      for (const debuggee of [page, early, late]) debuggee.release();
+      let reply = yield* nextCdp;
+      while (reply["id"] !== 4) reply = yield* nextCdp;
+      const paths: Array<string> = [];
+      const item = {
+        setSavePath: (path: string) => void paths.push(path),
+      } as unknown as Electron.DownloadItem;
+      late.emit("Page.downloadWillBegin", { guid: "guid-late" });
+      expect(host.placeDownload(page.tab.webContents, item)).toBe(false);
+      expect(host.placeDownload(late.tab.webContents, item)).toBe(true);
+      expect(paths).toEqual(["/srv/downloads/guid-late"]);
+
+      for (const id of [5, 6, 7]) {
+        yield* cdp(key, {
+          id,
+          method: id === 7 ? "Page.startScreencast" : "Page.captureScreenshot",
+          params: { id },
+          sessionId: earlySession,
+        });
+      }
+      yield* settle;
+      yield* cdp(key, {
+        id: 8,
+        method: "Target.detachFromTarget",
+        params: { sessionId: earlySession },
+      });
+      let detached = yield* nextCdp;
+      while (detached["id"] !== 8) detached = yield* nextCdp;
+      yield* TestClock.adjust("1 minute");
+      expect(early.focusEmulation).toEqual([true, false]);
+      early.release();
+      let queued = yield* nextCdp;
+      while (queued["id"] !== 6) queued = yield* nextCdp;
+      expect(queued).toHaveProperty("error");
+      expect(early.sent.filter((id) => id === 5 || id === 6)).toEqual([5]);
+      expect(early.tab.webContents.close).not.toHaveBeenCalled();
+
+      late.destroy();
+      let closed = yield* nextCdp;
+      while (closed["method"] !== "Target.detachedFromTarget") closed = yield* nextCdp;
+      expect(closed["params"]).toEqual({ sessionId: lateSession, targetId: "LATE" });
+
+      yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
+      expect(early.debuggee.detach).toHaveBeenCalledOnce();
+      expect(late.debuggee.detach).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["before", "after"] as const)(
+    "recovers the same popup when DevTools opened %s relay attachment closes",
+    (when) =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        const page = makeDebuggee();
+        const popup = makeDebuggee({ targetId: "POPUP" });
+        const sibling = makeDebuggee({ targetId: "SIBLING" });
+        const attach = vi.spyOn(popup.debuggee, "attach");
+        const nativeStates: Array<boolean> = [];
+        const events = yield* Queue.unbounded<DesktopBrowserEvent>();
+        yield* host.events.pipe(
+          Stream.runForEach((line) => {
+            const event = decodeEvent(new TextDecoder().decode(line));
+            if (event.type === "popupWindows") nativeStates.push(event.open);
+            return Queue.offer(events, event);
+          }),
+          Effect.forkScoped,
+        );
+        const cdp = (message: Record<string, unknown>) =>
+          host.handleCommandLine(encodeJson({ type: "cdp", ...key, message: encodeJson(message) }));
+        const nextCdp = Effect.gen(function* () {
+          let event = yield* Queue.take(events);
+          while (event.type !== "cdp") event = yield* Queue.take(events);
+          return JSON.parse(event.message) as Record<string, unknown>;
+        });
+        const reply = (id: number) =>
+          Effect.gen(function* () {
+            let message = yield* nextCdp;
+            while (message["id"] !== id) message = yield* nextCdp;
+            return message;
+          });
+        host.attach(key, page.tab);
+        expect(yield* Queue.take(events)).toEqual({ type: "attached", ...key });
+        if (when === "before") popup.openDevTools();
+        host.openedPopup(page.tab.webContents, popup.tab.webContents);
+        host.openedPopup(page.tab.webContents, sibling.tab.webContents);
+        yield* host.handleCommandLine(encodeJson({ type: "popups", ...key }));
+        yield* cdp({ id: 1, method: "Target.setAutoAttach" });
+        const sessions = new Map<string, string>();
+        while (sessions.size < (when === "before" ? 2 : 3)) {
+          const message = yield* nextCdp;
+          if (message["method"] !== "Target.attachedToTarget") continue;
+          const params = message["params"] as {
+            sessionId: string;
+            targetInfo: { targetId: string };
+          };
+          sessions.set(params.targetInfo.targetId, params.sessionId);
+        }
+        if (when === "after") {
+          popup.openDevTools();
+          const message = yield* nextCdp;
+          expect(message).toMatchObject({
+            method: "Target.detachedFromTarget",
+            params: { sessionId: sessions.get("POPUP"), targetId: "POPUP" },
+          });
+        }
+        expect(popup.debuggee.attached).toBe(false);
+        expect(nativeStates).toEqual([true]);
+        attach.mockClear();
+        popup.closeDevTools();
+        expect(popup.debuggee.attached).toBe(true);
+        let restored = yield* nextCdp;
+        while (restored["method"] !== "Target.attachedToTarget") restored = yield* nextCdp;
+        const restoredParams = restored["params"] as { sessionId: string };
+        expect(restored).toMatchObject({
+          params: { targetInfo: { targetId: "POPUP", openerId: "GUEST" } },
+        });
+        expect(restoredParams.sessionId).not.toBe(sessions.get("POPUP"));
+        popup.closeDevTools();
+        expect(attach).toHaveBeenCalledOnce();
+        if (when === "after") {
+          yield* cdp({ id: 2, method: "Runtime.evaluate", sessionId: sessions.get("POPUP") });
+          expect(yield* reply(2)).toHaveProperty("error");
+        }
+        for (const [index, sessionId] of [
+          restoredParams.sessionId,
+          sessions.get("SIBLING"),
+          sessions.get("GUEST"),
+        ].entries()) {
+          yield* cdp({
+            id: index + 3,
+            method: "Runtime.evaluate",
+            params: { id: index + 3 },
+            sessionId,
+          });
+        }
+        yield* settle;
+        expect([popup.sent, sibling.sent, page.sent]).toEqual([[3], [4], [5]]);
+        popup.release();
+        sibling.release();
+        page.release();
+        yield* reply(5);
+        yield* cdp({ id: 6, method: "Target.getTargets" });
+        expect(yield* reply(6)).toMatchObject({
+          result: {
+            targetInfos: ["GUEST", "SIBLING", "POPUP"].map((targetId) =>
+              expect.objectContaining({ targetId, attached: true }),
+            ),
+          },
+        });
+        const siblingAttach = vi.spyOn(sibling.debuggee, "attach");
+        sibling.openDevTools();
+        sibling.destroy();
+        sibling.closeDevTools();
+        expect(siblingAttach).not.toHaveBeenCalled();
+        yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
+        popup.closeDevTools();
+        expect(attach).toHaveBeenCalledOnce();
+        popup.destroy();
+        popup.closeDevTools();
+        let closed = yield* Queue.take(events);
+        while (closed.type !== "popupWindows" || closed.open) closed = yield* Queue.take(events);
+        expect(nativeStates).toEqual([true, false]);
+        expect(attach).toHaveBeenCalledOnce();
+        expect(popup.tab.webContents.close).not.toHaveBeenCalled();
+      }).pipe(Effect.scoped),
   );
 
   it.effect("detaches only the tab whose CDP event is too large to relay", () =>

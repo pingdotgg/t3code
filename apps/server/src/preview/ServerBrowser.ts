@@ -494,7 +494,17 @@ const make = Effect.gen(function* () {
   >();
 
   const closedPendingTabs = new Set<string>();
-  const adoptedPages = new Map<string, { readonly page: Page; readonly openerTabId: string }>();
+  const adoptedPages = new Map<
+    string,
+    {
+      readonly page: Page;
+      readonly openerTabId: string;
+      readonly native: boolean;
+      readonly pendingDialog?: { current: Dialog | null };
+    }
+  >();
+  /** A desktop popup can reach adoption from both its `popup` event and the connect sweep. */
+  const adoptedPopups = new WeakSet<Page>();
   const closedSessions = new Set<string>();
   let hostConnectionId: string | null = null;
   let viewerResizeOrder = 0;
@@ -741,7 +751,8 @@ const make = Effect.gen(function* () {
 
   const sessionOpen = (tab: ServerTab) => !closedSessions.has(tabKey(tab.threadId, tab.tabId));
 
-  const dropTab = (tab: ServerTab, closeSession: boolean) => {
+  /** `closePage: false` leaves a person's popup window open after its tab failed to adopt it. */
+  const dropTab = (tab: ServerTab, closeSession: boolean, closePage = true) => {
     const key = tabKey(tab.threadId, tab.tabId);
     if (tabs.get(key) !== tab) return;
     tabs.delete(key);
@@ -751,8 +762,10 @@ const make = Effect.gen(function* () {
     const end = tab.desktop && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
     for (const viewer of tab.viewers) viewer.push({ _tag: end });
     void tab.control.close().catch(constVoid);
-    if (tab.desktop) void tab.desktop.close().catch(constVoid);
-    else void tab.page.close().catch(constVoid);
+    if (closePage) {
+      if (tab.desktop) void tab.desktop.close().catch(constVoid);
+      else void tab.page.close().catch(constVoid);
+    }
     if (tab.isolatedContext) void tab.page.context().close().catch(constVoid);
     void tab.recording?.encoder.close().catch(constVoid);
     void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
@@ -777,7 +790,10 @@ const make = Effect.gen(function* () {
     try {
       const endpoint = await runPromise(
         desktopChannel
-          .endpoint({ threadId: snapshot.threadId, tabId: snapshot.tabId })
+          .endpoint(
+            { threadId: snapshot.threadId, tabId: snapshot.tabId },
+            { popups: snapshot.automationOwner !== undefined },
+          )
           .pipe(Scope.provide(scope)),
       );
       const connected = await contexts.connectDesktopPage(endpoint);
@@ -811,13 +827,17 @@ const make = Effect.gen(function* () {
   ): Promise<ServerTab> => {
     const adopted = adoptedPages.get(tabKey(snapshot.threadId, snapshot.tabId));
     adoptedPages.delete(tabKey(snapshot.threadId, snapshot.tabId));
-    const desktop =
+    const connection =
       adopted === undefined && (await desktopRenders(snapshot))
         ? await connectDesktop(snapshot)
         : null;
-    if (desktop) opened.push(desktop.close);
+    // A desktop popup window shares its opener's connection, so closing it closes only its page.
+    const desktop =
+      connection ??
+      (adopted?.native ? { page: adopted.page, close: () => adopted.page.close() } : null);
+    if (connection) opened.push(connection.close);
     // Otherwise a desktop that attaches late shows its own page, and the agent drives another.
-    if (!desktop && desktopChannel.available) {
+    if (!connection && desktopChannel.available) {
       await runPromise(
         manager
           .markHeadless({ threadId: ThreadId.make(snapshot.threadId), tabId: snapshot.tabId })
@@ -842,7 +862,9 @@ const make = Effect.gen(function* () {
     const page = adopted?.page ?? desktop?.page ?? (await context.newPage());
     if (!desktop) opened.push(() => page.close());
     const cdp = await context.newCDPSession(page);
-    await installPdfDocumentNavigation(cdp);
+    // A native popup can already show a modal, which holds page commands until it is answered.
+    const native = adopted?.native === true;
+    if (!native) await installPdfDocumentNavigation(cdp);
     // The desktop's page is already a normal browser. A popup's first request
     // went out before it became a tab; everything after presents as Chrome.
     if (!desktop) await presentAsChrome(cdp, host);
@@ -879,7 +901,7 @@ const make = Effect.gen(function* () {
       openerTabId: adopted?.openerTabId,
       downloads: [],
       fileChooser: null,
-      dialog: null,
+      dialog: adopted?.pendingDialog?.current ?? null,
       setting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
       colorScheme: "system",
       zoomFactor: 1,
@@ -896,24 +918,57 @@ const make = Effect.gen(function* () {
       captureLock: Promise.resolve(),
       capturing: 0,
     };
-    if (!desktop) {
-      await page.setViewportSize(fixedViewportSize(tab.setting) ?? UNATTACHED_FILL_VIEWPORT);
-    }
-    await applyRendering(tab, snapshot);
+    page.on("dialog", (dialog) => {
+      tab.dialog = dialog;
+      broadcastControl(tab);
+    });
     if (desktop) {
-      // The desktop resizes and zooms its webview itself; viewers map input with the new size.
-      const remeasure = () => {
-        if (tab.viewers.size > 0) return broadcastViewport(tab).catch(constVoid);
-      };
-      cdp.on("Page.frameResized", remeasure);
-      // A read a navigation broke has a fresh page to measure.
-      cdp.on("Page.loadEventFired", remeasure);
-      // Closing a dialog resizes nothing, and the host can close it without us.
       cdp.on("Page.javascriptDialogClosed", () => {
         tab.dialog = null;
-        return remeasure();
+        if (tab.viewers.size > 0) return broadcastViewport(tab).catch(constVoid);
       });
-      await cdp.send("Page.enable");
+    }
+    const finishSetUp = async () => {
+      if (native) await installPdfDocumentNavigation(cdp);
+      if (!desktop) {
+        await page.setViewportSize(fixedViewportSize(tab.setting) ?? UNATTACHED_FILL_VIEWPORT);
+      }
+      await applyRendering(tab, snapshot);
+      if (desktop) {
+        // The desktop resizes and zooms its webview itself; viewers map input with the new size.
+        const remeasure = () => {
+          if (tab.viewers.size > 0) return broadcastViewport(tab).catch(constVoid);
+        };
+        cdp.on("Page.frameResized", remeasure);
+        // A read a navigation broke has a fresh page to measure.
+        cdp.on("Page.loadEventFired", remeasure);
+        await cdp.send("Page.enable");
+      }
+    };
+    const key = tabKey(tab.threadId, tab.tabId);
+    const register = async () => {
+      if (closedPendingTabs.delete(key)) {
+        await control.close().catch(constVoid);
+        if (native) await page.close().catch(constVoid);
+        throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
+      }
+      // Playwright cannot reload a crashed page, so it must leave the tab list.
+      page.on("close", () => dropTab(tab, true));
+      page.on("crash", () => dropTab(tab, true));
+      tabs.set(key, tab);
+      reportLiveTabs();
+    };
+    if (native) {
+      // Listed first so its owner can answer that modal; later actions queue behind the setup.
+      await register();
+      await control.system(finishSetUp).catch((cause: unknown) => {
+        dropTab(tab, true, false);
+        throw cause;
+      });
+      if (tab.closing)
+        throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
+    } else {
+      await finishSetUp();
     }
     const isMainNavigation = (request: { isNavigationRequest(): boolean; frame(): unknown }) =>
       request.isNavigationRequest() && request.frame() === page.mainFrame();
@@ -945,7 +1000,7 @@ const make = Effect.gen(function* () {
       if (!desktop) void recordFrameCopies(tab, frame);
     });
     // An adopted popup's frames may have loaded before the tab listened.
-    if (adopted) for (const frame of page.frames()) void recordFrameCopies(tab, frame);
+    if (adopted && !desktop) for (const frame of page.frames()) void recordFrameCopies(tab, frame);
     page.on("requestfailed", (request) => {
       const errorText = request.failure()?.errorText ?? "";
       pushBounded(tab.networkEntries, {
@@ -1002,26 +1057,22 @@ const make = Effect.gen(function* () {
         timestamp: new Date().toISOString(),
       });
     });
-    page.on("dialog", (dialog) => {
-      tab.dialog = dialog;
-      broadcastControl(tab);
-    });
     page.on("download", (download) => void saveDownload(tab, download));
     updateFileChooserInterception(tab);
     // Popups become tabs and keep `window.opener`, so sign-in popups can report back.
     page.on("popup", (popup) => void adoptPopup(tab, popup));
-    // Playwright cannot reload a crashed page, so it must leave the tab list.
-    const key = tabKey(tab.threadId, tab.tabId);
-    if (closedPendingTabs.delete(key)) {
-      await control.close().catch(constVoid);
-      throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
-    }
-    page.on("close", () => dropTab(tab, true));
-    page.on("crash", () => dropTab(tab, true));
-    tabs.set(key, tab);
-    reportLiveTabs();
+    if (!native) await register();
     // A desktop page navigates on its own and can finish loading before these listeners attach.
     if (desktop) void page.waitForLoadState("load").then(() => reportLoaded(tab), constVoid);
+    // Popups opened before the connection fired their `popup` event before the listener above.
+    if (connection) {
+      for (const candidate of page.context().pages()) {
+        if (candidate === page) continue;
+        void candidate.opener().then((opener) => {
+          if (opener === page) return adoptPopup(tab, candidate);
+        }, constVoid);
+      }
+    }
     // Existing desktop and popup PDFs can start loading before interception attaches.
     if (
       snapshot.navStatus._tag === "Loading" &&
@@ -1336,6 +1387,15 @@ const make = Effect.gen(function* () {
   };
 
   const adoptPopup = async (opener: ServerTab, popup: Page) => {
+    if (adoptedPopups.has(popup) || popup.isClosed()) return;
+    adoptedPopups.add(popup);
+    const pendingDialog: { current: Dialog | null } = { current: null };
+    if (opener.desktop !== null) {
+      // Keep native dialogs pending even when this popup never becomes an automation tab.
+      popup.on("dialog", (dialog) => {
+        pendingDialog.current = dialog;
+      });
+    }
     if (opener.closing) {
       await popup.close().catch(constVoid);
       return;
@@ -1354,10 +1414,14 @@ const make = Effect.gen(function* () {
         ...(opener.control.agentId === null
           ? {}
           : { automationOwner: opener.control.agentId, reveal: false }),
+        // The popup's page already exists; a desktop hosting its own webview would load it again.
+        headless: desktopChannel.available,
         beforePublish: (snapshot) =>
           adoptedPages.set(tabKey(snapshot.threadId, snapshot.tabId), {
             page: popup,
             openerTabId: opener.tabId,
+            native: opener.desktop !== null,
+            ...(opener.desktop === null ? {} : { pendingDialog }),
           }),
       }),
     ).then(
@@ -1365,7 +1429,7 @@ const make = Effect.gen(function* () {
         if (opener.control.agentId === null) controller?.push({ _tag: "popup", tabId: tab.tabId });
       },
       async () => {
-        await popup.close().catch(constVoid);
+        if (opener.desktop === null) await popup.close().catch(constVoid);
       },
     );
   };
@@ -1430,10 +1494,20 @@ const make = Effect.gen(function* () {
   const isVisible = (tab: ServerTab) =>
     tab.viewers.size > 0 || (tab.desktop !== null && desktopChannel.isShown(tab));
 
+  // A desktop popup is the person's own window, and closing its opener destroys it too.
+  const isNativePopup = (tab: ServerTab) => tab.desktop !== null && tab.openerTabId !== undefined;
+  const holdsNativePopup = (tab: ServerTab) =>
+    isNativePopup(tab) || (tab.desktop !== null && desktopChannel.hasNativePopups(tab));
+
   const idleAgentTabs = () => {
     const cutoff = Date.now() - AGENT_TAB_IDLE_MS;
     return [...tabs.values()].filter(
-      (tab) => tab.control.agentId !== null && !isVisible(tab) && tab.usedAt < cutoff,
+      (tab) =>
+        tab.control.agentId !== null &&
+        !tab.agentOperating &&
+        !isVisible(tab) &&
+        tab.usedAt < cutoff &&
+        !holdsNativePopup(tab),
     );
   };
 
@@ -2324,43 +2398,66 @@ const make = Effect.gen(function* () {
       Effect.ignore,
     );
 
+  // A dialog can hold a tab's setup for as long as a person leaves it open, so each tab's
+  // events wait only for that tab's earlier ones, and closing waits for none.
+  const tabEvents = new Map<string, Promise<void>>();
+  const afterTabEvents = (key: string, work: () => Promise<unknown>) => {
+    const next = (tabEvents.get(key) ?? Promise.resolve()).then(work).then(constVoid, constVoid);
+    tabEvents.set(key, next);
+    void next.then(() => {
+      if (tabEvents.get(key) === next) tabEvents.delete(key);
+    });
+  };
+
   const mirrorManagerEvent = (event: PreviewEvent) =>
-    Effect.promise(async () => {
-      if (event.type === "opened" && event.snapshot.runtime === "server") {
-        const key = tabKey(event.snapshot.threadId, event.snapshot.tabId);
-        if (event.snapshot.automationOwner === undefined || pendingTabs.has(key) || tabs.has(key))
-          await ensureTab(event.snapshot).catch(constVoid);
+    Effect.sync(() => {
+      const key = tabKey(event.threadId, event.tabId);
+      if (event.type === "opened") {
+        if (event.snapshot.runtime !== "server") return;
+        if (event.snapshot.automationOwner === undefined || pendingTabs.has(key) || tabs.has(key)) {
+          // Started now, so a later close finds it pending and it never registers.
+          const opening = ensureTab(event.snapshot);
+          afterTabEvents(key, () => opening);
+        }
         return;
       }
-      const key = tabKey(event.threadId, event.tabId);
-      const tab = tabs.get(key);
-      if (event.type === "closed" && !tab && pendingTabs.has(key)) closedPendingTabs.add(key);
-      if (!tab) return;
       if (event.type === "closed") {
+        const tab = tabs.get(key);
+        if (!tab) {
+          if (pendingTabs.has(key)) closedPendingTabs.add(key);
+          return;
+        }
         closedSessions.add(key);
         dropTab(tab, false);
         closedSessions.delete(key);
         return;
       }
-      if (event.type === "resized") {
-        await tab.control
-          .system(async () => {
-            if (
-              !viewportSettingsEqual(event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT, tab.setting)
-            ) {
-              await applySetting(tab, event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT);
-            }
-            await applyRendering(tab, event.snapshot);
-            const request = event.request;
-            if (request?.clear === "cookies") await tab.cdp.send("Network.clearBrowserCookies");
-            if (request?.clear === "cache") await tab.cdp.send("Network.clearBrowserCache");
-            if (request?.hardReload) await tab.cdp.send("Page.reload", { ignoreCache: true });
-          })
-          .catch((cause: unknown) =>
-            runFork(Effect.logWarning("server preview could not apply a tab setting", { cause })),
-          );
-      }
+      if (event.type === "resized") afterTabEvents(key, () => applyTabSetting(key, event));
     });
+
+  const applyTabSetting = async (
+    key: string,
+    event: Extract<PreviewEvent, { readonly type: "resized" }>,
+  ) => {
+    const tab = tabs.get(key);
+    if (!tab) return;
+    await tab.control
+      .system(async () => {
+        if (!viewportSettingsEqual(event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT, tab.setting)) {
+          await applySetting(tab, event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT);
+        }
+        await applyRendering(tab, event.snapshot);
+        const request = event.request;
+        if (request?.clear === "cookies") await tab.cdp.send("Network.clearBrowserCookies");
+        if (request?.clear === "cache") await tab.cdp.send("Network.clearBrowserCache");
+        if (request?.hardReload) await tab.cdp.send("Page.reload", { ignoreCache: true });
+      })
+      .catch((cause: unknown) => {
+        // Closing the tab ends the setting with it.
+        if (!tab.closing)
+          runFork(Effect.logWarning("server preview could not apply a tab setting", { cause }));
+      });
+  };
 
   const releaseViewerInput = async (viewer: ViewerState, session: CDPSession) => {
     for (const { key, code } of viewer.pressedKeys.values()) {
@@ -2526,19 +2623,21 @@ const make = Effect.gen(function* () {
       capacity: VIEWER_OUTPUT_LIMIT,
       strategy: "dropping",
     });
+    let detached = false;
     const session = yield* Effect.acquireRelease(
       Effect.tryPromise({
         try: () => tab.page.context().newCDPSession(tab.page),
         catch: (cause) => new ServerBrowserLaunchError({ cause }),
       }),
       (session) =>
-        Effect.promise(() =>
-          session
+        Effect.promise(() => {
+          detached = true;
+          return session
             .send("Page.stopScreencast")
             .catch(constVoid)
             .then(() => session.detach())
-            .catch(constVoid),
-        ),
+            .catch(constVoid);
+        }),
     );
     const quality = Math.min(100, Math.max(1, Math.round(input.quality)));
     // Chromium may drop the final frame during a burst; send a still when it settles.
@@ -2551,8 +2650,9 @@ const make = Effect.gen(function* () {
     const startScreencast = (scale: number) => {
       screencastScale = scale;
       screencastParams = screencastParams.then(async () => {
-        if (tab.capturing > 0) return;
+        if (detached || tab.capturing > 0) return;
         await session.send("Page.stopScreencast").catch(constVoid);
+        if (detached) return;
         await session
           .send("Page.startScreencast", {
             format: "jpeg",
@@ -2621,8 +2721,8 @@ const make = Effect.gen(function* () {
     broadcastControl(tab);
     pushFileChooser(tab);
     const pushStill = async () => {
-      const data = await withCaptureLock(tab, () =>
-        ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
+      const data = await withCaptureLock(tab, async () =>
+        detached ? null : ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
       ).catch(() => null);
       if (data) viewer.push({ _tag: "frame", data: Buffer.from(data, "base64"), ack: Effect.void });
     };
@@ -2678,10 +2778,15 @@ const make = Effect.gen(function* () {
       });
     });
     void broadcastViewport(tab).catch(constVoid);
-    yield* Effect.promise(() => startScreencast(1));
-    // An idle page does not repaint for a new screencast, so the viewer
-    // starts from a still unless a live frame beat it.
-    if (!screencastStarted) yield* Effect.promise(pushStill);
+    // A page dialog can hold capture until it is answered, so the viewer
+    // returns first and can answer it. An idle page does not repaint for a
+    // new screencast, so the viewer starts from a still unless a live frame beat it.
+    yield* Effect.forkScoped(
+      Effect.promise(async () => {
+        await startScreencast(1);
+        if (!screencastStarted) await pushStill();
+      }),
+    );
     return {
       output,
       input: (raw: unknown) =>

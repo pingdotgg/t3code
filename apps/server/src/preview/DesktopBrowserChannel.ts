@@ -46,7 +46,12 @@ export class DesktopBrowserChannel extends Context.Service<
     readonly isAttached: (key: DesktopTabKey) => Effect.Effect<boolean>;
     /** Whether a desktop window draws the tab on screen, which no streamed viewer counts. */
     readonly isShown: (key: DesktopTabKey) => boolean;
-    readonly endpoint: (key: DesktopTabKey) => Effect.Effect<string, never, Scope.Scope>;
+    readonly hasNativePopups: (key: DesktopTabKey) => boolean;
+    /** With `popups`, the tab's popup windows become pages of the same connection. */
+    readonly endpoint: (
+      key: DesktopTabKey,
+      options?: { readonly popups: boolean },
+    ) => Effect.Effect<string, never, Scope.Scope>;
     readonly pointer: (
       key: DesktopTabKey,
       pointer: { readonly phase: "move" | "click"; readonly x: number; readonly y: number },
@@ -64,6 +69,7 @@ const make = Effect.gen(function* () {
   const attachedTabs = new Set<string>();
   // Missing reports protect desktop tabs until the renderer explicitly marks them hidden.
   const shownTabs = new Map<string, boolean>();
+  const popupOpeners = new Set<string>();
   const inbound = new Map<string, Queue.Queue<string>>();
   const writeLock = yield* Semaphore.make(1);
 
@@ -88,18 +94,16 @@ const make = Effect.gen(function* () {
         return Effect.void;
       }),
       isShown: () => false,
+      hasNativePopups: () => false,
     });
   }
 
-  const command = (message: DesktopBrowserCommandType) =>
-    writeLock.withPermits(1)(
-      encodeCommand(message).pipe(
-        Effect.flatMap((line) => writeAllToFileDescriptor(controlFd, Buffer.from(`${line}\n`))),
-        Effect.catchCause((cause) =>
-          Effect.logWarning("desktop browser command failed", { cause }),
-        ),
-      ),
+  const write = (message: DesktopBrowserCommandType) =>
+    encodeCommand(message).pipe(
+      Effect.flatMap((line) => writeAllToFileDescriptor(controlFd, Buffer.from(`${line}\n`))),
+      Effect.catchCause((cause) => Effect.logWarning("desktop browser command failed", { cause })),
     );
+  const command = (message: DesktopBrowserCommandType) => writeLock.withPermits(1)(write(message));
 
   // Use cancellable socket reads; filesystem pipe reads keep Node alive after scope shutdown.
   const readable = yield* Effect.acquireRelease(
@@ -129,6 +133,7 @@ const make = Effect.gen(function* () {
         case "detached": {
           attachedTabs.delete(id);
           shownTabs.delete(id);
+          popupOpeners.delete(id);
           const queue = inbound.get(id);
           return (queue ? Queue.shutdown(queue) : Effect.void).pipe(
             Effect.andThen(PubSub.publish(changes, { key, attached: false })),
@@ -137,14 +142,26 @@ const make = Effect.gen(function* () {
         case "shown":
           shownTabs.set(id, event.shown);
           return Effect.void;
+        case "popupWindows":
+          if (event.open) popupOpeners.add(id);
+          else popupOpeners.delete(id);
+          return Effect.void;
       }
     }),
     Effect.catchCause((cause) => Effect.logWarning("desktop browser channel stopped", { cause })),
-    Effect.ensuring(Effect.sync(() => shownTabs.clear())),
+    Effect.ensuring(
+      Effect.sync(() => {
+        shownTabs.clear();
+        popupOpeners.clear();
+      }),
+    ),
     Effect.forkScoped,
   );
 
-  const endpoint = Effect.fn("DesktopBrowserChannel.endpoint")(function* (key: DesktopTabKey) {
+  const endpoint = Effect.fn("DesktopBrowserChannel.endpoint")(function* (
+    key: DesktopTabKey,
+    options?: { readonly popups: boolean },
+  ) {
     const id = keyOf(key);
     const secret = NodeCrypto.randomBytes(24).toString("base64url");
     const server = yield* NodeSocketServer.makeWebSocket({
@@ -161,11 +178,19 @@ const make = Effect.gen(function* () {
     }
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
-        if (inbound.get(id) === queue) inbound.delete(id);
         yield* Queue.shutdown(queue);
-        yield* command({ type: "release", ...key });
+        // A reconnect's endpoint may already hold the tab; its release would drop the new relay.
+        yield* writeLock.withPermits(1)(
+          Effect.suspend(() => {
+            if (inbound.get(id) !== queue) return Effect.void;
+            inbound.delete(id);
+            return write({ type: "release", ...key });
+          }),
+        );
       }),
     );
+    // Written before any CDP, so popups already open are there when Playwright connects.
+    if (options?.popups) yield* command({ type: "popups", ...key });
     // The relay serves one Playwright connection; a second would see the first's sessions.
     let connected = false;
     yield* server
@@ -232,6 +257,7 @@ const make = Effect.gen(function* () {
       return Effect.sync(() => attachedTabs.has(keyOf(key)));
     }),
     isShown: (key) => shownTabs.get(keyOf(key)) ?? true,
+    hasNativePopups: (key) => popupOpeners.has(keyOf(key)),
     endpoint,
     turn: Effect.fn("DesktopBrowserChannel.turn")(function (threadId, active) {
       return command({ type: "turn", threadId, active });
