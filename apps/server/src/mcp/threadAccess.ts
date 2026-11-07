@@ -15,26 +15,39 @@ import * as Effect from "effect/Effect";
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
+import { fencingLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
 /**
  * Threads an agent starts over MCP are `mcp:<uuid>`, and agents often paste the
  * bare uuid. The id is never rewritten, so permission checks keyed on it still
  * hold; the miss only names a live thread the caller could read by its full id.
+ * Ids from another machine miss here too. The link hint is static: listing links probes peers.
  */
 export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")(function* (
   threads: Pick<ThreadManagement.ThreadManagementService["Service"], "getThreadShell">,
+  scope: McpInvocationContext.McpInvocationScope,
   threadId: ThreadId,
   message: string,
 ) {
   const prefixed = ThreadId.make(`mcp:${threadId}`);
   const shell = yield* threads.getThreadShell(prefixed).pipe(Effect.orElseSucceed(() => null));
+  const mcpHint =
+    shell === null || shell.deletedAt !== null ? "" : ` Did you mean \`${prefixed}\`?`;
+  const caller =
+    scope.thread === undefined
+      ? null
+      : yield* threads.getThreadShell(scope.thread.threadId).pipe(Effect.orElseSucceed(() => null));
+  // A peer link's caller would be pointed at this machine's links, and a fenced one may not use them.
+  const linksHint =
+    scope.linkedEnvironments === false ||
+    scope.client?.linked === true ||
+    fencingLinkOrigin({ scope, caller: caller ?? undefined }) !== undefined
+      ? ""
+      : " Thread ids belong to one environment: for a thread on a linked one, find it with `t3_environment_links` and pass its `environmentId` to a tool that takes one.";
   return yield* new OrchestratorMcpFailure({
     code: "thread_not_found",
-    message:
-      shell === null || shell.deletedAt !== null
-        ? message
-        : `${message} Did you mean \`${prefixed}\`?`,
+    message: `${message}${mcpHint}${linksHint}`,
   });
 });
 
@@ -186,7 +199,12 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
   const targetId = yield* resolveThreadId(context, threadId);
   const shell = yield* context.threads.getThreadShell(targetId).pipe(Effect.mapError(unavailable));
   if (shell === null || shell.deletedAt !== null) {
-    return yield* threadNotFound(context.threads, targetId, "The thread was not found.");
+    return yield* threadNotFound(
+      context.threads,
+      context.scope,
+      targetId,
+      "The thread was not found.",
+    );
   }
   const projection = yield* context.threads
     .getProjectThreadRecords({ projectId: shell.projectId, threadId: targetId }, fields, {
