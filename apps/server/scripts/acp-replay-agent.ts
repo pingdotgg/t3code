@@ -146,7 +146,11 @@ function matchesExpected(expected: unknown, actual: unknown): boolean {
   return Object.is(expected, actual);
 }
 
-function stopWithFailure(detail: string, actual?: unknown): void {
+function stopWithFailure(
+  detail: string,
+  actual?: unknown,
+  failedRequestId?: JsonRpcMessage["id"],
+): void {
   if (stopped) return;
   stopped = true;
   const entry = transcript.entries[cursor];
@@ -158,6 +162,16 @@ function stopWithFailure(detail: string, actual?: unknown): void {
   };
   writeStatus(failure);
   process.stderr.write(`ACP replay mismatch: ${JSON.stringify(failure)}\n`);
+  // Reject what the client still awaits, so a test fails with the mismatch instead of hanging.
+  const message = `ACP replay mismatch at ${entry?.label ?? "end of transcript"}: ${detail}${
+    actual === undefined ? "" : ` ${JSON.stringify(actual)}`
+  }`;
+  const ids = [...pendingClientRequestIds.values()];
+  if (failedRequestId !== undefined && failedRequestId !== null) ids.push(failedRequestId);
+  for (const id of ids) {
+    send({ jsonrpc: "2.0", id, error: { code: -32603, message } });
+  }
+  pendingClientRequestIds.clear();
   process.exitCode = 1;
   process.stdin.pause();
 }
@@ -284,14 +298,11 @@ function handleMessage(message: JsonRpcMessage): void {
   }
   const entry = transcript.entries[cursor];
   if (entry?.type !== "expect_outbound" || !matchesExpected(entry.frame, actual)) {
-    stopWithFailure("Unexpected outbound ACP frame", actual);
-    if (actual.kind === "request" && message.id !== undefined && message.id !== null) {
-      send({
-        jsonrpc: "2.0",
-        id: message.id,
-        error: { code: -32603, message: "ACP replay frame mismatch" },
-      });
-    }
+    stopWithFailure(
+      "Unexpected outbound ACP frame",
+      actual,
+      actual.kind === "request" ? message.id : undefined,
+    );
     return;
   }
   if (actual.kind === "request" && message.id !== undefined && message.id !== null) {

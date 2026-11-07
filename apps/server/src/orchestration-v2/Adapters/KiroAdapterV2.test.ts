@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  CheckpointId,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -293,13 +294,48 @@ const openSessionFrames = (input: {
   }),
 ];
 
+/** Kiro keys an MCP server's OAuth tokens by a hash of the server; the value is a JSON string. */
+const MCP_TOKENS_KEY = "kiro.mcp.4f1c2a9e.tokens";
+const MCP_TOKENS = JSON.stringify({ access_token: "stored-token", token_type: "Bearer" });
+
+const kiroSecretRequest = (method: string, params: unknown): Frame => ({
+  type: "emit_inbound",
+  label: method,
+  frame: { kind: "request", method, params },
+});
+const kiroSecretResponse = (method: string, result: unknown): Frame => ({
+  type: "expect_outbound",
+  label: `${method}.result`,
+  frame: { kind: "response", method, result },
+});
+
+/**
+ * A temp KIRO_HOME whose `secrets.json` holds `secrets`, the flat map kiro-cli
+ * keeps there. HOME points elsewhere so only KIRO_HOME can find the file.
+ */
+const makeKiroHome = Effect.fn("makeKiroHome")(function* (secrets: Record<string, string>) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-kiro-home-" });
+  const kiroHome = path.join(root, "kiro-home");
+  const home = path.join(root, "home");
+  yield* fileSystem.makeDirectory(kiroHome);
+  yield* fileSystem.makeDirectory(home);
+  const secretsPath = path.join(kiroHome, "secrets.json");
+  yield* fileSystem.writeFileString(secretsPath, JSON.stringify(secrets, null, 2));
+  return { secretsPath, environment: { HOME: home, KIRO_HOME: kiroHome } };
+});
+
 const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
   readonly scenario: string;
   readonly frames: ReadonlyArray<Frame>;
+  /** Frames for the runtime a rollback starts, replayed by a second agent process. */
+  readonly replacementFrames?: ReadonlyArray<Frame>;
   readonly model?: string;
   /** Option selections (e.g. reasoningEffort) for the session and `startTurn`. */
   readonly options?: ModelSelection["options"];
   readonly runtimeMode?: RuntimeMode;
+  readonly environment?: NodeJS.ProcessEnv;
   /** Holds the script's inbound frames at labels the test releases. */
   readonly replayGate?: ProviderReplayGate;
   readonly testHooks?: Parameters<typeof makeKiroAdapterV2>[0]["testHooks"];
@@ -323,6 +359,7 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
       requestId: RuntimeRequestId,
       decision: ProviderApprovalDecision,
     ) => Effect.Effect<void, ProviderAdapterV2Error>;
+    readonly rollbackToStart: Effect.Effect<void, ProviderAdapterV2Error>;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -331,17 +368,26 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
   const replayDir = yield* fileSystem.makeTempDirectoryScoped({
     prefix: `t3-kiro-${input.scenario}-`,
   });
-  const statusPath = path.join(replayDir, "status.json");
-  const transcript = yield* decodeAcpReplayTranscript(
-    {
-      provider: KIRO_PROVIDER,
-      protocol: "acp.ndjson-jsonrpc",
-      version: "1",
-      scenario: input.scenario,
-      entries: input.frames as never,
-    },
-    KIRO_PROVIDER,
+  const scripts = yield* Effect.forEach(
+    [input.frames, ...(input.replacementFrames === undefined ? [] : [input.replacementFrames])],
+    (frames, index) =>
+      decodeAcpReplayTranscript(
+        {
+          provider: KIRO_PROVIDER,
+          protocol: "acp.ndjson-jsonrpc",
+          version: "1",
+          scenario: input.scenario,
+          entries: frames as never,
+        },
+        KIRO_PROVIDER,
+      ).pipe(
+        Effect.map((transcript) => ({
+          transcript,
+          statusPath: path.join(replayDir, `status-${index}.json`),
+        })),
+      ),
   );
+  let runtimesMade = 0;
   const instanceId = ProviderInstanceId.make(`kiro-${input.scenario}`);
   const scriptPath = yield* path.fromFileUrl(
     new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
@@ -349,12 +395,21 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
   const adapter = yield* makeKiroAdapterV2({
     instanceId,
     settings: ENABLED_KIRO_SETTINGS,
-    environment: {},
+    environment: input.environment ?? {},
     selfInvocation: yield* resolveSelfInvocation(),
-    makeRuntime: (runtimeInput) =>
-      makeAcpReplayRuntime({
-        transcript,
-        statusPath,
+    makeRuntime: (runtimeInput) => {
+      const script = scripts[runtimesMade++];
+      if (script === undefined) {
+        // An unscripted runtime is a retry after the last one failed; report why it failed.
+        const last = scripts[scripts.length - 1]!;
+        return makeAcpReplayCompletenessAssertion(
+          fileSystem,
+          last.statusPath,
+          last.transcript,
+        ).pipe(Effect.andThen(Effect.die(`No replay script for Kiro runtime ${runtimesMade}`)));
+      }
+      return makeAcpReplayRuntime({
+        ...script,
         scriptPath,
         childProcessSpawner,
         fileSystem,
@@ -365,7 +420,8 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
             ? runtime
             : { ...runtime, cancel: input.wrapCancel(runtime.cancel) },
         ),
-      ),
+      );
+    },
     ...(input.testHooks === undefined ? {} : { testHooks: input.testHooks }),
   });
   // Held frames must not outlive a failed drive and wedge teardown.
@@ -441,10 +497,26 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
       startTurnOn,
       interrupt: (providerTurnId) => session.interruptTurn({ providerThread, providerTurnId }),
       respond: (requestId, decision) => session.respondToRuntimeRequest({ requestId, decision }),
+      rollbackToStart: session
+        .rollbackThread({
+          providerThread,
+          providerThreadTurns: [],
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make(`checkpoint-kiro-${input.scenario}`),
+            appRunOrdinal: 0,
+          },
+        })
+        .pipe(Effect.asVoid),
     });
   }).pipe(Effect.scoped);
-  // Closing the session stops the replay agent; every scripted frame must be used.
-  yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
+  // Closing the session stops the replay agents; every scripted frame must be used.
+  yield* Effect.forEach(
+    scripts,
+    ({ statusPath, transcript }) =>
+      makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript),
+    { discard: true },
+  );
 });
 
 const collectTurn = (events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>) =>
@@ -777,6 +849,97 @@ describe("KiroAdapterV2", () => {
           yield* respond(yield* Deferred.await(pending), "acceptForSession");
           assert.equal(terminalStatus(yield* Fiber.join(turn)), "completed");
         }),
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("advertises secret storage and answers Kiro's secret reads from its secrets file", () =>
+    Effect.gen(function* () {
+      const kiroHome = yield* makeKiroHome({ [MCP_TOKENS_KEY]: MCP_TOKENS });
+      yield* runKiroScript({
+        scenario: "secret-get",
+        environment: kiroHome.environment,
+        frames: [
+          // Kiro reads stored MCP OAuth tokens from the client only when it opts in.
+          outbound("initialize", {
+            protocolVersion: "<any>",
+            info: "<any>",
+            capabilities: "<any>",
+            clientCapabilities: {
+              fs: "<any>",
+              terminal: "<any>",
+              session: "<any>",
+              elicitation: "<any>",
+              _meta: { kiro: { hooks: { enabled: true, v2: true }, secretStorage: true } },
+            },
+            clientInfo: "<any>",
+          }),
+          answer("initialize", KIRO_V3_INITIALIZE),
+          outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
+          kiroSecretRequest("_kiro/secret/get", { key: MCP_TOKENS_KEY }),
+          kiroSecretResponse("_kiro/secret/get", { value: MCP_TOKENS }),
+          kiroSecretRequest("_kiro/secret/get", { key: "kiro.mcp.missing.tokens" }),
+          kiroSecretResponse("_kiro/secret/get", { value: null }),
+          answer("session/new", sessionSetup([modeOption])),
+          ...closeSession,
+        ],
+        drive: () => Effect.void,
+      });
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("answers Kiro's secret reads on the runtime a rollback starts", () =>
+    Effect.gen(function* () {
+      const kiroHome = yield* makeKiroHome({ [MCP_TOKENS_KEY]: MCP_TOKENS });
+      const openFrames = [
+        outbound("initialize"),
+        answer("initialize", KIRO_V3_INITIALIZE),
+        outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
+      ];
+      yield* runKiroScript({
+        scenario: "secret-get-after-rollback",
+        environment: kiroHome.environment,
+        // Rollback stops this runtime's process without `session/close`.
+        frames: [...openFrames, answer("session/new", sessionSetup([modeOption]))],
+        // The replacement `session/new` reconnects MCP servers, which reads their tokens.
+        replacementFrames: [
+          ...openFrames,
+          kiroSecretRequest("_kiro/secret/get", { key: MCP_TOKENS_KEY }),
+          kiroSecretResponse("_kiro/secret/get", { value: MCP_TOKENS }),
+          answer("session/new", sessionSetup([modeOption])),
+          ...closeSession,
+        ],
+        drive: ({ rollbackToStart }) => rollbackToStart,
+      });
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("stores and deletes Kiro's secrets in its secrets file", () =>
+    Effect.gen(function* () {
+      const kiroHome = yield* makeKiroHome({ [MCP_TOKENS_KEY]: MCP_TOKENS });
+      const refreshed = JSON.stringify({ access_token: "refreshed", token_type: "Bearer" });
+      const otherKey = "kiro.mcp.other.tokens";
+      yield* runKiroScript({
+        scenario: "secret-store-delete",
+        environment: kiroHome.environment,
+        frames: [
+          outbound("initialize"),
+          answer("initialize", KIRO_V3_INITIALIZE),
+          outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
+          kiroSecretRequest("_kiro/secret/store", { key: otherKey, value: refreshed }),
+          kiroSecretResponse("_kiro/secret/store", { success: true }),
+          kiroSecretRequest("_kiro/secret/delete", { key: MCP_TOKENS_KEY }),
+          kiroSecretResponse("_kiro/secret/delete", { success: true }),
+          answer("session/new", sessionSetup([modeOption])),
+          ...closeSession,
+        ],
+        drive: () => Effect.void,
+      });
+      const fileSystem = yield* FileSystem.FileSystem;
+      assert.deepStrictEqual(
+        JSON.parse(yield* fileSystem.readFileString(kiroHome.secretsPath)),
+        { [otherKey]: refreshed },
+        "Kiro's stored and deleted secrets must land in <KIRO_HOME>/secrets.json",
+      );
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 

@@ -50,6 +50,7 @@ import {
   kiroPermissionDisposition,
   makeKiroAcpRuntime,
 } from "./acpSupport.ts";
+import { makeKiroSecretStorage } from "./secretStorage.ts";
 
 export const KIRO_PROVIDER = ProviderDriverKind.make("kiro");
 /** T3's slug for "Kiro default", and Kiro's documented default model id. */
@@ -523,8 +524,11 @@ function kiroPromptFailure(cause: unknown) {
   });
 }
 
-function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Flavor {
-  const makeRuntime =
+function makeKiroAcpAdapterFlavor(
+  options: KiroAdapterV2Options,
+  secretStorage: Effect.Success<ReturnType<typeof makeKiroSecretStorage>>,
+): AcpAdapterV2Flavor {
+  const makeNativeRuntime =
     options.makeRuntime ??
     ((input: AcpAdapterV2RuntimeInput) => {
       const { runtimePolicy: _runtimePolicy, processEnvironment, ...runtimeInput } = input;
@@ -534,6 +538,9 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
         environment: { ...options.environment, ...processEnvironment },
       });
     });
+  // Not `registerExtensions`: a replacement runtime (rollback, failed resume) wires that after `start()`.
+  const makeRuntime = (input: AcpAdapterV2RuntimeInput) =>
+    makeNativeRuntime(input).pipe(Effect.tap(secretStorage.installHandlers));
   const stripSteeringNote = makeKiroSteeringNoteFilter();
   return {
     driver: KIRO_PROVIDER,
@@ -541,8 +548,9 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     capabilities: KiroProviderCapabilitiesV2,
     // Kiro V3 loads the user's hooks only when the client opts in. `v2` makes
     // Kiro run them itself; `enabled` alone hands them to the client as
-    // `_kiro/hooks/*` requests, which T3 does not answer.
-    clientCapabilitiesMeta: { kiro: { hooks: { enabled: true, v2: true } } },
+    // `_kiro/hooks/*` requests, which T3 does not answer. Kiro keeps MCP OAuth
+    // credentials only through `secretStorage` (see makeKiroSecretStorage).
+    clientCapabilitiesMeta: { kiro: { hooks: { enabled: true, v2: true }, secretStorage: true } },
     makeRuntime,
     promptFailure: kiroPromptFailure,
     ignoreSessionUpdate: makeKiroCloudConfigFilter(),
@@ -579,9 +587,10 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
 export const makeKiroAdapterV2 = Effect.fn("makeKiroAdapterV2")(function* (
   options: KiroAdapterV2Options,
 ) {
+  const secretStorage = yield* makeKiroSecretStorage(options.environment);
   return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
-    flavor: makeKiroAcpAdapterFlavor(options),
+    flavor: makeKiroAcpAdapterFlavor(options, secretStorage),
     selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.testHooks === undefined ? {} : { testHooks: options.testHooks }),
