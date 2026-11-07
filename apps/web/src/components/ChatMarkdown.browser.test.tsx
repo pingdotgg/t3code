@@ -433,6 +433,38 @@ describe("ChatMarkdown inline code selection", () => {
   });
 });
 
+describe("ChatMarkdown line selection", () => {
+  it.each([
+    ["brand link", "[#1](https://github.com/a/b/pull/1)", false],
+    ["favicon link", "[Example](https://example.com)", false],
+    ["file link", "[file.ts](/tmp/project/file.ts)", true],
+    ["file options", "[file.ts](/tmp/project/file.ts)", false],
+  ] as const)("triple-click selects the whole line with %s", async (_kind, link, withThread) => {
+    setup();
+    await using screen = await renderText(
+      `Before ${link} after words`,
+      withThread
+        ? {
+            threadRef: {
+              environmentId: EnvironmentId.make("workspace"),
+              threadId: ThreadId.make("thread"),
+            },
+          }
+        : {},
+    );
+    const paragraph = screen.container.querySelector("p")!;
+    const expected = paragraph.textContent;
+    for (const position of [
+      { x: 4, y: 4 },
+      { x: paragraph.clientWidth - 4, y: 4 },
+    ]) {
+      window.getSelection()?.removeAllRanges();
+      await userEvent.tripleClick(paragraph, { position });
+      expect(window.getSelection()?.toString()).toBe(expected);
+    }
+  });
+});
+
 describe("ChatMarkdown Windows file links", () => {
   const environmentId = EnvironmentId.make("env-windows");
   const renderWindows = (text: string, parseRawHtml: boolean) =>
