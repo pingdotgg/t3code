@@ -8402,15 +8402,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     const liveWork = agentWork;
                     const buffered = yield* takeWakeBuffer;
                     yield* Effect.forEach(buffered, handleSessionUpdate, { discard: true });
-                    const bufferedIdle = canFollowForegroundEvents
-                      ? buffered.findLast(
-                          (item) =>
-                            item.update.sessionUpdate === "state_update" &&
-                            item.update.state === "idle",
-                        )?.update
+                    const bufferedWork = canFollowForegroundEvents
+                      ? buffered.findLast((item) => item.update.sessionUpdate === "state_update")
+                          ?.update
                       : undefined;
                     agentWork =
-                      bufferedIdle?.sessionUpdate === "state_update" ? bufferedIdle : liveWork;
+                      bufferedWork?.sessionUpdate === "state_update" ? bufferedWork : liveWork;
                     context.workAccepted = true;
                     yield* settleIdleWork(context);
                     agentWork = liveWork;
@@ -8526,9 +8523,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       return;
                     if (canFollowForegroundEvents && !context.workAccepted) {
                       context.workAccepted = true;
-                      const buffered = yield* Ref.getAndSet(wakeBuffer, []);
-                      for (const notification of buffered) {
-                        yield* handleSessionUpdate(notification);
+                      if (!(yield* Ref.get(continuationRequested))) {
+                        const buffered = yield* Ref.getAndSet(wakeBuffer, []);
+                        for (const notification of buffered) {
+                          yield* handleSessionUpdate(notification);
+                        }
                       }
                       if (context.finalized) return;
                     }
@@ -8625,14 +8624,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         }),
                       ),
                     );
-                    if (
-                      canFollowForegroundEvents &&
-                      !context.workAccepted &&
-                      !interrupted &&
-                      !(yield* Ref.get(runtimeRestartRequired)) &&
-                      (yield* Ref.get(wakeBuffer)).some(acpRootSessionUpdateIngestsOutput)
-                    ) {
-                      yield* offerContinuationRun(requestedSessionId);
+                    if (canFollowForegroundEvents && !context.workAccepted) {
+                      if (
+                        !interrupted &&
+                        !(yield* Ref.get(runtimeRestartRequired)) &&
+                        (yield* Ref.get(wakeBuffer)).some(acpRootSessionUpdateIngestsOutput)
+                      ) {
+                        yield* offerContinuationRun(requestedSessionId);
+                      } else if (!(yield* Ref.get(continuationRequested))) {
+                        yield* Ref.set(wakeBuffer, []);
+                      }
                     }
                   }),
                 ).pipe(
@@ -9052,12 +9053,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         flavor.followForegroundEvents === true &&
                         !supportsClose &&
                         interruptContext === null &&
-                        pendingForegroundPrompts > 0 &&
+                        (yield* sessionRuntime.hasPendingBackgroundWork ?? Effect.succeed(false)) &&
                         turnInput.requestRuntimeRestart === true
                       ) {
-                        yield* quarantineStoppedRun();
+                        yield* runtimeCallbackPermit.withPermit(
+                          Effect.gen(function* () {
+                            const carryover = yield* Ref.get(carryoverSubagents);
+                            yield* quarantineStoppedRun();
+                            agentWork = null;
+                            agentRequests.clear();
+                            nativeChildren.clear();
+                            yield* cancelPendingRuntimeRequests();
+                            yield* terminalizeCarryoverSubagents(carryover);
+                            yield* Ref.set(runtimeRestartRequired, true);
+                          }),
+                        );
                         yield* runtime.cancel;
-                        yield* Ref.set(runtimeRestartRequired, true);
                         return undefined;
                       }
                       const softSteerCandidate =
