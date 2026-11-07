@@ -148,6 +148,30 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
   "--wait",
 ];
 
+/**
+ * agent-device 0.21.31 commands that pick their device from selectors: open, those that check its
+ * claim themselves, and read-only listings. Any other command given a selector and a session the
+ * daemon does not hold runs on that device without a claim check, even while another session holds it.
+ */
+const SELECTING_COMMANDS: ReadonlyArray<string> = [
+  "open",
+  "launch",
+  "relaunch",
+  "apps",
+  "appstate",
+  "capabilities",
+  "devices",
+  "doctor",
+  "boot",
+  "shutdown",
+  "prepare",
+  "install",
+  "reinstall",
+  "uninstall",
+  "install-from-source",
+  "push",
+];
+
 // Help gets no bound flags (agent-device reads --config even for help); only args before `--` are flags.
 // agent-device 0.21.31 refuses some bound flags per command; connect/disconnect/auth/daemon would
 // replace T3's connection; device status reads this machine's claims. It reports a sandboxed shell and a
@@ -160,9 +184,11 @@ const entry = ${JSON.stringify(entryPath)};
 const bound = ${JSON.stringify(boundArgs)};
 const refused = new Map([["cdp", ["--platform", "--udid", "--config", "--session"]], ["connection", ["--platform", "--udid"]]]);
 const managed = ["connect", "disconnect", "auth", "daemon"];
+const selectors = ["--platform", "--target", "--device", "--udid", "--serial"];
+const selecting = ${JSON.stringify(SELECTING_COMMANDS)};
 const args = process.argv.slice(2);
 const end = args.indexOf("--");
-const options = end < 0 ? args : args.slice(0, end);
+const given = end < 0 ? args : args.slice(0, end);
 const valued = new Set(${JSON.stringify(VALUE_FLAGS)});
 let name = "";
 for (let index = 0; index < args.length; index++) {
@@ -171,7 +197,10 @@ for (let index = 0; index < args.length; index++) {
   if (!arg.startsWith("-")) { name = arg; break; }
   if (!arg.includes("=") && valued.has(arg)) index++;
 }
-const informational = args.length === 0 || ["help", "--help", "-h", "--version", "version"].includes(args[0]) || options.includes("--help") || options.includes("-h");
+const informational = args.length === 0 || ["help", "--help", "-h", "--version", "version"].includes(args[0]) || given.includes("--help") || given.includes("-h");
+const selects = informational || selecting.includes(name.toLowerCase());
+const isSelector = arg => selectors.some(flag => arg === flag || arg.startsWith(flag + "="));
+const options = selects ? given : given.filter((arg, index) => !isSelector(arg) && !(selectors.includes(given[index - 1]) && !arg.startsWith("-")));
 if (!informational && managed.includes(name)) {
   console.error("T3 Code manages this command's connection to the device, so \`" + name + "\` is not available through it.");
   process.exit(1);
@@ -180,7 +209,7 @@ if (!informational && name === "device") {
   console.error("\`device status\` reads this machine's device claims, not those on the device's host, so it is not available through this command. Quote the DEVICE_IN_USE error instead.");
   process.exit(1);
 }
-const skip = refused.get(name) ?? [];
+const skip = [...(refused.get(name) ?? []), ...(selects ? [] : selectors)];
 if (!informational) for (let index = 0; index + 1 < bound.length; index += 2) if (!skip.includes(bound[index]) && !options.some(arg => arg === bound[index] || arg.startsWith(bound[index] + "="))) options.push(bound[index], bound[index + 1]);
 const command = end < 0 ? options : [...options, ...args.slice(end)];
 const hasValue = flag => { const index = options.indexOf(flag); return options.some(arg => arg.startsWith(flag + "=") && arg.length > flag.length + 1) || (index >= 0 && !!options[index + 1] && !options[index + 1].startsWith("--")); };
