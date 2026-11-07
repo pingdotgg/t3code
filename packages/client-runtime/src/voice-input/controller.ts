@@ -123,10 +123,10 @@ export function resolveTranscriptCommit(
     return { kind: "empty" };
   }
 
-  // Mobile fixes the selection when recording starts, so it can outrun a draft shortened since.
-  const { text } = current;
-  const start = Math.max(0, Math.min(text.length, current.selection.start));
-  const end = Math.max(start, Math.min(text.length, current.selection.end));
+  const {
+    text,
+    selection: { start, end },
+  } = current;
   const isEmptySelection = start === end;
   const language = locale.split(/[-_]/)[0]!.toLowerCase();
   let insertion = replacement;

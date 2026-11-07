@@ -1886,7 +1886,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     disabled: dictationDisabled,
     terminalOpen,
     modelPickerOpen: isComposerModelPickerOpen,
-    ...(backgroundThread ? { targetRef: composerFormRef } : { editorRef: composerFormRef }),
+    ...(backgroundThread ? { targetRef: composerFormRef } : {}),
   });
 
   const resolveActiveComposerTrigger = (): {

@@ -52,11 +52,18 @@ export function createVoiceInputTarget(
   commitDraft: VoiceInputTarget["commitDraft"],
   selection: VoiceDraftSnapshot["selection"],
 ): VoiceInputTarget {
+  const selectedText = readText();
   return {
     ownerKey,
     readDraft: () => {
       const text = readText();
-      return text === null ? null : { ownerKey, text, selection };
+      if (text === null) return null;
+      // The selection was taken in `selectedText`; a draft replaced since takes the transcript at its end.
+      return {
+        ownerKey,
+        text,
+        selection: text === selectedText ? selection : { start: text.length, end: text.length },
+      };
     },
     commitDraft,
   };

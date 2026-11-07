@@ -18,6 +18,27 @@ vi.mock("expo-audio", () => ({
   setIsAudioActiveAsync: audio.setActive,
 }));
 
+vi.mock("expo-file-system", () => ({
+  Directory: class {
+    create() {}
+  },
+  File: class {
+    exists = false;
+    create() {}
+    write() {}
+    moveSync() {}
+  },
+  Paths: { document: { uri: "file:///documents" } },
+}));
+
+import { appAtomRegistry } from "../../state/atom-registry";
+import {
+  clearComposerDraftContent,
+  composerDraftsAtom,
+  readComposerDraftTextUntilReset,
+  setComposerDraftText,
+  waitForComposerDraftsLoaded,
+} from "../../state/use-composer-drafts";
 import {
   createVoiceInputTarget,
   VoiceInputSession,
@@ -249,6 +270,37 @@ describe("global voice input", () => {
     text = "hi";
     await session.controller.stop();
     expect(commit).toHaveBeenCalledWith("hi spoken text", { start: 14, end: 14 });
+  });
+
+  it("appends to a draft replaced by different text while recording", async () => {
+    const { session } = createSession();
+    let text = "first";
+    const commit = vi.fn();
+    await session.start(createVoiceInputTarget("first", () => text, commit, { start: 3, end: 3 }));
+    text = "Please review carefully";
+    await session.controller.stop();
+    expect(commit).toHaveBeenCalledWith("Please review carefully spoken text", {
+      start: 35,
+      end: 35,
+    });
+  });
+
+  it("does not recreate a draft discarded while recording", async () => {
+    await waitForComposerDraftsLoaded();
+    const draftKey = "discarded-draft";
+    setComposerDraftText(draftKey, "hello");
+    const { session } = createSession();
+    await session.start(
+      createVoiceInputTarget(
+        draftKey,
+        readComposerDraftTextUntilReset(draftKey),
+        (text) => setComposerDraftText(draftKey, text),
+        { start: 5, end: 5 },
+      ),
+    );
+    clearComposerDraftContent(draftKey);
+    await session.controller.stop();
+    expect(appAtomRegistry.get(composerDraftsAtom)[draftKey]).toBeUndefined();
   });
 
   it("finishes the original draft at the recording limit while it is off screen", async () => {

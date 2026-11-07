@@ -71,8 +71,10 @@ while you record; models with built-in long-form support transcribe when you sto
 Press the microphone in the composer, or `mod+shift+d` (`mod` is Command on
 macOS and Ctrl elsewhere). Press again, or the check mark, to finish; `Esc`
 discards the recording and leaves your draft unchanged. Recordings last up to
-five minutes. Text is inserted at the cursor or replaces the selection you had
-when recording started, and the editor is read-only while dictation runs.
+five minutes. The editor is read-only while dictation runs, but changes that
+reach the draft meanwhile, such as a cited message, are kept. The transcript is
+inserted at the cursor, or replaces the selection, as it is when the transcript
+arrives.
 
 Pressing Send while dictating finishes the recording and sends the draft once
 the transcript has been inserted. Cancelling also cancels that queued send. In

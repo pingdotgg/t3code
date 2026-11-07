@@ -117,8 +117,20 @@ function nextComposerDraftReset(): number {
   return lastComposerDraftReset;
 }
 
+// The reset atoms forget their stamp once no editor subscribes; this keeps it for later readers.
+const composerDraftLastReset = new Map<string, number>();
+
 function markComposerDraftReset(draftKey: string): void {
-  appAtomRegistry.set(composerDraftResetAtom(draftKey), nextComposerDraftReset());
+  const generation = nextComposerDraftReset();
+  composerDraftLastReset.set(draftKey, generation);
+  appAtomRegistry.set(composerDraftResetAtom(draftKey), generation);
+}
+
+/** Reads a draft's text until it is next sent or discarded, then null. */
+export function readComposerDraftTextUntilReset(draftKey: string): () => string | null {
+  const reset = composerDraftLastReset.get(draftKey);
+  return () =>
+    composerDraftLastReset.get(draftKey) === reset ? getComposerDraftSnapshot(draftKey).text : null;
 }
 
 /**

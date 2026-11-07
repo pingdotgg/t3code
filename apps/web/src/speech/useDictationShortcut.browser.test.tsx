@@ -8,10 +8,10 @@ vi.mock("../hooks/useSettings", () => ({ useClientSettings: () => "hold" }));
 
 function Probe({
   speech,
-  editorRef,
+  targetRef,
 }: {
   speech: Parameters<typeof useDictationShortcut>[0]["speech"];
-  editorRef?: RefObject<HTMLElement | null>;
+  targetRef?: RefObject<HTMLElement | null>;
 }) {
   useDictationShortcut({
     keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
@@ -19,7 +19,7 @@ function Probe({
     disabled: false,
     terminalOpen: false,
     modelPickerOpen: false,
-    ...(editorRef ? { editorRef } : {}),
+    ...(targetRef ? { targetRef } : {}),
   });
   return null;
 }
@@ -89,17 +89,25 @@ it("finishes a released hold after startup even if the chord was pressed again w
   expect(speech.stop).toHaveBeenCalledOnce();
 });
 
-it("lets Escape in another text field reach that field instead of canceling the recording", async () => {
-  const speech = {
-    ...actions(true),
-    state: { phase: "recording" as const, error: null, errorAction: null },
-  };
+const escape = () =>
+  new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true });
+
+const recording = () => ({
+  ...actions(true),
+  state: { phase: "recording" as const, error: null, errorAction: null },
+});
+
+it("lets Escape in another dictation editor reach that editor instead of canceling the recording", async () => {
+  const speech = recording();
+  const commentRef = createRef<HTMLTextAreaElement>();
   const fieldEscape = vi.fn();
   await using screen = await render(
     <>
       <Probe speech={speech} />
+      <Probe speech={actions(true)} targetRef={commentRef} />
       <textarea
         aria-label="Comment"
+        ref={commentRef}
         onKeyDown={(event) => {
           if (event.key === "Escape") fieldEscape();
         }}
@@ -109,35 +117,22 @@ it("lets Escape in another text field reach that field instead of canceling the 
   const field = screen.getByRole("textbox", { name: "Comment" }).element();
   if (!(field instanceof HTMLTextAreaElement)) throw new Error("expected the comment textarea");
   field.focus();
-  field.dispatchEvent(
-    new KeyboardEvent("keydown", {
-      key: "Escape",
-      code: "Escape",
-      bubbles: true,
-      cancelable: true,
-    }),
-  );
+  field.dispatchEvent(escape());
   expect(speech.cancel).not.toHaveBeenCalled();
   expect(fieldEscape).toHaveBeenCalledOnce();
 });
 
-it("still cancels on Escape in the dictating editor", async () => {
-  const speech = {
-    ...actions(true),
-    state: { phase: "recording" as const, error: null, errorAction: null },
-  };
-  const editorRef = createRef<HTMLTextAreaElement>();
+it("cancels the recording on Escape in a text field that does not dictate", async () => {
+  const speech = recording();
   await using screen = await render(
     <>
-      <Probe speech={speech} editorRef={editorRef} />
-      <textarea aria-label="Prompt" ref={editorRef} />
+      <Probe speech={speech} />
+      <input aria-label="Search" />
     </>,
   );
-  const editor = screen.getByRole("textbox", { name: "Prompt" }).element();
-  if (!(editor instanceof HTMLTextAreaElement)) throw new Error("expected the prompt textarea");
-  editor.focus();
-  editor.dispatchEvent(
-    new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
-  );
+  const field = screen.getByRole("textbox", { name: "Search" }).element();
+  if (!(field instanceof HTMLInputElement)) throw new Error("expected the search field");
+  field.focus();
+  field.dispatchEvent(escape());
   expect(speech.cancel).toHaveBeenCalledOnce();
 });

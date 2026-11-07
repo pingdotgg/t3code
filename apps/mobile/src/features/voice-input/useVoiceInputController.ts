@@ -14,7 +14,8 @@ const IDLE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: n
 export function useVoiceInputController(input: {
   readonly ownerKey: string | null;
   readonly label: string;
-  readonly readDraftMessage: () => string | null;
+  /** Called when recording starts; the reader returns null once that draft is gone. */
+  readonly openDraftReader: () => () => string | null;
   readonly selection: ComposerEditorSelection;
   readonly disabled?: boolean;
   readonly onChangeDraftMessage: (value: string) => void;
@@ -49,7 +50,7 @@ export function useVoiceInputController(input: {
     void session.start({
       ...createVoiceInputTarget(
         captured.ownerKey,
-        captured.readDraftMessage,
+        captured.openDraftReader(),
         (text, selection) => {
           captured.onChangeDraftMessage(text);
           if (mounted.current && latestInput.current.ownerKey === captured.ownerKey) {
