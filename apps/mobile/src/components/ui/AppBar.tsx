@@ -4,7 +4,7 @@ import type { HeaderBarButtonMailSearchToolbarItem } from "react-native-screens"
 import { NavigationContext } from "@react-navigation/native";
 import { use, useId, useLayoutEffect } from "react";
 import { Pressable, View } from "react-native";
-import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
+import { createNativeHeaderMenu, renderNativeHeaderMenuItems } from "./nativeHeaderMenu.ios";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
 import { NativeStackScreenOptions, useScreenOptionsWriter } from "../../native/StackHeader";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
@@ -77,12 +77,16 @@ export function AppBar(props: AppBarProps) {
   const { colors } = useControlTheme();
   const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const { search, menus } = props;
-  const menu = menus?.[0];
+  const confirmMenuTitle = props.confirm?.menu?.title;
+  const menusWithoutConfirm = confirmMenuTitle
+    ? (menus?.filter((entry) => entry.title !== confirmMenuTitle) ?? [])
+    : (menus ?? []);
+  const menu = menusWithoutConfirm[0];
   const compactSearch =
     search !== undefined &&
     (search.compactToolbar ?? !layout.usesSplitView) &&
     usesNativeMailSearchToolbar;
-  const visibleMenus = compactSearch ? (menus?.slice(1) ?? []) : (menus ?? []);
+  const visibleMenus = compactSearch ? menusWithoutConfirm.slice(1) : menusWithoutConfirm;
   // Where the mail toolbar isn't used, the Duo keeps search at the bottom of the pane like its
   // workspace lists; elsewhere inline search is a button in the bar.
   const duoBottomSearch =
@@ -206,6 +210,27 @@ export function AppBar(props: AppBarProps) {
                 <AppActivityIndicator colorClassName="accent-prominent-action" />
               </View>
             </Toolbar.Custom>
+          ) : props.confirm?.menu ? (
+            // Edit-style glass text (or icon) + Safari-Back long-press: native primaryAction
+            // + menu, no chevron — the glass morphs into the menu on hold.
+            <Toolbar.Button
+              icon={
+                props.confirm.showLabel
+                  ? undefined
+                  : props.confirm.icon
+                    ? iosIcon(props.confirm.icon)
+                    : iosIcon(props.confirm.menu.icon)
+              }
+              label={props.confirm.showLabel ? props.confirm.label : undefined}
+              accessibilityLabel={props.confirm.accessibilityLabel ?? props.confirm.label}
+              accessibilityHint="Shows more actions on long press"
+              disabled={props.confirm.disabled}
+              onPress={props.confirm.onPress}
+              menuTitle={props.confirm.menu.status ?? props.confirm.menu.title}
+              separateBackground
+            >
+              {renderNativeHeaderMenuItems(props.confirm.menu.items)}
+            </Toolbar.Button>
           ) : props.confirm?.icon && !props.confirm.showLabel ? (
             // Custom AppSymbols (e.g. PR glyph) are not SF Symbols — render via SymbolView,
             // same footprint as other trailing icons (no prominent pill).

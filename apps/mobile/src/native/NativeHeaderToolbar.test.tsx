@@ -183,6 +183,41 @@ it.each(["left", "right", "bottom"] as const)(
   },
 );
 
+it("attaches a long-press menu to a button with menu children", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  root = createRoot(document.createElement("div"));
+  const onPress = vi.fn();
+  act(() =>
+    root!.render(
+      <NativeHeaderToolbar placement="right">
+        <NativeHeaderToolbar.Button
+          label="Push"
+          menuTitle="Git controls"
+          identifier="thread-git-cta"
+          onPress={() => onPress("button")}
+        >
+          <NativeHeaderToolbar.MenuAction onPress={() => onPress("review")}>
+            Review changes
+          </NativeHeaderToolbar.MenuAction>
+        </NativeHeaderToolbar.Button>
+      </NativeHeaderToolbar>,
+    ),
+  );
+  const [button] = harness.renderedItems;
+  if (button?.type !== "button") throw new Error("Expected the native button");
+  expect(button.label).toBe("Push");
+  expect(button.identifier).toBe("thread-git-cta");
+  const menu = (button as { menu?: { title?: string; items: { type: string; label: string }[] } })
+    .menu;
+  expect(menu?.title).toBe("Git controls");
+  expect(menu?.items).toHaveLength(1);
+  expect(menu?.items[0]).toMatchObject({ type: "action", label: "Review changes" });
+  button.onPress?.();
+  const action = menu?.items[0] as { onPress?: () => void } | undefined;
+  action?.onPress?.();
+  expect(onPress.mock.calls).toEqual([["button"], ["review"]]);
+});
+
 it("applies a custom header element rendered inside a navigation container", () => {
   renderConnecting("Connecting");
   expect(renderedCustomLabel()).toBe("Connecting");

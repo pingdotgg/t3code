@@ -143,7 +143,11 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
     );
   }
 
-  const menuView = props.menus?.map((menu) => (
+  const confirmMenuTitle = props.confirm?.menu?.title;
+  const menusWithoutConfirm = confirmMenuTitle
+    ? (props.menus?.filter((entry) => entry.title !== confirmMenuTitle) ?? [])
+    : (props.menus ?? []);
+  const menuView = menusWithoutConfirm.map((menu) => (
     <Menu
       key={menu.title}
       actions={menuActionsFromAppBarItems(menu.items)}
@@ -154,27 +158,60 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
       <ScreenHeaderButton accessibilityLabel={menu.title} icon={menu.icon} />
     </Menu>
   ));
-  const confirmButton = props.confirm ? (
-    props.confirm.showLabel || !props.confirm.icon ? (
+  const confirm = props.confirm;
+  const menuConfirm = confirm?.menu ? (
+    <Menu
+      actions={androidHeaderMenuActions(confirm.menu.items)}
+      isAnchoredToRight
+      title={confirm.menu.status ?? confirm.menu.title}
+      shouldOpenOnLongPress
+      onPressAction={({ nativeEvent }) => selectMenuItem(confirm.menu!.items, nativeEvent.event)}
+    >
+      {confirm.showLabel || !confirm.icon ? (
+        <View className="self-center">
+          <Button
+            label={confirm.label}
+            accessibilityLabel={confirm.accessibilityLabel ?? confirm.label}
+            tone="text"
+            loading={confirm.loading}
+            disabled={confirm.disabled}
+            onPress={confirm.onPress}
+          />
+        </View>
+      ) : (
+        <AndroidHeaderIconButton
+          accessibilityLabel={confirm.accessibilityLabel ?? confirm.label}
+          icon={confirm.icon}
+          disabled={confirm.disabled}
+          onPress={confirm.onPress}
+        />
+      )}
+    </Menu>
+  ) : null;
+  const labeledConfirm =
+    confirm && !confirm.menu && (confirm.showLabel || !confirm.icon) ? (
       <View className="self-center">
         <Button
-          label={props.confirm.label}
-          accessibilityLabel={props.confirm.accessibilityLabel ?? props.confirm.label}
+          label={confirm.label}
+          accessibilityLabel={confirm.accessibilityLabel ?? confirm.label}
           tone="text"
-          loading={props.confirm.loading}
-          disabled={props.confirm.disabled}
-          onPress={props.confirm.onPress}
+          loading={confirm.loading}
+          disabled={confirm.disabled}
+          onPress={confirm.onPress}
         />
       </View>
-    ) : (
-      <AndroidHeaderIconButton
-        accessibilityLabel={props.confirm.accessibilityLabel ?? props.confirm.label}
-        icon={props.confirm.icon}
-        disabled={props.confirm.disabled}
-        onPress={props.confirm.onPress}
-      />
-    )
-  ) : null;
+    ) : null;
+  const confirmButton = confirm
+    ? (menuConfirm ??
+      labeledConfirm ?? (
+        <AndroidHeaderIconButton
+          accessibilityLabel={confirm.accessibilityLabel ?? confirm.label}
+          icon={confirm.icon!}
+          disabled={confirm.disabled}
+          onPress={confirm.onPress}
+        />
+      ))
+    : null;
   const options =
     props.embedded || props.sheet ? null : (
       <NativeStackScreenOptions

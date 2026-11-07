@@ -62,6 +62,11 @@ export interface AppBarConfirm {
   readonly icon?: AppSymbolName;
   /** Defaults to `label`. Use when the visible control is icon-only or shortened. */
   readonly accessibilityLabel?: string;
+  /**
+   * Long-press menu on the confirm control (iOS: primaryAction + menu; Android: long-press).
+   * When set, AppBar does not also render this menu as a separate trailing icon.
+   */
+  readonly menu?: AppBarMenu;
 }
 
 export interface AppBarSearch {

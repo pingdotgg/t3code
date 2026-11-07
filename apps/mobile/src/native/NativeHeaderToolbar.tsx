@@ -42,7 +42,17 @@ type NativeStackHeaderVisibilityPriority = Extract<
   NativeStackHeaderItem,
   { type: "button" }
 >["visibilityPriority"];
-type NativeToolbarItem = NativeStackHeaderItem | HeaderBarButtonSearchBarPlacementItem;
+/** RN's button item omits `menu`; RNS applies both primaryAction and menu when both are set. */
+export type NativeStackHeaderItemButtonWithMenu = Extract<
+  NativeStackHeaderItem,
+  { type: "button" }
+> & {
+  readonly menu?: NativeStackHeaderItemMenu["menu"];
+};
+type NativeToolbarItem =
+  | NativeStackHeaderItem
+  | NativeStackHeaderItemButtonWithMenu
+  | HeaderBarButtonSearchBarPlacementItem;
 type NativeStackOptionsWithToolbar = NativeStackNavigationOptions & {
   unstable_headerToolbarItems?: () => NativeToolbarItem[];
 };
@@ -148,7 +158,9 @@ function convertToolbarChild(
   }
 
   if (typeName === "NativeHeaderToolbarButton") {
-    return {
+    const menuItems = collectMenuItems(child.props.children, register);
+    const menuTitle = typeof child.props.menuTitle === "string" ? child.props.menuTitle : undefined;
+    const button: NativeStackHeaderItemButtonWithMenu = {
       type: "button",
       label:
         typeof child.props.label === "string"
@@ -157,6 +169,10 @@ function convertToolbarChild(
       accessibilityLabel:
         typeof child.props.accessibilityLabel === "string"
           ? child.props.accessibilityLabel
+          : undefined,
+      accessibilityHint:
+        typeof child.props.accessibilityHint === "string"
+          ? child.props.accessibilityHint
           : undefined,
       axisBehavior: child.props.axisBehavior as NativeStackHeaderAxisBehavior,
       disabled: Boolean(child.props.disabled),
@@ -170,7 +186,9 @@ function convertToolbarChild(
           : "plain",
       identifier: typeof child.props.identifier === "string" ? child.props.identifier : undefined,
       visibilityPriority: child.props.visibilityPriority as NativeStackHeaderVisibilityPriority,
+      ...(menuItems.length > 0 ? { menu: { title: menuTitle, items: menuItems } } : undefined),
     };
+    return button;
   }
 
   if (typeName === "NativeHeaderToolbarMenu") {
@@ -288,11 +306,15 @@ function NativeHeaderToolbarRoot(props: {
 }
 
 function NativeHeaderToolbarButton(_props: {
+  readonly accessibilityHint?: string;
   readonly accessibilityLabel?: string;
   readonly axisBehavior?: NativeStackHeaderAxisBehavior;
+  readonly children?: ReactNode;
   readonly disabled?: boolean;
   readonly icon?: string | Extract<NativeStackHeaderIcon, { type: "image" }>;
   readonly label?: string;
+  /** Menu title when `children` define long-press actions (iOS primaryAction + menu). */
+  readonly menuTitle?: string;
   readonly onPress?: () => void;
   readonly separateBackground?: boolean;
   readonly tintColor?: ColorValue;

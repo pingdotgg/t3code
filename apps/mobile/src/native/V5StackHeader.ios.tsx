@@ -10,6 +10,7 @@ import { isDuoDevice } from "../lib/device-type";
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
 import { useDeviceType, useNativeLayoutMetrics } from "./native-layout-metrics";
 import { HeaderItemsWidthContext } from "./header-items-width";
+import type { NativeStackHeaderItemButtonWithMenu } from "./NativeHeaderToolbar";
 import {
   SearchBar,
   Stack,
@@ -129,7 +130,8 @@ function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderIte
           tintColor: item.tintColor,
           hidesSharedBackground: item.hidesSharedBackground,
         };
-      case "button":
+      case "button": {
+        const menu = (item as NativeStackHeaderItemButtonWithMenu).menu;
         return {
           type: "item",
           id,
@@ -138,6 +140,7 @@ function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderIte
           axisBehavior: item.axisBehavior,
           icon: convertIcon(item.icon),
           onPress: item.disabled ? undefined : item.onPress,
+          menu: item.disabled || !menu ? undefined : convertMenu(menu, `${id}:menu`),
           disabled: item.disabled,
           visibilityPriority:
             item.visibilityPriority === "default" ? "standard" : item.visibilityPriority,
@@ -145,6 +148,7 @@ function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderIte
           tintColor: item.tintColor,
           hidesSharedBackground: item.hidesSharedBackground,
         };
+      }
     }
   });
 }

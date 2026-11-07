@@ -4,9 +4,17 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 
 vi.mock("react-native", () => ({
   View: (props: { readonly children?: ReactNode }) => <div>{props.children}</div>,
+  Pressable: (props: { readonly children?: ReactNode }) => (
+    <button type="button">{props.children}</button>
+  ),
   Keyboard: { dismiss: () => {} },
   BackHandler: { addEventListener: () => ({ remove: () => {} }) },
 }));
+vi.mock("./AppText", () => ({
+  AppText: (props: { readonly children?: ReactNode }) => <span>{props.children}</span>,
+}));
+vi.mock("./AppSymbol", () => ({ SymbolView: () => null }));
+vi.mock("./AppActivityIndicator", () => ({ AppActivityIndicator: () => null }));
 // React Navigation throws this outside a navigator, as for the Arrange threads sheet.
 vi.mock("@react-navigation/native", () => ({
   useIsFocused: () => {

@@ -27,25 +27,26 @@ export function ThreadHeader(props: {
   const { panes } = useWorkspacePaneState();
   const { primaryAction: gitPrimaryAction, menu: gitMenu } = useThreadGitBar(props.gitControls);
   const terminalMenu = threadTerminalMenu(props.gitControls);
-  // Pill already crowds the bar — nest Terminal under Git instead of a second toolbar control.
-  const menus: AppBarMenu[] =
-    gitPrimaryAction !== null && terminalMenu
-      ? [
-          {
-            ...gitMenu,
-            items: [
-              ...gitMenu.items,
-              {
-                id: "git-terminal",
-                title: terminalMenu.title,
-                icon:
-                  typeof terminalMenu.icon === "string" ? terminalMenu.icon : terminalMenu.icon.ios,
-                items: terminalMenu.items,
-              },
-            ],
-          },
-        ]
-      : [gitMenu, ...(terminalMenu ? [terminalMenu] : [])];
+  // Edit-style text CTA + Safari-Back long-press menu (no chevron). Nest Terminal under Git.
+  const gitMenuWithTerminal: AppBarMenu =
+    terminalMenu !== null
+      ? {
+          ...gitMenu,
+          items: [
+            ...gitMenu.items,
+            {
+              id: "git-terminal",
+              title: terminalMenu.title,
+              icon:
+                typeof terminalMenu.icon === "string" ? terminalMenu.icon : terminalMenu.icon.ios,
+              items: terminalMenu.items,
+            },
+          ],
+        }
+      : gitMenu;
+  const confirm =
+    gitPrimaryAction !== null ? { ...gitPrimaryAction, menu: gitMenuWithTerminal } : undefined;
+  const menus: AppBarMenu[] = gitPrimaryAction !== null ? [] : [gitMenuWithTerminal];
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
   const actions: AppBarAction[] = props.hasThreadCwd
     ? [
@@ -77,7 +78,7 @@ export function ThreadHeader(props: {
       }
       actions={actions}
       menus={menus}
-      confirm={gitPrimaryAction ?? undefined}
+      confirm={confirm}
       hideBottomBorder
     />
   );
