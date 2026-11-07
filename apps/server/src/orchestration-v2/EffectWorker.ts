@@ -618,6 +618,7 @@ const isOrchestrationEffectWorkerError = Schema.is(OrchestrationEffectWorkerErro
 
 export interface OrchestrationEffectWorkerV2Shape {
   readonly awaitWork: Effect.Effect<void>;
+  /** Keep the caller's scope open until overdue executions settle, or use drain to await them. */
   readonly runOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError, Scope.Scope>;
   readonly runRecoveryOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
   readonly nextClaimableAt: Effect.Effect<
