@@ -2982,13 +2982,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (!newLessonProjectRef) return;
     openNewLesson({
       projectRef: newLessonProjectRef,
-      ...(newLessonSource === null
-        ? {}
-        : {
-            modelSelection: newLessonSource.modelSelection,
-            runtimeMode: newLessonSource.runtimeMode,
-            interactionMode: newLessonSource.interactionMode,
-          }),
     });
   };
   const canCreateLesson = useAtomValue(

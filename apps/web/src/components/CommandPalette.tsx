@@ -1351,13 +1351,6 @@ function OpenCommandPaletteDialog(props: {
           run: async () => {
             openNewLesson({
               projectRef: scopeProjectRef(lessonProject.environmentId, lessonProjectId),
-              ...(activeThread
-                ? {
-                    modelSelection: activeThread.modelSelection,
-                    runtimeMode: activeThread.runtimeMode,
-                    interactionMode: activeThread.interactionMode,
-                  }
-                : {}),
             });
           },
         });
