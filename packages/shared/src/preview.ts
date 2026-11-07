@@ -194,9 +194,8 @@ export function normalizePreviewUrl(rawUrl: string): string {
     });
   }
   const useHttp = LOOPBACK_PREFIX_PATTERN.test(trimmed);
-  const candidate = URL_SCHEME_WITH_AUTHORITY_PATTERN.test(trimmed)
-    ? trimmed
-    : `${useHttp ? "http" : "https"}://${trimmed}`;
+  const hasExplicitScheme = URL_SCHEME_WITH_AUTHORITY_PATTERN.test(trimmed);
+  const candidate = hasExplicitScheme ? trimmed : `${useHttp ? "http" : "https"}://${trimmed}`;
   let parsed: URL;
   try {
     parsed = new URL(candidate);
@@ -214,6 +213,14 @@ export function normalizePreviewUrl(rawUrl: string): string {
       reason: "unsupported-protocol",
       protocol: parsed.protocol,
     });
+  }
+  if (
+    !hasExplicitScheme &&
+    !useHttp &&
+    parsed.hostname.startsWith("127.") &&
+    isLocalLoopbackHost(parsed.hostname)
+  ) {
+    return new URL(`http://${trimmed}`).href;
   }
   return parsed.href;
 }

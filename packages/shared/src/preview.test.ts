@@ -149,6 +149,27 @@ describe("resolveSearchUrlTemplate", () => {
 });
 
 describe("normalizePreviewUrl", () => {
+  it.each([
+    ["127.0.0.2:3000/path", "http://127.0.0.2:3000/path"],
+    ["127.1.2.3?ready=1#section", "http://127.1.2.3/?ready=1#section"],
+    ["127.255.255.254:443/path", "http://127.255.255.254:443/path"],
+    ["127.1:3000", "http://127.0.0.1:3000/"],
+    ["0x7f.0.0.2:3000", "http://127.0.0.2:3000/"],
+    ["2130706434:3000", "http://127.0.0.2:3000/"],
+  ])("uses HTTP for schemeless IPv4 loopback %s", (input, expected) => {
+    expect(normalizePreviewUrl(input)).toBe(expected);
+  });
+
+  it.each([
+    ["127.0.0.2.example.com:3000", "https://127.0.0.2.example.com:3000/"],
+    ["128.0.0.1:3000", "https://128.0.0.1:3000/"],
+    ["https://127.0.0.2:80/path", "https://127.0.0.2:80/path"],
+    ["http://127.0.0.2:443/path", "http://127.0.0.2:443/path"],
+    ["http://example.com/path", "http://example.com/path"],
+  ])("preserves public and explicit schemes for %s", (input, expected) => {
+    expect(normalizePreviewUrl(input)).toBe(expected);
+  });
+
   it("tells agents how to open a blank tab and which URLs are accepted", () => {
     expect(() => normalizePreviewUrl("about:blank")).toThrow(
       /preview_open, omit url when creating a new tab[^.]*blank tab/i,
