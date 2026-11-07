@@ -1352,7 +1352,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
         );
       }
       return (
-        <code {...props} className={className} onDoubleClick={selectInlineCode}>
+        <code
+          {...props}
+          dir="ltr"
+          className={cn("[unicode-bidi:isolate]", className)}
+          onDoubleClick={selectInlineCode}
+        >
           {children}
         </code>
       );

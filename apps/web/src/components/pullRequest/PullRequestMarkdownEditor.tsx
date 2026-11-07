@@ -11,6 +11,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { Button } from "../ui/button";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { textDirection } from "~/textDirection";
 import {
   PullRequestMarkdownTextarea,
   type PullRequestCompletionScope,
@@ -112,6 +113,7 @@ export function PullRequestMarkdownEditor({
           disabled={saving}
           completionScope={completionScope}
           value={draft}
+          dir={textDirection(draft)}
           rows={6}
           placeholder={placeholder}
           aria-label={label}

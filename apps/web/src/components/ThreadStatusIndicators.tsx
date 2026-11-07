@@ -153,6 +153,7 @@ export {
   resolveThreadPullRequestBadge,
   type ThreadPullRequestBadge,
 } from "@t3tools/client-runtime/thread-pull-requests";
+import { textDirection } from "~/textDirection";
 
 export interface ThreadPullRequestBadgePresentation {
   readonly Icon: PullRequestGlyphIcon;
@@ -387,7 +388,9 @@ function ThreadPullRequestMiniListItem({
         className={cn("size-3 shrink-0", presentation?.toneClassName ?? "stroke-muted-foreground")}
       />
       <span className="shrink-0 font-mono tabular-nums">#{number}</span>
-      <span className="min-w-0 truncate text-foreground/75">{title}</span>
+      <span className="min-w-0 truncate text-foreground/75" dir={textDirection(title)}>
+        {title}
+      </span>
       {children}
     </>
   );

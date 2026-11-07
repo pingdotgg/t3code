@@ -21,6 +21,7 @@ import {
   type EnvironmentId,
   type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
+import { textDirection } from "@t3tools/shared/textDirection";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { useMemo, useRef, useState } from "react";
@@ -37,6 +38,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { Button } from "../../components/ui/Button";
+import { directionalText, proseDirectionStyle } from "../../lib/directionalText";
 import { Sheet } from "../../components/ui/Sheet";
 import { RUNTIME_MODE_CHOICES } from "./thread-settings-options";
 
@@ -139,7 +141,12 @@ function PendingLinkRequest(props: {
             : `Link ${target} to this environment`}
         </Text>
         {item.reason.trim() ? (
-          <Text className="font-sans text-sm leading-5 text-foreground-muted">{item.reason}</Text>
+          <Text
+            className="font-sans text-sm leading-5 text-foreground-muted"
+            style={proseDirectionStyle(item.reason, textDirection(item.reason))}
+          >
+            {directionalText(item.reason)}
+          </Text>
         ) : null}
         {item.label !== undefined && item.url !== undefined ? (
           <Text className="font-sans text-xs text-foreground-muted" numberOfLines={1}>

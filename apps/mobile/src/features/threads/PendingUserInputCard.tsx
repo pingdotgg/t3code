@@ -4,9 +4,10 @@ import type { EnvironmentId, RuntimeRequestId } from "@t3tools/contracts";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
 import {
   markdownProseDirection,
-  textDirection,
+  markdownWithDirection,
   type TextDirection,
 } from "@t3tools/shared/textDirection";
+import { directionalText, proseDirectionStyle } from "../../lib/directionalText";
 import { useRef } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
@@ -58,14 +59,6 @@ export interface PendingUserInputCardProps {
   readonly onDismiss: () => Promise<unknown>;
 }
 
-function proseDirectionStyle(text: string, setDirection: TextDirection | undefined) {
-  const direction = textDirection(text);
-  return {
-    ...(direction ? { direction, writingDirection: direction } : null),
-    textAlign: (direction === "rtl") === (setDirection === "rtl") ? "left" : "right",
-  } as const;
-}
-
 function QuestionText(props: {
   readonly markdown: string;
   readonly environmentId: EnvironmentId;
@@ -73,15 +66,21 @@ function QuestionText(props: {
 }) {
   const styles = useMarkdownPreviewStyles();
   const markdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
+  const direction = markdownProseDirection(markdown);
   const openLink = useOpenPullRequest();
   return (
     <SelectableMarkdownText
-      markdown={markdown}
+      markdown={Platform.OS === "android" ? markdownWithDirection(markdown, direction) : markdown}
       textStyle={styles.nativeTextStyle}
-      writingDirection={markdownProseDirection(markdown)}
-      // Android's renderer aligns relative to each paragraph's direction.
+      writingDirection={direction}
       textAlign={
-        Platform.OS === "android" ? undefined : props.setDirection === "rtl" ? "right" : "left"
+        Platform.OS === "android"
+          ? (direction === "rtl") === (props.setDirection === "rtl")
+            ? "left"
+            : "right"
+          : props.setDirection === "rtl"
+            ? "right"
+            : "left"
       }
       onLinkPress={(href) => void openLink(href)}
     />
@@ -94,13 +93,11 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const isResponding = props.respondingUserInputId === props.pendingUserInput.requestId;
   const responseDisabled = !canRespond || isResponding;
   const setDirection = markdownProseDirection(
-    props.pendingUserInput.questions
-      .flatMap((question) => [
-        question.header,
-        question.question,
-        ...question.options.flatMap((option) => [option.label, option.description ?? ""]),
-      ])
-      .join(" "),
+    ...props.pendingUserInput.questions.flatMap((question) => [
+      question.header,
+      question.question,
+      ...question.options.flatMap((option) => [option.label, option.description ?? ""]),
+    ]),
   );
 
   const { cardCoverage, cardProgress, maxHeight } = props;
@@ -234,7 +231,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 className="font-t3-bold text-xs uppercase tracking-[1px] text-foreground-muted"
                 style={proseDirectionStyle(question.header, setDirection)}
               >
-                {question.header}
+                {directionalText(question.header)}
               </Text>
               <QuestionText
                 markdown={question.question}
@@ -273,14 +270,14 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                           )}
                           style={proseDirectionStyle(option.label, setDirection)}
                         >
-                          {option.label}
+                          {directionalText(option.label)}
                         </Text>
                         {description ? (
                           <Text
                             className="font-sans text-sm leading-5 text-foreground-muted"
                             style={proseDirectionStyle(description, setDirection)}
                           >
-                            {description}
+                            {directionalText(description)}
                           </Text>
                         ) : null}
                       </View>

@@ -31,7 +31,7 @@ import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
-import { Platform, Pressable, useWindowDimensions, View } from "react-native";
+import { Platform, Pressable, useWindowDimensions, View, type TextStyle } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
@@ -82,6 +82,16 @@ import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
+import { textDirection } from "@t3tools/shared/textDirection";
+import { directionalText } from "../../lib/directionalText";
+
+function textDirectionStyle(text: string) {
+  return {
+    direction: "ltr",
+    writingDirection: textDirection(text),
+    textAlign: "left",
+  } satisfies TextStyle;
+}
 
 interface StatusLabel {
   readonly label: string;
@@ -462,8 +472,9 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
                 }
               : undefined
           }
+          style={textDirectionStyle(pendingTask.title)}
         >
-          {pendingTask.title}
+          {directionalText(pendingTask.title)}
         </Text>
         {isDraft ? (
           <View className="flex-row items-center gap-1" style={{ minHeight: titleLineHeight }}>
@@ -1150,6 +1161,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             isRegeneratingTitle && "opacity-55",
           )}
           numberOfLines={2}
+          style={textDirectionStyle(thread.title)}
           onTextLayout={
             Platform.OS === "android"
               ? ({ nativeEvent }) => {
@@ -1161,7 +1173,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               : undefined
           }
         >
-          {thread.title}
+          {directionalText(thread.title)}
         </Text>
         <View className="flex-row items-center gap-1.5" style={{ minHeight: titleLineHeight }}>
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
@@ -1448,8 +1460,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 isRegeneratingTitle && "opacity-55",
               )}
               numberOfLines={1}
+              style={textDirectionStyle(thread.title)}
             >
-              {thread.title}
+              {directionalText(thread.title)}
             </Text>
             {props.searchMatch ? (
               <ThreadSearchMatchExcerpt
