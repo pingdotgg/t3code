@@ -45,6 +45,8 @@ const DROPPED_REQUEST_HEADERS = new Set([
 
 const DROPPED_RESPONSE_HEADERS = new Set([
   "content-encoding",
+  // Node fetch may decompress while leaving the compressed length; never forward that.
+  "content-length",
   "transfer-encoding",
   "connection",
   "keep-alive",
@@ -133,8 +135,11 @@ const proxyHttp = Effect.fn("LanGatewayProxy.proxyHttp")(function* (
   if (!HttpMethod.isHttpMethod(method)) {
     return HttpServerResponse.text("Method Not Allowed", { status: 405 });
   }
+  // Node's fetch otherwise asks for gzip and decompresses while keeping the compressed
+  // content-length; Effect then aborts the client write as a length mismatch.
   const upstreamRequest = HttpClientRequest.make(method)(upstreamUrl).pipe(
     HttpClientRequest.setHeaders(forwardHeaders(request)),
+    HttpClientRequest.setHeader("accept-encoding", "identity"),
     method === "GET" || method === "HEAD"
       ? (self) => self
       : HttpClientRequest.bodyStream(request.stream, {
