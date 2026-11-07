@@ -20,6 +20,12 @@ export interface GhosttyCellRange {
 const DEFAULT_SELECTION_BACKGROUND = "rgba(72, 122, 191, 0.35)";
 const POWERLINE_SOLID_RIGHT = "\ue0b0";
 const POWERLINE_SOLID_LEFT = "\ue0b2";
+const POWERLINE_ROUND_RIGHT = "\ue0b4";
+const POWERLINE_ROUND_LEFT = "\ue0b6";
+const POWERLINE_FIRST = 0xe0b0;
+const POWERLINE_LAST = 0xe0d7;
+// Cubic control offset that approximates a quarter circle.
+const QUARTER_CIRCLE_KAPPA = ((Math.SQRT2 - 1) * 4) / 3;
 
 function cssColor(color: GhosttyColor): string {
   return `rgb(${color.r}, ${color.g}, ${color.b})`;
@@ -36,27 +42,98 @@ function sameTextStyle(left: GhosttyCell, right: GhosttyCell): boolean {
 }
 
 function isSolidPowerlineSeparator(text: string): boolean {
-  return text === POWERLINE_SOLID_RIGHT || text === POWERLINE_SOLID_LEFT;
+  return (
+    text === POWERLINE_SOLID_RIGHT ||
+    text === POWERLINE_SOLID_LEFT ||
+    text === POWERLINE_ROUND_RIGHT ||
+    text === POWERLINE_ROUND_LEFT
+  );
 }
 
 // Fallback fonts inset or scale these private-use glyphs, leaving a gap where
-// the separator should meet the next cell. Fill the triangle from the cell's
-// own edges instead, as native terminals do.
+// the separator should meet the next cell. Fill the shape from the cell's own
+// edges instead, as native terminals do.
 function fillSolidPowerlineSeparator(
   context: CanvasRenderingContext2D,
   text: string,
+  cellLeft: number,
+  top: number,
+  metrics: GhosttyCellMetrics,
+): void {
+  // Columns start at fractional x. Growing the shape out to whole pixels
+  // makes it overlap its neighbors instead of leaving an antialiased seam.
+  // Snap in device pixels so fractional display scales get the same edge.
+  const scale = context.getTransform().a;
+  const left = Math.floor(cellLeft * scale) / scale;
+  const right = Math.ceil((cellLeft + metrics.width) * scale) / scale;
+  const bottom = top + metrics.height;
+  const pointsRight = text === POWERLINE_SOLID_RIGHT || text === POWERLINE_ROUND_RIGHT;
+  const base = pointsRight ? left : right;
+  context.beginPath();
+  context.moveTo(base, top);
+  if (text === POWERLINE_ROUND_RIGHT || text === POWERLINE_ROUND_LEFT) {
+    // Ghostty's half circle: radius min(width, height / 2), with a straight
+    // edge between the arcs when the cell is taller than it is wide.
+    const radius = Math.min(right - left, metrics.height / 2);
+    const edge = base + (pointsRight ? radius : -radius);
+    const control = base + (pointsRight ? radius : -radius) * QUARTER_CIRCLE_KAPPA;
+    const inset = radius * (1 - QUARTER_CIRCLE_KAPPA);
+    context.bezierCurveTo(control, top, edge, top + inset, edge, top + radius);
+    context.lineTo(edge, bottom - radius);
+    context.bezierCurveTo(edge, bottom - inset, control, bottom, base, bottom);
+  } else {
+    context.lineTo(pointsRight ? right : left, top + metrics.height / 2);
+    context.lineTo(base, bottom);
+  }
+  context.closePath();
+  context.fill();
+}
+
+// Nerd Font icons live in the Private Use Areas.
+function isNerdFontIcon(text: string): boolean {
+  const codePoint = text.codePointAt(0) ?? 0;
+  return (codePoint >= 0xe000 && codePoint <= 0xf8ff) || codePoint >= 0xf0000;
+}
+
+// Icons are often wider than a cell. Like Ghostty, let one spread into a
+// following blank cell and shrink it to fit whatever room it has, so it never
+// spills under its neighbors.
+function fillNerdFontIcon(
+  context: CanvasRenderingContext2D,
+  cells: readonly GhosttyCell[],
+  column: number,
   left: number,
   top: number,
   metrics: GhosttyCellMetrics,
 ): void {
-  const right = left + metrics.width;
-  const [base, point] = text === POWERLINE_SOLID_RIGHT ? [left, right] : [right, left];
+  const text = cells[column]?.text ?? "";
+  const next = cells[column + 1];
+  const previous = cells[column - 1];
+  const previousCodePoint = previous?.text.codePointAt(0) ?? 0;
+  const previousIsIcon =
+    previous !== undefined &&
+    isNerdFontIcon(previous.text) &&
+    (previousCodePoint < POWERLINE_FIRST || previousCodePoint > POWERLINE_LAST);
+  const span = next && next.text.trim().length === 0 && !previousIsIcon ? 2 : 1;
+  const room = span * metrics.width;
+  const glyph = context.measureText(text);
+  const inkLeft = -glyph.actualBoundingBoxLeft;
+  const inkWidth = glyph.actualBoundingBoxLeft + glyph.actualBoundingBoxRight;
+  const inkHeight = glyph.actualBoundingBoxAscent + glyph.actualBoundingBoxDescent;
+  const scale = Math.min(1, room / inkWidth, metrics.height / inkHeight);
+  context.save();
   context.beginPath();
-  context.moveTo(base, top);
-  context.lineTo(point, top + metrics.height / 2);
-  context.lineTo(base, top + metrics.height);
-  context.closePath();
-  context.fill();
+  context.rect(left, top, room, metrics.height);
+  context.clip();
+  if (scale < 1 || inkLeft < 0 || inkLeft + inkWidth > room) {
+    const inkCenterOffset = (glyph.actualBoundingBoxAscent - glyph.actualBoundingBoxDescent) / 2;
+    context.translate(left + room / 2, top + metrics.height / 2);
+    context.scale(scale, scale);
+    context.fillText(text, -inkLeft - inkWidth / 2, inkCenterOffset);
+  } else {
+    context.fillText(text, left, top + metrics.baseline);
+  }
+  context.restore();
 }
 
 function ghosttyTextRunEnd(
@@ -72,7 +149,14 @@ function ghosttyTextRunEnd(
       end += 1;
       continue;
     }
-    if (next.text.length === 0 || isSolidPowerlineSeparator(next.text) || !sameStyle(next)) break;
+    if (
+      next.text.length === 0 ||
+      isSolidPowerlineSeparator(next.text) ||
+      isNerdFontIcon(next.text) ||
+      !sameStyle(next)
+    ) {
+      break;
+    }
     end += 1;
   }
   return end;
@@ -222,6 +306,22 @@ export function renderGhosttySnapshot(options: {
           fillSolidPowerlineSeparator(
             context,
             first.text,
+            padding + runStart * metrics.width,
+            top,
+            metrics,
+          );
+        }
+        runStart += 1;
+        continue;
+      }
+      if (isNerdFontIcon(first.text)) {
+        if (!first.invisible) {
+          context.font = fontForCell(first, fontSize, fontFamily);
+          context.fillStyle = cssColor(first.foreground);
+          fillNerdFontIcon(
+            context,
+            row.cells,
+            runStart,
             padding + runStart * metrics.width,
             top,
             metrics,
