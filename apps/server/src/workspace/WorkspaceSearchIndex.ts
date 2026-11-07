@@ -25,6 +25,7 @@ import type {
   ProjectSearchContentsResult,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 
 // fff-node's native library stays external; single-executables require disk packages instead of importing them.
@@ -121,8 +122,9 @@ export class WorkspaceSearchIndex extends Context.Service<
   }
 >()("t3/workspace/WorkspaceSearchIndex") {}
 
-function toPosixPath(input: string): string {
-  return input.replaceAll("\\", "/");
+// fff reports paths with the host separator; on POSIX `\` is a file name character.
+function toPosixPath(input: string, platform: NodeJS.Platform): string {
+  return platform === "win32" ? input.replaceAll("\\", "/") : input;
 }
 
 function trimDirectorySeparator(input: string): string {
@@ -134,8 +136,8 @@ function parentPathOf(input: string): string | undefined {
   return separatorIndex === -1 ? undefined : input.slice(0, separatorIndex);
 }
 
-function toProjectEntry(item: MixedItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.item.relativePath));
+function toProjectEntry(item: MixedItem, platform: NodeJS.Platform): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.item.relativePath, platform));
   if (!normalizedPath) {
     return null;
   }
@@ -146,23 +148,24 @@ function toProjectEntry(item: MixedItem): ProjectEntry | null {
   };
 }
 
-function toFileEntry(item: FileItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
+function toFileEntry(item: FileItem, platform: NodeJS.Platform): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath, platform));
   return normalizedPath ? { path: normalizedPath, kind: "file" } : null;
 }
 
-function toDirectoryEntry(item: DirItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
+function toDirectoryEntry(item: DirItem, platform: NodeJS.Platform): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath, platform));
   return normalizedPath ? { path: normalizedPath, kind: "directory" } : null;
 }
 
 function mapFileSearchResult(
   result: SearchResult,
   limit: number,
+  platform: NodeJS.Platform,
   imageOnly = false,
 ): ProjectSearchEntriesResult {
   const entries = result.items.flatMap((item) => {
-    const entry = toFileEntry(item);
+    const entry = toFileEntry(item, platform);
     return entry && (!imageOnly || isProjectFaviconPath(entry.path)) ? [entry] : [];
   });
   return {
@@ -174,9 +177,10 @@ function mapFileSearchResult(
 function mapDirectorySearchResult(
   result: DirSearchResult,
   limit: number,
+  platform: NodeJS.Platform,
 ): ProjectSearchEntriesResult {
   const entries = result.items.flatMap((item) => {
-    const entry = toDirectoryEntry(item);
+    const entry = toDirectoryEntry(item, platform);
     return entry ? [entry] : [];
   });
   const rootDirectoryCount = result.items.some((item) => item.relativePath.length === 0) ? 1 : 0;
@@ -189,10 +193,11 @@ function mapDirectorySearchResult(
 function mapMixedSearchResult(
   result: MixedSearchResult,
   limit: number,
+  platform: NodeJS.Platform,
 ): { readonly entries: ProjectEntry[]; readonly truncated: boolean } {
   const entries: ProjectEntry[] = [];
   for (const item of result.items) {
-    const entry = toProjectEntry(item);
+    const entry = toProjectEntry(item, platform);
     if (entry) {
       entries.push(entry);
     }
@@ -341,6 +346,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant = "paths",
 ) {
+  const platform = yield* HostProcess.Platform;
   const finder = yield* Effect.acquireRelease(createFinder(cwd, variant), (finder) =>
     Effect.try({
       try: () => finder.destroy(),
@@ -436,7 +442,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       const result = yield* runSearch("", WORKSPACE_INDEX_PAGE_SIZE, "mixedSearch", () =>
         finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
       );
-      const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
+      const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES, platform);
       const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
         left.path.localeCompare(right.path),
       );
@@ -458,20 +464,20 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       const result = yield* runSearch(query, pageSize, "fileSearch", () =>
         finder.fileSearch(query, { pageSize }),
       );
-      const mapped = mapFileSearchResult(result, limit, imageOnly);
+      const mapped = mapFileSearchResult(result, limit, platform, imageOnly);
       return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
     }
     if (kind === "directory") {
       const result = yield* runSearch(query, pageSize, "directorySearch", () =>
         finder.directorySearch(query, { pageSize }),
       );
-      const mapped = mapDirectorySearchResult(result, limit);
+      const mapped = mapDirectorySearchResult(result, limit, platform);
       return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
     }
     const result = yield* runSearch(query, pageSize, "mixedSearch", () =>
       finder.mixedSearch(query, { pageSize }),
     );
-    const mapped = mapMixedSearchResult(result, limit);
+    const mapped = mapMixedSearchResult(result, limit, platform);
     return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
   });
 
@@ -516,7 +522,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         // fff reports hits past its 512-char lineContent cap with no ranges, so whole words can't be verified there.
         if (input.wholeWord && matchRanges.length === 0) continue;
         matches.push({
-          path: toPosixPath(match.relativePath),
+          path: toPosixPath(match.relativePath, platform),
           lineNumber: match.lineNumber,
           lineContent: match.lineContent,
           matchRanges,
