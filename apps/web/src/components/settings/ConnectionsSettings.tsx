@@ -1175,9 +1175,7 @@ function ConnectionsSettingsContent({
                       environmentId={accessEnvironmentId}
                       serverConfig={accessServerConfig}
                     />
-                    {canReadRelay && hasCloudPublicConfig() ? (
-                      <ConnectMcpUrlMenuItem environmentId={accessEnvironmentId} />
-                    ) : null}
+                    <ConnectMcpUrlMenuItem environmentId={accessEnvironmentId} />
                   </MenuPopup>
                 </Menu>
               ) : null

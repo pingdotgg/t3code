@@ -50,6 +50,7 @@ import {
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
+import { useCloudLinkState } from "~/cloud/cloudLinkState";
 import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
 import { TunnelLimitAlert, TunnelUsageMeter } from "../cloud/TunnelUsage";
@@ -135,9 +136,11 @@ export function ConnectMcpUrlMenuItem({
 }: {
   readonly environmentId: EnvironmentId;
 }) {
-  const { linkState, managedTunnelActive } = useCloudLinkController(environmentId);
+  const { data } = useCloudLinkState(environmentId);
   const copyMcpUrl = useCopyMcpUrl();
-  const reachability = managedTunnelActive ? linkState.data?.reachability : undefined;
+  // A stopped tunnel triggers no recheck, so the last result can outlive it.
+  const reachability =
+    data?.managedTunnelActive === true && data.linkRevoked !== true ? data.reachability : undefined;
   if (reachability?.status !== "reachable" || !reachability.hostname) return null;
   const mcpUrl = `https://${reachability.hostname}/mcp`;
   return <MenuItem onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>Copy MCP URL</MenuItem>;
