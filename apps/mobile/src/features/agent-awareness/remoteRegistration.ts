@@ -187,7 +187,7 @@ export function setAgentAwarenessRelayTokenProvider(
       clearAndroidAgentNotifications();
     }
     if (provider) {
-      publishWidget({ kind: "loading" }, identity ?? null);
+      publishWidget({ kind: "loading" });
     }
     androidDeviceReplayedAt = null;
     deviceRegistrationGeneration++;
@@ -746,14 +746,11 @@ function ensureAppStateListener(): void {
   });
 }
 
-function publishWidget(
-  source: AgentActivityWidgetSource,
-  accountId = relayTokenProviderIdentity,
-): void {
+function publishWidget(source: AgentActivityWidgetSource): void {
   if (!canRegisterRemoteLiveActivities()) {
     return;
   }
-  publishAgentActivityWidget(source, accountId).catch((error: unknown) => {
+  publishAgentActivityWidget(source).catch((error: unknown) => {
     logRegistrationError("agent activity widget publish failed", error);
   });
 }
@@ -966,9 +963,9 @@ export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
   // refresh repaints it from one snapshot read. Yields undefined once the
   // account changed or a newer read started, so a stale result is never
   // shown or primed.
-  const identity = relayTokenProviderIdentity;
+  const generation = deviceRegistrationGeneration;
   const isCurrentAccount = () =>
-    relayTokenProvider !== null && relayTokenProviderIdentity === identity;
+    relayTokenProvider !== null && deviceRegistrationGeneration === generation;
   let read = 0;
   const isNewestRead = () => isCurrentAccount() && read === widgetSnapshotReads;
   const refreshWidget = Effect.gen(function* () {

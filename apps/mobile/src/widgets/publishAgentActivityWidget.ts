@@ -1,6 +1,3 @@
 import type { AgentActivityWidgetSource } from "./agentActivityWidgetTimeline";
 
-export async function publishAgentActivityWidget(
-  _source: AgentActivityWidgetSource,
-  _accountId: string | null,
-) {}
+export async function publishAgentActivityWidget(_source: AgentActivityWidgetSource) {}

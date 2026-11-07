@@ -805,46 +805,6 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       );
     }
 
-    it.effect("repaints from the relay snapshot when activity is reconciled", () => {
-      const relay = fakeRelay(() => Effect.succeed({ aggregate }));
-      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
-
-      return Effect.gen(function* () {
-        yield* refreshActiveLiveActivityRemoteRegistration();
-
-        expect(publishWidgetMock).toHaveBeenLastCalledWith(
-          { kind: "snapshot", aggregate },
-          "user-a",
-        );
-      }).pipe(Effect.provide(relay));
-    });
-
-    it.effect("delegates failed reads to the account-aware native publisher", () => {
-      const relayDown = new ManagedRelay.ManagedRelayRequestFailedError({
-        action: "read relay agent activity snapshot",
-        transportFailed: true,
-        cause: new Error("relay down"),
-      });
-      let relayUp = false;
-      const relay = fakeRelay(() =>
-        relayUp ? Effect.succeed({ aggregate }) : Effect.fail(relayDown),
-      );
-      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
-
-      return Effect.gen(function* () {
-        // After a cold start the persisted timeline may be a placeholder.
-        yield* refreshActiveLiveActivityRemoteRegistration();
-        expect(publishWidgetMock).toHaveBeenLastCalledWith({ kind: "unavailable" }, "user-a");
-
-        relayUp = true;
-        yield* refreshActiveLiveActivityRemoteRegistration();
-        relayUp = false;
-        publishWidgetMock.mockClear();
-        yield* refreshActiveLiveActivityRemoteRegistration();
-        expect(publishWidgetMock).toHaveBeenLastCalledWith({ kind: "unavailable" }, "user-a");
-      }).pipe(Effect.provide(relay));
-    });
-
     it.effect("registers an existing Live Activity before waiting on the widget read", () => {
       const order: Array<string> = [];
       const activity = {
@@ -868,10 +828,10 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         yield* refreshActiveLiveActivityRemoteRegistration();
 
         expect(order).toEqual(["push-token", "widget-snapshot"]);
-        expect(publishWidgetMock).toHaveBeenLastCalledWith(
-          { kind: "snapshot", aggregate },
-          "user-a",
-        );
+        expect(publishWidgetMock).toHaveBeenLastCalledWith({
+          kind: "snapshot",
+          aggregate,
+        });
       }).pipe(Effect.provide(relay));
     });
 
@@ -899,41 +859,12 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         yield* Deferred.succeed(olderResponse, { aggregate });
         yield* Fiber.join(older);
 
-        expect(publishWidgetMock).toHaveBeenLastCalledWith(
-          { kind: "snapshot", aggregate: newer },
-          "user-a",
-        );
+        expect(publishWidgetMock).toHaveBeenLastCalledWith({
+          kind: "snapshot",
+          aggregate: newer,
+        });
       }),
     );
-
-    it("shows loading, not the sign-in prompt, while a switched account's first read runs", () => {
-      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-a"), "user-a");
-      expect(publishWidgetMock).toHaveBeenLastCalledWith({ kind: "loading" }, "user-a");
-
-      // CloudAuthBridge deactivates the old account before activating the new one.
-      setAgentAwarenessRelayTokenProvider(null);
-      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-b"), "user-b");
-
-      expect(publishWidgetMock).toHaveBeenLastCalledWith({ kind: "loading" }, "user-b");
-    });
-
-    it.effect("shows loading when another account signs in after a provider release", () => {
-      const relay = fakeRelay(() => Effect.succeed({ aggregate }));
-      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-a"), "user-a");
-
-      return Effect.gen(function* () {
-        yield* refreshActiveLiveActivityRemoteRegistration();
-
-        // The native publisher checks persisted ownership even on a same-account remount.
-        releaseAgentAwarenessRelayTokenProvider();
-        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-a"), "user-a");
-        expect(publishWidgetMock).toHaveBeenLastCalledWith({ kind: "loading" }, "user-a");
-
-        releaseAgentAwarenessRelayTokenProvider();
-        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-b"), "user-b");
-        expect(publishWidgetMock).toHaveBeenLastCalledWith({ kind: "loading" }, "user-b");
-      }).pipe(Effect.provide(relay));
-    });
 
     it.effect("an obsolete refresh does not discard the next account's read", () =>
       Effect.gen(function* () {
@@ -975,10 +906,10 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         yield* Deferred.succeed(response, { aggregate });
         yield* Fiber.join(refreshB);
 
-        expect(publishWidgetMock).toHaveBeenLastCalledWith(
-          { kind: "snapshot", aggregate },
-          "user-b",
-        );
+        expect(publishWidgetMock).toHaveBeenLastCalledWith({
+          kind: "snapshot",
+          aggregate,
+        });
       }),
     );
 
@@ -1014,14 +945,6 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       }),
     );
 
-    it("shows the signed-out state after cloud sign-out", () => {
-      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
-
-      setAgentAwarenessRelayTokenProvider(null);
-
-      expect(publishWidgetMock).toHaveBeenLastCalledWith({ kind: "signed-out" }, null);
-    });
-
     it.effect("drops a snapshot that arrives after the account changed", () =>
       Effect.gen(function* () {
         const requested = yield* Deferred.make<void>();
@@ -1036,13 +959,11 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         );
         yield* Deferred.await(requested);
         setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-b"), "user-b");
+        publishWidgetMock.mockClear();
         yield* Deferred.succeed(response, { aggregate });
         yield* Fiber.join(refresh);
 
-        expect(publishWidgetMock).not.toHaveBeenCalledWith(
-          { kind: "snapshot", aggregate },
-          "user-a",
-        );
+        expect(publishWidgetMock).not.toHaveBeenCalled();
       }),
     );
 
