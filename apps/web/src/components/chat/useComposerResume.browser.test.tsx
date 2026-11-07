@@ -17,6 +17,7 @@ vi.mock(import("../../state/use-orchestration-command"), async (importOriginal) 
 
 import { render } from "../../../test/render";
 import type { ComposerHandleRef } from "../../composerHandleContext";
+import { draftSendState } from "../ChatView.logic";
 import { useComposerResume } from "./useComposerResume";
 
 function deferred<T>() {
@@ -48,6 +49,7 @@ function ResumeButton(props: {
   const { onResume } = useComposerResume({
     environmentId: EnvironmentId.make("environment:test"),
     routeThreadKey: "environment:test:thread:a",
+    routeSendState: draftSendState("environment:test:thread:a"),
     currentRouteThreadKeyRef: { current: "environment:test:thread:a" },
     activeThread: { id: threadA } as never,
     resumableRunId: RunId.make("run:interrupted"),

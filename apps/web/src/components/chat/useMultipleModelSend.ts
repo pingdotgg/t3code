@@ -28,12 +28,15 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   boundAttachmentIds,
   type ComposerSendSnapshot,
+  type DraftSendState,
   type makeThreadErrorSetter,
+  releaseDraftSendStateIfIdle,
+  retainDraftSendState,
+  routeSendInFlight,
   withMessageContext,
 } from "../ChatView.logic";
 import {
   draftFanoutSelectionsAtom,
-  draftSendState,
   type MultipleModelTarget,
   type prepareTurnAttachments,
   restoreComposerDraft,
@@ -44,6 +47,7 @@ import type { useLocalDispatchState } from "./useLocalDispatchState";
 interface MultipleModelSendInput {
   readonly environmentId: EnvironmentId;
   readonly routeThreadKey: string;
+  readonly routeSendState: DraftSendState;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
   readonly draftId: DraftId | null;
   readonly composerDraftTarget: ComposerThreadTarget;
@@ -64,6 +68,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
   const {
     environmentId,
     routeThreadKey,
+    routeSendState,
     currentRouteThreadKeyRef,
     draftId,
     composerDraftTarget,
@@ -81,7 +86,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const fanoutSelectionsAtom = draftFanoutSelectionsAtom(routeThreadKey);
   const { sendInFlight: sendInFlightRef, uncertainSubmissions: uncertainSubmissionsRef } =
-    draftSendState(routeThreadKey);
+    routeSendState;
 
   return async ({
     threadId,
@@ -157,6 +162,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
             ]),
             model: target.selection.model,
             uncertainSubmissions: uncertainSubmissionsRef.current,
+            onRetryAllowed: () => releaseDraftSendStateIfIdle(routeThreadKey, routeSendState),
             start: (targetThreadId) => {
               return startThreadTurn({
                 environmentId,
@@ -208,10 +214,14 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
           else failedSelections.push(target.selection);
         }),
       );
+      // The composer is free again, but a start that fails from here on
+      // records an uncertain submission on this route's state.
+      const releaseStarts = retainDraftSendState(routeThreadKey, routeSendState);
       sendInFlightRef.current = false;
       resetLocalDispatch();
       releasedComposer = true;
-      await starts;
+      // Not try/finally: React Compiler skips components that use it.
+      await starts.finally(releaseStarts);
       if (startedCount > 0) {
         toastManager.add(
           stackedThreadToast({
@@ -260,7 +270,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                 if (
                   !draftId ||
                   !useComposerDraftStore.getState().getDraftSession(draftId) ||
-                  sendInFlightRef.current ||
+                  routeSendInFlight(routeThreadKey) ||
                   composerDraftHasUserContent(
                     useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
                   )
