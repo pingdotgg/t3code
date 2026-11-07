@@ -1,6 +1,7 @@
 import type {
   DesktopBridge,
   DesktopPreviewAnnotationVoiceEvent,
+  DesktopPreviewFindResultEvent,
   DesktopPreviewOpenLinkEvent,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingInputEvent,
@@ -356,6 +357,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL, { tabId, colorScheme }),
     setAudioMuted: (tabId, audioMuted) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_AUDIO_MUTED_CHANNEL, { tabId, audioMuted }),
+    findInPage: (tabId, text, { forward, newSession }) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_FIND_IN_PAGE_CHANNEL, {
+        tabId,
+        text,
+        forward,
+        newSession,
+      }),
+    stopFindInPage: (tabId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_STOP_FIND_IN_PAGE_CHANNEL, { tabId }),
     setShown: (tabId, shown) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_SHOWN_CHANNEL, { tabId, shown }),
     openDevTools: (tabId) =>
@@ -455,6 +465,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.on(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, wrappedListener);
       return () =>
         ipcRenderer.removeListener(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, wrappedListener);
+    },
+    onFindResult: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, findEvent: unknown) => {
+        if (typeof findEvent !== "object" || findEvent === null) return;
+        listener(findEvent as DesktopPreviewFindResultEvent);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, wrappedListener);
     },
   },
 } satisfies DesktopBridge);
