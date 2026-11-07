@@ -75,6 +75,8 @@ const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_METADATA_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 // Temporary-index git add scales poorly (50k files took ~30 s); report incomplete totals above this cap.
 const REVIEW_UNTRACKED_MAX_FILES = 5_000;
+const REVIEW_UNTRACKED_MAX_FILE_BYTES = 10n * 1024n * 1024n;
+const REVIEW_UNTRACKED_MAX_TOTAL_BYTES = 64n * 1024n * 1024n;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const REVIEW_BRANCH_COMMIT_LIMIT = 100;
 const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
@@ -3137,9 +3139,35 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       (candidate) =>
         onlyPath === undefined || candidate === onlyPath || candidate === `${onlyPath}/`,
     );
-    if (paths.length === 0) return { env: undefined };
+    if (paths.length === 0) return { env: undefined, complete: true };
     if (paths.length > REVIEW_UNTRACKED_MAX_FILES) return null;
-    const env = yield* prepareReviewIndex(cwd, paths).pipe(
+    const boundedPaths: string[] = [];
+    let bytes = 0n;
+    let complete = true;
+    for (const relativePath of paths) {
+      // lstat bounds sparse files by logical size without reading symlink targets.
+      const info = yield* fileSystem
+        .lstat(path.resolve(cwd, relativePath))
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (
+        info === undefined ||
+        (info.type !== "File" && info.type !== "Directory" && info.type !== "SymbolicLink")
+      ) {
+        complete = false;
+        continue;
+      }
+      const size = info.type === "Directory" ? 0n : info.size;
+      if (
+        size > REVIEW_UNTRACKED_MAX_FILE_BYTES ||
+        bytes + size > REVIEW_UNTRACKED_MAX_TOTAL_BYTES
+      ) {
+        complete = false;
+        continue;
+      }
+      bytes += size;
+      boundedPaths.push(relativePath);
+    }
+    const env = yield* prepareReviewIndex(cwd, boundedPaths).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
           Effect.fail(
@@ -3153,7 +3181,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ),
       }),
     );
-    return { env };
+    return { env, complete };
   });
 
   const resolveReviewMergeBase = Effect.fn("resolveReviewMergeBase")(function* (
@@ -3230,12 +3258,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : [];
     // Empty status can mean untracked files are hidden; retain the full scan.
     const untracked = yield* prepareUntrackedReviewIndex(cwd, pathspecs);
-    if (untracked === null) {
+    if (untracked === null || !untracked.complete) {
       return yield* new GitCommandError({
         operation: "GitVcsDriver.readBranchChangeTotals",
         command: "git ls-files",
         cwd,
-        detail: "Too many untracked files to count.",
+        detail: "Untracked files exceed the review input limits.",
       });
     }
     const readNumstat = (ref: string) =>
@@ -3564,9 +3592,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
     const [dirtyTrackedResult, baseResult] = yield* Effect.gen(function* () {
       const untracked = input.trackedOnly
-        ? { env: undefined }
+        ? { env: undefined, complete: true }
         : yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path);
-      const metadataOnly = input.metadataOnly === true && !input.file && untracked !== null;
+      const metadataOnly =
+        input.metadataOnly === true && !input.file && untracked?.complete === true;
       const [dirty, base] =
         review.mergeBase === dirtyRef
           ? yield* readTrackedDiff(dirtyRef, untracked?.env, metadataOnly).pipe(
@@ -3579,7 +3608,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               ],
               { concurrency: 2 },
             );
-      if (untracked !== null) return [dirty, base] as const;
+      if (untracked?.complete) return [dirty, base] as const;
       const incomplete = (ref: string | null, result: typeof dirty) =>
         ref === null ? result : { ...result, files: undefined, stdoutTruncated: true };
       return [incomplete(dirtyRef, dirty), incomplete(review.mergeBase, base)] as const;
