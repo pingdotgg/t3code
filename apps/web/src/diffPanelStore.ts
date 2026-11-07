@@ -26,7 +26,8 @@ interface DiffPanelStoreState {
   byThreadKey: Record<string, DiffPanelSelection>;
   branchBaseRefByThreadKey: Record<string, string | null>;
   repositoryCwdByThreadKey: Record<string, string>;
-  selectRepository: (ref: ScopedThreadRef, cwd: string | null) => void;
+  selectRepository: (ref: ScopedThreadRef, cwd: string) => void;
+  clearRepository: (ref: ScopedThreadRef) => void;
   /** A link that selected a commit before opening the closed pane; opening keeps that selection. */
   keepSelectionOnOpenThreadKey: string | null;
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
@@ -64,14 +65,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
         set((state) => {
           const key = scopedThreadKey(ref);
           return {
-            repositoryCwdByThreadKey:
-              cwd === null
-                ? Object.fromEntries(
-                    Object.entries(state.repositoryCwdByThreadKey).filter(
-                      ([entry]) => entry !== key,
-                    ),
-                  )
-                : { ...state.repositoryCwdByThreadKey, [key]: cwd },
+            repositoryCwdByThreadKey: { ...state.repositoryCwdByThreadKey, [key]: cwd },
             byThreadKey: {
               ...state.byThreadKey,
               [key]:
@@ -81,6 +75,26 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
             },
             branchBaseRefByThreadKey: { ...state.branchBaseRefByThreadKey, [key]: null },
             keepSelectionOnOpenThreadKey: null,
+          };
+        }),
+      clearRepository: (ref) =>
+        set((state) => {
+          const key = scopedThreadKey(ref);
+          const { [key]: _removedRepository, ...repositoryCwdByThreadKey } =
+            state.repositoryCwdByThreadKey;
+          const previous = state.byThreadKey[key];
+          return {
+            repositoryCwdByThreadKey,
+            branchBaseRefByThreadKey: { ...state.branchBaseRefByThreadKey, [key]: null },
+            byThreadKey: {
+              ...state.byThreadKey,
+              [key]:
+                previous?.kind === "turn" ||
+                previous?.kind === "tool-call" ||
+                previous?.kind === "unstaged"
+                  ? previous
+                  : { kind: "branch", baseRef: null },
+            },
           };
         }),
       keepSelectionOnOpenThreadKey: null,

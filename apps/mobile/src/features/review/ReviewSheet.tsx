@@ -580,7 +580,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     });
   };
   const androidHeaderSubtitle = [
-    selectedRepository
+    repositories.length > 1 && selectedSection?.kind !== "turn" && selectedRepository
       ? selectedRepository.name + ": " + (selectedRepository.branch ?? "HEAD")
       : null,
     selectedSection?.title,
@@ -626,7 +626,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     return <>{children}</>;
   })();
   const headerSubtitle = [
-    selectedRepository
+    repositories.length > 1 && selectedSection?.kind !== "turn" && selectedRepository
       ? selectedRepository.name + ": " + (selectedRepository.branch ?? "HEAD")
       : null,
     headerDiffSummary.additions,

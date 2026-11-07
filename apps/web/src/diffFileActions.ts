@@ -13,6 +13,7 @@ interface OpenDiffFilePrimaryActionInput {
   readonly threadRef: ScopedThreadRef | null;
   readonly filePath: string;
   readonly activeCwd: string | undefined;
+  readonly fileCwd?: string | undefined;
   readonly repositoryRoot?: string | undefined;
   readonly openInEditor: (targetPath: string) => void;
 }
@@ -93,11 +94,12 @@ export function openDiffFilePrimaryAction({
   threadRef,
   filePath,
   activeCwd,
+  fileCwd,
   repositoryRoot,
   openInEditor,
 }: OpenDiffFilePrimaryActionInput): void {
   const workspaceFilePath = resolveDiffPathForWorkspace({
-    filePath,
+    filePath: fileCwd ? resolvePathLinkTarget(filePath, fileCwd) : filePath,
     workspaceRoot: activeCwd,
     repositoryRoot,
   });

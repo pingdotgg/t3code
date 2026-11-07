@@ -2252,6 +2252,18 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             ],
           );
           assert.isFalse(repos.truncated);
+          const subdirectory = NodePath.join(cwd, "packages");
+          const scoped = yield* driver.getReviewRepositories({ cwd: subdirectory });
+          assert.equal(scoped.repositories[0]!.cwd, subdirectory);
+          assert.deepStrictEqual(
+            scoped.repositories.map((repo) => repo.path),
+            ["", "auth service", "auth service/vendor/schema"],
+          );
+          yield* git(cwd, ["config", "-f", ".gitmodules", "submodule.file.path", "README.md"]);
+          assert.deepStrictEqual(
+            (yield* driver.getReviewRepositories({ cwd })).repositories,
+            repos.repositories,
+          );
           const commits = yield* driver.getReviewBranchCommits({ cwd: child, baseRef: "HEAD~1" });
           assert.equal(commits.commits.length, 1);
           assert.equal(commits.commits[0]!.subject, "Child change");
@@ -2282,11 +2294,26 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             makeReviewDiffFileContentsInput(child),
           );
           assert.equal(file.newContents, "# changed auth\n");
+          const fs = yield* FileSystem.FileSystem;
+          if ((yield* HostProcess.Platform) !== "win32") {
+            const locked = NodePath.join(cwd, "locked");
+            yield* fs.makeDirectory(locked);
+            yield* git(cwd, ["config", "-f", ".gitmodules", "submodule.locked.path", "locked"]);
+            yield* fs.chmod(locked, 0);
+            const result = yield* driver
+              .getReviewRepositories({ cwd })
+              .pipe(Effect.ensuring(fs.chmod(locked, 0o755).pipe(Effect.orDie)));
+            assert.deepStrictEqual(result.repositories, repos.repositories);
+          }
           // A hostile manifest must not turn discovery into an arbitrary filesystem scan.
           yield* git(cwd, ["config", "-f", ".gitmodules", "submodule.escape.path", upstream]);
           yield* git(cwd, ["config", "-f", ".gitmodules", "submodule.parent.path", ".."]);
           if (symlinksSupported) {
-            const fs = yield* FileSystem.FileSystem;
+            const alias = NodePath.join(yield* makeTmpDir(), "alias");
+            yield* fs.symlink(subdirectory, alias);
+            const throughAlias = yield* driver.getReviewRepositories({ cwd: alias });
+            assert.equal(throughAlias.repositories[0]!.cwd, alias);
+            assert.equal(throughAlias.repositories[1]!.cwd, NodePath.join(alias, "auth service"));
             yield* fs.symlink(upstream, NodePath.join(cwd, "escape-link"));
             yield* git(cwd, ["config", "-f", ".gitmodules", "submodule.link.path", "escape-link"]);
           }

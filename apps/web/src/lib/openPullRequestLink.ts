@@ -1,3 +1,5 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
@@ -188,7 +190,17 @@ export function useOpenChangeRequestLink(
                 useRightPanelStore.getState().byThreadKey,
                 resolvedThreadRef,
               ) === "diff";
-            useDiffPanelStore.getState().selectRepository(resolvedThreadRef, null);
+            const selectedCwd =
+              useDiffPanelStore.getState().repositoryCwdByThreadKey[
+                scopedThreadKey(resolvedThreadRef)
+              ];
+            const workspaceCwd = commitThread.worktreePath ?? commitProject.workspaceRoot;
+            if (
+              selectedCwd &&
+              normalizeProjectPathForComparison(selectedCwd) !==
+                normalizeProjectPathForComparison(workspaceCwd)
+            )
+              useDiffPanelStore.getState().clearRepository(resolvedThreadRef);
             useDiffPanelStore.getState().selectCommit(resolvedThreadRef, commit.sha, !diffOpen);
             useRightPanelStore.getState().open(resolvedThreadRef, "diff");
             return;

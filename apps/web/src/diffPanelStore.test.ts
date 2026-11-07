@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, TurnItemId, RunId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
@@ -30,7 +30,7 @@ describe("diffPanelStore", () => {
     store.selectRepository(ref, "/project/ui");
     expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual({ kind: "unstaged" });
     store.selectBranchBaseRef(ref, "child-only-branch");
-    store.selectRepository(ref, null);
+    store.clearRepository(ref);
     store.selectCommit(ref, "linked-parent-commit", true);
     expect(useDiffPanelStore.getState().repositoryCwdByThreadKey[key]).toBeUndefined();
     expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual({
@@ -38,6 +38,20 @@ describe("diffPanelStore", () => {
       sha: "linked-parent-commit",
       baseRef: null,
     });
+    store.selectRepository(ref, "/project/auth");
+    store.selectTurn(ref, RunId.make("turn"), "file.ts");
+    const turn = useDiffPanelStore.getState().byThreadKey[key];
+    store.clearRepository(ref);
+    expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual(turn);
+    store.selectRepository(ref, "/project/auth");
+    store.selectToolCall(ref, {
+      threadId: ThreadId.make("child"),
+      itemId: TurnItemId.make("edit"),
+      revision: "1",
+    });
+    const tool = useDiffPanelStore.getState().byThreadKey[key];
+    store.clearRepository(ref);
+    expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual(tool);
     store.selectRepository(ref, "/project/auth");
     store.removeThread(ref);
     expect(useDiffPanelStore.getState().repositoryCwdByThreadKey[key]).toBeUndefined();

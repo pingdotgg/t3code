@@ -1,3 +1,4 @@
+import { useThreadSelection } from "../../state/use-thread-selection";
 import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
@@ -63,13 +64,16 @@ export function useReviewSections(input: {
       ? reviewEnvironment.repositories({ environmentId, input: { cwd: selectedThreadCwd } })
       : null,
   );
-  const repositories = repositoriesQuery.data?.repositories ?? [];
+  const { selectedThreadProject } = useThreadSelection();
+  const repositories = (repositoriesQuery.data?.repositories ?? []).map((repo) =>
+    repo.path ? repo : { ...repo, name: selectedThreadProject?.title || repo.name },
+  );
   const selectedRepository =
     repositories.find(
       (repo) =>
         repositoryChoice?.threadKey === reviewCache.threadKey && repo.cwd === repositoryChoice.cwd,
     ) ?? repositories[0];
-  const reviewCwd = selectedRepository?.cwd ?? selectedThreadCwd;
+  const reviewCwd = selectedRepository?.path ? selectedRepository.cwd : selectedThreadCwd;
   const repositoryPath = selectedRepository?.path ?? "";
   const diffPreview = useEnvironmentQuery(
     canReadFiles && enabled && environmentId !== undefined && reviewCwd !== null

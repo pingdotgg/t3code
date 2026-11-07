@@ -273,7 +273,9 @@ export default function DiffPanel({
         })
       : null,
   );
-  const repositories = repositoriesQuery.data?.repositories ?? [];
+  const repositories = (repositoriesQuery.data?.repositories ?? []).map((repo) =>
+    repo.path ? repo : { ...repo, name: activeProject?.title || repo.name },
+  );
   const selectedRepository =
     repositories.find((repo) => repo.cwd === requestedRepositoryCwd) ?? repositories[0];
   const isRepositoryDiff =
@@ -287,17 +289,19 @@ export default function DiffPanel({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears a persisted child repository and its refs after that repository disappears
   useEffect(() => {
     if (repositoryMissing && routeThreadRef && repositories[0])
-      useDiffPanelStore.getState().selectRepository(routeThreadRef, repositories[0].cwd);
+      useDiffPanelStore.getState().clearRepository(routeThreadRef);
   }, [repositoryMissing, routeThreadRef, repositories]);
   const diffSelection =
     repositoryMissing && isRepositoryDiff
       ? { kind: "branch" as const, baseRef: null }
       : storedDiffSelection;
-  const activeCwd = isRepositoryDiff
-    ? requestedRepositoryCwd && repositoriesQuery.isPending && !repositoriesQuery.data
+  const repositoryCwd =
+    requestedRepositoryCwd && repositoriesQuery.isPending && !repositoriesQuery.data
       ? undefined
-      : (selectedRepository?.cwd ?? workspaceCwd)
-    : workspaceCwd;
+      : selectedRepository?.path
+        ? selectedRepository.cwd
+        : workspaceCwd;
+  const activeCwd = isRepositoryDiff ? repositoryCwd : workspaceCwd;
   const isChildRepository = isRepositoryDiff && !!selectedRepository?.path;
   const repositoryLabel = selectedRepository
     ? selectedRepository.name + ": " + (selectedRepository.branch ?? "HEAD")
@@ -320,7 +324,7 @@ export default function DiffPanel({
     activeThread !== null && activeThread !== undefined && activeCwd != null
       ? vcsEnvironment.status({
           environmentId: activeThread.environmentId,
-          input: { cwd: activeCwd },
+          input: { cwd: activeCwd, ...(isChildRepository ? { includeRemote: false } : {}) },
         })
       : null,
   );
@@ -444,11 +448,11 @@ export default function DiffPanel({
       : null,
   );
   const branchCommitsQuery = useEnvironmentQuery(
-    visible && isGitRepo && canReadFiles && activeThread && activeCwd
+    visible && isGitRepo && canReadFiles && activeThread && repositoryCwd
       ? reviewEnvironment.branchCommits({
           environmentId: activeThread.environmentId,
           input: {
-            cwd: activeCwd,
+            cwd: repositoryCwd,
             ...(!repositoryMissing && rememberedBaseRef ? { baseRef: rememberedBaseRef } : {}),
           },
         })
@@ -774,8 +778,11 @@ export default function DiffPanel({
     openDiffFilePrimaryAction({
       threadRef: routeThreadRef,
       filePath,
-      activeCwd,
-      repositoryRoot: activeRepositoryRoot,
+      activeCwd: workspaceCwd,
+      fileCwd: isChildRepository ? selectedRepository?.cwd : undefined,
+      repositoryRoot: activeThread?.worktreePath
+        ? undefined
+        : activeProject?.repositoryIdentity?.rootPath,
       openInEditor: (targetPath) => {
         void (async () => {
           const result = await openInPreferredEditor(targetPath);
@@ -865,7 +872,7 @@ export default function DiffPanel({
   const headerRow = (
     <>
       <div className="@container/diff-refs flex min-w-0 flex-1 items-center gap-3 [-webkit-app-region:no-drag] @max-[42rem]/diff-panel:basis-full @max-[42rem]/diff-panel:flex-wrap">
-        {isGitSelection && repositories.length > 1 && (
+        {repositories.length > 1 && (
           <Combobox
             items={repositories.map((repo) => repo.cwd)}
             filteredItems={repositories
@@ -890,6 +897,7 @@ export default function DiffPanel({
             <ComboboxTrigger
               render={<Button size="xs" variant="secondary" className="max-w-56 min-w-0" />}
               aria-label={"Repository: " + repositoryLabel}
+              title="Repository for Changes, Uncommitted and Commits. Turn diffs use the thread checkpoints."
             >
               <span className="truncate">{repositoryLabel}</span>
               <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />

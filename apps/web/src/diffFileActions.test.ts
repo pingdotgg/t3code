@@ -15,25 +15,51 @@ describe("openDiffFilePrimaryAction", () => {
     useRightPanelStore.setState({ byThreadKey: {}, threadPanelVisibilityByThreadKey: {} });
   });
 
-  it("opens repository-relative diff files from a nested project", () => {
-    const openInEditor = vi.fn();
-
-    openDiffFilePrimaryAction({
-      threadRef: THREAD_REF,
+  it.each([
+    {
       filePath: "frontend/Dockerfile",
       activeCwd: "/repo/frontend",
       repositoryRoot: "/repo",
-      openInEditor,
-    });
+      fileCwd: undefined,
+      expected: "Dockerfile",
+    },
+    {
+      filePath: "src/policy.ts",
+      activeCwd: "/repo",
+      repositoryRoot: "/repo",
+      fileCwd: "/repo/packages/auth",
+      expected: "packages/auth/src/policy.ts",
+    },
+    {
+      filePath: "src/policy.ts",
+      activeCwd: "/repo/packages",
+      repositoryRoot: "/repo",
+      fileCwd: "/repo/packages/auth",
+      expected: "auth/src/policy.ts",
+    },
+  ])(
+    "opens a diff in its workspace at $expected",
+    ({ filePath, activeCwd, repositoryRoot, fileCwd, expected }) => {
+      const openInEditor = vi.fn();
 
-    expect(
-      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
-    ).toMatchObject({
-      isOpen: true,
-      activeSurfaceId: "file:Dockerfile",
-    });
-    expect(openInEditor).not.toHaveBeenCalled();
-  });
+      openDiffFilePrimaryAction({
+        threadRef: THREAD_REF,
+        filePath,
+        activeCwd,
+        repositoryRoot,
+        fileCwd,
+        openInEditor,
+      });
+
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
+      ).toMatchObject({
+        isOpen: true,
+        activeSurfaceId: `file:${expected}`,
+      });
+      expect(openInEditor).not.toHaveBeenCalled();
+    },
+  );
 
   it("preserves repository-relative paths in a separate worktree", () => {
     expect(

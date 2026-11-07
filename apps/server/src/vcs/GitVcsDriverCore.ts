@@ -3375,8 +3375,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const canonicalRoot = yield* fileSystem
       .realPath(root.worktreeRoot)
       .pipe(Effect.orElseSucceed(() => root.worktreeRoot!));
+    const canonicalWorkspace = yield* fileSystem
+      .realPath(input.cwd)
+      .pipe(Effect.orElseSucceed(() => path.resolve(input.cwd)));
     const withinRoot = (candidate: string) => {
-      const relative = path.relative(canonicalRoot, candidate);
+      const relative = path.relative(canonicalWorkspace, candidate);
       return (
         relative === "" ||
         (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
@@ -3396,7 +3399,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             const real = yield* fileSystem
               .realPath(candidate)
               .pipe(Effect.orElseSucceed(() => null));
-            if (!real || !withinRoot(real) || seen.has(real)) return null;
+            if (!real || (real !== canonicalRoot && !withinRoot(real)) || seen.has(real))
+              return null;
+            const stat = yield* fileSystem.stat(real).pipe(Effect.orElseSucceed(() => null));
+            if (stat?.type !== "Directory") return null;
             seen.add(real);
             const repo = yield* resolveRepositoryPathsUncached(real);
             if (!repo?.worktreeRoot) return null;
@@ -3430,14 +3436,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                 : [];
             return {
               repository: {
-                cwd: real,
-                path: path.relative(canonicalRoot, real).split(path.sep).join("/"),
+                cwd:
+                  real === canonicalRoot
+                    ? input.cwd
+                    : path.resolve(input.cwd, path.relative(canonicalWorkspace, real)),
+                path:
+                  real === canonicalRoot
+                    ? ""
+                    : path.relative(canonicalWorkspace, real).split(path.sep).join("/"),
                 name: path.basename(real) || "Repository",
                 branch: repo.currentBranch,
               },
               children,
             };
-          }),
+          }).pipe(
+            Effect.catchCause((cause) =>
+              candidate === canonicalRoot ? Effect.failCause(cause) : Effect.succeed(null),
+            ),
+          ),
         { concurrency: 8 },
       );
       for (const item of found) {

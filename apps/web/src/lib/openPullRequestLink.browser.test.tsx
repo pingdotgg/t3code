@@ -75,6 +75,7 @@ function setup() {
   });
   useDiffPanelStore.setState({
     byThreadKey: {},
+    repositoryCwdByThreadKey: {},
     branchBaseRefByThreadKey: {},
     keepSelectionOnOpenThreadKey: null,
   });
@@ -138,12 +139,25 @@ it.each(["system", "app"] as const)(
   },
 );
 
-it.each([false, true])(
-  "opens a linked parent commit from a child repository with diffOpen=%j",
-  async (diffOpen) => {
+it.each(
+  [false, true].flatMap((diffOpen) =>
+    ["child", "parent", "default"].map((repository) => ({ diffOpen, repository })),
+  ),
+)(
+  "opens a linked parent commit with $repository selected and diffOpen=$diffOpen",
+  async ({ diffOpen, repository }) => {
     setup();
-    useDiffPanelStore.getState().selectRepository(threadRef, "/repo/auth");
-    useDiffPanelStore.getState().selectBranchBaseRef(threadRef, "child-only-branch");
+    if (repository !== "default")
+      useDiffPanelStore
+        .getState()
+        .selectRepository(threadRef, repository === "child" ? "/repo/auth" : "/repo");
+    const expectedBase = repository === "child" ? null : "origin/develop";
+    useDiffPanelStore
+      .getState()
+      .selectBranchBaseRef(
+        threadRef,
+        repository === "child" ? "child-only-branch" : "origin/develop",
+      );
     if (diffOpen) useRightPanelStore.getState().open(threadRef, "diff");
     const sha = "a".repeat(40);
     state.preview.mockResolvedValue(
@@ -157,13 +171,18 @@ it.each([false, true])(
     await screen.getByRole("link", { name: "Commit" }).click();
     await vi.waitFor(() =>
       expect(useDiffPanelStore.getState().byThreadKey).toEqual({
-        [scopedThreadKey(threadRef)]: { kind: "commit", sha, baseRef: null },
+        [scopedThreadKey(threadRef)]: { kind: "commit", sha, baseRef: expectedBase },
       }),
     );
     // ChatView resets a pane opened without an explicit request to Changes unless this is set.
     expect(useDiffPanelStore.getState().consumeKeepSelectionOnOpen(threadRef)).toBe(!diffOpen);
-    expect(
-      useDiffPanelStore.getState().repositoryCwdByThreadKey[scopedThreadKey(threadRef)],
-    ).toBeUndefined();
+    expect(useDiffPanelStore.getState().repositoryCwdByThreadKey[scopedThreadKey(threadRef)]).toBe(
+      repository === "parent" ? "/repo" : undefined,
+    );
+    useDiffPanelStore.getState().selectGitScope(threadRef, "branch");
+    expect(useDiffPanelStore.getState().byThreadKey[scopedThreadKey(threadRef)]).toEqual({
+      kind: "branch",
+      baseRef: expectedBase,
+    });
   },
 );
