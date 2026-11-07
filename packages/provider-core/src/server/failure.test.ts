@@ -139,6 +139,29 @@ it("names how the provider process exited and the stage it failed in, without it
   );
 });
 
+it("tells the user to sign in when an ACP agent rejects the session as unauthenticated", () => {
+  const providerSessionId = ProviderSessionId.make("provider-session:private-id");
+  const sessionOpenFailure = {
+    _tag: "ProviderSessionOpenError",
+    providerSessionId,
+    cause: new ProviderAdapter.ProviderAdapterOpenSessionError({
+      driver: ProviderDriverKind.make("acpRegistry"),
+      providerSessionId,
+      cause: Cause.fail({
+        _tag: "AcpRequestError",
+        code: -32000,
+        errorMessage: "Authentication required",
+      }),
+    }),
+  };
+
+  const known = knownProviderFailureMessage(sessionOpenFailure);
+  assert.isDefined(known, "an ACP auth-required failure should have a curated message");
+  assert.match(known ?? "", /sign(ed)?[ -]?in|log(ged)?[ -]?in/iu);
+  assert.notInclude(known ?? "", providerSessionId);
+  assert.equal(makeProviderFailure({ cause: Cause.fail(sessionOpenFailure) }).message, known);
+});
+
 it("keeps unrecognized reasons and provider text out of category messages", () => {
   for (const cause of [
     "Private launch command",

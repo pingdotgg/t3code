@@ -138,6 +138,14 @@ function curatedCauseMessages(cause: unknown): {
             category: categoryMessage(),
           };
         }
+        // ACP reserves -32000 for auth_required; the agent's own text is not shown.
+        case "AcpRequestError":
+          if ((cause as Record<string, unknown>).code !== -32000) break;
+          return {
+            known:
+              "The provider needs you to sign in. Sign in from its provider settings or with its own CLI or app, then retry the turn.",
+            category: categoryMessage(),
+          };
         case "ContextHandoffDeliveryUncertainError":
           return {
             known:
