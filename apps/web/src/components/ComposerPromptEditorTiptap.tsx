@@ -1,3 +1,4 @@
+import { draftCitationMarkers } from "./chat/assistantCitationMarkers.logic";
 import { documentChipKindForFileName } from "~/pierre-icons";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
@@ -135,7 +136,7 @@ export interface ComposerPromptEditorHandle {
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
   readSelectionRange: () => { start: number; end: number };
-  openCitation: (index: number, sourceAnchor: AssistantCitationSourceAnchor) => void;
+  openCitation: (key: string, sourceAnchor: AssistantCitationSourceAnchor) => void;
   requestCitationComment: (request: ComposerCitationCommentRequest) => void;
   readSnapshot: () => {
     value: string;
@@ -200,6 +201,7 @@ type CitationInsertedSpaces = { before: boolean; after: boolean };
 
 type OpenCitationComment = {
   key: string;
+  markerKey?: string;
   sourceAnchor?: AssistantCitationSourceAnchor;
   removeOnCancel?: CitationInsertedSpaces;
 };
@@ -434,6 +436,15 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   };
 
   const onRestoreFocus = () => {
+    if (commentTarget?.markerKey && commentTarget.sourceAnchor) {
+      const marker = commentTarget.sourceAnchor.viewport.querySelector<HTMLElement>(
+        `[data-citation-marker-key="${CSS.escape(commentTarget.markerKey)}"]`,
+      );
+      if (marker && !marker.hidden) {
+        marker.focus({ preventScroll: true });
+        return;
+      }
+    }
     if (!editor.isEditable) return;
     const pos = nodePos();
     if (pos === null) return;
@@ -1640,13 +1651,18 @@ function ComposerPromptEditorTiptapInner(
         readSnapshot();
         return selectionRangeRef.current;
       },
-      openCitation: (index, sourceAnchor) => {
+      openCitation: (key, sourceAnchor) => {
         if (!editor) return;
-        const node = findChildren(
+        const nodes = findChildren(
           editor.state.doc,
           (node) => node.type.name === "composer-citation",
-        )[index]?.node;
-        if (node) setOpenCitation({ key: node.attrs.citeKey, sourceAnchor });
+        );
+        const markers = draftCitationMarkers({
+          type: "doc",
+          content: nodes.map(({ node }) => node.toJSON()),
+        });
+        const node = nodes[markers.findIndex((marker) => marker.key === key)]?.node;
+        if (node) setOpenCitation({ key: node.attrs.citeKey, markerKey: key, sourceAnchor });
       },
       requestCitationComment: (request) => {
         citationRequestRef.current = request;

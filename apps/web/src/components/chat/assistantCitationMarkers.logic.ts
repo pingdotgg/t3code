@@ -1,16 +1,26 @@
-import type { AssistantCitation } from "@t3tools/contracts";
+import { AssistantCitation } from "@t3tools/contracts";
 import type { JSONContent } from "@tiptap/core";
+import * as Schema from "effect/Schema";
 
-export function draftCitationMarkers(
-  doc: JSONContent,
-): { citation: AssistantCitation; key: string }[] {
+const isCitation = Schema.is(AssistantCitation);
+
+export function draftCitationMarkers(doc: JSONContent) {
   const citations: { citation: AssistantCitation; key: string }[] = [];
+  const occurrences = new Map<string, number>();
   const visit = (node: JSONContent) => {
-    if (node.type === "composer-citation")
-      citations.push({
-        citation: node.attrs?.citation as AssistantCitation,
-        key: node.attrs?.citeKey as string,
-      });
+    const citation: unknown = node.attrs?.citation;
+    if (node.type === "composer-citation" && isCitation(citation)) {
+      const identity = JSON.stringify([
+        citation.environmentId,
+        citation.threadId,
+        citation.messageId,
+        citation.start,
+        citation.end,
+      ]);
+      const occurrence = occurrences.get(identity) ?? 0;
+      occurrences.set(identity, occurrence + 1);
+      citations.push({ citation, key: `${identity}:${occurrence}` });
+    }
     for (const child of node.content ?? []) visit(child);
   };
   visit(doc);

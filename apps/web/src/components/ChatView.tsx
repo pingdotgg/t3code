@@ -580,8 +580,8 @@ export default function ChatView(props: ChatViewProps) {
   })() as AssistantCitationRequest | null;
   const citationHistory = useCitedHistory(citationRequest);
   const openDraftCitation = useStableCallback(
-    (index: number, anchor: AssistantCitationSourceAnchor) =>
-      composerRef.current?.openCitation(index, anchor),
+    (key: string, anchor: AssistantCitationSourceAnchor) =>
+      composerRef.current?.openCitation(key, anchor),
   );
   const { resolvedTheme } = useTheme();
   const composerRuntimeMode = useComposerDraftStore(

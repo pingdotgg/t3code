@@ -224,7 +224,7 @@ interface MessagesTimelineProps {
   citationRequest?: AssistantCitationRequest | null;
   citationHistory?: CitedHistory;
   citationDraftTarget?: ComposerThreadTarget;
-  onOpenDraftCitation?: (index: number, anchor: AssistantCitationSourceAnchor) => void;
+  onOpenDraftCitation?: (key: string, anchor: AssistantCitationSourceAnchor) => void;
   onCiteAssistantText?: (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,

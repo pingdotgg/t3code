@@ -302,7 +302,7 @@ export interface ChatComposerHandle {
     options?: { ensureLeadingBoundary?: boolean; clipboardData?: DataTransfer },
   ) => boolean;
   pasteTextAtEnd: (text: string, options?: { bypassAutoAttachment?: boolean }) => boolean;
-  openCitation: (index: number, sourceAnchor: AssistantCitationSourceAnchor) => void;
+  openCitation: (key: string, sourceAnchor: AssistantCitationSourceAnchor) => void;
   citeAssistantText: (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
@@ -2967,8 +2967,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         focusComposer();
         return true;
       },
-      openCitation: (index, sourceAnchor) =>
-        composerEditorRef.current?.openCitation(index, sourceAnchor),
+      openCitation: (key, sourceAnchor) =>
+        composerEditorRef.current?.openCitation(key, sourceAnchor),
       citeAssistantText: (citation, sourceAnchor) =>
         insertComposerTextStable(
           formatAssistantCitationForComposer(citation, citation.comment),

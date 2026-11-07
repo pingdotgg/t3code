@@ -33,12 +33,14 @@ const promptBefore = `See ${serializeAssistantCitation(citation)} `;
 function Composer({
   question,
   editorRef,
+  initialPrompt = promptBefore,
 }: {
   question: boolean;
+  initialPrompt?: string;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }) {
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
-  const [prompt, setPrompt] = useState(promptBefore);
+  const [prompt, setPrompt] = useState(initialPrompt);
   const [answer, setAnswer] = useState("");
   return (
     <>
@@ -53,7 +55,7 @@ function Composer({
         <AssistantCitationMarkers
           viewport={viewport}
           prompt={question ? answer : prompt}
-          onOpen={(index, anchor) => editorRef.current?.openCitation(index, anchor)}
+          onOpen={(key, anchor) => editorRef.current?.openCitation(key, anchor)}
         />
       </div>
       <output data-prompt={prompt} data-answer={answer} />
@@ -112,4 +114,34 @@ it("opens the existing comment at its source from a draft marker", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Edit citation 1 comment" }));
   await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
   expect(screen.container.querySelector("output")?.dataset.prompt).toBe(promptBefore);
+});
+
+it("opens each duplicate marker's own comment and restores marker focus", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  const first = withAssistantCitationComment(citation, "first");
+  const second = withAssistantCitationComment(citation, "second");
+  await using screen = await render(
+    <Composer
+      question={false}
+      editorRef={editorRef}
+      initialPrompt={`${serializeAssistantCitation(first)} ${serializeAssistantCitation(second)}`}
+    />,
+  );
+  const one = screen.getByRole("button", { name: "Edit citation 1 comment" });
+  const two = screen.getByRole("button", { name: "Edit citation 2 comment" });
+  await expect.element(one).toBeVisible();
+  await expect.element(two).toBeVisible();
+  const firstButton = screen.container.querySelector<HTMLElement>("[data-citation-marker-key]")!;
+  const secondButton = screen.container.querySelectorAll<HTMLElement>(
+    "[data-citation-marker-key]",
+  )[1]!;
+  expect(firstButton.getBoundingClientRect().left).not.toBe(
+    secondButton.getBoundingClientRect().left,
+  );
+  await userEvent.click(one);
+  await expect.element(page.getByLabelText("Comment on selected text")).toHaveValue("first");
+  await userEvent.keyboard("{Escape}");
+  await expect.element(one).toHaveFocus();
+  await userEvent.click(two);
+  await expect.element(page.getByLabelText("Comment on selected text")).toHaveValue("second");
 });

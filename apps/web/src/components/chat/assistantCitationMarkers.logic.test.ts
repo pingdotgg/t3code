@@ -24,6 +24,22 @@ it("numbers only citation nodes in document order, including repeated sources", 
     citation,
     citation,
   ]);
+  const markers = draftCitationMarkers(doc);
+  expect(new Set(markers.map(({ key }) => key)).size).toBe(3);
+  expect(
+    draftCitationMarkers(
+      buildDocJson(`typing ${serializeAssistantCitation(second)} ${link} ${link} more`, () => null),
+    ),
+  ).toEqual(markers);
+  expect(
+    draftCitationMarkers({
+      type: "doc",
+      content: [
+        { type: "composer-citation", attrs: { citation: null } },
+        { type: "composer-citation", attrs: { citation: { messageId: "bad" } } },
+      ],
+    }),
+  ).toEqual([]);
   expect(draftCitationMarkers(buildDocJson("plain text", () => null))).toEqual([]);
   expect(draftCitationMarkers(buildDocJson(`\`\`\`text\n${link}\n\`\`\``, () => null))).toEqual([]);
 });
