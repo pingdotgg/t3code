@@ -10,7 +10,6 @@ import { IconButton } from "./IconButton";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
 import { splitAndroidHeaderActions } from "./headerMenu.android";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
-import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import { useToolbarLayout } from "./useToolbarLayout";
 import { useControlTheme } from "./useControlTheme";
 import { RoutedFormSheetContext } from "./RoutedFormSheetContext";
@@ -51,8 +50,8 @@ export function AndroidScreenHeader(props: {
   readonly compact?: boolean;
 }) {
   const { colors } = useControlTheme();
-  const titleTypography = { ...useScaledTextRole("title"), fontFamily: FONT_FAMILIES.regular };
-  const subtitleTypography = { ...useScaledTextRole("label"), fontFamily: FONT_FAMILIES.regular };
+  const titleTypography = useScaledTextRole("title");
+  const subtitleTypography = useScaledTextRole("label");
   const inFormSheet = use(RoutedFormSheetContext);
   const { paddingTop, paddingBottom } = useToolbarLayout(props.embedded || inFormSheet);
   const [headerWidth, setHeaderWidth] = useState(0);
