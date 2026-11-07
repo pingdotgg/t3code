@@ -3844,6 +3844,117 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("shows an ask_user_question multi-select input as options and encodes answers", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      const question = {
+        question: "Which gaps should I build now?",
+        header: "Build next",
+        multiSelect: true,
+        options: [
+          { label: "Bills", description: "Due-date reminders" },
+          { label: "Lock", description: "Face ID on open" },
+          { label: "Subscriptions", description: "Monthly totals" },
+        ],
+      };
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_ask",
+        toolName: "ask_user_question",
+        args: { questions: [question] },
+      });
+      // The RPC dialog walker in @juicesharp/rpiv-ask-user-question asks multi-select this way.
+      const titleFor = (options: typeof question.options) =>
+        [
+          `[Build next] ${question.question}`,
+          options
+            .map((option, index) => `${index + 1}. ${option.label} — ${option.description}`)
+            .join("\n"),
+          'Enter the numbers of all that apply, comma-separated (e.g. "1,3").',
+        ].join("\n\n");
+      const ask = Effect.fnUntraced(function* (id: string, title = titleFor(question.options)) {
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id,
+          method: "input",
+          title,
+          placeholder: "1,3; custom answer",
+        });
+        const event = yield* takeEvent(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "user_input_request" &&
+            event.turnItem.nativeItemRef?.nativeId === id,
+        );
+        if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
+          return assert.fail("expected a user input request");
+        }
+        return event.turnItem;
+      });
+
+      const first = yield* ask("ui-multi");
+      const asked = decodeUserInputQuestions(first.questions)[0];
+      assert.equal(asked?.header, "Build next");
+      assert.equal(asked?.question, question.question);
+      assert.isTrue(asked?.multiSelect);
+      assert.deepEqual(
+        asked?.options.map((option) => [option.label, option.description, option.value]),
+        [
+          ["Bills", "Due-date reminders", "1"],
+          ["Lock", "Face ID on open", "2"],
+          ["Subscriptions", "Monthly totals", "3"],
+        ],
+      );
+      yield* runtime.respondToRuntimeRequest({
+        requestId: first.requestId,
+        answers: { "ui-multi": ["3", "1"] },
+      });
+      assert.equal((yield* fake.takeRequest("extension_ui_response"))["value"], "1,3");
+
+      const second = yield* ask("ui-multi-custom");
+      yield* runtime.respondToRuntimeRequest({
+        requestId: second.requestId,
+        answers: { "ui-multi-custom": "2" },
+      });
+      // A leading semicolon makes the extension read the reply as custom text, not option 2.
+      assert.equal((yield* fake.takeRequest("extension_ui_response"))["value"], "; 2");
+
+      const reordered = [question.options[2]!, question.options[0]!];
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_ask_again",
+        toolName: "ask_user_question",
+        // The extension strips stray carriage returns from these fields before building the title.
+        args: {
+          questions: [
+            {
+              ...question,
+              header: "Build\r next",
+              options: [{ ...reordered[0]!, label: "Subscr\riptions" }, reordered[1]!],
+            },
+          ],
+        },
+      });
+      const third = decodeUserInputQuestions(
+        (yield* ask("ui-multi-again", titleFor(reordered))).questions,
+      )[0];
+      assert.equal(third?.header, "Build next");
+      assert.deepEqual(
+        third?.options.map((option) => option.label),
+        ["Subscriptions", "Bills"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("keeps the complete editor prefill editable and returns exact edited text", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
