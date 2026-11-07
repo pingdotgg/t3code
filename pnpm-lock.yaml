@@ -2046,6 +2046,9 @@ importers:
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
+      culori:
+        specifier: ^4.0.2
+        version: 4.0.2
       effect:
         specifier: 4.1.2
         version: 4.1.2

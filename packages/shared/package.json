@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./themeResolution": {
+      "types": "./src/themeResolution.ts",
+      "import": "./src/themeResolution.ts"
+    },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"
@@ -552,6 +556,7 @@
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",
     "@t3tools/contracts": "workspace:*",
+    "culori": "^4.0.2",
     "effect": "catalog:",
     "ffi-rs": "1.3.2",
     "mdast-util-directive": "catalog:",
