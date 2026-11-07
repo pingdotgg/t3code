@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
@@ -28,7 +29,7 @@ interface SentRequest {
 
 function fakeGitCafe(
   routes: Record<string, unknown | ((request: SentRequest) => unknown)>,
-  options: { readonly status?: number; readonly env?: NodeJS.ProcessEnv } = {},
+  options: { readonly env?: NodeJS.ProcessEnv } = {},
 ) {
   const sent: Array<SentRequest> = [];
   const client = HttpClient.make(
@@ -55,7 +56,7 @@ function fakeGitCafe(
           : route instanceof Response
             ? route
             : new Response(encodeJson(typeof route === "function" ? route(entry) : route), {
-                status: options.status ?? 200,
+                status: 200,
               });
       return Effect.succeed(HttpClientResponse.fromWeb(request, response));
     },
@@ -498,22 +499,21 @@ describe("GitCafePullRequestProvider", () => {
 
   it.effect("reports a refused token as unauthenticated and a limit as rate-limited", () =>
     Effect.gen(function* () {
-      for (const [status, reason] of [
-        [401, "unauthenticated"],
-        [429, "rate-limited"],
+      const now = yield* Clock.currentTimeMillis;
+      for (const [status, reason, headers, retryAt] of [
+        [401, "unauthenticated", {}, undefined],
+        [429, "rate-limited", { "retry-after": "120" }, now + 120_000],
       ] as const) {
-        const server = fakeGitCafe(
-          { "GET /repos/owner/repo/pulls/7/stack": { stack: null } },
-          {
-            status,
-          },
-        );
+        const server = fakeGitCafe({
+          "GET /repos/owner/repo/pulls/7/stack": new Response(null, { status, headers }),
+        });
         const error = yield* GitCafePullRequestProvider.make.pipe(
           Effect.flatMap((provider) => provider.getChangeRequestStack!(target)),
           Effect.flip,
           Effect.provide(server.layer),
         );
         assert.strictEqual(error.reason, reason);
+        assert.strictEqual(error.retryAt, retryAt);
       }
     }),
   );

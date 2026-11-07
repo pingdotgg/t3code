@@ -279,6 +279,7 @@ export const make = Effect.gen(function* () {
             operation,
             reason: error.reason,
             detail: error.detail,
+            ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
             cause: error,
           }),
       ),

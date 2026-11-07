@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -8,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 import * as GitCafeCredentials from "./GitCafeCredentials.ts";
 import * as GitCafeHosts from "./gitCafeHosts.ts";
@@ -30,6 +32,7 @@ export class GitCafeApiError extends Schema.TaggedError<GitCafeApiError>()("GitC
   status: Schema.NullOr(Schema.Int),
   reason: GitCafeApiFailure,
   detail: Schema.String,
+  retryAt: Schema.optional(Schema.Number),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
@@ -115,7 +118,9 @@ export const make = Effect.gen(function* () {
 
   const request = Effect.fn("GitCafeApi.request")(function* (input: GitCafeApiRequest) {
     const fail = (
-      fields: Pick<GitCafeApiError, "status" | "reason" | "detail"> & { cause?: unknown },
+      fields: Pick<GitCafeApiError, "status" | "reason" | "detail" | "retryAt"> & {
+        cause?: unknown;
+      },
     ) =>
       new GitCafeApiError({
         host: input.host,
@@ -123,6 +128,7 @@ export const make = Effect.gen(function* () {
         status: fields.status,
         reason: fields.reason,
         detail: fields.detail,
+        ...(fields.retryAt === undefined ? {} : { retryAt: fields.retryAt }),
         ...(fields.cause === undefined ? {} : { cause: fields.cause }),
       });
     // Remote URLs must not send tokens outside GitCafe's hosts.
@@ -168,6 +174,7 @@ export const make = Effect.gen(function* () {
         return {
           status: response.status,
           location: response.headers.location,
+          retryAfter: response.headers["retry-after"],
           text: yield* response.text,
         };
       }).pipe(
@@ -187,15 +194,20 @@ export const make = Effect.gen(function* () {
       url = next;
       response = yield* send(url);
     }
-    const { status, text } = response;
+    const { status, text, retryAfter } = response;
     yield* Effect.annotateCurrentSpan({ "http.response.status_code": status });
     if (status >= 200 && status < 300) return text;
     // The source may hold a newer token than the one that was refused.
     if (status === 401) yield* credentials.invalidate(host);
     const problem = Option.getOrUndefined(decodeProblem(text));
+    const retryAt =
+      status === 429
+        ? SourceControlRateLimit.retryAtFromHeader(retryAfter, yield* Clock.currentTimeMillis)
+        : undefined;
     return yield* fail({
       status,
       reason: reasonForStatus(status),
+      retryAt,
       detail:
         boundedProblemText(problem?.detail ?? problem?.title) ?? `GitCafe answered HTTP ${status}.`,
     });
