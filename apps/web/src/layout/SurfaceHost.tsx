@@ -1131,6 +1131,21 @@ export function LayoutSurfaceHost({
   // from this very frame. After the motion above, so they start where it does.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reposition external browser surfaces after committed pane geometry and transforms change.
   useLayoutEffect(() => kickBrowserSurfaceTracking({ now: true }));
+  const paneStyleById = new Map([
+    ...shown.workspaces.flatMap((candidate) => {
+      if (candidate.columns.length === 0) return [];
+      const own = selectShownSlots(
+        candidate,
+        { width: viewportWidth, whenNoRoom },
+        narrow,
+        maximizedTabId,
+      );
+      return own.slots.map(
+        (slot) => [slot.paneId, slotStyle(slot, own.stripWidth * viewportWidth)] as const,
+      );
+    }),
+    ...[...slotByTabId.values()].map(({ slot, style }) => [slot.paneId, style] as const),
+  ]);
   const renderedTabIds = [
     ...new Set([
       ...mountedTabIds,
@@ -1253,6 +1268,7 @@ export function LayoutSurfaceHost({
                 paneId={entry.paneId}
                 target={entry.tab.content.target}
                 placed={slotByTabId.get(tabId) ?? null}
+                paneStyle={paneStyleById.get(entry.paneId)}
                 near={nearTabIds.has(tabId)}
                 kept={keptTabIds.has(tabId)}
                 focused={tabId === focusedTabId}
@@ -1424,6 +1440,7 @@ function LayoutChatSurface({
   paneId,
   target,
   placed,
+  paneStyle,
   near,
   kept,
   focused,
@@ -1441,6 +1458,7 @@ function LayoutChatSurface({
   paneId: string;
   target: Extract<LayoutTab["content"], { kind: "chat" }>["target"];
   placed: { slot: LayoutPaneSlot; style: React.CSSProperties } | null;
+  paneStyle?: React.CSSProperties | undefined;
   /** Within a window of the camera: a chat not rendered yet renders now. */
   near: boolean;
   /** Near, focused or recently near: a rendered chat stays rendered. */
@@ -1505,12 +1523,13 @@ function LayoutChatSurface({
         closing && "pointer-events-none",
         // Off screen: skip its rendering but keep its layout state, so the
         // timeline's scroll position and the terminal's size survive.
-        !visible && "pointer-events-none inset-0 [content-visibility:hidden]",
+        !visible && "pointer-events-none [content-visibility:hidden]",
+        !visible && paneStyle === undefined && "inset-0",
         visible && (split || staged) && "overflow-clip rounded-pane pane-surface",
         // A lone pane paints flat before its chat does, not the inset's grain behind it.
         visible && !(split || staged) && "bg-background",
       )}
-      style={placed?.style}
+      style={placed?.style ?? paneStyle}
       // Not inert mid-switch: flipping inert restyles a whole rendered chat,
       // and the panes leaving go hidden (and inert) as soon as it lands.
       inert={!visible || overview || closing}
