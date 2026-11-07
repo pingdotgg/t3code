@@ -13,6 +13,7 @@ import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import type * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
@@ -154,6 +155,21 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  const probe = (systemdRun: string, options: ReadonlyArray<string>) =>
+    run(systemdRun, [
+      "--user",
+      "--scope",
+      "--quiet",
+      "--collect",
+      `--slice=${AGENT_SLICE}`,
+      ...options,
+      "--",
+      "true",
+    ]);
+  const probeSucceeded = (result: Option.Option<ProcessRunner.ProcessRunOutput>) =>
+    result._tag === "Some" && result.value.code === 0;
+  const OOM_PROBE_OPTIONS = [...SCOPE_OPTIONS, "--property=OOMPolicy=stop"];
+
   const systemd = yield* Effect.cached(
     Effect.gen(function* () {
       const runtimeDir = hostEnvironment.XDG_RUNTIME_DIR;
@@ -162,20 +178,9 @@ export const make = Effect.gen(function* () {
       const systemctl = yield* resolve("systemctl", hostEnvironment);
       if (systemdRun === null || systemctl === null) return undefined;
       yield* stopLeftoverAgents(systemctl);
-      const probe = (options: ReadonlyArray<string>) =>
-        run(systemdRun, [
-          "--user",
-          "--scope",
-          "--quiet",
-          "--collect",
-          `--slice=${AGENT_SLICE}`,
-          ...options,
-          "--",
-          "true",
-        ]).pipe(Effect.map((result) => result._tag === "Some" && result.value.code === 0));
       // Scopes take OOMPolicy from systemd 253; older managers still get scopes.
-      const supportsOomPolicy = yield* probe([...SCOPE_OPTIONS, "--property=OOMPolicy=stop"]);
-      if (!supportsOomPolicy && !(yield* probe(SCOPE_OPTIONS))) {
+      const supportsOomPolicy = probeSucceeded(yield* probe(systemdRun, OOM_PROBE_OPTIONS));
+      if (!supportsOomPolicy && !probeSucceeded(yield* probe(systemdRun, SCOPE_OPTIONS))) {
         yield* Effect.logInfo("Agent scopes are off: no systemd user manager");
         return undefined;
       }
@@ -396,6 +401,19 @@ export const make = Effect.gen(function* () {
       if (resolved === null) return { command, args };
       const scope = yield* systemd;
       if (scope === undefined) return agentScopeCommand({ command: resolved, args });
+      // systemd can stop creating scopes after startup, e.g. once XDG_RUNTIME_DIR fills up.
+      const checked = yield* probe(
+        scope.systemdRun,
+        scope.supportsOomPolicy ? OOM_PROBE_OPTIONS : SCOPE_OPTIONS,
+      );
+      if (!probeSucceeded(checked)) {
+        yield* Effect.logWarning("Launching an agent without a scope: systemd cannot create one", {
+          exitCode: checked._tag === "Some" ? checked.value.code : undefined,
+          stderr: checked._tag === "Some" ? checked.value.stderr.trim() : undefined,
+        });
+        if (threadId !== undefined) yield* track(scope.systemctl, threadId, undefined);
+        return agentScopeCommand({ command: resolved, args });
+      }
       const unit = `t3code-${name}-${NodeCrypto.randomUUID().slice(0, 8)}.scope`;
       // A continuing shared scope cannot attribute a tool's OOM to one thread.
       // Clear the launch thread's previous scope instead.
