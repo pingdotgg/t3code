@@ -4923,6 +4923,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
     }
+    Object.assign(thread, { modelSelection: withoutUltracode(thread.modelSelection) });
     yield* emit(
       events,
       command,
@@ -6398,7 +6399,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           (error) =>
             steerMode.type === "steer_active" &&
             command.createdBy === "user" &&
-            Predicate.isTagged(error.cause, "CommandPolicyCapabilityUnsupportedError"),
+            Predicate.isTagged(error.cause, "CommandPolicyCapabilityUnsupportedError") &&
+            error.cause.capability !== "context_handoff",
           () => Effect.succeed(false),
         ),
       );
