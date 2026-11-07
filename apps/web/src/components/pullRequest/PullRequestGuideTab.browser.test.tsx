@@ -100,7 +100,13 @@ const threeStopGuide: PullRequestReviewGuide = {
   })),
 };
 
-function ChatBeside({ composerKeys }: { composerKeys: string[] }) {
+function ChatBeside({
+  composerKeys,
+  maximizedAway,
+}: {
+  composerKeys: string[];
+  maximizedAway: boolean;
+}) {
   useChatShortcuts({
     enabled: true,
     keybindings: [],
@@ -128,10 +134,10 @@ function ChatBeside({ composerKeys }: { composerKeys: string[] }) {
     commands: {},
     fallback: () => undefined,
   });
-  return null;
+  return <div data-chat-column-maximized-away={maximizedAway ? "true" : "false"} />;
 }
 
-it("steps with J and K after a click on guide prose beside a chat", async () => {
+it("steps with J and K beside a chat, also after a stop button or while the chat is maximized away", async () => {
   vi.mocked(useReviewGuideWriter).mockReturnValue({
     query: { isPending: false, error: null } as never,
     data: { guide: threeStopGuide, run: null, currentHeadSha: "head" },
@@ -141,9 +147,9 @@ it("steps with J and K after a click on guide prose beside a chat", async () => 
   });
   const composerKeys: string[] = [];
 
-  await using screen = await render(
+  const tree = (maximizedAway: boolean) => (
     <>
-      <ChatBeside composerKeys={composerKeys} />
+      <ChatBeside composerKeys={composerKeys} maximizedAway={maximizedAway} />
       <PullRequestGuideTab
         environmentId={EnvironmentId.make("environment")}
         reference={reference}
@@ -158,11 +164,18 @@ it("steps with J and K after a click on guide prose beside a chat", async () => 
         onFinishReview={null}
         onOpenFile={() => {}}
       />
-    </>,
+    </>
   );
+  await using screen = await render(tree(true));
 
-  await userEvent.click(screen.getByText("Prose for the first stop."));
-  await userEvent.keyboard("jj");
+  await userEvent.keyboard("j");
+  await expect.element(screen.getByText("Prose for the second stop.")).toBeVisible();
+  await screen.rerender(tree(false));
+  await userEvent.click(screen.getByText("Prose for the second stop."));
+  await userEvent.keyboard("k");
+  await expect.element(screen.getByText("Prose for the first stop.")).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Next stop" }));
+  await userEvent.keyboard("j");
   await expect.element(screen.getByText("Prose for the third stop.")).toBeVisible();
   await userEvent.keyboard("k");
   await expect.element(screen.getByText("Prose for the second stop.")).toBeVisible();

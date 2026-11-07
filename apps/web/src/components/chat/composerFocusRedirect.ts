@@ -78,6 +78,7 @@ export function shouldRedirectInputToComposer(event: Event): boolean {
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
   if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
+  if (document.querySelector('[data-chat-column-maximized-away="true"]')) return false;
   return true;
 }
 

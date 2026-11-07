@@ -68,7 +68,12 @@ export function GuideTour({
   });
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const railRef = useRef<HTMLElement>(null);
   const goTo = (next: number) => {
+    const focused = document.activeElement;
+    if (scrollRef.current?.contains(focused) && !railRef.current?.contains(focused)) {
+      scrollRef.current.focus({ preventScroll: true });
+    }
     update((current) => ({
       position: next,
       seen: next > position ? new Set(current.seen).add(position) : current.seen,
@@ -103,7 +108,7 @@ export function GuideTour({
       className="@container/guide h-full overflow-y-auto scrollbar-gutter-both outline-none"
     >
       <div className="mx-auto grid max-w-[100rem] gap-6 px-4 py-4 @min-[56rem]/guide:grid-cols-[16rem_minmax(0,1fr)] @min-[90rem]/guide:gap-8 @min-[90rem]/guide:px-6">
-        <aside className="sticky top-4 self-start @max-[56rem]/guide:hidden">
+        <aside ref={railRef} className="sticky top-4 self-start @max-[56rem]/guide:hidden">
           <GuideRail stops={guide.stops} position={position} seen={tour.seen} onSelect={goTo} />
         </aside>
         <main className="flex min-w-0 flex-col gap-4">
