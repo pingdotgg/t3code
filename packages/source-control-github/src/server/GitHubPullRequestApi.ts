@@ -1890,10 +1890,12 @@ export const make = Effect.gen(function* () {
           }),
         );
       // Unindexed repositories silently return no search rows; fall back to the repository listing.
-      // Authored lists skip search: the index lags merges and opens, so a refresh would otherwise
-      // keep closed rows and miss new ones. Text search still needs the index.
+      // Authored first pages skip search: the index lags merges and opens, so a refresh would
+      // otherwise keep closed rows and miss new ones. Continuations and text search still use
+      // search, whose updatedBefore cursor the shared pager understands.
       const hasQuery = (input.query?.trim().length ?? 0) > 0;
-      const preferListing = input.involvement === "authored" && !hasQuery;
+      const preferListing =
+        input.involvement === "authored" && !hasQuery && input.cursor === undefined;
       const withStacks = (
         batch: GitHubPullRequestListBatch,
       ): Effect.Effect<GitHubPullRequestListBatch, GitHubPullRequestApiError> =>
@@ -1930,9 +1932,19 @@ export const make = Effect.gen(function* () {
               }),
               Effect.map((items) => ({ ...batch, items })),
             );
+      const authoredListing = read(false).pipe(
+        Effect.flatMap((batch) =>
+          // An empty truncated window found no authored rows among the newest-created; search
+          // may still have them. A filled truncated page keeps the listing rows and marks
+          // continues so Load more can page through search.
+          batch.truncated && batch.items.length === 0
+            ? read(true)
+            : Effect.succeed(batch.truncated ? { ...batch, continues: true } : batch),
+        ),
+      );
       const listed = (
         preferListing
-          ? read(false)
+          ? authoredListing
           : read(true).pipe(
               Effect.filterOrElse(
                 (batch) => batch.items.length > 0 || input.cursor !== undefined || hasQuery,

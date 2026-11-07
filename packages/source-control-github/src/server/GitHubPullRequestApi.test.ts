@@ -2086,6 +2086,72 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("a truncated authored listing still continues so Load more can page", () =>
+    Effect.gen(function* () {
+      const author = {
+        __typename: "User",
+        login: "bilal",
+        name: null,
+        avatarUrl: "https://avatars.example/u",
+      };
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(listedPullRequests(11, 1, () => ({ author })))),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "authored",
+        viewer: "bilal",
+        limit: 10,
+      });
+
+      expect(searchOfCall(0)).toBeUndefined();
+      expect(batch.items).toHaveLength(10);
+      assert.isTrue(batch.truncated);
+      assert.isTrue(batch.continues);
+    }),
+  );
+
+  it.effect("authored continuations page through search", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            pullRequests(1, 20, () => ({
+              author: {
+                __typename: "User",
+                login: "bilal",
+                name: null,
+                avatarUrl: "https://avatars.example/u",
+              },
+            })),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "authored",
+        viewer: "bilal",
+        limit: 10,
+        cursor: { updatedBefore: "2026-07-02T00:00:00Z", delivered: 10 },
+      });
+
+      expect(searchOfCall(0)).toBe(
+        "is:pr is:open author:bilal updated:<=2026-07-02T00:00:00Z sort:updated-desc repo:acme/web",
+      );
+      assert.isTrue(batch.continues);
+    }),
+  );
+
   it.effect("authored text search still uses the search index", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
