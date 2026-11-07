@@ -49,6 +49,7 @@ import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
+import { reconcileMarkJump, type MarkJump } from "./markJump";
 import { prepareSourceFileDocument } from "./source-file-document";
 import { SourceFileSurface } from "./SourceFileSurface";
 import { ThreadFileNavigatorPane } from "./thread-file-navigator-pane";
@@ -633,31 +634,17 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const routeLine = normalizeRouteLine(firstRouteParam(params.line));
   const { cwd, environmentId, projectName, relativePath, selectedThread, threadId } =
     useThreadFilesWorkspace(props.route.params);
-  const [markJump, setMarkJump] = useState<{
-    path: string | null;
-    line: number;
-    requestId: number;
-    baselineRouteLine: number | null;
-    cwd: string | null;
-    environmentId: EnvironmentId | null;
-  } | null>(null);
+  const [markJump, setMarkJump] = useState<MarkJump | null>(null);
   // Drop stale jumps when the route line or workspace changes so deep links cannot revive them.
-  if (
-    markJump !== null &&
-    (markJump.baselineRouteLine !== routeLine ||
-      markJump.path !== relativePath ||
-      markJump.cwd !== cwd ||
-      markJump.environmentId !== environmentId)
-  ) {
-    setMarkJump(null);
+  const activeMarkJump = reconcileMarkJump(markJump, {
+    path: relativePath,
+    routeLine,
+    cwd,
+    environmentId,
+  });
+  if (markJump !== activeMarkJump) {
+    setMarkJump(activeMarkJump);
   }
-  const activeMarkJump =
-    markJump?.path === relativePath &&
-    markJump.baselineRouteLine === routeLine &&
-    markJump.cwd === cwd &&
-    markJump.environmentId === environmentId
-      ? markJump
-      : null;
   const targetLine = activeMarkJump?.line ?? routeLine;
   const jumpRequestId = activeMarkJump?.requestId;
   const fileAccessSession = useEnvironmentQuery(
