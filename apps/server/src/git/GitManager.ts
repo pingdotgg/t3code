@@ -115,6 +115,7 @@ export type GitBranchPullRequest = NonNullable<VcsStatusResult["pr"]> & {
 interface SourceControlTextGenerationSettings {
   readonly modelSelection: ModelSelection;
   readonly style: SourceControlWritingStyleSettings;
+  readonly changeRequestInstructions: string;
 }
 
 export class GitManager extends Context.Service<
@@ -428,6 +429,28 @@ function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
 function limitContext(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   return `${value.slice(0, maxChars)}\n\n[truncated]`;
+}
+
+/** Matches `policyInstruction` in textGenerationPrompts; keep configured preferences inside that budget. */
+const CHANGE_REQUEST_INSTRUCTION_LIMIT = 20_000;
+
+function combineChangeRequestInstructions(
+  styleInstructions: string | undefined,
+  extraInstructions: string,
+): string | undefined {
+  const extra = extraInstructions.trim();
+  const style = styleInstructions?.trim() ?? "";
+  if (!extra) return style || undefined;
+  if (!style) return extra;
+
+  const separator = "\n\n";
+  const styleBudget = CHANGE_REQUEST_INSTRUCTION_LIMIT - extra.length - separator.length;
+  if (styleBudget <= 0) return extra;
+  if (style.length <= styleBudget) return `${style}${separator}${extra}`;
+
+  const truncationMarker = "\n\n[truncated]";
+  const keep = Math.max(0, styleBudget - truncationMarker.length);
+  return `${style.slice(0, keep)}${truncationMarker}${separator}${extra}`;
 }
 
 // Preserve command evidence when selectHistory drops oversized items; test verdicts are at the tail.
@@ -2328,7 +2351,15 @@ export const make = Effect.gen(function* () {
     });
     const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef);
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
-    const policy = yield* resolveStylePolicy(cwd, settings);
+    const stylePolicy = yield* resolveStylePolicy(cwd, settings);
+    const changeRequestInstructions = combineChangeRequestInstructions(
+      stylePolicy.changeRequestInstructions,
+      settings.changeRequestInstructions,
+    );
+    const policy =
+      changeRequestInstructions === stylePolicy.changeRequestInstructions
+        ? stylePolicy
+        : { ...stylePolicy, changeRequestInstructions };
     const changeRequestTemplate =
       settings.style.followChangeRequestTemplates && provider.readChangeRequestTemplate
         ? Option.getOrUndefined(
@@ -2346,7 +2377,7 @@ export const make = Effect.gen(function* () {
       diffPatch: limitContext(rangeContext.diffPatch, 60_000),
       ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
       ...(threadContext ? { threadContext } : {}),
-      ...(policy ? { policy } : {}),
+      policy,
       modelSelection: settings.modelSelection,
     });
 
@@ -3194,6 +3225,7 @@ export const make = Effect.gen(function* () {
               ? Effect.succeed({
                   modelSelection: settings.textGenerationModelSelection,
                   style: settings.sourceControlWritingStyle,
+                  changeRequestInstructions: settings.changeRequestInstructions,
                 })
               : providerRegistry.getProviders.pipe(
                   Effect.map((providers) => ({
@@ -3203,6 +3235,7 @@ export const make = Effect.gen(function* () {
                       projectId,
                     ),
                     style: settings.sourceControlWritingStyle,
+                    changeRequestInstructions: settings.changeRequestInstructions,
                   })),
                 ),
           ),
