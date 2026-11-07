@@ -26,6 +26,7 @@ import {
   type TerminalMenuSession,
 } from "../terminal/terminalMenu";
 import { projectScriptMenuLabel } from "@t3tools/shared/projectScripts";
+import { resolveThreadGitViewPrItem } from "./threadGitMenu";
 
 function truncateMiddle(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
@@ -239,6 +240,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   return {
     currentBranchLabel,
     isRepo,
+    openExistingPr,
     openGitInspector,
     openReview,
     quickAction,
@@ -304,6 +306,7 @@ export function threadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | 
 /** The thread's git menu, shared by the thread bar and Review. */
 export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMenu | null {
   const model = useThreadGitControlModel(props);
+  const viewPr = resolveThreadGitViewPrItem(props.gitStatus, model.quickAction.kind);
   return {
     title: "Git controls",
     icon: "point.topleft.down.curvedto.point.bottomright.up",
@@ -327,6 +330,19 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
           void model.runQuickAction();
         },
       },
+      ...(viewPr
+        ? [
+            {
+              id: "git-view-pr",
+              title: viewPr.title,
+              icon: PullRequestGlyph.pullRequest,
+              subtitle: viewPr.subtitle,
+              onPress: () => {
+                void model.openExistingPr();
+              },
+            },
+          ]
+        : []),
       {
         id: "git-review",
         title: "Review changes",
