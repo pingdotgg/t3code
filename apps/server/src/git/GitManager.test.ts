@@ -895,6 +895,54 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("status reads a remote's first URL when it has a second push URL", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/mirrored"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/mirrored"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:pingdotgg/codething-mvp.git",
+        remoteDir,
+      );
+      // `git remote set-url --add`: Git fetches from the first URL and also pushes to this one.
+      yield* runGit(repoDir, [
+        "config",
+        "--add",
+        "remote.origin.url",
+        "git@gitlab.com:mirror-owner/codething-mvp.git",
+      ]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          prListSequence: [
+            [
+              {
+                number: 16,
+                title: "Mirrored branch",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/16",
+                baseRefName: "main",
+                headRefName: "feature/mirrored",
+                isCrossRepository: false,
+                headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+                headRepositoryOwnerLogin: "pingdotgg",
+              },
+            ],
+          ],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.sourceControlProvider?.kind).toBe("github");
+      expect(status.pr?.number).toBe(16);
+    }),
+  );
+
   it.effect("status reports the latest of a branch's closed and merged PRs", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

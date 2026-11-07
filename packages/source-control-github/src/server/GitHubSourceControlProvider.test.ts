@@ -164,6 +164,7 @@ function harness(input: {
   readonly localBranches?: ReadonlyArray<string>;
   readonly resolved?: string;
   readonly gitFailure?: unknown;
+  readonly originUrls?: string;
 }) {
   const git: Array<readonly [string, unknown]> = [];
   const graphqlCalls: Array<GraphQlCall> = [];
@@ -178,7 +179,9 @@ function harness(input: {
     execute: (args) =>
       Effect.sync(() => {
         git.push(["execute", args.args]);
-        return processOutput("");
+        return processOutput(
+          args.args[0] === "config" ? (input.originUrls ?? "git@github.com:acme/web.git\n") : "",
+        );
       }),
     resolvePrimaryRemoteName: () => Effect.succeed("origin"),
     readConfigValue: () => Effect.succeed("git@github.com:acme/web.git"),
@@ -648,6 +651,41 @@ describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
       const gh = yield* GitHubSourceControlProvider.make;
       yield* Effect.flip(gh.checkoutChangeRequest({ cwd: "/repo", reference: "6", force: true }));
       assert.deepStrictEqual(git, []);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("adds a fork remote with the protocol of the URL origin fetches from", () => {
+    // `git remote -v` shows origin's SSH `insteadOf` rewrite; config holds HTTPS, then an SSH push URL.
+    const { layer, git } = harness({
+      remotes: [
+        "origin\tgit@github.com:acme/web.git (fetch)",
+        "origin\tgit@github.com:acme/web.git (push)",
+        "origin\tgit@github.com:acme/web.git (push)",
+      ].join("\n"),
+      originUrls: "https://github.com/acme/web.git\ngit@github.com:acme/web.git\n",
+      graphql: () => ({ pullRequest: node(7, "feature", "someone") }),
+      api: {
+        rest: (input) => {
+          const fullName = input.path.slice("repos/".length);
+          return Effect.succeed(
+            restResponse({
+              full_name: fullName,
+              html_url: `https://github.com/${fullName}`,
+              ssh_url: `git@github.com:${fullName}.git`,
+              default_branch: "main",
+            }),
+          );
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      yield* gh.checkoutChangeRequest({ cwd: "/repo", reference: "7" });
+      assert.deepStrictEqual(git.find(([name]) => name === "ensureRemote")?.[1], {
+        cwd: "/repo",
+        preferredName: "someone",
+        url: "https://github.com/someone/web",
+      });
     }).pipe(Effect.provide(layer));
   });
 
