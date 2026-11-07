@@ -7,7 +7,7 @@ import { useTheme } from "../../hooks/useTheme";
 import { useServerConfigs } from "../../state/entities";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
-import type { TurnItemSource } from "./timelineRowContext";
+import { useInitialOutputReady, type TurnItemSource } from "./timelineRowContext";
 
 const FOLLOW_SLACK_PX = 8;
 
@@ -24,6 +24,7 @@ export function useCommandOutputStreaming(environmentId: EnvironmentId): boolean
  * It subscribes only while mounted, so collapsed rows and other threads receive nothing.
  */
 export function CommandOutputPanel(props: {
+  readonly onInitialOutputReady?: (() => void) | undefined;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly itemId: TurnItemId;
@@ -35,6 +36,7 @@ export function CommandOutputPanel(props: {
       ? props.source(input)
       : orchestrationEnvironment.v2.commandOutput({ environmentId: props.environmentId, input }),
   );
+  useInitialOutputReady(data === null && !error, props.onInitialOutputReady);
   const scrollRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
   const text = data?.output.text ?? "";
