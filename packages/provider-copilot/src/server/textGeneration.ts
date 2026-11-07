@@ -4,7 +4,6 @@ import {
   decodeJsonReply,
   fromRunner,
   type Request,
-  withoutInvestigation,
 } from "@t3tools/provider-core/server/textGenerationOperations";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
@@ -17,7 +16,7 @@ import { makeCopilotSdkClient } from "./copilotSdkRuntime.ts";
 
 const PROVIDER = "GitHub Copilot";
 const TIMEOUT_MS = 180_000;
-// `TIMEOUT_MS` only covers the reply, so a stalled CLI handshake needs its own limit.
+// The reply timeout does not cover startup, so a stalled CLI handshake needs its own limit.
 const STARTUP_TIMEOUT_MS = 30_000;
 
 export function makeGitHubCopilotTextGeneration(input: {
@@ -41,13 +40,15 @@ export function makeGitHubCopilotTextGeneration(input: {
       });
     }
     const client = makeClient({ command, args: [], env: input.environment });
+    const timeoutMs = request.investigate?.timeoutMs ?? TIMEOUT_MS;
     const reply = yield* Effect.tryPromise({
       try: () =>
         client.generateText({
           cwd: request.cwd,
           model: request.modelSelection.model,
           prompt: request.prompt,
-          timeoutMs: TIMEOUT_MS,
+          timeoutMs,
+          investigate: request.investigate !== undefined,
         }),
       catch: (cause) =>
         new TextGenerationError({
@@ -69,7 +70,7 @@ export function makeGitHubCopilotTextGeneration(input: {
         }).pipe(Effect.ignore),
       ),
       Effect.timeoutOrElse({
-        duration: TIMEOUT_MS + STARTUP_TIMEOUT_MS,
+        duration: timeoutMs + STARTUP_TIMEOUT_MS,
         orElse: () =>
           Effect.fail(
             new TextGenerationError({
@@ -81,5 +82,5 @@ export function makeGitHubCopilotTextGeneration(input: {
     );
     return yield* decodeJsonReply(request, PROVIDER, reply);
   });
-  return fromRunner("GitHubCopilotTextGeneration", withoutInvestigation(PROVIDER, run));
+  return fromRunner("GitHubCopilotTextGeneration", run);
 }

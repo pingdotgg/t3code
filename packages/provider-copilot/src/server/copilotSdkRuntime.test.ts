@@ -1,4 +1,10 @@
-import type { ModelInfo, PermissionRequest, SessionEvent } from "@github/copilot-sdk";
+import type {
+  CopilotClient,
+  CopilotSession,
+  ModelInfo,
+  PermissionRequest,
+  SessionEvent,
+} from "@github/copilot-sdk";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -18,6 +24,8 @@ import {
   COPILOT_SDK_ROLLBACK_METHOD,
   COPILOT_SDK_STEER_METHOD,
   COPILOT_SDK_STOP_TASK_METHOD,
+  copilotInvestigationDecision,
+  copilotInvestigationToolDecision,
   copilotPermissionDecision,
   copilotSdkClosesAssistantMessage,
   copilotSdkForkBoundary,
@@ -436,6 +444,65 @@ it("keeps only remote MCP servers with their headers", () => {
   );
 });
 
+it("lets an investigation run plain git reads and read the checkout, and nothing else", () => {
+  const shell = (fullCommandText: string, hasWriteFileRedirection = false) =>
+    ({ kind: "shell", fullCommandText, hasWriteFileRedirection }) as PermissionRequest;
+  const read = (path: string) => ({ kind: "read", path }) as PermissionRequest;
+  const decide = (request: PermissionRequest) =>
+    copilotInvestigationDecision(request, "/repo").kind;
+
+  for (const allowed of [
+    shell("git diff --stat abc123...HEAD"),
+    shell("git log --oneline --format=%H abc123..HEAD"),
+    shell("git diff abc123...HEAD -- src/a.ts"),
+    shell("git show HEAD:src/a.ts"),
+    read("/repo"),
+    read("/repo/src/a.ts"),
+    read("src/a.ts"),
+  ]) {
+    assert.strictEqual(decide(allowed), "approve-once");
+  }
+  for (const refused of [
+    shell("git diff --output=/tmp/x"),
+    shell("git diff --outp=/tmp/x"),
+    shell("git diff -o /tmp/x"),
+    shell("git diff --ext-diff"),
+    shell("git log --textconv"),
+    shell("git diff | sh"),
+    shell("git diff; rm -rf ."),
+    shell("git diff $(rm x)"),
+    shell("git diff > out", true),
+    shell("git checkout main"),
+    shell("git -c core.pager=sh diff"),
+    shell("rm -rf ."),
+    read("/etc/passwd"),
+    read("../secrets"),
+    read("/repo/../secrets"),
+    read("/repository/other"),
+    { kind: "write" } as PermissionRequest,
+    { kind: "url" } as PermissionRequest,
+    { kind: "mcp" } as PermissionRequest,
+  ]) {
+    assert.strictEqual(decide(refused), "reject");
+  }
+});
+
+// Copilot skips the permission request for these, so the hook alone stops them.
+it("refuses tool calls Copilot would run without asking", () => {
+  const decide = (toolName: string, toolArgs: unknown) =>
+    copilotInvestigationToolDecision({ toolName, toolArgs }, "/repo").permissionDecision;
+
+  assert.strictEqual(decide("bash", { command: "git log --oneline a..HEAD" }), "allow");
+  assert.strictEqual(decide("view", { path: "/repo/a.ts" }), "allow");
+  assert.strictEqual(decide("grep", { pattern: "x" }), "allow");
+  assert.strictEqual(decide("bash", { command: "git diff --output=leak.txt" }), "deny");
+  assert.strictEqual(decide("bash", { command: "ls" }), "deny");
+  assert.strictEqual(decide("bash", {}), "deny");
+  assert.strictEqual(decide("grep", { pattern: "x", path: "/etc" }), "deny");
+  assert.strictEqual(decide("view", { path: "/repo/../secrets" }), "deny");
+  assert.strictEqual(decide("edit", { path: "/repo/a.ts" }), "deny");
+});
+
 it("rejects a permission unless an allow option was selected", () => {
   const selected = (optionId: string) =>
     copilotPermissionDecision({ outcome: { outcome: "selected", optionId } });
@@ -717,6 +784,32 @@ it.effect("refuses to fork from a turn its session does not have", () =>
     assert.deepEqual(fakes.calls, ["sessionHistory:source"]);
   }).pipe(Effect.scoped),
 );
+
+it("limits only an investigation to read-only tools behind the hook", async () => {
+  const configs: Array<Parameters<CopilotClient["createSession"]>[0]> = [];
+  const client = {
+    start: async () => undefined,
+    createSession: async (config: (typeof configs)[number]) => {
+      configs.push(config);
+      return {
+        sessionId: "text",
+        sendAndWait: async () => undefined,
+        disconnect: async () => undefined,
+      } as unknown as CopilotSession;
+    },
+    deleteSession: async () => undefined,
+    stop: async () => [],
+  };
+  const input = { cwd: "/repo", model: "m", prompt: "p", timeoutMs: 1 };
+
+  await generateCopilotText(client, input);
+  await generateCopilotText(client, { ...input, investigate: true });
+
+  assert.deepEqual(configs[0]?.availableTools, []);
+  assert.isUndefined(configs[0]?.hooks);
+  assert.deepEqual(configs[1]?.availableTools, ["view", "grep", "glob", "bash"]);
+  assert.isDefined(configs[1]?.hooks?.onPreToolUse);
+});
 
 it("stops the client when a text generation session cannot start", async () => {
   let stopped = false;
