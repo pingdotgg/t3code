@@ -96,7 +96,11 @@ export function dedupeChecks(
       continue;
     }
     const severity = eventSeverity(entry.check.status) - eventSeverity(kept.check.status);
-    const worse = severity > 0 || (severity === 0 && isAtLeastAsNew(entry.at, kept.at));
+    const newer = isAtLeastAsNew(entry.at, kept.at);
+    // Equal times break on the event, so a reordered rollup cannot flip the run a watch was told.
+    const tied = newer && isAtLeastAsNew(kept.at, entry.at);
+    const later = tied ? (entry.event ?? "") > (kept.event ?? "") : newer;
+    const worse = severity > 0 || (severity === 0 && later);
     const chosen = worse ? entry : kept;
     newestByCheck.set(
       key,

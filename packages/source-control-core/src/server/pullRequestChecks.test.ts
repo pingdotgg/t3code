@@ -59,6 +59,21 @@ describe("dedupeChecks", () => {
     expect([forward[0]?.status, reversed[0]?.status]).toEqual(["failure", "failure"]);
   });
 
+  it("reports the same run for two events' failures finished at once, whichever is listed first", () => {
+    const failed = (event: string) => ({
+      ...entry("lint", "failure", { at: "2026-11-07T00:01:00Z" }),
+      check: { name: "lint", status: "failure" as const, description: null, url: event },
+      event,
+    });
+
+    expect(
+      [
+        [failed("push"), failed("pull_request")],
+        [failed("pull_request"), failed("push")],
+      ].map((runs) => dedupeChecks(runs)[0]?.url),
+    ).toEqual(["push", "push"]);
+  });
+
   it("takes the higher sequence when instants tie, whichever is listed first", () => {
     const final = entry("build", "success", { at: "2026-10-12T10:14:29Z", sequence: 15 });
     const pending = entry("build", "pending", { at: "2026-10-12T10:14:29Z", sequence: 14 });

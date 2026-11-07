@@ -594,13 +594,16 @@ describe("pull request detail decoding", () => {
       startedAt: "2026-10-08T04:06:10Z",
       completedAt: "2026-10-08T04:08:00Z",
     });
+    // Only the losing run says the check is required; the merged check must still say so.
     const pullRequestRunning = run("pull_request", {
+      isRequired: true,
       status: "IN_PROGRESS",
       conclusion: null,
       startedAt: "2026-10-08T04:06:13Z",
       completedAt: "0001-01-01T00:00:00Z",
     });
     const pullRequestPassed = run("pull_request", {
+      isRequired: true,
       status: "COMPLETED",
       conclusion: "SUCCESS",
       startedAt: "2026-10-08T04:06:13Z",
@@ -608,7 +611,10 @@ describe("pull request detail decoding", () => {
     });
     const checksOf = (rollup: ReadonlyArray<Record<string, unknown>>) => {
       const detail = detailOf(rollup);
-      return [detail.checks.map((check) => [check.name, check.status]), detail.checksState];
+      return [
+        detail.checks.map((check) => [check.name, check.status, check.required]),
+        detail.checksState,
+      ];
     };
 
     const rollups = [
@@ -617,7 +623,9 @@ describe("pull request detail decoding", () => {
       [pushFailed, pullRequestPassed],
       [pullRequestPassed, pushFailed],
     ];
-    expect(rollups.map(checksOf)).toEqual(rollups.map(() => [[["lint", "failure"]], "failing"]));
+    expect(rollups.map(checksOf)).toEqual(
+      rollups.map(() => [[["lint", "failure", true]], "failing"]),
+    );
   });
 
   it("does not fail a check whose run of one event was cancelled beside a passing run", () => {
