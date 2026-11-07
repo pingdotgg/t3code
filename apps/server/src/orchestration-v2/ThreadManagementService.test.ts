@@ -817,6 +817,18 @@ it.effect.each([
       yield* Deferred.await(subscribed);
       expect(moveCommands).toEqual([]);
 
+      const second = yield* service
+        .moveThreadToProject({
+          threadId,
+          projectId: ProjectId.make("project:thread-management:move-other"),
+          commandId: CommandId.make("command:thread-management:move-second"),
+          afterMove: Effect.void,
+        })
+        .pipe(Effect.flip);
+      expect(second).toMatchObject({
+        cause: `Thread ${threadId} already has a move pending.`,
+      });
+
       runs[0]!.status = status;
       sequence = 1;
       yield* Queue.offer(events, {
@@ -845,21 +857,16 @@ it.effect.each([
 );
 
 it.effect.each([
-  { name: "a refused move fails at once", moveFails: true, disabled: false, sendFails: false },
-  {
-    name: "a disabled provider refuses the move",
-    moveFails: false,
-    disabled: true,
-    sendFails: false,
-  },
-  {
-    name: "a failed continuation still reports the move",
-    moveFails: false,
-    disabled: false,
-    sendFails: true,
-  },
-] as const)("moveThreadToProject on an idle thread: $name", ({ moveFails, disabled, sendFails }) =>
+  { name: "a refused move fails at once", moveFails: true },
+  { name: "a disabled provider refuses the move", disabled: true },
+  { name: "a failed continuation still reports the move", sendFails: true },
+  { name: "a missing shell still runs the post-move steps", shellMissing: true, sendFails: true },
+] as const)("moveThreadToProject on an idle thread: $name", (row) =>
   Effect.gen(function* () {
+    const moveFails = "moveFails" in row;
+    const disabled = "disabled" in row;
+    const sendFails = "sendFails" in row;
+    const shellMissing = "shellMissing" in row;
     const targetProjectId = ProjectId.make("project:thread-management:idle-move-target");
     const threadId = ThreadId.make("thread:thread-management:idle-move");
     const instanceId = ProviderInstanceId.make("claudeAgent");
@@ -871,12 +878,16 @@ it.effect.each([
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
           getThreadShell: () =>
-            Effect.succeed({
-              id: threadId,
-              projectId: ProjectId.make("project:thread-management:idle-move-source"),
-              activeRunId: null,
-              providerInstanceId: instanceId,
-            } as never),
+            Effect.succeed(
+              (shellMissing
+                ? null
+                : {
+                    id: threadId,
+                    projectId: ProjectId.make("project:thread-management:idle-move-source"),
+                    activeRunId: null,
+                    providerInstanceId: instanceId,
+                  }) as never,
+            ),
           // A retry stream would wait here forever.
           streamStoredEventsFrom: () => Stream.never,
           getThreadRecords: () =>

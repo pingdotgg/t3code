@@ -1134,6 +1134,9 @@ const make = Effect.gen(function* () {
     );
   });
 
+  // Held until the deferred move's fiber ends; two pending moves would race for the thread.
+  const threadsWithPendingMove = new Set<ThreadId>();
+
   const moveThreadToProject: ThreadManagementServiceShape["moveThreadToProject"] = Effect.fn(
     "orchestrationV2.threadManagement.moveThreadToProject",
   )(function* (input) {
@@ -1160,8 +1163,25 @@ const make = Effect.gen(function* () {
             createdBy: "agent",
             creationSource: "mcp",
           }).pipe(Effect.asVoid);
+    const movePending = new Orchestrator.OrchestratorDispatchError({
+      commandId: input.commandId,
+      commandType: "thread.project.move",
+      cause: `Thread ${input.threadId} already has a move pending.`,
+    });
+    const moveNow = Effect.gen(function* () {
+      if (threadsWithPendingMove.has(input.threadId)) return yield* movePending;
+      yield* dispatchMove;
+      yield* input.afterMove;
+      return yield* continueThere.pipe(
+        Effect.as({ movesWhenTurnEnds: false }),
+        // The move landed, so this call must not report that it failed.
+        Effect.catch((error) =>
+          Effect.succeed({ movesWhenTurnEnds: false, continuationFailure: error.message }),
+        ),
+      );
+    });
     const shell = yield* orchestrator.getThreadShell(input.threadId);
-    if (shell == null) return yield* dispatchMove.pipe(Effect.as({ movesWhenTurnEnds: false }));
+    if (shell == null) return yield* moveNow;
     const instanceId = shell.providerInstanceId;
     // Without its provider the thread could not run again in the destination.
     const providerEnabled = isProviderInstanceEnabledForProject({
@@ -1174,17 +1194,7 @@ const make = Effect.gen(function* () {
         instanceId,
       });
     }
-    if (shell.activeRunId === null) {
-      yield* dispatchMove;
-      yield* input.afterMove;
-      return yield* continueThere.pipe(
-        Effect.as({ movesWhenTurnEnds: false }),
-        // The move landed, so this call must not report that it failed.
-        Effect.catch((error) =>
-          Effect.succeed({ movesWhenTurnEnds: false, continuationFailure: error.message }),
-        ),
-      );
-    }
+    if (shell.activeRunId === null) return yield* moveNow;
     const { projectId, activeRunId } = shell;
     const moveWhenIdle = Effect.gen(function* () {
       const afterSequence = yield* orchestrator.getThreadEventSequence(input.threadId);
@@ -1213,7 +1223,13 @@ const make = Effect.gen(function* () {
         Stream.runHead,
         Effect.timeoutOption(Duration.millis(SETTLE_AFTER_RUN_WAIT_MS)),
       );
-      if (Option.isNone(outcome) || Option.isNone(outcome.value)) return;
+      if (Option.isNone(outcome) || Option.isNone(outcome.value)) {
+        return yield* Effect.logWarning("Dropped a thread move that never found the thread idle", {
+          threadId: input.threadId,
+          projectId: input.projectId,
+          instanceId,
+        });
+      }
       if (outcome.value.value === "dropped") {
         return yield* Effect.logWarning(
           "Dropped a thread move because the destination disabled the thread's provider",
@@ -1223,7 +1239,7 @@ const make = Effect.gen(function* () {
       yield* input.afterMove;
       yield* continueThere;
     });
-    yield* waitForThread({
+    const waitThenMove = waitForThread({
       projectId,
       threadId: input.threadId,
       runId: activeRunId,
@@ -1239,7 +1255,16 @@ const make = Effect.gen(function* () {
             }),
       ),
       Effect.ignoreCause({ log: true }),
-      Effect.forkIn(layerScope),
+      Effect.interruptible,
+      Effect.ensuring(Effect.sync(() => threadsWithPendingMove.delete(input.threadId))),
+    );
+    // Uninterruptible so cancellation cannot hold the guard with no fiber to release it.
+    yield* Effect.uninterruptible(
+      Effect.suspend(() => {
+        if (threadsWithPendingMove.has(input.threadId)) return Effect.fail(movePending);
+        threadsWithPendingMove.add(input.threadId);
+        return waitThenMove.pipe(Effect.forkIn(layerScope));
+      }),
     );
     return { movesWhenTurnEnds: true };
   });
