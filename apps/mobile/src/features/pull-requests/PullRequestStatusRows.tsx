@@ -126,7 +126,9 @@ export function PullRequestChecksRow(props: RowProps) {
           className="pl-8"
         >
           {props.pr.state === "open" &&
-          props.pr.checks.some((check) => check.status === "failure") ? (
+          props.pr.checks.some(
+            (check) => check.status === "failure" || check.status === "cancelled",
+          ) ? (
             <PullRequestAgentRow {...props} task="feedback" title="Fix failing checks" />
           ) : null}
           {action.available("approve-workflows") ? (
