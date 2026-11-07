@@ -64,6 +64,15 @@ export const make = Effect.gen(function* () {
   const homeDirectory = yield* HostProcess.HomeDirectory;
   const linuxDesktopEntryConfig = yield* LinuxDesktopEntryConfig;
   return yield* Effect.sync((): DesktopPreReadyElectronOptions["Service"] => {
+    // Match Playwright's launch default: legacy CDP screenshots can wait forever for a presented frame.
+    const enableFeatures = new Set(
+      (readCommandLineSwitchValue(Electron.app.commandLine, "enable-features") ?? "")
+        .split(",")
+        .filter(Boolean),
+    );
+    enableFeatures.add("CDPScreenshotNewSurface");
+    Electron.app.commandLine.appendSwitch("enable-features", [...enableFeatures].join(","));
+
     const linuxPasswordStoreCommandLine =
       platform === "linux"
         ? readCommandLineSwitchValue(Electron.app.commandLine, "password-store")
