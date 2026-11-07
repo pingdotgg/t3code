@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 export const devDeps = "@alchemy.run/frontend-frameworks";
 
@@ -23,20 +23,7 @@ The build integration is not bundled with alchemy. Install
 `/vite/aws` exports from your project at deploy time. It is only used
 at build time, so a dev dependency is enough:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add -d ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers dev={devDeps} />
 
 ## Configure Vite
 
@@ -64,7 +51,7 @@ Stack):
 
 ```typescript
 // alchemy.run.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 
 export const Website = AWS.Website.Vite("Website");
 ```
@@ -302,8 +289,8 @@ this resource. Each client-only stack has its own page building on it:
 - [React SPA](/aws/frontend/vite-spa) — from a bare `index.html` to
   the `create-vite` template.
 - [Vue](/aws/frontend/vue) — Vue 3 SPAs with `vue-router` deep links.
-- [Foldkit](/aws/frontend/foldkit) — builds through the same Vite
-  pipeline under its own `AWS.Website.Foldkit` resource.
+- [Foldkit](/aws/frontend/foldkit) — deploys SPA, SSR, and prerendered apps
+  through `AWS.Website.Foldkit`.
 
 ## SSR frameworks
 

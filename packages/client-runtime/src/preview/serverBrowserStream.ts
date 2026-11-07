@@ -224,6 +224,13 @@ export function createPreviewStreamClient(
   let control: PreviewStreamControl | null = null;
   let fileChooser: string | null = null;
 
+  // The server re-offers a picker still open, under a new id, when this viewer reattaches.
+  const withdrawFileChooser = () => {
+    if (fileChooser === null) return;
+    fileChooser = null;
+    events.onFileChooser?.(null);
+  };
+
   const connect = () => {
     if (stopped) return;
     const ws = new WebSocket(url);
@@ -346,6 +353,7 @@ export function createPreviewStreamClient(
       if (socket !== ws) return;
       socket = null;
       control = null;
+      withdrawFileChooser();
       if (opened) events.onConnectedChange(false);
       if (stopped) return;
       if (event.code === 4404) {
@@ -385,6 +393,7 @@ export function createPreviewStreamClient(
       const ws = socket;
       socket = null;
       control = null;
+      withdrawFileChooser();
       ws?.close();
     },
   };
