@@ -152,6 +152,7 @@ export function MenuPopupItems(
 
 export function MenuPopup(props: MenuPopupProps) {
   const { themeVariables: colors } = useAppearancePreferences();
+  const { menuCornerRadius } = useAndroidControlSizing();
   const items = <MenuPopupItems {...props} />;
   if (props.inline) {
     return (
@@ -175,7 +176,12 @@ export function MenuPopup(props: MenuPopupProps) {
         height: props.anchor.height,
       }}
     >
-      <DropdownMenu expanded onDismissRequest={props.onClose} color={colors["--color-card-alt"]}>
+      <DropdownMenu
+        expanded
+        onDismissRequest={props.onClose}
+        color={colors["--color-grouped-card"]}
+        cornerRadius={menuCornerRadius}
+      >
         <DropdownMenu.Trigger>
           <Box modifiers={[size(props.anchor.width, props.anchor.height)]} />
         </DropdownMenu.Trigger>
