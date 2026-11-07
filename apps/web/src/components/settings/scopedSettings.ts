@@ -21,12 +21,28 @@ import {
   resolveWorktreeCleanup,
   type ProjectSettingSource,
 } from "@t3tools/shared/projectSettings";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as Equal from "effect/Equal";
 import * as Cause from "effect/Cause";
+import { Atom } from "effect/reactivity";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
 export type ScopedSettingsPatch = ServerSettingsPatch & ClientSettingsPatch;
+
+export function createScopedSettingsSaveQueue() {
+  let pending: Promise<void> | undefined;
+  return (save: () => Promise<void>) => {
+    const next = pending ? pending.then(save, save) : save();
+    pending = next;
+    void next
+      .finally(() => {
+        if (pending === next) pending = undefined;
+      })
+      .catch(() => {});
+    return next;
+  };
+}
 
 interface ScopedSettingsEnvironment {
   readonly environmentId: EnvironmentId;
@@ -53,6 +69,84 @@ export function isConnectedWithConfig(
   environment: Pick<ScopedSettingsEnvironment, "connection" | "serverConfig">,
 ) {
   return environment.connection.phase === "connected" && environment.serverConfig !== null;
+}
+
+export interface PendingScopedWrite {
+  readonly environmentId: EnvironmentId;
+  readonly patch: ServerSettingsPatch;
+  readonly savedOver?: ServerSettings;
+  readonly confirmed?: ServerSettings;
+  readonly predecessors?: readonly ServerSettings[];
+}
+
+export function appendPendingScopedWrites(
+  current: readonly PendingScopedWrite[],
+  pending: readonly PendingScopedWrite[],
+) {
+  return [
+    ...current,
+    ...pending.map((write) => {
+      const previous = current
+        .filter((candidate) => candidate.environmentId === write.environmentId)
+        .at(-1);
+      const expected =
+        previous?.confirmed ??
+        (previous?.savedOver
+          ? applyServerSettingsPatch(
+              previous.predecessors?.at(-1) ?? previous.savedOver,
+              previous.patch,
+            )
+          : undefined);
+      return {
+        ...write,
+        predecessors: expected ? [...(previous?.predecessors ?? []), expected] : [],
+      };
+    }),
+  ];
+}
+
+export const pendingScopedWritesAtom = Atom.make<readonly PendingScopedWrite[]>([]).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("web-settings:pending-scoped-writes"),
+);
+
+export function pendingScopedWriteApplies(
+  write: PendingScopedWrite,
+  settings: ServerSettings | undefined,
+) {
+  return (
+    settings !== undefined &&
+    (write.savedOver === undefined ||
+      write.savedOver === settings ||
+      write.predecessors?.some((previous) => Equal.equals(previous, settings)) === true)
+  );
+}
+
+export function applyPendingScopedWrites<T extends ScopedSettingsEnvironment>(
+  environments: readonly T[],
+  writes: readonly PendingScopedWrite[],
+): readonly T[] {
+  if (writes.length === 0) return environments;
+  return environments.map((environment) => {
+    const config = environment.serverConfig;
+    if (config === null) return environment;
+    const settings = writes.reduce(
+      (current, write) =>
+        write.environmentId === environment.environmentId &&
+        pendingScopedWriteApplies(write, config.settings)
+          ? (write.confirmed ?? applyServerSettingsPatch(current, write.patch))
+          : current,
+      config.settings,
+    );
+    const { idleCompaction: _mode, ...legacy } = settings;
+    const projected =
+      config.settings.idleCompaction === undefined
+        ? { ...legacy, ...idleCompactionPatch(config.settings, globalIdleCompaction(settings)) }
+        : settings;
+    return settings === config.settings
+      ? environment
+      : { ...environment, serverConfig: { ...config, settings: projected } };
+  });
 }
 
 /** The representative supplies display values, never the set of write targets. */

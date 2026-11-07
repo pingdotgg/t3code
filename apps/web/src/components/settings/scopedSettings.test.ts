@@ -13,6 +13,10 @@ import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
+  applyPendingScopedWrites,
+  appendPendingScopedWrites,
+  createScopedSettingsSaveQueue,
+  type PendingScopedWrite,
   persistScopedSettingsPatch,
   planProjectOverridesClear,
   planScopedSettingsClear,
@@ -142,6 +146,45 @@ describe("scoped settings targets", () => {
 });
 
 describe("scoped settings writes", () => {
+  it("plans dependent project saves after their predecessor settles without carrying failed values", async () => {
+    for (const succeeds of [true, false]) {
+      const enqueue = createScopedSettingsSaveQueue();
+      let release: () => void = () => {};
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let confirmed = environment("Server");
+      const first = enqueue(async () => {
+        const plan = planScopedSettingsPatch(checkout, [confirmed], { branchNamingMode: "custom" });
+        await pending;
+        if (succeeds) {
+          confirmed = environment("Server", {
+            settings: applyServerSettingsPatch(
+              confirmed.serverConfig!.settings,
+              plan.serverWrites[0]!.patch,
+            ),
+          });
+        }
+      });
+      const second = enqueue(async () => {
+        const plan = planScopedSettingsPatch(checkout, [confirmed], {
+          branchNameInstructions: "Use verify/ followed by a short description.",
+        });
+        confirmed = environment("Server", {
+          settings: applyServerSettingsPatch(
+            confirmed.serverConfig!.settings,
+            plan.serverWrites[0]!.patch,
+          ),
+        });
+      });
+      release();
+      await Promise.all([first, second]);
+      expect(confirmed.serverConfig!.settings.projectSettingsOverrides[projectId]).toEqual({
+        ...(succeeds ? { branchNamingMode: "custom" } : {}),
+        branchNameInstructions: "Use verify/ followed by a short description.",
+      });
+    }
+  });
   it("edits the effective machine policy without changing other machines' rules", () => {
     const custom = environment("Laptop", {
       settings: {
@@ -205,6 +248,19 @@ describe("scoped settings writes", () => {
     const legacy = { settings: { ...DEFAULT_SERVER_SETTINGS, compactIdleThreads: false } };
     expect(scopedIdleCompaction([fixed, modes])).toEqual({ mixed: false, neverAvailable: true });
     expect(scopedIdleCompaction([fixed, legacy])).toEqual({ mixed: false, neverAvailable: false });
+    const legacyEnvironment = environment("Legacy", { settings: legacy.settings });
+    const projected = applyPendingScopedWrites(
+      [legacyEnvironment],
+      [
+        {
+          environmentId: legacyEnvironment.environmentId,
+          patch: { defaultRuntimeMode: "auto" },
+        },
+      ],
+    );
+    expect(scopedIdleCompaction(resolveScopedSettingsTargets(all, projected)).neverAvailable).toBe(
+      false,
+    );
     expect(
       scopedIdleCompaction([fixed, { settings: { ...fixed.settings, idleCompaction: "off" } }])
         .mixed,
@@ -553,6 +609,79 @@ describe("scoped settings mixed values", () => {
     const second = environment("Second", { settings: { sourceControlWritingStyle: { ...style } } });
     const targets = resolveScopedSettingsTargets(all, [first, second]);
     expect(scopedSettingsAreMixed(targets, ["sourceControlWritingStyle"])).toBe(false);
+  });
+
+  it("agrees while a save is in flight and follows the environment once it reports back", () => {
+    const patch = { defaultRuntimeMode: "auto" as const };
+    const confirmed = environment("Laptop", { settings: patch });
+    const waiting = environment("Server");
+    const mixedAfter = (writes: readonly PendingScopedWrite[]) =>
+      scopedSettingsAreMixed(
+        resolveScopedSettingsTargets(all, applyPendingScopedWrites([confirmed, waiting], writes)),
+        ["defaultRuntimeMode"],
+      );
+    const inFlight = [confirmed, waiting].map(({ environmentId }) => ({ environmentId, patch }));
+    expect(mixedAfter([])).toBe(true);
+    expect(mixedAfter(inFlight)).toBe(false);
+
+    const saved = inFlight.map((write, index) => ({
+      ...write,
+      savedOver: [confirmed, waiting][index]!.serverConfig!.settings,
+    }));
+    expect(mixedAfter(saved)).toBe(false);
+
+    const baseline = waiting.serverConfig!.settings;
+    const rapid = appendPendingScopedWrites(
+      [
+        {
+          environmentId: waiting.environmentId,
+          savedOver: baseline,
+          patch: { defaultRuntimeMode: "auto" },
+        },
+      ],
+      [
+        {
+          environmentId: waiting.environmentId,
+          savedOver: baseline,
+          patch: { defaultRuntimeMode: "approval-required" },
+        },
+      ],
+    );
+    const earlierReply = environment("Server", {
+      settings: applyServerSettingsPatch(baseline, { defaultRuntimeMode: "auto" }),
+    });
+    expect(
+      applyPendingScopedWrites([earlierReply], rapid)[0]!.serverConfig!.settings.defaultRuntimeMode,
+    ).toBe("approval-required");
+    const first = applyServerSettingsPatch(baseline, { branchNamingMode: "custom" });
+    const second = applyServerSettingsPatch(first, { branchNameInstructions: "Use verify/" });
+    const intermediate = environment("Server", { settings: first });
+    const acknowledged = applyPendingScopedWrites(
+      [intermediate],
+      [
+        {
+          environmentId: intermediate.environmentId,
+          savedOver: baseline,
+          confirmed: second,
+          predecessors: [first],
+          patch: { branchNameInstructions: "Use verify/" },
+        },
+      ],
+    );
+    expect(acknowledged[0]!.serverConfig!.settings.branchNameInstructions).toBe("Use verify/");
+
+    const changedElsewhere = environment("Server", {
+      settings: { defaultRuntimeMode: "approval-required" },
+    });
+    expect(
+      scopedSettingsAreMixed(
+        resolveScopedSettingsTargets(
+          all,
+          applyPendingScopedWrites([confirmed, changedElsewhere], saved),
+        ),
+        ["defaultRuntimeMode"],
+      ),
+    ).toBe(true);
   });
 });
 
