@@ -1219,7 +1219,7 @@ function ThreadSettingsModelsScreen() {
           session.hasLegacyModels,
         ]}
         confirm={{
-          label: session.pendingModel ? "Save thread settings" : "Done",
+          label: session.pendingModel ? "Save" : "Done",
           onPress: commitAndClose,
         }}
         hideBottomBorder
