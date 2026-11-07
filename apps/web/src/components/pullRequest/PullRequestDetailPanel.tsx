@@ -625,13 +625,18 @@ export function PullRequestDetailPanel({
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
   const [isInvalidating, setIsInvalidating] = useState(false);
   const refreshing = isInvalidating || detailQuery.isPending;
-  const refreshFromHost = async () => {
+  /** Resolves whether the host cache was invalidated before the refetch. */
+  const refetchFromHost = async () => {
     setIsInvalidating(true);
     // Atom commands settle without throwing, so reset always runs.
-    await invalidate({ environmentId, input: { reference } });
+    const invalidated = await invalidate({ environmentId, input: { reference } });
     refreshDetail();
     setRefreshToken((token) => token + 1);
     setIsInvalidating(false);
+    return invalidated._tag === "Success";
+  };
+  const refreshFromHost = async () => {
+    await refetchFromHost();
   };
   const refreshFromHostOnRequest = useEffectEvent(() => void refreshFromHost());
   const appliedForcedToken = useRef(forcedRefreshToken);
@@ -641,19 +646,36 @@ export function PullRequestDetailPanel({
     appliedForcedToken.current = forcedRefreshToken;
     refreshFromHostOnRequest();
   }, [forcedRefreshToken]);
-  const revealRefreshedFor = useRef<string | null>(null);
+  // Cached activity can predate the comment, so a miss waits for one host read. `after` is when
+  // that read's invalidation finished; null while it runs.
+  const revealHostRead = useRef<{ readonly url: string; readonly after: number | null } | null>(
+    null,
+  );
+  const settleRevealMiss = () => {
+    revealHostRead.current = null;
+    onRevealSettled?.();
+  };
   const showRevealedComment = useEffectEvent(() => {
     if (revealCommentId === null) {
-      // Cached activity can predate the comment, so read the host once more before giving up.
-      if (revealUrl !== undefined && revealRefreshedFor.current !== revealUrl) {
-        revealRefreshedFor.current = revealUrl;
-        return void refreshFromHost();
+      if (revealUrl === undefined) return;
+      const read = revealHostRead.current;
+      if (read?.url !== revealUrl) {
+        const request = { url: revealUrl, after: null };
+        revealHostRead.current = request;
+        void refetchFromHost().then((invalidated) => {
+          if (revealHostRead.current !== request) return;
+          // Without an invalidation the refetch could only repeat the cached read.
+          if (!invalidated) return settleRevealMiss();
+          revealHostRead.current = { url: request.url, after: Date.now() };
+        });
+        return;
       }
-      revealRefreshedFor.current = null;
-      return onRevealSettled?.();
+      // A read that finished before the invalidation cannot show the comment is missing.
+      if (read.after !== null && (revealMissedAt ?? 0) > read.after) settleRevealMiss();
+      return;
     }
     // A later click on the same link gets its own host read.
-    revealRefreshedFor.current = null;
+    revealHostRead.current = null;
     // selectTab's store writes; the local tab already switched during render.
     if (tabOnPage) useGuideRunStore.getState().showPageDetailTab(guideKey, "summary");
     onTabChange?.("summary");
