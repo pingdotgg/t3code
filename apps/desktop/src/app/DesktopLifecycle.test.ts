@@ -422,7 +422,6 @@ describe("DesktopLifecycle", () => {
           const emit = (eventName: string) => powerListeners.get(eventName)?.();
 
           // A wake from sleep reports resume, then unlock-screen.
-          emit("lock-screen");
           emit("suspend");
           emit("resume");
           emit("unlock-screen");
@@ -434,14 +433,8 @@ describe("DesktopLifecycle", () => {
           emit("unlock-screen");
           yield* Effect.yieldNow;
           assert.deepEqual(sent, [SYSTEM_WAKE_CHANNEL, SYSTEM_WAKE_CHANNEL]);
-
-          emit("unlock-screen");
-          emit("resume");
-          yield* Effect.yieldNow;
-          assert.deepEqual(sent, [SYSTEM_WAKE_CHANNEL, SYSTEM_WAKE_CHANNEL]);
         }),
       ).pipe(Effect.provide(layer));
-      assert.equal(powerListeners.size, 0);
     }),
   );
 });

@@ -309,7 +309,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const signals = yield* Queue.unbounded<SupervisorSignal>();
   const resetRetryState = yield* Ref.make(false);
   const probeUnanswered = yield* Ref.make(false);
+  // After a long resume, attempts are post-wake until one connects, a probe
+  // answers, or the 3 second retry is spent.
   const wakeRecoveryPending = yield* Ref.make(false);
+  const isLongResume = (signal: SupervisorSignal) =>
+    signal._tag === "Wakeup" && signal.reason === "application-active-long";
+  const takeSignal = Queue.take(signals).pipe(
+    Effect.tap((next) => (isLongResume(next) ? Ref.set(wakeRecoveryPending, true) : Effect.void)),
+  );
   const state = yield* SubscriptionRef.make<SupervisorConnectionState>(
     !initialIntent.desired
       ? availableState(initialIntent, 0)
@@ -478,7 +485,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     routeOpen: SubscriptionRef.SubscriptionRef<boolean>,
   ) {
     return yield* driver.connect(yield* attemptEntry, (progress) => {
-      if ("transportOpened" in progress) {
+      if (progress.stage !== "preparing" && progress.transportOpened) {
         return SubscriptionRef.set(routeOpen, true);
       }
       return SubscriptionRef.set(routeOpen, false).pipe(
@@ -598,23 +605,24 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
-  const waitForEstablishmentInterrupt = Effect.fnUntraced(function* (
-    routeOpen: SubscriptionRef.SubscriptionRef<boolean>,
-  ) {
+  const waitForEstablishmentInterrupt = Effect.fnUntraced(function* () {
+    // A primary attempt keeps running through an offline report, so the
+    // network returning restarts it in case it stalled meanwhile.
+    let deviceOffline = (yield* connectivity.status) === "offline";
     for (;;) {
-      const next = yield* Queue.take(signals);
+      const next = yield* takeSignal;
       switch (next._tag) {
         case "DisconnectRequested":
         case "RetryRequested":
           return false;
         case "NetworkChanged":
-          // A primary attempt keeps running through an offline report.
-          if (next.network === "offline" && target._tag !== "PrimaryConnectionTarget") {
-            return false;
-          }
-          // An attempt started before the network came back can hang until
-          // its setup timeout, so a recovery restarts it unless its socket is open.
-          if (next.network === "online" && !(yield* SubscriptionRef.get(routeOpen))) {
+          if (target._tag !== "PrimaryConnectionTarget") {
+            if (next.network === "offline") {
+              return false;
+            }
+          } else if (next.network === "offline") {
+            deviceOffline = true;
+          } else if (deviceOffline) {
             return true;
           }
           break;
@@ -624,11 +632,6 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         case "Wakeup":
           // An attempt that ran into a long suspension is likely stuck.
           if (next.reason === "application-active-long") {
-            yield* Ref.set(wakeRecoveryPending, true);
-            return true;
-          }
-          // One started before a network change can hang until its setup timeout.
-          if (next.reason === "network-changed" && !(yield* SubscriptionRef.get(routeOpen))) {
             return true;
           }
           if (next.reason === "credentials-changed" && usesRelay) {
@@ -672,9 +675,6 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         return route === undefined ? undefined : connectionRouteKind(route);
       }),
     );
-
-  const isLongResume = (signal: SupervisorSignal) =>
-    signal._tag === "Wakeup" && signal.reason === "application-active-long";
 
   const answersQuickly = (routeKind: ConnectionRouteKind | undefined) =>
     routeKind === "loopback" || routeKind === "lan";
@@ -765,7 +765,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const monitorConnectedLease = Effect.fnUntraced(function* (lease: ConnectedLease) {
     // A probe answers an explicit retry here, so the retry must not also reset
     // the backoff of a later, unrelated failure.
-    const takeSignal = Queue.take(signals).pipe(
+    const takeConnectedSignal = takeSignal.pipe(
       Effect.tap((next) =>
         next._tag === "RetryRequested" ? Ref.set(resetRetryState, false) : Effect.void,
       ),
@@ -779,7 +779,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
     const routeKind = yield* leaseRouteKind(lease);
     for (;;) {
-      const next = yield* takeSignal;
+      const next = yield* takeConnectedSignal;
       const end = yield* connectedLeaseEnd(next, lease);
       if (end !== undefined) {
         return end === "reset";
@@ -801,9 +801,6 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       // the socket, needs a fresh check only if the running one sees a frame.
       let recheck = false;
       let longResume = isLongResume(next);
-      // Until the socket answers, the next attempt after a long resume is a
-      // post-wake attempt.
-      if (longResume) yield* Ref.set(wakeRecoveryPending, true);
       const startSilentSocketCheck = Effect.gen(function* () {
         silentSocket = yield* Effect.forkChild(awaitSilentSocket(lease, routeKind, longResume));
         recheck = false;
@@ -833,7 +830,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           Fiber.await(probe).pipe(
             Effect.map((exit) => ({ _tag: "ProbeCompleted" as const, exit })),
           ),
-          takeSignal.pipe(Effect.map((signal) => ({ _tag: "Signal" as const, signal }))),
+          takeConnectedSignal.pipe(
+            Effect.map((signal) => ({ _tag: "Signal" as const, signal })),
+          ),
           Effect.sleep(Duration.nanos(remaining > 0n ? remaining : 0n)).pipe(
             Effect.as({ _tag: "TimedOut" as const }),
           ),
@@ -888,12 +887,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         }
         const signalTimeout = probeTimeoutFor(probeEvent.signal, routeKind);
         if (signalTimeout !== undefined) {
-          if (isLongResume(probeEvent.signal)) {
-            if (!longResume) {
-              longResume = true;
-              longResumeStartedAt = yield* Clock.monotonicTimeNanos;
-            }
-            yield* Ref.set(wakeRecoveryPending, true);
+          if (isLongResume(probeEvent.signal) && !longResume) {
+            longResume = true;
+            longResumeStartedAt = yield* Clock.monotonicTimeNanos;
           }
           yield* armSilentSocketCheck(probeEvent.signal);
           const signalDeadline =
@@ -921,6 +917,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     ) {
       yield* awaitRouteOpen(false);
     }
+    yield* Ref.set(wakeRecoveryPending, false);
     yield* Effect.logInfo("Connection after a wake did not open; retrying it once.").pipe(
       Effect.annotateLogs({
         "environment.id": target.environmentId,
@@ -941,7 +938,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     yield* SubscriptionRef.set(prepared, Option.none());
     const synchronizedRoutes = yield* Ref.make(0);
     const routeOpen = yield* SubscriptionRef.make(false);
-    const wakeRecovery = yield* Ref.getAndSet(wakeRecoveryPending, false);
+    const wakeRecovery = yield* Ref.get(wakeRecoveryPending);
     const establishment = yield* Effect.raceAllFirst([
       exitUnlessInterrupted(
         establishTracedConnection(
@@ -958,7 +955,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           exit,
         })),
       ),
-      waitForEstablishmentInterrupt(routeOpen).pipe(
+      waitForEstablishmentInterrupt().pipe(
         Effect.map((resetRetry): EstablishmentEvent => ({
           _tag: "Interrupted",
           resetRetry,
@@ -1027,6 +1024,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
 
     const active = establishment.exit.value;
+    yield* Ref.set(wakeRecoveryPending, false);
     if (Option.isSome(switchingTo)) {
       const landed = connectionRouteId(active.lease.prepared.target);
       if (landed !== switchingTo.value) {
@@ -1124,12 +1122,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       Effect.sleep(delayMs).pipe(Effect.as(false)),
       Effect.gen(function* () {
         for (;;) {
-          const next = yield* Queue.take(signals);
+          const next = yield* takeSignal;
           switch (next._tag) {
             case "Wakeup":
-              if (next.reason === "application-active-long") {
-                yield* Ref.set(wakeRecoveryPending, true);
-              }
               return ConnectionWakeups.resetsRetryBackoff(next.reason);
             case "ConnectRequested":
             case "DisconnectRequested":
@@ -1144,9 +1139,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
-  const waitForSignal = Queue.take(signals).pipe(
+  const waitForSignal = takeSignal.pipe(
     Effect.repeat({ while: (next) => next._tag === "BetterRouteAvailable" }),
-    Effect.tap((next) => (isLongResume(next) ? Ref.set(wakeRecoveryPending, true) : Effect.void)),
     Effect.map(
       (next) => next._tag === "Wakeup" && ConnectionWakeups.resetsRetryBackoff(next.reason),
     ),

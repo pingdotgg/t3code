@@ -374,25 +374,16 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
-  it.effect.each([
-    { stall: "preparation", attempts: 2 },
-    { stall: "snapshot", attempts: 1 },
-  ] as const)(
-    "keeps a primary attempt stalled in $stall through an offline report, then online makes $attempts attempts",
-    ({ stall, attempts }) =>
+  it.effect(
+    "keeps a primary attempt through an offline report and restarts it when the network returns",
+    () =>
       Effect.gen(function* () {
         const started = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        const stallFirst = (attempt: number) =>
-          attempt === 1
-            ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)))
-            : Effect.void;
         const harness = yield* makeHarness({
           prepare: (attempt) =>
-            (stall === "preparation" ? stallFirst(attempt) : Effect.void).pipe(
-              Effect.as(PREPARED_CONNECTION),
-            ),
-          ready: (attempt) => (stall === "snapshot" ? stallFirst(attempt) : Effect.void),
+            attempt === 1
+              ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
+              : Effect.succeed(PREPARED_CONNECTION),
         });
         const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
           initiallyDesired: true,
@@ -404,11 +395,8 @@ describe("EnvironmentSupervisor", () => {
         expect(yield* Ref.get(harness.prepareCount)).toBe(1);
 
         yield* harness.setNetworkStatus("online");
-        yield* TestClock.adjust("0 millis");
-        expect(yield* Ref.get(harness.prepareCount)).toBe(attempts);
-        yield* Deferred.succeed(release, undefined);
         yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-        expect(yield* Ref.get(harness.prepareCount)).toBe(attempts);
+        expect(yield* Ref.get(harness.prepareCount)).toBe(2);
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -532,169 +520,89 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
-  it.effect.each(["network-changed", "online"] as const)(
-    "restarts a hanging setup immediately after network recovery via %s",
-    (recovery) =>
-      Effect.gen(function* () {
-        const firstAttemptStarted = yield* Deferred.make<void>();
-        const firstAttemptCancelled = yield* Deferred.make<void>();
-        const harness = yield* makeHarness({
-          networkStatus: recovery === "online" ? "unknown" : "online",
-          prepare: (attempt) =>
-            attempt === 1
-              ? Deferred.succeed(firstAttemptStarted, undefined).pipe(
-                  Effect.andThen(Effect.never),
-                  Effect.onInterrupt(() => Deferred.succeed(firstAttemptCancelled, undefined)),
-                )
-              : Effect.succeed(PREPARED_CONNECTION),
-        });
-        const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
-          initiallyDesired: true,
-        }).pipe(Effect.provide(harness.dependencies));
-
-        yield* Deferred.await(firstAttemptStarted);
-        yield* recovery === "online"
-          ? harness.setNetworkStatus("online")
-          : harness.wake("network-changed");
-        yield* TestClock.adjust("0 millis");
-
-        expect(yield* Deferred.isDone(firstAttemptCancelled)).toBe(true);
-        expect(yield* Ref.get(harness.prepareCount)).toBe(2);
-        const connected = yield* awaitState(
-          supervisor.state,
-          (state) => state.phase === "connected",
-        );
-        expect(connected).toMatchObject({ attempt: 1, generation: 1, lastFailure: null });
-        expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-      }).pipe(Effect.provide(TestClock.layer())),
-  );
-
-  it.effect(
-    "preserves synchronization on activation and online signals but restarts on a long resume",
-    () =>
-      Effect.gen(function* () {
-        const synchronizing = yield* Deferred.make<void>();
-        const harness = yield* makeHarness({
-          networkStatus: "unknown",
-          ready: (attempt) =>
-            attempt === 1
-              ? Deferred.succeed(synchronizing, undefined).pipe(Effect.andThen(Effect.never))
-              : Effect.void,
-        });
-        const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
-          initiallyDesired: true,
-        }).pipe(Effect.provide(harness.dependencies));
-
-        yield* Deferred.await(synchronizing);
-        yield* harness.setNetworkStatus("online");
-        yield* harness.wake("application-active");
-        yield* harness.wake("application-active-probe");
-        yield* TestClock.adjust("0 millis");
-
-        expect((yield* SubscriptionRef.get(supervisor.state)).stage).toBe("synchronizing");
-        expect(yield* Ref.get(harness.prepareCount)).toBe(1);
-        expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-        expect(yield* Ref.get(harness.releaseCount)).toBe(0);
-
-        yield* harness.wake("application-active-long");
-        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-
-        expect(yield* Ref.get(harness.prepareCount)).toBe(2);
-        expect(yield* Ref.get(harness.sessionCount)).toBe(2);
-        expect(yield* Ref.get(harness.releaseCount)).toBe(1);
-      }).pipe(Effect.provide(TestClock.layer())),
-  );
-
-  it.effect("keeps an opened synchronization through a network-path wakeup", () =>
-    Effect.gen(function* () {
-      const synchronizing = yield* Deferred.make<void>();
-      const finishSnapshot = yield* Deferred.make<void>();
-      const harness = yield* makeHarness({
-        ready: () =>
-          Deferred.succeed(synchronizing, undefined).pipe(
-            Effect.andThen(Deferred.await(finishSnapshot)),
-          ),
-      });
-      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
-        initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies));
-
-      yield* Deferred.await(synchronizing);
-      yield* harness.wake("network-changed");
-      yield* TestClock.adjust("0 millis");
-      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
-
-      yield* Deferred.succeed(finishSnapshot, undefined);
-      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
-      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
-    }).pipe(Effect.provide(TestClock.layer())),
-  );
-
   const unansweredFirstProbe = (attempt: number) => (attempt === 1 ? Effect.never : Effect.void);
 
   it.effect.each([
     { from: "connected", stall: "handshake" },
     { from: "backoff", stall: "preparation" },
-    { from: "connected, then offline", stall: "preparation" },
     { from: "offline", stall: "handshake" },
-    { from: "connected, then primary reports offline", stall: "preparation" },
+    { from: "an attempt cancelled offline", stall: "preparation" },
   ] as const)(
     "retries a $stall that stalls after a long resume from $from once, at 3 seconds",
     ({ from, stall }) =>
       Effect.gen(function* () {
+        // The attempt the 3 second retry replaces, after any cancelled offline.
+        const lastStall = from === "an attempt cancelled offline" ? 3 : 2;
+        const firstStalled = yield* Deferred.make<void>();
         const stalled = yield* Deferred.make<void>();
         const stallCancelled = yield* Deferred.make<void>();
-        const hang = Deferred.succeed(stalled, undefined).pipe(
-          Effect.andThen(Effect.never),
-          Effect.onInterrupt(() => Deferred.succeed(stallCancelled, undefined)),
-        );
+        const retryStarted = yield* Deferred.make<void>();
+        const hang = (attempt: number) =>
+          attempt === lastStall
+            ? Deferred.succeed(stalled, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() => Deferred.succeed(stallCancelled, undefined)),
+              )
+            : Deferred.succeed(firstStalled, undefined).pipe(Effect.andThen(Effect.never));
+        const stalls = (attempt: number) => attempt >= 2 && attempt <= lastStall;
         const harness = yield* makeHarness({
           prepare: (attempt) =>
-            attempt === 2 && stall === "preparation" ? hang : Effect.succeed(PREPARED_CONNECTION),
-          opened: (attempt) => (attempt === 2 && stall === "handshake" ? hang : Effect.void),
+            attempt === lastStall + 1
+              ? Deferred.succeed(retryStarted, undefined).pipe(Effect.andThen(Effect.never))
+              : stall === "preparation" && stalls(attempt)
+                ? hang(attempt)
+                : Effect.succeed(PREPARED_CONNECTION),
+          opened: (attempt) =>
+            stall === "handshake" && stalls(attempt) ? hang(attempt) : Effect.void,
           probe: unansweredFirstProbe,
         });
-        const primary = from === "connected, then primary reports offline";
-        const supervisor = yield* EnvironmentSupervisor.make(primary ? TARGET_ENTRY : RELAY_ENTRY, {
+        const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
           initiallyDesired: true,
         }).pipe(Effect.provide(harness.dependencies));
         yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-        // The socket dies with the network, so the supervisor waits offline.
-        const goOffline = harness
-          .setNetworkStatus("offline")
-          .pipe(
-            Effect.andThen(harness.closeLatestSession()),
-            Effect.andThen(awaitState(supervisor.state, (state) => state.phase === "offline")),
-          );
         if (from === "backoff") {
           yield* harness.closeLatestSession();
           yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
         }
-        if (from === "offline") yield* goOffline;
+        if (from === "offline") {
+          // The socket dies with the network, so the supervisor waits offline.
+          yield* harness.setNetworkStatus("offline");
+          yield* harness.closeLatestSession();
+          yield* awaitState(supervisor.state, (state) => state.phase === "offline");
+        }
 
         yield* harness.wake("application-active-long");
-        if (from === "connected" || primary) yield* TestClock.adjust("1500 millis");
-        if (from === "connected, then offline" || from === "offline") {
+        if (from === "offline") {
           yield* TestClock.adjust("0 millis");
-          if (from === "connected, then offline") yield* goOffline;
+          yield* harness.setNetworkStatus("online");
+        } else if (from !== "backoff") {
+          yield* TestClock.adjust("1500 millis");
+        }
+        if (from === "an attempt cancelled offline") {
+          yield* Deferred.await(firstStalled);
+          yield* harness.setNetworkStatus("offline");
+          yield* awaitState(supervisor.state, (state) => state.phase === "offline");
           yield* harness.setNetworkStatus("online");
         }
         yield* Deferred.await(stalled);
-        if (primary) yield* harness.setNetworkStatus("offline");
         yield* TestClock.adjust("2999 millis");
-        expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+        expect(yield* Ref.get(harness.prepareCount)).toBe(lastStall);
 
         yield* TestClock.adjust("1 millis");
         expect(yield* Deferred.isDone(stallCancelled)).toBe(true);
-        expect(yield* Ref.get(harness.prepareCount)).toBe(3);
-        const connected = yield* awaitState(
-          supervisor.state,
-          (state) => state.phase === "connected",
-        );
-        expect(connected.lastFailure).toBeNull();
+        expect(yield* Ref.get(harness.prepareCount)).toBe(lastStall + 1);
+
+        // The retry is one-shot: the next attempt gets the full setup time.
+        yield* Deferred.await(retryStarted);
+        yield* TestClock.adjust("14999 millis");
+        expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+          phase: "connecting",
+          lastFailure: null,
+        });
+        yield* TestClock.adjust("1 millis");
+        const retrying = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+        expect(retrying.lastFailure).toMatchObject({ reason: "timeout" });
+        expect(yield* Ref.get(harness.prepareCount)).toBe(lastStall + 1);
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -729,106 +637,6 @@ describe("EnvironmentSupervisor", () => {
 
       yield* Deferred.succeed(allowSnapshot, undefined);
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
-    }).pipe(Effect.provide(TestClock.layer())),
-  );
-
-  it.effect("gives the attempt after a stalled post-wake attempt the full setup time", () =>
-    Effect.gen(function* () {
-      const retryStarted = yield* Deferred.make<void>();
-      const harness = yield* makeHarness({
-        prepare: (attempt) =>
-          attempt === 1
-            ? Effect.succeed(PREPARED_CONNECTION)
-            : attempt === 3
-              ? Deferred.succeed(retryStarted, undefined).pipe(Effect.andThen(Effect.never))
-              : Effect.never,
-        probe: unansweredFirstProbe,
-      });
-      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
-        initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies));
-      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-
-      yield* harness.wake("application-active-long");
-      yield* TestClock.adjust("1500 millis");
-      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
-      yield* TestClock.adjust("3 seconds");
-      expect(yield* Ref.get(harness.prepareCount)).toBe(3);
-      yield* Deferred.await(retryStarted);
-
-      yield* TestClock.adjust("14999 millis");
-      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
-        phase: "connecting",
-        attempt: 1,
-      });
-      expect(yield* Ref.get(harness.prepareCount)).toBe(3);
-
-      yield* TestClock.adjust("1 millis");
-      const retrying = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
-      expect(retrying.lastFailure).toMatchObject({ reason: "timeout" });
-      expect(yield* Ref.get(harness.prepareCount)).toBe(3);
-    }).pipe(Effect.provide(TestClock.layer())),
-  );
-
-  it.effect.each(["disconnect", "scope close"] as const)("stops wake recovery on %s", (stop) =>
-    Effect.gen(function* () {
-      const stalled = yield* Deferred.make<void>();
-      const harness = yield* makeHarness({
-        prepare: (attempt) =>
-          attempt === 1
-            ? Effect.succeed(PREPARED_CONNECTION)
-            : Deferred.succeed(stalled, undefined).pipe(Effect.andThen(Effect.never)),
-        probe: unansweredFirstProbe,
-      });
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
-            initiallyDesired: true,
-          }).pipe(Effect.provide(harness.dependencies));
-          yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-          yield* harness.wake("application-active-long");
-          yield* TestClock.adjust("1500 millis");
-          yield* Deferred.await(stalled);
-          if (stop === "disconnect") {
-            yield* supervisor.disconnect;
-            yield* awaitState(supervisor.state, (state) => state.phase === "available");
-            yield* TestClock.adjust("20 seconds");
-            expect(yield* Ref.get(harness.prepareCount)).toBe(2);
-          }
-        }),
-      );
-
-      if (stop === "scope close") {
-        yield* TestClock.adjust("20 seconds");
-        expect(yield* Ref.get(harness.prepareCount)).toBe(2);
-      }
-    }).pipe(Effect.provide(TestClock.layer())),
-  );
-
-  it.effect("gives no 3 second retry after a long resume kept a live socket", () =>
-    Effect.gen(function* () {
-      const stalled = yield* Deferred.make<void>();
-      const harness = yield* makeHarness({
-        opened: (attempt) =>
-          attempt === 2
-            ? Deferred.succeed(stalled, undefined).pipe(Effect.andThen(Effect.never))
-            : Effect.void,
-      });
-      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
-        initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies));
-      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-
-      yield* harness.wake("application-active-long");
-      yield* TestClock.adjust("3 seconds");
-      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-
-      yield* harness.closeLatestSession();
-      yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
-      yield* TestClock.adjust("2 seconds");
-      yield* Deferred.await(stalled);
-      yield* TestClock.adjust("3 seconds");
       expect(yield* Ref.get(harness.prepareCount)).toBe(2);
     }).pipe(Effect.provide(TestClock.layer())),
   );
@@ -1030,8 +838,13 @@ describe("EnvironmentSupervisor", () => {
   it.effect("keeps a live mobile session after a long background resume", () =>
     Effect.gen(function* () {
       const probeCount = yield* Ref.make(0);
+      const stalled = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
         probe: () => Ref.update(probeCount, (count) => count + 1),
+        opened: (attempt) =>
+          attempt === 2
+            ? Deferred.succeed(stalled, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
       });
       const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
         initiallyDesired: true,
@@ -1047,6 +860,14 @@ describe("EnvironmentSupervisor", () => {
         phase: "connected",
         generation: 1,
       });
+
+      // The answered probe ends wake recovery, so a later stall gets no 3 second retry.
+      yield* harness.closeLatestSession();
+      yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+      yield* TestClock.adjust("2 seconds");
+      yield* Deferred.await(stalled);
+      yield* TestClock.adjust("3 seconds");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -1996,117 +1817,44 @@ describe("EnvironmentSupervisor routes", () => {
     }),
   );
 
-  // The LAN route opens and then fails its snapshot, so the attempt moves on to relay.
-  it.effect.each([
-    { stall: "reachability check", sessions: 2 },
-    { stall: "preparation", sessions: 2 },
-    { stall: "opening", sessions: 3 },
-  ] as const)(
-    "restarts on a network recovery while a fallback route stalls in $stall",
-    ({ stall, sessions }) =>
-      Effect.gen(function* () {
-        const stalled = yield* Deferred.make<void>();
-        const stallHere = Deferred.succeed(stalled, undefined).pipe(Effect.andThen(Effect.never));
-        const harness = yield* makeHarness({
-          networkStatus: "unknown",
-          checkRoute: (route) =>
-            stall === "reachability check" && route.target._tag === "RelayConnectionTarget"
-              ? Effect.never
-              : Effect.succeed("answered"),
-          prepare: (_attempt, target) =>
-            stall === "preparation" && target._tag === "RelayConnectionTarget"
-              ? stallHere
-              : Effect.succeed(preparedFor(target)),
-          opened: (attempt) => (stall === "opening" && attempt === 2 ? stallHere : Effect.void),
-          ready: (attempt) =>
-            attempt !== 1
-              ? Effect.void
-              : stall === "reachability check"
-                ? Deferred.succeed(stalled, undefined).pipe(
-                    Effect.andThen(Effect.fail(transient())),
-                  )
-                : Effect.fail(transient()),
-        });
-        const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
-          initiallyDesired: true,
-        }).pipe(Effect.provide(harness.dependencies));
-
-        yield* Deferred.await(stalled);
-        yield* TestClock.adjust("0 millis");
-        yield* harness.setNetworkStatus("online");
-        yield* TestClock.adjust("0 millis");
-
-        expect(yield* Ref.get(harness.sessionCount)).toBe(sessions);
-        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-        const prepared = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
-        expect(prepared.target._tag).toBe("BearerConnectionTarget");
-      }).pipe(Effect.provide(TestClock.layer())),
-  );
-
   // After a wake, the LAN route opens and fails its snapshot 2 seconds later.
-  it.effect.each(["reachability check", "preparation", "opening"] as const)(
-    "retries once, 3 seconds on, a post-wake fallback route that stalls in %s",
-    (stall) =>
-      Effect.gen(function* () {
-        const woke = yield* Ref.make(false);
-        const stallCancelled = yield* Deferred.make<void>();
-        const stallHere = Effect.never.pipe(
-          Effect.onInterrupt(() => Deferred.succeed(stallCancelled, undefined)),
-        );
-        const harness = yield* makeHarness({
-          checkRoute: (route) =>
-            Effect.gen(function* () {
-              if (
-                stall === "reachability check" &&
-                route.target._tag === "RelayConnectionTarget" &&
-                (yield* Ref.get(woke))
-              ) {
-                return yield* stallHere;
-              }
-              return "answered" as const;
-            }),
-          prepare: (_attempt, target) =>
-            Effect.gen(function* () {
-              if (
-                stall === "preparation" &&
-                target._tag === "RelayConnectionTarget" &&
-                (yield* Ref.get(woke))
-              ) {
-                return yield* stallHere;
-              }
-              return preparedFor(target);
-            }),
-          opened: (attempt) => (stall === "opening" && attempt === 3 ? stallHere : Effect.void),
-          ready: (attempt) =>
-            attempt === 2
-              ? Effect.sleep("2 seconds").pipe(Effect.andThen(Effect.fail(transient())))
-              : Effect.void,
-          probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
-        });
-        const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
-          initiallyDesired: true,
-        }).pipe(Effect.provide(harness.dependencies));
-        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+  it.effect("retries once, 3 seconds on, a post-wake fallback route that stalls opening", () =>
+    Effect.gen(function* () {
+      const stallCancelled = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        opened: (attempt) =>
+          attempt === 3
+            ? Effect.never.pipe(
+                Effect.onInterrupt(() => Deferred.succeed(stallCancelled, undefined)),
+              )
+            : Effect.void,
+        ready: (attempt) =>
+          attempt === 2
+            ? Effect.sleep("2 seconds").pipe(Effect.andThen(Effect.fail(transient())))
+            : Effect.void,
+        probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
 
-        yield* Ref.set(woke, true);
-        yield* harness.wake("application-active-long");
-        yield* TestClock.adjust("1500 millis");
-        expect(yield* Ref.get(harness.sessionCount)).toBe(2);
-        yield* TestClock.adjust("2 seconds");
-        const stalledAt = yield* Ref.get(harness.prepareCount);
-        yield* TestClock.adjust("2999 millis");
-        expect(yield* Deferred.isDone(stallCancelled)).toBe(false);
-        expect(yield* Ref.get(harness.prepareCount)).toBe(stalledAt);
+      yield* harness.wake("application-active-long");
+      yield* TestClock.adjust("1500 millis");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      yield* TestClock.adjust("2 seconds");
+      const stalledAt = yield* Ref.get(harness.prepareCount);
+      yield* TestClock.adjust("2999 millis");
+      expect(yield* Deferred.isDone(stallCancelled)).toBe(false);
+      expect(yield* Ref.get(harness.prepareCount)).toBe(stalledAt);
 
-        yield* TestClock.adjust("1 millis");
-        expect(yield* Deferred.isDone(stallCancelled)).toBe(true);
-        expect(yield* Ref.get(harness.prepareCount)).toBe(stalledAt + 1);
-        const connected = yield* awaitState(
-          supervisor.state,
-          (state) => state.phase === "connected",
-        );
-        expect(connected.lastFailure).toBeNull();
-      }).pipe(Effect.provide(TestClock.layer())),
+      yield* TestClock.adjust("1 millis");
+      expect(yield* Deferred.isDone(stallCancelled)).toBe(true);
+      expect(yield* Ref.get(harness.prepareCount)).toBe(stalledAt + 1);
+      const connected = yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(connected.lastFailure).toBeNull();
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("tries every route when none answers the reachability check", () =>

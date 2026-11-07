@@ -33,12 +33,8 @@ export type ConnectionDriverProgress =
   | {
       readonly stage: Exclude<ConnectionAttemptStage, "preparing">;
       readonly prepared: PreparedConnection;
-    }
-  | {
       // The socket opened; the stage stays synchronizing until the first snapshot.
-      readonly stage: "synchronizing";
-      readonly prepared: PreparedConnection;
-      readonly transportOpened: true;
+      readonly transportOpened?: true;
     };
 
 export interface EnvironmentConnectionLease {
