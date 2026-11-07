@@ -30,7 +30,7 @@ import {
   usageSourceMessages,
 } from "@t3tools/shared/usageFormat";
 import { useRef, useState, type ReactNode } from "react";
-import { Platform, RefreshControl, View } from "react-native";
+import { RefreshControl, View } from "react-native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -49,8 +49,6 @@ import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
 import { UsageLimitsSection } from "./UsageLimitsPooled";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usageProviders";
 
@@ -197,27 +195,6 @@ function UsageScreen(props: {
   );
 
   const showEnvironmentFilter = environments.length > 0 || selectedEnvironmentIds !== null;
-  const filterIcon =
-    selectedEnvironmentIds === null
-      ? "line.3.horizontal.decrease"
-      : "line.3.horizontal.decrease.circle.fill";
-  const environmentActions = [
-    {
-      id: "all",
-      title: "All environments",
-      subtitle: undefined,
-      state: selectedEnvironmentIds === null ? ("on" as const) : ("off" as const),
-    },
-    ...environments.map((environment) => ({
-      id: environment.environmentId,
-      title: environment.label,
-      subtitle: usageEnvironmentStatus(environment, refreshingUsage),
-      state:
-        selectedEnvironmentIds === null || selectedEnvironmentIds.has(environment.environmentId)
-          ? ("on" as const)
-          : ("off" as const),
-    })),
-  ];
   const selectEnvironment = (value: string) => {
     if (value === "all") {
       setSelectedEnvironmentIds(null);
@@ -230,15 +207,24 @@ function UsageScreen(props: {
     title: "Filter usage environments",
     icon:
       selectedEnvironmentIds === null
-        ? ("line.3.horizontal.decrease.circle" as const)
+        ? ("line.3.horizontal.decrease" as const)
         : ("line.3.horizontal.decrease.circle.fill" as const),
-    items: environmentActions.map((action) => ({
-      id: action.id,
-      title: action.title,
-      subtitle: action.subtitle,
-      selected: action.state === "on",
-      onPress: () => selectEnvironment(action.id),
-    })),
+    items: [
+      {
+        id: "all",
+        title: "All environments",
+        selected: selectedEnvironmentIds === null,
+        onPress: () => selectEnvironment("all"),
+      },
+      ...environments.map((environment) => ({
+        id: environment.environmentId,
+        title: environment.label,
+        subtitle: usageEnvironmentStatus(environment, refreshingUsage),
+        selected:
+          selectedEnvironmentIds === null || selectedEnvironmentIds.has(environment.environmentId),
+        onPress: () => selectEnvironment(environment.environmentId),
+      })),
+    ],
   };
 
   return (
@@ -247,35 +233,6 @@ function UsageScreen(props: {
       menus={showEnvironmentFilter ? [environmentMenu] : undefined}
       workspaceRoot={props.workspace}
     >
-      {Platform.OS === "ios" ? (
-        <NativeStackScreenOptions
-          optionsVersion={JSON.stringify({ showEnvironmentFilter, filterIcon, environmentActions })}
-          options={{
-            // A native menu item, unlike a custom view, moves into the Duo's vertical bar.
-            unstable_headerRightItems: () =>
-              showEnvironmentFilter
-                ? [
-                    withNativeGlassHeaderItem({
-                      accessibilityLabel: "Filter usage environments",
-                      icon: { name: filterIcon, type: "sfSymbol" },
-                      label: "",
-                      type: "menu",
-                      menu: {
-                        title: "Environments",
-                        items: environmentActions.map((action) => ({
-                          type: "action" as const,
-                          label: action.title,
-                          description: action.subtitle,
-                          state: action.state === "on" ? ("on" as const) : undefined,
-                          onPress: () => selectEnvironment(action.id),
-                        })),
-                      },
-                    }),
-                  ]
-                : [],
-          }}
-        />
-      ) : null}
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
