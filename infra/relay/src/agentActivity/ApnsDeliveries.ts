@@ -445,12 +445,14 @@ function makeLiveActivityDeliveryRequest(
   apns: Apns.ApnsClient["Service"],
   input: SendLiveActivityDeliveryInput,
   now: DateTime.DateTime,
+  preferences: RelayAgentAwarenessPreferences | null,
 ) {
   const epochSeconds = Math.floor(now.epochMilliseconds / 1_000);
   const base = {
     token: input.token,
     nowEpochSeconds: epochSeconds,
     nowIso: DateTime.formatIso(now),
+    soundsEnabled: preferences?.soundsEnabled,
   };
   switch (input.kind) {
     case "live_activity_update":
@@ -687,8 +689,8 @@ const make = Effect.gen(function* () {
       return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
     }
     deliveryTarget = currentTarget;
+    const preferences = parsePreferences(currentTarget.preferences_json);
     if (alert) {
-      const preferences = parsePreferences(currentTarget.preferences_json);
       const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
       alert =
         !preferences?.notificationsEnabled || !aggregate
@@ -724,7 +726,7 @@ const make = Effect.gen(function* () {
     if (
       input.kind === "live_activity_end" &&
       aggregate === null &&
-      parsePreferences(currentTarget.preferences_json)?.liveActivitiesEnabled !== false &&
+      preferences?.liveActivitiesEnabled !== false &&
       (yield* userHasContentToShow(input.target.user_id))
     ) {
       yield* attempts.completeSourceJob({
@@ -737,6 +739,7 @@ const make = Effect.gen(function* () {
       apns,
       { ...input, aggregate, alert } as SendLiveActivityDeliveryInput,
       now,
+      preferences,
     );
     const result = yield* apns
       .sendLiveActivityRequest({

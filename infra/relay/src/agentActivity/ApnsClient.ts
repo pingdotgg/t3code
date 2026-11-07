@@ -89,6 +89,8 @@ interface LiveActivityRequestBase {
   readonly token: string;
   readonly nowEpochSeconds: number;
   readonly nowIso: string;
+  // iOS applies the per-app Sounds switch to notifications but not to Live Activity alerts.
+  readonly soundsEnabled?: boolean | undefined;
 }
 
 type MakeLiveActivityRequestInput =
@@ -104,12 +106,12 @@ type MakeLiveActivityRequestInput =
     });
 
 // Alert dictionaries wake the iOS screen and trigger haptics instead of silently refreshing.
-function liveActivityAlertPayload(alert: ApnsLiveActivityAlert) {
+function liveActivityAlertPayload(alert: ApnsLiveActivityAlert, soundsEnabled = true) {
   return {
     alert: {
       title: alert.title,
       body: alert.body,
-      sound: "default",
+      ...(soundsEnabled ? { sound: "default" } : {}),
     },
   };
 }
@@ -179,7 +181,7 @@ function buildLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLive
           timestamp,
           event: "end",
           ...(input.state ? { "content-state": contentState(input.state) } : {}),
-          ...(input.alert ? liveActivityAlertPayload(input.alert) : {}),
+          ...(input.alert ? liveActivityAlertPayload(input.alert, input.soundsEnabled) : {}),
           "dismissal-date":
             timestamp + (input.state ? DISMISS_AFTER_SECONDS : CONTENTLESS_DISMISS_AFTER_SECONDS),
         },
@@ -196,7 +198,9 @@ function buildLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLive
       aps: {
         timestamp,
         event: input.event,
-        ...(input.event === "update" && input.alert ? liveActivityAlertPayload(input.alert) : {}),
+        ...(input.event === "update" && input.alert
+          ? liveActivityAlertPayload(input.alert, input.soundsEnabled)
+          : {}),
         "content-state": contentState(state),
         "stale-date": timestamp + STALE_AFTER_SECONDS,
       },

@@ -233,6 +233,9 @@ const runBackgroundOperations = Effect.fn("TestRemoteRegistration.runBackgroundO
 describe("makeRelayDeviceRegistrationRequest", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as Awaited<
+      ReturnType<typeof Notifications.getPermissionsAsync>
+    >);
     vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({
       type: "ios",
       data: "apns-token",
@@ -659,6 +662,52 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
         Effect.provide(
           ManagedRelayLayer.layer("https://permission-relay.example.test").pipe(
+            Layer.provide(Layer.mergeAll(FetchHttpClient.layer, Dpop.layer)),
+          ),
+        ),
+      );
+    },
+  );
+  it.effect(
+    "reports iOS notification sounds turned off when the app returns to the foreground",
+    () => {
+      const registrations: unknown[] = [];
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        if (request.url.endsWith("/v1/client/dpop-token")) {
+          return Response.json({
+            access_token: "dpop",
+            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+            token_type: "DPoP",
+            expires_in: 300,
+            scope: "mobile:registration",
+          });
+        }
+        registrations.push(await request.json());
+        return Response.json({ ok: true });
+      });
+      const permissions = (allowsSound: boolean) =>
+        ({ granted: true, ios: { allowsSound } }) as Awaited<
+          ReturnType<typeof Notifications.getPermissionsAsync>
+        >;
+      vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue(permissions(true));
+      Constants.expoConfig!.extra = { relay: { url: "https://sound-relay.example.test" } };
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk"), "user-a");
+      return Effect.gen(function* () {
+        yield* runBackgroundOperations();
+        expect(registrations).toHaveLength(1);
+
+        vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue(permissions(false));
+        for (const listener of appStateMock.listeners) listener("active");
+        yield* runBackgroundOperations();
+
+        expect(registrations.at(-1)).toMatchObject({
+          preferences: { notificationsEnabled: true, soundsEnabled: false },
+        });
+      }).pipe(
+        Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+        Effect.provide(
+          ManagedRelayLayer.layer("https://sound-relay.example.test").pipe(
             Layer.provide(Layer.mergeAll(FetchHttpClient.layer, Dpop.layer)),
           ),
         ),

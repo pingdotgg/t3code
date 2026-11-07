@@ -848,6 +848,73 @@ describe("ApnsDeliveries", () => {
     );
   });
 
+  it.effect("sends a silent Done Live Activity alert when the device turned sounds off", () => {
+    const requests: HttpClientRequest.HttpClientRequest[] = [];
+    const completedAt = "1970-01-01T00:00:01.000Z";
+    const completedAggregate: RelayAgentActivityAggregateState = {
+      ...aggregate,
+      activeCount: 0,
+      updatedAt: completedAt,
+      activities: [
+        {
+          ...aggregate.activities[0]!,
+          phase: "completed",
+          status: "Done",
+          updatedAt: completedAt,
+        },
+      ],
+    };
+    const soundsOffTarget: LiveActivities.TargetRow = {
+      ...target,
+      preferences_json: JSON.stringify({ ...JSON.parse(enabledPreferences), soundsEnabled: false }),
+      last_aggregate_json: JSON.stringify(aggregate),
+    };
+    const signed = signApnsDeliveryJob({
+      secret: config.apnsDeliveryJobSigningSecret,
+      payload: makeApnsDeliveryJobPayload({
+        kind: "live_activity_update",
+        userId: target.user_id,
+        deviceId: target.device_id,
+        token: "activity-token",
+        aggregate: completedAggregate,
+        alert: { title: "Thread", body: "Done: Project" },
+        createdAt: completedAt,
+        expiresAt: "1970-01-01T00:10:00.000Z",
+        jobId: "job-update-sounds-off",
+      }),
+    });
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.processSignedJob(signed);
+
+      expect(result.ok).toBe(true);
+      expect(requests).toHaveLength(1);
+      const body = requests[0]!.body;
+      expect(body._tag).toBe("Uint8Array");
+      if (body._tag === "Uint8Array") {
+        const { aps } = JSON.parse(new TextDecoder().decode(body.body));
+        expect(aps.alert).toEqual({ title: "Thread", body: "Done: Project" });
+      }
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts: [],
+          config: signingConfig,
+          currentTargets: [soundsOffTarget],
+          activityStates: [
+            { ...state, phase: "completed", headline: "Done", updatedAt: completedAt },
+          ],
+          execute: (request) =>
+            Effect.sync(() => {
+              requests.push(request);
+              return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+            }),
+        }),
+      ),
+    );
+  });
+
   it.effect("retries signed queue jobs that are already claimed but not completed", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     let executeCount = 0;

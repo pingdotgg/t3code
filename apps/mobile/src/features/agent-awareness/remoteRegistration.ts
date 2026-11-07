@@ -265,8 +265,10 @@ const nativePushTokenRegistration = Effect.fn("remoteRegistration.nativePushToke
     if (!permissions.granted) {
       return { notificationsEnabled: false, pushToken: null };
     }
+    const allowsSound = permissions.ios?.allowsSound;
+    const sounds = typeof allowsSound === "boolean" ? { soundsEnabled: allowsSound } : {};
     if (observedPushToken) {
-      return { notificationsEnabled: true, pushToken: observedPushToken };
+      return { notificationsEnabled: true, pushToken: observedPushToken, ...sounds };
     }
     const token = yield* Effect.tryPromise({
       try: () => Notifications.getDevicePushTokenAsync(),
@@ -287,7 +289,7 @@ const nativePushTokenRegistration = Effect.fn("remoteRegistration.nativePushToke
       token?.type === Platform.OS && typeof token.data === "string" && token.data.trim().length > 0
         ? token.data.trim()
         : null;
-    return { notificationsEnabled: pushToken !== null, pushToken };
+    return { notificationsEnabled: pushToken !== null, pushToken, ...sounds };
   },
 );
 
@@ -321,6 +323,7 @@ function registrationSignature(body: RelayDeviceRegistrationRequest): string {
     body.preferences.notifyOnInput,
     body.preferences.notifyOnCompletion,
     body.preferences.notifyOnFailure,
+    body.preferences.soundsEnabled ?? "",
   ].join("|");
 }
 
@@ -687,6 +690,7 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
         : {}),
       ...(pushTokenRegistration.pushToken ? { pushToken: pushTokenRegistration.pushToken } : {}),
       notificationsEnabled: pushTokenRegistration.notificationsEnabled,
+      soundsEnabled: pushTokenRegistration.soundsEnabled,
       preferences,
     }),
     expectedGeneration,
