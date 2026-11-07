@@ -1,11 +1,17 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL,
+  DEFAULT_SERVER_SETTINGS,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_UNIFIED_SETTINGS,
+  type UnifiedSettings,
+} from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "@t3tools/shared/model";
 import { deriveEffectiveComposerModelState } from "./composerDraftStore";
@@ -17,6 +23,7 @@ import {
   providerInstanceEntriesFor,
 } from "./providerInstances";
 import {
+  defaultModelSelectionsAreMixed,
   getAppModelOptionsForInstance,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
@@ -72,6 +79,142 @@ function settingsWithProviderInstances(): UnifiedSettings {
     },
   };
 }
+
+describe("scoped default model selections", () => {
+  // regression: #27997 equal automatic defaults can resolve to different providers
+  it("compares automatic defaults using each environment's models", () => {
+    const codex = {
+      projectId: null,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+      providers: [provider({ instanceId: "codex", models: ["gpt-6-astra"] })],
+    };
+    const claude = {
+      projectId: null,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+      providers: [
+        provider({
+          instanceId: "claudeAgent",
+          provider: ProviderDriverKind.make("claudeAgent"),
+          models: ["claude-sonnet-4-6"],
+        }),
+      ],
+    };
+
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [codex, claude])).toBe(true);
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [claude, codex])).toBe(true);
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [codex, codex])).toBe(false);
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [claude])).toBe(false);
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [])).toBe(false);
+    expect(
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [codex, { ...codex, providers: [] }]),
+    ).toBe(true);
+    expect(
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
+        codex,
+        { ...codex, providers: [provider({ instanceId: "codex", models: ["gpt-6-sol"] })] },
+      ]),
+    ).toBe(true);
+
+    const projectId = ProjectId.make("claude-only");
+    const project = {
+      projectId,
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: {
+          [projectId]: {
+            providerInstances: { [ProviderInstanceId.make("codex")]: { enabled: false } },
+          },
+        },
+      },
+      providers: [...codex.providers, ...claude.providers],
+    };
+    const remoteProject = { ...claude, projectId: ProjectId.make("remote-project") };
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [project, remoteProject])).toBe(
+      false,
+    );
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [remoteProject, project])).toBe(
+      false,
+    );
+    expect(
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
+        project,
+        { ...project, projectId: ProjectId.make("other-project") },
+      ]),
+    ).toBe(true);
+
+    const configured = {
+      projectId: null,
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerModelPreferences: {
+          [ProviderInstanceId.make("codex")]: {
+            hiddenModels: ["gpt-6-astra"],
+            modelOrder: [],
+          },
+        },
+      },
+      providers: [provider({ instanceId: "codex", models: ["gpt-6-astra", "gpt-6-sol"] })],
+    };
+    const inherited = { ...configured, settings: DEFAULT_SERVER_SETTINGS };
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [configured, inherited])).toBe(
+      true,
+    );
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [inherited, configured])).toBe(
+      true,
+    );
+    const clientSettings = {
+      ...DEFAULT_CLIENT_SETTINGS,
+      providerModelPreferences: configured.settings.providerModelPreferences,
+    };
+    expect(defaultModelSelectionsAreMixed(clientSettings, [configured, inherited])).toBe(false);
+    expect(defaultModelSelectionsAreMixed(clientSettings, [inherited, configured])).toBe(false);
+    expect(
+      defaultModelSelectionsAreMixed(clientSettings, [
+        { ...inherited, settings: { ...DEFAULT_SERVER_SETTINGS, providerModelPreferences: {} } },
+        inherited,
+      ]),
+    ).toBe(true);
+  });
+
+  it("keeps automatic, explicit, and different saved options distinct", () => {
+    const providers = [provider({ instanceId: "codex", models: ["gpt-6-astra"] })];
+    const selected = {
+      projectId: null,
+      providers,
+      settings: {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        defaultModelSelection: createModelSelection(
+          ProviderInstanceId.make("codex"),
+          "gpt-6-astra",
+        ),
+      },
+    };
+    expect(
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [selected, { ...selected }]),
+    ).toBe(false);
+    expect(
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
+        selected,
+        { projectId: null, providers, settings: DEFAULT_UNIFIED_SETTINGS },
+      ]),
+    ).toBe(true);
+    expect(
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
+        selected,
+        {
+          ...selected,
+          settings: {
+            ...selected.settings,
+            defaultModelSelection: {
+              ...selected.settings.defaultModelSelection,
+              options: [{ id: "reasoningEffort", value: "xhigh" }],
+            },
+          },
+        },
+      ]),
+    ).toBe(true);
+  });
+});
 
 describe("instance-scoped model selection", () => {
   it("keeps custom models on the provider instance that declared them", () => {
@@ -609,6 +752,37 @@ describe("instance-scoped model selection", () => {
     ).toEqual(createModelSelection(instanceId, "openai/gpt-5.5"));
   });
 
+  it("keeps the default instance's draft model off a custom instance of the same driver", () => {
+    const driver = ProviderDriverKind.make("opencode");
+    const defaultInstanceId = ProviderInstanceId.make("opencode");
+    const kimiInstanceId = ProviderInstanceId.make("kimi_api");
+    const kimiModel = "kimi-code-plan-global/k3.1-pro";
+    const providers = [
+      provider({
+        provider: driver,
+        instanceId: defaultInstanceId,
+        models: ["opencode-go/kimi-k3.1-pro"],
+      }),
+      provider({ provider: driver, instanceId: kimiInstanceId, models: [kimiModel] }),
+    ];
+    const state = deriveEffectiveComposerModelState({
+      draft: {
+        activeProvider: kimiInstanceId,
+        modelSelectionByProvider: {
+          [defaultInstanceId]: createModelSelection(defaultInstanceId, "opencode-go/kimi-k3.1-pro"),
+        },
+      },
+      providers,
+      selectedProvider: driver,
+      selectedInstanceId: kimiInstanceId,
+      threadModelSelection: null,
+      projectModelSelection: null,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+    });
+
+    expect(state.selectedModel).toBe(kimiModel);
+  });
+
   it("self-heals a persisted selection pointing at a text-generation-incapable instance", () => {
     const providers = [
       provider({
@@ -829,6 +1003,7 @@ describe("composer fallback to another instance of the same driver", () => {
     readonly providers: ReadonlyArray<ServerProvider>;
     readonly draft?: Parameters<typeof deriveEffectiveComposerModelState>[0]["draft"];
     readonly threadModelSelection: ReturnType<typeof createModelSelection>;
+    readonly customModels?: Partial<Record<string, ReadonlyArray<string>>>;
   }) {
     const settings = {
       ...DEFAULT_UNIFIED_SETTINGS,
@@ -838,7 +1013,13 @@ describe("composer fallback to another instance of the same driver", () => {
           {
             driver: provider.driver,
             enabled: provider.enabled,
-            config: {},
+            config: {
+              customModels: (input.customModels?.[provider.instanceId] ?? []).map((slug) => ({
+                slug,
+                name: slug,
+                capabilities: null,
+              })),
+            },
           },
         ]),
       ),
@@ -921,6 +1102,138 @@ describe("composer fallback to another instance of the same driver", () => {
     expect(state.selectedModel).toBe("claude-opus-5-5");
     expect(traits.promptEffort).toBe("medium");
     expect(traits.modelOptionsForDispatch).toBeUndefined();
+  });
+
+  describe("with model aliases", () => {
+    const reasoningModel = (
+      slug: string,
+      id: string,
+      extra: Partial<ServerProvider["models"][number]> = {},
+    ): ServerProvider["models"][number] => ({
+      slug,
+      name: slug,
+      isCustom: false,
+      ...extra,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id,
+            label: id,
+            type: "select",
+            options: ["medium", "high", "xhigh"].map((value) => ({
+              id: value,
+              label: value,
+              isDefault: value === "medium",
+            })),
+          },
+        ],
+      },
+    });
+
+    it.each([
+      ["5.4", "gpt-5.4"],
+      ["gpt-5-codex", "gpt-5.4"],
+      ["gpt-5.4", "5.4"],
+    ])("keeps the effort from %s on fallback %s", (savedModel, fallbackModel) => {
+      const disabledCodex = ProviderInstanceId.make("codex");
+      const fallbackCodex = ProviderInstanceId.make("codex_team");
+      const models = [reasoningModel(fallbackModel, "reasoningEffort")];
+      const { selectedInstanceId, state, traits } = composerFor({
+        providers: [
+          { ...provider({ provider: codex, instanceId: disabledCodex }), enabled: false, models },
+          { ...provider({ provider: codex, instanceId: fallbackCodex }), models },
+        ],
+        threadModelSelection: createModelSelection(disabledCodex, savedModel, [
+          { id: "reasoningEffort", value: "xhigh" },
+        ]),
+      });
+
+      expect(selectedInstanceId).toBe(fallbackCodex);
+      expect(state.selectedModel).toBe(fallbackModel);
+      expect(traits.promptEffort).toBe("xhigh");
+    });
+
+    it.each([
+      {
+        // A disabled Codex instance reports only its custom models.
+        state: "disabled",
+        requested: {
+          enabled: false,
+          models: [reasoningModel("5.4", "reasoningEffort", { isCustom: true })],
+        },
+      },
+      {
+        // An unavailable instance reports no models; its custom models are only in settings.
+        state: "unavailable",
+        requested: { enabled: false, availability: "unavailable" as const, models: [] },
+      },
+    ])(
+      "does not alias-expand a custom model named 5.4 when the requested instance is $state",
+      ({ requested }) => {
+        const disabledCodex = ProviderInstanceId.make("codex");
+        const { state, traits } = composerFor({
+          providers: [
+            { ...provider({ provider: codex, instanceId: disabledCodex }), ...requested },
+            {
+              ...provider({ provider: codex, instanceId: "codex_team" }),
+              models: [reasoningModel("gpt-5.4", "reasoningEffort")],
+            },
+          ],
+          customModels: { [disabledCodex]: ["5.4"] },
+          threadModelSelection: createModelSelection(disabledCodex, "5.4", [
+            { id: "reasoningEffort", value: "xhigh" },
+          ]),
+        });
+
+        expect(state.selectedModel).toBe("gpt-5.4");
+        expect(traits.modelOptionsForDispatch).toBeUndefined();
+      },
+    );
+
+    it("does not alias-expand the fallback instance's custom model", () => {
+      const { state, traits } = composerFor({
+        providers: [
+          { ...provider({ provider: codex, instanceId: "codex" }), enabled: false },
+          {
+            ...provider({ provider: codex, instanceId: "codex_team" }),
+            models: [reasoningModel("5.4", "reasoningEffort", { isCustom: true })],
+          },
+        ],
+        customModels: { codex_team: ["5.4"] },
+        threadModelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
+          { id: "reasoningEffort", value: "xhigh" },
+        ]),
+      });
+
+      expect(state.selectedModel).toBe("5.4");
+      expect(traits.modelOptionsForDispatch).toBeUndefined();
+    });
+
+    it("does not carry options through an alias that names another model per instance", () => {
+      // "antigravity-default" is each Antigravity instance's current model.
+      const antigravity = ProviderDriverKind.make("antigravity");
+      const disabledAntigravity = ProviderInstanceId.make("antigravity");
+      const current = { isDefault: true, aliases: [ANTIGRAVITY_DEFAULT_MODEL] };
+      const { state, traits } = composerFor({
+        providers: [
+          {
+            ...provider({ provider: antigravity, instanceId: disabledAntigravity }),
+            enabled: false,
+            models: [reasoningModel("gemini-3-pro", "thinking", current)],
+          },
+          {
+            ...provider({ provider: antigravity, instanceId: "antigravity_work" }),
+            models: [reasoningModel("claude-sonnet-4-6", "thinking", current)],
+          },
+        ],
+        threadModelSelection: createModelSelection(disabledAntigravity, ANTIGRAVITY_DEFAULT_MODEL, [
+          { id: "thinking", value: "high" },
+        ]),
+      });
+
+      expect(state.selectedModel).toBe("claude-sonnet-4-6");
+      expect(traits.modelOptionsForDispatch).toBeUndefined();
+    });
   });
 
   it("does not carry options to another driver", () => {
