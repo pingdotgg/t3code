@@ -17,6 +17,7 @@ const state = vi.hoisted(() => ({
   pendingOrder: null as object | null,
   dropBusy: false,
   failedAction: null as string | null,
+  failure: new Error("Server rejected action") as unknown,
   archivedRefreshes: [] as string[],
   scopes: new Map<string, Set<string>>(),
   shells: [] as EnvironmentThreadShell[],
@@ -28,6 +29,7 @@ const state = vi.hoisted(() => ({
   dialogs: [] as { onConfirm: () => void }[],
   alerts: [] as {
     title: string;
+    message?: string;
     buttons?: { text: string; onPress?: () => void }[];
   }[],
   afterRequest: undefined as (() => void) | undefined,
@@ -40,7 +42,7 @@ vi.mock("react", () => ({
 vi.mock("react-native", () => ({
   Alert: {
     alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
-      state.alerts.push({ title, buttons }),
+      state.alerts.push({ title, message: _message, buttons }),
   },
 }));
 vi.mock("expo-haptics", () => ({
@@ -49,7 +51,7 @@ vi.mock("expo-haptics", () => ({
 }));
 vi.mock("../../components/ui/Dialog", () => ({
   alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
-    state.alerts.push({ title, buttons }),
+    state.alerts.push({ title, message: _message, buttons }),
   confirm: (dialog: { onConfirm: () => void }) => state.dialogs.push(dialog),
 }));
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
@@ -148,8 +150,7 @@ vi.mock("../../state/threads", () => ({
         if (!state.scopes.get(request.environmentId)?.has(AuthOrchestrationOperateScope)) {
           return AsyncResult.failure(Cause.fail(new Error("Thread operation denied")));
         }
-        if (action === state.failedAction)
-          return AsyncResult.failure(Cause.fail(new Error("Server rejected action")));
+        if (action === state.failedAction) return AsyncResult.failure(Cause.fail(state.failure));
         state.afterRequest?.();
         return AsyncResult.success(undefined);
       },
@@ -159,6 +160,7 @@ vi.mock("../../state/threads", () => ({
 
 import { dismissThreadUndoNotice, readThreadUndoNotice } from "./thread-undo-notice";
 import { useThreadListActions } from "./useThreadListActions";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 
 const primaryEnvironmentId = EnvironmentId.make("primary");
 const otherEnvironmentId = EnvironmentId.make("other");
@@ -200,12 +202,189 @@ beforeEach(() => {
   state.dialogs = [];
   state.alerts = [];
   state.afterRequest = undefined;
+  state.failure = new Error("Server rejected action");
 });
 
 afterEach(() => {
   dismissThreadUndoNotice();
   vi.useRealTimers();
   vi.unstubAllEnvs();
+});
+
+describe("thread arrangement save recovery", () => {
+  it("keeps a return to Active after a drafted pin is auto-settled", async () => {
+    const thread = makeThread({ pinnedAt: null, pinOrderKey: null });
+    state.shells = [thread];
+    const actions = useThreadListActions();
+    const pinned = actions.previewThreadMove(new Map(), thread, {
+      section: "pinned",
+      targetId: null,
+      placement: "after",
+    });
+    expect(pinned).not.toBeNull();
+    state.shells = [{ ...thread, settledOverride: "settled" }];
+    const active = actions.previewThreadMove(pinned!, thread, {
+      section: "active",
+      targetId: null,
+      placement: "after",
+    });
+    expect(active).not.toBeNull();
+    expect(await actions.saveThreadArrangement(active!)).toBe(true);
+    expect(state.requests.map(({ action }) => action)).toContain("unsettle");
+  });
+
+  it.each([
+    [new Error("Server rejected pin"), "Server rejected pin"],
+    [{ reason: "offline" }, "The thread could not be pinned."],
+    [new Error(" "), "The thread could not be pinned."],
+  ])("reports a readable pin failure (%s)", async (failure, message) => {
+    const thread = makeThread();
+    state.shells = [thread];
+    state.failedAction = "pin";
+    state.failure = failure;
+
+    expect(
+      await useThreadListActions().saveThreadArrangement(
+        new Map([
+          [
+            scopedThreadKey(thread.environmentId, thread.id),
+            { pinnedAt: "2026-10-26T00:00:00.000Z" },
+          ],
+        ]),
+      ),
+    ).toBe(false);
+    expect(state.alerts.at(-1)).toMatchObject({ title: "Could not pin thread", message });
+    expect(state.dropBusy).toBe(false);
+  });
+
+  it("keeps an unavailable thread's draft for retry instead of reporting a successful save", async () => {
+    const thread = makeThread({ pinnedAt: "2026-10-26T00:00:00.000Z", pinOrderKey: "a" });
+    const drafts = new Map([
+      [scopedThreadKey(thread.environmentId, thread.id), { pinOrderKey: "b" }],
+    ]);
+    const { saveThreadArrangement } = useThreadListActions();
+
+    expect(await saveThreadArrangement(drafts)).toBe(false);
+    expect(state.requests).toEqual([]);
+    expect(state.dropBusy).toBe(false);
+
+    state.shells = [thread];
+    expect(await saveThreadArrangement(drafts)).toBe(true);
+    expect(state.requests).toEqual([
+      {
+        action: "reorderPin",
+        environmentId: primaryEnvironmentId,
+        input: { threadId: thread.id, orderKey: "b" },
+      },
+    ]);
+  });
+
+  it("previews consecutive moves without writes and saves only the last position", async () => {
+    const threads = ["a", "b", "c"].map((id, index) =>
+      makeThread({
+        id: ThreadId.make(id),
+        pinnedAt: "2026-10-26T00:00:00.000Z",
+        pinOrderKey: ["g", "m", "t"][index]!,
+      }),
+    );
+    state.shells = threads;
+    const { previewThreadMove, saveThreadArrangement } = useThreadListActions();
+    const first = previewThreadMove(new Map(), threads[0]!, "down");
+    expect(first).not.toBeNull();
+    const second = previewThreadMove(first!, threads[0]!, "down");
+    expect(second).not.toBeNull();
+    expect(state.requests).toEqual([]);
+    expect(state.dropBusy).toBe(false);
+
+    expect(await saveThreadArrangement(second!)).toBe(true);
+    expect(state.requests).toEqual([
+      {
+        action: "reorderPin",
+        environmentId: primaryEnvironmentId,
+        input: {
+          threadId: threads[0]!.id,
+          orderKey: second!.get(scopedThreadKey(primaryEnvironmentId, threads[0]!.id))!.pinOrderKey,
+        },
+      },
+    ]);
+  });
+
+  it("rechecks permission before saving a drafted pin", async () => {
+    const thread = makeThread();
+    state.shells = [thread];
+    const { saveThreadArrangement } = useThreadListActions();
+    state.scopes.get(primaryEnvironmentId)!.clear();
+
+    expect(
+      await saveThreadArrangement(
+        new Map([
+          [
+            scopedThreadKey(thread.environmentId, thread.id),
+            { pinnedAt: "2026-10-26T00:00:00.000Z", pinOrderKey: "a" },
+          ],
+        ]),
+      ),
+    ).toBe(false);
+    expect(state.requests).toEqual([]);
+    expect(state.dropBusy).toBe(false);
+  });
+
+  it.each(["saving", "pending order"])("does not overlap an existing %s", async (busy) => {
+    const thread = makeThread({ pinnedAt: "2026-10-26T00:00:00.000Z", pinOrderKey: "a" });
+    state.shells = [thread];
+    state.dropBusy = busy === "saving";
+    state.pendingOrder = busy === "pending order" ? {} : null;
+    const { saveThreadArrangement } = useThreadListActions();
+
+    expect(
+      await saveThreadArrangement(
+        new Map([[scopedThreadKey(thread.environmentId, thread.id), { pinOrderKey: "b" }]]),
+      ),
+    ).toBe(false);
+    expect(state.requests).toEqual([]);
+    expect(state.dropBusy).toBe(busy === "saving");
+  });
+
+  it("retries failed moves without repeating confirmed moves from another environment", async () => {
+    const primary = makeThread({
+      pinnedAt: "2026-10-15T00:00:00.000Z",
+      pinOrderKey: "a",
+    });
+    const other = makeThread({ ...primary, environmentId: otherEnvironmentId });
+    state.shells = [primary, other];
+    const drafts = new Map([
+      [scopedThreadKey(primary.environmentId, primary.id), { pinOrderKey: "c" }],
+      [scopedThreadKey(other.environmentId, other.id), { pinOrderKey: "d" }],
+    ]);
+    state.afterRequest = () => {
+      state.shells = [{ ...primary, pinOrderKey: "c" }, other];
+    };
+    const { saveThreadArrangement } = useThreadListActions();
+
+    expect(await saveThreadArrangement(drafts)).toBe(false);
+    expect(state.dropBusy).toBe(false);
+    expect(state.requests).toEqual([
+      {
+        action: "reorderPin",
+        environmentId: primaryEnvironmentId,
+        input: { threadId: primary.id, orderKey: "c" },
+      },
+    ]);
+
+    state.requests = [];
+    state.scopes.get(otherEnvironmentId)!.add(AuthOrchestrationOperateScope);
+    state.afterRequest = undefined;
+
+    expect(await saveThreadArrangement(drafts)).toBe(true);
+    expect(state.dropBusy).toBe(false);
+    expect(state.requests).toEqual([
+      {
+        action: "reorderPin",
+        environmentId: otherEnvironmentId,
+        input: { threadId: other.id, orderKey: "d" },
+      },
+    ]);
+  });
 });
 
 describe("thread list operation permissions", () => {

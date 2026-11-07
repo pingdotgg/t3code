@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomValue } from "@effect/atom-react";
@@ -30,6 +31,8 @@ import { useThreadListActions } from "../home/useThreadListActions";
 import {
   createThreadMovePlanner,
   threadDragAction,
+  withThreadDrafts,
+  type ThreadArrangementPatch,
   type ThreadMoveDestination,
 } from "./threadOrder";
 import {
@@ -169,13 +172,17 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
     baseFontSize: appearance.baseFontSize,
     fontScale,
   });
-  const threads = useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
+  const savedThreads = useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
   const configs = useAtomValue(environmentServerConfigsAtom);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const queuedThreadKeys = useAtomValue(queuedThreadKeysAtom);
   const pendingOrder = useAtomValue(pendingThreadOrderAtom);
   const dropBusy = useAtomValue(threadDropBusyAtom);
-  const { moveThread } = useThreadListActions();
+  const { previewThreadMove, saveThreadArrangement } = useThreadListActions();
+  const [drafts, setDrafts] = useState<ReadonlyMap<string, ThreadArrangementPatch>>(new Map());
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const threads = useMemo(() => withThreadDrafts(savedThreads, drafts), [savedThreads, drafts]);
   const { workingShelfEnabled } = useThreadListV2ShelfPreferences();
   const now = useThreadListNow(threads);
   const [expanded, setExpanded] = useState({ snoozed: false, settled: false });
@@ -185,8 +192,8 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
   // Older settled threads load in pages, as in the thread list.
   const olderSettledShelf = useOlderSettledShelf({
     scopes: [...configs.keys()].map((environmentId) => ({ environmentId, projectIds: null })),
-    expanded: expanded.settled,
-    visibleCount: settledVisibleCount,
+    expanded: expanded.settled || drafts.size > 0,
+    visibleCount: expanded.settled ? settledVisibleCount : 0,
   });
   const sections = useMemo(() => {
     const shared = {
@@ -256,9 +263,51 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
   const frame = useRef<number | null>(null);
   const [preview, setPreview] = useState<Drag | null>(null);
   const [translateY] = useState(() => new Animated.Value(0));
-  const latest = useRef({ rows, planners, moveThread });
-  // oxlint-disable-next-line react/refs -- The autoscroll rAF loop started at drag start reads the current rows and planners on every frame.
-  latest.current = { rows, planners, moveThread };
+  const latest = useRef({ rows, planners });
+  latest.current = { rows, planners };
+
+  function move(thread: EnvironmentThreadShell, destination: ThreadMoveDestination) {
+    if (savingRef.current) return;
+    const next = previewThreadMove(drafts, thread, destination);
+    if (next !== null) setDrafts(next);
+  }
+
+  function done() {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    stop();
+    setSaving(true);
+    void saveThreadArrangement(drafts)
+      .then((saved) => {
+        if (saved) props.onClose();
+      })
+      .catch((error: unknown) => {
+        Dialog.alert(
+          "Could not save arrangement",
+          error instanceof Error ? error.message : String(error),
+        );
+      })
+      .finally(() => {
+        savingRef.current = false;
+        setSaving(false);
+      });
+  }
+
+  function close() {
+    if (savingRef.current) return;
+    stop();
+    if (drafts.size === 0) {
+      props.onClose();
+      return;
+    }
+    Dialog.confirm({
+      title: "Discard arrangement?",
+      message: "Your unsaved changes will be lost.",
+      confirmText: "Discard",
+      destructive: true,
+      onConfirm: props.onClose,
+    });
+  }
 
   function stop() {
     if (frame.current !== null) cancelAnimationFrame(frame.current);
@@ -273,7 +322,6 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
     .join("|");
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the in-progress drag gesture when the thread order changes underneath it
   useEffect(() => {
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies, react/set-state-in-effect -- A changed thread order cancels the in-progress drag and clears its preview; stop only touches refs and state setters.
     stop();
   }, [orderVersion]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending drag animation frame on unmount
@@ -335,7 +383,6 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
     };
     setPreview({ ...drag.current });
     update(0);
-    // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
     let last = performance.now();
     const tick = () => {
       const current = drag.current;
@@ -384,7 +431,7 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
       visible
       animationType="slide"
       presentationStyle="fullScreen"
-      onRequestClose={props.onClose}
+      onRequestClose={() => void done()}
     >
       <GestureHandlerRootView style={{ flex: 1 }}>
         {/* A Modal is its own native hierarchy, so measure its own safe area, including side
@@ -395,11 +442,17 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
               <SheetHeader
                 presentation="inline"
                 title="Arrange threads"
-                onClose={props.onClose}
+                onClose={close}
+                dismissDisabled={saving}
+                confirm={{
+                  label: saving ? "Saving arrangement" : "Done",
+                  onPress: () => void done(),
+                  loading: saving,
+                }}
                 accessibilityLabel="Close arrange threads"
               />
               <Text className="px-5 pb-3 text-sm text-foreground-muted">
-                Drag to reorder, pin, or settle. Changes save when you drop.
+                Drag to reorder, pin, or settle. Changes save when you tap Done.
               </Text>
               <View
                 onLayout={(event) => {
@@ -479,6 +532,7 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
                             <DragHandle
                               title={thread.title}
                               disabled={
+                                saving ||
                                 dropBusy ||
                                 pendingOrder !== null ||
                                 (!listEnvironments.pinReorderEnvironmentIds.has(
@@ -490,7 +544,7 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
                               }
                               sectionActions={sectionActions}
                               onSectionMove={(section) => {
-                                void moveThread(thread, {
+                                move(thread, {
                                   section,
                                   targetId: null,
                                   placement: "before",
@@ -499,20 +553,15 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
                               canMoveUp={planner?.(item.key, "up") != null}
                               canMoveDown={planner?.(item.key, "down") != null}
                               onStep={(direction) => {
-                                void moveThread(thread, direction);
+                                move(thread, direction);
                               }}
                               onStart={() => start(item)}
                               onMove={update}
                               onEnd={(cancelled) => {
                                 const current = drag.current;
-                                if (cancelled || !current?.destination) {
-                                  stop();
-                                  return;
-                                }
-                                if (frame.current !== null) cancelAnimationFrame(frame.current);
-                                frame.current = null;
-                                drag.current = null;
-                                void moveThread(current.thread, current.destination).finally(stop);
+                                if (!cancelled && current?.destination)
+                                  move(current.thread, current.destination);
+                                stop();
                               }}
                             />
                           </>
