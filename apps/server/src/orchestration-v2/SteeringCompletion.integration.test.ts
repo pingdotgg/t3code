@@ -1181,6 +1181,50 @@ it.effect("queues a steer until the turn ends when the provider cannot steer it"
   ),
 );
 
+// APP-79: a steer that needed a restart the provider can't do was refused instead of queued.
+it.effect("queues a steer that needs an unsupported restart until the turn ends", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, interrupted, layer, startFirstTurn } =
+        yield* nextTurnSelectionHarness("steering-restart-queues", false, true, Effect.void, false);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        const messageId = MessageId.make("message:restart-steer");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("restart-steer"),
+          threadId,
+          messageId,
+          text: "look at this",
+          attachments: [
+            {
+              type: "image",
+              id: ChatAttachmentId.make("restart-steer"),
+              name: "screenshot.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            },
+          ],
+          modelSelection: runSelection,
+          dispatchMode: { type: "start_immediately" },
+          deliveryIntent: "steer",
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+
+        const held = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(steered, []);
+        assert.deepEqual(interrupted, []);
+        assert.equal(started.length, 1);
+        assert.equal(held.runs.find((run) => run.userMessageId === messageId)?.status, "queued");
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
 // Codex flushes held drafts after the final answer; reserve their pre-steer position before turn end.
 it.effect("keeps a held commentary draft before the steer when turn end flushes it", () =>
   Effect.scoped(
