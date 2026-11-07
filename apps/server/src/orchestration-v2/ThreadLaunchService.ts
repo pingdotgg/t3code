@@ -67,11 +67,7 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly branch?: string | undefined;
       readonly startFromOrigin?: boolean | undefined;
     }
-  /**
-   * A fleet worker's workspace (spec section 6.3). Launch accepts it so the
-   * command type stays whole, but a local launch treats it as its own project
-   * root: the sandbox is provisioned by delegation, never by this service.
-   */
+  /** A fleet worker's workspace. Only delegation provisions it, so a local launch fails its run. */
   | {
       readonly type: "sandbox";
       readonly workerClass?: "ephemeral" | "persistent" | undefined;

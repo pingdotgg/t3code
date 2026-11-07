@@ -268,6 +268,10 @@ describe("PeerEnvironmentRegistry", () => {
       assert.equal(resolved.token, "session-token");
       assert.equal(resolved.url, "http://127.0.0.1:8111");
       assert.equal(resolved.label, "Worker One");
+
+      yield* TestClock.adjust(Duration.seconds(3600));
+      const expired = yield* registry.resolveSession(registered.environmentId).pipe(Effect.flip);
+      assert.equal(expired.reason, "not_paired");
     }).pipe(Effect.scoped),
   );
 
