@@ -6,7 +6,7 @@ import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
-  type EnvironmentId,
+  EnvironmentId,
   type ProjectId,
   type SpeechCustomWords,
   type SpeechPostProcessingOptions,
@@ -14,8 +14,14 @@ import {
 } from "@t3tools/contracts";
 
 import { act, render } from "../../test/render";
+import type { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
-import { chooseAudioDestination, chooseTranscriptCleanup, bindAudioGrant } from "./voiceConsent";
+import {
+  chooseAudioDestination,
+  chooseTranscriptCleanup,
+  bindAudioGrant,
+  pendingCloudAudioChoice,
+} from "./voiceConsent";
 import { writeBrowserClientSettings } from "../clientPersistenceStorage";
 
 const mocks = vi.hoisted(() => ({
@@ -23,6 +29,7 @@ const mocks = vi.hoisted(() => ({
   settings: {} as Record<string, unknown>,
   connected: new Set<string>(),
   voiceCapable: new Set<string>(),
+  cloudVoiceCapable: new Set<string>(),
   canDictate: new Set<string>(),
   prepared: new Map<string, unknown>(),
   primaryEnvironmentId: "primary-env",
@@ -63,7 +70,10 @@ vi.mock("../state/environments", () => ({
           environmentId,
           serverConfig: {
             environment: {
-              capabilities: { voiceTranscription: mocks.voiceCapable.has(environmentId) },
+              capabilities: {
+                voiceTranscription: mocks.voiceCapable.has(environmentId),
+                cloudVoiceTranscription: mocks.cloudVoiceCapable.has(environmentId),
+              },
             },
           },
         }
@@ -124,12 +134,10 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
       return { text: `Cleaned ${transcript}` };
     }),
 }));
-// Capture and the wire live behind the platform; its `prepared` is where audio would go.
 vi.mock("./browserVoiceInput", () => ({
-  createBrowserVoiceInputPlatform: (input: {
-    prepared: PreparedConnection;
-    getTranscriptionOptions?: () => SpeechTranscriptionOptions;
-  }) => {
+  createBrowserVoiceInputPlatform: (
+    input: Parameters<typeof createBrowserVoiceInputPlatform>[0],
+  ) => {
     const environmentId = input.prepared.environmentId;
     mocks.platforms.push(environmentId);
     return {
@@ -143,12 +151,15 @@ vi.mock("./browserVoiceInput", () => ({
       },
       transcriber: {
         prepare: async () => {
-          const options = input.getTranscriptionOptions?.();
-          if (options) mocks.recordingOptions.push(options);
+          mocks.recordingOptions.push(input.getTranscriptionOptions());
           return {
             locale: "en",
             transcribe: async () => {
-              mocks.transcribeCalls.push(environmentId);
+              mocks.transcribeCalls.push(
+                input.cloudProvider
+                  ? `${[input.cloudProvider, (input as { cloudModel?: string }).cloudModel].filter(Boolean).join(":")} via ${environmentId}`
+                  : environmentId,
+              );
               const next = mocks.transcripts.shift() ?? "dictated";
               if (next instanceof Error) throw next;
               return next;
@@ -171,6 +182,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.primaryEnvironmentId = "primary-env";
   mocks.connected = new Set(["primary-env", THREAD_ENV, "env-a", "env-b"]);
   mocks.voiceCapable = new Set(["primary-env", THREAD_ENV, "env-a", "env-b"]);
+  mocks.cloudVoiceCapable.clear();
   mocks.canDictate = new Set(mocks.voiceCapable);
   mocks.prepared.clear();
   mocks.statusRequests = [];
@@ -367,7 +379,15 @@ it("revokes across windows even before the storage event and survives stale pref
     const grant = JSON.parse(storage.getItem(key)!) as { id: string };
     const canSend = bindAudioGrant(grant.id);
     expect(canSend()).toBe(true);
+    const saved = pendingCloudAudioChoice({
+      kind: "cloud",
+      provider: "openai",
+      environmentId: EnvironmentId.make("env-a"),
+    });
+    expect(canSend()).toBe(true);
     storage.removeItem(key);
+    saved();
+    expect(storage.getItem(key)).toBeNull();
     expect(canSend()).toBe(false);
     writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, wordWrap: false });
     await vi.waitFor(() => expect(mocks.voice.available).toBe(false));
@@ -381,15 +401,89 @@ it("revokes across windows even before the storage event and survives stale pref
   }
 });
 
-it("cleans the transcript only after cleanup is separately enabled", async () => {
+it("recovers from a corrupt choice without enabling cloud dictation before the save completes", async () => {
+  setup();
+  mocks.cloudVoiceCapable.add("env-b");
+  mocks.modelState = "missing-model";
+  window.localStorage.setItem("t3code:voice-audio-grant:v1", "not-json");
+  const save = pendingCloudAudioChoice({
+    kind: "cloud",
+    environmentId: EnvironmentId.make("env-b"),
+    provider: "xai",
+  });
+  await using _screen = await render(<Probe />);
+  expect(mocks.voice.transcriptionEnvironmentId).toBeNull();
+  await act(() => mocks.voice.start());
+  expectNoAudioSent();
+  await act(save);
+  await act(() => mocks.voice.start());
+  await act(() => mocks.voice.stop());
+  expect(mocks.transcribeCalls).toEqual(["xai via env-b"]);
+  expect(mocks.statusRequests).toEqual([]);
+});
+
+it("sends audio to OpenRouter only under a device grant naming the exact model", async () => {
+  setup();
+  mocks.cloudVoiceCapable.add("env-b");
+  const key = "t3code:voice-audio-grant:v1";
+  const destination = { kind: "cloud", environmentId: "env-b", provider: "openrouter" };
+  window.localStorage.setItem(key, JSON.stringify({ id: "no-model", destination }));
+  {
+    await using _screen = await render(<Probe />);
+    await act(() => mocks.voice.start());
+    expectNoAudioSent();
+  }
+  const model = "acme/transcribe-1";
+  window.localStorage.setItem(
+    key,
+    JSON.stringify({ id: "model", destination: { ...destination, model } }),
+  );
+  await using _screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  await act(() => mocks.voice.stop());
+  expect(mocks.transcribeCalls).toEqual([`openrouter:${model} via env-b`]);
+  expect(mocks.statusRequests).toEqual([]);
+});
+
+it("uses neither destination when the cloud save marker cannot be read", async () => {
   setup({ destination: "env-a" });
+  const key = "t3code:voice-audio-grant:v1";
+  const previous = JSON.parse(window.localStorage.getItem(key)!) as { id: string };
+  const canSendToPrevious = bindAudioGrant(previous.id);
+  const save = pendingCloudAudioChoice({
+    kind: "cloud",
+    environmentId: EnvironmentId.make("env-b"),
+    provider: "openai",
+  });
+  save();
+  const getItem = Storage.prototype.getItem;
+  using _blocked = vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (
+    this: Storage,
+    k,
+  ) {
+    if (k.startsWith(`${key}:saved:`))
+      throw new DOMException("Storage is blocked", "SecurityError");
+    return getItem.call(this, k);
+  });
+  await using _screen = await render(<Probe />);
+  expect(mocks.voice.transcriptionEnvironmentId).toBeNull();
+  expect(canSendToPrevious()).toBe(false);
+  await act(() => mocks.voice.start());
+  expectNoAudioSent();
+});
+
+it("cleans text on a cloud-only draft environment only while cleanup is separately enabled", async () => {
+  setup({ destination: "env-a" });
+  mocks.voiceCapable.delete(THREAD_ENV);
+  mocks.cloudVoiceCapable.add(THREAD_ENV);
   chooseTranscriptCleanup(true);
   const nearby = "x".repeat(1_024);
   mocks.draft = "unrelated private paragraph " + nearby;
   await using screen = await render(<Probe />);
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.stop());
-  expect(mocks.cleanupCalls).toHaveLength(1);
+  expect(mocks.transcribeCalls).toEqual(["env-a"]);
+  expect(mocks.cleanupCalls).toEqual([THREAD_ENV]);
   expect(mocks.cleanupDraft).toHaveBeenCalledExactlyOnceWith({
     text: nearby,
     selection: { start: nearby.length, end: nearby.length },
@@ -414,6 +508,7 @@ it.each([
   "keeps a recording without authorized cleanup off the provider: $cleanup / $authorized",
   async ({ cleanup, authorized }) => {
     setup({ destination: "env-a" });
+    mocks.cloudVoiceCapable.add(THREAD_ENV);
     chooseTranscriptCleanup(true);
     mocks.settings.speechCorrectionWord = "sorry";
     if (!authorized) mocks.canDictate.delete(THREAD_ENV);
