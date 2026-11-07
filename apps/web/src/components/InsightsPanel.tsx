@@ -216,7 +216,7 @@ export function InsightsPanel({
         });
   const costLabel = formatCostEstimate(threadCost);
   const headerBits = [
-    trace !== null ? formatDuration(trace.totalMs) : null,
+    trace !== null && trace.activeMs > 0 ? formatDuration(trace.activeMs) : null,
     trace !== null ? `${trace.turns.length} ${trace.turns.length === 1 ? "turn" : "turns"}` : null,
     tokenUsage?.totalTokens != null ? `${formatTokens(tokenUsage.totalTokens)} tokens` : null,
     costLabel,
@@ -449,9 +449,7 @@ function FlameChartPanel({
         ) : (
           <p className="text-2xs text-muted-foreground">
             Click a turn or span to inspect it.
-            {axis.collapsedIdleMs > 0
-              ? ` Idle between turns collapsed: ${formatDuration(axis.collapsedIdleMs)}.`
-              : ""}
+            {axis.collapsedIdleMs > 0 ? " Gaps between turns are collapsed." : ""}
           </p>
         )}
       </div>
@@ -538,6 +536,13 @@ function ContextOccupancyChart({
       : fillPct === null
         ? `Peak ${peakLabel} of ${maxLabel}`
         : `Peak ${peakLabel} of ${maxLabel} · ${fillPct}%`;
+  const compactionIndexes = series.points.flatMap((point, index) =>
+    point.kind === "compaction-before" ? [index] : [],
+  );
+  const chartLabel =
+    compactionIndexes.length === 0
+      ? `Context occupancy ${meta}`
+      : `Context occupancy ${meta}. Compaction at ${compactionIndexes.length} ${compactionIndexes.length === 1 ? "point" : "points"}.`;
 
   return (
     <section aria-label="Context over time" className="flex min-w-0 shrink-0 flex-col gap-1">
@@ -545,42 +550,71 @@ function ContextOccupancyChart({
         <h3 className="text-sm font-medium text-foreground">Context</h3>
         <span className="min-w-0 truncate text-2xs tabular-nums text-muted-foreground">{meta}</span>
       </div>
-      <svg
-        role="img"
-        aria-label={`Context occupancy ${meta}`}
-        viewBox={`0 0 ${width} ${height}`}
-        className="h-16 w-full overflow-hidden rounded-md border border-border/50 bg-muted/15"
-        preserveAspectRatio="none"
-      >
-        <path d={areaPath} className="fill-foreground/10" />
-        <polyline
-          points={linePoints}
-          fill="none"
-          className="stroke-foreground/70"
-          strokeWidth={1.5}
-          strokeLinejoin="round"
-          strokeLinecap="round"
-          vectorEffect="non-scaling-stroke"
-        />
-        {/* Markers omitted: preserveAspectRatio=none stretches circles into ovals. */}
-        {selectedRunId !== null
-          ? series.points.map((point, index) => {
-              if (point.runId !== selectedRunId) return null;
-              return (
-                <line
-                  key={`sel:${point.kind}:${point.atMs}`}
-                  x1={xForIndex(index)}
-                  x2={xForIndex(index)}
-                  y1={padTop}
-                  y2={height - padBottom}
-                  className="stroke-foreground/50"
-                  strokeWidth={1}
-                  vectorEffect="non-scaling-stroke"
-                />
-              );
-            })
-          : null}
-      </svg>
+      <div className="relative h-16 w-full overflow-hidden rounded-md border border-border/50 bg-muted/15">
+        <svg
+          role="img"
+          aria-label={chartLabel}
+          viewBox={`0 0 ${width} ${height}`}
+          className="size-full"
+          preserveAspectRatio="none"
+        >
+          <path d={areaPath} className="fill-foreground/10" />
+          <polyline
+            points={linePoints}
+            fill="none"
+            className="stroke-foreground/70"
+            strokeWidth={1.5}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+          {compactionIndexes.map((index) => (
+            <line
+              key={`compact:${series.points[index]!.atMs}`}
+              x1={xForIndex(index)}
+              x2={xForIndex(index)}
+              y1={padTop}
+              y2={height - padBottom}
+              className="stroke-warning/80"
+              strokeWidth={1.5}
+              strokeDasharray="3 2"
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+          {selectedRunId !== null
+            ? series.points.map((point, index) => {
+                if (point.runId !== selectedRunId) return null;
+                return (
+                  <line
+                    key={`sel:${point.kind}:${point.atMs}`}
+                    x1={xForIndex(index)}
+                    x2={xForIndex(index)}
+                    y1={padTop}
+                    y2={height - padBottom}
+                    className="stroke-foreground/50"
+                    strokeWidth={1}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                );
+              })
+            : null}
+        </svg>
+        {/* Dots sit in HTML so preserveAspectRatio=none cannot stretch them into ovals. */}
+        {compactionIndexes.map((index) => {
+          const point = series.points[index]!;
+          return (
+            <span
+              key={`compact-dot:${point.atMs}`}
+              aria-hidden
+              className="pointer-events-none absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-background bg-warning"
+              style={{
+                left: `${(xForIndex(index) / width) * 100}%`,
+                top: `${(yFor(point.usedTokens) / height) * 100}%`,
+              }}
+            />
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -643,6 +677,12 @@ function Summary({
 function TimingSummary({ trace }: { readonly trace: ThreadTimingTrace }) {
   const segments = timingPhaseSegments(trace);
   const phaseTotal = segments.reduce((sum, segment) => sum + segment.value, 0);
+  const totalLabel =
+    phaseTotal > 0 ? (
+      <span className="text-xs tabular-nums text-muted-foreground">
+        {formatDuration(phaseTotal)} total
+      </span>
+    ) : null;
   return (
     <section aria-label="Thread timing summary" className="flex min-w-0 flex-col gap-2">
       {phaseTotal > 0 ? (
@@ -650,19 +690,12 @@ function TimingSummary({ trace }: { readonly trace: ThreadTimingTrace }) {
           label="Time by phase"
           segments={segments}
           format={formatDuration}
-          aside={
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {formatDuration(trace.totalMs)} total
-            </span>
-          }
+          aside={totalLabel}
         />
       ) : (
         <>
           <div className="flex items-baseline justify-between gap-3">
             <h3 className="text-sm font-medium text-foreground">Time by phase</h3>
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {formatDuration(trace.totalMs)} total
-            </span>
           </div>
           <p className="text-xs text-muted-foreground">No working, waiting, or queue time yet.</p>
         </>
@@ -968,8 +1001,15 @@ function FlameViewport({
   const visibleBreaks = axis.breaks.filter(
     (item) => item.displayEndMs >= view.startMs && item.displayStartMs <= viewEndMs,
   );
+  // Label the compressed axis (active work + short gap placeholders), not wall-clock idle.
+  // Skip ticks that land in collapsed gaps so the ruler isn't sliced by paper tears.
   const ticks = buildTimeTicks(view.startMs, viewEndMs, (displayMs) =>
-    formatDuration(Math.max(0, axis.displayToReal(displayMs) - trace.originMs)),
+    formatDuration(Math.max(0, displayMs)),
+  ).filter(
+    (tick) =>
+      !visibleBreaks.some(
+        (idleBreak) => tick.ms > idleBreak.displayStartMs && tick.ms < idleBreak.displayEndMs,
+      ),
   );
 
   return (
@@ -985,7 +1025,7 @@ function FlameViewport({
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
       >
-        <div className="absolute inset-x-0 top-0 z-[1] h-[22px] border-b border-border/40 bg-muted/40">
+        <div className="absolute inset-x-0 top-0 z-[50] h-[22px] overflow-hidden border-b border-border/40 bg-muted/40">
           {ticks.map((tick) => {
             const left = ((tick.ms - view.startMs) / view.durationMs) * 100;
             return (
@@ -1081,13 +1121,16 @@ function FlameViewport({
         })}
 
         {/* Above bars so the void covers any subpixel bleed into the idle gap. */}
-        {visibleBreaks.map((idleBreak) => (
-          <IdlePaperTear
-            key={idleBreak.id}
-            style={positionForDisplay(idleBreak.displayStartMs, idleBreak.displayEndMs)}
-            label={formatDuration(idleBreak.idleMs)}
-          />
-        ))}
+        {visibleBreaks.map((idleBreak) => {
+          const style = positionForDisplay(idleBreak.displayStartMs, idleBreak.displayEndMs);
+          const widthPct = Number.parseFloat(style.width);
+          // Narrow voids read as paper-cuts through the turn legend; only tear when
+          // the gap is wide enough for readable flaps (usually after zooming in).
+          if (!Number.isFinite(widthPct) || widthPct < 1.5) return null;
+          return (
+            <IdlePaperTear key={idleBreak.id} style={{ ...style, top: RULER_HEIGHT, bottom: 0 }} />
+          );
+        })}
       </div>
 
       <OverviewStrip
@@ -1173,23 +1216,7 @@ function OverviewStrip({
           />
         );
       })}
-      {axis.breaks.map((idleBreak) => {
-        const left = (idleBreak.displayStartMs / totalMs) * 100;
-        const width = ((idleBreak.displayEndMs - idleBreak.displayStartMs) / totalMs) * 100;
-        return (
-          <div
-            key={idleBreak.id}
-            aria-hidden
-            className="pointer-events-none absolute inset-y-0 overflow-hidden bg-background"
-            style={{ left: `${left}%`, width: `${Math.max(width, 0.6)}%` }}
-          >
-            <svg className="size-full" preserveAspectRatio="none" viewBox="0 0 100 200">
-              <path d={PAPER_TEAR_LEFT_FLAP} className="fill-muted/25" />
-              <path d={PAPER_TEAR_RIGHT_FLAP} className="fill-muted/25" />
-            </svg>
-          </div>
-        );
-      })}
+      {/* Overview is a dense legend: leave strip background in gaps — no paper-tear voids. */}
       <div
         className="pointer-events-none absolute inset-y-0 rounded-sm border border-ring bg-ring/15"
         style={{ left: `${windowLeft}%`, width: `${Math.max(windowWidth, 1.5)}%` }}
@@ -1198,13 +1225,7 @@ function OverviewStrip({
   );
 }
 
-function IdlePaperTear({
-  style,
-  label,
-}: {
-  readonly style: CSSProperties;
-  readonly label: string;
-}) {
+function IdlePaperTear({ style }: { readonly style: CSSProperties }) {
   const reactId = useId().replaceAll(":", "");
   const leftShadowId = `${reactId}-tear-left`;
   const rightShadowId = `${reactId}-tear-right`;
@@ -1212,7 +1233,7 @@ function IdlePaperTear({
   return (
     <div
       aria-hidden
-      className="pointer-events-none absolute inset-y-0 z-40 overflow-hidden bg-background"
+      className="pointer-events-none absolute z-40 overflow-hidden bg-background"
       style={style}
     >
       <svg className="absolute inset-0 size-full" preserveAspectRatio="none" viewBox="0 0 100 200">
@@ -1259,9 +1280,6 @@ function IdlePaperTear({
           vectorEffect="non-scaling-stroke"
         />
       </svg>
-      <span className="absolute inset-x-0 top-1/2 -translate-y-1/2 truncate px-1 text-center text-2xs font-medium text-muted-foreground/80">
-        {label}
-      </span>
     </div>
   );
 }

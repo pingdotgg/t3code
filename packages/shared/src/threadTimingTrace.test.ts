@@ -148,6 +148,8 @@ describe("deriveThreadTimingTrace", () => {
     expect(trace!.turns[0]!.spans.map((span) => span.kind)).toEqual(["queue", "tool", "wait"]);
     expect(trace!.queueWaitMs).toBe(5_000);
     expect(trace!.waitMs).toBe(3_000);
+    expect(trace!.workMs).toBe(22_000);
+    expect(trace!.activeMs).toBe(30_000);
     expect(trace!.totalMs).toBe(30_000);
   });
 
@@ -179,6 +181,35 @@ describe("deriveThreadTimingTrace", () => {
     expect(trace!.turns[0]!.endMs).toBe(NOW);
     expect(trace!.turns[0]!.spans[0]!.kind).toBe("reasoning");
     expect(trace!.turns[0]!.spans[0]!.endMs).toBe(NOW);
+  });
+
+  it("excludes idle gaps between turns from activeMs", () => {
+    const trace = deriveThreadTimingTrace({
+      runs: [
+        run({
+          id: "r1",
+          ordinal: 1,
+          requestedAt: "2026-05-22T12:00:00.000Z",
+          startedAt: "2026-05-22T12:00:00.000Z",
+          completedAt: "2026-05-22T12:00:10.000Z",
+        }),
+        run({
+          id: "r2",
+          ordinal: 2,
+          requestedAt: "2026-05-22T13:00:00.000Z",
+          startedAt: "2026-05-22T13:00:00.000Z",
+          completedAt: "2026-05-22T13:00:05.000Z",
+        }),
+      ],
+      turnItems: [],
+      nowMs: NOW,
+    });
+
+    expect(trace!.totalMs).toBe(3_605_000);
+    expect(trace!.activeMs).toBe(15_000);
+    expect(trace!.workMs).toBe(15_000);
+    expect(trace!.queueWaitMs).toBe(0);
+    expect(trace!.waitMs).toBe(0);
   });
 });
 
