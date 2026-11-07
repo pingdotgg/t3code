@@ -1967,6 +1967,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           case "message_end": {
             if (turn === null) return;
             const message = event["message"];
+            if (recordString(message, "role") === "custom") {
+              if (recordField(message, "display") !== true) return;
+              const text = contentText(recordField(message, "content"));
+              if (text.trim().length === 0) return;
+              const customType = recordString(message, "customType");
+              yield* emitSystemNotice(
+                turn,
+                `custom:${turn.providerTurn.id}:${turn.nextItemOrdinal}`,
+                customType === undefined ? text : `[${customType}] ${text}`,
+              );
+              return;
+            }
             if (recordString(message, "role") !== "assistant") return;
             yield* completeOpenStreamItems(turn);
             if (recordString(message, "stopReason") === "error" && turn.failure === null) {
