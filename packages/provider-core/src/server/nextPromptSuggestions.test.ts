@@ -11,7 +11,7 @@ const commands: ReadonlyArray<NextPromptCommand> = [
   {
     name: "what-did-you-learn",
     kind: "skill",
-    description: "Use when Ryan asks what you learned.",
+    description: "Use when the user asks what you learned.",
   },
   { name: "code-review", kind: "command" },
 ];
@@ -120,7 +120,7 @@ describe("buildNextPromptSuggestionsPrompt", () => {
       commands,
       modelSelection: { instanceId: "claudeAgent", model: "claude-haiku-5-5" } as never,
     });
-    assert.include(prompt, "- skill what-did-you-learn: Use when Ryan asks what you learned.");
+    assert.include(prompt, "- skill what-did-you-learn: Use when the user asks what you learned.");
     assert.include(prompt, "- command code-review");
     assert.include(prompt, "Should I install it now?");
     assert.isBelow(prompt.length, 9_000);

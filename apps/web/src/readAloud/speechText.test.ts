@@ -21,7 +21,7 @@ describe("markdownToSpeechText", () => {
   it("reads file paths as their file names", () => {
     expect(
       markdownToSpeechText(
-        "Edited `apps/web/src/components/Sidebar.tsx` and C:\\Users\\Ryan\\notes.md, see src/main.ts:42.",
+        "Edited `apps/web/src/components/Sidebar.tsx` and C:\\Users\\alex\\notes.md, see src/main.ts:42.",
       ),
     ).toBe("Edited Sidebar.tsx and notes.md, see main.ts.");
   });

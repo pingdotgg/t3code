@@ -9,7 +9,7 @@ const LONG_INLINE_CODE = 48;
 
 const URL_PATTERN = /\b(?:https?|file):\/\/[^\s)>\]]+/gi;
 // A token with at least one / or \ between name characters, such as
-// apps/web/src/App.tsx, C:\Users\Ryan\notes.md or ~/.claude/settings.json.
+// apps/web/src/App.tsx, C:\Users\alex\notes.md or ~/.claude/settings.json.
 const PATH_PATTERN =
   /(?:[A-Za-z]:)?(?:[~.]{0,2}[\\/])?(?:[\w.@-]+[\\/])+[\w.@-]+(?::\d+(?::\d+)?)?/g;
 
