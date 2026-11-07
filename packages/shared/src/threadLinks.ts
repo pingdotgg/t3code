@@ -171,6 +171,23 @@ export function unknownThreadLinkLabel(
     : "Thread on another machine";
 }
 
+/** Self-contained thread references outside code, including their source ranges. */
+export function collectThreadLinks(markdown: string) {
+  return Array.from(markdown.matchAll(THREAD_LINK_OUTSIDE_CODE)).flatMap((match) => {
+    const link = match.groups?.href ? parseThreadLinkHref(match.groups.href) : null;
+    if (link === null) return [];
+    return [
+      {
+        ...link,
+        label: match[0].slice(1, match[0].indexOf("](")),
+        source: match[0],
+        start: match.index,
+        end: match.index + match[0].length,
+      },
+    ];
+  });
+}
+
 /** Rewrites each link outside code `replace` answers for. `label` is a Markdown link's own text. */
 export function replaceThreadLinks(
   markdown: string,

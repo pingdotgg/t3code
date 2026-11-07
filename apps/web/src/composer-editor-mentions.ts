@@ -1,6 +1,8 @@
 import type { AssistantCitation } from "@t3tools/contracts";
 import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import { collectThreadLinks } from "@t3tools/shared/threadLinks";
+import { toKindScopedComposerContextId } from "@t3tools/shared/composerContextReferences";
 import {
   collectComposerInlineTokens,
   type ComposerInlineToken,
@@ -75,16 +77,23 @@ function forEachMentionMatch(
   });
 }
 
-export function collectComposerPromptInlineTokens(text: string) {
+export function collectComposerPromptInlineTokens(text: string, answerThreadLinks = false) {
   const tokens = collectComposerInlineTokens(text);
   const citations = collectAssistantCitations(text);
   const references = collectComposerContextReferences(text);
-  if (citations.length === 0 && references.length === 0) return tokens;
+  const threads = answerThreadLinks ? collectThreadLinks(text) : [];
+  if (citations.length === 0 && references.length === 0 && threads.length === 0) return tokens;
 
   // An unfinished @ mention can otherwise consume the start of a link label.
   const links = [
     ...citations.map((match) => ({ ...match, type: "citation" as const })),
     ...references.map((match) => ({ ...match, type: "context-reference" as const })),
+    ...threads.map((match) => ({
+      ...match,
+      type: "context-reference" as const,
+      kind: "thread",
+      contextId: toKindScopedComposerContextId("thread", match.source),
+    })),
   ];
   return [
     ...tokens.filter(
@@ -94,13 +103,16 @@ export function collectComposerPromptInlineTokens(text: string) {
   ].sort((left, right) => left.start - right.start);
 }
 
-function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegment[] {
+function splitPromptTextIntoComposerSegments(
+  text: string,
+  answerThreadLinks: boolean,
+): ComposerPromptSegment[] {
   const segments: ComposerPromptSegment[] = [];
   if (!text) {
     return segments;
   }
 
-  const tokenMatches = collectComposerPromptInlineTokens(text);
+  const tokenMatches = collectComposerPromptInlineTokens(text, answerThreadLinks);
   let cursor = 0;
   for (const match of tokenMatches) {
     if (match.start < cursor) {
@@ -175,6 +187,9 @@ export function selectionTouchesMentionBoundary(
   });
 }
 
-export function splitPromptIntoComposerSegments(prompt: string): ComposerPromptSegment[] {
-  return splitPromptTextIntoComposerSegments(prompt);
+export function splitPromptIntoComposerSegments(
+  prompt: string,
+  answerThreadLinks = false,
+): ComposerPromptSegment[] {
+  return splitPromptTextIntoComposerSegments(prompt, answerThreadLinks);
 }

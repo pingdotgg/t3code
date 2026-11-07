@@ -151,6 +151,7 @@ export interface ComposerPromptEditorProps {
   cursor: number;
   richTextEnabled?: boolean;
   literalText?: boolean;
+  answerThreadLinks?: boolean;
   contextRecords: ComposerDraftContextRecords;
   buildContextClipboardFragment?:
     | ((contextIds: ReadonlyArray<string>) => string | null)
@@ -714,13 +715,18 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
   // a caret inside unknown `$name` text, so retain the exact Markdown offset here.
   return (
     <ComposerPromptEditorTiptapInner
-      key={`${props.draftKey ?? ""}:${props.literalText ? "literal" : props.richTextEnabled ? "rich" : "plain"}`}
+      key={`${props.draftKey ?? ""}:${props.literalText ? "literal" : props.richTextEnabled ? "rich" : "plain"}:${props.answerThreadLinks ?? false}`}
       {...props}
       restoreFocusRef={restoreFocusRef}
       initialExpandedCursor={
         selection?.value === props.value && selection.cursor === props.cursor
           ? selection.expandedCursor
-          : expandCollapsedComposerCursor(props.value, props.cursor, props.literalText)
+          : expandCollapsedComposerCursor(
+              props.value,
+              props.cursor,
+              props.literalText,
+              props.answerThreadLinks,
+            )
       }
       onChange={onChange}
     />
@@ -863,6 +869,7 @@ function ComposerPromptEditorTiptapInner(
     cursor,
     richTextEnabled,
     literalText = false,
+    answerThreadLinks = false,
     contextRecords,
     buildContextClipboardFragment,
     importContextFragment,
@@ -895,9 +902,11 @@ function ComposerPromptEditorTiptapInner(
           0,
           Math.min(text.length, Number.isFinite(position) ? Math.floor(position) : text.length),
         )
-      : clampCollapsedComposerCursor(text, position);
+      : clampCollapsedComposerCursor(text, position, false, answerThreadLinks);
   const expandEditorCursor = (text: string, position: number) =>
-    literalText ? position : expandCollapsedComposerCursor(text, position);
+    literalText
+      ? position
+      : expandCollapsedComposerCursor(text, position, false, answerThreadLinks);
 
   const latestValueRef = useRef(value);
   // The editor config is built once, so its handlers reach the current callbacks through here.
@@ -957,7 +966,12 @@ function ComposerPromptEditorTiptapInner(
       0,
       Math.min(map.value.length, flatToMarkdown(map, fromFlat)),
     );
-    const nextCursor = collapseExpandedComposerCursor(map.value, nextExpandedCursor, literalText);
+    const nextCursor = collapseExpandedComposerCursor(
+      map.value,
+      nextExpandedCursor,
+      literalText,
+      answerThreadLinks,
+    );
     const nextSelectionRange = {
       start: Math.min(nextExpandedCursor, flatToMarkdown(map, toFlat)),
       end: Math.max(nextExpandedCursor, flatToMarkdown(map, toFlat)),
@@ -1039,6 +1053,7 @@ function ComposerPromptEditorTiptapInner(
       content: buildDocJson(value, (name) => composerSkillMeta(skills, name), {
         styling: richText,
         literalText,
+        answerThreadLinks,
       }),
       editable: !disabled,
       editorProps: {
@@ -1331,9 +1346,11 @@ function ComposerPromptEditorTiptapInner(
           const importFragment = readCallbacks().importContextFragment;
           let text =
             !literalText && importFragment
-              ? importPastedComposerText(clipboardData, importFragment)
+              ? importPastedComposerText(clipboardData, importFragment, answerThreadLinks)
               : pastedText;
-          const tokens = literalText ? [] : collectComposerPromptInlineTokens(`${text}\n`);
+          const tokens = literalText
+            ? []
+            : collectComposerPromptInlineTokens(`${text}\n`, answerThreadLinks);
           const isChip = (token: (typeof tokens)[number] | undefined) =>
             token?.type === "mention" ||
             (token?.type === "skill" && skillLabelFor(token.value) !== null);
@@ -1360,7 +1377,7 @@ function ComposerPromptEditorTiptapInner(
             insertMarkdownParagraphs(
               text,
               skillLabelFor,
-              { styling: richText, blocks: !nested, literalText, literalLength },
+              { styling: richText, blocks: !nested, literalText, literalLength, answerThreadLinks },
               (content) => {
                 editorInstance
                   .chain()
@@ -1433,7 +1450,12 @@ function ComposerPromptEditorTiptapInner(
     const expandedCursor = Math.max(0, Math.min(map.value.length, flatToMarkdown(map, fromFlat)));
     const next: typeof snapshot = {
       value: map.value,
-      cursor: collapseExpandedComposerCursor(map.value, expandedCursor, literalText),
+      cursor: collapseExpandedComposerCursor(
+        map.value,
+        expandedCursor,
+        literalText,
+        answerThreadLinks,
+      ),
       expandedCursor,
       contextIds: literalText ? [] : [...map.contextIds],
     };
@@ -1518,7 +1540,7 @@ function ComposerPromptEditorTiptapInner(
     if (previousSnapshot.value !== value) {
       saveCitationDraft(editor, previousSnapshot.value);
       editor.commands.setContent(
-        buildDocJson(value, skillLabelFor, { styling: richText, literalText }),
+        buildDocJson(value, skillLabelFor, { styling: richText, literalText, answerThreadLinks }),
         {
           emitUpdate: false,
         },
@@ -1557,6 +1579,7 @@ function ComposerPromptEditorTiptapInner(
     expandEditorCursor,
     initialExpandedCursor,
     literalText,
+    answerThreadLinks,
     richText,
     skillLabelFor,
     value,
@@ -1632,6 +1655,8 @@ function ComposerPromptEditorTiptapInner(
             : collapseExpandedComposerCursor(
                 snapshotRef.current.value,
                 snapshotRef.current.value.length,
+                false,
+                answerThreadLinks,
               ),
         );
       },
@@ -1799,7 +1824,13 @@ function ComposerPromptEditorTiptapInner(
 function insertMarkdownParagraphs(
   value: string,
   skillLabelFor: (name: string) => SkillMeta | null,
-  options: { styling: boolean; blocks?: boolean; literalText?: boolean; literalLength?: number },
+  options: {
+    styling: boolean;
+    blocks?: boolean;
+    literalText?: boolean;
+    literalLength?: number;
+    answerThreadLinks?: boolean;
+  },
   insertContent: (content: JSONContent[] | JSONContent) => void,
 ): void {
   const blocks = buildTiptapContent(value, skillLabelFor, options);

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 
 import {
+  collectThreadLinks,
   formatHostedThreadLink,
   formatThreadLink,
   guessThreadLinkRef,
@@ -59,6 +60,21 @@ describe("thread link destinations", () => {
 });
 
 describe("thread links", () => {
+  it("collects exact chip sources and ranges while leaving code and invalid links literal", () => {
+    const link = ref("remote", "thread:peer%3A1");
+    const source = formatThreadLink(link, "Parser design");
+    const text =
+      "Ask " +
+      source +
+      ", then `" +
+      source +
+      "`.\n```md\n" +
+      source +
+      "\n```\n[bad](t3-thread://v1/)";
+    expect(collectThreadLinks(text)).toEqual([
+      { ...link, label: "Parser design", source, start: 4, end: 4 + source.length },
+    ]);
+  });
   it("takes the ids verbatim, percent escapes included", () => {
     expect(parseThreadLinkHref("t3-thread://v1/mcp:1234")).toEqual(v1("mcp:1234"));
     expect(parseThreadLinkHref("t3-thread://v1/thread:delegated-task:mcp%3A1")).toEqual(
