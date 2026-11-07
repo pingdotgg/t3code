@@ -19,3 +19,12 @@ export function subagentResumedSince(
     !Number.isNaN(notifiedAtMillis) && DateTime.toEpochMillis(agent.startedAt) > notifiedAtMillis
   );
 }
+
+export function plainDetail(text: string): string {
+  return text
+    .replace(/!?\[([^\]]+)\]\((?:\\.|[^\\()]|\((?:\\.|[^\\()])*\))*\)/g, "$1")
+    .replace(/`/g, "")
+    .replace(/^[ \t]*[-*][ \t]+/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}

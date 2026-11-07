@@ -1,7 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { subagentResumedSince } from "./V2LifecycleRow.logic";
+import { plainDetail, subagentResumedSince } from "./V2LifecycleRow.logic";
 
 const failedAt = "2026-10-09T12:21:00.000Z";
 const beforeFailure = DateTime.makeUnsafe("2026-10-09T12:05:00.000Z");
@@ -28,5 +28,16 @@ describe("subagentResumedSince", () => {
     expect(subagentResumedSince({ status: "failed", startedAt: beforeFailure }, failedAt)).toBe(
       false,
     );
+  });
+});
+
+describe("plainDetail", () => {
+  it.each([
+    ["![screenshot](screenshots/shot.png) Verified", "screenshot Verified"],
+    ["[docs](https://en.wikipedia.org/wiki/T3_(protocol))", "docs"],
+    ["[report](outputs/report%20(final).md)", "report"],
+    ["[report](outputs/report\\(final.md)", "report"],
+  ])("strips image and link markup from %s", (detail, expected) => {
+    expect(plainDetail(detail)).toBe(expected);
   });
 });
