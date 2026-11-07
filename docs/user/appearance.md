@@ -113,3 +113,7 @@ create or replace published definitions, duplicate a built-in or published theme
 themes. These tools cannot access personal themes saved in a client. Creating or editing a theme
 does not apply it. Ask the agent to apply it to set the environment default, or clear the default
 to let clients keep their current choices. Clear or change the default before deleting its theme.
+
+Atomic creation through MCP requires a filesystem with hard-link support. On filesystems without it,
+publish a complete temporary file with an atomic rename, or move the T3 home to a supporting filesystem.
+Replacing an existing theme still works without hard links.

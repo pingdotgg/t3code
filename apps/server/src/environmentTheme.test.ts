@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - publishing tests simulate filesystem capabilities.
+import * as NodeFS from "node:fs";
+import { vi } from "vite-plus/test";
 import { EnvironmentThemeFile } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -8,6 +11,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -20,6 +24,11 @@ import * as Policy from "./policy/ManagedPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return { ...fs, linkSync: vi.fn(fs.linkSync) };
+});
 
 const encodeThemeFile = Schema.encodeSync(Schema.fromJsonString(EnvironmentThemeFile));
 
@@ -148,6 +157,70 @@ it.layer(Layer.merge(NodeServices.layer, NodeCrypto.layer))("environment theme",
       ),
   );
 
+  it.effect("reports directory failures to readers and retains the published snapshot", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let denied = false;
+      const failing = FileSystem.FileSystem.of({
+        ...fs,
+        readDirectory: (directory) =>
+          denied && directory.endsWith("themes")
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "readDirectory",
+                  pathOrDescriptor: directory,
+                }),
+              )
+            : fs.readDirectory(directory),
+      });
+      yield* withEnvironmentThemes(
+        { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
+        Effect.gen(function* () {
+          const service = yield* EnvironmentTheme.EnvironmentThemeService;
+          assert.equal((yield* service.read("nightfall")).id, "nightfall");
+          denied = true;
+          assert.equal((yield* Effect.flip(service.list)).reason, "storage");
+          assert.equal((yield* Effect.flip(service.read("nightfall"))).reason, "storage");
+          assert.deepEqual(
+            (yield* service.current).map((theme) => theme.id),
+            ["nightfall"],
+          );
+          denied = false;
+          const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+          yield* fs.remove(environmentThemesDir, { recursive: true });
+          assert.equal(
+            (yield* service.list).every((theme) => theme.builtin),
+            true,
+          );
+        }),
+      ).pipe(Effect.provideService(FileSystem.FileSystem, failing));
+    }),
+  );
+
+  it.effect("refuses deletion when settings cannot be decoded and explains how to recover", () =>
+    withEnvironmentThemes(
+      { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
+      Effect.gen(function* () {
+        const service = yield* EnvironmentTheme.EnvironmentThemeService;
+        const fs = yield* FileSystem.FileSystem;
+        const { settingsPath } = yield* ServerConfig.ServerConfig;
+        yield* fs.writeFileString(
+          settingsPath,
+          JSON.stringify({
+            defaultTheme: "nightfall",
+            newWorktreesStartFromOrigin: "invalid",
+          }),
+        );
+        const error = yield* Effect.flip(service.remove("nightfall"));
+        assert.equal(error.reason, "storage");
+        assert.include(error.message, "settings.json");
+        assert.equal((yield* service.read("nightfall")).id, "nightfall");
+      }),
+    ),
+  );
+
   it.effect("protects an effective managed default and refuses apply and clear", () =>
     withEnvironmentThemes(
       { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
@@ -209,6 +282,40 @@ it.layer(Layer.merge(NodeServices.layer, NodeCrypto.layer))("environment theme",
         }),
       ).pipe(Effect.provideService(FileSystem.FileSystem, gated));
     }),
+  );
+
+  it.effect("supports atomic overwrites without hard links and safely refuses new creates", () =>
+    withEnvironmentThemes(
+      { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
+      Effect.gen(function* () {
+        using _link = vi.spyOn(NodeFS, "linkSync").mockImplementation(() => {
+          throw Object.assign(new Error("Hard links unavailable"), { code: "ENOTSUP" });
+        });
+        const service = yield* EnvironmentTheme.EnvironmentThemeService;
+        yield* service.save({ id: "nightfall", theme: SHARED_THEME, overwrite: true });
+        assert.equal((yield* service.read("nightfall")).name, SHARED_THEME.name);
+        const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+        const publication = yield* EnvironmentTheme.publishThemeContents({
+          themesDir: environmentThemesDir,
+          themeId: "nightfall",
+          raw: encodeThemeFile(NIGHTFALL_THEME),
+        });
+        yield* publication.revert;
+        assert.equal((yield* service.read("nightfall")).name, SHARED_THEME.name);
+        const error = yield* Effect.flip(
+          service.save({
+            id: "new-theme",
+            theme: NIGHTFALL_THEME,
+            overwrite: false,
+          }),
+        );
+        assert.equal(error.reason, "unsupported");
+        assert.include(error.message, "hard links");
+        assert.equal((yield* Effect.flip(service.read("new-theme"))).reason, "not_found");
+        const fs = yield* FileSystem.FileSystem;
+        assert.deepEqual(yield* fs.readDirectory(environmentThemesDir), ["nightfall.json"]);
+      }),
+    ),
   );
 
   it.effect("never replaces another publisher during create", () =>
@@ -398,7 +505,7 @@ it.layer(Layer.merge(NodeServices.layer, NodeCrypto.layer))("environment theme",
       Effect.gen(function* () {
         assert.deepEqual(
           (yield* currentThemes).map((theme) => theme.id),
-          ["nightfall", "notepad"],
+          ["css-var", "nightfall", "notepad"],
         );
         const service = yield* EnvironmentTheme.EnvironmentThemeService;
         yield* service.remove("malformed");

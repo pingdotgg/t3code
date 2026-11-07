@@ -356,19 +356,35 @@ export function summarizeT3ToolCalls(
       label = phrase("Listed", "list", `environment themes ${times}`);
       break;
     case "theme-read":
-      label = phrase("Read", "read", `an environment theme ${times}`);
+      label = phrase("Read", "read", quantity(countEntities(entityIds("id")), "environment theme"));
       break;
     case "theme-create":
-      label = phrase("Published", "publish", `an environment theme ${times}`);
+      label = phrase(
+        "Published",
+        "publish",
+        quantity(countEntities(entityIds("id")), "environment theme"),
+      );
       break;
     case "theme-update":
-      label = phrase("Updated", "update", `an environment theme ${times}`);
+      label = phrase(
+        "Updated",
+        "update",
+        quantity(countEntities(entityIds("id")), "environment theme"),
+      );
       break;
     case "theme-delete":
-      label = phrase("Deleted", "delete", `an environment theme ${times}`);
+      label = phrase(
+        "Deleted",
+        "delete",
+        quantity(countEntities(entityIds("id")), "environment theme"),
+      );
       break;
     case "theme-duplicate":
-      label = phrase("Duplicated", "duplicate", `an environment theme ${times}`);
+      label = phrase(
+        "Duplicated",
+        "duplicate",
+        quantity(countEntities(entityIds("id")), "environment theme"),
+      );
       break;
     case "theme-apply":
       label = phrase("Applied", "apply", `the environment theme default ${times}`);

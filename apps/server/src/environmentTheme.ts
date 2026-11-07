@@ -60,6 +60,7 @@ export class ThemeLibraryError extends Schema.TaggedError<ThemeLibraryError>()(
       "storage",
       "limit",
       "managed",
+      "unsupported",
     ]),
     detail: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
@@ -143,7 +144,7 @@ export const readThemeFileGuarded = (filePath: string, maxBytes: number): string
   }
 };
 
-/** The CLI, MCP and watcher accept the same partial v1 palettes. */
+/** CLI and MCP writes require usable colors; the watcher preserves lenient legacy files. */
 export const validateThemeFile = Effect.fn("EnvironmentTheme.validateFile")(function* (
   raw: string,
 ) {
@@ -182,9 +183,20 @@ export const validateThemeFile = Effect.fn("EnvironmentTheme.validateFile")(func
 
 export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
   const fs = yield* FileSystem.FileSystem;
-  const entries = yield* fs
-    .readDirectory(themesDir)
-    .pipe(Effect.orElseSucceed((): Array<string> => []));
+  const entries = yield* fs.readDirectory(themesDir).pipe(
+    Effect.catch((cause) =>
+      cause.reason._tag === "NotFound"
+        ? Effect.succeed([])
+        : Effect.fail(
+            new ThemeLibraryError({
+              reason: "storage",
+              detail:
+                "Could not read theme storage. Check directory permissions and disk availability.",
+              cause,
+            }),
+          ),
+    ),
+  );
 
   const themes: Array<EnvironmentTheme> = [];
   let examined = 0;
@@ -216,15 +228,16 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
     }
     if (raw.trim().length === 0) continue;
 
-    const validated = yield* validateThemeFile(raw).pipe(Effect.result);
-    if (validated._tag === "Failure") {
-      yield* Effect.logWarning("ignoring invalid environment theme", {
-        path: filePath,
-        detail: validated.failure.message,
-      });
+    const decoded = decodeEnvironmentThemeFileJsonExit(raw);
+    if (decoded._tag === "Failure") {
+      yield* Effect.logWarning("ignoring invalid environment theme", { path: filePath });
       continue;
     }
-    const file = validated.success;
+    const file = decoded.value;
+    if (!environmentThemeFileHasColors(file)) {
+      yield* Effect.logWarning("ignoring environment theme without colors", { path: filePath });
+      continue;
+    }
 
     totalBytes += Buffer.byteLength(raw);
     if (totalBytes > MAX_THEME_TOTAL_BYTES) {
@@ -239,6 +252,9 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
   }
   return themes;
 });
+
+const hardLinksUnavailable = (cause: unknown) =>
+  ["EPERM", "ENOTSUP", "EOPNOTSUPP"].includes((cause as NodeJS.ErrnoException).code ?? "");
 
 class ThemePublishError extends Schema.TaggedError<ThemePublishError>()("ThemePublishError", {
   themesDir: Schema.String,
@@ -324,11 +340,16 @@ export const publishThemeContents = Effect.fn("EnvironmentTheme.publish")(functi
         return true;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        // FAT and some network filesystems lack hard links; preserve CLI overwrite support.
+        if (hardLinksUnavailable(error)) {
+          NodeFS.renameSync(destinationPath, backupPath);
+          return true;
+        }
         throw error;
       }
     },
     catch: publishFailure,
-  });
+  }).pipe(Effect.onError(() => fs.remove(stagingPath).pipe(Effect.ignoreCause({ log: true }))));
 
   const revert = Effect.sync(() => {
     try {
@@ -370,11 +391,18 @@ export const publishThemeContents = Effect.fn("EnvironmentTheme.publish")(functi
     catch: (cause) =>
       input.overwrite === false && (cause as NodeJS.ErrnoException).code === "EEXIST"
         ? new ThemeLibraryError({ reason: "collision" })
-        : publishFailure(cause),
+        : input.overwrite === false && hardLinksUnavailable(cause)
+          ? new ThemeLibraryError({
+              reason: "unsupported",
+              detail:
+                "Atomic theme creation requires hard links. Move the T3 home to a filesystem that supports hard links, or publish a complete temporary file with an atomic rename.",
+              cause,
+            })
+          : publishFailure(cause),
   }).pipe(Effect.onError(() => revert));
 
   // A concurrent writer outside this process can still fill the directory after the check above.
-  const visible = yield* readPublishedThemes(input.themesDir);
+  const visible = yield* readPublishedThemes(input.themesDir).pipe(Effect.onError(() => revert));
   if (!visible.some((theme) => theme.id === themeId)) {
     yield* revert;
     return yield* new ThemeLibraryError({
@@ -425,7 +453,16 @@ const make = Effect.gen(function* () {
   // A save emits several events, and fs.watch can fire before content is flushed.
   const watchEvents = fs.watch(environmentThemesDir).pipe(Stream.debounce(Duration.millis(100)));
 
-  yield* refresh;
+  const refreshForClients = refresh.pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning(
+        "could not refresh environment themes; retaining published state",
+        cause,
+      ).pipe(Effect.andThen(Ref.get(published))),
+    ),
+  );
+
+  yield* refreshForClients;
   yield* Stream.runForEach(watchEvents, () => refresh.pipe(Effect.ignoreCause({ log: true }))).pipe(
     Effect.ignoreCause({ log: true }),
     Effect.forkIn(watcherScope),
@@ -531,21 +568,34 @@ const make = Effect.gen(function* () {
     if (UNPUBLISHABLE_THEME_IDS.has(id)) return yield* new ThemeLibraryError({ reason: "builtin" });
     if (!isEnvironmentThemeId(id)) return yield* new ThemeLibraryError({ reason: "invalid" });
     yield* settings
-      .withSettingsSnapshot((current) =>
-        Effect.gen(function* () {
-          if (current.defaultTheme === id)
-            return yield* new ThemeLibraryError({ reason: "default_in_use" });
-          yield* Effect.try({
-            try: () =>
-              NodeFS.unlinkSync(path.join(environmentThemesDir, `${id}${THEME_FILE_SUFFIX}`)),
-            catch: (cause) =>
-              (cause as NodeJS.ErrnoException).code === "ENOENT"
-                ? new ThemeLibraryError({ reason: "not_found" })
-                : storageError(cause),
-          });
-        }),
+      .withSettingsSnapshot(
+        (current) =>
+          Effect.gen(function* () {
+            if (current.defaultTheme === id)
+              return yield* new ThemeLibraryError({ reason: "default_in_use" });
+            yield* Effect.try({
+              try: () =>
+                NodeFS.unlinkSync(path.join(environmentThemesDir, `${id}${THEME_FILE_SUFFIX}`)),
+              catch: (cause) =>
+                (cause as NodeJS.ErrnoException).code === "ENOENT"
+                  ? new ThemeLibraryError({ reason: "not_found" })
+                  : storageError(cause),
+            });
+          }),
+        { requireValidFile: true },
       )
-      .pipe(Effect.mapError(storageError));
+      .pipe(
+        Effect.mapError((cause) =>
+          isThemeLibraryError(cause)
+            ? cause
+            : new ThemeLibraryError({
+                reason: "storage",
+                detail:
+                  "Could not read settings. Check settings.json syntax, permissions and disk space.",
+                cause,
+              }),
+        ),
+      );
     yield* refresh;
   });
   const setDefault = Effect.fn("EnvironmentTheme.setDefault")(function* (id: string) {
@@ -572,12 +622,12 @@ const make = Effect.gen(function* () {
     duplicate: (input) => locked(duplicate(input)),
     remove: (id) => locked(remove(id)),
     setDefault: (id) => locked(setDefault(id)),
-    current: Effect.map(refresh, (state) => state.themes),
+    current: Effect.map(refreshForClients, (state) => state.themes),
     get streamChanges() {
       return Stream.unwrap(
         Effect.gen(function* () {
           const subscription = yield* PubSub.subscribe(changes);
-          const snapshot = yield* refresh;
+          const snapshot = yield* refreshForClients;
           return Stream.concat(
             Stream.make(snapshot.themes),
             Stream.fromSubscription(subscription).pipe(

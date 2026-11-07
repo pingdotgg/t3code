@@ -277,6 +277,7 @@ export class ServerSettingsService extends Context.Service<
 
     readonly withSettingsSnapshot: <A, E, R>(
       use: (settings: ServerSettings) => Effect.Effect<A, E, R>,
+      options?: { readonly requireValidFile: boolean },
     ) => Effect.Effect<A, E | ServerSettingsError, R>;
 
     readonly streamChanges: Stream.Stream<ServerSettings>;
@@ -1250,8 +1251,25 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const withSettingsSnapshot: ServerSettingsService["Service"]["withSettingsSnapshot"] = (use) =>
-    writeSemaphore.withPermits(1)(getMaterializedSettings.pipe(Effect.flatMap(use)));
+  const withSettingsSnapshot: ServerSettingsService["Service"]["withSettingsSnapshot"] = (
+    use,
+    options,
+  ) =>
+    writeSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        if (options?.requireValidFile) {
+          const { parseFailure } = yield* reloadSettings;
+          if (Option.isSome(parseFailure)) {
+            return yield* new ServerSettingsError({
+              settingsPath,
+              operation: "read-file",
+              cause: parseFailure.value,
+            });
+          }
+        }
+        return yield* use(yield* getMaterializedSettings);
+      }),
+    );
 
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
@@ -1360,6 +1378,7 @@ const make = Effect.gen(function* () {
     getSettings: getMaterializedSettings,
     setDefaultTheme: (id) =>
       updateAndPersistSettings({}, (current) => {
+        // vetWrite permits unchanged values, but even a timestamp-only reapply must honor policy.
         const locked = ["defaultTheme", "defaultThemeSetAt"].find((key) =>
           isManagedSettingPath(managedPolicy, key),
         );
