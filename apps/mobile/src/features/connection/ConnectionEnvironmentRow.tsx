@@ -23,11 +23,15 @@ import { environmentPresentations } from "../../state/presentation";
 import { ConnectionDiagnosisDetails, useConnectionDiagnosis } from "./ConnectionDiagnosisDetails";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
-import { environmentStatusText } from "./environmentStatusText";
+import {
+  PAUSED_SWITCH_OPACITY,
+  environmentStatusText,
+  offStatusText,
+} from "./environmentStatusText";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
   if (!environment.isEnabled && environment.connectionState !== "unsupported") {
-    return "Off";
+    return offStatusText(environment);
   }
   return environmentStatusText({
     phase: environment.connectionState,
@@ -64,6 +68,7 @@ export function ConnectionEnvironmentRow(props: {
     presentation,
   );
   const enabled = props.environment.isEnabled && !unsupported;
+  const switchedOn = (enabled || props.environment.isPausedByFocus) && !unsupported;
   const statusLabel = connectionStatusLabel(props.environment);
   const statusTraceId = enabled ? props.environment.connectionErrorTraceId : null;
   const hasConnectionFailure = enabled && props.environment.connectionError !== null;
@@ -166,10 +171,13 @@ export function ConnectionEnvironmentRow(props: {
 
         <ThemedSwitch
           accessibilityLabel={`Enable ${props.environment.environmentLabel}`}
-          style={{ alignSelf: "center" }}
+          style={{
+            alignSelf: "center",
+            opacity: props.environment.isPausedByFocus ? PAUSED_SWITCH_OPACITY : 1,
+          }}
           disabled={unsupported && !canRetry}
           onValueChange={(next) => props.onSetEnabled(props.environment.environmentId, next)}
-          value={enabled}
+          value={switchedOn}
         />
         <Pressable
           accessibilityRole="button"
