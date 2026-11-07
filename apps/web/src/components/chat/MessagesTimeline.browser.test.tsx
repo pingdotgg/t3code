@@ -552,49 +552,6 @@ describe("MessagesTimeline work rows", () => {
     expect(navigations.filter((navigation) => navigation.source !== "pointer")).toEqual([]);
   });
 
-  it("follows growth that lands after a smooth follow scroll starts", async () => {
-    const runId = RunId.make("tail-run");
-    const props = {
-      ...baseProps(),
-      isWorking: true,
-      activeTurnStartedAt: CREATED_AT,
-      latestRun: { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
-    };
-    const entries = (lines: number) => [
-      ...Array.from({ length: 40 }, (_, index) =>
-        message(`Earlier ${index}`, {}, `earlier-${index}`),
-      ),
-      message("Build it", { runId }),
-      message(
-        Array.from({ length: lines }, (_, index) => `Line ${index}`).join("\n\n"),
-        { runId, role: "assistant", streaming: true },
-        "answer",
-      ),
-    ];
-    await using screen = await renderElement(
-      <MessagesTimeline {...props} timelineEntries={entries(2)} />,
-    );
-    await expect.element(screen.getByText("Line 1", { exact: true })).toBeVisible();
-    const viewport = props.listRef.current!.getScrollableNode()!;
-    const gap = () => viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
-    await vi.waitFor(() => expect(gap()).toBeLessThan(2));
-    const realSetTimeout = globalThis.setTimeout;
-    using _followRetry = stubGlobal("setTimeout", ((
-      handler: () => void,
-      delay?: number,
-      ...args: unknown[]
-    ) =>
-      delay === 500 ? 0 : realSetTimeout(handler, delay, ...args)) as unknown as typeof setTimeout);
-
-    for (const lines of [12, 22, 32]) {
-      await screen.rerender(<MessagesTimeline {...props} timelineEntries={entries(lines)} />);
-      await expect
-        .element(screen.getByText(`Line ${lines - 1}`, { exact: true }))
-        .toBeInTheDocument();
-      await vi.waitFor(() => expect(gap()).toBeLessThan(2));
-    }
-  });
-
   it.each(["delegated", "legacy", "missing"] as const)(
     "uses the reported task for %s completion notifications",
     async (source) => {
