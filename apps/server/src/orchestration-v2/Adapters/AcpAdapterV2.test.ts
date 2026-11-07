@@ -6641,7 +6641,7 @@ describe("AcpAdapterV2", () => {
   );
 
   it.effect(
-    "projects a child terminal in the completed-root finalization window exactly once",
+    "projects changed full results in the completed-root finalization window once per result",
     () =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -6672,6 +6672,7 @@ describe("AcpAdapterV2", () => {
           const secondChildSessionId = "mock-child-session-finalize-window-second";
           let firstSubagentStatus: "running" | "completed" = "running";
           let secondSubagentStatus: "waiting" | "completed" = "waiting";
+          let secondSubagentResult: string | null = "SECOND_DONE";
           type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
           let sessionUpdateHandler:
             | Parameters<RuntimeService["handleSessionUpdate"]>[0]
@@ -6709,7 +6710,7 @@ describe("AcpAdapterV2", () => {
                     model: null,
                     status: secondSubagentStatus,
                     childSessionId: secondChildSessionId,
-                    result: secondSubagentStatus === "completed" ? "SECOND_DONE" : null,
+                    result: secondSubagentStatus === "completed" ? secondSubagentResult : null,
                     suppressNormalTool: true,
                   } as AcpAdapterV2SubagentUpdate;
                 }
@@ -6782,10 +6783,6 @@ describe("AcpAdapterV2", () => {
               rawOutput: { content: "FIRST_DONE" },
             },
           }).pipe(Effect.provideService(Clock.Clock, blockingClock));
-          for (let attempt = 0; attempt < 10; attempt += 1) {
-            yield* Effect.yieldNow;
-          }
-
           yield* sessionUpdateHandler!({
             sessionId: "mock-session-1",
             update: {
@@ -6798,8 +6795,6 @@ describe("AcpAdapterV2", () => {
             },
           });
           assert.isTrue(yield* hasPendingBackgroundWork);
-
-          while (Option.isSome(yield* Queue.poll(events))) {}
 
           blockNextClockRead = true;
           const adjustFiber = yield* TestClock.adjust("3 seconds").pipe(Effect.forkScoped);
@@ -6816,35 +6811,71 @@ describe("AcpAdapterV2", () => {
               rawOutput: { content: "SECOND_DONE" },
             },
           });
+          for (const result of ["SECOND_FULL_RESULT", "SECOND_FULL_RESULT", null]) {
+            secondSubagentResult = result;
+            yield* sessionUpdateHandler!({
+              sessionId: secondChildSessionId,
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "tool-call-generic-2",
+                title: "second background subagent",
+                kind: "other",
+                status: "completed",
+                rawOutput: { content: result },
+              },
+            });
+          }
           yield* Deferred.succeed(releaseFinalizationClockRead, undefined);
           yield* Fiber.join(adjustFiber);
-          yield* Effect.yieldNow;
-          yield* Effect.yieldNow;
 
           const providerTurnId = idAllocator.derive.providerTurn({
             driver: ACP_TEST_DRIVER,
             nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
           });
-          let completedSubagentUpdates = 0;
-          let rootTerminalStatus: string | null = null;
-          let polled = yield* Queue.poll(events);
-          while (Option.isSome(polled)) {
-            const event = polled.value;
-            if (
-              event.type === "turn_item.updated" &&
-              event.turnItem.type === "subagent" &&
-              event.turnItem.nativeItemRef?.nativeId === "task-finalize-window-second" &&
-              event.turnItem.status === "completed"
-            ) {
-              completedSubagentUpdates += 1;
-            }
-            if (event.type === "turn.terminal" && event.providerTurnId === providerTurnId) {
-              rootTerminalStatus = event.status;
-            }
-            polled = yield* Queue.poll(events);
-          }
-          assert.equal(rootTerminalStatus, "completed");
-          assert.equal(completedSubagentUpdates, 1);
+          const observed = yield* Stream.fromQueue(events).pipe(
+            Stream.takeUntil(
+              (event) => event.type === "turn.terminal" && event.providerTurnId === providerTurnId,
+            ),
+            Stream.runCollect,
+          );
+          const terminal = observed.at(-1);
+          assert.equal(
+            terminal?.type === "turn.terminal" ? terminal.status : undefined,
+            "completed",
+          );
+          const results = observed.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "subagent" &&
+            event.turnItem.nativeItemRef?.nativeId === "task-finalize-window-second" &&
+            event.turnItem.status === "completed"
+              ? [event.turnItem.result]
+              : [],
+          );
+          assert.deepEqual(results, ["SECOND_DONE", "SECOND_FULL_RESULT"]);
+          const childUpdates = observed.flatMap((event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.nativeTaskRef?.nativeId === "task-finalize-window-second" &&
+            event.subagent.status === "completed"
+              ? [event.subagent]
+              : [],
+          );
+          assert.deepEqual(
+            childUpdates.map(({ result }) => result),
+            results,
+          );
+          assert.equal(childUpdates[1]?.completedAt, childUpdates[0]?.completedAt);
+          const replies = observed.flatMap((event) =>
+            event.type === "message.updated" &&
+            event.message.threadId === childUpdates[0]?.childThreadId &&
+            event.message.role === "assistant"
+              ? [event.message]
+              : [],
+          );
+          assert.deepEqual(
+            replies.map(({ text }) => text),
+            results,
+          );
+          assert.equal(replies[1]?.id, replies[0]?.id);
           assert.isFalse(
             yield* hasPendingBackgroundWork,
             "finalize-window terminal must clear the carryover pin",

@@ -14,8 +14,9 @@ import {
 } from "../shared.ts";
 
 /**
- * fx reports each sub-agent as a `subagent` tool call and streams none of the
- * child's frames, so each child thread holds the task and fx's reply.
+ * This recording's fx does not confirm hooks, so fx reports each sub-agent
+ * only as a `subagent` tool call and each child thread holds the task and
+ * fx's clipped reply.
  */
 export function assertFxSubagentOutput(
   result: OrchestratorV2ScenarioResult,
