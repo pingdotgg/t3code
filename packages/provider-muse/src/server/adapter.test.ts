@@ -1736,6 +1736,8 @@ describe("MuseAdapterV2", () => {
         fake.queueResponse("session/compact", runActive());
         yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread));
         const first = yield* fake.takeCall("session/compact");
+        // A wake's own automatic compaction must not end the waiting manual one.
+        yield* fake.emit("item/completed", compactionItem("auto-compaction-2"));
         if (run === "wake-2") {
           yield* fake.emit("turn/started", { turnId: "wake-2" });
           yield* fake.emit("turn/completed", { turnId: "wake-1", terminal: "completed" });
@@ -1765,7 +1767,7 @@ describe("MuseAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect("settles a request shown during compaction after the compaction is stopped", () =>
+  it.effect("keeps a request shown during compaction live after the compaction is stopped", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHeldWakeHarness(fake);
@@ -1787,6 +1789,25 @@ describe("MuseAdapterV2", () => {
         providerTurnId: running.providerTurn.id,
       });
       assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "interrupted");
+      yield* fake.emit("approval/updated", {
+        ...approval("wake-2"),
+        currentRequirementId: { approvalId: "approval-1", sourceIndex: 1 },
+      });
+      yield* harness.takeEvent(
+        "runtime_request.updated",
+        (event) =>
+          event.runtimeRequest.id === shown.runtimeRequest.id &&
+          event.runtimeRequest.status === "pending",
+      );
+      yield* harness.runtime.respondToRuntimeRequest({
+        requestId: shown.runtimeRequest.id,
+        decision: "accept",
+      });
+      const decision = yield* fake.takeCall("approval/decide");
+      assert.deepStrictEqual(decision.params.requirementId, {
+        approvalId: "approval-1",
+        sourceIndex: 1,
+      });
       yield* fake.emit("approval/resolved", { approvalId: "approval-1", turnId: "wake-2" });
       const resolved = yield* harness.takeEvent(
         "runtime_request.updated",

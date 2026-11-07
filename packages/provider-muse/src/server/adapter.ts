@@ -220,7 +220,8 @@ interface ActiveTurn {
   flushScheduled: boolean;
   interruptRequested: boolean;
   compact: boolean;
-  compactAdmitted: boolean;
+  /** Muse admits compaction only when idle; while waiting, its compaction items are not ours. */
+  compactPhase: "sending" | "waiting" | "admitted";
 }
 
 interface PendingRequest {
@@ -1150,8 +1151,16 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
        */
       const publishRequest = Effect.fnUntraced(function* (native: PendingRequest["native"]) {
         const child = native.type === "approval" && native.value.subagentOrigin !== undefined;
+        const nativeId =
+          native.type === "approval" ? native.value.approvalId : native.value.userInputId;
+        const previous = [...pending.values()].find(
+          (entry) =>
+            entry.native.type === native.type &&
+            entry.request.nativeRequestRef?.nativeId === nativeId,
+        );
         // Compaction never asks, so requests during it come from runs it waits on.
-        const runless = child || active?.compact === true;
+        const runless =
+          child || active?.compact === true || previous?.request.providerTurnId === null;
         const turn = runless ? undefined : active;
         if (
           !thread ||
@@ -1160,14 +1169,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           (turn && native.value.turnId && !owns(turn, native.value.turnId))
         )
           return;
-        const nativeId =
-          native.type === "approval" ? native.value.approvalId : native.value.userInputId;
         if (turn?.settledRequests.has(`${native.type}:${nativeId}`)) return;
-        const previous = [...pending.values()].find(
-          (entry) =>
-            entry.native.type === native.type &&
-            entry.request.nativeRequestRef?.nativeId === nativeId,
-        );
         const providerTurnId = turn?.providerTurn.id ?? null;
         const threadId = turn?.input.threadId ?? thread.appThreadId ?? input.threadId;
         const requestId =
@@ -1397,20 +1399,17 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         // Child approvals use their own run IDs and can outlive turns; bypass turn routing.
         if (params.subagentOrigin !== undefined && method.startsWith("approval/"))
           return yield* handleRequestEvent(method, params, undefined);
-        // Runless requests outlive their turn, so their settlement does too.
-        const settled =
-          method === "approval/resolved"
-            ? params.approvalId
-            : method === "userInput/settled"
-              ? params.userInputId
-              : undefined;
+        // Requests during compaction come from runs it waits on, so they must reach the
+        // user now; runless requests outlive their turn.
         if (
-          settled !== undefined &&
-          [...pending.values()].some(
-            (entry) =>
-              entry.request.providerTurnId === null &&
-              entry.request.nativeRequestRef?.nativeId === settled,
-          )
+          REQUEST_NOTIFICATIONS.has(method) &&
+          (active?.compact ||
+            [...pending.values()].some(
+              (entry) =>
+                entry.request.providerTurnId === null &&
+                entry.request.nativeRequestRef?.nativeId ===
+                  (params.approvalId ?? params.userInputId),
+            ))
         )
           return yield* handleRequestEvent(method, params, undefined);
         if (
@@ -1442,14 +1441,16 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }
         if (wake && active?.nativeId !== wake.nativeId) {
           const turnId = typeof params.turnId === "string" ? params.turnId : itemEvent?.turnId;
-          if (turnId === wake.nativeId) {
-            // Compaction waits for this run, so its requests must reach the user now.
-            if (active?.compact && REQUEST_NOTIFICATIONS.has(method))
-              return yield* handleRequestEvent(method, params, undefined);
-            if (!(active?.compact && itemEvent?.kind === "compaction")) {
-              wake.events.push([method, data]);
-              return;
-            }
+          if (
+            turnId === wake.nativeId &&
+            !(
+              active?.compact &&
+              active.compactPhase !== "waiting" &&
+              itemEvent?.kind === "compaction"
+            )
+          ) {
+            wake.events.push([method, data]);
+            return;
           }
         }
         const turn = active;
@@ -1464,7 +1465,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             if (
               item.turnId &&
               !owns(turn, item.turnId) &&
-              !(turn.compact && item.kind === "compaction")
+              !(turn.compact && turn.compactPhase !== "waiting" && item.kind === "compaction")
             )
               return;
             const previous = turn.items.get(item.itemId);
@@ -2074,9 +2075,15 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         let commandId = firstCommandId;
         while (true) {
           const ended = hostRunsEnded;
+          turn.compactPhase = "sending";
           const admission = yield* request("session/compact", {}, true, commandId).pipe(
             Effect.flatMap((value) => decode(MuseCompactResult, value)),
-            Effect.catchIf(isRunActive, (busy) => Effect.succeed({ busy })),
+            Effect.catchIf(isRunActive, (busy) =>
+              Effect.sync(() => {
+                turn.compactPhase = "waiting";
+                return { busy };
+              }),
+            ),
           );
           if (!("busy" in admission)) {
             if (admission.status === "noop") {
@@ -2089,7 +2096,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               return yield* protocolError(
                 `Muse returned an unsupported compaction status: ${admission.status}`,
               );
-            turn.compactAdmitted = true;
+            turn.compactPhase = "admitted";
             return;
           }
           const next = yield* eventPermit.withPermits(1)(
@@ -2186,7 +2193,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           flushScheduled: false,
           interruptRequested: false,
           compact,
-          compactAdmitted: false,
+          compactPhase: "sending",
         };
         yield* Effect.gen(function* () {
           thread = turnInput.providerThread;
@@ -2408,7 +2415,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 Effect.gen(function* () {
                   if (active !== turn) return;
                   // Nothing runs on the host before admission, so the host can stay.
-                  if (!turn.compactAdmitted) return yield* finish(turn, "interrupted");
+                  if (turn.compactPhase !== "admitted") return yield* finish(turn, "interrupted");
                   hostEpoch++;
                   yield* Effect.tryPromise({
                     try: () => host.close(),
