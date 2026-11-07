@@ -706,8 +706,8 @@ export const make = Effect.gen(function* () {
       return yield* Ref.get(desktopState.closeToTray);
     });
     let sessionEnding = false;
-    // Windows sends this before logoff/shutdown; never hold the window open past it.
-    window.on("query-session-end", () => {
+    // A session-end query can be canceled; bypass the tray only once logoff is final.
+    window.on("session-end", () => {
       sessionEnding = true;
     });
     window.on("close", (event) => {

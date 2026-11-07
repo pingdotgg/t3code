@@ -963,11 +963,12 @@ describe("DesktopWindow", () => {
           yield* Ref.set(state.quitting, quitting);
 
           const close = fakeWindow.windowListeners.get("close");
-          const querySessionEnd = fakeWindow.windowListeners.get("query-session-end");
-          if (!close || !querySessionEnd) {
+          const sessionEnd = fakeWindow.windowListeners.get("session-end");
+          if (!close) {
             return yield* Effect.die("window lifecycle listeners were not registered");
           }
-          if (sessionEnding) querySessionEnd();
+          fakeWindow.windowListeners.get("query-session-end")?.();
+          if (sessionEnding) sessionEnd?.();
           const preventDefault = vi.fn();
           close({ preventDefault });
           yield* Effect.promise(() => Promise.resolve());

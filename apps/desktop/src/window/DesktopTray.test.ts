@@ -119,6 +119,33 @@ describe("DesktopTray", () => {
     ),
   );
 
+  it.effect.each(["initialize", "configure"] as const)(
+    "recovers from menu setup failure during %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const tray = yield* DesktopTray.DesktopTray;
+        const state = yield* DesktopState.DesktopState;
+        electronMock.buildFromTemplate.mockImplementationOnce(() => {
+          throw new Error("menu unavailable");
+        });
+        yield* operation === "initialize" ? tray.initialize : tray.configure(true);
+        assert.isFalse(yield* Ref.get(state.closeToTray));
+        assert.equal(electronMock.trays[0]!.destroy.mock.calls.length, 1);
+        yield* tray.configure(true);
+        assert.equal(electronMock.trays.length, 2);
+        assert.isTrue(yield* Ref.get(state.closeToTray));
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "win32",
+            ico: "icon.ico",
+            settings: Option.some({ ...DEFAULT_CLIENT_SETTINGS, keepRunningInTray: true }),
+          }),
+        ),
+        Effect.scoped,
+      ),
+  );
+
   it.effect.each([
     {
       name: "darwin never creates a tray",
