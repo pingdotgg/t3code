@@ -1293,7 +1293,11 @@ export const OrchestrationV2Notification = Schema.Struct({
 export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Type;
 
 /** Why T3 Code compacted a thread on its own, on the `/compact` it sent. */
-export const OrchestrationV2IdleCompaction = Schema.Literals(["beforeCacheExpires", "onReturn"]);
+export const OrchestrationV2IdleCompaction = Schema.Literals([
+  "beforeCacheExpires",
+  "inBackground",
+  "onReturn",
+]);
 export type OrchestrationV2IdleCompaction = typeof OrchestrationV2IdleCompaction.Type;
 
 export const OrchestrationV2ConversationMessage = Schema.Struct({

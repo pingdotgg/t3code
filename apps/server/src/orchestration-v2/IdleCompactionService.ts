@@ -15,15 +15,13 @@ import * as Stream from "effect/Stream";
 
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { idleCompactionWindow } from "./IdleCompaction.ts";
+import { idleCompactionWindow, isScheduledIdleCompaction } from "./IdleCompaction.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 /**
- * Beta: when a run completes on a Claude instance set to compact before the
- * cache expires, waits until shortly before its prompt cache expires and sends
- * `/compact` as a visible T3 Code turn. Timers live in
- * memory, so a server restart skips compactions that were still waiting.
+ * Schedules a server `/compact` for Claude idle modes. Timers are in-memory, so
+ * a restart skips ones still waiting; `inBackground` fires as soon as eligible.
  */
 export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -40,9 +38,10 @@ export const make = Effect.gen(function* () {
         const claudeInstance = Object.hasOwn(current.providerInstances, thread.providerInstanceId)
           ? current.providerInstances[thread.providerInstanceId]?.driver === "claudeAgent"
           : thread.providerInstanceId === "claudeAgent";
+        const mode = resolveIdleCompaction(current, thread.providerInstanceId);
         if (
           !claudeInstance ||
-          resolveIdleCompaction(current, thread.providerInstanceId) !== "beforeCacheExpires" ||
+          !isScheduledIdleCompaction(mode) ||
           !resolveProjectProviderInstanceEnabled(
             current,
             thread.projectId,
@@ -78,9 +77,9 @@ export const make = Effect.gen(function* () {
             contextTransferStatuses: ["pending"],
           },
         );
+        const resolvedMode = resolveIdleCompaction(current, records.thread.providerInstanceId);
         if (
-          resolveIdleCompaction(current, records.thread.providerInstanceId) !==
-            "beforeCacheExpires" ||
+          !isScheduledIdleCompaction(resolvedMode) ||
           !resolveProjectProviderInstanceEnabled(
             current,
             records.thread.projectId,
@@ -100,7 +99,7 @@ export const make = Effect.gen(function* () {
           continue;
         }
         const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-        const window = idleCompactionWindow(records, nowMs);
+        const window = idleCompactionWindow(records, nowMs, resolvedMode);
         if (window?.runId !== runId) return;
         if (nowMs < window.startMs) {
           yield* Effect.sleep(Duration.millis(window.startMs - nowMs));
@@ -116,7 +115,7 @@ export const make = Effect.gen(function* () {
           attachments: [],
           createdBy: "agent",
           creationSource: "server",
-          idleCompaction: "beforeCacheExpires",
+          idleCompaction: resolvedMode,
           dispatchMode: { type: "start_immediately" },
         });
         return;
