@@ -1,7 +1,17 @@
+const UNITS = ["KB", "MB", "GB", "TB"] as const;
+
+function formatScaled(value: number): string {
+  return Number(value.toFixed(1)) < 10 ? value.toFixed(1) : value.toFixed(0);
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
-  if (bytes < 1024 ** 3)
-    return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
-  return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  // Pick the unit after rounding, so 1023.9 KB reads "1.0 MB", not "1024 KB".
+  while (Number(formatScaled(value)) >= 1024 && unitIndex < UNITS.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${formatScaled(value)} ${UNITS[unitIndex]}`;
 }
