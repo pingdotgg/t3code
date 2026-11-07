@@ -19,8 +19,8 @@ const mocks = vi.hoisted(() => ({
   heicTo: vi.fn(),
 }));
 
-vi.mock("heic-to/csp", () => ({
-  heicTo: mocks.heicTo,
+vi.mock("./heicDecoder", () => ({
+  loadHeicDecoder: async () => ({ heicTo: mocks.heicTo }),
 }));
 
 const originalCreateImageBitmap = globalThis.createImageBitmap;

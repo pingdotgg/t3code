@@ -1,3 +1,4 @@
+import { loadHeicDecoder } from "./heicDecoder";
 import {
   downscalableImageMimeType,
   fitImageAttachmentSize,
@@ -472,7 +473,7 @@ export async function prepareImageForAttachment(
     if (dimensionError) {
       return { ok: false, reason: dimensionError };
     }
-    const { heicTo } = await import("heic-to/csp");
+    const { heicTo } = await loadHeicDecoder();
     converted = await heicTo({ blob: file, type: "image/jpeg", quality: QUALITY_STEPS[0] });
   } catch {
     return { ok: false, reason: "unreadable" };
