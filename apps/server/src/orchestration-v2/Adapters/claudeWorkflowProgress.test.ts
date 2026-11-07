@@ -74,6 +74,24 @@ describe("mergeClaudeWorkflowProgress", () => {
     expect(workflow?.agents[2]).not.toHaveProperty("completedAt");
   });
 
+  it("keeps a started member queued until the provider reports its startedAt", () => {
+    const scheduled = mergeClaudeWorkflowProgress({
+      previous: undefined,
+      message: snapshotFrame([agent({ state: "start", queuedAt: 1000 })]),
+    });
+    expect(scheduled?.agents[0]?.state).toBe("queued");
+    const started = mergeClaudeWorkflowProgress({
+      previous: scheduled,
+      message: snapshotFrame([agent({ state: "start", queuedAt: 1000, startedAt: 21_000 })]),
+    });
+    expect(started?.agents[0]).toMatchObject({ state: "running", startedAt: 21_000 });
+    const progressed = mergeClaudeWorkflowProgress({
+      previous: started,
+      message: snapshotFrame([agent({ state: "progress", startedAt: 21_000 })]),
+    });
+    expect(progressed?.agents[0]?.state).toBe("running");
+  });
+
   it.each(["something-new", "toString", "constructor", "__proto__"])(
     "treats unrecognised state %s as still running rather than settled",
     (state) => {
@@ -133,7 +151,14 @@ describe("mergeClaudeWorkflowProgress", () => {
         agents: first.agents.map((member) => ({ ...member, effort: "max", speed: "standard" })),
       },
       message: snapshotFrame([
-        { type: "workflow_agent", index: 1, label: "alpha:one", state: "start", attempt: 2 },
+        {
+          type: "workflow_agent",
+          index: 1,
+          label: "alpha:one",
+          state: "start",
+          attempt: 2,
+          startedAt: 3000,
+        },
       ]),
     });
     expect(second?.agents).toEqual([
@@ -142,6 +167,7 @@ describe("mergeClaudeWorkflowProgress", () => {
         label: "alpha:one",
         state: "running",
         attempt: 2,
+        startedAt: 3000,
         phaseIndex: 1,
         phaseTitle: "Alpha",
       },
@@ -171,12 +197,14 @@ describe("mergeClaudeWorkflowProgress", () => {
   ])("keeps member state when the same attempt regresses from %s to %s", (state, staleState) => {
     const first = mergeClaudeWorkflowProgress({
       previous: undefined,
-      message: snapshotFrame([agent({ state, attempt: 2, resultPreview: "Current result" })]),
+      message: snapshotFrame([
+        agent({ state, attempt: 2, startedAt: 1010, resultPreview: "Current result" }),
+      ]),
     });
     const second = mergeClaudeWorkflowProgress({
       previous: first,
       message: snapshotFrame([
-        agent({ state: staleState, attempt: 2, resultPreview: "Old result" }),
+        agent({ state: staleState, attempt: 2, startedAt: 1010, resultPreview: "Old result" }),
       ]),
     });
     expect(second?.agents).toEqual(first?.agents);
