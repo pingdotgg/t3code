@@ -58,6 +58,26 @@ export const FILE_LINK_REVEAL_UNSAFE_CSS = `
   }
 `;
 
+/* The @pierre/diffs gutter utility ("+" button) overflows right into the code
+   and blocks text selection. Mirror the library's left-aligned (bars) variant:
+   slot at left, margin-right 0, digits padded out of reach. left: 6px matches
+   that variant's offset and leaves breathing room at the gutter edge. */
+export const FILE_GUTTER_UTILITY_UNSAFE_CSS = `
+  [data-gutter-utility-slot] {
+    right: unset !important;
+    left: 6px !important;
+    justify-content: flex-start !important;
+  }
+
+  [data-utility-button] {
+    margin-right: 0 !important;
+  }
+
+  [data-column-number] {
+    padding-left: calc(1lh + 9px) !important;
+  }
+`;
+
 export function FileSurfaceAction(props: {
   readonly label: string;
   readonly pressed?: boolean;
