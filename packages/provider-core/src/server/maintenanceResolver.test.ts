@@ -31,11 +31,13 @@ import {
   makeProviderMaintenanceCapabilities,
   normalizeCommandPath,
   npmGlobalPrefixFromCommandPath,
+  parseBunReleaseAgeConfig,
   parseChocolateyLatestVersion,
   parseHomebrewLatestVersion,
   resolveLatestProviderVersion,
   resolvePackageManagedProviderMaintenance,
   resolveProviderMaintenanceCapabilitiesEffect,
+  selectReleaseAgeEligibleVersion,
   type PackageManagedProviderMaintenanceDefinition,
   type ProviderMaintenanceCapabilities,
 } from "./maintenanceResolver.ts";
@@ -1659,4 +1661,43 @@ it("pins only owned package-manager installs and preserves their execution conte
     ).toBeNull();
   }
   expect(makeTargetedProviderUpdateAction(capabilities, "2.0.0; rm -rf /")).toBeNull();
+});
+
+it("reads bun's release-age limit and excludes from the install table only", () => {
+  expect(
+    parseBunReleaseAgeConfig(
+      [
+        "[run]",
+        "minimumReleaseAge = 1",
+        "[install]",
+        "minimumReleaseAge = 604800 # 7 days",
+        'minimumReleaseAgeExcludes = ["@openai/codex", "typescript"]',
+      ].join("\n"),
+    ),
+  ).toEqual({ seconds: 604800, excludes: ["@openai/codex", "typescript"] });
+  expect(parseBunReleaseAgeConfig('[install]\nregistry = "https://example.test"\n')).toBeNull();
+});
+
+it("picks the newest stable version published before the release-age cutoff", () => {
+  const nowMs = Date.parse("2026-11-04T04:20:00Z");
+  const times = {
+    created: "2026-10-01T00:00:00Z",
+    modified: "2026-11-03T00:00:00Z",
+    "2.2.0": "2026-10-27T08:59:34Z",
+    "2.2.1": "2026-10-29T05:12:41Z",
+    "2.2.5": "2026-10-30T23:14:07Z",
+    "2.3.0-beta.1": "2026-10-01T00:00:00Z",
+    "0.0.0-dev-565": "2026-11-04T04:11:56Z",
+  };
+  expect(selectReleaseAgeEligibleVersion({ times, nowMs, minimumAgeSeconds: 604_800 })).toBe(
+    "2.2.0",
+  );
+  expect(selectReleaseAgeEligibleVersion({ times, nowMs, minimumAgeSeconds: 0 })).toBe("2.2.5");
+  expect(
+    selectReleaseAgeEligibleVersion({
+      times: { "1.0.0": "2026-11-03T00:00:00Z" },
+      nowMs,
+      minimumAgeSeconds: 604_800,
+    }),
+  ).toBeNull();
 });

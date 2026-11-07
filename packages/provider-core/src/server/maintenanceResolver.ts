@@ -463,6 +463,87 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);
 });
 
+const decodeNpmViewTime = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
+);
+
+/** Reads `[install] minimumReleaseAge` and `minimumReleaseAgeExcludes` from bunfig.toml. */
+export function parseBunReleaseAgeConfig(
+  bunfig: string,
+): { readonly seconds: number; readonly excludes: ReadonlyArray<string> } | null {
+  let inInstall = false;
+  let seconds: number | null = null;
+  let excludes: ReadonlyArray<string> = [];
+  for (const rawLine of bunfig.split("\n")) {
+    const line = rawLine.replace(/#.*$/, "").trim();
+    const section = /^\[([^\]]+)\]$/.exec(line);
+    if (section) {
+      inInstall = section[1]!.trim() === "install";
+      continue;
+    }
+    if (!inInstall) continue;
+    const age = /^minimumReleaseAge\s*=\s*(\d+)$/.exec(line);
+    if (age) seconds = Number(age[1]);
+    const list = /^minimumReleaseAgeExcludes\s*=\s*\[(.*)\]$/.exec(line);
+    if (list) {
+      excludes = [...list[1]!.matchAll(/"([^"]*)"|'([^']*)'/g)].map(
+        (match) => match[1] ?? match[2]!,
+      );
+    }
+  }
+  return seconds === null ? null : { seconds, excludes };
+}
+
+/**
+ * Newest stable version whose publish time is at least `minimumAgeSeconds` old,
+ * matching bun's rule for skipping recently published releases.
+ */
+export function selectReleaseAgeEligibleVersion(input: {
+  readonly times: Readonly<Record<string, string>>;
+  readonly nowMs: number;
+  readonly minimumAgeSeconds: number;
+}): string | null {
+  const cutoffMs = input.nowMs - input.minimumAgeSeconds * 1_000;
+  let best: string | null = null;
+  for (const [version, published] of Object.entries(input.times)) {
+    if (!/^\d+\.\d+\.\d+$/.test(version)) continue;
+    const publishedMs = Date.parse(published);
+    if (!Number.isFinite(publishedMs) || publishedMs > cutoffMs) continue;
+    if (best === null || compareSemverVersions(version, best) > 0) best = version;
+  }
+  return best;
+}
+
+// Bun skips releases newer than `minimumReleaseAge` when it installs `@latest`, but the
+// npm `latest` tag does not. Advertising that tag would offer an update bun keeps refusing.
+// Null defers to the npm lookup, which is the right answer when no age limit is set.
+const resolveBunGlobalLatestVersion = Effect.fn("resolveBunGlobalLatestVersion")(function* (
+  packageName: string,
+  env: NodeJS.ProcessEnv,
+) {
+  const resolvedEnv = { ...(yield* HostProcess.Environment), ...env };
+  const home = resolvedEnv.HOME ?? resolvedEnv.USERPROFILE;
+  if (!home) return null;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const bunfig = yield* fileSystem
+    .readFileString(path.join(home, ".bunfig.toml"))
+    .pipe(Effect.orElseSucceed(() => null));
+  const releaseAge = bunfig === null ? null : parseBunReleaseAgeConfig(bunfig);
+  if (!releaseAge || releaseAge.excludes.includes(packageName)) return null;
+  const npmPath = yield* resolveCommandPath("npm", { env });
+  if (!npmPath) return null;
+  const stdout = yield* runProbe(npmPath, ["view", "--json", packageName, "time"], env);
+  const times = stdout ? Option.getOrNull(decodeNpmViewTime(stdout)) : null;
+  if (!times) return null;
+  const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+  return selectReleaseAgeEligibleVersion({
+    times,
+    nowMs,
+    minimumAgeSeconds: releaseAge.seconds,
+  });
+});
+
 export const resolvePackageManagedProviderMaintenance = Effect.fn(
   "resolvePackageManagedProviderMaintenance",
 )(function* (
@@ -560,6 +641,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     });
   }
   if (commandPaths.some(isBunGlobalCommandPath)) {
+    const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -567,6 +649,9 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateArgs: ["i", "-g", `${packageName}@latest`],
       updateLockKey: "bun-global",
       env: context.env,
+      lookupLatestVersion: resolveBunGlobalLatestVersion(packageName, context.env).pipe(
+        Effect.provideContext(services),
+      ),
     });
   }
   if (commandPaths.some(isPnpmGlobalCommandPath)) {
