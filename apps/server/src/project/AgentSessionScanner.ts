@@ -199,7 +199,8 @@ export type AgentSessionRecentThread =
     }
   | { readonly _tag: "AlreadyImported"; readonly source: AgentSessionImportSource }
   | { readonly _tag: "Duplicate"; readonly source: AgentSessionImportSource }
-  | { readonly _tag: "Skipped" };
+  | { readonly _tag: "Skipped" }
+  | { readonly _tag: "Deferred" };
 
 export class AgentSessionScanner extends Context.Service<
   AgentSessionScanner,
@@ -1030,8 +1031,11 @@ export const make = Effect.gen(function* () {
     source: AgentSessionSource,
     prefix?: { readonly endByteOffset: number; readonly historyBytes: number },
   ) {
+    // "unimportable": an unchanged file fails the same way again. null: the read may succeed later.
     const readBytes = prefix?.endByteOffset ?? expected.size;
-    if (readBytes > expected.size || readBytes > MAX_IMPORTED_TRANSCRIPT_BYTES) return null;
+    if (readBytes > expected.size || readBytes > MAX_IMPORTED_TRANSCRIPT_BYTES) {
+      return "unimportable" as const;
+    }
 
     return yield* Effect.scoped(
       fileSystem.open(filePath, { flag: "r" }).pipe(
@@ -1120,7 +1124,7 @@ export const make = Effect.gen(function* () {
                 },
                 catch: (cause) => new TranscriptParseError({ filePath, cause }),
               });
-              if (!withinBudget) return null;
+              if (!withinBudget) return "unimportable" as const;
             }
 
             if (
@@ -1130,7 +1134,7 @@ export const make = Effect.gen(function* () {
                 catch: (cause) => new TranscriptParseError({ filePath, cause }),
               }))
             )
-              return null;
+              return "unimportable" as const;
             return sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))
               ? { records, cwd, claudeFields, historyBytes }
               : null;
@@ -1138,6 +1142,12 @@ export const make = Effect.gen(function* () {
         ),
       ),
     ).pipe(
+      Effect.catchTags({
+        TranscriptParseError: (cause) =>
+          Effect.logWarning("Could not read imported transcript", { filePath, cause }).pipe(
+            Effect.as("unimportable" as const),
+          ),
+      }),
       Effect.catch((cause) =>
         Effect.logWarning("Could not read imported transcript", { filePath, cause }).pipe(
           Effect.as(null),
@@ -1524,6 +1534,9 @@ export const make = Effect.gen(function* () {
   });
 
   let cachedCandidates: ReadonlyArray<RawCandidate> | null = null;
+  // An unchanged transcript that hit a read limit or could not be parsed fails the same way again,
+  // so later attempts skip it without spending the per-attempt budget.
+  const unimportableTranscripts = new Map<string, TranscriptIdentity>();
 
   const scan: AgentSessionScanner["Service"]["scan"] = Effect.gen(function* () {
     const { candidates: raw, truncated } = yield* collectCandidates();
@@ -1752,7 +1765,7 @@ export const make = Effect.gen(function* () {
           "codex",
           { endByteOffset: base.end_byte_offset, historyBytes },
         );
-        if (inherited === null) return null;
+        if (inherited === null || inherited === "unimportable") return null;
         historyBytes = inherited.historyBytes;
         // The rollout's own session_meta names the thread; inherited ones may name a fork parent.
         prefixes.unshift(inherited.records.filter((record) => record.type !== "session_meta"));
@@ -1763,11 +1776,15 @@ export const make = Effect.gen(function* () {
     return Stream.fromIteratorSucceed(eligibleTranscripts.values(), 1).pipe(
       Stream.mapEffect(({ candidate, transcript }) =>
         Effect.gen(function* () {
-          const completed = completedByFile.get(
-            `${candidate.providerInstanceId}\0${transcript.filePath}`,
-          );
-          if (completed === undefined && (transcriptsRemaining === 0 || bytesRemaining === 0)) {
-            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+          const fileKey = `${candidate.providerInstanceId}\0${transcript.filePath}`;
+          const completed = completedByFile.get(fileKey);
+          const unimportable = unimportableTranscripts.get(fileKey);
+          if (
+            completed === undefined &&
+            unimportable === undefined &&
+            (transcriptsRemaining === 0 || bytesRemaining === 0)
+          ) {
+            return Option.some<AgentSessionRecentThread>({ _tag: "Deferred" });
           }
           const stats = yield* statOption(transcript.filePath);
           if (Option.isNone(stats) || stats.value.type !== "File") {
@@ -1788,11 +1805,13 @@ export const make = Effect.gen(function* () {
             });
           }
           if (
-            transcriptsRemaining === 0 ||
             identity.size > MAX_IMPORTED_TRANSCRIPT_BYTES ||
-            identity.size > bytesRemaining
+            (unimportable !== undefined && sameTranscriptIdentity(unimportable, identity))
           ) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+          }
+          if (transcriptsRemaining === 0 || identity.size > bytesRemaining) {
+            return Option.some<AgentSessionRecentThread>({ _tag: "Deferred" });
           }
           transcriptsRemaining -= 1;
           bytesRemaining -= identity.size;
@@ -1801,7 +1820,8 @@ export const make = Effect.gen(function* () {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
 
-          if (Option.isNone(snapshot.cwd)) {
+          if (snapshot === "unimportable" || Option.isNone(snapshot.cwd)) {
+            unimportableTranscripts.set(fileKey, identity);
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
           const expandedCwd = expandHomePath(snapshot.cwd.value.trim(), homeDir);
@@ -1833,6 +1853,10 @@ export const make = Effect.gen(function* () {
             snapshot.claudeFields,
           );
           if (parsedThread === null) {
+            // A Codex rollout missing its inherited history may parse once that history fits.
+            if (candidate.source !== "codex" || inheritedRecords !== null) {
+              unimportableTranscripts.set(fileKey, identity);
+            }
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
           let savedTitle: string | undefined;

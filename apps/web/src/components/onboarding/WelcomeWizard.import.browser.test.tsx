@@ -8,6 +8,7 @@ import {
   type AuthEnvironmentScope,
   type AuthSessionState,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -37,6 +38,7 @@ const state = vi.hoisted(() => ({
   scan: vi.fn(),
   refreshScan: vi.fn(),
   waitForProject: vi.fn(),
+  toast: vi.fn(),
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
@@ -126,11 +128,16 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
     command: "createProject" | "importThreads" | "refreshProviders" | "connectPairing",
   ) => state[command]) as never,
 }));
+vi.mock(import("../ui/toast"), async (original) => {
+  const actual = await original();
+  return { ...actual, toastManager: { ...actual.toastManager, add: state.toast } };
+});
 vi.mock(import("../settings/ChatGptWelcomeCoordinator"), async (original) => ({
   ...(await original()),
   ChatGptWelcomeCoordinator: () => <></>,
 }));
 
+import { formatOnboardingImportWarning } from "../../onboarding/projectImport.logic";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { WelcomeWizard } from "./WelcomeWizard";
 
@@ -289,6 +296,7 @@ function setup() {
   state.scan.mockReset();
   state.refreshScan.mockReset();
   state.waitForProject.mockReset().mockImplementation(waitForRecordedProject);
+  state.toast.mockReset().mockReturnValue("toast");
   return now;
 }
 
@@ -385,4 +393,135 @@ it("finishes setup without landing when the imported project never reaches the c
   await click("Import 1 project");
   await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
   expect(state.onDone).toHaveBeenCalledWith(undefined);
+});
+
+// The summary text itself is covered by projectImport.logic.test.ts; these check the counts.
+function expectImportSummary(
+  counts: Parameters<typeof formatOnboardingImportWarning>[0],
+  canContinue: boolean,
+) {
+  expect(state.toast).toHaveBeenCalledWith(
+    expect.objectContaining({ description: formatOnboardingImportWarning(counts) }),
+  );
+  const [toast] = state.toast.mock.calls.at(-1) ?? [];
+  expect(toast?.actionProps?.children).toBe(canContinue ? "Continue import" : undefined);
+}
+
+it("imports in batches and stops after the current batch without starting the next project", async () => {
+  using _now = setup();
+  const secondBatch = deferred<{
+    importedCount: number;
+    skippedCount: number;
+    deferredCount: number;
+  }>();
+  state.importThreads
+    .mockResolvedValueOnce(
+      AsyncResult.success({ importedCount: 2, skippedCount: 5, deferredCount: 5 }),
+    )
+    .mockImplementationOnce(async () => AsyncResult.success(await secondBatch.promise));
+  await using _screen = await mountImport();
+
+  await click("Import 2 projects");
+  await vi.waitFor(() => expect(state.importThreads).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() =>
+    expect(pageText()).toContain("Importing first (1 of 2)… 2 threads imported, 5 left"),
+  );
+
+  await click("Stop importing");
+  expect(button("Stopping…").disabled).toBe(true);
+  await act(async () => {
+    secondBatch.resolve({ importedCount: 4, skippedCount: 3, deferredCount: 3 });
+    await secondBatch.promise;
+  });
+  await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+  expect(state.importThreads).toHaveBeenCalledTimes(2);
+  expect(state.createProject).toHaveBeenCalledOnce();
+  expectImportSummary({ imported: 4, failed: 0, deferred: 3, stopped: true }, true);
+});
+
+it("stops when a batch makes no progress and reports the rest as not imported", async () => {
+  using _now = setup();
+  state.candidates = state.candidates.slice(0, 1);
+  state.importThreads.mockResolvedValue(
+    AsyncResult.success({ importedCount: 2, skippedCount: 5, deferredCount: 5 }),
+  );
+  await using _screen = await mountImport();
+
+  await click("Import 1 project");
+  await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+  expect(state.importThreads).toHaveBeenCalledTimes(2);
+  expectImportSummary({ imported: 2, failed: 5, deferred: 0, stopped: false }, false);
+});
+
+it("keeps the last successful batch when a later batch fails", async () => {
+  using _now = setup();
+  state.candidates = state.candidates.slice(0, 1);
+  state.importThreads
+    .mockResolvedValueOnce(
+      AsyncResult.success({ importedCount: 2, skippedCount: 5, deferredCount: 5 }),
+    )
+    .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("offline"))));
+  await using _screen = await mountImport();
+
+  await click("Import 1 project");
+  await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+  expect(state.importThreads).toHaveBeenCalledTimes(2);
+  expect(state.refreshScan).toHaveBeenCalledOnce();
+  expectImportSummary({ imported: 2, failed: 0, deferred: 5, stopped: false }, true);
+});
+
+it("counts each project's last batch and treats servers without deferred counts as one batch", async () => {
+  using _now = setup();
+  state.importThreads
+    .mockResolvedValueOnce(AsyncResult.success({ importedCount: 1, skippedCount: 2 }))
+    .mockResolvedValueOnce(
+      AsyncResult.success({ importedCount: 2, skippedCount: 3, deferredCount: 3 }),
+    )
+    .mockResolvedValueOnce(
+      AsyncResult.success({ importedCount: 5, skippedCount: 0, deferredCount: 0 }),
+    );
+  await using _screen = await mountImport();
+
+  await click("Import 2 projects");
+  await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+  expect(state.importThreads).toHaveBeenCalledTimes(3);
+  expectImportSummary({ imported: 6, failed: 2, deferred: 0, stopped: false }, false);
+});
+
+it("reopens setup on the unfinished projects through Continue import", async () => {
+  using _now = setup();
+  // Fewer than three conversations keeps a project out of the default selection.
+  state.candidates = [
+    candidate("/projects/first"),
+    { ...candidate("/projects/lonely"), threadCount: 1 },
+  ];
+  state.importThreads
+    .mockResolvedValueOnce(AsyncResult.success({ importedCount: 1, skippedCount: 0 }))
+    .mockResolvedValueOnce(
+      AsyncResult.success({ importedCount: 1, skippedCount: 3, deferredCount: 3 }),
+    )
+    .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("offline"))));
+  await using screen = await mountImport();
+  expect(pageText()).toContain("1 of 2 selected");
+  await click("Select all");
+  await click("Import 2 projects");
+  await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+  const [toast] = state.toast.mock.calls.at(-1) ?? [];
+  await act(async () => toast?.actionProps?.onClick());
+
+  await screen.rerender(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <WelcomeWizard key="reopened" localAvailable onDone={state.onDone} />
+    </RegistryContext.Provider>,
+  );
+  expect(pageText()).toContain("Import your projects");
+  expect(pageText()).toContain("1 of 2 selected");
+  await click("Import 1 project");
+  await vi.waitFor(() => expect(state.importThreads).toHaveBeenCalledTimes(4));
+  expect(state.importThreads).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      input: expect.objectContaining({ expectedWorkspaceRoot: "/projects/lonely" }),
+    }),
+  );
+  expect(state.createProject).toHaveBeenCalledTimes(2);
 });

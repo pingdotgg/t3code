@@ -1,6 +1,8 @@
 import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import type {
+  AgentSessionImportResult,
   AgentSessionProjectCandidate,
   EnvironmentId,
   ProjectId,
@@ -43,12 +45,15 @@ import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { completeOnboarding } from "../../onboarding/firstRun";
 import {
+  formatOnboardingImportProgress,
+  formatOnboardingImportWarning,
   groupOnboardingProjects,
   partitionOnboardingProjects,
   onboardingProjectKey,
   resolveOnboardingLandingProject,
   resolveOnboardingProjectId,
   type OnboardingProjectGroup,
+  shouldImportNextBatch,
   splitOnboardingProjectPath,
 } from "../../onboarding/projectImport.logic";
 import {
@@ -114,6 +119,18 @@ const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
 const ONBOARDING_STAGES = ["Connect", "Agents", "Projects"] as const;
 const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations may be missing.";
 
+/** The projects an interrupted import left unfinished, reopened by Continue import. */
+interface ImportResume {
+  readonly environmentIds: ReadonlyArray<EnvironmentId>;
+  readonly keys: ReadonlyArray<string>;
+}
+
+declare module "@tanstack/react-router" {
+  interface HistoryState {
+    onboardingImport?: ImportResume;
+  }
+}
+
 export function WelcomeWizard({
   localAvailable,
   onDone,
@@ -123,15 +140,22 @@ export function WelcomeWizard({
   readonly resumeEnvironmentId?: EnvironmentId | undefined;
   readonly onDone: (projectRef?: ScopedProjectRef) => void | Promise<void>;
 }) {
-  const [step, setStep] = useState<WizardStep>(resumeEnvironmentId ? "agents" : "connection");
+  const resumeImport = useLocation({ select: (location) => location.state.onboardingImport });
+  const [step, setStep] = useState<WizardStep>(
+    resumeImport ? "import" : resumeEnvironmentId ? "agents" : "connection",
+  );
   const { environments } = useEnvironments();
   const [selection, setSelection] = useState<ReadonlySet<EnvironmentId> | null>(null);
   // Share the registry for the wizard's lifetime so unchecked computers are not auto-selected again.
   const [autoSelectedComputers] = useState(() => new Set<EnvironmentId>());
   const [setupIds, setSetupIds] = useState<readonly EnvironmentId[]>(
-    resumeEnvironmentId ? [resumeEnvironmentId] : [],
+    resumeImport?.environmentIds ?? (resumeEnvironmentId ? [resumeEnvironmentId] : []),
   );
-  const [importSelection, setImportSelection] = useState<ImportSelection | null>(null);
+  const [importSelection, setImportSelection] = useState<ImportSelection | null>(() =>
+    resumeImport === undefined
+      ? null
+      : { environmentIds: new Set(resumeImport.environmentIds), keys: new Set(resumeImport.keys) },
+  );
   const [isImporting, setIsImporting] = useState(false);
   const finishingPromiseRef = useRef<Promise<boolean> | null>(null);
   const completionErrorToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
@@ -169,10 +193,12 @@ export function WelcomeWizard({
     setStep("agents");
   };
   const stageIndex = step === "agents" ? 1 : step === "import" ? 2 : 0;
+  const navigate = useNavigate();
   const finish = (
     projectRef?: ScopedProjectRef,
     importWarning?: string,
     importedThreadCount = 0,
+    resume?: ImportResume,
   ) => {
     if (finishingPromiseRef.current !== null) return finishingPromiseRef.current;
     if (completionErrorToastIdRef.current !== null) {
@@ -188,11 +214,22 @@ export function WelcomeWizard({
         }
         await onDone(projectRef);
         if (importWarning) {
-          toastManager.add({
+          const toastId = toastManager.add({
             type: "warning",
             title: "Some history was not imported",
             description: importWarning,
             timeout: 0,
+            ...(resume
+              ? {
+                  actionProps: {
+                    children: "Continue import",
+                    onClick: () => {
+                      toastManager.close(toastId);
+                      void navigate({ to: "/welcome", state: { onboardingImport: resume } });
+                    },
+                  },
+                }
+              : {}),
           });
         } else if (importedThreadCount > 0) {
           toastManager.add({
@@ -1216,6 +1253,7 @@ function ImportStep({
     projectRef?: ScopedProjectRef,
     importWarning?: string,
     importedThreadCount?: number,
+    resume?: ImportResume,
   ) => Promise<boolean>;
 }) {
   const { environments } = useEnvironments();
@@ -1224,6 +1262,7 @@ function ImportStep({
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
   const importWarningRef = useRef("");
   const importedThreadCountRef = useRef(0);
+  const resumeRef = useRef<ImportResume | undefined>(undefined);
   const importedProjectsRef = useRef(new Map<string, ScopedProjectRef>());
   const projectsWithImportedHistoryRef = useRef(new Map<string, ScopedProjectRef>());
   const lastImportSelectionRef = useRef<ReadonlyArray<string>>([]);
@@ -1231,6 +1270,14 @@ function ImportStep({
     new Map<string, { readonly projectId: ProjectId; readonly commandId: CommandId }>(),
   );
   const importGenerationRef = useRef(0);
+  const stopRequestedRef = useRef(false);
+  const [isStopping, setIsStopping] = useState(false);
+  const [progress, setProgress] = useState<{
+    readonly title: string;
+    readonly position: number;
+    readonly total: number;
+    readonly batch: AgentSessionImportResult | null;
+  } | null>(null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- bumps the import generation on mount and unmount so in-flight imports drop stale results
   useEffect(() => {
@@ -1281,7 +1328,12 @@ function ImportStep({
       importedProjectsRef.current,
     );
     if (projectRef === undefined) {
-      void onDone(undefined, importWarningRef.current, importedThreadCountRef.current);
+      void onDone(
+        undefined,
+        importWarningRef.current,
+        importedThreadCountRef.current,
+        resumeRef.current,
+      );
       return;
     }
     setIsImporting(true);
@@ -1299,6 +1351,7 @@ function ImportStep({
           landing,
           importWarningRef.current,
           importedThreadCountRef.current,
+          resumeRef.current,
         );
         if (!completed) setIsImporting(false);
       });
@@ -1312,6 +1365,8 @@ function ImportStep({
       );
     const stopForDeniedAccess = () => {
       setIsImporting(false);
+      setProgress(null);
+      setIsStopping(false);
       setImportError(IMPORT_PERMISSION_MESSAGE);
     };
     if (!hasAccess()) {
@@ -1323,8 +1378,11 @@ function ImportStep({
       return;
     }
     setIsImporting(true);
+    stopRequestedRef.current = false;
+    setIsStopping(false);
     importWarningRef.current = "";
     importedThreadCountRef.current = 0;
+    resumeRef.current = undefined;
     lastImportSelectionRef.current = selection.map((candidate) => candidate.key);
     const importGeneration = importGenerationRef.current;
     const importedProjects = importedProjectsRef.current;
@@ -1334,9 +1392,11 @@ function ImportStep({
         ? selection.filter((candidate) => importedProjects.has(candidate.key)).length
         : 0;
     let importedThreadCount = 0;
-    let skippedThreadCount = 0;
+    let failedThreadCount = 0;
+    let deferredThreadCount = 0;
+    let stopped = false;
     const refreshEnvironments = new Set<EnvironmentId>();
-    for (const candidate of selection) {
+    for (const [index, candidate] of selection.entries()) {
       const { environmentId } = candidate;
       if (
         importGeneration !== importGenerationRef.current ||
@@ -1344,11 +1404,21 @@ function ImportStep({
       ) {
         return;
       }
+      if (stopRequestedRef.current) {
+        stopped = true;
+        break;
+      }
       if (!hasAccess()) {
         stopForDeniedAccess();
         return;
       }
       if (importedProjects.has(candidate.key)) continue;
+      const projectProgress = {
+        title: candidate.title,
+        position: index + 1,
+        total: selection.length,
+      };
+      setProgress({ ...projectProgress, batch: null });
       let projectId = resolveOnboardingProjectId(readProjects(), environmentId, candidate);
       if (projectId === null) {
         let attempt = projectAttempts.get(candidate.key);
@@ -1387,52 +1457,81 @@ function ImportStep({
         }
       }
 
-      if (!hasAccess()) {
-        stopForDeniedAccess();
-        return;
+      let previousBatch: AgentSessionImportResult | undefined;
+      let lastBatch: AgentSessionImportResult | undefined;
+      let stalled = false;
+      while (true) {
+        if (stopRequestedRef.current) {
+          stopped = true;
+          break;
+        }
+        if (!hasAccess()) {
+          stopForDeniedAccess();
+          return;
+        }
+        const threadImportResult = await importThreads({
+          environmentId,
+          input: { projectId, expectedWorkspaceRoot: candidate.path },
+        });
+        if (
+          importGeneration !== importGenerationRef.current ||
+          importedProjects !== importedProjectsRef.current
+        ) {
+          return;
+        }
+        if (threadImportResult._tag !== "Success") {
+          if (!isAtomCommandInterrupted(threadImportResult)) {
+            projectAttempts.delete(candidate.key);
+            refreshEnvironments.add(environmentId);
+          }
+          break;
+        }
+        previousBatch = lastBatch;
+        lastBatch = threadImportResult.value;
+        setProgress({ ...projectProgress, batch: lastBatch });
+        if (!shouldImportNextBatch(previousBatch, lastBatch)) {
+          stalled = (lastBatch.deferredCount ?? 0) > 0;
+          break;
+        }
       }
-      const threadImportResult = await importThreads({
-        environmentId,
-        input: { projectId, expectedWorkspaceRoot: candidate.path },
-      });
-      if (
-        importGeneration !== importGenerationRef.current ||
-        importedProjects !== importedProjectsRef.current
-      ) {
-        return;
-      }
-      if (threadImportResult._tag === "Success") {
-        importedThreadCount += threadImportResult.value.importedCount;
-        skippedThreadCount += threadImportResult.value.skippedCount;
-        if (threadImportResult.value.importedCount > 0) {
+      if (lastBatch !== undefined) {
+        // Without progress, another run stalls the same way, so the rest count as failed.
+        const deferred = stalled ? 0 : (lastBatch.deferredCount ?? 0);
+        importedThreadCount += lastBatch.importedCount;
+        deferredThreadCount += deferred;
+        failedThreadCount += lastBatch.skippedCount - deferred;
+        if (lastBatch.importedCount > 0) {
           projectsWithImportedHistoryRef.current.set(
             candidate.key,
             scopeProjectRef(environmentId, projectId),
           );
         }
-        if (threadImportResult.value.skippedCount === 0) {
+        if (lastBatch.skippedCount === 0) {
           importedProjectsCount += 1;
           importedProjects.set(candidate.key, scopeProjectRef(environmentId, projectId));
         }
-      } else if (!isAtomCommandInterrupted(threadImportResult)) {
-        projectAttempts.delete(candidate.key);
-        refreshEnvironments.add(environmentId);
       }
     }
     for (const scan of scans) {
       if (refreshEnvironments.has(scan.environmentId)) scan.refresh();
     }
     setIsImporting(false);
+    setProgress(null);
+    setIsStopping(false);
     importedThreadCountRef.current = importedThreadCount;
     if (importedProjectsCount < selection.length) {
-      if (importedThreadCount > 0 && skippedThreadCount > 0) {
-        importWarningRef.current = `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. ${skippedThreadCount} ${skippedThreadCount === 1 ? "thread" : "threads"} could not be imported.`;
-      } else if (skippedThreadCount > 0) {
-        importWarningRef.current = `${skippedThreadCount} ${skippedThreadCount === 1 ? "thread could" : "threads could"} not be imported.`;
-      } else if (importedThreadCount > 0) {
-        importWarningRef.current = `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. Some thread history could not be imported.`;
-      } else {
-        importWarningRef.current = "Could not import thread history.";
+      importWarningRef.current = formatOnboardingImportWarning({
+        imported: importedThreadCount,
+        failed: failedThreadCount,
+        deferred: deferredThreadCount,
+        stopped,
+      });
+      const unfinished = selection.filter((candidate) => !importedProjects.has(candidate.key));
+      if (unfinished.length > 0 && (stopped || deferredThreadCount > 0)) {
+        resumeRef.current = {
+          environmentIds: [...new Set(unfinished.map((candidate) => candidate.environmentId))],
+          keys: unfinished.map((candidate) => candidate.key),
+        };
       }
     }
     finishAfterImport();
@@ -1543,10 +1642,28 @@ function ImportStep({
       {visibleImportError ? (
         <p className="mt-3 text-sm text-destructive">{visibleImportError}</p>
       ) : null}
+      {progress !== null ? (
+        <p role="status" className="mt-3 text-xs text-muted-foreground">
+          {formatOnboardingImportProgress(progress)}
+        </p>
+      ) : null}
       <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
-        <Button variant="ghost-muted" disabled={isImporting} onClick={finishAfterImport}>
-          Do not import projects
-        </Button>
+        {progress !== null ? (
+          <Button
+            variant="ghost-muted"
+            disabled={isStopping}
+            onClick={() => {
+              stopRequestedRef.current = true;
+              setIsStopping(true);
+            }}
+          >
+            {isStopping ? "Stopping…" : "Stop importing"}
+          </Button>
+        ) : (
+          <Button variant="ghost-muted" disabled={isImporting} onClick={finishAfterImport}>
+            Do not import projects
+          </Button>
+        )}
         <Button
           autoFocus
           disabled={!canImport || isImporting || selected.length === 0}
