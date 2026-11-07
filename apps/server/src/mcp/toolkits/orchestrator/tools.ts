@@ -7,6 +7,12 @@ import {
   OrchestratorMcpEnvironmentLinksResult,
   OrchestratorMcpEnvironmentUnlinkInput,
   OrchestratorMcpEnvironmentUnlinkResult,
+  OrchestratorMcpEnvironmentSpawnInput,
+  OrchestratorMcpEnvironmentSpawnResult,
+  OrchestratorMcpEnvironmentRemoveInput,
+  OrchestratorMcpEnvironmentRemoveResult,
+  OrchestratorMcpEnvironmentListInput,
+  OrchestratorMcpEnvironmentListResult,
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpCreateThreadsResult,
   OrchestratorMcpDelegateTaskInput,
@@ -43,6 +49,7 @@ import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as OpenShellFleetService from "../../../environment/OpenShellFleetService.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
@@ -68,6 +75,14 @@ const threadMetadataDependencies = [
   ThreadManagementService.ThreadManagementService,
   ThreadMetadataMcpService.ThreadMetadataMcpService,
 ];
+/** Delegation that can also provision a fleet worker (spec section 6.3). */
+const delegateDependencies = [...dependencies, OpenShellFleetService.OpenShellFleetService];
+/** Fleet worker lifecycle on the OpenShell gateway (spec section 5.1). */
+const fleetDependencies = [
+  McpInvocationContext.McpInvocationContext,
+  ThreadManagementService.ThreadManagementService,
+  OpenShellFleetService.OpenShellFleetService,
+];
 
 const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description:
@@ -85,12 +100,12 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Start one child agent with only `task`. No parent history. Separate checkout or PR per child: `isolation:'worktree'`. Keep `taskId` for `task_status` and `task_cancel`. No secrets in `task`.",
+    "Start one child agent with only `task`. No parent history. Separate checkout or PR per child: `isolation:'worktree'`. `isolation:'openshell-auto'` runs the child on a self-retiring ephemeral fleet worker. Keep `taskId` for `task_status` and `task_cancel`. No secrets in `task`.",
   parameters: OrchestratorMcpDelegateTaskInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies,
+  dependencies: delegateDependencies,
 })
   .annotate(Tool.Title, "Delegate a child task")
   .annotate(Tool.Destructive, true)
@@ -349,6 +364,50 @@ const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
   .annotate(Tool.Idempotent, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileLinksOff);
 
+const EnvironmentSpawnTool = Tool.make("t3_environment_spawn", {
+  description:
+    "Provision and pair a fleet worker. Ephemeral workers self-retire; persistent ones are named lanes. Same `clientRequestId` converges retries.",
+  parameters: OrchestratorMcpEnvironmentSpawnInput,
+  success: OrchestratorMcpEnvironmentSpawnResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: fleetDependencies,
+})
+  .annotate(Tool.Title, "Spawn a fleet worker environment")
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFleetOff);
+
+const EnvironmentRemoveTool = Tool.make("t3_environment_remove", {
+  description:
+    "Drain a fleet worker to this instance, then delete its sandbox. Refused while the drain is incomplete; the sandbox is kept.",
+  parameters: OrchestratorMcpEnvironmentRemoveInput,
+  success: OrchestratorMcpEnvironmentRemoveResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: fleetDependencies,
+})
+  .annotate(Tool.Title, "Remove a fleet worker environment")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFleetOff);
+
+const EnvironmentListTool = Tool.make("t3_environment_list", {
+  description: "Report this instance's fleet worker state.",
+  parameters: OrchestratorMcpEnvironmentListInput,
+  success: OrchestratorMcpEnvironmentListResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: fleetDependencies,
+})
+  .annotate(Tool.Title, "List fleet worker environments")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFleetOff);
+
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
@@ -370,4 +429,7 @@ export const OrchestratorToolkit = Toolkit.make(
   EnvironmentLinksTool,
   EnvironmentLinkTool,
   EnvironmentUnlinkTool,
+  EnvironmentSpawnTool,
+  EnvironmentRemoveTool,
+  EnvironmentListTool,
 );

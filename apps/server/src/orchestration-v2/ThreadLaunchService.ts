@@ -66,6 +66,12 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly baseRef: string;
       readonly branch?: string | undefined;
       readonly startFromOrigin?: boolean | undefined;
+    }
+  /** A fleet worker's workspace. Only delegation provisions it, so a local launch fails its run. */
+  | {
+      readonly type: "sandbox";
+      readonly workerClass?: "ephemeral" | "persistent" | undefined;
+      readonly branch?: string | undefined;
     };
 
 export interface ThreadLaunchInitialMessage {
@@ -307,6 +313,19 @@ const make = Effect.gen(function* () {
       ),
     );
 
+    // A sandbox workspace belongs to a fleet worker, which is created by a
+    // delegation. Launching it here would quietly run in the project root.
+    if (input.workspaceStrategy.type === "sandbox") {
+      return yield* new ThreadLaunchError({
+        operation: "provision-worktree",
+        commandId: input.commandId,
+        projectId: input.projectId,
+        ...(threadId === undefined ? {} : { threadId }),
+        cause: new Error(
+          "A sandbox workspace runs in a fleet worker, so delegate the work with isolation 'openshell-auto' instead of launching it here.",
+        ),
+      });
+    }
     const reused = input.reusedWorktree;
     const tracked = input.workspaceStrategy.type === "worktree" || reused !== undefined;
     let createdWorktreePath: string | null = null;

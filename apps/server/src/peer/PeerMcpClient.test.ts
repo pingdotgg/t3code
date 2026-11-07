@@ -1,6 +1,6 @@
 import { NodeHttpServer } from "@effect/platform-node";
-import { expect, it } from "@effect/vitest";
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { assert, expect, it } from "@effect/vitest";
+import { OrchestratorMcpFailure, PeerLinkError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -15,6 +15,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../mcp/McpToolAccess.ts";
+import * as PeerEnvironmentRegistry from "./PeerEnvironmentRegistry.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
@@ -235,5 +236,104 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
       "renewed",
       "renewed",
     ]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("reaches an unlinked worker through its fleet delegation session", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ readonly url: string; readonly authorization: string | undefined }> =
+      [];
+    let calls = 0;
+    const http = HttpClient.make((request) =>
+      Effect.sync(() => {
+        requests.push({ url: request.url, authorization: request.headers.authorization });
+        const step = requests.length;
+        const toolCallBody = JSON.stringify({
+          result: { content: [{ type: "text", text: '{"modes":"approval-required/plan"}' }] },
+        });
+        if (step === 1) {
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(toolCallBody, {
+              status: 200,
+              headers: { "mcp-session-id": "fleet-session" },
+            }),
+          );
+        }
+        calls += 1;
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(step === 2 ? "" : toolCallBody, {
+            status: step === 2 ? 202 : 200,
+            headers: { "mcp-session-id": "fleet-session" },
+          }),
+        );
+      }),
+    );
+    const fleet = descriptorOf("environment-fleet", "Fleet Worker");
+    const context = yield* Layer.build(
+      PeerMcpClient.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(HttpClient.HttpClient, http),
+            Layer.mock(PeerLinks.PeerLinks)({
+              resolve: (environmentId) =>
+                environmentId === fleet.environmentId
+                  ? Effect.fail(
+                      new PeerLinkError({
+                        reason: "unknown_link",
+                        message: "This environment is not linked.",
+                      }),
+                    )
+                  : Effect.fail(
+                      new PeerLinkError({
+                        reason: "storage",
+                        message: "Not part of this test.",
+                      }),
+                    ),
+              recordOutcome: () => Effect.void,
+            }),
+            Layer.succeed(PeerEnvironmentRegistry.PeerEnvironmentRegistry, {
+              enabled: Effect.succeed(true),
+              register: () => Effect.die("not part of this test"),
+              unregister: () => Effect.die("not part of this test"),
+              list: Effect.die("not part of this test"),
+              get: () => Effect.die("not part of this test"),
+              exchangeBootstrap: () => Effect.die("not part of this test"),
+              resolveSession: (environmentId) =>
+                environmentId === fleet.environmentId
+                  ? Effect.succeed({
+                      environmentId: fleet.environmentId,
+                      label: fleet.label,
+                      url: "http://127.0.0.1:8333",
+                      token: "fleet-delegation-session-token",
+                    })
+                  : Effect.fail(
+                      new PeerEnvironmentRegistry.PeerEnvironmentRegistryError({
+                        reason: "unknown_peer",
+                        message: "Not a registered peer.",
+                      }),
+                    ),
+            } satisfies Partial<
+              PeerEnvironmentRegistry.PeerEnvironmentRegistry["Service"]
+            > as never),
+          ),
+        ),
+      ),
+    );
+    const client = Context.get(context, PeerMcpClient.PeerMcpClient);
+    assert.deepEqual(
+      yield* client.call({
+        environmentId: fleet.environmentId,
+        tool: "probe",
+        arguments: {},
+        limits: { runtimeMode: "approval-required", interactionMode: "plan" },
+        success: Result,
+      }),
+      { modes: "approval-required/plan" },
+    );
+    // The worker's session carried the call; the registry session was its credential.
+    assert.include(requests[0]?.authorization ?? "", "fleet-delegation-session-token");
+    assert.equal(calls, 2);
   }).pipe(Effect.scoped),
 );

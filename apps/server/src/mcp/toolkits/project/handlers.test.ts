@@ -485,6 +485,32 @@ it.effect("a launch binds only an existing checkout that is one of the project's
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("a sandbox workspace is refused here and pointed at delegation", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      launched,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const result = yield* toolkit
+      .handle("t3_thread_launch", {
+        title: "Fix",
+        projectId,
+        workspaceStrategy: { type: "sandbox" },
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    expect(result.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+    // No thread launched locally: the sandbox would have silently become the root.
+    expect(launched).toHaveLength(0);
+  }),
+);
+
 it.effect("a launch into a new worktree creates nothing when its base ref has no commit", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
