@@ -18,28 +18,6 @@ function normalizeDesktopUpdateDownloadPercent(percent: number | null): number {
   return Math.min(100, Math.max(0, percent));
 }
 
-export function shouldShowDesktopUpdateCheckIcon({
-  isAnimationLatched,
-  isChecking,
-  prefersReducedMotion,
-}: {
-  readonly isAnimationLatched: boolean;
-  readonly isChecking: boolean;
-  readonly prefersReducedMotion: boolean;
-}): boolean {
-  return isChecking || (isAnimationLatched && !prefersReducedMotion);
-}
-
-export function shouldContinueDesktopUpdateCheckAnimation({
-  isChecking,
-  prefersReducedMotion,
-}: {
-  readonly isChecking: boolean;
-  readonly prefersReducedMotion: boolean;
-}): boolean {
-  return isChecking && !prefersReducedMotion;
-}
-
 function DesktopUpdateAvailableIcon() {
   return (
     <span className="relative grid size-4 place-items-center">

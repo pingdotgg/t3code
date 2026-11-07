@@ -1,9 +1,9 @@
-import type { DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
-import { act, render } from "../../../test/render";
+import { act, render, stubGlobal } from "../../../test/render";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
 
 const mocks = vi.hoisted(() => {
@@ -82,6 +82,91 @@ function publish(update: DesktopUpdateState | null) {
 }
 
 const releaseNotes = () => document.querySelector('[aria-label="Update release notes"]');
+
+describe("SidebarUpdatePill manual checks", () => {
+  it.each(["success", "failure"] as const)(
+    "finishes the manual rotation after %s and keeps automatic checks static",
+    async (outcome) => {
+      const idle: DesktopUpdateState = {
+        ...nightlyUpdate([]),
+        status: "idle",
+        availableVersion: null,
+      };
+      setup(idle);
+      const check = Promise.withResolvers<Awaited<ReturnType<DesktopBridge["checkForUpdate"]>>>();
+      using _bridge = stubGlobal("desktopBridge", { checkForUpdate: () => check.promise });
+      await using screen = await render(<SidebarUpdatePill />);
+      const button = screen.getByRole("button", { name: "Check for updates" }).element();
+
+      await publish({ ...idle, status: "checking" });
+      expect(button.querySelector('[class*="visible-animate-spin"]')).toBeNull();
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      await publish(idle);
+
+      await userEvent.click(button);
+      const spinner = button.querySelector<SVGSVGElement>('[class*="visible-animate-spin"]');
+      expect(spinner).not.toBeNull();
+      // Drive rotation boundaries explicitly so the IPC response cannot race the browser's animation.
+      spinner!.style.animationPlayState = "paused";
+      await publish({ ...idle, status: "checking" });
+      await act(() =>
+        spinner!.dispatchEvent(new AnimationEvent("animationiteration", { bubbles: true })),
+      );
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      expect(button.contains(spinner)).toBe(true);
+
+      await act(async () => {
+        mocks.update = idle;
+        mocks.notify();
+        if (outcome === "success") check.resolve({ checked: true, state: idle });
+        else check.reject(new Error("Update check failed"));
+        await check.promise.catch(() => undefined);
+      });
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      expect(button.contains(spinner)).toBe(true);
+
+      await act(() =>
+        spinner!.dispatchEvent(new AnimationEvent("animationiteration", { bubbles: true })),
+      );
+      expect(button.hasAttribute("aria-disabled")).toBe(false);
+      expect(button.querySelector('[class*="visible-animate-spin"]')).toBeNull();
+      expect(button.querySelector(".lucide-circle-arrow-up")).not.toBeNull();
+
+      await publish({ ...idle, status: "checking" });
+      expect(button.querySelector('[class*="visible-animate-spin"]')).toBeNull();
+    },
+  );
+
+  it("finishes immediately with reduced motion", async () => {
+    const idle: DesktopUpdateState = {
+      ...nightlyUpdate([]),
+      status: "idle",
+      availableVersion: null,
+    };
+    setup(idle);
+    const matchMedia = window.matchMedia.bind(window);
+    using _media = vi.spyOn(window, "matchMedia").mockImplementation((query) => {
+      const result = matchMedia(query);
+      if (query === "(prefers-reduced-motion: reduce)") {
+        Object.defineProperty(result, "matches", { value: true });
+      }
+      return result;
+    });
+    const check = Promise.withResolvers<Awaited<ReturnType<DesktopBridge["checkForUpdate"]>>>();
+    using _bridge = stubGlobal("desktopBridge", { checkForUpdate: () => check.promise });
+    await using screen = await render(<SidebarUpdatePill />);
+    const button = screen.getByRole("button", { name: "Check for updates" }).element();
+    await userEvent.click(button);
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.querySelector('[class*="visible-animate-spin"]')).toBeNull();
+
+    await act(async () => {
+      check.resolve({ checked: true, state: idle });
+      await check.promise;
+    });
+    expect(button.hasAttribute("aria-disabled")).toBe(false);
+  });
+});
 
 describe("SidebarUpdatePill release notes", () => {
   it("closes when the release notes stop applying", async () => {
