@@ -391,6 +391,10 @@ File links refer to the environment's machine, including when you connect remote
 Previews use the original file, even outside the workspace. Moving or deleting it
 can break the preview, so save a copy if you need to keep it.
 
+T3 Code asks agents to embed media and link files by absolute path so they open here.
+To give an agent different guidance, or none, edit **File link instructions** in that
+provider's settings under **Settings → Providers**.
+
 ## Files outside the workspace
 
 Follow an agent's file link to read a report or other file outside the workspace.

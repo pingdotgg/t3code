@@ -620,6 +620,7 @@ export interface AcpAdapterV2SubagentUpdate {
 export interface AcpAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly flavor: AcpAdapterV2Flavor;
+  readonly fileLinkInstructions?: string | undefined;
   readonly selfInvocation: SelfInvocation;
   readonly clientTerminals?: {
     readonly environment?: NodeJS.ProcessEnv;
@@ -8025,6 +8026,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               text: buildRuntimeInstructions({
                 harness: flavor.runtimeHarness ?? driver,
                 model: turnInput.modelSelection.model,
+                fileLinkInstructions: options.fileLinkInstructions,
                 pullRequestLinking:
                   sessionSetup === null ||
                   flavor.sessionCarriesPullRequestLinking?.(sessionSetup.initializeResult) !== true,

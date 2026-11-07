@@ -226,6 +226,7 @@ Passes per case, main's text → the request_secret guidance change stacked on t
 ## Where T3's text lives
 
 - `packages/provider-core/src/server/runtimeInstructions.ts`
+- `packages/contracts/src/settings.ts` (`DEFAULT_FILE_LINK_INSTRUCTIONS`)
 - `packages/provider-core/src/server/orchestrationInstructions.ts`
 - `apps/server/src/provider/CodexDeveloperInstructions.ts`
 - `apps/server/src/mcp/toolkits/*/tools.ts` (tool descriptions)

@@ -347,6 +347,7 @@ export const makeGrokAdapterV2 = Effect.fn("makeGrokAdapterV2")(function* (
   return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
     flavor: makeGrokAcpAdapterFlavor(options, yield* HostProcess.HomeDirectory),
+    fileLinkInstructions: options.settings.fileLinkInstructions,
     selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.continuationRequests === undefined

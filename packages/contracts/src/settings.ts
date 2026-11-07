@@ -608,6 +608,28 @@ export const makeBinaryPathSetting = (fallback: string) =>
     Schema.withDecodingDefault(Effect.succeed(fallback)),
   );
 
+export const DEFAULT_FILE_LINK_INSTRUCTIONS =
+  "You can embed images, video, and audio in your response using Markdown image syntax with absolute file paths. Link any other file you produce using its absolute path so the user can open it in T3 Code's files viewer.";
+
+// Keeps Codex's runtime context entry under its 4,000-byte cap, past which it drops the PR rules.
+export const FILE_LINK_INSTRUCTIONS_MAX_LENGTH = 800;
+
+export const FileLinkInstructionsSetting = TrimmedString.check(
+  Schema.isMaxLength(FILE_LINK_INSTRUCTIONS_MAX_LENGTH),
+).pipe(
+  Schema.withDecodingDefault(Effect.succeed(DEFAULT_FILE_LINK_INSTRUCTIONS)),
+  Schema.annotateKey({
+    title: "File link instructions",
+    description: `How T3 Code tells agents to show media and link files. Up to ${FILE_LINK_INSTRUCTIONS_MAX_LENGTH} characters; clear it to send none.`,
+    providerSettingsForm: {
+      control: "textarea",
+      placeholder: "None",
+      maxLength: FILE_LINK_INSTRUCTIONS_MAX_LENGTH,
+      clearWhenEmpty: "persist",
+    },
+  }),
+);
+
 export type ProviderSettingsFormControl = "text" | "password" | "textarea" | "switch" | "select";
 
 export interface ProviderSettingsFormOption {
@@ -618,6 +640,7 @@ export interface ProviderSettingsFormOption {
 export interface ProviderSettingsFormAnnotation {
   readonly control?: ProviderSettingsFormControl | undefined;
   readonly placeholder?: string | undefined;
+  readonly maxLength?: number | undefined;
   readonly hidden?: boolean | undefined;
   readonly clearWhenEmpty?: "omit" | "persist" | undefined;
 
@@ -727,13 +750,14 @@ export const CodexSettings = makeProviderSettingsSchema(
         description: "Additional CLI arguments passed to codex app-server on session start.",
       }),
     ),
+    fileLinkInstructions: FileLinkInstructionsSetting,
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
   {
-    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
+    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs", "fileLinkInstructions"],
   },
 );
 export type CodexSettings = typeof CodexSettings.Type;
@@ -797,6 +821,7 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    fileLinkInstructions: FileLinkInstructionsSetting,
     autoCompactWindow: TrimmedString.check(
       Schema.isPattern(CLAUDE_AUTO_COMPACT_WINDOW_PATTERN),
     ).pipe(
@@ -826,7 +851,14 @@ export const ClaudeSettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "idleCompaction", "launchArgs"],
+    order: [
+      "binaryPath",
+      "homePath",
+      "autoCompactWindow",
+      "idleCompaction",
+      "launchArgs",
+      "fileLinkInstructions",
+    ],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
@@ -899,12 +931,22 @@ export const AntigravitySettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "Automatic", clearWhenEmpty: "persist" },
       }),
     ),
+    fileLinkInstructions: FileLinkInstructionsSetting,
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
-  { order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"] },
+  {
+    order: [
+      "authMethod",
+      "apiKey",
+      "gcpProject",
+      "gcpLocation",
+      "binaryPath",
+      "fileLinkInstructions",
+    ],
+  },
 );
 export type AntigravitySettings = typeof AntigravitySettings.Type;
 

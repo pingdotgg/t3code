@@ -165,6 +165,7 @@ export const CursorDriver: ProviderDriver<
     const orchestrationAdapter = yield* makeCursorAdapterV2({
       instanceId,
       environment: processEnv,
+      fileLinkInstructions: effectiveConfig.fileLinkInstructions,
       getModels: () => catalogModels,
     }).pipe(
       Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {

@@ -295,7 +295,7 @@ export const OpenCodeDriver: ProviderDriver<
     const orchestrationAdapter = selectOpenCodeRuntimeAdapter({
       probe: runtimeProbe,
       v1: openCodeV1Adapter,
-      v2: yield* OpenCode2AdapterV2.make(instanceId).pipe(
+      v2: yield* OpenCode2AdapterV2.make(instanceId, effectiveConfig.fileLinkInstructions).pipe(
         Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
       ),
     });

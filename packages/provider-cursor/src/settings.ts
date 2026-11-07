@@ -1,4 +1,9 @@
-import { CustomModelSetting, makeProviderSettingsSchema, TrimmedString } from "@t3tools/contracts";
+import {
+  CustomModelSetting,
+  makeProviderSettingsSchema,
+  FileLinkInstructionsSetting,
+  TrimmedString,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -19,9 +24,10 @@ export const CursorSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    fileLinkInstructions: FileLinkInstructionsSetting,
   },
   {
-    order: [],
+    order: ["fileLinkInstructions"],
   },
 );
 export type CursorSettings = typeof CursorSettings.Type;
