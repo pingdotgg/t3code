@@ -180,6 +180,42 @@ describe("readOpenCodeUsage", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("keys OpenCode Go messages to the opencode_go LiteLLM rate", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
+      const legacy = path.join(dir, "storage", "message", "session-1");
+      yield* fileSystem.makeDirectory(legacy, { recursive: true });
+      const base = {
+        sessionID: "session-1",
+        role: "assistant",
+        time: { created: 1780000000000 },
+        cost: 0,
+        tokens: { input: 100, output: 20 },
+      };
+      yield* fileSystem.writeFileString(
+        path.join(legacy, "msg-top.json"),
+        JSON.stringify({ ...base, providerID: "opencode-go", modelID: "deepseek-v4.1-flash" }),
+      );
+      yield* fileSystem.writeFileString(
+        path.join(legacy, "msg-nested.json"),
+        JSON.stringify({ ...base, model: { providerID: "opencode-go", id: "glm-5.3" } }),
+      );
+      const result = yield* readOpenCodeUsage(dir, 0);
+      assert.deepStrictEqual(
+        result.files
+          .flatMap((file) => file.records)
+          .map(({ model, rateModel }) => ({ model, rateModel }))
+          .sort((a, b) => a.model.localeCompare(b.model)),
+        [
+          { model: "deepseek-v4.1-flash", rateModel: "opencode_go/deepseek-v4.1-flash" },
+          { model: "glm-5.3", rateModel: "opencode_go/glm-5.3" },
+        ],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("never follows symlinks in the legacy OpenCode store", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
