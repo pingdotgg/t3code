@@ -2,6 +2,7 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
 import { isPrivateNetworkHost, isSharedAddressSpaceHost } from "@t3tools/shared/hostClassification";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { QrCode } from "@t3tools/shared/qrCode";
 import { buildPairingAppLink } from "@t3tools/shared/remote";
 import * as Effect from "effect/Effect";
@@ -45,8 +46,18 @@ export const formatHostForUrl = (host: string): string =>
  * host bridge such as `br0` or Proxmox's `vmbr0` carries the LAN address, so
  * it stays listed.
  */
-export const VIRTUAL_INTERFACE =
+const VIRTUAL_INTERFACE =
   /^(docker|br-|veth|virbr|vmnet|vboxnet|vEthernet|podman|cni|flannel|cali|lxcbr|lxdbr|bridge[1-9]\d\d)/;
+
+/**
+ * systemd-nspawn's `ve-*`/`vz-*` and NixOS containers' `vb-*` name host-side
+ * veths after the machine. Windows aliases are user-renameable, so these
+ * prefixes only apply to Linux interface discovery.
+ */
+const LINUX_CONTAINER_INTERFACE = /^(ve-|vb-|vz-)/;
+
+export const isVirtualInterface = (name: string, platform: NodeJS.Platform): boolean =>
+  VIRTUAL_INTERFACE.test(name) || (platform === "linux" && LINUX_CONTAINER_INTERFACE.test(name));
 
 /**
  * Loopback or private-range IPv4 (LAN, tailnet, CGNAT), not link-local, in
@@ -87,6 +98,7 @@ const resolveHeadlessConnectionHost = (
   host: string | undefined,
   interfaces: NetworkInterfacesMap,
   privateNetworkOnly: boolean,
+  platform: NodeJS.Platform,
 ): string => {
   if (!host) {
     return "localhost";
@@ -97,7 +109,7 @@ const resolveHeadlessConnectionHost = (
   }
 
   const interfaceEntries = Object.entries(interfaces).flatMap(([name, entries]) =>
-    privateNetworkOnly && VIRTUAL_INTERFACE.test(name) ? [] : (entries ?? []),
+    privateNetworkOnly && isVirtualInterface(name, platform) ? [] : (entries ?? []),
   );
   const externalIpv4Entries = interfaceEntries.filter(
     (entry) =>
@@ -129,12 +141,14 @@ export const resolveHeadlessConnectionString = (
   options: {
     readonly interfaces?: NetworkInterfacesMap;
     readonly privateNetworkOnly?: boolean | undefined;
-  } = {},
+    readonly platform: NodeJS.Platform;
+  },
 ): string => {
   const connectionHost = resolveHeadlessConnectionHost(
     host,
     options.interfaces ?? NodeOS.networkInterfaces(),
     options.privateNetworkOnly === true,
+    options.platform,
   );
   return `http://${formatHostForUrl(connectionHost)}:${port}`;
 };
@@ -197,10 +211,11 @@ export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessI
   const serverConfig = yield* ServerConfig.ServerConfig;
   const httpServer = yield* HttpServer.HttpServer;
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const platform = yield* HostProcess.Platform;
   const connectionString = resolveHeadlessConnectionString(
     serverConfig.host,
     resolveListeningPort(httpServer.address, serverConfig.port),
-    { privateNetworkOnly: serverConfig.privateNetworkOnly },
+    { privateNetworkOnly: serverConfig.privateNetworkOnly, platform },
   );
   const issued = yield* serverAuth.issueStartupPairingCredential();
 
