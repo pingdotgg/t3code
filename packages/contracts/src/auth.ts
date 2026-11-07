@@ -560,6 +560,12 @@ export const AuthMcpTokenResult = Schema.Struct({
 });
 export type AuthMcpTokenResult = typeof AuthMcpTokenResult.Type;
 
+/** RFC 7009. The token revokes itself, so presenting it is the authority. */
+export const AuthMcpTokenRevocationRequest = Schema.Struct({
+  token: Schema.RedactedFromValue(Schema.String),
+}).pipe(HttpApiSchema.asFormUrlEncoded());
+export type AuthMcpTokenRevocationRequest = typeof AuthMcpTokenRevocationRequest.Type;
+
 export class AuthMcpTokenError extends Schema.Error<AuthMcpTokenError>("AuthMcpTokenError")(
   {
     error: Schema.Literals([

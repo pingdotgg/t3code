@@ -245,7 +245,7 @@ it.live("registers loopback and https clients and never redirects for an unverif
   ),
 );
 
-it.live("signs in with a pairing code and issues a token only /mcp accepts", () =>
+it.live("signs in with a pairing code, issues a token only /mcp accepts, and revokes only it", () =>
   withRoutes((handler, auth) =>
     Effect.gen(function* () {
       const clientId = yield* registeredClientId(handler);
@@ -316,6 +316,20 @@ it.live("signs in with a pairing code and issues a token only /mcp accepts", () 
         }),
       );
       expect(ticket.status).toBe(401);
+
+      // RFC 7009 answers alike for any token, so it reveals nothing about one.
+      const revoke = (presented: string) =>
+        handler(at("/oauth/mcp/revoke", form({ token: presented }))).pipe(
+          Effect.map((response) => response.status),
+        );
+      const other = yield* auth.issueSession();
+      expect(yield* revoke("not-a-token")).toBe(200);
+      expect(yield* revoke(other.token)).toBe(200);
+      expect(yield* revoke(token.access_token)).toBe(200);
+      expect(yield* revoke(token.access_token)).toBe(200);
+      expect((yield* auth.listSessions()).map((listed) => listed.sessionId)).toEqual([
+        other.sessionId,
+      ]);
     }),
   ),
 );

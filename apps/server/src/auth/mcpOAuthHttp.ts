@@ -153,6 +153,7 @@ export const layer = HttpApiBuilder.group(
           yield* noStore;
           return yield* oauth.exchangeCode({ request, urls: yield* requestUrls, token: payload });
         }),
-      );
+      )
+      .handle("revoke", ({ payload }) => oauth.revoke(payload.token).pipe(Effect.orDie));
   }),
 );

@@ -74,7 +74,9 @@ agents work in another. The linking environment signs in to the other's `/mcp`
 as an outside MCP client, with a pairing code from it, and keeps that session's
 token in its own secret store. The other environment needs nothing new: it
 sees one more OAuth client, lists it in Sharing & access, and revokes it there.
-Unlinking on the linking side only forgets the token.
+Linking again sends the replaced token to `/oauth/mcp/revoke` at the first of
+the old link's addresses that answers as that peer, best-effort, so an older
+peer keeps that session until it expires. Unlinking on the linking side only forgets the token.
 
 - **The Linked environments beta (`linkedEnvironmentsEnabled`) gates both
   sides.** Off on the linking side, `PeerLinks.link`, link requests and

@@ -394,6 +394,28 @@ const make = Effect.gen(function* () {
     return { primary: first.origin, peer: first.descriptor, origins };
   });
 
+  /**
+   * Ends the session a replaced link's token holds, at the address a call with that token would
+   * have used. A peer without the endpoint keeps it until it expires.
+   */
+  const revokeReplaced = Effect.fn("PeerLinks.revokeReplaced")(function* (row: PeerLinkRow) {
+    const stored = yield* secrets.get(row.secret_name);
+    if (Option.isNone(stored)) return;
+    const urls = yield* decodeUrls(row.urls_json);
+    const origin = yield* Effect.findFirst(urls, (candidate) =>
+      describe(candidate).pipe(
+        Effect.map(
+          (found) => Option.isSome(found) && found.value.environmentId === row.environment_id,
+        ),
+      ),
+    );
+    if (Option.isNone(origin)) return;
+    const client = yield* clientFor(origin.value);
+    yield* client.mcpOAuth
+      .revoke({ payload: { token: Redacted.make(new TextDecoder().decode(stored.value)) } })
+      .pipe(Effect.timeout(probeTimeout(origin.value)));
+  });
+
   /** The peer at `url`, with every address checked for credentials first. */
   const answeringAt = Effect.fn("PeerLinks.answeringAt")(function* (urls: ReadonlyArray<string>) {
     const origins = yield* Effect.forEach(urls, peerOrigin);
@@ -480,10 +502,14 @@ const make = Effect.gen(function* () {
       `.pipe(Effect.catch(failStorage));
       return previous;
     }).pipe(Effect.onError(() => secrets.remove(secretName).pipe(Effect.ignore)));
-    // Linking again replaces the old token. A racing link may leave its own
-    // behind; it is unused either way.
+    // Linking again replaces the old token, here and on the peer. A racing
+    // link may leave its own behind; it is unused either way.
     if (Option.isSome(previous) && previous.value.secret_name !== secretName) {
-      yield* secrets.remove(previous.value.secret_name).pipe(Effect.ignore);
+      const replaced = previous.value.secret_name;
+      yield* revokeReplaced(previous.value).pipe(
+        Effect.ignore,
+        Effect.ensuring(secrets.remove(replaced).pipe(Effect.ignore)),
+      );
     }
     return linked;
   });

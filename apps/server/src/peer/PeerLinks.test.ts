@@ -31,6 +31,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import {
   descriptorOf,
   layerLinkingEnvironment,
+  linkTo,
   servePeer,
   type ServedPeer,
 } from "./PeerLinks.testkit.ts";
@@ -199,6 +200,34 @@ it.effect("links with a pairing code, and the peer holds its agents to the limit
       // A refusal keeps the peer's reason.
       const notFound = yield* probe(a, undefined, "refuse").pipe(Effect.flip);
       expect(notFound).toMatchObject({ code: "thread_not_found", message: "No such thread." });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("linking again ends the session it replaces on the peer", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      yield* linkTo(a.links, b);
+      yield* probe(a);
+      const replaced = (yield* Ref.get(b.bearers)).at(-1)!;
+
+      yield* linkTo(a.links, b, "read-only");
+      yield* linkTo(a.links, b, "read-only");
+      expect(yield* linkedSessions(b)).toHaveLength(1);
+      const presented = yield* b.auth
+        .authenticateMcpClient(
+          HttpServerRequest.fromWeb(
+            new Request(`${b.url}/mcp`, { headers: { authorization: replaced } }),
+          ),
+        )
+        .pipe(Effect.flip);
+      expect(presented._tag).toBe("ServerAuthInvalidCredentialError");
+      expect(yield* probe(a)).toEqual({
+        caller: "T3 Code · Laptop",
+        modes: "approval-required/default",
+      });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
