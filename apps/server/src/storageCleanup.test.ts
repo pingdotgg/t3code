@@ -2320,6 +2320,26 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("keeps a thread's recreated worktree folder that has no .git", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        yield* fixture.command(fixture.repo, ["worktree", "remove", fixture.worktree]);
+        yield* fixture.fs.makeDirectory(`${fixture.worktree}/node_modules`, { recursive: true });
+        yield* fixture.fs.writeFileString(`${fixture.worktree}/yarn.lock`, "# lockfile\n");
+        expect((yield* fixture.service.runNow).entries).toEqual([
+          expect.objectContaining({
+            path: fixture.worktree,
+            outcome: "kept",
+            reason: "Not a linked worktree",
+          }),
+        ]);
+        expect(yield* fixture.fs.readFileString(`${fixture.worktree}/yarn.lock`)).toBe(
+          "# lockfile\n",
+        );
+      }),
+    ),
+  );
   it.live.each([
     ["any-local-files", ".env", "kept"],
     ["uncommitted-changes", ".env", "removed"],
