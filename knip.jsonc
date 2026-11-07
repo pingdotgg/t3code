@@ -31,6 +31,8 @@
         "linux-after-pack.ts",
         "mobile-behavior/run.ts",
         "mobile-native-client.ts",
+        // Manual verification seeds a sandbox worktree with these fixtures.
+        "seed-markdown-scroll-fixtures.mjs",
         "setup-worktree.ts",
         "sign-macos.ts",
         "prepare-server-compile-cache.cjs",
