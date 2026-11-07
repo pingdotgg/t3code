@@ -160,16 +160,26 @@ function placeRow(id: string, from: WorkspaceStackRow, direction: 1 | -1): Works
   const offset = from.offset + direction;
   const existing = current.rows.find((row) => row.id === id);
   if (existing?.offset === offset) return existing;
-  const p = currentPosition();
   const row = { id, offset };
-  const rows = current.rows.filter(
-    (candidate) =>
-      candidate.id !== id &&
-      candidate.offset !== offset &&
-      (candidate === from || Math.abs(candidate.offset - p) < 1),
-  );
-  setStack({ ...current, rows: [...rows, row].toSorted((a, b) => a.offset - b.offset) });
+  setStack({ ...current, rows: placeStackRow(current.rows, row, from, currentPosition()) });
   return row;
+}
+
+export function placeStackRow(
+  rows: readonly WorkspaceStackRow[],
+  row: WorkspaceStackRow,
+  from: WorkspaceStackRow,
+  position: number,
+): WorkspaceStackRow[] {
+  const low = Math.min(position, row.offset) - 1;
+  const high = Math.max(position, row.offset) + 1;
+  const kept = rows.filter(
+    (candidate) =>
+      candidate.id !== row.id &&
+      candidate.offset !== row.offset &&
+      (candidate === from || (candidate.offset > low && candidate.offset < high)),
+  );
+  return [...kept, row].toSorted((a, b) => a.offset - b.offset);
 }
 
 function rowOf(id: string): WorkspaceStackRow | null {
@@ -196,6 +206,7 @@ function springTo(offset: number, velocity?: number): void {
   if (!host || !stack) return;
   const from = currentPosition();
   const v = velocity ?? run?.velocity() ?? 0;
+  const retargeted = run !== null;
   run?.cancel();
   run = null;
   const motion = MotionAnimation.start("workspace-switch", from, offset, v);
@@ -212,6 +223,7 @@ function springTo(offset: number, velocity?: number): void {
       if (run === started) run = null;
       settle();
     },
+    retargeted ? document.timeline.currentTime : undefined,
   );
   run = motion.durationMs > 0 ? started : null;
   settle();
