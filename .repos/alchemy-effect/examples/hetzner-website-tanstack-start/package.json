@@ -2,6 +2,11 @@
   "name": "hetzner-website-tanstack-start",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/hetzner-website-tanstack-start"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -17,6 +22,8 @@
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/hetzner": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@distilled.cloud/hetzner": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@tailwindcss/vite": "catalog:",
@@ -31,10 +38,5 @@
   },
   "engines": {
     "node": ">=22"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/hetzner-website-tanstack-start"
   }
 }
