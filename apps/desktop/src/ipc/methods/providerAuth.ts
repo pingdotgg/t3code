@@ -23,8 +23,13 @@ export const receiveProviderAuthCallback = DesktopIpc.makeIpcMethod({
     const context = yield* Effect.context<ElectronShell.ElectronShell>();
     const runPromise = Effect.runPromiseWith(context);
     const callbackUrl = yield* Effect.tryPromise({
-      try: () =>
-        receiveCodexAuthCallback(authorizationUrl, (url) => runPromise(shell.openExternal(url))),
+      try: (signal) =>
+        receiveCodexAuthCallback(
+          authorizationUrl,
+          (url) => runPromise(shell.openExternal(url)),
+          undefined,
+          signal,
+        ),
       catch: () =>
         new CodexAuthCallbackError({
           detail:
