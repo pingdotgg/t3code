@@ -585,24 +585,6 @@ export function PullRequestDetailPanel({
     !activityQuery.isPending
       ? activityQuery.dataUpdatedAt
       : null;
-  const revealRefreshedFor = useRef<string | null>(null);
-  const showRevealedComment = useEffectEvent(() => {
-    if (revealCommentId === null) {
-      // Cached activity can predate the comment, so load it once more before giving up.
-      if (revealUrl !== undefined && revealRefreshedFor.current !== revealUrl) {
-        revealRefreshedFor.current = revealUrl;
-        return activityQuery.refresh();
-      }
-      return onRevealSettled?.();
-    }
-    // selectTab's store writes; the local tab already switched during render.
-    if (tabOnPage) useGuideRunStore.getState().showPageDetailTab(guideKey, "summary");
-    onTabChange?.("summary");
-  });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the tab and the pending link live in stores outside the panel
-  useEffect(() => {
-    if (revealCommentId !== null || revealMissedAt !== null) showRevealedComment();
-  }, [revealCommentId, revealMissedAt]);
   const refreshDetail = () => {
     detailQuery.refresh();
     activityQuery.refresh();
@@ -659,6 +641,24 @@ export function PullRequestDetailPanel({
     appliedForcedToken.current = forcedRefreshToken;
     refreshFromHostOnRequest();
   }, [forcedRefreshToken]);
+  const revealRefreshedFor = useRef<string | null>(null);
+  const showRevealedComment = useEffectEvent(() => {
+    if (revealCommentId === null) {
+      // Cached activity can predate the comment, so read the host once more before giving up.
+      if (revealUrl !== undefined && revealRefreshedFor.current !== revealUrl) {
+        revealRefreshedFor.current = revealUrl;
+        return void refreshFromHost();
+      }
+      return onRevealSettled?.();
+    }
+    // selectTab's store writes; the local tab already switched during render.
+    if (tabOnPage) useGuideRunStore.getState().showPageDetailTab(guideKey, "summary");
+    onTabChange?.("summary");
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the tab and the pending link live in stores outside the panel
+  useEffect(() => {
+    if (revealCommentId !== null || revealMissedAt !== null) showRevealedComment();
+  }, [revealCommentId, revealMissedAt]);
   const runAction = useAtomCommand(pullRequestEnvironment.runAction, {
     reportFailure: false,
   });
