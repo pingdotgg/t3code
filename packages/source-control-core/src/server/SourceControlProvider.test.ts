@@ -14,6 +14,13 @@ it("removes URL credentials, query parameters, and fragments from error transpor
   );
 });
 
+it("keeps the spelling of an Entire clone URL's repository path", () => {
+  assert.strictEqual(
+    repositoryPathFromRemoteUrl("entire://aws-us-east-2.entire.io/gh/Acme/Web.git"),
+    "gh/Acme/Web",
+  );
+});
+
 it.each([
   ["git@github.com:T3Tools/t3code.git", "T3Tools/t3code"],
   ["github.com:T3Tools/t3code.git", "T3Tools/t3code"],
