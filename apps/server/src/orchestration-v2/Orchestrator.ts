@@ -1297,6 +1297,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // Commands here read only undelivered or active tasks; a dispatcher thread keeps
           // thousands of delivered ones, each carrying its full prompt.
           omitSettledSubagents: true,
+          // Command decisions only consume pending forks and merge-backs.
+          contextTransferStatuses: ["pending"],
         },
       )
       .pipe(
