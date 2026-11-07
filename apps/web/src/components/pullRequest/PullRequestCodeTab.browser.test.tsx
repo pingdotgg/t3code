@@ -6,6 +6,7 @@ import {
   type PullRequestDiffResult,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
+import * as Schema from "effect/Schema";
 
 import "~/index.css";
 
@@ -71,6 +72,12 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
 });
 
 import { render } from "../../../test/render";
+import {
+  getLocalStorageItem,
+  removeLocalStorageItem,
+  setLocalStorageItem,
+} from "~/hooks/useLocalStorage";
+import { __setClientSettingsForTests, getClientSettings } from "~/hooks/useSettings";
 import PullRequestCodeTab from "./PullRequestCodeTab";
 
 const detail: PullRequestDetailView = {
@@ -160,6 +167,40 @@ it("keeps the diff after a refresh that brings back the same page", async () => 
     .element(screen.getByText("This pull request has no file changes."))
     .not.toBeInTheDocument();
   await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+});
+
+function hideFiles(patterns: string) {
+  const key = "t3code.diffHideTestFiles";
+  const previousSettings = getClientSettings();
+  const previousHidden = getLocalStorageItem(key, Schema.Boolean);
+  __setClientSettingsForTests({ ...previousSettings, diffHideFilePatterns: patterns });
+  setLocalStorageItem(key, true, Schema.Boolean);
+  return {
+    [Symbol.dispose]() {
+      __setClientSettingsForTests(previousSettings);
+      if (previousHidden === null) removeLocalStorageItem(key);
+      else setLocalStorageItem(key, previousHidden, Schema.Boolean);
+    },
+  };
+}
+
+it("distinguishes hidden files from no changes and lets the user show them", async () => {
+  setup({ paged: false });
+  using _settings = hideFiles("^a\\.ts$");
+  const container = document.createElement("div");
+  container.className = "h-[700px] w-[900px]";
+  await using screen = await render(tab(0), { container });
+
+  await expect.element(screen.getByText("All matching files are hidden.")).toBeVisible();
+  await expect
+    .element(screen.getByText("This pull request has no file changes."))
+    .not.toBeInTheDocument();
+
+  await screen.getByRole("button", { name: "1 matching file hidden" }).click();
+
+  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("a.ts", { exact: true }).first()).toBeVisible();
+  await expect.element(screen.getByText("All matching files are hidden.")).not.toBeInTheDocument();
 });
 
 function pagedContainer() {
