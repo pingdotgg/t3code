@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   alignListPaneToHinge,
+  chatFitsBesideSidebar,
   deriveLayout,
   deriveThreadFeedInitialContentInset,
   deriveThreadArrangementSizing,
@@ -211,6 +212,50 @@ describe("deriveWorkspacePaneLayout", () => {
       auxiliaryPaneVisible: true,
     });
   });
+});
+
+describe("chatFitsBesideSidebar", () => {
+  const ANDROID_RAIL = 72;
+  const ANDROID_CONTENT_END_GAP = 4;
+
+  // regression: #31112 wide Android tablets kept hiding the sidebar while typing
+  it.each([
+    { name: "a wide tablet", width: 1_280, height: 800, fits: true },
+    { name: "a narrow split", width: 900, height: 800, fits: false },
+    {
+      name: "a wide tablet with the inspector open",
+      width: 1_280,
+      height: 800,
+      inspector: true,
+      fits: false,
+    },
+    {
+      name: "a book-posture hinge",
+      width: 1_100,
+      height: 800,
+      hinge: { x: 550, width: 30 },
+      fits: false,
+    },
+    { name: "the same window without its hinge", width: 1_100, height: 800, fits: true },
+  ])(
+    "keeps the chat at reading width beside the sidebar on $name: $fits",
+    ({ width, height, inspector = false, hinge = null, fits }) => {
+      const layout = alignListPaneToHinge({
+        layout: deriveLayout({ width, height }),
+        hinge,
+        viewportWidth: width,
+        leadingWidth: ANDROID_RAIL,
+      });
+      const panes = deriveWorkspacePaneLayout({
+        layout,
+        viewportWidth: width - ANDROID_RAIL,
+        primarySidebarFloats: false,
+        primarySidebarPreferredVisible: true,
+        auxiliaryPanePreferredVisible: inspector,
+      });
+      expect(chatFitsBesideSidebar(panes, ANDROID_CONTENT_END_GAP)).toBe(fits);
+    },
+  );
 });
 
 describe("alignListPaneToHinge", () => {
