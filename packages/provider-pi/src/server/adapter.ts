@@ -1123,11 +1123,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         kind: PiStreamItemState["kind"],
         contentIndex: number | `final:${number}`,
       ) {
-        const blockId = `${turn.providerTurn.id}:m${turn.messageOrdinal}:c${contentIndex}`;
-        const previous = turn.streamItems.get(blockId);
-        // Pi's final content can put a different block kind at a streamed index.
-        const nativeItemId =
-          previous === undefined || previous.kind === kind ? blockId : `${blockId}:${kind}`;
+        const nativeItemId = `${turn.providerTurn.id}:m${turn.messageOrdinal}:c${contentIndex}`;
         const existing = turn.streamItems.get(nativeItemId);
         if (existing !== undefined) return existing;
         const startedAt = yield* DateTime.now;
@@ -1145,18 +1141,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         return item;
       });
 
-      const completeStreamItem = (
-        turn: ActivePiTurn,
-        item: PiStreamItemState,
-        text?: string,
-        ordinal = itemOrdinal(turn, item.nativeItemId),
-      ) =>
+      const completeStreamItem = (turn: ActivePiTurn, item: PiStreamItemState, text?: string) =>
         Effect.suspend(() => {
-          const reordered = ordinal !== itemOrdinal(turn, item.nativeItemId);
-          if (item.completed && !reordered && (text === undefined || text === item.text)) {
-            return Effect.void;
-          }
-          turn.itemOrdinals.set(item.nativeItemId, ordinal);
+          if (item.completed && (text === undefined || text === item.text)) return Effect.void;
           const hadText = item.text.length > 0;
           item.completed = true;
           if (text !== undefined) item.text = text;
@@ -1990,7 +1977,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 (item) => item.messageOrdinal === turn.messageOrdinal,
               );
               const finalized = new Set<PiStreamItemState>();
-              const replacements: { item: PiStreamItemState; text: string }[] = [];
               for (const [index, block] of content.entries()) {
                 const type = recordString(block, "type");
                 if (type !== "text" && type !== "thinking") continue;
@@ -2000,14 +1986,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   currentItems.find((item) => item.kind === kind && !finalized.has(item)) ??
                   (yield* streamItemFor(turn, kind, `final:${index}`));
                 finalized.add(item);
-                replacements.push({ item, text: recordString(block, type) ?? "" });
-              }
-              // Reuse only these blocks' slots so tool and retry ordinals stay in place.
-              const ordinals = replacements
-                .map(({ item }) => itemOrdinal(turn, item.nativeItemId))
-                .sort((a, b) => a - b);
-              for (const [index, { item, text }] of replacements.entries()) {
-                yield* completeStreamItem(turn, item, text, ordinals[index]);
+                yield* completeStreamItem(turn, item, recordString(block, type) ?? "");
               }
               for (const item of currentItems) {
                 if (!finalized.has(item)) yield* completeStreamItem(turn, item, "");

@@ -623,7 +623,7 @@ describe("PiAdapterV2", () => {
       ],
     },
     {
-      name: "orders two final text blocks after removing thinking",
+      name: "reuses text and adds a second final block after removing thinking",
       streamed: "draft",
       ended: true,
       content: [textBlock("First"), textBlock("Second")],
@@ -634,13 +634,13 @@ describe("PiAdapterV2", () => {
       ],
     },
     {
-      name: "orders final-only thinking before existing text",
+      name: "reuses identities when final block kinds reorder",
       streamed: "draft",
       ended: true,
       content: [textBlock("First"), thinkingBlock("Next"), textBlock("Last")],
       items: [
-        ["assistant_message", "First"],
         ["reasoning", "Next"],
+        ["assistant_message", "First"],
         ["assistant_message", "Last"],
       ],
     },
@@ -740,9 +740,7 @@ describe("PiAdapterV2", () => {
           assert.equal(itemUpdates, updates);
         }
         assert.deepEqual(
-          [...turnItems.values()]
-            .sort((a, b) => a.ordinal - b.ordinal)
-            .map(({ type, text, streaming }) => ({ type, text, streaming })),
+          [...turnItems.values()].map(({ type, text, streaming }) => ({ type, text, streaming })),
           items.map(([type, text]) => ({ type, text, streaming: false })),
         );
         assert.deepEqual(
@@ -754,7 +752,7 @@ describe("PiAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("preserves earlier messages and surrounding tools when final blocks reorder", () =>
+  it.effect("preserves earlier messages, identities and positions when final content changes", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -820,8 +818,8 @@ describe("PiAdapterV2", () => {
         [
           ["assistant_message", "first", 101],
           ["dynamic_tool", undefined, 102],
-          ["reasoning", "reason", 103],
-          ["assistant_message", "Second", 104],
+          ["assistant_message", "Second", 103],
+          ["reasoning", "reason", 104],
           ["assistant_message", "Third", 105],
           ["dynamic_tool", undefined, 106],
         ],
