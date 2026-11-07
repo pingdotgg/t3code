@@ -6,6 +6,7 @@ import {
   type ProviderSettingsFieldModel,
   type SettingsFormDefinition,
 } from "@t3tools/client-runtime/settings/provider-form-fields";
+import { isSecretReference } from "@t3tools/contracts";
 import { useState } from "react";
 import { TextInput, View } from "react-native";
 
@@ -108,8 +109,13 @@ function TextSettingsField(props: {
   readonly multiline?: boolean;
   readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
 }) {
-  const saved = readProviderConfigFieldString(props.value, props.field.key);
-  const redacted = props.secure && saved.length > 0;
+  const raw =
+    props.value !== null && typeof props.value === "object"
+      ? (props.value as Record<string, unknown>)[props.field.key]
+      : undefined;
+  const hasSecretReference = isSecretReference(raw);
+  const saved = typeof raw === "string" ? raw : "";
+  const redacted = hasSecretReference || (props.secure === true && saved.length > 0);
   const [draft, setDraft] = useState(redacted ? "" : saved);
   const shown = redacted && draft.length === 0 ? "" : draft;
 
@@ -123,7 +129,13 @@ function TextSettingsField(props: {
         accessibilityLabel={props.field.label}
         className="mt-1 rounded-lg border border-border-subtle px-3 py-2 text-base text-foreground"
         placeholderTextColorClassName="accent-foreground-muted"
-        placeholder={redacted ? "Saved on the host" : props.field.placeholder}
+        placeholder={
+          hasSecretReference
+            ? "Linked secret on the host"
+            : redacted
+              ? "Saved on the host"
+              : props.field.placeholder
+        }
         secureTextEntry={props.secure}
         multiline={props.multiline}
         autoCapitalize="none"
@@ -132,7 +144,7 @@ function TextSettingsField(props: {
         value={shown}
         onChangeText={setDraft}
         onEndEditing={() => {
-          if (redacted && draft.trim().length === 0) return;
+          if (redacted ? draft.trim().length === 0 : draft === saved) return;
           props.onChange(nextProviderConfigWithFieldValue(props.value, props.field, draft));
         }}
       />

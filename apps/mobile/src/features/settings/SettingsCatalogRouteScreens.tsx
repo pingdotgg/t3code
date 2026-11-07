@@ -222,6 +222,16 @@ export function SettingsSecretsRouteScreen() {
     );
   }
 
+  if (page.targets.length > 1) {
+    return (
+      <SettingsCatalogPage title="Secrets">
+        <Text className="text-foreground-muted">
+          Select a single environment to manage secret providers.
+        </Text>
+      </SettingsCatalogPage>
+    );
+  }
+
   const providers = page.targets[0]?.environment.serverConfig.settings.secretProviders ?? {};
   const entries = Object.entries(providers);
 
@@ -236,16 +246,15 @@ export function SettingsSecretsRouteScreen() {
               <Text className="text-base text-foreground">{provider.label}</Text>
               <Text className="text-sm text-foreground-muted">{provider.kind}</Text>
               {page.canWrite ? (
-                <Text
-                  className="text-sm text-destructive"
-                  onPress={() =>
-                    void page.write({
-                      secretProviders: { [SecretProviderId.make(id)]: null },
-                    })
-                  }
-                >
-                  Remove
-                </Text>
+                <SettingsActionRow
+                  label="Remove"
+                  tone="danger"
+                  loading={page.pending}
+                  onPress={() => {
+                    const providerId = SecretProviderId.make(id);
+                    void page.write({ secretProviders: { [providerId]: null } });
+                  }}
+                />
               ) : null}
             </View>
           ))

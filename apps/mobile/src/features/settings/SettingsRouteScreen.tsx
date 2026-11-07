@@ -112,7 +112,7 @@ function useConnectionExtraRows(): SettingsListRow[] {
   const secretsFeatureEnabled = Constants.expoConfig?.extra?.secretsFeatureEnabled === true;
   return [
     {
-      id: "access",
+      id: "SettingsAccess",
       icon: "exclamationmark.shield",
       label: "Sharing & access",
       target: "SettingsAccess",
@@ -121,7 +121,7 @@ function useConnectionExtraRows(): SettingsListRow[] {
     ...(secretsFeatureEnabled
       ? [
           {
-            id: "secrets",
+            id: "SettingsSecrets",
             icon: "exclamationmark.shield",
             label: "Secrets",
             target: "SettingsSecrets" as const,
@@ -265,7 +265,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
   return mobileSettingsIndexGroups({ secretsFeatureEnabled }).map((group) => ({
     title: group.title,
     rows: group.rows.map((row) => ({
-      id: row.id,
+      id: row.target,
       icon: row.icon as SettingsListRow["icon"],
       label: row.label,
       target: row.target as SettingsPageTarget,
