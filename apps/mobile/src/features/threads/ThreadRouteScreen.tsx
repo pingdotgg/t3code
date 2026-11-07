@@ -840,9 +840,9 @@ function ThreadRouteContent(
     preparing:
       composer.selectedThreadActivityRun?.status === "preparing" ||
       selectedThread?.runtime?.status === "preparing" ||
-      selectedThread?.worktreePath != null ||
       (selectedThreadCreation?.message.creation?.workspaceMode === "worktree" &&
         selectedThreadCreation.outcome == null),
+    hasWorktree: selectedThread?.worktreePath != null,
     turnStarted: setupTurnStartedAt !== null,
     followUpSent:
       composer.selectedThreadFeed.filter(

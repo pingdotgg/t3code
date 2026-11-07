@@ -1,5 +1,13 @@
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 
+/** The server restarts `sequence` for a later attempt, so a later `startedAt` wins first. */
+export function compareWorktreeSetupSnapshots(
+  a: WorktreeSetupSnapshot,
+  b: WorktreeSetupSnapshot,
+): number {
+  return Date.parse(a.startedAt) - Date.parse(b.startedAt) || a.sequence - b.sequence;
+}
+
 export function resolveVisibleWorktreeSetup(input: {
   live: WorktreeSetupSnapshot | null;
   recorded: WorktreeSetupSnapshot | null;
@@ -7,7 +15,8 @@ export function resolveVisibleWorktreeSetup(input: {
   followUpSent: boolean;
 }): WorktreeSetupSnapshot | null {
   const snapshot =
-    input.live && (!input.recorded || input.live.sequence >= input.recorded.sequence)
+    input.live &&
+    (!input.recorded || compareWorktreeSetupSnapshots(input.live, input.recorded) >= 0)
       ? input.live
       : input.recorded;
   if (!snapshot) return null;

@@ -68,6 +68,13 @@ describe("mobile worktree setup handoff", () => {
     },
   );
 
+  it("takes a later retry even after the server restarts its sequence", () => {
+    const failed = { ...running, phase: "failed" as const, sequence: 2 };
+    const retry = { ...running, startedAt: "2026-09-17T00:01:00.000Z", sequence: 0 };
+    expect(resolveWorktreeSetupSnapshot(threadId, retry, failed)).toBe(retry);
+    expect(resolveWorktreeSetupSnapshot(threadId, failed, retry)).toBe(retry);
+  });
+
   it("does not carry a previous thread's progress across navigation", () => {
     const otherId = ThreadId.make("other-thread");
     expect(resolveWorktreeSetupSnapshot(otherId, running, running)).toBeNull();

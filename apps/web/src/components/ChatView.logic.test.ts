@@ -722,6 +722,12 @@ describe("worktree setup visibility", () => {
       });
     expect(resolve(newest, base)).toEqual({ snapshot: newest, isPreparingWorktree: false });
     expect(resolve(base, newest)).toEqual({ snapshot: newest, isPreparingWorktree: false });
+    const retry = {
+      ...base,
+      startedAt: new Date(Date.parse(now) + 60_000).toISOString(),
+      sequence: 0,
+    };
+    expect(resolve(retry, newest).snapshot).toBe(retry);
     const other = { ...base, threadId: ThreadId.make("another-thread") };
     expect(resolve(other, other)).toEqual({ snapshot: null, isPreparingWorktree: false });
   });
