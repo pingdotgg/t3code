@@ -95,28 +95,40 @@ describe("server browser page copies", () => {
     { argument: "", text: "", outcome: "TypeError" },
     { argument: 'Symbol("invalid")', text: "", outcome: "TypeError" },
     {
-      argument: '{ toString() { throw new TypeError("invalid"); } }',
+      argument:
+        '{ n: 0, toString() { document.body.dataset.conversions++; if (this.n++ === 0) throw conversionError; return "token"; } }',
       text: "",
       outcome: "TypeError",
+      conversionFailure: true,
     },
-  ])("reports native writeText conversion for $argument", async ({ argument, text, outcome }) => {
-    await inPage(`
-      document.body.dataset.conversions = "0";
-      document.getElementById("write").onclick = () => {
-        const writing = navigator.clipboard.writeText(${argument});
-        writing.then(
-          () => document.body.dataset.outcome = "resolved",
-          (error) => document.body.dataset.outcome = error.name,
-        );
-      };
-    `);
-    await page.locator("#write").click();
-    await page.locator("body[data-outcome]").waitFor();
-    expect(await inPage("document.body.dataset.outcome")).toBe(outcome);
-    expect(await takeCopy(true)).toBe(text);
-    expect(await takeCopy(false)).toBe("");
-    expect(await inPage("document.body.dataset.conversions")).toBe(text === "converted" ? "1" : "0");
-  });
+  ])(
+    "reports native writeText conversion for $argument",
+    async ({ argument, text, outcome, conversionFailure }) => {
+      await inPage(`
+        document.body.dataset.conversions = "0";
+        const conversionError = new TypeError("invalid");
+        document.getElementById("write").onclick = () => {
+          const writing = navigator.clipboard.writeText(${argument});
+          writing.then(
+            () => document.body.dataset.outcome = "resolved",
+            (error) => {
+              document.body.dataset.outcome = error.name;
+              document.body.dataset.originalError = String(error === conversionError);
+            },
+          );
+        };
+      `);
+      await page.locator("#write").click();
+      await page.locator("body[data-outcome]").waitFor();
+      expect(await inPage("document.body.dataset.outcome")).toBe(outcome);
+      expect(await takeCopy(true)).toBe(text);
+      expect(await takeCopy(false)).toBe("");
+      expect(await inPage("document.body.dataset.conversions")).toBe(
+        text === "converted" || conversionFailure ? "1" : "0",
+      );
+      if (conversionFailure) expect(await inPage("document.body.dataset.originalError")).toBe("true");
+    },
+  );
 
   it.each([
     { target: "document", capture: true, format: "text/plain", items: false },

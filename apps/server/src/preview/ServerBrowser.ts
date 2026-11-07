@@ -508,6 +508,7 @@ const CLIPBOARD_SCRIPT = `(() => {
 const CLIPBOARD_WRITE_SCRIPT = `(() => {
   const clipboard = globalThis.Clipboard?.prototype;
   const writeText = clipboard?.writeText;
+  const reject = Promise.reject.bind(Promise);
   const dispatch = EventTarget.prototype.dispatchEvent;
   const Report = CustomEvent;
   const report = (type, text) => {
@@ -522,8 +523,8 @@ const CLIPBOARD_WRITE_SCRIPT = `(() => {
           let text;
           try {
             text = \`\${args[0]}\`;
-          } catch {
-            return Reflect.apply(target, self, args);
+          } catch (error) {
+            return reject(error);
           }
           report("${CLIPBOARD_WRITE_EVENT}", text);
           args[0] = text;
