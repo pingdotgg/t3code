@@ -1,4 +1,5 @@
 import { assert, it, vi } from "@effect/vitest";
+import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
   EnvironmentId,
   EventId,
@@ -5927,7 +5928,71 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         },
       });
       yield* assertSummary("Plan limit reached.", "usage_limit");
+      // A subagent that died on the same limit starts a notification wake that completes
+      // before the reset. It did no work, so the failed run stays the latest.
+      const wakeRunId = RunId.make("run:limit-shell:wake");
+      const wakeNodeId = NodeId.make("node:limit-shell:wake");
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:wake"),
+        type: "run.created",
+        threadId,
+        runId: wakeRunId,
+        nodeId: wakeNodeId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...original,
+          id: wakeRunId,
+          ordinal: original.ordinal + 4,
+          rootNodeId: wakeNodeId,
+          userMessageId: MessageId.make("message:limit-shell:wake"),
+          status: "completed",
+          startedAt: DateTime.add(now, { minutes: 1 }),
+          completedAt: DateTime.add(now, { minutes: 1 }),
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:wake-notification"),
+        type: "turn-item.updated",
+        threadId,
+        runId: wakeRunId,
+        nodeId: wakeNodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("limit-shell:wake-notification"),
+          threadId,
+          runId: wakeRunId,
+          nodeId: wakeNodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 4,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "notification",
+          source: { kind: "delegated_task", taskIds: [] },
+          outcome: "failed",
+          summary: "Subagent failed",
+        },
+      });
+      yield* assertSummary("Plan limit reached.", "usage_limit");
+      const wakeProjection = yield* store.getThreadProjection(threadId);
+      assert.equal(
+        ProjectionStore.threadShellFromProjection(wakeProjection).latestRunId,
+        original.id,
+      );
+      assert.equal(
+        (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId)!.latestRunId,
+        original.id,
+      );
       const sql = yield* SqlClient.SqlClient;
+      yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${wakeRunId}`;
       yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${aheadRunId}`;
       yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${queuedRunId}`;
       yield* assertSummary("Plan limit reached.", "usage_limit");
@@ -6578,12 +6643,123 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           (detail) =>
             /^SEARCH (?:item|error) /.test(detail) && !detail.includes("(turn_item_id=?)"),
         );
-        assert.lengthOf(errorLookups, marker.includes("blocking") ? 2 : 1, marker);
+        assert.lengthOf(errorLookups, marker.includes("blocking") ? 3 : 2, marker);
         for (const errorLookup of errorLookups) {
           assert.include(errorLookup, "turn_items_failed_error_idx");
           assert.include(errorLookup, "(thread_id=? AND run_id=? AND node_id=?)");
         }
       }
+    }),
+  );
+
+  it.effect("snapshot windows keep the limited run that notification wakes hide", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("limit-window");
+      const original = (yield* store.getThreadProjection(threadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      const base = { threadId, providerThreadId: null, providerTurnId: null, nativeItemRef: null };
+      yield* store.apply({
+        id: EventId.make("event:limit-window:error"),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          ...base,
+          id: TurnItemId.make("limit-window:error"),
+          runId: original.id,
+          nodeId: original.rootNodeId,
+          parentItemId: null,
+          ordinal: 2,
+          status: "failed",
+          title: "Usage limit reached",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "error",
+          failure: {
+            class: "usage_limit",
+            message: "Plan limit reached.",
+            resetAt: "2099-01-01T00:00:00.000Z",
+            code: "usageLimitExceeded",
+            retryable: null,
+          },
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("event:limit-window:failed"),
+        type: "run.updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...original, status: "failed", completedAt: now },
+      });
+      for (let index = 0; index < 6; index++) {
+        const runId = RunId.make(`run:limit-window:wake-${index}`);
+        const nodeId = NodeId.make(`node:limit-window:wake-${index}`);
+        const at = DateTime.add(now, { seconds: index + 1 });
+        yield* store.apply({
+          id: EventId.make(`event:limit-window:wake-${index}`),
+          type: "run.created",
+          threadId,
+          runId,
+          nodeId,
+          driver,
+          providerInstanceId,
+          occurredAt: at,
+          payload: {
+            ...original,
+            id: runId,
+            ordinal: original.ordinal + index + 1,
+            rootNodeId: nodeId,
+            userMessageId: MessageId.make(`message:limit-window:wake-${index}`),
+            status: "completed",
+            startedAt: at,
+            completedAt: at,
+          },
+        });
+        yield* store.apply({
+          id: EventId.make(`event:limit-window:wake-${index}:notification`),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          nodeId,
+          driver,
+          occurredAt: at,
+          payload: {
+            ...base,
+            id: TurnItemId.make(`limit-window:wake-${index}`),
+            runId,
+            nodeId,
+            parentItemId: null,
+            ordinal: 10 + index,
+            status: "completed",
+            title: null,
+            startedAt: at,
+            completedAt: at,
+            updatedAt: at,
+            type: "notification",
+            source: { kind: "delegated_task", taskIds: [] },
+            outcome: "failed",
+            summary: "Subagent failed",
+          },
+        });
+      }
+
+      const snapshot = yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 3 });
+      const bounded = buildBoundedThreadProjection({
+        projection: snapshot.projection,
+        snapshotSequence: snapshot.snapshotSequence,
+      }).projection;
+      for (const projection of [snapshot.projection, bounded]) {
+        assert.equal(
+          usageLimitBlockedRun(projection.runs, projection.turnItems, null)?.id,
+          original.id,
+        );
+      }
+      assert.notInclude(
+        snapshot.projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
+        "limit-window:error",
+      );
     }),
   );
 
