@@ -159,7 +159,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     ],
   },
   {
-    heading: null,
+    heading: "Application",
     paths: ["/settings/maintenance", "/settings/labs", "/settings/about", "/settings/archived"],
   },
 ];

@@ -282,10 +282,10 @@ function SnoozePresetList(props: {
             key={props.keys[index]}
             role="group"
             aria-label={`Snooze option ${index + 1}`}
-            className="flex flex-wrap items-center gap-2"
+            className="flex flex-wrap items-center gap-2 sm:flex-nowrap"
           >
             <SnoozePresetFields preset={preset} onChange={(next) => props.onChange(index, next)} />
-            <div className="ml-auto flex min-w-0 items-center gap-2 text-meta text-muted-foreground">
+            <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2 whitespace-nowrap text-meta text-muted-foreground">
               {preview.tone === "menu" ? (
                 <span className="truncate">
                   <span className="text-foreground">{preview.label}</span>
@@ -367,7 +367,7 @@ function SnoozePresetFields(props: {
           onChange(next);
         }}
       >
-        <SelectTrigger size="sm" className="w-32" aria-label="When">
+        <SelectTrigger variant="well" size="compact" className="w-28 min-w-0" aria-label="When">
           <SelectValue />
         </SelectTrigger>
         <SelectPopup>
@@ -388,7 +388,7 @@ function SnoozePresetFields(props: {
           <span className="text-meta text-muted-foreground">at</span>
           <Input
             nativeInput
-            size="sm"
+            size="settings"
             type="time"
             className="w-32"
             aria-label="Time"
@@ -423,8 +423,8 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
   return (
     <div className="flex max-w-full min-w-0 items-center gap-2">
       <NumberField
-        size="sm"
-        className="w-32 shrink-0"
+        size="compact"
+        className="w-28 shrink-0"
         min={1}
         max={maxAmount}
         step={1}
@@ -465,7 +465,7 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
           }
         }}
       >
-        <SelectTrigger size="sm" className="w-28 max-sm:min-w-0" aria-label="Unit">
+        <SelectTrigger variant="well" size="compact" className="w-24 min-w-0" aria-label="Unit">
           <SelectValue />
         </SelectTrigger>
         <SelectPopup>

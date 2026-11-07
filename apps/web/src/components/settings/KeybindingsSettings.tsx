@@ -1652,7 +1652,7 @@ export function KeybindingsSettingsPanel() {
         <Button
           type="button"
           ref={addButtonRef}
-          size="sm"
+          size="standard"
           disabled={isAddingBinding || !canWriteSettings}
           onClick={() => setIsAddingBinding(true)}
         >

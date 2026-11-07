@@ -216,7 +216,7 @@ export function AppearanceSettingsPanel() {
                 value={settings.appearanceContrast}
               />
               <output
-                className="min-w-12 text-right text-caption tabular-nums text-muted-foreground"
+                className="min-w-16 text-right text-meta tabular-nums text-muted-foreground"
                 htmlFor="appearance-contrast"
               >
                 {settings.appearanceContrast === DEFAULT_UNIFIED_SETTINGS.appearanceContrast
@@ -263,7 +263,12 @@ export function AppearanceSettingsPanel() {
                     updateSettings({ chatWidth: value });
                 }}
               >
-                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Chat width">
+                <SelectTrigger
+                  variant="well"
+                  size="compact"
+                  className="w-full min-w-0"
+                  aria-label="Chat width"
+                >
                   <SelectValue>{CHAT_WIDTH_LABELS[settings.chatWidth]}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -298,7 +303,12 @@ export function AppearanceSettingsPanel() {
                     updateSettings({ effortDisplay: value });
                 }}
               >
-                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Effort display">
+                <SelectTrigger
+                  variant="well"
+                  size="compact"
+                  className="w-full min-w-0"
+                  aria-label="Effort display"
+                >
                   <SelectValue>{EFFORT_DISPLAY_LABELS[settings.effortDisplay]}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -362,7 +372,8 @@ export function AppearanceSettingsPanel() {
               }}
             >
               <SelectTrigger
-                size="sm"
+                variant="well"
+                size="compact"
                 className="w-full sm:w-40"
                 aria-label="Environment identification"
               >
@@ -389,7 +400,7 @@ export function AppearanceSettingsPanel() {
               <PanelAnimationsPreview durationMs={settings.panelAnimationDurationMs} />
               <div className="flex w-full items-center gap-3">
                 <output
-                  className="min-w-16 rounded-control surface-card px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+                  className="min-w-16 text-right text-meta tabular-nums text-muted-foreground"
                   htmlFor="panel-animation-duration"
                 >
                   {settings.panelAnimationDurationMs} ms
