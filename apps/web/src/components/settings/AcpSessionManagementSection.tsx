@@ -106,7 +106,7 @@ function ProjectSessionManagement(
   const canRead = useEnvironmentScope(props.environmentId, AuthOrchestrationReadScope);
   const { projectId } = props;
   const active = useRef(true);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Invalidate RPC continuations when their project scope unmounts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Late continuations must not act on a replaced project scope.
   useLayoutEffect(() => {
     active.current = true;
     return () => {
@@ -172,7 +172,6 @@ function ProjectSessionManagement(
         ...(cursor === undefined ? {} : { cursor }),
       },
     });
-    if (!active.current) return;
     setLoading(false);
     if (result._tag === "Success") {
       setSessions((current) =>
@@ -202,7 +201,6 @@ function ProjectSessionManagement(
         updatedAt: session.updatedAt,
       },
     });
-    if (!active.current) return;
     setImportingSessionId(null);
     if (result._tag === "Success") {
       setSessions((current) =>
@@ -239,7 +237,6 @@ function ProjectSessionManagement(
       environmentId: props.environmentId,
       input: { instanceId: props.instanceId, projectId, sessionId: session.sessionId },
     });
-    if (!active.current) return;
     setDeletingSessionId(null);
     if (result._tag === "Success") {
       setSessions((current) =>
@@ -258,7 +255,6 @@ function ProjectSessionManagement(
       environmentId: props.environmentId,
       input: { instanceId: props.instanceId, projectId },
     });
-    if (!active.current) return;
     setLoadingProviders(false);
     if (result._tag === "Success") {
       setProviders(result.value.providers);
@@ -313,11 +309,10 @@ function ProjectSessionManagement(
         ...(headers === undefined ? {} : { headers }),
       },
     });
-    if (!active.current) return;
     setSavingProviderId(null);
     if (result._tag === "Success") {
       toastManager.add({ type: "success", title: "ACP provider configured" });
-      await loadProviders(provider.providerId);
+      if (active.current) await loadProviders(provider.providerId);
       return;
     }
     reportFailure("Could not configure ACP provider", result);
@@ -341,11 +336,10 @@ function ProjectSessionManagement(
       environmentId: props.environmentId,
       input: { instanceId: props.instanceId, projectId, providerId: provider.providerId },
     });
-    if (!active.current) return;
     setSavingProviderId(null);
     if (result._tag === "Success") {
       toastManager.add({ type: "success", title: "ACP provider disabled" });
-      await loadProviders(provider.providerId);
+      if (active.current) await loadProviders(provider.providerId);
       return;
     }
     reportFailure("Could not disable ACP provider", result);
@@ -358,7 +352,6 @@ function ProjectSessionManagement(
       environmentId: props.environmentId,
       input: { instanceId: props.instanceId },
     });
-    if (!active.current) return;
     setLoggingOut(false);
     if (result._tag === "Success") {
       setSessions([]);
