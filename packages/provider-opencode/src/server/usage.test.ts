@@ -11,12 +11,71 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import { vi } from "vite-plus/test";
 
+import {
+  openCodeForkContinuationSessionId,
+  openCodeForkMessages,
+  openCodeForkSchema,
+  openCodeForkSessions,
+  openCodeForkSourceAssistantId,
+  openCodeForkSourceSessionId,
+} from "./usage.fixture.ts";
 import { openCodeUsageReader, readOpenCodeUsage } from "./usage.ts";
 
 const openDatabase = (filename: string) =>
   Layer.build(NodeSqliteClient.layer({ filename })).pipe(
     Effect.map(Context.get(SqlClient.SqlClient)),
   );
+
+const recordedForkDatabase = Effect.fn(function* (
+  sessions: ReadonlyArray<{
+    readonly id: string;
+    readonly project_id: string;
+    readonly fork_session_id: string | null;
+    readonly fork_boundary: string | null;
+    readonly slug: string;
+    readonly directory: string;
+    readonly version: string;
+    readonly time_created: number;
+    readonly time_updated: number;
+  }>,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-fork-test-" });
+  const db = yield* openDatabase(path.join(dir, "opencode.db"));
+  for (const statement of openCodeForkSchema) yield* db.unsafe(statement);
+  for (const session of sessions) {
+    yield* db.unsafe(
+      "INSERT INTO session_v2 (id, project_id, fork_session_id, fork_boundary, slug, directory, version, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        session.id,
+        session.project_id,
+        session.fork_session_id,
+        session.fork_boundary,
+        session.slug,
+        session.directory,
+        session.version,
+        session.time_created,
+        session.time_updated,
+      ],
+    );
+  }
+  for (const message of openCodeForkMessages) {
+    yield* db.unsafe(
+      "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        message.id,
+        message.session_id,
+        message.type,
+        message.seq,
+        message.time_created,
+        message.time_updated,
+        message.data,
+      ],
+    );
+  }
+  return { dir, db };
+});
 
 describe("readOpenCodeUsage", () => {
   it.effect("bounds raw history allocations while counting every eligible message once", () =>
@@ -133,6 +192,112 @@ describe("readOpenCodeUsage", () => {
         ["opencode:msg-2"],
       );
       assert.isAbove(Number((yield* fileSystem.stat(path.join(dir, "opencode.db-wal"))).size), 0);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("counts an OpenCode reply once across the sessions forked from it", () =>
+    Effect.gen(function* () {
+      const { dir, db } = yield* recordedForkDatabase(openCodeForkSessions);
+      // A reply sent after the second fork is a new provider request.
+      yield* db.unsafe(
+        "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+          "msg_continuationassistant00001",
+          openCodeForkContinuationSessionId,
+          "assistant",
+          8,
+          1792620090000,
+          1792620090500,
+          JSON.stringify({
+            time: { created: 1792620090000, completed: 1792620090500 },
+            agent: "build",
+            model: { id: "claude-sonnet-4-5", providerID: "anthropic" },
+            content: [{ type: "text", text: "continued" }],
+            finish: "stop",
+            cost: 0.02,
+            tokens: { input: 50, output: 10, reasoning: 0, cache: { read: 1500, write: 0 } },
+          }),
+        ],
+      );
+
+      const result = yield* readOpenCodeUsage(dir, 0);
+      assert.isFalse(result.error);
+      const records = result.files.flatMap((file) => file.records);
+      assert.deepStrictEqual(
+        records.map((record) => [record.dedupeKey, record.sessionId]),
+        [
+          [`opencode:${openCodeForkSourceAssistantId}`, openCodeForkSourceSessionId],
+          ["opencode:msg_continuationassistant00001", openCodeForkContinuationSessionId],
+        ],
+      );
+      assert.deepStrictEqual(records[0]?.totals, {
+        uncachedInputTokens: 1000,
+        cachedInputTokens: 300,
+        cacheCreationTokens: 0,
+        outputTokens: 200,
+        reasoningTokens: 0,
+      });
+      assert.strictEqual(records[0]?.reportedCostUsd, 0.01);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("counts each OpenCode fork's own replies after its boundary", () =>
+    Effect.gen(function* () {
+      const [source, fork] = openCodeForkSessions;
+      const sibling = { ...fork, id: "ses_siblingfork00000000000000", slug: "quiet-river" };
+      const { dir, db } = yield* recordedForkDatabase([...openCodeForkSessions, sibling]);
+      const insert = (id: string, sessionId: string, seq: number, created: number, data: string) =>
+        db.unsafe(
+          "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?, ?, 'assistant', ?, ?, ?, ?)",
+          [id, sessionId, seq, created, created, data],
+        );
+      const copied = openCodeForkMessages.find(
+        (message) => message.id === openCodeForkSourceAssistantId,
+      )!;
+      yield* insert("msg_siblingcopy_2", sibling.id, copied.seq, copied.time_created, copied.data);
+      // Sibling forks send identical replies at the same seq and millisecond.
+      const created = 1792620090000;
+      const reply = JSON.stringify({ ...JSON.parse(copied.data), time: { created } });
+      yield* insert("msg_forkreply000000000000003", fork.id, 3, created, reply);
+      yield* insert("msg_siblingreply0000000000003", sibling.id, 3, created, reply);
+
+      const records = (yield* readOpenCodeUsage(dir, 0)).files.flatMap((file) => file.records);
+      assert.deepStrictEqual(
+        records.map((record) => record.sessionId),
+        [source.id, fork.id, sibling.id],
+      );
+
+      // Deleting the source leaves the first fork holding the only copy.
+      yield* db.unsafe("DELETE FROM session_message WHERE session_id = ?", [source.id]);
+      yield* db.unsafe("DELETE FROM session_v2 WHERE id = ?", [source.id]);
+      const remaining = (yield* readOpenCodeUsage(dir, 0)).files.flatMap((file) => file.records);
+      assert.includeMembers(
+        remaining.map((record) => record.dedupeKey),
+        ["opencode:msg_1607ab38e001GxURO0NU4GY4Az_2", "opencode:msg_forkreply000000000000003"],
+      );
+      assert.notInclude(
+        remaining.map((record) => record.dedupeKey),
+        "opencode:msg_1607b8a6d001MA7a5GgmyUywMf_2",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("counts identical OpenCode replies in sessions that were not forked", () =>
+    Effect.gen(function* () {
+      const { dir } = yield* recordedForkDatabase(
+        openCodeForkSessions.map((session) => ({
+          ...session,
+          fork_session_id: null,
+          fork_boundary: null,
+        })),
+      );
+
+      const result = yield* readOpenCodeUsage(dir, 0);
+      assert.isFalse(result.error);
+      assert.deepStrictEqual(
+        result.files.flatMap((file) => file.records).map((record) => record.sessionId),
+        openCodeForkSessions.map((session) => session.id),
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
