@@ -3,6 +3,7 @@ import { secondTick } from "@t3tools/client-runtime/clock";
 import { useSyncExternalStore } from "react";
 
 import { useAppActive } from "../../lib/appState";
+import { usePaneRole } from "../../components/ui/Pane";
 
 const subscribeNever = () => () => undefined;
 
@@ -12,8 +13,10 @@ const subscribeNever = () => () => undefined;
  */
 export function useVisibleSecondClock(enabled: boolean): number {
   const focused = useIsFocused();
+  // The sidebar's route stays unfocused under the page beside it.
+  const inSidebar = usePaneRole() === "sidebar";
   const appActive = useAppActive();
-  const ticking = enabled && focused && appActive;
+  const ticking = enabled && (focused || inSidebar) && appActive;
   // While paused the snapshot still reads the shared tick, so resuming shows
   // the current second rather than the one the clock stopped on.
   return useSyncExternalStore(

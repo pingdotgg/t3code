@@ -19,7 +19,7 @@ output:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -117,7 +117,9 @@ distribution:
 
 ```typescript
 const router = yield* AWS.Website.Router("WebsiteRouter", {
-  // hosted zone inferred from the hostname; pass hostedZoneId to pin it
+  // hosted zone inferred from the hostname; pass hostedZoneId to pin it, or
+  // dns: Cloudflare.DNS.Adapter() for a domain on Cloudflare DNS
+  // (see /infrastructure-as-code/dns-adapters)
   domain: { name: "example.com" },
 });
 
