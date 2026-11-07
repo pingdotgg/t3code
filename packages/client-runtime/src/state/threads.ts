@@ -110,17 +110,47 @@ function snapshotToPersist(
   return { snapshotSequence, projection };
 }
 
+// Room for a server snapshot (a 1 MiB turn window plus runs and checkpoints). Encoding a larger
+// cache blocks the main thread, and only events streamed into a mounted thread grow one past it.
+const CACHED_THREAD_MAX_JSON_LENGTH = 4 * 1024 * 1024;
+const jsonLengths = new WeakMap<object, number>();
+
+// Approximates the JSON length without building the whole document. Projection versions
+// share unchanged objects, so the memo limits a repeat check to the rows that changed.
+function approximateJsonLength(value: unknown): number {
+  if (typeof value === "string") return JSON.stringify(value).length;
+  if (typeof value !== "object" || value === null) return 8;
+  const known = jsonLengths.get(value);
+  if (known !== undefined) return known;
+  let length = 2;
+  if (Array.isArray(value)) {
+    for (const entry of value) length += approximateJsonLength(entry) + 1;
+  } else {
+    for (const [key, entry] of Object.entries(value)) {
+      length += key.length + 4 + approximateJsonLength(entry);
+    }
+  }
+  jsonLengths.set(value, length);
+  return length;
+}
+
+function isBoundedProjection(thread: OrchestrationV2ThreadProjection): boolean {
+  return approximateJsonLength(thread) <= CACHED_THREAD_MAX_JSON_LENGTH;
+}
+
 function shouldPersistThread(
   thread: OrchestrationV2ThreadProjection,
   history: ThreadHistoryMeta,
 ): boolean {
-  // After the user loads older pages the in-memory timeline can grow large.
-  // Keep those expanded projections out of the monolithic cache.
+  // Older pages and streamed events grow the in-memory timeline past a bounded
+  // snapshot. Keep those projections out of the monolithic cache.
   if (history.expanded) {
     return false;
   }
-  return !thread.runs.some(
-    (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
+  return (
+    !thread.runs.some(
+      (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
+    ) && isBoundedProjection(thread)
   );
 }
 
@@ -231,6 +261,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const loaded =
     retained === undefined
       ? yield* cache.loadThread(environmentId, threadId).pipe(
+          // An oversized cache predates the size limit. Drop it so no later open decodes it again.
+          Effect.filterOrElse(
+            (loaded) => Option.isNone(loaded) || isBoundedProjection(loaded.value.projection),
+            () =>
+              cache
+                .removeThread(environmentId, threadId)
+                .pipe(Effect.as(Option.none<OrchestrationV2ThreadDetailSnapshot>())),
+          ),
           Effect.catch((error) =>
             Effect.logWarning("Could not load cached thread.").pipe(
               Effect.annotateLogs({
@@ -326,6 +364,22 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       )
     )
       return;
+    if (!isBoundedProjection(snapshot.projection)) {
+      // Only a repair arrives here oversized. Drop the entry so its stale rows cannot reload.
+      yield* cache.removeThread(environmentId, threadId).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            savedSnapshot = snapshot;
+          }),
+        ),
+        Effect.catch((error) =>
+          Effect.logWarning("Could not remove the oversized thread cache.").pipe(
+            Effect.annotateLogs({ environmentId, threadId, error: error.message }),
+          ),
+        ),
+      );
+      return;
+    }
     yield* cache.saveThread(environmentId, snapshot).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
@@ -370,7 +424,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                   committed.acceptsBoundedSnapshots === true,
                 ),
               )
-            : // The consumer may still be waiting out its delay; an expanded thread queues
+            : // The consumer may still be waiting out its delay; an unsaved thread queues
               // only cache repairs, which must survive leaving the thread.
               queuedSnapshot !== undefined && queuedSnapshot !== savedSnapshot
               ? persist(queuedSnapshot)
@@ -878,12 +932,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             yield* setThread(thread);
             yield* remember;
           }
-          // An expanded timeline is never saved, so reload would bring the stale row back.
+          // An unsaved timeline would reload the stale row from the cache.
           // Repair the snapshot last handed to the cache instead, keeping its window and cursor.
           // A resumed state skipped the cache load, so read the saved snapshot then.
           if (shouldPersistThread(thread, latest.history)) return;
           // A terminal event that landed during the lookup is newer than any reply, and the
-          // expanded live state never saves it, whatever the lookup returned.
+          // unsaved live state never saves it, whatever the lookup returned.
           const latestItems = new Map(settled);
           for (const item of thread.turnItems) {
             if (queried.has(item.id) && !isOrchestrationV2WorkActive(item.status)) {
