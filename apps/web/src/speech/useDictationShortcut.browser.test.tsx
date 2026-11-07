@@ -80,3 +80,35 @@ it("finishes a released hold after startup even if the chord was pressed again w
   expect(speech.start).toHaveBeenCalledOnce();
   expect(speech.stop).toHaveBeenCalledOnce();
 });
+
+it("lets Escape in another text field reach that field instead of canceling the recording", async () => {
+  const speech = {
+    ...actions(true),
+    state: { phase: "recording" as const, error: null, errorAction: null },
+  };
+  const fieldEscape = vi.fn();
+  await using screen = await render(
+    <>
+      <Probe speech={speech} />
+      <textarea
+        aria-label="Comment"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") fieldEscape();
+        }}
+      />
+    </>,
+  );
+  const field = screen.getByRole("textbox", { name: "Comment" }).element();
+  if (!(field instanceof HTMLTextAreaElement)) throw new Error("expected the comment textarea");
+  field.focus();
+  field.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "Escape",
+      code: "Escape",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  expect(speech.cancel).not.toHaveBeenCalled();
+  expect(fieldEscape).toHaveBeenCalledOnce();
+});

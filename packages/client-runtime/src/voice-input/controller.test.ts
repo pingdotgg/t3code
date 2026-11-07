@@ -280,17 +280,12 @@ describe("resolveTranscriptCommit", () => {
     });
   });
 
-  it("does not replace text after the owner, text, or revision changes", () => {
+  it("does not insert into a missing draft or another owner's draft", () => {
     const captured = draft();
+    expect(resolveTranscriptCommit(captured, null, "text", "en-US")).toEqual({ kind: "stale" });
     expect(
       resolveTranscriptCommit(captured, draft({ ownerKey: "other" }), "text", "en-US"),
     ).toEqual({
-      kind: "stale",
-    });
-    expect(resolveTranscriptCommit(captured, draft({ text: "newer" }), "text", "en-US")).toEqual({
-      kind: "stale",
-    });
-    expect(resolveTranscriptCommit(captured, draft({ revision: 2 }), "text", "en-US")).toEqual({
       kind: "stale",
     });
   });
@@ -645,6 +640,28 @@ describe("VoiceInputController", () => {
 
     expect(harness.commits).toEqual([]);
     expect(harness.controller.currentState.error).toContain("draft changed");
+  });
+
+  it("inserts the transcript at the current caret when the draft changed while recording", async () => {
+    const harness = createHarness();
+    await harness.controller.start();
+    harness.setDraft(
+      draft({
+        text: "> cited line\n\nhello world",
+        revision: 2,
+        selection: { start: 25, end: 25 },
+      }),
+    );
+    await harness.controller.stop();
+
+    expect(harness.controller.currentState).toEqual({
+      phase: "idle",
+      error: null,
+      errorAction: null,
+    });
+    expect(harness.commits).toEqual([
+      { text: "> cited line\n\nhello world new text", selection: { start: 34, end: 34 } },
+    ]);
   });
 
   it("queues the next recording until canceled preparation settles", async () => {
