@@ -105,7 +105,7 @@ import {
   copyPromptLink,
   promptLinkRepositoryOf,
 } from "./promptLinks/copyPromptLink";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { readLocalApi } from "../localApi";
 import { configuredHostedAppUrl } from "../hostedPairing";
@@ -479,6 +479,7 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -1555,7 +1556,7 @@ function OpenCommandPaletteDialog(props: {
   if (openBesideItem) actionItems.push(openBesideItem);
   // The index shows the layout too once there is a project.
   if (activeThread || activeDraftThread || (pathname === "/" && projects.length > 0)) {
-    actionItems.push(...buildLayoutPaletteItems());
+    actionItems.push(...buildLayoutPaletteItems(scrollingWorkspaces));
   }
 
   actionItems.push({
