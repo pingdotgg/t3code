@@ -1071,6 +1071,8 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         "write-tree",
         "commit-tree",
         "update-ref",
+        // Without a parsed top level, capture cannot rule out submodules.
+        "submodule",
       ]);
       assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
       assert.deepEqual(yield* fileSystem.readFile(path.join(cwd, ".git", "index")), originalIndex);
@@ -1224,6 +1226,73 @@ it.effect("restores a checkpoint before the first commit without staging its fil
         args: ["diff", "--cached", "--name-only"],
       });
       assert.strictEqual(staged.stdout.trim(), nested ? "outside.txt" : "");
+    }
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("restores and deletes checkpoints inside populated submodules", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const git = (cwd: string, args: ReadonlyArray<string>) =>
+      driver.execute({ operation: "test", cwd, args });
+    const makeRepository = Effect.fn("makeRepository")(function* (prefix: string) {
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix });
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["config", "user.email", "test@test.com"]);
+      yield* git(cwd, ["config", "user.name", "Test"]);
+      yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "original\n");
+      yield* git(cwd, ["add", "."]);
+      yield* git(cwd, ["commit", "-m", "initial"]);
+      return cwd;
+    });
+    const nested = yield* makeRepository("t3-submodule-nested-");
+    const library = yield* makeRepository("t3-submodule-library-");
+    const addSubmodule = (cwd: string, url: string, name: string) =>
+      git(cwd, ["-c", "protocol.file.allow=always", "submodule", "add", url, name]).pipe(
+        Effect.andThen(git(cwd, ["commit", "-m", `add ${name}`])),
+      );
+    yield* addSubmodule(library, nested, "nested");
+    const root = yield* makeRepository("t3-submodule-root-");
+    yield* addSubmodule(root, library, "library");
+    yield* git(root, [
+      "-c",
+      "protocol.file.allow=always",
+      "submodule",
+      "update",
+      "--init",
+      "--recursive",
+    ]);
+    const files = ["file.txt", "library/file.txt", "library/nested/file.txt"].map((file) =>
+      path.join(root, file),
+    );
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/submodules");
+    yield* fileSystem.writeFileString(files[1]!, "captured\n");
+    yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
+
+    for (const file of files) {
+      yield* fileSystem.writeFileString(file, "changed\n");
+      yield* fileSystem.writeFileString(`${file}.added`, "new\n");
+    }
+    assert.isTrue(
+      yield* driver.checkpoints.restoreCheckpoint({
+        cwd: root,
+        checkpointRef,
+        fallbackToHead: false,
+      }),
+    );
+
+    assert.deepStrictEqual(
+      yield* Effect.forEach(files, (file) => fileSystem.readFileString(file)),
+      ["original\n", "captured\n", "original\n"],
+    );
+    for (const file of files) assert.isFalse(yield* fileSystem.exists(`${file}.added`));
+
+    yield* driver.checkpoints.deleteCheckpointRefs({ cwd: root, checkpointRefs: [checkpointRef] });
+    for (const cwd of [root, path.join(root, "library"), path.join(root, "library", "nested")]) {
+      const ref = yield* git(cwd, ["for-each-ref", "refs/t3"]);
+      assert.strictEqual(ref.stdout, "");
     }
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );

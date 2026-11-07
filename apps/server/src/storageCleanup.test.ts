@@ -640,6 +640,19 @@ it.live("removes clean submodules recursively, including deinitialized repositor
       ]);
       yield* recordSubmodules();
       yield* command(submodule, ["submodule", "deinit", "stored"]);
+      const checkpoint = (yield* command(submodule, [
+        "commit-tree",
+        "HEAD^{tree}",
+        "-p",
+        "HEAD",
+        "-m",
+        "checkpoint",
+      ])).stdout.trim();
+      yield* command(submodule, [
+        "update-ref",
+        "refs/t3/orchestration-v2/checkpoints/test",
+        checkpoint,
+      ]);
       const admin = (yield* command(worktree, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
       const report = yield* service.runNow;
       expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
