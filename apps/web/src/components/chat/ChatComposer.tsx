@@ -35,6 +35,7 @@ import type {
   ScopedThreadRef,
   ServerProvider,
   ThreadId,
+  UserInputQuestion,
 } from "@t3tools/contracts";
 import {
   EnvironmentRequestInvalidError,
@@ -407,6 +408,7 @@ export interface ChatComposerProps {
     customAnswer: string;
     activeQuestion: {
       id: string;
+      options: UserInputQuestion["options"];
       initialAnswer?: string | undefined;
       multiSelect?: boolean | undefined;
       allowCustomAnswer?: boolean | undefined;
@@ -3529,7 +3531,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         : activePendingProgress
                           ? isChoiceOnlyPendingQuestion
                             ? "Choose an option above"
-                            : "Type your own answer, or leave this blank to use the selected option"
+                            : activePendingProgress.activeQuestion?.options.length
+                              ? "Type your own answer, or leave this blank to use the selected option"
+                              : "Type your answer"
                           : showPlanFollowUpPrompt && activeProposedPlan
                             ? "Add feedback to refine the plan, or leave this blank to implement it"
                             : projectSelectionRequired
