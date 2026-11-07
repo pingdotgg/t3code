@@ -1410,6 +1410,48 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect.each(["cancelled", "interrupted", "timedOut", "aborted"] as const)(
+    "cancels a question Muse settles as %s without an answer",
+    (outcome) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeMuse();
+        const harness = yield* makeHarness(fake);
+        const { nativeId } = yield* startConversation(harness, fake);
+        yield* fake.emit("userInput/requested", {
+          userInputId: "question-1",
+          turnId: nativeId,
+          questions: [
+            {
+              id: "approach",
+              header: "Approach",
+              question: "Which approach?",
+              options: [{ label: "Small" }, { label: "Large" }],
+              selection: { mode: "single" },
+            },
+          ],
+        });
+        yield* harness.takeEvent(
+          "runtime_request.updated",
+          (event) => event.runtimeRequest.kind === "user_input",
+        );
+        yield* fake.emit("userInput/settled", {
+          userInputId: "question-1",
+          turnId: nativeId,
+          answers: [],
+          clarification: null,
+          outcome,
+        });
+        const settled = yield* harness.takeEvent("runtime_request.updated");
+        assert.strictEqual(settled.runtimeRequest.status, "cancelled");
+        assert.isUndefined(settled.runtimeRequest.answers);
+        const item = yield* harness.takeEvent(
+          "turn_item.updated",
+          (event) => event.turnItem.type === "user_input_request",
+        );
+        assert.strictEqual(item.turnItem.status, "cancelled");
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("steers only the active native turn and waits for confirmed interruption", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
