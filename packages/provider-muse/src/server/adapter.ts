@@ -2206,11 +2206,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           const held = compact ? undefined : wake;
           if (!compact) wake = undefined;
           // Compaction waits for the held run, so requests it already raised are shown now.
-          else if (wake)
-            for (const [method, data] of wake.events.splice(0))
+          else if (wake) {
+            // failHost clears `wake` mid-loop.
+            const buffered = wake;
+            for (const [method, data] of buffered.events.splice(0))
               if (REQUEST_NOTIFICATIONS.has(method))
                 yield* handleNotification(method, data).pipe(Effect.catch(failHost));
-              else wake.events.push([method, data]);
+              else buffered.events.push([method, data]);
+          }
           if (continuation && !held) return yield* finish(turn, "completed");
           if (held && !continuation) turn.joined.add(held.nativeId);
           for (const [method, data] of held?.events ?? [])
