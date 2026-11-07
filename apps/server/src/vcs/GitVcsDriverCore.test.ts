@@ -2414,6 +2414,60 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("reads uncommitted changes when the branch base shares no history with HEAD", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["checkout", "--orphan", "unrelated"]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "unrelated root"]);
+        yield* git(cwd, ["checkout", "-b", "feature/unrelated-base", initialBranch]);
+        yield* git(cwd, [
+          "config",
+          "branch.feature/unrelated-base.t3-merge-base-ref",
+          "refs/heads/unrelated",
+        ]);
+        yield* writeTextFile(cwd, "README.md", "dirty\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const dirty = yield* driver.getReviewDiffPreview({ cwd, sourceKind: "working-tree" });
+        assert.deepStrictEqual(
+          dirty.sources.map((source) => source.kind),
+          ["working-tree"],
+        );
+        assert.include(dirty.sources[0]!.diff, "+dirty");
+        const file = { path: "README.md", previousPath: null, sourceKind: "working-tree" as const };
+        const scoped = yield* driver.getReviewDiffPreview({
+          cwd,
+          sourceKind: "working-tree",
+          file,
+        });
+        assert.include(scoped.sources[0]!.diff, "+dirty");
+        for (const [requestedKind, fileKind] of [
+          ["working-tree", "branch-range"],
+          ["branch-range", "working-tree"],
+        ] as const) {
+          const conflict = yield* driver
+            .getReviewDiffPreview({
+              cwd,
+              sourceKind: requestedKind,
+              file: { ...file, sourceKind: fileKind },
+            })
+            .pipe(Effect.flip);
+          assert.equal(conflict.operation, "GitVcsDriver.getReviewDiffPreview");
+          assert.equal(conflict.detail, "Review source selectors must agree.");
+        }
+
+        const branch = yield* driver
+          .getReviewDiffPreview({ cwd, sourceKind: "branch-range" })
+          .pipe(Effect.flip);
+        assert.equal(branch.operation, "GitVcsDriver.resolveReviewMergeBase");
+        assert.include(
+          branch.detail,
+          "Could not find a common commit between 'refs/heads/unrelated' and HEAD.",
+        );
+      }),
+    );
+
     it.effect("reads complete tracked and untracked manifests beyond 1 MB", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
