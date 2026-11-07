@@ -4852,22 +4852,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (input.oldBranch === input.newBranch) {
       return { branch: input.newBranch };
     }
-    const targetBranch = input.exactName
-      ? input.newBranch
-      : yield* resolveAvailableBranchName(input.cwd, input.newBranch);
-
-    yield* executeGit(
-      "GitVcsDriver.renameBranch",
+    // Parallel launches often generate the same name; picking it under the lock that serializes
+    // the renames keeps a second launch from choosing a name the first is about to take.
+    return yield* withSharedConfigLock(
       input.cwd,
-      ["branch", "-m", "--", input.oldBranch, targetBranch],
-      {
-        timeoutMs: 10_000,
-        fallbackErrorDetail: "git branch rename failed",
-        writesSharedConfig: true,
-      },
-    );
+      Effect.gen(function* () {
+        const targetBranch = input.exactName
+          ? input.newBranch
+          : yield* resolveAvailableBranchName(input.cwd, input.newBranch);
 
-    return { branch: targetBranch };
+        yield* executeGit(
+          "GitVcsDriver.renameBranch",
+          input.cwd,
+          ["branch", "-m", "--", input.oldBranch, targetBranch],
+          {
+            timeoutMs: 10_000,
+            fallbackErrorDetail: "git branch rename failed",
+          },
+        );
+
+        return { branch: targetBranch };
+      }),
+    );
   });
 
   const switchRef: GitVcsDriver.GitVcsDriver["Service"]["switchRef"] = Effect.fn("switchRef")(
