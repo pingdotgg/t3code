@@ -1760,6 +1760,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const resolvePushRemoteName = Effect.fn("resolvePushRemoteName")(function* (
     cwd: string,
     refName: string,
+    fallbackRemoteName: string | null = null,
   ) {
     const branchPushRemote = yield* runGitStdout(
       "GitVcsDriver.resolvePushRemoteName.branchPushRemote",
@@ -1779,6 +1780,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ).pipe(Effect.map((stdout) => stdout.trim()));
     if (pushDefaultRemote.length > 0) {
       return pushDefaultRemote;
+    }
+
+    if (fallbackRemoteName) {
+      return fallbackRemoteName;
     }
 
     return yield* resolvePrimaryRemoteName(cwd).pipe(Effect.orElseSucceed(() => null));
@@ -2260,6 +2265,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     let refName: string | null = null;
     let upstreamRef: string | null = null;
+    // Git omits branch.ab when the upstream ref is gone, e.g. deleted after its PR merged,
+    // and also for an unborn HEAD, which can still track a fetched upstream.
+    let upstreamRefExists = false;
+    let isUnbornHead = false;
     let aheadCount = 0;
     let behindCount = 0;
     let aheadOfDefaultCount = 0;
@@ -2270,6 +2279,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const statusRecords = statusStdout.split("\0");
     for (let index = 0; index < statusRecords.length; index++) {
       const line = statusRecords[index]!;
+      if (line === "# branch.oid (initial)") {
+        isUnbornHead = true;
+        continue;
+      }
       if (line.startsWith("# branch.head ")) {
         const value = line.slice("# branch.head ".length).trim();
         refName = value.startsWith("(") ? null : value;
@@ -2280,11 +2293,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         upstreamRef = value.length > 0 ? value : null;
         continue;
       }
-      if (includeDivergence && line.startsWith("# branch.ab ")) {
-        const value = line.slice("# branch.ab ".length).trim();
-        const parsed = parseBranchAb(value);
-        aheadCount = parsed.ahead;
-        behindCount = parsed.behind;
+      if (line.startsWith("# branch.ab ")) {
+        upstreamRefExists = true;
+        if (includeDivergence) {
+          const parsed = parseBranchAb(line.slice("# branch.ab ".length).trim());
+          aheadCount = parsed.ahead;
+          behindCount = parsed.behind;
+        }
         continue;
       }
       if (line.length > 0 && !line.startsWith("#")) {
@@ -2302,6 +2317,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         }
       }
     }
+
+    if (!upstreamRefExists && !isUnbornHead) upstreamRef = null;
 
     const isDefaultBranch =
       refName !== null &&
@@ -2657,6 +2674,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ),
   );
 
+  // Publishing retargets the upstream, so preserve its comparison base first.
+  const preserveUpstreamBase = Effect.fn("preserveUpstreamBase")(function* (
+    cwd: string,
+    branch: string,
+    upstream: { readonly branchName: string; readonly upstreamRef: string },
+  ) {
+    if ((yield* readBranchBase(cwd, branch)) !== null) return;
+    yield* writeConfigValue({ cwd, key: branchBaseConfigKey(branch), value: upstream.branchName });
+    if (!(yield* readConfigValue(cwd, `branch.${branch}.t3-merge-base-ref`))) {
+      yield* writeConfigValue({
+        cwd,
+        key: `branch.${branch}.t3-merge-base-ref`,
+        value: `refs/remotes/${upstream.upstreamRef}`,
+      });
+    }
+  });
+
   const pushCurrentBranch: GitVcsDriver.GitVcsDriver["Service"]["pushCurrentBranch"] = Effect.fn(
     "pushCurrentBranch",
   )(function* (cwd, fallbackBranch, options) {
@@ -2690,6 +2724,31 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       };
     }
 
+    // A deleted upstream keeps its config: republish to it when it was this branch's own,
+    // otherwise it was the base, so keep that before publishing.
+    let goneUpstream: { remoteName: string; branchName: string } | null = null;
+    let goneBaseUpstream: { branchName: string; upstreamRef: string } | null = null;
+    if (!details.hasUpstream) {
+      const mergeRef = yield* readConfigValue(cwd, `branch.${branch}.merge`);
+      const mergeBranch = mergeRef?.startsWith("refs/heads/")
+        ? mergeRef.slice("refs/heads/".length)
+        : null;
+      const remoteName = yield* readConfigValue(cwd, `branch.${branch}.remote`);
+      if (mergeBranch && remoteName && remoteName !== ".") {
+        if (
+          mergeBranch === branch ||
+          mergeBranch === (yield* resolvePublishBranchName(cwd, branch))
+        ) {
+          goneUpstream = { remoteName, branchName: mergeBranch };
+        } else {
+          goneBaseUpstream = {
+            branchName: mergeBranch,
+            upstreamRef: `${remoteName}/${mergeBranch}`,
+          };
+        }
+      }
+    }
+
     const hasNoLocalDelta = details.aheadCount === 0 && details.behindCount === 0;
     if (hasNoLocalDelta) {
       if (details.hasUpstream) {
@@ -2704,9 +2763,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Effect.orElseSucceed(() => null),
       );
       if (comparableBaseBranch) {
-        const publishRemoteName = yield* resolvePushRemoteName(cwd, branch).pipe(
-          Effect.orElseSucceed(() => null),
-        );
+        const publishRemoteName = yield* resolvePushRemoteName(
+          cwd,
+          branch,
+          goneUpstream?.remoteName,
+        ).pipe(Effect.orElseSucceed(() => null));
         if (!publishRemoteName) {
           return {
             status: "skipped_up_to_date" as const,
@@ -2714,7 +2775,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           };
         }
 
-        const publishBranch = yield* resolvePublishBranchName(cwd, branch);
+        const publishBranch =
+          goneUpstream?.branchName ?? (yield* resolvePublishBranchName(cwd, branch));
         // The configured diff base can contain HEAD while the publish branch is still behind.
         const publishContainsHead = yield* executeGit(
           "GitVcsDriver.pushCurrentBranch.publishContainsHead",
@@ -2740,7 +2802,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     if (!details.hasUpstream) {
-      const publishRemoteName = yield* resolvePushRemoteName(cwd, branch);
+      const publishRemoteName = yield* resolvePushRemoteName(cwd, branch, goneUpstream?.remoteName);
       if (!publishRemoteName) {
         return yield* new GitCommandError({
           ...gitCommandContext({
@@ -2751,7 +2813,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           detail: "Cannot push because no git remote is configured for this repository.",
         });
       }
-      const publishBranch = yield* resolvePublishBranchName(cwd, branch);
+      const publishBranch =
+        goneUpstream?.branchName ?? (yield* resolvePublishBranchName(cwd, branch));
+      if (goneBaseUpstream) yield* preserveUpstreamBase(cwd, branch, goneBaseUpstream);
       yield* runGit(
         "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
         cwd,
@@ -2781,21 +2845,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         );
         const remoteName = publishRemoteName ?? currentUpstream.remoteName;
         const publishBranch = yield* resolvePublishBranchName(cwd, branch);
-        // Publishing retargets the upstream, so preserve its comparison base first.
-        if ((yield* readBranchBase(cwd, branch)) === null) {
-          yield* writeConfigValue({
-            cwd,
-            key: branchBaseConfigKey(branch),
-            value: currentUpstream.branchName,
-          });
-          if (!(yield* readConfigValue(cwd, `branch.${branch}.t3-merge-base-ref`))) {
-            yield* writeConfigValue({
-              cwd,
-              key: `branch.${branch}.t3-merge-base-ref`,
-              value: `refs/remotes/${currentUpstream.upstreamRef}`,
-            });
-          }
-        }
+        yield* preserveUpstreamBase(cwd, branch, currentUpstream);
         yield* runGit(
           "GitVcsDriver.pushCurrentBranch.pushOwnBranch",
           cwd,
