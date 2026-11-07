@@ -212,31 +212,31 @@ export function pullRequestPanelContext(
     : "page";
 }
 
-export function threadPullRequestPanelTarget(thread: {
+export function threadPullRequestPanelTargets(thread: {
   readonly projectId: string;
   readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;
   readonly branchPullRequest?: ThreadLinkedPullRequest | null | undefined;
 }) {
-  const current = resolveThreadCurrentPullRequestLink(thread.pullRequests ?? []);
+  const links = visibleThreadPullRequests(thread.pullRequests ?? []);
   const legacy = thread.linkedPullRequest;
-  if (
-    current !== null &&
-    legacy != null &&
-    threadPullRequestKeysEqual(current, legacyThreadPullRequestKey(legacy))
-  ) {
-    return legacy;
+  if (links.length > 0) {
+    const current = resolveThreadCurrentPullRequestLink(links);
+    const orderedLinks = current ? [current, ...links.filter((link) => link !== current)] : links;
+    return orderedLinks.map((link) =>
+      legacy != null && threadPullRequestKeysEqual(link, legacyThreadPullRequestKey(legacy))
+        ? legacy
+        : {
+            projectId: thread.projectId,
+            host: link.host,
+            repository: link.repository,
+            number: link.number,
+            url: link.url,
+          },
+    );
   }
-  if (current !== null) {
-    return {
-      projectId: thread.projectId,
-      host: current.host,
-      repository: current.repository,
-      number: current.number,
-      url: current.url,
-    };
-  }
-  return legacy ?? thread.branchPullRequest ?? null;
+  const fallback = legacy ?? thread.branchPullRequest;
+  return fallback ? [fallback] : [];
 }
 
 export function pullRequestHandoffLabels(inThisThread: boolean) {

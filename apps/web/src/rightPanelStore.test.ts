@@ -997,13 +997,19 @@ describe("rightPanelStore", () => {
     useRightPanelStore.getState().openPullRequest(refA, second);
     const url = "https://gitlab.example.com/pingdotgg/t3code/-/merge_requests/4909";
     useRightPanelStore.getState().openPullRequest(refA, { ...first, url });
-    useRightPanelStore.getState().openPullRequest(refA, first);
+    useRightPanelStore
+      .getState()
+      .setPullRequestDetailTab(refA, pullRequestSurfaceId(second), "code");
+    useRightPanelStore.getState().openFile(refA, "README.md");
+    useRightPanelStore.getState().openPullRequests(refA, [first, second, first]);
 
     const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
     expect(state.surfaces.map((surface) => surface.id)).toEqual([
       pullRequestSurfaceId(first),
       pullRequestSurfaceId(second),
+      "file:README.md",
     ]);
+    expect(state.surfaces[1]).toMatchObject({ detailTab: "code" });
     expect(state.activeSurfaceId).toBe(pullRequestSurfaceId(first));
     expect(
       selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),

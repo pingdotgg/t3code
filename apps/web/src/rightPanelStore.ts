@@ -139,17 +139,10 @@ interface RightPanelStoreState {
     keepSource?: boolean,
   ) => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
-  openPullRequest: (
+  openPullRequest: (ref: ScopedThreadRef, target: Parameters<typeof pullRequestSurface>[0]) => void;
+  openPullRequests: (
     ref: ScopedThreadRef,
-    target: {
-      environmentId?: string;
-      projectId: string;
-      host?: string;
-      repository: string;
-      number: number;
-      url?: string;
-      detailTab?: PullRequestDetailTab;
-    },
+    targets: ReadonlyArray<Parameters<typeof pullRequestSurface>[0]>,
   ) => void;
   setPullRequestDetailTab: (
     ref: ScopedThreadRef,
@@ -747,23 +740,26 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             return upsertSurface({ ...current, surfaces: withoutPlaceholder }, surface);
           }),
         ),
-      openPullRequest: (ref, target) =>
+      openPullRequest: (ref, target) => get().openPullRequests(ref, [target]),
+      openPullRequests: (ref, targets) => {
+        if (targets.length === 0) return;
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
-            const surface = pullRequestSurface(target);
-            const next = upsertSurface(current, surface);
-            return target.url
-              ? {
-                  ...next,
-                  surfaces: next.surfaces.map((entry) =>
-                    entry.id === surface.id && entry.kind === "pull-request"
-                      ? { ...entry, ...surface }
-                      : entry,
-                  ),
-                }
-              : next;
+            const surfaces = new Map(current.surfaces.map((surface) => [surface.id, surface]));
+            for (const target of targets) {
+              const surface = pullRequestSurface(target);
+              const existing = surfaces.get(surface.id);
+              surfaces.set(surface.id, existing ? { ...existing, ...surface } : surface);
+            }
+            return {
+              ...current,
+              isOpen: true,
+              surfaces: [...surfaces.values()],
+              activeSurfaceId: pullRequestSurfaceId(targets[0]!),
+            };
           }),
-        ),
+        );
+      },
       setPullRequestDetailTab: (ref, surfaceId, detailTab) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);

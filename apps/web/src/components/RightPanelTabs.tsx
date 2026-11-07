@@ -370,7 +370,7 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddDiff,
     },
     {
-      label: "Pull request",
+      label: "Open pull requests",
       icon: PullRequestGlyph.pullRequest,
       shortcut: "P",
       available: props.pullRequestAvailable,
@@ -1124,7 +1124,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddDiff,
     },
     {
-      label: "Pull request",
+      label: "Open pull requests",
       icon: PullRequestGlyph.pullRequest,
       shortcut: "P",
       available: props.pullRequestAvailable,

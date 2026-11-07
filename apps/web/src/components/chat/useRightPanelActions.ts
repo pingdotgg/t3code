@@ -28,7 +28,7 @@ import { focusActivePanelTerminal, focusTerminal } from "../../lib/terminalFocus
 import { subscribePreviewAction } from "../preview/previewActionBus";
 import { floatDeviceSurface } from "../preview/agentOpenedPreviews";
 import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../../previewMiniPlayerStore";
-import type { threadPullRequestPanelTarget } from "../pullRequest/pullRequestDetail.logic";
+import type { threadPullRequestPanelTargets } from "../pullRequest/pullRequestDetail.logic";
 import type { useDeviceState } from "../../state/device";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { openDeviceSetupDialog } from "./ChatOverlayHosts";
@@ -42,7 +42,7 @@ interface RightPanelActionsInput {
   readonly activePreviewState: ThreadPreviewState;
   readonly deviceState: ReturnType<typeof useDeviceState>["state"];
   readonly deviceStateLoaded: boolean;
-  readonly pullRequestPanelTarget: ReturnType<typeof threadPullRequestPanelTarget> | null;
+  readonly pullRequestPanelTargets: ReturnType<typeof threadPullRequestPanelTargets>;
   readonly threadPanelPresentation: ThreadPanelPresentation;
   readonly isServerThread: boolean;
   /** A side chat pane; the main view already answers preview bus actions. */
@@ -77,7 +77,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     activePreviewState,
     deviceState,
     deviceStateLoaded,
-    pullRequestPanelTarget,
+    pullRequestPanelTargets,
     threadPanelPresentation,
     isServerThread,
     embedded,
@@ -292,9 +292,9 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   };
   const copyRightPanelFilePathStable = useStableCallback(copyRightPanelFilePath);
   const addPullRequestSurface = () => {
-    if (!supportsPullRequests || activeThreadRef === null || pullRequestPanelTarget === null)
+    if (!supportsPullRequests || activeThreadRef === null || pullRequestPanelTargets.length === 0)
       return;
-    useRightPanelStore.getState().openPullRequest(activeThreadRef, pullRequestPanelTarget);
+    useRightPanelStore.getState().openPullRequests(activeThreadRef, pullRequestPanelTargets);
   };
   const addPullRequestSurfaceStable = useStableCallback(addPullRequestSurface);
   const onOpenTurnDiff = (runId: RunId, filePath?: string) => {
