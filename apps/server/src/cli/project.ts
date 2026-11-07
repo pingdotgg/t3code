@@ -490,6 +490,20 @@ const projectAddCommand = Command.make("add", {
         const existingProject = snapshot.projects.find(
           (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
         );
+        // Adding an archived project's folder again brings the project back, as every client does.
+        if (existingProject?.archivedAt != null) {
+          const title = Option.isSome(flags.title)
+            ? yield* resolveProjectTitle(workspaceRoot, flags.title.value)
+            : undefined;
+          yield* dispatch({
+            type: "project.update",
+            commandId: CommandId.make(yield* projectCommandUuid),
+            projectId: existingProject.id,
+            archived: false,
+            ...(title === undefined ? {} : { title }),
+          });
+          return `Unarchived project ${existingProject.id} (${title ?? existingProject.title}) at ${workspaceRoot}.`;
+        }
         if (existingProject) {
           return yield* new ProjectAlreadyExistsError({
             operation: "addProject",

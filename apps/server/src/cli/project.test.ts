@@ -89,7 +89,10 @@ const makeConfig = (baseDir: string) =>
     } satisfies ServerConfig.ServerConfig["Service"];
   });
 
-const readProjects = (baseDir: string) =>
+const withProjectService = <A, E>(
+  baseDir: string,
+  use: (projects: ProjectService.ProjectService["Service"]) => Effect.Effect<A, E>,
+) =>
   Effect.gen(function* () {
     const config = yield* makeConfig(baseDir);
     const layer = RuntimeLayer.layerProjectService.pipe(
@@ -108,11 +111,11 @@ const readProjects = (baseDir: string) =>
       Layer.provide(ServerConfig.layer(config)),
       Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
     );
-    return yield* ProjectService.ProjectService.pipe(
-      Effect.flatMap((projects) => projects.snapshot),
-      Effect.provide(layer),
-    );
+    return yield* ProjectService.ProjectService.pipe(Effect.flatMap(use), Effect.provide(layer));
   });
+
+const readProjects = (baseDir: string) =>
+  withProjectService(baseDir, (projects) => projects.snapshot);
 
 it.effect("adds, renames, and removes projects through the V2 project CLI domain", () =>
   Effect.gen(function* () {
@@ -205,6 +208,56 @@ const makeProjectLookupFixture = Effect.fn("ProjectCliTest.makeProjectLookupFixt
   assert.isDefined(project);
   return { baseDir, workspaceRoot, project: project! };
 });
+
+it.effect("adding an archived project's folder again unarchives the project", () =>
+  Effect.gen(function* () {
+    const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
+    yield* withProjectService(baseDir, (projects) =>
+      projects.update({
+        commandId: CommandId.make("project-cli-archive"),
+        projectId: project.id,
+        archived: true,
+      }),
+    );
+
+    yield* runCli(["project", "add", workspaceRoot, "--base-dir", baseDir]);
+
+    const projects = (yield* readProjects(baseDir)).projects;
+    assert.deepEqual(
+      projects.map((entry) => ({ id: entry.id, archivedAt: entry.archivedAt })),
+      [{ id: project.id, archivedAt: null }],
+    );
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+);
+
+it.effect("adding an archived project's folder with --title also renames it", () =>
+  Effect.gen(function* () {
+    const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
+    yield* withProjectService(baseDir, (projects) =>
+      projects.update({
+        commandId: CommandId.make("project-cli-archive"),
+        projectId: project.id,
+        archived: true,
+      }),
+    );
+
+    yield* runCli([
+      "project",
+      "add",
+      workspaceRoot,
+      "--title",
+      " Back again ",
+      "--base-dir",
+      baseDir,
+    ]);
+
+    const projects = (yield* readProjects(baseDir)).projects;
+    assert.deepEqual(
+      projects.map((entry) => ({ id: entry.id, title: entry.title, archivedAt: entry.archivedAt })),
+      [{ id: project.id, title: "Back again", archivedAt: null }],
+    );
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+);
 
 const makeThreadPersistenceLayer = Effect.fn("ProjectCliTest.makeThreadPersistenceLayer")(
   function* (baseDir: string) {
