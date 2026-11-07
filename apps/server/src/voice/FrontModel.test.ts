@@ -41,7 +41,7 @@ it.effect("loads a managed model once per call and unloads it after idling", () 
   let disposed = 0;
   const replies = [
     `{"action":"delegate","speech":" On it. ","task":"Run the tests."}`,
-    `{"action":"none","speech":"mm-hm","task":""}`,
+    `{"action":"none","speech":"mm-hm","task":"None."}`,
     `{"action":"reply"`,
   ];
   const load = async (path: string): Promise<FrontLlama> => {

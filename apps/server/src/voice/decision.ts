@@ -24,12 +24,15 @@ const Decision = Schema.Struct({
 });
 const decodeDecision = Schema.decodeUnknownOption(Schema.fromJsonString(Decision));
 
-/** Undefined when the text is not a decision. "none" never speaks, whatever the model wrote. */
+/**
+ * Undefined when the text is not a decision. Small models fill every field, so "none" never speaks
+ * and only delegate and note carry a task.
+ */
 export function parseFrontDecision(text: string): FrontDecision | undefined {
   const decoded = decodeDecision(text.trim());
   if (decoded._tag === "None") return undefined;
-  const { action, task } = decoded.value;
+  const { action } = decoded.value;
   const speech = action === "none" ? "" : decoded.value.speech.trim();
-  const trimmedTask = task?.trim();
-  return trimmedTask ? { action, speech, task: trimmedTask } : { action, speech };
+  const task = action === "delegate" || action === "note" ? decoded.value.task?.trim() : undefined;
+  return task ? { action, speech, task } : { action, speech };
 }
