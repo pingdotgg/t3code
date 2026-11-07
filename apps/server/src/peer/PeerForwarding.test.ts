@@ -440,6 +440,14 @@ it.effect("keeps a forwarded wait short and its retries scoped to the caller", (
       yield* linkTo(a.links, b, "auto");
       yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
 
+      const defaulted = yield* a.call("thread:laptop-full", "t3_thread_wait", {
+        environmentId: box.environmentId,
+        threadId: boxThread,
+      });
+      expect(defaulted.structuredContent).toMatchObject({ status: "running", timedOut: true });
+      expect((yield* Ref.get(seen)).waits.map(({ timeoutMs }) => timeoutMs)).toEqual([50_000]);
+      yield* Ref.set(seen, nothingSeen);
+
       const waited = yield* a.call("thread:laptop-full", "t3_thread_wait", {
         environmentId: box.environmentId,
         threadId: boxThread,
