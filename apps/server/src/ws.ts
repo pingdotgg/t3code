@@ -1977,7 +1977,9 @@ export const layerWsRpc = (
             onNone: () => ({}),
             onSome: (root) => ({ scratchWorkspaceRoot: root }),
           }),
-          newProjectsRoot: managedFolders.namedProjectsRoot,
+          newProjectsRoot: yield* managedFolders.resolveNamedProjectsRoot(
+            settings.newProjectDirectory,
+          ),
           ...(lastEventLoopStall === undefined ? {} : { lastEventLoopStall }),
         };
       });

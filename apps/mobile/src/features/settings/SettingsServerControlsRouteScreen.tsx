@@ -3,7 +3,7 @@ import { SettingsRow } from "./components/SettingsRow";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { AppText as Text } from "../../components/ui/AppText";
+import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
 import {
   type ResponseStreamingMode,
   type ServerSettings,
@@ -396,6 +396,44 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                 </SettingsSection>
                 <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
               </>
+            ) : null}
+
+            {props.page === "threads" ? (
+              <SettingsSection title="New projects">
+                {(["newProjectDirectory", "addProjectBaseDirectory"] as const).map((key) => {
+                  const saved = uniform(key);
+                  const value = typeof saved === "string" ? saved : "";
+                  const label =
+                    key === "newProjectDirectory"
+                      ? "New project location"
+                      : "Add project starts in";
+                  return (
+                    <View key={key} className="gap-2 px-4 py-3">
+                      <Text>{label}</Text>
+                      <Text className="text-sm text-foreground-muted">
+                        {key === "newProjectDirectory"
+                          ? "Leave empty to use T3 home's projects folder."
+                          : "Leave empty to start in your home folder."}
+                      </Text>
+                      <AppTextInput
+                        key={`${targetsKey}:${value}`}
+                        accessibilityLabel={label}
+                        defaultValue={value}
+                        placeholder={isMixed(key) ? "Mixed" : "Default folder"}
+                        editable={!disabledFor(key)}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        className="min-h-10 rounded-xl px-3 py-2 text-base text-foreground"
+                        onEndEditing={(event) => {
+                          const text = event.nativeEvent.text.trim();
+                          if (text === value) return;
+                          write({ [key]: text });
+                        }}
+                      />
+                    </View>
+                  );
+                })}
+              </SettingsSection>
             ) : null}
 
             {props.page === "source-control" ? (
