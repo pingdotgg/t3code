@@ -300,6 +300,73 @@ it.layer(
     { skip: !symlinksSupported || windowsHost },
   );
 
+  it.effect.each([
+    {
+      install: "native",
+      path: ".local/bin/native-package-tool",
+      packageName: "@example/native-package-tool",
+    },
+    { install: "Vite+", path: ".vite-plus/bin/package-tool", packageName: "@example/package-tool" },
+  ])(
+    "does not offer a $install update npm's release-age policy will not install",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-release-age");
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        const npmPath = NodePath.join(npmBinDir, "npm");
+        writeExecutable(npmPath);
+        const binaryPath = NodePath.join(tempDir, fixture.path);
+        writeExecutable(binaryPath);
+        const resolver = fixture.install === "native" ? nativePackageToolUpdate : packageToolUpdate;
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(resolver, {
+          binaryPath,
+          env: { PATH: npmBinDir },
+        }).pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            // `npm view` ignores min-release-age; install-time resolution honours it.
+            stdoutSpawner(
+              (command, args) => {
+                if (command !== npmPath) return "";
+                if (args[0] === "view") return '"1.2.0"';
+                if (args[0] === "pack" && args.includes("--dry-run")) {
+                  return JSON.stringify([{ name: fixture.packageName, version: "1.1.0" }]);
+                }
+                if (args[0] === "install" && args.includes("--dry-run")) {
+                  return JSON.stringify({ add: [{ name: fixture.packageName, version: "1.1.0" }] });
+                }
+                return args[0] === "outdated" ? "{}" : "";
+              },
+              (args) => (["view", "pack", "install", "outdated"].includes(args[0] ?? "") ? 0 : 1),
+            ),
+          ),
+        );
+
+        const provider = yield* enrichProviderSnapshotWithVersionAdvisory(
+          { ...installedPackageToolProvider, version: "1.1.0" },
+          capabilities,
+        ).pipe(
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make([]),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() =>
+              Effect.die("a configured npm lookup must not fall back to public npm"),
+            ),
+          ),
+        );
+        expect(provider.versionAdvisory).toMatchObject({
+          status: "current",
+          currentVersion: "1.1.0",
+          latestVersion: "1.1.0",
+        });
+      }),
+    { skip: windowsHost },
+  );
+
   it("pins the advertised stable version in a pnpm-global update command", () => {
     const advisoryFor = (
       maintenanceCapabilities: ReturnType<typeof makeProviderMaintenanceCapabilities>,
