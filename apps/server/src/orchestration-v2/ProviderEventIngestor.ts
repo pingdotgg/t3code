@@ -27,6 +27,7 @@ import * as SqlError from "effect/sql/SqlError";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { isProxied } from "@t3tools/shared/usageLimits";
 import {
   ProviderTurnAnalytics,
   type ProviderTurnAnalyticsContext,
@@ -641,11 +642,15 @@ export const layer: Layer.Layer<
                     )
                   : undefined;
               // A direct login whose own probe failed is not served by the hub.
-              const proxied =
-                provider?.auth.type === "customEndpoint" ||
-                provider?.usageLimits?.unavailable?.reason === "unsupported";
+              const proxied = provider !== undefined && isProxied(provider);
+              const model = proxied
+                ? yield* projections.getThread(input.threadId).pipe(
+                    Effect.map((thread) => thread.modelSelection.model),
+                    Effect.orElseSucceed(() => null),
+                  )
+                : null;
               const hubResetAt = proxied
-                ? yield* usageLimitResets.resetAt(input.event.driver)
+                ? yield* usageLimitResets.resetAt(input.event.driver, model)
                 : null;
               const failure = hubResetAt === null ? reported : { ...reported, resetAt: hubResetAt };
               return [

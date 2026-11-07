@@ -166,9 +166,10 @@ it.effect("reads a management key from its secret provider", () => {
 it("waits for the first refill only when every pooled account of the driver is spent", () => {
   const now = Date.parse("2026-11-06T12:00:00.000Z");
   const claude = ProviderDriverKind.make("claudeAgent");
-  const account = (id: string, windows: ReadonlyArray<object>) => ({
+  const account = (id: string, windows: ReadonlyArray<object>, models?: ReadonlyArray<string>) => ({
     id,
     driver: claude,
+    ...(models ? { models } : {}),
     usageLimits: { checkedAt: "2026-11-06T12:00:00.000Z", windows },
   });
   const session = (usedPercent: number, resetsAt: string) => ({
@@ -201,18 +202,26 @@ it("waits for the first refill only when every pooled account of the driver is s
       },
     ]),
   ];
-  expect(UsageLimitSources.hubPoolResetAt(hub(spent), claude, now)).toBe(
+  expect(UsageLimitSources.hubPoolResetAt(hub(spent), claude, null, now)).toBe(
     "2026-11-06T14:00:00.000Z",
   );
   const withRoom = [...spent, account("c", [session(40, "2026-11-06T15:00:00.000Z")])];
-  expect(UsageLimitSources.hubPoolResetAt(hub(withRoom), claude, now)).toBeNull();
+  expect(UsageLimitSources.hubPoolResetAt(hub(withRoom), claude, null, now)).toBeNull();
   const unread = {
     id: "d",
     driver: claude,
     usageLimits: { checkedAt: "", windows: [], unavailable: { reason: "probeFailed" } },
   };
-  expect(UsageLimitSources.hubPoolResetAt(hub([...spent, unread]), claude, now)).toBeNull();
+  expect(UsageLimitSources.hubPoolResetAt(hub([...spent, unread]), claude, null, now)).toBeNull();
   expect(
-    UsageLimitSources.hubPoolResetAt(hub(spent), ProviderDriverKind.make("codex"), now),
+    UsageLimitSources.hubPoolResetAt(hub(spent), ProviderDriverKind.make("codex"), null, now),
   ).toBeNull();
+  const routed = [
+    account("opus", [session(100, "2026-11-06T13:00:00.000Z")], ["claude-opus-5-5"]),
+    account("sonnet", [session(40, "2026-11-06T15:00:00.000Z")], ["claude-sonnet-5-5"]),
+  ];
+  expect(UsageLimitSources.hubPoolResetAt(hub(routed), claude, "claude-opus-5-5[1m]", now)).toBe(
+    "2026-11-06T13:00:00.000Z",
+  );
+  expect(UsageLimitSources.hubPoolResetAt(hub(routed), claude, null, now)).toBeNull();
 });

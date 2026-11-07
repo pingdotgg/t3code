@@ -56,6 +56,7 @@ function fixture(
     >;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
+    models?: (name: string) => Response;
   } = {},
 ) {
   const requests: Array<{ path: string; body?: RequestBody }> = [];
@@ -68,6 +69,12 @@ function fixture(
           ? decodeRequest(new TextDecoder().decode(request.body.body))
           : undefined;
       requests.push({ path, ...(body ? { body } : {}) });
+      if (path.endsWith("/auth-files/models"))
+        return HttpClientResponse.fromWeb(
+          request,
+          options.models?.(new URL(request.url).searchParams.get("name")!) ??
+            Response.json({}, { status: 404 }),
+        );
       if (path.endsWith("/auth-files"))
         return HttpClientResponse.fromWeb(
           request,
@@ -222,6 +229,21 @@ describe("CLIProxyAPI built-in management API", () => {
           ],
         ).toBe("account-b");
       }),
+  );
+
+  it.effect("names the models the hub routes to each account, when the hub lists them", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        models: (name) =>
+          name === "first.json"
+            ? Response.json({ models: [{ id: "gpt-5.6-sol" }, { id: " " }] })
+            : Response.json({}, { status: 404 }),
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result.map((account) => account.models)).toEqual([["gpt-5.6-sol"], undefined]);
+      expect(result[1]?.usageLimits.windows).toHaveLength(1);
+    }),
   );
 
   it.effect("resolves a missing usage plan from current, then legacy, token plans", () =>

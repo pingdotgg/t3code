@@ -1252,6 +1252,32 @@ describe("/usage-limits", () => {
     expect(report?.notices).toEqual([]);
   });
 
+  it("shows a proxied instance the hub accounts its model routes to, of any driver", () => {
+    const routed = [
+      {
+        ...sources[0]!,
+        accounts: sources[0]!.accounts.map((account) =>
+          account.id === "oss" ? { ...account, models: ["gpt-5.6-sol"] } : account,
+        ),
+      },
+    ];
+    const proxy = provider({
+      instanceId: ProviderInstanceId.make("claudex"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      auth: { status: "authenticated", type: "customEndpoint" },
+    });
+    const ids = (instance: ServerProvider, model: string | null) =>
+      collectProviderUsageLimits(
+        instance.instanceId,
+        [selected, proxy],
+        routed,
+        now,
+        model,
+      )?.accounts.map((account) => account.id);
+    expect(ids(proxy, "gpt-5.6-sol[1m]")).toEqual(["codex", "hub:oss"]);
+    expect(ids(selected, "gpt-5.6-sol")).toEqual(["codex", "hub:oss"]);
+  });
+
   it("keeps the freshest usable native duplicate and the freshest native credits in either order", () => {
     const failed = provider({
       auth: selected.auth,

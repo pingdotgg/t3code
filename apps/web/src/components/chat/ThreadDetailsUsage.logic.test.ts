@@ -73,6 +73,7 @@ interface HubAccountInput {
   readonly id: string;
   readonly email?: string;
   readonly driver?: ProviderDriverKind;
+  readonly models?: readonly string[];
   readonly limits: ServerProviderUsageLimits;
 }
 
@@ -90,6 +91,7 @@ function hub(
       id: account.id,
       driver: account.driver ?? claude,
       ...(account.email ? { email: account.email } : {}),
+      ...(account.models ? { models: account.models } : {}),
       usageLimits: account.limits,
     })),
     ...(error ? { error } : {}),
@@ -100,9 +102,11 @@ function shown(
   own: ServerProviderUsageLimits,
   sources: readonly UsageLimitSourceSnapshot[],
   natives: readonly ServerProvider[] = [],
+  model: string | null = null,
 ) {
   const resolved = resolveThreadDetailsLimits(
     instanceId,
+    model,
     [claudeInstance(own), ...natives],
     sources,
     now,
@@ -121,13 +125,15 @@ function shown(
 
 describe("resolveThreadDetailsLimits", () => {
   it("shows nothing without a selected, known instance, or before its first reading", () => {
-    expect(resolveThreadDetailsLimits(null, [claudeInstance(unsupported)], [], now)).toBeNull();
     expect(
-      resolveThreadDetailsLimits(ProviderInstanceId.make("gone"), [], [hub("Hub", [])], now),
+      resolveThreadDetailsLimits(null, null, [claudeInstance(unsupported)], [], now),
+    ).toBeNull();
+    expect(
+      resolveThreadDetailsLimits(ProviderInstanceId.make("gone"), null, [], [hub("Hub", [])], now),
     ).toBeNull();
     const { usageLimits: _unread, ...unread } = claudeInstance(unsupported);
     const readableHub = hub("Hub", [{ id: "a.json", limits: limitsAt(20) }]);
-    expect(resolveThreadDetailsLimits(instanceId, [unread], [readableHub], now)).toBeNull();
+    expect(resolveThreadDetailsLimits(instanceId, null, [unread], [readableHub], now)).toBeNull();
   });
 
   it("keeps a direct login's failed reading instead of an unrelated hub", () => {
@@ -138,7 +144,7 @@ describe("resolveThreadDetailsLimits", () => {
     };
     const direct = { ...claudeInstance(failed), auth: { status: "authenticated" as const } };
     const readableHub = hub("Hub", [{ id: "a.json", limits: limitsAt(20) }]);
-    expect(resolveThreadDetailsLimits(instanceId, [direct], [readableHub], now)).toEqual({
+    expect(resolveThreadDetailsLimits(instanceId, null, [direct], [readableHub], now)).toEqual({
       kind: "instance",
       limits: failed,
     });
@@ -189,8 +195,19 @@ describe("resolveThreadDetailsLimits", () => {
       natives: [signedIn("claude-a", "a@example.com", limitsAt(30, "2026-10-30T11:59:30.000Z"))],
       rows: [{ label: "Session", left: 70, accounts: 1, from: ["Signed-in accounts"] }],
     },
-  ])("pools $name when the instance reads no limits", ({ sources, natives, rows }) => {
-    expect(shown(unsupported, sources, natives)).toEqual({ kind: "pool", rows });
+    {
+      name: "only the accounts the hub routes the model to, even of another driver",
+      sources: [
+        hub("Hub", [
+          { id: "a.json", models: ["claude-opus-5-5"], limits: limitsAt(10) },
+          { id: "c.json", driver: codex, models: ["gpt-5.6-sol"], limits: limitsAt(30) },
+        ]),
+      ],
+      model: "gpt-5.6-sol[1m]",
+      rows: [{ label: "Session", left: 70, accounts: 1, from: ["Hub"] }],
+    },
+  ])("pools $name when the instance reads no limits", ({ sources, natives, model, rows }) => {
+    expect(shown(unsupported, sources, natives, model)).toEqual({ kind: "pool", rows });
   });
 
   it("names the next reset that refills quota, skipping an unused account's 0% reset", () => {
@@ -198,6 +215,7 @@ describe("resolveThreadDetailsLimits", () => {
     const later = "2026-10-30T14:00:00.000Z";
     const resolved = resolveThreadDetailsLimits(
       instanceId,
+      null,
       [claudeInstance(unsupported)],
       [
         hub("Hub", [

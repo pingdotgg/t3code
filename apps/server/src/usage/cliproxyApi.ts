@@ -10,6 +10,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
@@ -39,6 +40,9 @@ const AuthFile = Schema.Struct({
   ),
 });
 const AuthFiles = Schema.Struct({ files: Schema.Array(AuthFile) });
+const AuthFileModels = Schema.Struct({
+  models: Schema.Array(Schema.Struct({ id: Schema.String })),
+});
 const ApiResponse = Schema.Struct({ status_code: Schema.Number, body: Schema.String });
 const CodexWindow = Schema.Struct({
   used_percent: Schema.Number,
@@ -101,6 +105,7 @@ const CreditList = Schema.Struct({
 });
 
 const decodeAuthFiles = Schema.decodeUnknownEffect(AuthFiles);
+const decodeAuthFileModels = Schema.decodeUnknownEffect(AuthFileModels);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
@@ -213,6 +218,20 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return (yield* decodeAuthFiles(response)).files;
   });
 
+  // Older hubs lack this endpoint; the account then counts for every model of its driver.
+  const routedModels = Effect.fn("CliproxyApi.routedModels")(function* (
+    hub: CliproxyHub,
+    account: typeof AuthFile.Type,
+  ) {
+    const response = yield* management(
+      hub,
+      `auth-files/models?name=${encodeURIComponent(account.id)}`,
+    );
+    return (yield* decodeAuthFileModels(response)).models.flatMap(({ id }) =>
+      id.trim() ? [id.trim()] : [],
+    );
+  });
+
   const apiCall = Effect.fn("CliproxyApi.apiCall")(function* (
     hub: CliproxyHub,
     account: typeof AuthFile.Type,
@@ -274,6 +293,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     account: typeof AuthFile.Type,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    const models = yield* routedModels(hub, account).pipe(Effect.option);
     const base = {
       id: account.id,
       driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
@@ -281,6 +301,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ...(account.id_token?.chatgpt_account_id?.trim()
         ? { workspaceId: account.id_token.chatgpt_account_id.trim() }
         : {}),
+      ...(Option.isSome(models) && models.value.length > 0 ? { models: models.value } : {}),
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {

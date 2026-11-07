@@ -36,6 +36,7 @@ const PACE_LABEL: Record<LimitPace, string> = {
 
 export interface ThreadDetailsUsageInput {
   readonly providerInstanceId: ProviderInstanceId | null;
+  readonly model: string | null;
   readonly providers: readonly ServerProvider[];
   readonly sources: UsageLimitSourceSnapshots;
   readonly contextWindow: ContextWindowSnapshot | null;
@@ -52,12 +53,13 @@ function limitTone(left: number): UsageTone {
 /** The selected provider's limit windows. Each row reads as room left. */
 export function ThreadDetailsUsage({
   providerInstanceId,
+  model,
   providers,
   sources,
 }: Omit<ThreadDetailsUsageInput, "contextWindow">) {
   const nowMinute = useNowMinute();
   const now = Date.parse(`${nowMinute}:00Z`);
-  const resolved = resolveThreadDetailsLimits(providerInstanceId, providers, sources, now);
+  const resolved = resolveThreadDetailsLimits(providerInstanceId, model, providers, sources, now);
   if (!resolved) return null;
 
   return (
