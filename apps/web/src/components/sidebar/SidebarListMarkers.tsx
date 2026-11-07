@@ -80,6 +80,8 @@ export function SidebarDragBoundary(props: {
   label: string;
   visible: boolean;
   isDropTarget: boolean;
+  /** A resting hairline, drawn in the space the pinned grid leaves above it. */
+  rule?: boolean;
 }) {
   return (
     <SortableSidebarMarker
@@ -87,6 +89,9 @@ export function SidebarDragBoundary(props: {
       data-testid={`sidebar-${props.marker}`}
       className="pointer-events-none relative mx-0.5 -mb-px h-0"
     >
+      {props.rule && !props.visible ? (
+        <span aria-hidden className="absolute inset-x-1 -top-1 h-px bg-sidebar-foreground/10" />
+      ) : null}
       {props.visible ? (
         <div className="sidebar-drag-boundary-label absolute inset-x-2 top-1 flex h-4 items-center gap-2">
           <span

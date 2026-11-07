@@ -1,5 +1,6 @@
 import { closestCenter, type CollisionDetection, type Modifier } from "@dnd-kit/core";
 import { verticalListSortingStrategy, type SortingStrategy } from "@dnd-kit/sortable";
+import { restrictToFirstScrollableAncestor } from "@dnd-kit/modifiers";
 import {
   resolveSidebarDropTarget,
   sidebarListItemId,
@@ -10,6 +11,40 @@ import {
 } from "./Sidebar.logic";
 
 const stationary = { x: 0, y: 0, scaleX: 1, scaleY: 1 };
+
+export function resolveSidebarDragSourceRect(
+  event: Event,
+  initialRect: Parameters<Modifier>[0]["activeNodeRect"],
+) {
+  // DragStart precedes dnd-kit's first rectangle measurement.
+  return (
+    initialRect ??
+    (event.target instanceof Element
+      ? event.target.closest<HTMLElement>("[data-thread-item]")?.getBoundingClientRect()
+      : undefined)
+  );
+}
+
+export function restrictSidebarDrag(
+  args: Parameters<Modifier>[0],
+  preview?: { readonly width: number; readonly offsetX: number },
+) {
+  const rect = args.draggingNodeRect;
+  if (!preview || !rect) return restrictToFirstScrollableAncestor(args);
+  const width = preview.width;
+  return restrictToFirstScrollableAncestor({
+    ...args,
+    transform: { ...args.transform, x: args.transform.x + preview.offsetX },
+    draggingNodeRect: {
+      top: rect.top,
+      bottom: rect.bottom,
+      left: rect.left,
+      right: rect.left + width,
+      width,
+      height: rect.height,
+    },
+  });
+}
 const hidden = { ...stationary, scaleY: 0 };
 type ThreadItem = Extract<SidebarListItem, { kind: "thread" }>;
 type Layout = Parameters<SortingStrategy>[0];
@@ -22,9 +57,10 @@ const isShelfHeader = (item: SidebarListItem | undefined) =>
 export function restrictBelowSidebarLabel(
   { transform, containerNodeRect, draggingNodeRect }: Parameters<Modifier>[0],
   offset: number,
+  listTop = containerNodeRect?.top,
 ) {
-  if (!containerNodeRect || !draggingNodeRect) return transform;
-  const minimumY = containerNodeRect.top + offset - draggingNodeRect.top;
+  if (listTop === undefined || !draggingNodeRect) return transform;
+  const minimumY = listTop + offset - draggingNodeRect.top;
   return transform.y < minimumY ? { ...transform, y: minimumY } : transform;
 }
 
@@ -33,15 +69,54 @@ export function createSidebarCollisionDetection(
   options: {
     items?: readonly SidebarListItem[];
     activationY?: number | null;
+    pinnedGrid?: SidebarPinnedGrid | undefined;
   } = {},
 ): CollisionDetection {
   const validity = new Map<string, boolean>();
   const sections = new Map<string, SidebarSection | null>();
   let previousPointerY = options.activationY;
   let boundarySection: "pinned" | "active" | undefined;
+  const pins =
+    options.items?.filter(
+      (item): item is ThreadItem => item.kind === "thread" && item.section === "pinned",
+    ) ?? [];
   return (args) => {
-    let collisions = closestCenter(args);
     const pointer = args.pointerCoordinates;
+    let droppableRects = args.droppableRects;
+    const grid = options.pinnedGrid;
+    const header = args.droppableRects.get(sidebarMarkerId("pinned-header"));
+    if (grid && header && pins.length > 0) {
+      droppableRects = new Map(args.droppableRects);
+      for (const [index, pin] of pins.entries()) {
+        const cell = sidebarPinnedGridCell(grid, index, pins.length);
+        const left = header.left + cell.left;
+        const top = header.top + grid.labelHeight + 1 + grid.leading + cell.top;
+        droppableRects.set(pin.key, {
+          left,
+          top,
+          width: cell.width,
+          height: grid.rowHeight,
+          right: left + cell.width,
+          bottom: top + grid.rowHeight,
+        });
+      }
+    }
+    // Rows span the list, so only pinned grid columns feel the pointer's x; cards keep their column.
+    let collisions = closestCenter(
+      pointer
+        ? {
+            ...args,
+            droppableRects,
+            collisionRect: {
+              ...args.collisionRect,
+              left: pointer.x - args.collisionRect.width / 2,
+              right: pointer.x + args.collisionRect.width / 2,
+              top: pointer.y - args.collisionRect.height / 2,
+              bottom: pointer.y + args.collisionRect.height / 2,
+            },
+          }
+        : args,
+    );
     const items = options.items;
     const source = items?.find((item) => item.kind === "thread" && item.key === args.active.id);
     const boundary = args.droppableContainers
@@ -89,6 +164,57 @@ export function createSidebarCollisionDetection(
   };
 }
 
+/** Pinned tile grid geometry in client pixels, measured when a drag starts. */
+export type SidebarPinnedGrid = {
+  readonly width: number;
+  readonly labelHeight: number;
+  readonly columns: number;
+  readonly rowHeight: number;
+  readonly gap: number;
+  readonly leading: number;
+  readonly trailing: number;
+};
+
+export function sidebarPinnedGridCell(grid: SidebarPinnedGrid, index: number, count: number) {
+  const row = Math.floor(index / grid.columns);
+  const columns = Math.min(grid.columns, count - row * grid.columns);
+  const width = (grid.width - (columns - 1) * grid.gap) / columns;
+  return {
+    left: (index % grid.columns) * (width + grid.gap),
+    top: row * (grid.rowHeight + grid.gap),
+    width,
+  };
+}
+
+/** Reads the pinned grid's CSS-driven columns and spacing; `scale` maps CSS to client pixels. */
+export function measureSidebarPinnedGrid(
+  grid: HTMLElement,
+  scale: number,
+  labelHeight = 0,
+): SidebarPinnedGrid | undefined {
+  const style = getComputedStyle(grid);
+  const rowHeight = Number.parseFloat(style.gridAutoRows);
+  if (!Number.isFinite(rowHeight)) return undefined;
+  const tile = grid.firstElementChild;
+  const columns = tile
+    ? Number.parseInt(getComputedStyle(tile).getPropertyValue("--sidebar-pinned-columns"), 10)
+    : 1;
+  const px = (value: string) => (Number.parseFloat(value) || 0) * scale;
+  return {
+    width:
+      grid.getBoundingClientRect().width ||
+      (grid.parentElement?.getBoundingClientRect().width ?? 0) -
+        px(style.marginLeft) -
+        px(style.marginRight),
+    labelHeight,
+    columns: Number.isFinite(columns) && columns > 0 ? columns : 1,
+    rowHeight: rowHeight * scale,
+    gap: px(style.rowGap),
+    leading: px(style.marginTop) + px(style.borderTopWidth) + px(style.paddingTop),
+    trailing: px(style.paddingBottom) + px(style.borderBottomWidth) + px(style.marginBottom),
+  };
+}
+
 export function createSidebarSortingStrategy(input: {
   items: readonly SidebarListItem[];
   enabled?: boolean;
@@ -101,6 +227,8 @@ export function createSidebarSortingStrategy(input: {
   cardHeight?: number;
   slimHeight?: number;
   boundaryLabelHeight?: number;
+  /** Omitted, pinned rows stack like cards: one column at their own height. */
+  pinnedGrid?: SidebarPinnedGrid | undefined;
 }): SortingStrategy {
   if (input.enabled === false) return () => stationary;
   const { items } = input;
@@ -123,6 +251,7 @@ export function createSidebarSortingStrategy(input: {
     };
     let cardHeight = input.cardHeight;
     let slimHeight = input.slimHeight;
+    let pinnedHeight: number | undefined;
     let headerScale: number | undefined;
     for (const [index, item] of items.entries()) {
       if (item.kind === "marker") {
@@ -132,11 +261,13 @@ export function createSidebarSortingStrategy(input: {
         }
         continue;
       }
-      if (item.section === "pinned" || item.section === "active" || item.section === "working")
+      if (item.section === "pinned") pinnedHeight ??= rects[index]?.height;
+      else if (item.section === "active" || item.section === "working")
         cardHeight ??= rects[index]?.height;
       else slimHeight ??= rects[index]?.height;
       if (item.key !== active.key) groups[item.section].push(item);
     }
+    if (!input.pinnedGrid) cardHeight ??= pinnedHeight;
     const scale =
       slimHeight !== undefined ? slimHeight / 36 : (headerScale ?? (cardHeight ?? 82) / 82);
     cardHeight ??= 82 * scale;
@@ -173,7 +304,6 @@ export function createSidebarSortingStrategy(input: {
       else marker(`${name}-placeholder`);
     };
     marker("pinned-header");
-    projected.push(...groups.pinned);
     marker("pinned-divider");
     section("active");
     if (items.some((item) => item.kind === "marker" && item.marker === "working-header")) {
@@ -190,12 +320,40 @@ export function createSidebarSortingStrategy(input: {
     }
     marker("settled-header");
     section("settled");
+    const pinnedGrid = input.pinnedGrid ?? {
+      columns: 1,
+      width: rects[0].width,
+      labelHeight: 0,
+      rowHeight: pinnedHeight ?? cardHeight,
+      gap: 1,
+      leading: 0,
+      trailing: 0,
+    };
+    // An outgoing pin leaves its cell; an incoming pin reserves its destination row.
+    const restingPins = items.flatMap((item, index) =>
+      item.kind === "thread" && item.section === "pinned" ? [index] : [],
+    );
+    const pinnedRows = Math.ceil(
+      Math.max(
+        restingPins.length,
+        target.section === "pinned" ? groups.pinned.length : 0,
+        input.pinnedGrid && restingPins.length === 0 ? 1 : 0,
+      ) / pinnedGrid.columns,
+    );
+    // The grid hides when empty, so it adds no list gap either.
+    const pinnedBlock =
+      pinnedRows === 0
+        ? 0
+        : pinnedGrid.leading +
+          pinnedRows * pinnedGrid.rowHeight +
+          (pinnedRows - 1) * pinnedGrid.gap +
+          pinnedGrid.trailing +
+          1;
     const heights = projected.map((item) => {
       const index = indices.get(sidebarListItemId(item));
       const rect = index === undefined ? undefined : rects[index];
       const fallback =
-        item.kind === "thread" &&
-        (item.section === "pinned" || item.section === "active" || item.section === "working")
+        item.kind === "thread" && (item.section === "active" || item.section === "working")
           ? cardHeight
           : slimHeight;
       const moved = item.kind === "thread" && item.key === active.key;
@@ -216,12 +374,16 @@ export function createSidebarSortingStrategy(input: {
       shelfRect && beforeShelf && lastRect && shelfRect.top > beforeShelf.bottom + 1
         ? Math.max(
             0,
-            lastRect.bottom - rects[0].top - heights.reduce((sum, height) => sum + height + 1, -1),
+            lastRect.bottom -
+              rects[0].top -
+              heights.reduce((sum, height) => sum + height + 1, -1) -
+              pinnedBlock,
           )
         : 0;
     const result = items.map(() => hidden);
+    const firstPin = rects[restingPins[0] ?? -1];
     let top = rects[0].top;
-    for (const [projectedIndex, item] of projected.entries()) {
+    for (const [flowIndex, item] of projected.entries()) {
       if (isShelfHeader(item)) {
         top += shelfSpace;
         shelfSpace = 0;
@@ -229,7 +391,30 @@ export function createSidebarSortingStrategy(input: {
       const index = indices.get(sidebarListItemId(item));
       const rect = index === undefined ? undefined : rects[index];
       if (index !== undefined && rect) result[index] = { ...stationary, y: top - rect.top };
-      top += heights[projectedIndex]! + 1;
+      top += heights[flowIndex]! + 1;
+      if (item.kind === "marker" && item.marker === "pinned-header") {
+        const y = firstPin ? top + pinnedGrid.leading - firstPin.top : 0;
+        for (const pin of restingPins) result[pin] = { ...stationary, y };
+        if (input.pinnedGrid && target.section === "pinned") {
+          for (const [position, pin] of groups.pinned.entries()) {
+            const pinIndex = indices.get(pin.key);
+            if (pinIndex === undefined || pinIndex === activeIndex) continue;
+            const from = sidebarPinnedGridCell(
+              input.pinnedGrid,
+              restingPins.indexOf(pinIndex),
+              restingPins.length,
+            );
+            const to = sidebarPinnedGridCell(input.pinnedGrid, position, groups.pinned.length);
+            result[pinIndex] = {
+              ...stationary,
+              x: to.left - from.left,
+              y: y + to.top - from.top,
+              scaleX: to.width / from.width,
+            };
+          }
+        }
+        top += pinnedBlock;
+      }
     }
     result[activeIndex] = stationary;
     return result;

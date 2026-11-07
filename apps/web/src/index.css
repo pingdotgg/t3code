@@ -2181,6 +2181,66 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
       all: revert;
     }
   }
+
+  /* Pinned thread tiles: up to three a row by sidebar width, and a short last
+     row stretches to fill. Six tracks let 1, 2 or 3 tiles share any row evenly.
+     Sidebar.drag.ts reads the row height, gap, padding and
+     --sidebar-pinned-columns to project drags, so keep layout here. */
+  .sidebar-pinned-grid {
+    container: sidebar-pinned / inline-size;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-auto-rows: 2.875rem;
+    gap: 0.25rem;
+    margin-inline: 0.125rem;
+    padding-bottom: 0.5rem;
+  }
+  .sidebar-pinned-grid:empty {
+    display: none;
+  }
+  /* Inline-size containers isolate stacking; raise the group as well as its travelling tile. */
+  .sidebar-pinned-grid:has(> [data-sidebar-motion-moving], > [data-sidebar-drag-source]) {
+    z-index: 20;
+  }
+  [data-sidebar-motion-lead] {
+    position: relative;
+    z-index: 20;
+  }
+  [data-sidebar-motion-moving] [data-sidebar-row] {
+    background-color: var(--sidebar);
+    opacity: 1;
+  }
+  .sidebar-pinned-grid:has(> [data-sidebar-drag-source])
+    > :not([data-sidebar-drag-source])
+    [data-sidebar-row] {
+    background-color: var(--sidebar);
+  }
+  .sidebar-pinned-grid > * {
+    --sidebar-pinned-columns: 1;
+    grid-column: span 6;
+  }
+  @container sidebar-pinned (10rem <= width < 14rem) {
+    .sidebar-pinned-grid > * {
+      --sidebar-pinned-columns: 2;
+      grid-column: span 3;
+    }
+    .sidebar-pinned-grid > :nth-child(2n + 1):last-child {
+      grid-column: span 6;
+    }
+  }
+  @container sidebar-pinned (width >= 14rem) {
+    .sidebar-pinned-grid > * {
+      --sidebar-pinned-columns: 3;
+      grid-column: span 2;
+    }
+    .sidebar-pinned-grid > :nth-child(3n + 1):last-child {
+      grid-column: span 6;
+    }
+    .sidebar-pinned-grid > :nth-child(3n + 1):nth-last-child(2),
+    .sidebar-pinned-grid > :nth-child(3n + 1):nth-last-child(2) + * {
+      grid-column: span 3;
+    }
+  }
 }
 
 /* Safe-area inset utilities for surfaces that opt into edge-to-edge rendering.
