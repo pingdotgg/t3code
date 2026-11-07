@@ -135,7 +135,7 @@ import {
   registerPresentedRoutes,
 } from "./features/layout/workspace-overlay-routes";
 import { ShowcaseReadyMarker } from "./features/showcase/ShowcaseCaptureCoordinator";
-import { immersiveRoute, modalRoute, pageRoute, sheetRoute } from "./features/layout/route-options";
+import { modalRoute, pageRoute, sheetRoute } from "./features/layout/route-options";
 import { deriveLayout } from "./lib/layout";
 import { useNativeLayoutMetrics } from "./native/native-layout-metrics";
 import { isPresentedRoute } from "./native/workspace-stack-projection";
@@ -619,7 +619,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadDevicePreview: createNativeStackScreen({
       screen: DevicePreviewRouteScreen,
       linking: `${THREAD_LINKING_PREFIX}/devices`,
-      options: immersiveRoute({ hideSystemBars: true }),
+      options: sheetRoute({ detent: "full", header: "none" }),
     }),
     ThreadBrowserPreview: createNativeStackScreen({
       screen: BrowserPreviewRouteScreen,

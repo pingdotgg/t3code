@@ -14,8 +14,8 @@ screen never asks which platform or window width it is on.
    selected, what is pushed, which sheet is open. Rotating, folding or resizing renders the same
    stack differently. Nothing remembers which column a page was in. Each route declares what it
    is with a [preset](../../apps/mobile/src/features/layout/route-options.ts) (`pageRoute`,
-   `sheetRoute`, `modalRoute`, `immersiveRoute`); the preset owns detents, corner radius, header
-   appearance and the Android fallback. See [Mobile navigation](./mobile-navigation.md).
+   `sheetRoute`, `modalRoute`); the preset owns detents, corner radius, header appearance and the
+   Android fallback. See [Mobile navigation](./mobile-navigation.md).
 2. **Workspace shell.** [`features/layout`](../../apps/mobile/src/features/layout/) owns placement
    and widths, from the width class in [`layout.ts`](../../apps/mobile/src/lib/layout.ts):
    - _Expanded_: sidebar, content and inspector columns.

@@ -144,15 +144,3 @@ export function modalRoute(options: ModalRouteOptions = {}): AppScreenOptions {
     presentation: "fullScreenModal",
   };
 }
-
-/** Full-screen media (a device stream, a browser, an app) with no bar and no dismiss gesture. */
-export function immersiveRoute(options: { readonly hideSystemBars?: boolean } = {}) {
-  return {
-    presentation: "fullScreenModal",
-    headerShown: false,
-    gestureEnabled: false,
-    ...(options.hideSystemBars
-      ? { autoHideHomeIndicator: true, navigationBarHidden: true }
-      : undefined),
-  } satisfies AppScreenOptions;
-}
