@@ -6,8 +6,6 @@ describe("resolveComposerMenuActiveItemId", () => {
   it("clears the active result while async results are empty and resolves against restored results", () => {
     const search = {
       highlightedItemId: "second",
-      currentSearchKey: "path:src",
-      highlightedSearchKey: "path:src",
     };
     const cleared = resolveComposerMenuActiveItemId({ ...search, items: [] });
     expect(cleared).toBeNull();
@@ -19,4 +17,13 @@ describe("resolveComposerMenuActiveItemId", () => {
       }),
     ).toBe("new-result");
   });
+});
+
+it("keeps the highlighted item when a new query still contains it", () => {
+  expect(
+    resolveComposerMenuActiveItemId({
+      items: [{ id: "first" }, { id: "second" }],
+      highlightedItemId: "second",
+    }),
+  ).toBe("second");
 });
