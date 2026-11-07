@@ -10,6 +10,7 @@ import * as Result from "effect/Result";
 import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import * as Exit from "effect/Exit";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
@@ -48,6 +49,7 @@ const loadNative = vi.hoisted(() =>
     },
   ),
 );
+const sharedModels = vi.hoisted(() => new Set<string>());
 const readyModels = vi.hoisted(() => new Set(["test-model", "fallback-model"]));
 const modelDefinitions = vi.hoisted(() => [
   {
@@ -95,7 +97,11 @@ const download = vi.fn<SpeechModelStore.SpeechModelStore["Service"]["download"]>
 const store = Layer.succeed(
   SpeechModelStore.SpeechModelStore,
   SpeechModelStore.SpeechModelStore.of({
-    isReady: (model) => Effect.sync(() => readyModels.has(model.id)),
+    isReady: (model, directories = []) =>
+      Effect.sync(
+        () => readyModels.has(model.id) || (directories.length > 0 && sharedModels.has(model.id)),
+      ),
+    hasOwnedFile: (model) => Effect.sync(() => readyModels.has(model.id)),
     installedPath: (model) =>
       Effect.sync(() => (readyModels.has(model.id) ? "test.gguf" : undefined)),
     download,
@@ -119,6 +125,7 @@ beforeEach(() => {
   native.backend = "Vulkan0";
   native.supportsVocabulary = false;
   native.supportsStreaming = true;
+  sharedModels.clear();
   readyModels.clear();
   readyModels.add("test-model");
   readyModels.add("fallback-model");
@@ -840,5 +847,68 @@ it.effect("does not restart a stream cancelled while native finalization is pend
     expect(Result.isFailure(yield* Fiber.join(request))).toBe(true);
     expect(loadNative).toHaveBeenCalledOnce();
     expect(native.reset).toHaveBeenCalledOnce();
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("saves normalized model folders and releases a loaded model when they change", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    const path = yield* Path.Path;
+    const directory = path.resolve("speech-models");
+    yield* speech.prepareModel;
+    const status = yield* speech.updateModelDirectories([` ${directory} `, directory]);
+    expect(status).toMatchObject({ supported: true, modelDirectories: [directory] });
+    expect(native.dispose).toHaveBeenCalled();
+    const platform = yield* HostProcess.Platform;
+    for (const invalidPath of ["relative", "", platform === "win32" ? "/models" : "C:\\models"]) {
+      const invalid = yield* Effect.result(speech.updateModelDirectories([invalidPath]));
+      expect(invalid).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "SpeechInvalidModelDirectoryError" },
+      });
+    }
+    expect(yield* speech.status).toMatchObject({ modelDirectories: [directory] });
+    expect(yield* speech.updateModelDirectories([])).toMatchObject({ modelDirectories: [] });
+  }).pipe(Effect.provide(Layer.mergeAll(layer, NodeServices.layer))),
+);
+
+it.effect("keeps the selected model when removing its owned copy leaves a shared copy", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    const path = yield* Path.Path;
+    yield* speech.updateModelDirectories([path.resolve("shared-models")]);
+    sharedModels.add("test-model");
+    expect(
+      (yield* speech.models(false)).models.find((model) => model.id === "test-model"),
+    ).toMatchObject({ shared: false });
+    yield* speech.removeModel("test-model");
+    expect(yield* speech.status).toMatchObject({ modelId: "test-model", state: "ready" });
+    expect(
+      (yield* speech.models(false)).models.find((model) => model.id === "test-model"),
+    ).toMatchObject({ shared: true, active: true });
+  }).pipe(Effect.provide(Layer.mergeAll(layer, NodeServices.layer))),
+);
+
+it.effect("holds the busy slot until new model folders are saved", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const update = settings.updateSettings;
+    using _save = vi
+      .spyOn(settings, "updateSettings")
+      .mockImplementation((patch) =>
+        Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.andThen(update(patch)),
+        ),
+      );
+    const saving = yield* speech.updateModelDirectories([]).pipe(Effect.forkChild);
+    yield* Deferred.await(entered);
+    const preparation = yield* Effect.result(speech.prepareModel);
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(saving);
+    expect(preparation).toMatchObject({ _tag: "Failure", failure: { _tag: "SpeechBusyError" } });
   }).pipe(Effect.provide(layer)),
 );

@@ -54,6 +54,7 @@ import {
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 import {
   SpeechAcceleration,
+  SpeechModelDirectories,
   SpeechCorrectionCue,
   SpeechCustomWords,
   SpeechLanguage,
@@ -1359,6 +1360,9 @@ export const ServerSettings = Schema.Struct({
   speechModelId: Schema.String.pipe(
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
   ),
+  speechModelDirectories: SpeechModelDirectories.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   speechAcceleration: SpeechAcceleration.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
   speechModelUnloadTimeout: SpeechModelUnloadTimeout.pipe(
     Schema.withDecodingDefault(Effect.succeed("min_15")),
@@ -1776,6 +1780,7 @@ export const ServerSettingsPatch = Schema.Struct({
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   speechModelId: Schema.optionalKey(Schema.String),
+  speechModelDirectories: Schema.optionalKey(SpeechModelDirectories),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),
   speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),
   speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),

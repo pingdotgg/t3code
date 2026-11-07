@@ -612,6 +612,7 @@ describe("voice settings", () => {
   it("stores the transcription model and resources on the environment", () => {
     expect(DEFAULT_SERVER_SETTINGS).toMatchObject({
       speechModelId: "handy-computer/parakeet-unified-en-0.6b-gguf",
+      speechModelDirectories: [],
       speechAcceleration: "auto",
       speechModelUnloadTimeout: "min_15",
     });

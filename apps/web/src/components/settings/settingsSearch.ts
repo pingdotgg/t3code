@@ -646,6 +646,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "speech-model-folders",
+    title: "Model folders",
+    to: "/settings/voice",
+    searchTerms: ["speech voice local models folder directory path reuse hex handy"],
+  },
+  {
     id: "speech-hardware",
     title: "Transcription hardware and model unloading",
     to: "/settings/voice",
