@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Cache from "effect/Cache";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -197,6 +198,56 @@ describe("makeManagedServerProvider", () => {
         yield* Fiber.join(queued);
         assert.strictEqual(yield* Ref.get(calls), 3);
         assert.strictEqual((yield* provider.getSnapshot).usageLimits?.windows[0]?.usedPercent, 100);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+  it.effect("re-reads cached usage on an explicit refresh once the reading passes the floor", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const calls = yield* Ref.make(0);
+        const cache = yield* Cache.makeWith(
+          () =>
+            Effect.gen(function* () {
+              const count = yield* Ref.updateAndGet(calls, (count) => count + 1);
+              const checkedAt = DateTime.formatIso(yield* DateTime.now);
+              return {
+                ...refreshedSnapshot,
+                usageLimits: {
+                  checkedAt,
+                  windows: [
+                    {
+                      id: "five_hour",
+                      kind: "session",
+                      label: "Session",
+                      usedPercent: count === 1 ? 20 : 100,
+                    },
+                  ],
+                },
+              } satisfies ServerProvider;
+            }),
+          { capacity: 1, timeToLive: () => "5 minutes" },
+        );
+        const warmed = yield* Cache.get(cache, "claude");
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: () => false,
+          initialSnapshot: () => Effect.succeed(warmed),
+          checkProvider: Cache.get(cache, "claude"),
+          invalidateUsageCache: Cache.invalidateAll(cache),
+          refreshOnInterval: false,
+        });
+        yield* provider.streamChanges.pipe(Stream.take(1), Stream.runDrain);
+
+        const withinFloor = yield* provider.refresh;
+        assert.strictEqual(yield* Ref.get(calls), 1);
+        assert.strictEqual(withinFloor.usageLimits?.windows[0]?.usedPercent, 20);
+
+        yield* TestClock.adjust("1 minute");
+        const pastFloor = yield* provider.refresh;
+        assert.strictEqual(yield* Ref.get(calls), 2);
+        assert.strictEqual(pastFloor.usageLimits?.windows[0]?.usedPercent, 100);
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
