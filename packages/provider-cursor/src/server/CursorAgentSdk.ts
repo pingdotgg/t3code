@@ -58,6 +58,17 @@ export function isCursorUsageLimitError(cause: unknown): boolean {
   );
 }
 
+export function cursorSdkFailureMetadata(cause: unknown) {
+  const error = isCursorAgentSdkRunnerError(cause) ? cause.cause : cause;
+  if (typeof error !== "object" || error === null) return {};
+  const code = Reflect.get(error, "code");
+  const retryable = Reflect.get(error, "isRetryable");
+  return {
+    ...(typeof code === "string" ? { code } : {}),
+    ...(typeof retryable === "boolean" ? { retryable } : {}),
+  };
+}
+
 const GENERIC_SDK_ERROR_CODES = new Set(["", "error", "unknown"]);
 
 function sdkErrorReason(cause: unknown): string | undefined {
