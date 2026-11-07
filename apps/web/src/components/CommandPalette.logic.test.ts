@@ -269,6 +269,45 @@ describe("buildThreadActionItems", () => {
     expect(search("add project", true)).toEqual([["Actions", ["Add project"]]]);
   });
 
+  it("numbers project jump shortcuts in the order the filtered rows are shown", () => {
+    const project = (title: string, shortcutCommand?: "chat.newWithoutProject") => ({
+      kind: "action" as const,
+      value: `new-thread-in:${title}`,
+      searchTerms: [title],
+      title,
+      icon: null,
+      run: async () => undefined,
+      ...(shortcutCommand ? { shortcutCommand } : {}),
+    });
+    const items = [
+      project("sync-engine"),
+      project("No project", "chat.newWithoutProject"),
+      ...Array.from({ length: 9 }, (_, index) => project(`app-${index}`)),
+      project("scripts"),
+      project("stefan-utils"),
+    ];
+    const shortcuts = (query: string) =>
+      filterCommandPaletteGroups({
+        activeGroups: [{ value: "projects", label: "Projects", jumpShortcuts: true, items }],
+        query,
+        isInSubmenu: true,
+        projectSearchItems: [],
+        threadSearchItems: [],
+      }).flatMap((group) => group.items.map((item) => [item.title, item.shortcutCommand]));
+
+    expect(shortcuts("").slice(0, 3)).toEqual([
+      ["sync-engine", "thread.jump.1"],
+      ["No project", "chat.newWithoutProject"],
+      ["app-0", "thread.jump.2"],
+    ]);
+    expect(shortcuts("").at(-1)).toEqual(["stefan-utils", undefined]);
+    expect(shortcuts("s")).toEqual([
+      ["sync-engine", "thread.jump.1"],
+      ["stefan-utils", "thread.jump.2"],
+      ["scripts", "thread.jump.3"],
+    ]);
+  });
+
   it("lists message matches last, once, without moving the title matches above them", () => {
     const threads = [
       makeThread({ id: ThreadId.make("title"), title: "Disable Convex schema validation" }),

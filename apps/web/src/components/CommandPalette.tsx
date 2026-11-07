@@ -186,7 +186,6 @@ import {
   buildRootGroups,
   buildLinkedThreadActionItems,
   buildCommandPaletteRows,
-  enumerateCommandPaletteItems,
   newThreadNoProjectIndex,
   findHighlightedCommandPaletteItem,
   type CommandPaletteActionItem,
@@ -822,7 +821,7 @@ function OpenCommandPaletteDialog(props: {
     true,
   );
 
-  const openingOrderThreadItems = useOrderWhileOpen(
+  const projectThreadItems = useOrderWhileOpen(
     (() => {
       const isScratch = (project: CommandPaletteProject) =>
         isScratchProject(project, scratchWorkspaceRootFor(project.environmentId));
@@ -875,15 +874,6 @@ function OpenCommandPaletteDialog(props: {
     })(),
     rowOrderKey("new-thread-in"),
     true,
-  );
-  // Jump shortcuts follow the rows as shown, so a pin cannot move a number to another row.
-  const projectJumpItems = new Map(
-    enumerateCommandPaletteItems(
-      openingOrderThreadItems.filter((item) => item.value !== NEW_THREAD_NO_PROJECT_VALUE),
-    ).map((item) => [item.value, item] as const),
-  );
-  const projectThreadItems = openingOrderThreadItems.map(
-    (item) => projectJumpItems.get(item.value) ?? item,
   );
 
   const {
@@ -1289,7 +1279,14 @@ function OpenCommandPaletteDialog(props: {
       title: "New thread in...",
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: NEW_THREAD_IN_GROUP, label: "Projects", items: projectThreadItems }],
+      groups: [
+        {
+          value: NEW_THREAD_IN_GROUP,
+          label: "Projects",
+          jumpShortcuts: true,
+          items: projectThreadItems,
+        },
+      ],
     });
   }
 
@@ -1725,12 +1722,15 @@ function OpenCommandPaletteDialog(props: {
         ? addProjectEntryGroups()
         : currentView?.groups[0]?.value === NEW_THREAD_IN_GROUP
           ? [
-              {
-                value: NEW_THREAD_IN_GROUP,
-                label: "Projects",
-                // Every project archived and no "No project" home leaves only adding one.
-                items: projectThreadItems.length > 0 ? projectThreadItems : [addProjectAction],
-              },
+              projectThreadItems.length > 0
+                ? {
+                    value: NEW_THREAD_IN_GROUP,
+                    label: "Projects",
+                    jumpShortcuts: true,
+                    items: projectThreadItems,
+                  }
+                : // Every project archived and no "No project" home leaves only adding one.
+                  { value: NEW_THREAD_IN_GROUP, label: "Projects", items: [addProjectAction] },
             ]
           : currentView?.groups[0]?.value === "themes"
             ? changeThemeItem.groups
