@@ -255,6 +255,42 @@ function WordWrapRow() {
   );
 }
 
+function ChatDensityToggleRow({
+  settingKey,
+  searchId,
+  label,
+  description,
+}: {
+  settingKey: "compactWorkLog" | "hideReasoning";
+  searchId: "compact-work-log" | "hide-reasoning";
+  label: string;
+  description: string;
+}) {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting(searchId)}
+      description={description}
+      resetAction={
+        settings[settingKey] !== DEFAULT_UNIFIED_SETTINGS[settingKey] ? (
+          <SettingResetButton
+            label={label}
+            onClick={() => updateSettings({ [settingKey]: DEFAULT_UNIFIED_SETTINGS[settingKey] })}
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={settings[settingKey]}
+          onCheckedChange={(checked) => updateSettings({ [settingKey]: Boolean(checked) })}
+          aria-label={label}
+        />
+      }
+    />
+  );
+}
+
 function FontSettingsGroup() {
   return (
     <>
@@ -338,6 +374,18 @@ export function TypographySection() {
     <SettingsSection id="typography" title="Typography">
       {showAdvanced ? <FontSettingsGroup /> : <SimpleFontRows />}
       <WordWrapRow />
+      <ChatDensityToggleRow
+        settingKey="compactWorkLog"
+        searchId="compact-work-log"
+        label="Compact work log"
+        description="Collapse each run of tool calls into a single line that updates with the latest step."
+      />
+      <ChatDensityToggleRow
+        settingKey="hideReasoning"
+        searchId="hide-reasoning"
+        label="Hide reasoning"
+        description="Hide model reasoning and intermediate commentary. Tool activity and the final answer stay visible."
+      />
       <AdvancedSettings
         targetIds={[searchableSetting("separate-fonts").id, searchableSetting("font-smoothing").id]}
       >
