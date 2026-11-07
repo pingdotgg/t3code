@@ -4028,79 +4028,234 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live("replaces an unexpectedly terminated ACP runtime before the next turn", () =>
-    Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const path = yield* Path.Path;
-      const selfInvocation = yield* resolveSelfInvocation();
-      const mockAgentPath = yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-      );
-      const runtimeInputs: AcpAdapterV2RuntimeInput[] = [];
-      let runtimeOrdinalSeen = 0;
-      const baseMakeRuntime = makeMockRuntime({
-        childProcessSpawner,
-        mockAgentPath,
-        environment: (runtimeOrdinal) => {
-          runtimeOrdinalSeen = runtimeOrdinal;
-          return {};
-        },
-      });
-      const instanceId = ProviderInstanceId.make("acp-test-unexpected-termination");
-      const adapter = yield* makeAcpAdapterV2({
-        instanceId,
-        flavor: {
-          driver: ACP_TEST_DRIVER,
-          capabilities: AcpProviderCapabilitiesV2,
-          makeRuntime: (runtimeInput) =>
-            Effect.sync(() => {
-              runtimeInputs.push(runtimeInput);
-            }).pipe(Effect.andThen(baseMakeRuntime(runtimeInput))),
-        },
-        selfInvocation,
-      });
-      const threadId = ThreadId.make("thread-acp-unexpected-termination");
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: process.cwd(),
-      });
-      const modelSelection = { instanceId, model: "default" } as const;
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-acp-unexpected-termination"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      assert.equal(runtimeOrdinalSeen, 1);
-      yield* runtimeInputs[0]!.onTermination!(
-        new EffectAcpErrors.AcpTransportError({
-          detail: "Injected unexpected writer termination",
-          cause: "test",
-        }),
-      );
-
-      yield* runtime.startTurn(
-        makeTurnInput({
-          threadId,
-          providerThread,
+  it.live.each(["termination", "rollback"] as const)(
+    "retires Copilot runtime tasks on %s",
+    (replacement) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const runtimeInputs: AcpAdapterV2RuntimeInput[] = [];
+        let runtimeOrdinalSeen = 0;
+        const handlers: Array<
+          Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]>[0]
+        > = [];
+        const routing = makeCopilotSubagentRouting();
+        const runtimes: Array<AcpSessionRuntime.AcpSessionRuntime["Service"]> = [];
+        const rawHandlers: Array<
+          (event: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>
+        > = [];
+        const baseMakeRuntime = makeMockRuntime({
+          childProcessSpawner,
+          mockAgentPath,
+          wrapRuntime: (runtime) => {
+            const wrapped: AcpSessionRuntime.AcpSessionRuntime["Service"] = {
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  handlers.push(handler);
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              handleExtNotification: (method, schema, handler) =>
+                Effect.sync(() => {
+                  if (method === "github.com/copilot/sessionEvent")
+                    rawHandlers.push(handler as (typeof rawHandlers)[number]);
+                }).pipe(Effect.andThen(runtime.handleExtNotification(method, schema, handler))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  if (runtimeOrdinalSeen === 1) {
+                    yield* handlers[0]!({
+                      sessionId: "mock-session-1",
+                      update: {
+                        sessionUpdate: "tool_call",
+                        toolCallId: "task-bg",
+                        title: "Background task",
+                        kind: "other",
+                        status: "pending",
+                        rawInput: {
+                          description: "Background task",
+                          prompt: "Do work",
+                          agent_type: "explore",
+                          mode: "background",
+                        },
+                      },
+                    });
+                    yield* handlers[0]!({
+                      sessionId: "mock-session-1",
+                      update: {
+                        sessionUpdate: "tool_call_update",
+                        toolCallId: "task-bg",
+                        status: "completed",
+                      },
+                    });
+                  } else {
+                    yield* handlers[0]!({
+                      sessionId: "mock-session-1",
+                      update: {
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: "stale runtime output" },
+                      },
+                    });
+                    yield* handlers[1]!({
+                      sessionId: "mock-session-1",
+                      update: {
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: "replacement output" },
+                      },
+                    });
+                  }
+                  return { stopReason: "end_turn" as const };
+                }),
+            };
+            runtimes.push(wrapped);
+            return wrapped;
+          },
+          environment: (runtimeOrdinal) => {
+            runtimeOrdinalSeen = runtimeOrdinal;
+            return {};
+          },
+        });
+        const instanceId = ProviderInstanceId.make("acp-test-unexpected-termination");
+        const adapter = yield* makeAcpAdapterV2({
           instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            registerExtensions: routing.registerExtensions,
+            normalizeSessionUpdate: routing.normalizeSessionUpdate,
+            extractSubagentUpdate: extractCopilotSubagentUpdate,
+            subagentsOwnedByRuntime: true,
+            enablePostSettleContinuation: true,
+            makeRuntime: (runtimeInput) =>
+              Effect.sync(() => {
+                runtimeInputs.push(runtimeInput);
+              }).pipe(Effect.andThen(baseMakeRuntime(runtimeInput))),
+          },
+          selfInvocation,
+          continuationRequests: { offer: () => Effect.void },
+        });
+        const threadId = ThreadId.make("thread-acp-unexpected-termination");
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-unexpected-termination"),
+          modelSelection,
           runtimePolicy,
-          now: yield* DateTime.now,
-        }),
-      );
-      yield* runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
-      );
-      assert.equal(runtimeOrdinalSeen, 2);
-      assert.lengthOf(runtimeInputs, 2);
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+        });
+        let providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+        const initialEvents: ProviderAdapter.ProviderAdapterV2Event[] = [];
+        while (true) {
+          const event = yield* Queue.take(events);
+          initialEvents.push(event);
+          if (event.type === "turn.terminal") break;
+        }
+        assert.isTrue(
+          initialEvents.some(
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.nativeTaskRef?.nativeId === "task-bg" &&
+              event.subagent.status === "running",
+          ),
+        );
+        assert.equal(runtimeOrdinalSeen, 1);
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+        if (replacement === "termination") {
+          yield* runtimeInputs[0]!.onTermination!(
+            new EffectAcpErrors.AcpTransportError({
+              detail: "Injected unexpected writer termination",
+              cause: "test",
+            }),
+          );
+        } else {
+          const rolledBack = yield* runtime.rollbackThread({
+            providerThread,
+            providerThreadTurns: [],
+            target: {
+              type: "thread_start",
+              checkpointId: CheckpointId.make("checkpoint-copilot-runtime-tasks"),
+              appRunOrdinal: 0,
+            },
+          });
+          providerThread = rolledBack.providerThread;
+        }
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+        const observed: ProviderAdapter.ProviderAdapterV2Event[] = [];
+        while (true) {
+          const event = yield* Queue.take(events);
+          observed.push(event);
+          if (event.type === "turn.terminal") break;
+        }
+        const statuses = observed.flatMap((event) =>
+          event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === "task-bg"
+            ? [event.subagent.status]
+            : [],
+        );
+        assert.deepEqual(statuses, ["interrupted"]);
+        const replacementMessages = observed.flatMap((event) =>
+          event.type === "message.updated" && event.message.role === "assistant"
+            ? [event.message.text]
+            : [],
+        );
+        assert.include(replacementMessages, "replacement output");
+        assert.isFalse(replacementMessages.some((text) => text.includes("stale runtime output")));
+        yield* rawHandlers[0]!({
+          sessionId: "mock-session-1",
+          type: "subagent.started",
+          agentId: "stale-agent",
+          data: { toolCallId: "task-bg" },
+        });
+        const update = {
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call" as const,
+            toolCallId: "new-tool",
+            title: "New",
+            _meta: { "github.com/copilot": { agentId: "stale-agent" } },
+          },
+        };
+        assert.equal(
+          routing.normalizeSessionUpdate(update, runtimes[1]!).sessionId,
+          "mock-session-1",
+        );
+
+        assert.equal(runtimeOrdinalSeen, 2);
+        assert.lengthOf(runtimeInputs, 2);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("fails a prompt its agent leaves silent past the inactivity timeout", () =>
