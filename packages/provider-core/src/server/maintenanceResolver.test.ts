@@ -266,6 +266,7 @@ it.layer(
                 expect(args).toEqual([
                   "pack",
                   "--dry-run",
+                  "--json=false",
                   "--global",
                   ...(fixture.install === "npm" ? ["--prefix", tempDir] : []),
                   `${capabilities.packageName}@latest`,
@@ -344,17 +345,11 @@ it.layer(
               (command, args) => {
                 if (command !== npmPath) return "";
                 if (args[0] === "view") return '"1.2.0"';
-                if (args[0] === "pack" && args.includes("--dry-run")) {
-                  return args.includes("--json")
-                    ? JSON.stringify([{ name: fixture.packageName, version: "1.1.0" }])
-                    : `${fixture.packageName.slice(1).replace("/", "-")}-1.1.0.tgz\n`;
-                }
-                if (args[0] === "install" && args.includes("--dry-run")) {
-                  return JSON.stringify({ add: [{ name: fixture.packageName, version: "1.1.0" }] });
-                }
-                return args[0] === "outdated" ? "{}" : "";
+                return args[0] === "pack" && args.includes("--dry-run")
+                  ? `${fixture.packageName.slice(1).replace("/", "-")}-1.1.0.tgz\n`
+                  : "";
               },
-              (args) => (["view", "pack", "install", "outdated"].includes(args[0] ?? "") ? 0 : 1),
+              (args) => (["view", "pack"].includes(args[0] ?? "") ? 0 : 1),
             ),
           ),
         );

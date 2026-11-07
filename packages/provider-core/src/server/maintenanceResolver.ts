@@ -814,12 +814,13 @@ const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup
     : -1;
   const prefix = prefixIndex >= 0 ? update?.args[prefixIndex + 1] : undefined;
   // `npm view` ignores min-release-age and `before`; pack resolves the release `npm install` picks.
-  // Without --json it prints only the tarball name, where the JSON lists every file in the package.
+  // Text output is only the tarball name, where JSON lists every file; it overrides a `json=true` npmrc.
   const lookup = runProbe(
     npmPath,
     [
       "pack",
       "--dry-run",
+      "--json=false",
       "--global",
       ...(prefix ? ["--prefix", prefix] : []),
       `${packageName}@latest`,
