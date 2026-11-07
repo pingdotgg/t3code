@@ -350,7 +350,6 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   readonly pendingTask: PendingNewTask;
   readonly selected?: boolean;
   readonly project: EnvironmentProject | null;
-  readonly projectTitle?: string;
   readonly environmentLabel: string | null;
   readonly environmentMachine?: EnvironmentMachineKind;
   readonly pane?: "screen" | "sidebar";
@@ -397,7 +396,6 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
     }),
     [deleteLabel, handleDelete, pendingTask.title],
   );
-  const projectTitle = props.projectTitle ?? props.project?.title ?? pendingTask.projectTitle ?? "";
   const projectCwd = props.project?.workspaceRoot || null;
   // Drafts only; the reads are shared per-project atoms, and queued rows skip them.
   const projectDefaults = useNewTaskProjectDefaults(isDraft ? props.project : null);
@@ -439,7 +437,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
               faviconPath={props.project.faviconPath}
               projectIcon={props.project.projectIcon}
               size={projectIconSize}
-              projectTitle={projectTitle}
+              projectTitle={props.project.title}
               workspaceRoot={props.project.workspaceRoot}
             />
           </View>
