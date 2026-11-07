@@ -356,10 +356,15 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     >
                       <SettingsSectionIcon to={item.to} />
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium text-sidebar-foreground">
+                        <span className="block truncate text-sm font-medium text-inherit">
                           {item.title}
                         </span>
-                        <span className="block truncate text-2xs text-dim-foreground">
+                        <span
+                          className={cn(
+                            "block truncate text-2xs",
+                            index === activeResultIndex ? "text-inherit" : "text-dim-foreground",
+                          )}
+                        >
                           {SETTINGS_SECTION_LABELS[item.to]}
                         </span>
                       </span>

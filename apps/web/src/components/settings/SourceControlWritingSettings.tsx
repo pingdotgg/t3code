@@ -203,7 +203,8 @@ export function SourceControlWritingSettingsSection() {
             }}
           >
             <SelectTrigger
-              size="sm"
+              variant="well"
+              size="compact"
               className="w-full sm:w-56"
               aria-label="Source control writing style"
               leadingIcon={<GitCommitHorizontalIcon />}

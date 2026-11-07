@@ -113,7 +113,6 @@ function SettingsContentLayout() {
             <div className="ms-auto flex shrink-0 items-center gap-1">
               {location.pathname === "/settings/general" ? (
                 <RestoreDeviceDefaultsButton
-                  compact
                   onRestored={() => setRestoreSignal((value) => value + 1)}
                 />
               ) : null}
