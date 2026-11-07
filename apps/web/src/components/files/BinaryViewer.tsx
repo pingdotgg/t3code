@@ -71,7 +71,7 @@ function ArchiveFile(props: { readonly path: string; readonly bytes: Uint8Array<
         <FileSurfaceNotice>Preview limited to the first 1 MB.</FileSurfaceNotice>
       ) : null}
       <Suspense fallback={<FileSurfaceLoading />}>
-        <SourcePreview name={props.path} text={text.text} />
+        <SourcePreview name={props.path} text={text.text} marksMenu />
       </Suspense>
     </>
   );

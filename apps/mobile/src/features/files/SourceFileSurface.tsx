@@ -1,4 +1,5 @@
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
+import { parseXcodeMarks } from "@t3tools/shared/xcodeMarks";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import type { ComponentType } from "react";
@@ -50,6 +51,8 @@ interface SourceFileSurfaceProps {
   readonly path: string;
   readonly embedded?: boolean;
   readonly initialLine?: number | null;
+  /** Bumps to re-scroll when jumping to the same line again. */
+  readonly jumpRequestId?: number;
   readonly headerInsetTop?: number;
   readonly selectable?: boolean;
   readonly onLongPressLine?: (line: number) => void;
@@ -58,19 +61,39 @@ interface SourceFileSurfaceProps {
 
 type SourceHighlightStatus = "highlighting" | "ready" | "error";
 
+function xcodeMarkTokenColor(kind: "mark" | "todo" | "fixme", scheme: "light" | "dark"): string {
+  switch (kind) {
+    case "todo":
+      return scheme === "dark" ? "#E8B84A" : "#B45309";
+    case "fixme":
+      return scheme === "dark" ? "#F07178" : "#BE123C";
+    // Cool silver sampled from Xcode Default Dark MARK glyphs.
+    default:
+      return scheme === "dark" ? "#A3B1BF" : "#5A6470";
+  }
+}
+
 const HighlightedSourceLine = function HighlightedSourceLine(props: {
   readonly codeSurface: ResolvedMobileCodeSurface;
   readonly index: number;
   readonly line: string;
   readonly tokens: ReadonlyArray<HighlightedToken> | null;
   readonly highlighted: boolean;
+  readonly markSeparator: boolean;
+  readonly markKind: "mark" | "todo" | "fixme" | null;
+  readonly colorScheme: "light" | "dark";
   readonly wordBreak: boolean;
   readonly onLongPress?: () => void;
 }) {
   const selectable = props.onLongPress === undefined;
+  const markColor = props.markKind ? xcodeMarkTokenColor(props.markKind, props.colorScheme) : null;
   const row = (
     <View
-      className={cn("flex-row", props.highlighted && "bg-primary/10")}
+      className={cn(
+        "flex-row",
+        props.highlighted && "bg-primary/10",
+        props.markSeparator && "border-t border-foreground/10",
+      )}
       style={{ minHeight: props.codeSurface.rowHeight }}
     >
       <NativeText
@@ -88,12 +111,17 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
         selectable={selectable}
         selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
         numberOfLines={props.wordBreak ? undefined : 1}
-        className="flex-1 font-normal text-foreground"
+        className={cn(
+          "flex-1 font-normal text-foreground",
+          markColor != null && "font-t3-semibold",
+        )}
         style={{
           fontFamily: REVIEW_MONO_FONT_FAMILY,
           fontSize: props.codeSurface.fontSize,
           lineHeight: props.codeSurface.rowHeight,
           minWidth: props.wordBreak ? undefined : 320,
+          fontWeight: markColor != null ? "700" : undefined,
+          color: markColor ?? undefined,
         }}
       >
         {props.tokens && props.tokens.length > 0
@@ -104,13 +132,17 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
                 offset += token.content.length;
 
                 const fontWeight =
-                  token.fontStyle !== null && (token.fontStyle & 2) === 2
+                  markColor != null
                     ? ("700" as const)
-                    : ("400" as const);
+                    : token.fontStyle !== null && (token.fontStyle & 2) === 2
+                      ? ("700" as const)
+                      : ("400" as const);
                 const fontStyle =
-                  token.fontStyle !== null && (token.fontStyle & 1) === 1
-                    ? ("italic" as const)
-                    : ("normal" as const);
+                  markColor != null
+                    ? ("normal" as const)
+                    : token.fontStyle !== null && (token.fontStyle & 1) === 1
+                      ? ("italic" as const)
+                      : ("normal" as const);
 
                 return (
                   <NativeText
@@ -120,7 +152,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
                       Platform.OS === "android" ? "accent-focus/32" : undefined
                     }
                     style={{
-                      color: token.color ?? undefined,
+                      color: markColor ?? token.color ?? undefined,
                       fontFamily: REVIEW_MONO_FONT_FAMILY,
                       fontWeight,
                       fontStyle,
@@ -159,6 +191,9 @@ function useSourceFileModel(props: SourceFileSurfaceProps) {
     props.initialLine !== null && props.initialLine !== undefined && props.initialLine > 0
       ? Math.min(Math.floor(props.initialLine) - 1, Math.max(0, lines.length - 1))
       : null;
+  const marksByLine = new Map(
+    parseXcodeMarks(normalizedContents).map((mark) => [mark.line - 1, mark] as const),
+  );
   const highlightAtom = sourceHighlightAtom({
     path: props.path,
     contents: normalizedContents,
@@ -172,7 +207,7 @@ function useSourceFileModel(props: SourceFileSurfaceProps) {
       ? "ready"
       : "highlighting";
 
-  return { normalizedContents, lines, rowsJson, status, targetIndex, theme, tokens };
+  return { normalizedContents, lines, marksByLine, rowsJson, status, targetIndex, theme, tokens };
 }
 
 function SourceHighlightStatusView(props: { readonly status: SourceHighlightStatus }) {
@@ -227,6 +262,10 @@ function NativeSourceFileSurface(
   const contentWidth = codeWordBreak
     ? Math.max(240, viewportWidth - codeSurface.gutterWidth - 24)
     : NATIVE_SOURCE_CONTENT_WIDTH;
+  const contentResetKey =
+    props.jumpRequestId && props.jumpRequestId > 0
+      ? `${props.path}:${props.jumpRequestId}`
+      : props.path;
 
   return (
     <View className="relative flex-1 bg-sheet">
@@ -236,7 +275,7 @@ function NativeSourceFileSurface(
         testID="source-native-code-view"
         style={{ flex: 1 }}
         appearanceScheme={themeAppearance}
-        contentResetKey={props.path}
+        contentResetKey={contentResetKey}
         contentWidth={contentWidth}
         contentInsetTop={props.embedded ? 0 : (props.headerInsetTop ?? safeArea.top)}
         contentInsetBottom={props.embedded ? 0 : safeArea.bottom + 8}
@@ -268,7 +307,8 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const appTheme = useUniwindTheme();
   const foreground = appTheme["--color-foreground"];
   const { codeSurface, codeWordBreak } = useAppearanceCodeSurface();
-  const { normalizedContents, lines, status, targetIndex, tokens } = useSourceFileModel(props);
+  const { normalizedContents, lines, marksByLine, status, targetIndex, theme, tokens } =
+    useSourceFileModel(props);
   const selectableTokens = props.selectable ? boundedSelectableSourceTokens(tokens) : null;
   const listRef = useRef<FlatList<string>>(null);
   const [lineScroll] = useState(createSourceLineScroll);
@@ -290,21 +330,27 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     }
     lineScroll.scrollToLine(listRef.current, targetIndex);
     return lineScroll.cancel;
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening another file at the same line index, or leaving selection mode, scrolls the remounted list to it.
-  }, [lineScroll, props.path, targetIndex, usesLineList]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening another file at the same line index, re-jumping, or leaving selection mode scrolls the remounted list to it.
+  }, [lineScroll, props.path, props.jumpRequestId, targetIndex, usesLineList]);
 
   const { onLongPressLine } = props;
-  const renderLine = ({ item, index }: { item: string; index: number }) => (
-    <HighlightedSourceLine
-      codeSurface={codeSurface}
-      index={index}
-      line={item}
-      tokens={tokens?.[index] ?? null}
-      highlighted={index === targetIndex}
-      wordBreak={codeWordBreak}
-      onLongPress={onLongPressLine ? () => onLongPressLine(index + 1) : undefined}
-    />
-  );
+  const renderLine = ({ item, index }: { item: string; index: number }) => {
+    const mark = marksByLine.get(index) ?? null;
+    return (
+      <HighlightedSourceLine
+        codeSurface={codeSurface}
+        index={index}
+        line={item}
+        tokens={tokens?.[index] ?? null}
+        highlighted={index === targetIndex}
+        markSeparator={mark?.separator === true}
+        markKind={mark?.kind ?? null}
+        colorScheme={theme}
+        wordBreak={codeWordBreak}
+        onLongPress={onLongPressLine ? () => onLongPressLine(index + 1) : undefined}
+      />
+    );
+  };
 
   // One native text view permits document-wide selection; virtualized rows cannot.
   const selectableBlock = usesTextSelection ? (

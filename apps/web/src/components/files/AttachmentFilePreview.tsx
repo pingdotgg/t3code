@@ -64,7 +64,12 @@ function blobKey(blob: Blob) {
   return key;
 }
 
-export function ReadOnlySourcePreview(props: { name: string; text: string; wordWrap?: boolean }) {
+export function ReadOnlySourcePreview(props: {
+  name: string;
+  text: string;
+  wordWrap?: boolean;
+  marksMenu?: boolean;
+}) {
   return (
     <Suspense fallback={<FileSurfaceLoading className="p-4" />}>
       <SourcePreview {...props} />
@@ -304,7 +309,7 @@ export function AttachmentFilePreview(props: {
         />
       </ScrollArea>
     ) : (
-      <ReadOnlySourcePreview name={props.name} text={content.text} wordWrap={wordWrap} />
+      <ReadOnlySourcePreview name={props.name} text={content.text} wordWrap={wordWrap} marksMenu />
     )
   ) : kind === "archive" || kind === "sqlite" ? (
     <BinaryFilePreview
