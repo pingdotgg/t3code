@@ -48,6 +48,7 @@ export function SettingsRow(props: {
       if (inList) endListSearch();
       navigation.navigate(props.fullScreenTarget);
     } else {
+      if (inList) endListSearch();
       props.onPress?.();
     }
   };

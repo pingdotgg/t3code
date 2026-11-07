@@ -17,7 +17,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { useAuth, useUser } from "@clerk/expo";
 import { useNavigation, useNavigationState } from "@react-navigation/native";
 import { use, type ComponentProps } from "react";
-import { Platform, View } from "react-native";
+import { Keyboard, Platform, View } from "react-native";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -25,6 +25,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { useHardwareBack } from "../../lib/backHandler";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection, SettingsSidebarContext } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -78,6 +79,15 @@ export function SettingsListScreen(props: {
   const environmentMenu = useSettingsEnvironmentMenu();
   const settings = workspace?.state.tabs.settings;
   const searching = settings !== undefined && settings.searchMode !== "resting";
+  // Controlled AppBar search leaves Back to the owner; close search before leaving Settings.
+  useHardwareBack(searching, () => {
+    if (Keyboard.isVisible()) {
+      Keyboard.dismiss();
+      return true;
+    }
+    workspace?.dispatch({ type: "cancel", tab: "settings" });
+    return true;
+  });
   return (
     <SettingsSidebarContext value={props.sidebar ? { selected: props.selected } : null}>
       <View className="flex-1 bg-screen">
