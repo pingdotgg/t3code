@@ -130,6 +130,22 @@ describe("evaluatePullRequestWatch", () => {
 
     // Approved, the run's jobs carry their own names under the run's URL.
     const job = { ...check("lint", "success"), url: `${run(1)}/job/7` };
+    const pending = { ...check("test", "pending"), url: `${run(1)}/job/8` };
+    const required = { ...bot, required: true };
+    const running = evaluatePullRequestWatch(
+      missing.next,
+      detail({ checks: [required, job, pending] }),
+      noRemarks,
+    );
+    assert.deepEqual(running.changes, []);
+    assert.isFalse(running.next.passed);
+    assert.deepEqual(running.next.awaitingApproval, [run(1)]);
+    const completed = detail({ checks: [required, job, { ...pending, status: "success" }] });
+    const finished = evaluatePullRequestWatch(running.next, completed, noRemarks);
+    assert.deepEqual(finished.changes, [{ kind: "checks-passed", count: 1, required: true }]);
+    assert.deepEqual(finished.next.awaitingApproval, []);
+    assert.deepEqual(evaluatePullRequestWatch(finished.next, completed, noRemarks).changes, []);
+
     const done = evaluatePullRequestWatch(missing.next, detail({ checks: [bot, job] }), noRemarks);
     assert.deepEqual(done.changes, [{ kind: "checks-passed", count: 2, required: false }]);
   });

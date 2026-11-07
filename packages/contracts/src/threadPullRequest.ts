@@ -91,7 +91,7 @@ export const ThreadPullRequestWatch = Schema.Struct({
   owedChecks: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   /**
    * Checks waiting for someone to approve or act on them, which block a pass: a workflow run's
-   * URL, kept through reads that miss it until one of its jobs finishes, or else a check's name,
+   * URL, kept through reads that miss it until all reported jobs finish, or else a check's name,
    * kept while a read lists it or could not list everything.
    */
   awaitingApproval: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
