@@ -3668,6 +3668,7 @@ it.effect(
           threadId: secondThreadId,
           providerSessionId,
           now,
+          nativeThreadId: "native-thread-second",
         });
         const firstRunId = idAllocator.derive.run({ threadId: firstThreadId, ordinal: 1 });
         yield* eventSink.write({
@@ -3770,13 +3771,16 @@ it.effect(
         yield* resumeSecondThread;
         assert.equal((yield* Ref.get(state)).resumeCount, 4);
 
-        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread-second"]);
 
         yield* manager.detach({ providerSessionId, threadId: firstThreadId });
         assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
         assert.equal((yield* Ref.get(state)).closeCount, 0);
         assert.equal((yield* Ref.get(state)).interruptCount, 1);
-        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+          "native-thread-second",
+          "native-thread",
+        ]);
 
         yield* manager.detach({ providerSessionId, threadId: secondThreadId });
         yield* TestClock.adjust("1 second");
@@ -4086,6 +4090,74 @@ it.effect(
         yield* manager.detach(parent);
 
         assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-child-thread"]);
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })), Effect.scoped);
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 unloads a thread from its old session after it resumes on another instance",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("cross-instance-switch");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: providerThread,
+            },
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.resumeThread({ providerThread, threadId, modelSelection, runtimePolicy });
+
+        // A restart_and_resume switch moves the same row to the other instance's session.
+        const otherInstanceId = ProviderInstanceId.make("codex-other");
+        yield* eventSink.write({
+          events: [
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: {
+                ...providerThread,
+                providerInstanceId: otherInstanceId,
+                providerSessionId: idAllocator.derive.providerSession({
+                  providerInstanceId: otherInstanceId,
+                }),
+              },
+            },
+          ],
+        });
+        yield* manager.detach({ providerSessionId, threadId });
+
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
       }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })), Effect.scoped);
     }),
 );

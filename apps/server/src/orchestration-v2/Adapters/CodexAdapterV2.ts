@@ -1386,6 +1386,8 @@ export class CodexAppServerClientFactory extends Context.Service<
 export const CODEX_THREAD_CONFIG = {
   "tools.update_plan.enabled": true,
   mcp_optional_startup_grace_ms: 10_000,
+  // Otherwise Codex keeps an unsubscribed thread, and its writer lock, loaded for this delay.
+  thread_unload_delay_secs: 0,
 } as const;
 
 // T3 waits can block for an hour; keep Codex's MCP timeout above that.
