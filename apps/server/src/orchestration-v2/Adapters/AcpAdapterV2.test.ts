@@ -760,6 +760,94 @@ function assertReinjectedInstructions(
   assert.include(text, `<user_request>\n${request}\n</user_request>`);
 }
 
+const makeAdvertisedCompactionHarness = Effect.fnUntraced(function* (
+  environment: Readonly<Record<string, string>>,
+) {
+  const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const path = yield* Path.Path;
+  const selfInvocation = yield* resolveSelfInvocation();
+  const mockAgentPath = yield* path.fromFileUrl(
+    new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+  );
+  const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+  // Resolves after the adapter records what the agent advertised, so the refusal is deterministic.
+  const commandsPublished = yield* Deferred.make<void>();
+  const instanceId = ProviderInstanceId.make("acp-test-advertised-compaction");
+  const threadId = ThreadId.make("thread-acp-advertised-compaction");
+  const adapter = yield* makeAcpAdapterV2({
+    instanceId,
+    flavor: {
+      driver: ACP_TEST_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      compactCommand: "compact",
+      onAvailableCommandsUpdate: () => Deferred.succeed(commandsPublished, undefined),
+      makeRuntime: makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath,
+        protocolEvents,
+        environment,
+      }),
+    },
+    selfInvocation,
+  });
+  const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    cwd: process.cwd(),
+  });
+  const modelSelection = { instanceId, model: "default" } as const;
+  const runtime = yield* adapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make("provider-session-acp-advertised-compaction"),
+    modelSelection,
+    runtimePolicy,
+  });
+  const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+  yield* Deferred.await(commandsPublished);
+  const now = yield* DateTime.now;
+  let ordinal = 0;
+  const nextPromptTexts = () =>
+    Effect.gen(function* () {
+      while (true) {
+        const event = yield* Queue.take(protocolEvents);
+        if (event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt") {
+          return rawProtocolPromptTextBlocks(event);
+        }
+      }
+    });
+  return {
+    runtime,
+    compact: (otherSession = false) =>
+      Effect.gen(function* () {
+        const compactThread = runtime.compactThread;
+        assert.isDefined(compactThread, "compactThread must be wired for compactCommand");
+        return yield* Effect.exit(
+          compactThread!(
+            makeTurnInput({
+              threadId,
+              providerThread: otherSession
+                ? {
+                    ...providerThread,
+                    nativeThreadRef: {
+                      driver: ACP_TEST_DRIVER,
+                      nativeId: "other-session",
+                      strength: "strong",
+                    },
+                  }
+                : { ...providerThread, contextUsage: { usedTokens: 1234 } },
+              instanceId,
+              runtimePolicy,
+              now,
+              ordinal: ++ordinal,
+              messageText: "Compact the conversation.",
+            }),
+          ),
+        );
+      }),
+    nextPromptTexts,
+  };
+});
+
 const runFormElicitation = (input: {
   readonly name: string;
   readonly requestedSchema: unknown;
@@ -2320,6 +2408,90 @@ describe("AcpAdapterV2", () => {
         assert.deepEqual(yield* runTurn("/repro-skill"), [{ type: "text", text: "/repro-skill" }]);
         assertReinjectedInstructions(yield* runTurn("Continue work."), "Continue work.");
         assert.equal((yield* runTurn("Finish work."))[0]?.text, "Finish work.");
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live.each([false, true])(
+    "sends a bare /compact prompt with protocol compaction %s",
+    (structured) =>
+      Effect.gen(function* () {
+        const harness = yield* makeAdvertisedCompactionHarness({
+          T3_ACP_AVAILABLE_COMMANDS: "compact,plan",
+          T3_ACP_COMPACTION_PROMPT_ORDINALS: structured ? "1" : "",
+        });
+        const compacted = yield* harness.compact();
+        assert.isTrue(Exit.isSuccess(compacted));
+        assert.deepEqual(yield* harness.nextPromptTexts(), [{ type: "text", text: "/compact" }]);
+        const events = yield* harness.runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        assert.isTrue(
+          events.some(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.contextUsage === null,
+          ),
+        );
+        assert.isTrue(
+          events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "compaction" &&
+              event.turnItem.status === "completed" &&
+              event.turnItem.title === (structured ? "Compact context" : "Context compacted"),
+          ),
+        );
+        assert.lengthOf(
+          events.filter(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "compaction" &&
+              event.turnItem.status === "completed",
+          ),
+          1,
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("refuses compaction when the agent does not advertise the compact command", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeAdvertisedCompactionHarness({
+        T3_ACP_AVAILABLE_COMMANDS: "plan",
+      });
+      const compacted = yield* harness.compact();
+      const error = Exit.isFailure(compacted) ? Cause.squash(compacted.cause) : undefined;
+      assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError);
+      assert.include(
+        (error as ProviderAdapter.ProviderAdapterTurnStartError).cause,
+        "does not advertise a /compact command",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live.each([
+    { active: "plan", target: "compact", allowed: true },
+    { active: "compact", target: "plan", allowed: false },
+  ])(
+    "validates the target session's compact command ($active -> $target)",
+    ({ active, target, allowed }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeAdvertisedCompactionHarness({
+          T3_ACP_AVAILABLE_COMMANDS: active,
+          T3_ACP_LOADED_COMMANDS: target,
+        });
+        const result = yield* harness.compact(true);
+        assert.equal(Exit.isSuccess(result), allowed);
+        if (allowed) {
+          assert.deepEqual(yield* harness.nextPromptTexts(), [{ type: "text", text: "/compact" }]);
+          yield* harness.runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runDrain,
+          );
+        } else {
+          const error = Exit.isFailure(result) ? Cause.squash(result.cause) : undefined;
+          assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError);
+        }
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

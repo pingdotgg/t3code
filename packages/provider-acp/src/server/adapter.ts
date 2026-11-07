@@ -442,6 +442,12 @@ export interface AcpAdapterV2Flavor {
   readonly subagentsIdleOnTurnCompletion?: boolean;
   readonly supportsCompaction?: boolean;
   /**
+   * Name of the slash command an agent runs natively to compact its own context
+   * (`compact` for agents that implement `/compact` as a prompt command).
+   * Turns `/compact` into an agent turn; rejected unless the agent advertises it.
+   */
+  readonly compactCommand?: string;
+  /**
    * Native steering: `send` queues a message into the running turn and returns the
    * agent's id for it, which `injectedSteerId` reads from the update that delivers it.
    */
@@ -1935,6 +1941,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
         // Unique markers keep delayed prompt completions from clearing later compactions.
         const compactionMarkers = yield* Ref.make(new Map<string, symbol>());
+        // Commands each agent session advertised; `/compact` is only sent to agents that list it.
+        const advertisedCommandNames = yield* Ref.make(new Map<string, ReadonlySet<string>>());
+        // Agents that run `/compact` themselves advertise it as a command, so they take part in
+        // T3 compaction even though ACP has no dedicated compact method.
+        const compactCommand = flavor.compactCommand?.trim().replace(/^\/+/u, "").toLowerCase();
+        const compactPromptText = `/${compactCommand ?? "compact"}`;
+        const compactsContext =
+          flavor.supportsCompaction === true ||
+          flavor.compactSession !== undefined ||
+          compactCommand !== undefined;
         const runtimeRestartRequired = yield* Ref.make(false);
         const runtimeTeardownState = yield* Ref.make<AcpRuntimeTeardownState>({ _tag: "Idle" });
         const runtimeCallbackGeneration = yield* Ref.make(0);
@@ -6318,10 +6334,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       clientTerminals.readOutputSnapshot,
                     );
               if (notification.update.sessionUpdate === "available_commands_update") {
-                yield* (
-                  flavor.onAvailableCommandsUpdate?.(notification.update.availableCommands) ??
-                    Effect.void
-                );
+                const sessionId = rawNotification.sessionId;
+                const advertisedCommands = notification.update.availableCommands;
+                yield* Ref.update(advertisedCommandNames, (current) => {
+                  const updated = new Map(current);
+                  updated.set(
+                    sessionId,
+                    new Set(advertisedCommands.map((command) => command.name.trim().toLowerCase())),
+                  );
+                  return updated;
+                });
+                yield* flavor.onAvailableCommandsUpdate?.(advertisedCommands) ?? Effect.void;
               }
               if (
                 notification.update.sessionUpdate === "config_option_update" ||
@@ -7646,10 +7669,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           const now = yield* DateTime.now;
           if (
-            (flavor.supportsCompaction === true || flavor.compactSession !== undefined) &&
-            isCompactionMessage(context.input.message) &&
-            settledStatus === "completed"
+            compactsContext &&
+            context.input.message.text.trim().toLowerCase() === compactPromptText &&
+            context.input.message.attachments.length === 0 &&
+            settledStatus === "completed" &&
+            !context.tools.keys().some((id) => id.startsWith("acp-compaction:"))
           ) {
+            context.contextUsage = null;
+            yield* Ref.update(contextUsageBySessionId, (current) => {
+              const updated = new Map(current);
+              updated.delete(context.nativeThreadId);
+              return updated;
+            });
             const nativeItemId = `${context.nativeTurnId}:compaction`;
             yield* Ref.update(compactionMarkers, (current) => {
               const updated = new Map(current);
@@ -8108,6 +8139,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 );
                 yield* Ref.set(activeSelection, turnInput.modelSelection);
                 yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
+              }
+            }
+            if (
+              compactCommand !== undefined &&
+              turnInput.message.text.trim().toLowerCase() === compactPromptText &&
+              turnInput.message.attachments.length === 0
+            ) {
+              const advertised = (yield* Ref.get(advertisedCommandNames)).get(requestedSessionId);
+              if (advertised !== undefined && !advertised.has(compactCommand)) {
+                return yield* Effect.fail(
+                  `This agent does not advertise a /${compactCommand} command.`,
+                );
               }
             }
             yield* validateModelSelection(turnInput.modelSelection);
@@ -8775,13 +8818,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ),
           ),
           startTurn,
-          ...(flavor.supportsCompaction === true || flavor.compactSession !== undefined
+          ...(compactsContext
             ? {
-                compactThread: (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
-                  startTurn({
+                compactThread: Effect.fn("AcpAdapterV2.compactThread")(function* (
+                  turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+                ) {
+                  return yield* startTurn({
                     ...turnInput,
-                    message: { ...turnInput.message, text: "/compact" },
-                  }),
+                    message: { ...turnInput.message, text: compactPromptText },
+                  });
+                }),
               }
             : {}),
           steerTurn: Effect.fn("AcpAdapterV2.steerTurn")(
