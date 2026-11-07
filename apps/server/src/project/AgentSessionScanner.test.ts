@@ -2836,11 +2836,16 @@ describe("parseAgentSessionTranscript", () => {
     ]);
   });
 
-  it("titles a Codex event after the request that follows injected setup blocks", () => {
+  it.each([
+    ['<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>'],
+    ['<external_codex_apps_open_page>{"page_id":"page-1"}</external_codex_apps_open_page>'],
+    [""],
+  ])("titles a Codex event after the request that follows injected setup blocks: %s", (page) => {
     const prompt = [
       "<recommended_plugins>\nGitHub\n</recommended_plugins>",
       "# AGENTS.md instructions for /tmp/project\n\n<INSTRUCTIONS>\nRules\n</INSTRUCTIONS>",
       '<in-app-browser-context source="ambient-ui-state">\nTab\n</in-app-browser-context>',
+      page,
       "Fix the import titles",
     ].join("\n");
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
@@ -2859,6 +2864,43 @@ describe("parseAgentSessionTranscript", () => {
 
     expect(thread?.title).toBe("Fix the import titles");
     expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
+  });
+
+  it.each([
+    {
+      prompts: [
+        '<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>',
+        "Import my sessions",
+      ],
+      title: "Import my sessions",
+    },
+    {
+      prompts: ["Explain <external_codex_apps_open_page> in this transcript"],
+      title: "Explain <external_codex_apps_open_page> in this transcript",
+    },
+    {
+      prompts: ["<external_codex_apps_open_page>Keep this incomplete example"],
+      title: "<external_codex_apps_open_page>Keep this incomplete example",
+    },
+  ])("derives a Codex title without discarding user text: $title", ({ prompts, title }) => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        ...prompts.map((message) =>
+          encodeTranscriptRecord({
+            type: "event_msg",
+            payload: { type: "user_message", message },
+          }),
+        ),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe(title);
+    expect(thread?.messages.map((message) => message.text)).toEqual(prompts);
   });
 
   it("skips sessions without a visible user message", () => {
