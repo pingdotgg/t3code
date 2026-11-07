@@ -16,6 +16,7 @@ import android.text.Layout
 import android.text.Spanned
 import android.text.TextUtils
 import android.text.TextWatcher
+import android.text.method.Touch
 import android.text.style.ReplacementSpan
 import android.util.TypedValue
 import android.view.DragEvent
@@ -598,6 +599,8 @@ internal class SelectionAwareEditText(
   var textPasteThresholdBytes = 0
   var maxInputChars = Int.MAX_VALUE
   var clipboardFragment = ""
+  private var touchPreservesCaret = false
+  private var touchScrolled = false
 
   // Keeps autofill services such as SMS verification codes from writing into the draft.
   override fun getAutofillType(): Int = View.AUTOFILL_TYPE_NONE
@@ -682,7 +685,59 @@ internal class SelectionAwareEditText(
         super.deleteSurroundingTextInCodePoints(beforeLength, afterLength)
     }
   }
+
+  override fun onTouchEvent(event: MotionEvent): Boolean {
+    when (event.actionMasked) {
+      MotionEvent.ACTION_DOWN -> {
+        touchPreservesCaret = event.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER &&
+          selectionStart >= 0 && selectionStart == selectionEnd
+        touchScrolled = false
+      }
+      MotionEvent.ACTION_POINTER_DOWN -> touchPreservesCaret = false
+    }
+    if (event.metaState != 0) touchPreservesCaret = false
+    if (
+      event.actionMasked == MotionEvent.ACTION_UP && touchPreservesCaret && touchScrolled
+    ) {
+      // Finish Touch's scroll state, then cancel the release so neither ArrowKeyMovementMethod
+      // nor Editor moves the caret. Restoring it afterward also notifies the IME of a false move.
+      Touch.onTouchEvent(this, text, event)
+      touchPreservesCaret = false
+      touchScrolled = false
+      val cancel = MotionEvent.obtain(event)
+      try {
+        cancel.action = MotionEvent.ACTION_CANCEL
+        return super.onTouchEvent(cancel)
+      } finally {
+        cancel.recycle()
+      }
+    }
+    val previousScrollX = scrollX
+    val previousScrollY = scrollY
+    val handled = super.onTouchEvent(event)
+    if (
+      event.actionMasked == MotionEvent.ACTION_MOVE &&
+      (scrollX != previousScrollX || scrollY != previousScrollY)
+    ) {
+      touchScrolled = true
+    }
+    if (
+      event.actionMasked == MotionEvent.ACTION_UP ||
+      event.actionMasked == MotionEvent.ACTION_CANCEL
+    ) {
+      touchPreservesCaret = false
+      touchScrolled = false
+    }
+    return handled
+  }
+
+  override fun performLongClick(): Boolean {
+    touchPreservesCaret = false
+    return super.performLongClick()
+  }
+
   override fun onSelectionChanged(selStart: Int, selEnd: Int) {
+    touchPreservesCaret = false
     super.onSelectionChanged(selStart, selEnd)
     selectionListener?.invoke(selStart, selEnd)
   }
