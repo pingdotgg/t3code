@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { documentChipKindForFileName } from "~/pierre-icons";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
@@ -87,9 +88,10 @@ import {
   pmToFlat,
   serializeEditorDoc,
   serializeSelection,
-  skillChipReplacements,
+  composerChipReplacements,
   splitOrLiftListItem,
   stepCaretAcrossStyledEdge,
+  type ComposerChipResolver,
   type SkillMeta,
 } from "~/composer-rich-text-doc";
 import {
@@ -114,9 +116,12 @@ import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
 import { FileTagChipContent } from "./chat/FileTagChip";
 import { SkillChipPopover, skillPopoverDescription } from "./chat/SkillInlineText";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
+import { modelMentionKey, modelMentionKeysAtom } from "./chat/ModelMentionChip";
+import { ComposerModelExtension } from "./ComposerModelMentionNode";
 import { getTimelinePageScrollKey } from "./chat/pageScrollController";
 import { ContextChip } from "./ContextChip";
 import {
+  CHIP_NODE_SELECTION_CLASS_NAME,
   ComposerContextActionsContext,
   ComposerContextReferenceChip,
   ComposerContextRecordsContext,
@@ -235,9 +240,6 @@ function resolvedThemeFromDocument(): "light" | "dark" {
   return document.documentElement.classList.contains("dark") ? "dark" : "light";
 }
 
-const CHIP_NODE_SELECTION_CLASS_NAME =
-  "relative inline-flex min-w-0 max-w-full select-none items-baseline data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-sm data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
-
 const ComposerMentionExtension = Node.create({
   name: "composer-mention",
   group: "inline",
@@ -337,6 +339,16 @@ function composerSkillMeta(
   return {
     label: formatProviderSkillDisplayName(skill),
     description: shortDescription || skill.description?.trim() || null,
+  };
+}
+
+function composerChips(
+  skills: ReadonlyArray<ServerProviderSkill>,
+  modelKeys: ReadonlySet<string>,
+): ComposerChipResolver {
+  return {
+    skill: (name) => composerSkillMeta(skills, name),
+    model: (instanceId, model) => modelKeys.has(modelMentionKey(instanceId, model)),
   };
 }
 
@@ -684,9 +696,9 @@ function chipSelectionDecorations({ doc, selection }: EditorState): DecorationSe
 
 type TiptapEditor = NonNullable<ReturnType<typeof useEditor>>;
 
-function replaceSkillChips(
+function replaceChips(
   editor: TiptapEditor,
-  replacements: ReturnType<typeof skillChipReplacements>,
+  replacements: ReturnType<typeof composerChipReplacements>,
 ): void {
   const transaction = editor.state.tr.setMeta("addToHistory", false);
   for (const { from, to, node } of replacements) transaction.replaceWith(from, to, node);
@@ -769,6 +781,7 @@ function createComposerExtensions(richText: boolean) {
     ComposerTextDirectionExtension,
     ComposerMentionExtension,
     ComposerSkillExtension,
+    ComposerModelExtension,
     ComposerCitationExtension,
     ComposerContextReferenceExtension,
     ComposerChipSelectionExtension,
@@ -909,8 +922,17 @@ function ComposerPromptEditorTiptapInner(
     importContextFragment,
   }));
 
-  // Stable so a skills refresh does not rerun the controlled-value effect.
+  const { environmentId } = use(ComposerContextActionsContext);
+  const modelKeys = useAtomValue(modelMentionKeysAtom(environmentId ?? ""));
+  // Stable so a skills or models refresh does not rerun the controlled-value effect.
   const skillLabelFor = useStableCallback((name: string) => composerSkillMeta(skills, name));
+  const modelResolves = useStableCallback((instanceId: string, model: string) =>
+    modelKeys.has(modelMentionKey(instanceId, model)),
+  );
+  const [chips] = useState<ComposerChipResolver>(() => ({
+    skill: skillLabelFor,
+    model: modelResolves,
+  }));
 
   const initialCursor = clampEditorCursor(value, cursor);
   const initialExpandedCursor = Math.max(0, Math.min(value.length, props.initialExpandedCursor));
@@ -1036,7 +1058,7 @@ function ComposerPromptEditorTiptapInner(
   const editor = useEditor(
     {
       extensions: richText ? RICH_TEXT_EXTENSIONS : PLAIN_TEXT_EXTENSIONS,
-      content: buildDocJson(value, (name) => composerSkillMeta(skills, name), {
+      content: buildDocJson(value, composerChips(skills, modelKeys), {
         styling: richText,
         literalText,
       }),
@@ -1336,7 +1358,8 @@ function ComposerPromptEditorTiptapInner(
           const tokens = literalText ? [] : collectComposerPromptInlineTokens(`${text}\n`);
           const isChip = (token: (typeof tokens)[number] | undefined) =>
             token?.type === "mention" ||
-            (token?.type === "skill" && skillLabelFor(token.value) !== null);
+            (token?.type === "skill" && chips.skill(token.value) !== null) ||
+            (token?.type === "model" && chips.model(token.instanceId, token.model));
           const lastToken = tokens.at(-1);
           if (isChip(lastToken) && lastToken?.end === text.length) {
             text += " ";
@@ -1359,7 +1382,7 @@ function ComposerPromptEditorTiptapInner(
             );
             insertMarkdownParagraphs(
               text,
-              skillLabelFor,
+              chips,
               { styling: richText, blocks: !nested, literalText, literalLength },
               (content) => {
                 editorInstance
@@ -1393,13 +1416,13 @@ function ComposerPromptEditorTiptapInner(
         },
       },
       onUpdate: ({ editor: updated, transaction }) => {
-        // Undo can restore a chip for a skill the current provider no longer offers.
+        // Undo can restore a chip for a skill or model the environment no longer offers.
         if (!literalText && isHistoryTransaction(transaction)) {
-          const stale = skillChipReplacements(updated.state.doc, skillLabelFor).filter(
+          const stale = composerChipReplacements(updated.state.doc, chips).filter(
             ({ node }) => node.isText,
           );
           if (stale.length > 0) {
-            replaceSkillChips(updated, stale);
+            replaceChips(updated, stale);
             return;
           }
         }
@@ -1517,12 +1540,9 @@ function ComposerPromptEditorTiptapInner(
       citationRequestRef.current?.value === value ? citationRequestRef.current : null;
     if (previousSnapshot.value !== value) {
       saveCitationDraft(editor, previousSnapshot.value);
-      editor.commands.setContent(
-        buildDocJson(value, skillLabelFor, { styling: richText, literalText }),
-        {
-          emitUpdate: false,
-        },
-      );
+      editor.commands.setContent(buildDocJson(value, chips, { styling: richText, literalText }), {
+        emitUpdate: false,
+      });
     }
     selectMarkdownOffset(editor, normalizedExpandedCursor);
     const map = serializeEditorDoc(editor.state.doc);
@@ -1558,19 +1578,20 @@ function ComposerPromptEditorTiptapInner(
     initialExpandedCursor,
     literalText,
     richText,
-    skillLabelFor,
+    chips,
     value,
   ]);
 
-  // Reconcile loaded or switched provider skills without rebuilding citation node views.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- replaces skill chip nodes in the Tiptap document when the provider skill list loads or changes
+  // Reconcile loaded or switched provider skills and models without rebuilding citation node views.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- replaces skill and model chip nodes in the Tiptap document when the provider skill or model list loads or changes
   useEffect(() => {
     if (!editor || literalText) return;
-    const replacements = skillChipReplacements(editor.state.doc, (name) =>
-      composerSkillMeta(skills, name),
+    const replacements = composerChipReplacements(
+      editor.state.doc,
+      composerChips(skills, modelKeys),
     );
-    if (replacements.length > 0) replaceSkillChips(editor, replacements);
-  }, [editor, literalText, skills]);
+    if (replacements.length > 0) replaceChips(editor, replacements);
+  }, [editor, literalText, modelKeys, skills]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores ProseMirror focus and caret scroll when the keyed editor remounts, capturing focus on teardown
   useLayoutEffect(() => {
@@ -1798,11 +1819,11 @@ function ComposerPromptEditorTiptapInner(
 /** Split newlines into paragraphs; trailing hard breaks render no visible line. */
 function insertMarkdownParagraphs(
   value: string,
-  skillLabelFor: (name: string) => SkillMeta | null,
+  chips: ComposerChipResolver,
   options: { styling: boolean; blocks?: boolean; literalText?: boolean; literalLength?: number },
   insertContent: (content: JSONContent[] | JSONContent) => void,
 ): void {
-  const blocks = buildTiptapContent(value, skillLabelFor, options);
+  const blocks = buildTiptapContent(value, chips, options);
   if (blocks.length === 1 && blocks[0]?.type === "paragraph") {
     const inline = (blocks[0]?.content ?? []) as JSONContent[];
     if (inline.length === 0) return;

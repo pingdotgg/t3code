@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { rankModelPickerSearch, scoreModelPickerSearch } from "./modelPickerSearch";
+import { rankModelPickerSearch, scoreModelPickerSearch } from "./modelSearch.ts";
 
 describe("scoreModelPickerSearch", () => {
   it("ranks exact token matches ahead of fuzzier matches", () => {

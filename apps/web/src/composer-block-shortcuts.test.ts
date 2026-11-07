@@ -11,7 +11,13 @@ import {
   ComposerTaskItemExtension,
   ComposerTaskListExtension,
   serializeEditorDoc,
+  type ComposerChipResolver,
 } from "./composer-rich-text-doc";
+
+const knownChips: ComposerChipResolver = {
+  skill: (name) => ({ label: name, description: null }),
+  model: () => false,
+};
 
 const mac = typeof navigator !== "undefined" && /Mac|iP(hone|[oa]d)/.test(navigator.platform);
 
@@ -51,7 +57,7 @@ function press(value: string, spec: string) {
       ComposerTaskListExtension,
       ComposerTaskItemExtension,
     ],
-    content: buildDocJson(value, (name) => ({ label: name, description: null })),
+    content: buildDocJson(value, knownChips),
   });
   editor.view.dispatch(editor.state.tr.setSelection(TextSelection.atEnd(editor.state.doc)));
   const event = chord(spec);

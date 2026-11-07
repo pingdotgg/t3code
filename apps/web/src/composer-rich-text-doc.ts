@@ -53,6 +53,12 @@ import { composerMathRanges } from "@t3tools/shared/composerInlineTokens";
 
 export type SkillMeta = { label: string; description: string | null };
 
+/** Decides which `$skill` and `model:` references become chips; the rest stay editable text. */
+export interface ComposerChipResolver {
+  skill: (name: string) => SkillMeta | null;
+  model: (instanceId: string, model: string) => boolean;
+}
+
 const MARK_NESTING_ORDER: RichTextMark[] = ["strike", "bold", "italic", "code"];
 
 const MARK_TO_TIPTAP: Record<RichTextMark, string> = {
@@ -611,17 +617,18 @@ function listKey(prefix: ListLinePrefix): string {
 }
 
 type InlineJson = Record<string, unknown>;
+type AtomJson = { type: string; attrs: Record<string, unknown> };
 
 interface DocLine {
   list: ListLinePrefix | null;
   inline: InlineJson[];
 }
 
-/** Null for a `$name` that is not one of the provider's skills: it stays editable text. */
+/** Null for a `$name` or `model:` reference the resolver does not know: it stays editable text. */
 function atomJsonForSegment(
   segment: Exclude<ReturnType<typeof splitPromptIntoComposerSegments>[number], { type: "text" }>,
-  skillLabelFor: (name: string) => SkillMeta | null,
-): InlineJson | null {
+  chips: ComposerChipResolver,
+): AtomJson | null {
   if (segment.type === "mention") {
     return {
       type: "composer-mention",
@@ -629,7 +636,7 @@ function atomJsonForSegment(
     };
   }
   if (segment.type === "skill") {
-    const meta = skillLabelFor(segment.name);
+    const meta = chips.skill(segment.name);
     if (!meta) return null;
     return {
       type: "composer-skill",
@@ -638,6 +645,13 @@ function atomJsonForSegment(
         skillLabel: meta.label,
         skillDescription: meta.description,
       },
+    };
+  }
+  if (segment.type === "model") {
+    if (!chips.model(segment.instanceId, segment.model)) return null;
+    return {
+      type: "composer-model",
+      attrs: { instanceId: segment.instanceId, model: segment.model, source: segment.source },
     };
   }
   if (segment.type === "citation") {
@@ -717,7 +731,7 @@ function textJsonForSpan(text: string, marks: RichTextMark[]): Record<string, un
 /** Keeps literalLength leading characters unstyled so path queries reach file search unchanged. */
 export function buildTiptapContent(
   value: string,
-  skillLabelFor: (name: string) => SkillMeta | null,
+  chips: ComposerChipResolver,
   options?: { styling?: boolean; blocks?: boolean; literalText?: boolean; literalLength?: number },
 ): Record<string, unknown>[] {
   if (options?.literalText) {
@@ -756,7 +770,7 @@ export function buildTiptapContent(
       return splitPromptIntoComposerSegments(chunk.text)
         .map((segment) => {
           if (segment.type === "text") return segment.text;
-          const atom = atomJsonForSegment(segment, skillLabelFor);
+          const atom = atomJsonForSegment(segment, chips);
           if (!atom) return segment.source;
           atoms.push(atom);
           atomSources.push(segment.source);
@@ -955,10 +969,10 @@ export function buildTiptapContent(
 
 export function buildDocJson(
   value: string,
-  skillLabelFor: (name: string) => SkillMeta | null,
+  chips: ComposerChipResolver,
   options?: { styling?: boolean; literalText?: boolean },
 ) {
-  const content = buildTiptapContent(value, skillLabelFor, options);
+  const content = buildTiptapContent(value, chips, options);
   if (content.at(-1)?.type === "horizontalRule") content.push({ type: "paragraph" });
   return { type: "doc", content };
 }
@@ -989,6 +1003,7 @@ function readAtomSource(node: ProseMirrorNode): string {
   const attrs = node.attrs as Record<string, unknown>;
   switch (node.type.name) {
     case "composer-mention":
+    case "composer-model":
     case "composer-citation":
     case "composer-context-reference":
       return typeof attrs.source === "string" ? attrs.source : "";
@@ -1533,43 +1548,48 @@ function serializeDoc(doc: ProseMirrorNode): RichDocMap {
   };
 }
 
-export interface SkillChipReplacement {
+export interface ComposerChipReplacement {
   from: number;
   to: number;
   node: ProseMirrorNode;
+}
+
+function isStaleChip(node: ProseMirrorNode, chips: ComposerChipResolver): boolean {
+  const { skillName, instanceId, model } = node.attrs as Record<string, unknown>;
+  if (node.type.name === "composer-skill") {
+    return typeof skillName === "string" && skillName !== "" && !chips.skill(skillName);
+  }
+  if (node.type.name === "composer-model") return !chips.model(String(instanceId), String(model));
+  return false;
 }
 
 /**
  * Use the same Markdown token boundaries as draft restoration. Apply edits
  * last-first so positions stay valid and unrelated citation nodes keep their keys.
  */
-export function skillChipReplacements(
+export function composerChipReplacements(
   doc: ProseMirrorNode,
-  skillLabelFor: (name: string) => SkillMeta | null,
-): SkillChipReplacement[] {
+  chips: ComposerChipResolver,
+): ComposerChipReplacement[] {
   const schema = doc.type.schema;
-  const skillType = schema.nodes["composer-skill"];
-  if (!skillType) return [];
-  const replacements: SkillChipReplacement[] = [];
+  const replacements: ComposerChipReplacement[] = [];
   doc.descendants((node, pos) => {
-    if (node.type !== skillType) return;
-    const name = typeof node.attrs.skillName === "string" ? node.attrs.skillName : "";
-    if (name && !skillLabelFor(name)) {
-      replacements.push({
-        from: pos,
-        to: pos + node.nodeSize,
-        node: schema.text(readAtomSource(node), node.marks),
-      });
-    }
+    if (!isStaleChip(node, chips)) return;
+    replacements.push({
+      from: pos,
+      to: pos + node.nodeSize,
+      node: schema.text(readAtomSource(node), node.marks),
+    });
   });
   const map = serializeEditorDoc(doc);
   let end = 0;
   for (const segment of splitPromptIntoComposerSegments(map.value)) {
     const start = end;
     end += segment.type === "text" ? segment.text.length : segment.source.length;
-    if (segment.type !== "skill") continue;
-    const meta = skillLabelFor(segment.name);
-    if (!meta) continue;
+    if (segment.type !== "skill" && segment.type !== "model") continue;
+    const atom = atomJsonForSegment(segment, chips);
+    const type = atom && schema.nodes[atom.type];
+    if (!atom || !type) continue;
     // Only text needs converting; an existing chip is a token run.
     const run = map.runs.find(
       (candidate) =>
@@ -1583,11 +1603,7 @@ export function skillChipReplacements(
     replacements.push({
       from,
       to: from + segment.source.length,
-      node: skillType.create(
-        { skillName: segment.name, skillLabel: meta.label, skillDescription: meta.description },
-        null,
-        doc.nodeAt(from)?.marks,
-      ),
+      node: type.create(atom.attrs, null, doc.nodeAt(from)?.marks),
     });
   }
   return replacements.sort((left, right) => right.from - left.from);

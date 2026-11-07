@@ -44,7 +44,9 @@ export interface ProviderInstanceEntry {
 }
 
 /** Disabled instances may retain ready status until reconciliation. */
-export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boolean {
+export function isProviderInstancePickerReady(
+  entry: Pick<ProviderInstanceEntry, "enabled" | "isAvailable" | "status">,
+): boolean {
   return entry.enabled && entry.isAvailable && entry.status === "ready";
 }
 
