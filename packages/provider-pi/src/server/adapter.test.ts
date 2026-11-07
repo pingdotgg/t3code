@@ -2350,6 +2350,11 @@ describe("PiAdapterV2", () => {
           },
           2,
         );
+        const replayModel = yield* fake.takeRequest("set_model");
+        assert.equal(replayModel["provider"], "xai");
+        assert.equal(replayModel["modelId"], "grok-4.6");
+        const resetLevel = yield* fake.takeRequest("set_thinking_level");
+        assert.equal(resetLevel["level"], "medium");
         yield* fake.takeRequest("prompt");
         assert.deepEqual(fake.promptThinkingLevels, ["high", "medium"]);
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
