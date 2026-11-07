@@ -24,3 +24,16 @@ export function clearChunkReloadGuard(getStorage: () => Storage = () => window.s
     getStorage().removeItem(CHUNK_RELOAD_GUARD_KEY);
   } catch {}
 }
+
+export const chunkLoadState = { failed: false, reloadScheduled: false };
+
+// Registered from the entry before main loads, so main-chunk and route-chunk failures share one decision.
+export function handleChunkLoadErrors() {
+  window.addEventListener("vite:preloadError", (event) => {
+    chunkLoadState.failed = true;
+    if (reloadOnceForChunkLoadError()) {
+      chunkLoadState.reloadScheduled = true;
+      event.preventDefault();
+    }
+  });
+}
