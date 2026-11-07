@@ -1,0 +1,244 @@
+---
+title: Federated APIs
+description: Serve one API at one URL from many Workers — each path handled by its own least-privilege Worker, routed by Cloudflare's zone routes with no gateway Worker, and emulated locally by alchemy dev.
+sidebar:
+  order: 10
+---
+
+Serve one API from several Workers at a single URL. Each Worker handles
+its own paths and binds only what those paths need. Cloudflare routes
+each request straight to the right Worker, so there is no gateway
+Worker in the request path.
+
+```
+api.example.com/products*  → Products  reads the catalog
+api.example.com/orders*    → Orders    reads the catalog, writes orders
+api.example.com/admin/*    → Admin     writes the catalog
+api.example.com/*          → Home      binds nothing
+```
+
+The full code is in the
+[federated API example](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-federated-api).
+
+## Define the API once
+
+Declare one `HttpApi` and give each group a path prefix. The prefix
+becomes the route each Worker claims:
+
+```typescript
+// src/Api.ts
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
+import * as Schema from "effect/Schema";
+
+export class ProductsGroup extends HttpApiGroup.make("products")
+  .add(HttpApiEndpoint.get("list", "/", { success: Schema.Array(Product) }))
+  .add(HttpApiEndpoint.get("get", "/:id", { params: Id, success: Product }))
+  .prefix("/products") {}
+
+export class OrdersGroup extends HttpApiGroup.make("orders")
+  .add(HttpApiEndpoint.post("create", "/", { payload: NewOrder, success: Order }))
+  .prefix("/orders") {}
+
+// What clients see at the one URL.
+export class StoreApi extends HttpApi.make("StoreApi")
+  .add(ProductsGroup)
+  .add(OrdersGroup) {}
+
+// What each Worker serves.
+export class ProductsApi extends HttpApi.make("ProductsApi").add(ProductsGroup) {}
+export class OrdersApi extends HttpApi.make("OrdersApi").add(OrdersGroup) {}
+```
+
+## Serve one group per Worker
+
+Claim the group's prefix with `routes`, and bind only what its
+handlers use. `Products` only reads the catalog:
+
+```typescript
+// src/Products.ts
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Http from "alchemy/Http";
+import * as Effect from "effect/Effect";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as Layer from "effect/Layer";
+import { ProductsApi } from "./Api.ts";
+import { Catalog } from "./Store.ts";
+
+export default class Products extends Cloudflare.Worker<Products>()(
+  "Products",
+  {
+    main: import.meta.url,
+    routes: [{ pattern: "api.example.com/products*" }],
+  },
+  Effect.gen(function* () {
+    const catalog = yield* Cloudflare.KV.ReadNamespace(Catalog);
+
+    const handlers = HttpApiBuilder.group(ProductsApi, "products", (h) =>
+      h
+        .handle("list", () => listProducts(catalog))
+        .handle("get", ({ params }) => getProduct(catalog, params.id)),
+    );
+
+    return {
+      fetch: yield* HttpRouter.toHttpEffect(
+        HttpApiBuilder.layer(ProductsApi).pipe(
+          Layer.provide(handlers),
+          Layer.provide(Http.Platform),
+        ),
+      ),
+    };
+  }).pipe(Effect.provide(Cloudflare.KV.ReadNamespaceBinding)),
+) {}
+```
+
+`Orders` follows the same shape with `routes: [{ pattern: "api.example.com/orders*" }]`
+and binds `ReadNamespace(Catalog)` plus `ReadWriteNamespace(OrderBook)`.
+A bug in `Products` can never write to the catalog or touch orders.
+
+## Own the hostname
+
+Give one Worker the hostname as its `domain`. It gets the DNS record
+and certificate, and answers every path no route claims:
+
+```typescript
+// src/Home.ts
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+
+export default class Home extends Cloudflare.Worker<Home>()(
+  "Home",
+  {
+    main: import.meta.url,
+    domain: "api.example.com",
+  },
+  Effect.succeed({
+    fetch: HttpServerResponse.json({ endpoints: ["/products", "/orders"] }),
+  }),
+) {}
+```
+
+## Deploy the Workers together
+
+Add every Worker to the Stack and return the domain Worker's URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Effect from "effect/Effect";
+import Home from "./src/Home.ts";
+import Orders from "./src/Orders.ts";
+import Products from "./src/Products.ts";
+
+export default Alchemy.Stack(
+  "StoreApi",
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  Effect.gen(function* () {
+    const home = yield* Home;
+    yield* Products;
+    yield* Orders;
+    return { url: home.url };
+  }),
+);
+```
+
+`url` is `https://api.example.com`. Every request to it goes straight
+to the Worker that owns its path.
+
+## How requests are matched
+
+Routes take precedence over the custom domain. When several patterns
+match, the most specific one wins:
+
+| Request          | Worker     | Why                                  |
+| ---------------- | ---------- | ------------------------------------ |
+| `/products`      | `Products` | `/products*` matches                 |
+| `/orders/7`      | `Orders`   | `/orders*` matches                   |
+| `/about`         | `Home`     | no route matches                     |
+
+A trailing `*` matches any suffix, so `/orders/*` does not match
+`/orders` itself — use `/orders*` to claim both.
+
+Opt a path out of a route with a route that has no `script`. Matching
+requests fall through to the domain Worker:
+
+```typescript
+yield* Cloudflare.Workers.WorkerRoute("ProductsHealth", {
+  zoneId: zone.zoneId,
+  pattern: "api.example.com/products/health",
+});
+```
+
+## Call it from a client
+
+Use `StoreApi` against the one URL. The client doesn't know the API is
+split across Workers:
+
+```typescript
+const client = yield* HttpApiClient.make(StoreApi, { baseUrl: url });
+
+const product = yield* client.products.get({ params: { id: "widget" } });
+const order = yield* client.orders.create({
+  payload: { productId: product.id, quantity: 3 },
+});
+```
+
+## Run it locally
+
+`alchemy dev` applies the same routes locally:
+
+```sh
+alchemy dev
+```
+
+The `url` output is now a local URL, and requests to it reach the
+local `Products`, `Orders`, and `Home` Workers by the same rules as
+`api.example.com`:
+
+```sh
+curl $URL/products   # runs the local Products Worker
+curl $URL/about      # runs the local Home Worker
+```
+
+Each routed Worker sees the original request URL, just as it does when
+deployed.
+
+## Without a custom domain
+
+Use only `routes` when no Worker should own the whole hostname. Add a
+proxied placeholder record so the hostname resolves through Cloudflare:
+
+```typescript
+yield* Cloudflare.DNS.Record("ApiPlaceholder", {
+  zoneId: zone.zoneId,
+  name: "api.example.com",
+  type: "AAAA",
+  content: "100::",
+  proxied: true,
+});
+```
+
+Read the hostname's URL from any route. It's `https://api.example.com`
+when deployed and a local URL under `alchemy dev`:
+
+```typescript
+const products = yield* Products;
+return { url: products.routes[0].url };
+```
+
+Paths no route claims return a 404 locally.
+
+## Where next
+
+- [Custom domains & routes](/cloudflare/networking/custom-domains) — domains,
+  routes, and DNS records in detail.
+- [Workers](/cloudflare/compute/workers) — bindings and the Worker runtime.
+
+Reference:
+
+- [Worker API reference](/providers/cloudflare/workers/worker)
+- [WorkerRoute API reference](/providers/cloudflare/workers/workerroute)
