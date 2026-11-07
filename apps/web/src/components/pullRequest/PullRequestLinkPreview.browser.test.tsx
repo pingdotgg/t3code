@@ -12,6 +12,7 @@ const known = vi.hoisted(
       title: "Known title",
       url: "https://github.com/owner/repo/pull/1",
       state: "open",
+      inMergeQueue: true,
       headBranch: "feature",
       baseBranch: "main",
       updatedAt: "2026-09-01T00:00:00Z",
@@ -89,4 +90,5 @@ it("shows the known summary while the preview loads", async () => {
   await userEvent.hover(screen.getByRole("link"));
 
   await expect.element(page.getByText("Known title")).toBeVisible();
+  await expect.element(page.getByText("Queued", { exact: true })).toBeVisible();
 });

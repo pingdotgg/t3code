@@ -3,6 +3,7 @@ import {
   GitPullRequestArrowIcon,
   GitPullRequestClosedIcon,
   GitPullRequestDraftIcon,
+  CircleDashedIcon,
   LayersIcon,
   Link2Icon,
   Unlink2Icon,
@@ -14,6 +15,7 @@ export const PullRequestGlyph = {
   pullRequest: GitPullRequestArrowIcon,
   reopen: GitPullRequestArrowIcon,
   draft: GitPullRequestDraftIcon,
+  queued: CircleDashedIcon,
   closed: GitPullRequestClosedIcon,
   merged: GitMergeIcon,
   conflicting: TriangleAlertIcon,
@@ -41,6 +43,11 @@ export const PULL_REQUEST_STATE_PRESENTATION = {
     toneClassName: "text-zinc-500 dark:text-zinc-400/80",
     Icon: PullRequestGlyph.draft,
   },
+  queued: {
+    label: "Queued",
+    toneClassName: "text-amber-600 dark:text-amber-400/80",
+    Icon: PullRequestGlyph.queued,
+  },
   closed: {
     label: "Closed",
     toneClassName: "text-red-600 dark:text-red-300/90",
@@ -51,4 +58,4 @@ export const PULL_REQUEST_STATE_PRESENTATION = {
     toneClassName: "text-violet-600 dark:text-violet-300/90",
     Icon: PullRequestGlyph.merged,
   },
-} as const satisfies Record<PullRequestState | "draft", PullRequestStatePresentation>;
+} as const satisfies Record<PullRequestState | "draft" | "queued", PullRequestStatePresentation>;

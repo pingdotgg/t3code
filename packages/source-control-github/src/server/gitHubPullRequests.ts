@@ -17,6 +17,7 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly headSha?: string;
   readonly state: "open" | "closed" | "merged";
   readonly isDraft?: boolean;
+  readonly inMergeQueue?: boolean;
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
   readonly updatedAt: Option.Option<DateTime.Utc>;
@@ -34,6 +35,7 @@ const GitHubPullRequestSchema = Schema.Struct({
   headRefOid: Schema.optional(Schema.NullOr(Schema.String)),
   state: Schema.optional(Schema.NullOr(Schema.String)),
   isDraft: Schema.optional(Schema.Boolean),
+  isInMergeQueue: Schema.optional(Schema.Boolean),
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   updatedAt: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
@@ -97,6 +99,7 @@ export function normalizeGitHubPullRequestRecord(
     ...(headSha ? { headSha } : {}),
     state: normalizeGitHubPullRequestState(raw),
     ...(raw.isDraft === true ? { isDraft: true } : {}),
+    ...(raw.isInMergeQueue === undefined ? {} : { inMergeQueue: raw.isInMergeQueue }),
     closedAt: raw.closedAt ?? null,
     mergedAt: raw.mergedAt ?? null,
     updatedAt: raw.updatedAt ?? Option.none(),

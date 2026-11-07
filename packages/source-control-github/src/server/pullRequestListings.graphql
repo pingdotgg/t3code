@@ -32,6 +32,7 @@ fragment PullRequestRow on PullRequest {
   baseRefName
   state
   isDraft
+  isInMergeQueue @include(if: $mergeQueue)
   mergeable
   reviewDecision
   latestReviews(first: 20) {
@@ -89,6 +90,7 @@ query PullRequestSearch(
   $first: Int!
   $after: String
   $stacks: Boolean!
+  $mergeQueue: Boolean!
   $stats: Boolean!
 ) {
   search(query: $q, type: ISSUE, first: $first, after: $after) {
@@ -111,6 +113,7 @@ query PullRequestList(
   $first: Int!
   $after: String
   $stacks: Boolean!
+  $mergeQueue: Boolean!
   $stats: Boolean!
 ) {
   repository(owner: $owner, name: $name) {

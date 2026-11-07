@@ -31,6 +31,7 @@ query PullRequestsByHead(
   $head: String!
   $states: [PullRequestState!]
   $first: Int!
+  $mergeQueue: Boolean!
 ) {
   repository(owner: $owner, name: $name) {
     # `gh pr list` orders the same way, so a head with more matches than the limit keeps the
@@ -43,15 +44,17 @@ query PullRequestsByHead(
     ) {
       nodes {
         ...PullRequestNode
+        isInMergeQueue @include(if: $mergeQueue)
       }
     }
   }
 }
 
-query PullRequestByNumber($owner: String!, $name: String!, $number: Int!) {
+query PullRequestByNumber($owner: String!, $name: String!, $number: Int!, $mergeQueue: Boolean!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       ...PullRequestNode
+      isInMergeQueue @include(if: $mergeQueue)
     }
   }
 }

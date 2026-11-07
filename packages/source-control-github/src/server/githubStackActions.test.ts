@@ -181,12 +181,28 @@ const rebased = {
 };
 const rebaseResponses = [branch(2, "bbb"), rebased, branch(3, "ccc", 1, ["rebased-sha"]), rebased];
 
-function fake(responses: readonly unknown[]) {
+function fake(responses: readonly unknown[], queued: ReadonlyArray<number> = []) {
   const calls: Call[] = [];
+  let responseIndex = 0;
   const execute: Send = (call) =>
     Effect.sync(() => {
       calls.push(call);
-      const value = responses[calls.length - 1];
+      if (call[0]?.includes("PullRequestQueueMembership")) {
+        return Object.fromEntries(
+          call.flatMap((word) => {
+            const match = /^(_\d+_)number=(\d+)$/.exec(word);
+            return match
+              ? [
+                  [
+                    match[1] + "repository",
+                    { pullRequest: { isInMergeQueue: queued.includes(Number(match[2])) } },
+                  ],
+                ]
+              : [];
+          }),
+        );
+      }
+      const value = responses[responseIndex++];
       if (value === undefined) throw new Error("Unexpected GitHub request");
       return value;
     });
@@ -197,11 +213,11 @@ it.effect("submits one atomic merge with the reviewed head and respects the merg
   Effect.gen(function* () {
     const api = fake([stack, { status: "enqueued", details: {} }]);
     yield* runGitHubStackAction(api.execute, { ...input, mergeMethod: "squash" });
-    expect(api.calls).toHaveLength(2);
-    expect(api.calls[1]).toContain("repos/acme/web/pulls/3/merge-async");
-    expect(api.calls[1]).toContain("sha=ccc");
-    expect(api.calls[1]).toContain("merge_action=default");
-    expect(api.calls[1]).toContain("merge_method=squash");
+    expect(api.calls).toHaveLength(3);
+    expect(api.calls[2]).toContain("repos/acme/web/pulls/3/merge-async");
+    expect(api.calls[2]).toContain("sha=ccc");
+    expect(api.calls[2]).toContain("merge_action=default");
+    expect(api.calls[2]).toContain("merge_method=squash");
   }),
 );
 
@@ -224,10 +240,22 @@ it.effect("merges through the selected layer without including later draft layer
       number: 3,
       expectedStackHeads: [1, 2, 3].map((number) => ({ number, headSha: `sha-${number}` })),
     });
-    expect(api.calls).toHaveLength(2);
-    expect(api.calls[1]).toContain("repos/acme/web/pulls/3/merge-async");
-    expect(api.calls[1]).toContain("sha=sha-3");
-    expect(api.calls[1]).toContain("merge_action=default");
+    expect(api.calls).toHaveLength(3);
+    expect(api.calls[2]).toContain("repos/acme/web/pulls/3/merge-async");
+    expect(api.calls[2]).toContain("sha=sha-3");
+    expect(api.calls[2]).toContain("merge_action=default");
+  }),
+);
+
+it.effect("rejects a stack merge when a freshly read lower layer is queued", () =>
+  Effect.gen(function* () {
+    const api = fake([stack, { status: "enqueued", details: {} }], [2]);
+    const result = yield* runGitHubStackAction(api.execute, input).pipe(Effect.result);
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "GitHubPullRequestQueuedError", number: 2 },
+    });
+    expect(api.calls.some((call) => call[0]?.includes("merge-async"))).toBe(false);
   }),
 );
 

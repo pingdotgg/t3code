@@ -446,6 +446,48 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect.each(["github.com", "enterprise.example"])(
+    "shares the branch lookup fragment and preserves host-specific queue fields on %s",
+    (host) => {
+      const cloud = host === "github.com";
+      const { layer, graphqlCalls } = harness({
+        remotes: remotesOutput(["origin", `git@${host}:acme/web.git`]),
+        graphql: (lookup) => ({
+          pullRequests: {
+            nodes: [
+              { ...node(42, String(lookup["head"])), ...(cloud ? { isInMergeQueue: true } : {}) },
+            ],
+          },
+        }),
+      });
+      return Effect.gen(function* () {
+        const provider = yield* GitHubSourceControlProvider.make;
+        const pending = yield* Effect.forEach(
+          ["feature/a", "feature/b"],
+          (headSelector) =>
+            provider.listChangeRequests({
+              cwd: "/repo",
+              headSelector,
+              state: "open",
+              limit: 1,
+              context: githubContext(host),
+            }),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.forkChild);
+        yield* TestClock.adjust("50 millis");
+        const results = yield* Fiber.join(pending);
+        assert.deepStrictEqual(
+          results.map((rows) => rows[0]?.inMergeQueue),
+          cloud ? [true, true] : [undefined, undefined],
+        );
+        assert.lengthOf(graphqlCalls, 1);
+        const query = graphqlCalls[0]!.query;
+        assert.lengthOf(query.match(/fragment\s+\w*PullRequestNode\b/g) ?? [], 1);
+        if (!cloud) assert.notMatch(query, /mergeQueue|isInMergeQueue/);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("maps API failures onto the errors callers handle", () => {
     let signedIn = false;
     const { layer } = harness({
@@ -485,30 +527,34 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
 });
 
 describe("GitHubSourceControlProvider.getChangeRequest", () => {
-  it.effect("reads a pull request by number, and by URL on its own repository", () => {
-    const { layer, graphqlCalls } = harness({
-      remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
-      graphql: () => ({ pullRequest: node(42, "feature") }),
-    });
-    return Effect.gen(function* () {
-      const gh = yield* GitHubSourceControlProvider.make;
-      assert.strictEqual(
-        (yield* gh.getChangeRequest({ cwd: "/repo", reference: "#42" })).number,
-        42,
-      );
-      yield* gh.getChangeRequest({
-        cwd: "/repo",
-        reference: "https://github.com/other/thing/pull/42",
+  it.effect.each([true, false])(
+    "reads a pull request by number and URL with queue membership %s",
+    (queued) => {
+      const { layer, graphqlCalls } = harness({
+        remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
+        graphql: () => ({ pullRequest: { ...node(42, "feature"), isInMergeQueue: queued } }),
       });
-      assert.deepStrictEqual(
-        graphqlCalls.flatMap((call) => call.lookups),
-        [
-          { owner: "acme", name: "web", number: 42 },
-          { owner: "other", name: "thing", number: 42 },
-        ],
-      );
-    }).pipe(Effect.provide(layer));
-  });
+      return Effect.gen(function* () {
+        const gh = yield* GitHubSourceControlProvider.make;
+        assert.strictEqual(
+          (yield* gh.getChangeRequest({ cwd: "/repo", reference: "#42" })).number,
+          42,
+        );
+        const byUrl = yield* gh.getChangeRequest({
+          cwd: "/repo",
+          reference: "https://github.com/other/thing/pull/42",
+        });
+        assert.strictEqual(byUrl.inMergeQueue, queued);
+        assert.deepStrictEqual(
+          graphqlCalls.flatMap((call) => call.lookups),
+          [
+            { owner: "acme", name: "web", number: 42, mergeQueue: true },
+            { owner: "other", name: "thing", number: 42, mergeQueue: true },
+          ],
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });
 
 describe("GitHubSourceControlProvider writes", () => {

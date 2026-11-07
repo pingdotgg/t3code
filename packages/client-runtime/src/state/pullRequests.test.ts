@@ -850,6 +850,7 @@ it.live.each([undefined, true, false])(
                     title: "github title",
                     state: "closed",
                     ...(isDraft === undefined ? {} : { isDraft }),
+                    inMergeQueue: true,
                     updatedAt: "2026-10-10T01:52:36Z",
                   })
                 : Effect.never,
@@ -877,12 +878,14 @@ it.live.each([undefined, true, false])(
           title: "github title",
           state: "closed",
           ...(isDraft === undefined ? {} : { isDraft }),
+          inMergeQueue: true,
           updatedAt: "2026-10-10T01:52:36Z",
         });
         expect(yield* Deferred.await(noted)).toEqual({
           reference: { projectId: "project-1", repository: "acme/web", number: 7 },
           state: "closed",
           ...(isDraft === undefined ? {} : { isDraft }),
+          inMergeQueue: true,
         });
       }),
     ),
@@ -1015,7 +1018,7 @@ it.effect("keeps concurrent diff file reads on different hosts separate", () =>
   ),
 );
 
-it.effect.each(["closed", "draft", "permission", "stack", "method"] as const)(
+it.effect.each(["closed", "draft", "queued", "permission", "stack", "method"] as const)(
   "rejects an unsafe quick merge with %s and keeps later actions running",
   (reason) =>
     Effect.scoped(
@@ -1026,6 +1029,7 @@ it.effect.each(["closed", "draft", "permission", "stack", "method"] as const)(
             Effect.succeed({
               state: reason === "closed" ? "closed" : "open",
               isDraft: reason === "draft",
+              inMergeQueue: reason === "queued",
               capabilities: { actions: ["merge"], stackActions: true },
               viewerPermissions: { actions: reason === "permission" ? [] : ["merge"] },
             }),

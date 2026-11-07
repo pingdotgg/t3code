@@ -78,12 +78,14 @@ type PullRequestPrimaryControl =
   | "merge"
   | "enable-auto-merge"
   | "auto-merge-armed"
+  | "queued"
   | "merged"
   | "closed"
   | null;
 
 export function resolvePullRequestPrimaryControl(input: {
   readonly state: PullRequestState;
+  readonly inMergeQueue?: boolean | undefined;
   readonly isDraft: boolean;
   readonly mergeability: PullRequestMergeability;
   readonly checksState: ContractPullRequestChecksState | null;
@@ -95,6 +97,7 @@ export function resolvePullRequestPrimaryControl(input: {
 }): PullRequestPrimaryControl {
   if (input.state === "merged") return "merged";
   if (input.state === "closed") return "closed";
+  if (input.inMergeQueue) return "queued";
   if (input.mergeability === "conflicting") return "resolve";
   if (input.isDraft) return input.canMarkReady ? "ready" : null;
   if (input.autoMergeEnabled) return "auto-merge-armed";
@@ -278,7 +281,13 @@ export function isStackedPullRequestBase(
 
 type PullRequestActionableDetail = Pick<
   PullRequestDetail,
-  "state" | "isDraft" | "mergeability" | "capabilities" | "viewerPermissions" | "mergeCapabilities"
+  | "state"
+  | "isDraft"
+  | "inMergeQueue"
+  | "mergeability"
+  | "capabilities"
+  | "viewerPermissions"
+  | "mergeCapabilities"
 >;
 
 export function allowedPullRequestMergeMethods(
@@ -289,12 +298,16 @@ export function allowedPullRequestMergeMethods(
     : detail.capabilities.mergeMethods.filter((method) => detail.mergeCapabilities[method]);
 }
 
-function canPerformPullRequestAction(
-  detail: Pick<PullRequestActionableDetail, "capabilities" | "viewerPermissions"> | null,
+export function canPerformPullRequestAction(
+  detail: Pick<
+    PullRequestActionableDetail,
+    "capabilities" | "viewerPermissions" | "inMergeQueue"
+  > | null,
   action: PullRequestAction,
 ): boolean {
   return (
     detail !== null &&
+    !(detail.inMergeQueue && (action === "merge" || action === "enable-auto-merge")) &&
     detail.capabilities.actions.includes(action) &&
     detail.viewerPermissions.actions.includes(action)
   );
@@ -1079,6 +1092,7 @@ function pullRequestContextComment(
     readonly baseBranch: string;
     readonly state: PullRequestState;
     readonly isDraft: boolean;
+    readonly inMergeQueue?: boolean | undefined;
   },
   instructions: ReadonlyArray<string>,
 ): ReviewCommentContext {
@@ -1107,6 +1121,7 @@ function pullRequestContextComment(
       baseBranch: boundedField(input.baseBranch),
       state: input.state,
       isDraft: input.isDraft,
+      inMergeQueue: input.inMergeQueue,
     },
   };
 }
@@ -1182,6 +1197,7 @@ export function buildAskAboutPullRequestHandoff(input: {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly inMergeQueue?: boolean | undefined;
 }): FixFindingsHandoff {
   return {
     prompt: "",
@@ -1197,6 +1213,7 @@ export function buildExplainPullRequestHandoff(input: {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly inMergeQueue?: boolean | undefined;
 }): FixFindingsHandoff {
   const term = terminologyForUrl(input.url).singular;
   return {
@@ -1218,6 +1235,7 @@ export function buildAddSelectionToAgentHandoff(input: {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly inMergeQueue?: boolean | undefined;
   readonly comment: ReviewCommentContext;
   readonly request: string;
 }): FixFindingsHandoff {
@@ -1235,6 +1253,7 @@ export function buildAskAboutGuideStopHandoff(input: {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly inMergeQueue?: boolean | undefined;
   readonly stop: {
     readonly index: number;
     readonly title: string;

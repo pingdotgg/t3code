@@ -104,8 +104,16 @@ export function PullRequestReviewDecisionGlyph({
 export function resolvePullRequestState(input: {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly inMergeQueue?: boolean | undefined;
 }): PullRequestStatePresentation {
-  const key = input.state === "open" && input.isDraft ? "draft" : input.state;
+  const key =
+    input.state === "merged" || input.state === "closed"
+      ? input.state
+      : input.inMergeQueue
+        ? "queued"
+        : input.state === "open" && input.isDraft
+          ? "draft"
+          : input.state;
   return PULL_REQUEST_STATE_PRESENTATION[key];
 }
 
@@ -134,13 +142,15 @@ function resolvePullRequestConflict(input: {
 export function PullRequestStateGlyph({
   state,
   isDraft,
+  inMergeQueue,
   className,
 }: {
   state: PullRequestState;
   isDraft: boolean;
+  inMergeQueue?: boolean | undefined;
   className?: string;
 }) {
-  const presentation = resolvePullRequestState({ state, isDraft });
+  const presentation = resolvePullRequestState({ state, isDraft, inMergeQueue });
   return (
     <Tooltip>
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>

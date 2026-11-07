@@ -76,6 +76,7 @@ export const PullRequestContextMetadata = Schema.Struct({
   baseBranch: ShortString,
   state: Schema.Literals(["open", "closed", "merged"]),
   isDraft: Schema.Boolean,
+  inMergeQueue: Schema.optional(Schema.Boolean),
 });
 export type PullRequestContextMetadata = typeof PullRequestContextMetadata.Type;
 

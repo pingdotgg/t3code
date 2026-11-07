@@ -371,7 +371,7 @@ describe("composerContextRecords", () => {
 });
 
 describe("pullRequestContextKindLabel", () => {
-  const comment = (url: string, isDraft: boolean) => ({
+  const comment = (url: string, isDraft: boolean, inMergeQueue = false) => ({
     id: "pull-request-context:7",
     sectionId: "pull-request:7",
     sectionTitle: "PR #7",
@@ -389,6 +389,7 @@ describe("pullRequestContextKindLabel", () => {
       baseBranch: "main",
       state: "open" as const,
       isDraft,
+      inMergeQueue,
     },
   });
 
@@ -399,6 +400,8 @@ describe("pullRequestContextKindLabel", () => {
     expect(
       pullRequestContextKindLabel(comment("https://gitlab.com/acme/app/-/merge_requests/7", true)),
     ).toBe("Draft merge request");
+    const queued = comment("https://github.com/acme/app/pull/7", false, true);
+    expect(pullRequestContextKindLabel(queued)).toBe("Queued pull request");
   });
 });
 

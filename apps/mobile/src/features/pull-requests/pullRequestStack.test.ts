@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   pullRequestLayerParams,
   pullRequestStackMerge,
+  pullRequestStackView,
   savedPullRequestStack,
   singlePullRequestMergeAllowed,
 } from "./pullRequestStack";
@@ -101,6 +102,20 @@ describe("mobile stack merge scope", () => {
       pullRequestStackMerge(stack, 99, sourceControlClients.get("gitlab").changeRequest).reason,
     ).toBe("This merge request is no longer in the stack. Refresh it.");
   });
+  it("blocks merging any queued layer in the selected stack prefix", () => {
+    const queued = {
+      ...stack,
+      layers: stack.layers.map((layer) =>
+        layer.number === 2 ? { ...layer, inMergeQueue: true } : layer,
+      ),
+    };
+    expect(pullRequestStackMerge(queued, 3, GITHUB).reason).toContain("merge queue");
+    const exited = {
+      ...queued,
+      layers: queued.layers.map((layer) => ({ ...layer, inMergeQueue: false })),
+    };
+    expect(pullRequestStackMerge(exited, 3, GITHUB).reason).toBeNull();
+  });
   it("waits for successful discovery before allowing a single PR merge on modern servers", () => {
     expect(
       singlePullRequestMergeAllowed({
@@ -147,12 +162,42 @@ describe("mobile stack layer navigation", () => {
 
 describe("mobile saved stack navigation", () => {
   it("keeps all saved layers and enriches titles without carrying action revisions", () => {
-    const saved = savedPullRequestStack([link], reference);
+    const queuedLink = {
+      ...link,
+      snapshot: { ...link.snapshot!, inMergeQueue: true },
+    };
+    const saved = savedPullRequestStack([queuedLink], reference);
     expect(saved?.layers).toHaveLength(3);
-    expect(saved?.layers[1]).toMatchObject({ number: 2, title: "Middle layer", isDraft: false });
+    expect(saved?.layers[1]).toMatchObject({
+      number: 2,
+      title: "Middle layer",
+      isDraft: false,
+      inMergeQueue: true,
+    });
     expect(saved?.layers.every((layer) => layer.headSha === undefined)).toBe(true);
-    expect(pullRequestStackMerge(saved!, 2, GITHUB).reason).toContain("latest revisions");
+    expect(pullRequestStackMerge(saved!, 2, GITHUB).reason).toContain("merge queue");
     expect(savedPullRequestStack([link], { ...reference, number: 3 })?.number).toBe(10);
+  });
+  it("restores saved queue status only when fresh stack data omits it", () => {
+    const saved = savedPullRequestStack(
+      [{ ...link, snapshot: { ...link.snapshot!, inMergeQueue: true } }],
+      reference,
+    )!;
+    const fresh = {
+      ...stack,
+      layers: stack.layers.map(({ inMergeQueue: _queue, ...layer }) => layer),
+    };
+    expect(pullRequestStackView(stack, stack)).toBe(stack);
+    expect(pullRequestStackView(fresh, saved)?.layers[1]?.inMergeQueue).toBe(true);
+    expect(
+      pullRequestStackView(
+        {
+          ...fresh,
+          layers: fresh.layers.map((layer) => ({ ...layer, inMergeQueue: false })),
+        },
+        saved,
+      )?.layers[1]?.inMergeQueue,
+    ).toBe(false);
   });
   it("never borrows membership from another host or repository", () => {
     expect(savedPullRequestStack([link], { ...reference, host: "enterprise.example" })).toBeNull();

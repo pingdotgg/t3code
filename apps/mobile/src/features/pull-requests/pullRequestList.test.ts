@@ -85,6 +85,11 @@ describe("recycled PR list rows", () => {
       }),
     ).toBe(false);
   });
+
+  it("recycles a row when its merge queue status changes", () => {
+    const original = scopedEntry();
+    expect(pullRequestListRowsAreEqual(original, { ...original, inMergeQueue: true })).toBe(false);
+  });
 });
 
 describe("mobile PR list pagination", () => {

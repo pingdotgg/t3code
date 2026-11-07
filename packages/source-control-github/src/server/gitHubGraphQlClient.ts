@@ -65,6 +65,13 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
             "github.kind": "graphql",
             "github.graphql.query_hash": queryHash(request.query),
           });
+          // Enterprise validates excluded fields too; strip queue selections from generated queries.
+          const query =
+            host === "github.com"
+              ? request.query
+              : request.query
+                  .replace(/\bisInMergeQueue@include\(if:\$\w+\)/g, "")
+                  .replace(/\$\w*mergeQueue:Boolean!/g, "");
           return yield* policy.request(
             {
               host,
@@ -73,7 +80,7 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
               allowReserve: target.allowReserve ?? (yield* SourceControlRateLimit.Interactive),
             },
             (headers, source) =>
-              next({ ...request, headers: Headers.setAll(request.headers, headers) }).pipe(
+              next({ ...request, query, headers: Headers.setAll(request.headers, headers) }).pipe(
                 Effect.map((answer) => {
                   const status = answer.status;
                   const responseHeaders = answer.headers ?? Headers.empty;

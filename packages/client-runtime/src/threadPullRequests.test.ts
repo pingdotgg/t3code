@@ -406,6 +406,29 @@ describe("chain selection and badge state", () => {
     expect(resolveThreadPullRequestBadge([link(3, { source: "stack-dismissed" })])).toBeNull();
   });
 
+  it("shows queued only when every open stack layer is queued", () => {
+    const queuedBottom = link(1, {
+      snapshot: snapshot({ state: "open", inMergeQueue: true, headBranch: "base" }),
+    });
+    const queuedTop = link(2, {
+      snapshot: snapshot({ state: "open", inMergeQueue: true, baseBranch: "base" }),
+    });
+    expect(resolveThreadPullRequestBadge([queuedBottom, queuedTop])?.state).toBe("queued");
+    expect(
+      resolveThreadPullRequestBadge([
+        { ...queuedBottom, snapshot: snapshot({ state: "merged", headBranch: "base" }) },
+        queuedTop,
+      ])?.state,
+    ).toBe("queued");
+    expect(
+      resolveThreadPullRequestBadge([
+        queuedBottom,
+        { ...queuedTop, snapshot: snapshot({ baseBranch: "base", inMergeQueue: false }) },
+      ])?.state,
+    ).toBe("open");
+    expect(resolveThreadPullRequestBadge([queuedBottom, link(3)])?.state).toBe("open");
+  });
+
   it("keeps branch matching case-sensitive while ignoring repository case", () => {
     const bottom = link(1, {
       repository: "PingDotGG/T3code",
