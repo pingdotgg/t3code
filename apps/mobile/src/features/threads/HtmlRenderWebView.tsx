@@ -21,10 +21,11 @@ import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 const ROW_BOTTOM_MARGIN = 8;
+const ACTION_ROW_HEIGHT = 32;
 const FULL_SCREEN_GUTTER = 16;
 
 export function htmlRenderRowHeight(frameHeight: number) {
-  return frameHeight + ROW_BOTTOM_MARGIN;
+  return ACTION_ROW_HEIGHT + frameHeight + ROW_BOTTOM_MARGIN;
 }
 
 function useHtmlRenderTheme() {
@@ -210,6 +211,34 @@ export function ThreadHtmlRender(props: {
 
   return (
     <View style={{ marginBottom: ROW_BOTTOM_MARGIN }}>
+      <View style={{ height: ACTION_ROW_HEIGHT }} className="flex-row items-start justify-end">
+        {uri !== null && !failed ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${title}`}
+            hitSlop={8}
+            className="h-7 w-7 items-center justify-center rounded-full border border-border/60 bg-card/80"
+            onPress={() =>
+              navigation.navigate("ThreadAttachment", {
+                environmentId: String(props.environmentId),
+                threadId: String(props.threadId),
+                attachmentId,
+                name: fileName,
+                mimeType: "text/html",
+                sizeBytes: "0",
+                htmlRender: "1",
+              })
+            }
+          >
+            <SymbolView
+              name="arrow.up.left.and.arrow.down.right"
+              size={12}
+              tintColor={props.iconColor}
+              type="monochrome"
+            />
+          </Pressable>
+        ) : null}
+      </View>
       <View style={{ height }}>
         {uri !== null && !failed ? (
           <HtmlRenderWebView
@@ -237,32 +266,6 @@ export function ThreadHtmlRender(props: {
             <AppActivityIndicator />
           </View>
         )}
-        {uri !== null && !failed ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Open ${title}`}
-            hitSlop={8}
-            className="absolute right-1.5 top-1.5 h-7 w-7 items-center justify-center rounded-full border border-border/60 bg-card/80"
-            onPress={() =>
-              navigation.navigate("ThreadAttachment", {
-                environmentId: String(props.environmentId),
-                threadId: String(props.threadId),
-                attachmentId,
-                name: fileName,
-                mimeType: "text/html",
-                sizeBytes: "0",
-                htmlRender: "1",
-              })
-            }
-          >
-            <SymbolView
-              name="arrow.up.left.and.arrow.down.right"
-              size={12}
-              tintColor={props.iconColor}
-              type="monochrome"
-            />
-          </Pressable>
-        ) : null}
       </View>
     </View>
   );
