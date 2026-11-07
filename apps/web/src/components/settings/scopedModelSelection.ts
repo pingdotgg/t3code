@@ -7,6 +7,7 @@ export const SCOPED_MODEL_SETTING_KEYS = [
   "textGenerationModelSelection",
   "sourceControlWriterModelSelection",
   "reviewGuideModelSelection",
+  "speechPostProcessingModelSelection",
 ] as const;
 
 const NON_SUBSCRIPTION_CLAUDE_AUTH = new Set(["apiKey", "bedrock", "customEndpoint"]);

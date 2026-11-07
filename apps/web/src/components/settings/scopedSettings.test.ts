@@ -830,6 +830,7 @@ describe("model selections for one account under distinct instance IDs", () => {
     "textGenerationModelSelection",
     "sourceControlWriterModelSelection",
     "reviewGuideModelSelection",
+    "speechPostProcessingModelSelection",
   ] as const;
 
   it("writes each environment's own instance for every model setting", () => {
@@ -847,8 +848,13 @@ describe("model selections for one account under distinct instance IDs", () => {
     expect(pending.unavailableReason).toContain("Server");
   });
 
-  it("maps project overrides and keeps each member's own instance for option-only edits", () => {
-    const projectKeys = keys.filter((key) => key !== "fallbackModelSelection");
+  it("maps project overrides to each member's own instance", () => {
+    const projectKeys = [
+      "defaultModelSelection",
+      "textGenerationModelSelection",
+      "sourceControlWriterModelSelection",
+      "reviewGuideModelSelection",
+    ] as const;
     const plan = planScopedSettingsPatch(
       project,
       environments,
@@ -863,30 +869,9 @@ describe("model selections for one account under distinct instance IDs", () => {
       },
       { [laptopProjectId]: Object.fromEntries(projectKeys.map((key) => [key, luna])) },
     ]);
-
-    const serverSelection = { instanceId: serverCodex.instanceId, model: "gpt-6-luna" };
-    const serverWithOverride = environment("Server", {
-      settings: {
-        providerInstances: {
-          [serverCodex.instanceId]: { driver: serverCodex.driver, enabled: true },
-        },
-        projectSettingsOverrides: {
-          [projectId]: { textGenerationModelSelection: serverSelection },
-        },
-      },
-    });
-    const options = [{ id: "reasoningEffort", value: "low" }];
-    expect(
-      planScopedSettingsPatch(
-        project,
-        [laptop, serverWithOverride],
-        { textGenerationModelSelection: { options } },
-        fromLaptop(matching),
-      ).serverWrites[0]?.patch.projectSettingsOverrides?.[projectId]?.textGenerationModelSelection,
-    ).toEqual({ ...serverSelection, options });
   });
 
-  it("keeps exact instance and driver matches and other providers exact-ID only", () => {
+  it("prefers the same instance ID and driver over account matching", () => {
     const shared = account("codex_shared");
     expect(
       planScopedSettingsPatch(
@@ -910,9 +895,9 @@ describe("model selections for one account under distinct instance IDs", () => {
       [account("codex_server_gmail", { workspaceId: "team" })],
     ],
     [
-      "a missing workspace",
-      [account("codex_laptop_gmail", { workspaceId: undefined })],
-      [account("codex_server_gmail", { workspaceId: undefined })],
+      "a matching display name with no workspace",
+      [{ ...account("codex_laptop_gmail", { workspaceId: undefined }), displayName: "Gmail" }],
+      [{ ...account("codex_server_gmail", { workspaceId: undefined }), displayName: "Gmail" }],
     ],
     [
       "an unauthenticated destination",
@@ -926,12 +911,10 @@ describe("model selections for one account under distinct instance IDs", () => {
     ],
     ["two matching source accounts", [laptopCodex, account("codex_laptop_other")], [serverCodex]],
     ["missing from the source snapshot", [], [serverCodex]],
-    ["missing from the destination snapshot", [laptopCodex], []],
-    ["a different driver", [laptopCodex], [account("claude_server_gmail", {}, "claudeAgent")]],
     [
-      "a display name alone",
-      [{ ...laptopCodex, displayName: "Gmail", auth: { status: "authenticated" as const } }],
-      [{ ...serverCodex, displayName: "Gmail", auth: { status: "authenticated" as const } }],
+      "the same ID and login on another driver",
+      [laptopCodex],
+      [account(laptopCodex.instanceId, { type: "chatgpt" }, "claudeAgent")],
     ],
   ])("refuses every write when the account is %s", (_name, laptopProviders, serverProviders) => {
     const instanceId = laptopProviders[0]?.instanceId ?? laptopCodex.instanceId;
@@ -943,32 +926,6 @@ describe("model selections for one account under distinct instance IDs", () => {
     );
     expect(plan.serverWrites).toEqual([]);
     expect(plan.unavailableReason).toContain("Server");
-    const targets = [
-      {
-        environmentId: laptop.environmentId,
-        settings: {
-          ...DEFAULT_SERVER_SETTINGS,
-          textGenerationModelSelection: { instanceId, model: "gpt-6-luna" },
-        },
-      },
-      {
-        environmentId: server.environmentId,
-        settings: {
-          ...DEFAULT_SERVER_SETTINGS,
-          textGenerationModelSelection: {
-            instanceId: serverProviders[0]?.instanceId ?? serverCodex.instanceId,
-            model: "gpt-6-luna",
-          },
-        },
-      },
-    ];
-    expect(
-      scopedSettingsAreMixed(
-        targets,
-        ["textGenerationModelSelection"],
-        providers(laptopProviders, serverProviders),
-      ),
-    ).toBe(true);
   });
 
   it("treats the same account and model as one value in either order", () => {

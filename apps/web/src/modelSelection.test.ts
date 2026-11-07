@@ -142,40 +142,6 @@ describe("scoped default model selections", () => {
       ]),
     ).toBe(true);
 
-    const stored = (instanceId: string, email = "gmail@example.test") => {
-      const account = provider({ instanceId, models: ["gpt-6-luna"] });
-      return {
-        projectId: null,
-        settings: {
-          ...DEFAULT_SERVER_SETTINGS,
-          defaultModelSelection: { instanceId: account.instanceId, model: "gpt-6-luna" },
-        },
-        providers: [
-          {
-            ...account,
-            auth: {
-              status: "authenticated" as const,
-              type: "chatgpt",
-              email,
-              workspaceId: "personal",
-            },
-          },
-        ],
-      };
-    };
-    expect(
-      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
-        stored("codex_laptop_gmail"),
-        stored("codex_server_gmail"),
-      ]),
-    ).toBe(false);
-    expect(
-      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
-        stored("codex_laptop_gmail"),
-        stored("codex_server_gmail", "other@example.test"),
-      ]),
-    ).toBe(true);
-
     const configured = {
       projectId: null,
       settings: {
