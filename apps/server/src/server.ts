@@ -15,7 +15,7 @@ import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as SpawnHost from "./process/SpawnHost.ts";
+import * as SpawnWorker from "./process/SpawnWorker.ts";
 import { EnvironmentHttpApi, type RepositoryIdentity } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
@@ -384,7 +384,7 @@ const layerPlatformServices = DocumentText.layer.pipe(
     Layer.mergeAll(
       NodeServices.layer,
       NodeCrypto.layer,
-      SpawnHost.layer.pipe(Layer.provide(NodeServices.layer)),
+      SpawnWorker.layerServer.pipe(Layer.provide(NodeServices.layer)),
     ),
   ),
 );

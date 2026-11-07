@@ -447,7 +447,7 @@ class SpawnWorkerPool {
     const finish = (killed: boolean) => {
       if (settled) return;
       settled = true;
-      // taskkill could not end the tree, so at least end the direct child.
+      // As Effect's own kill does when taskkill fails, end at least the direct child.
       if (!killed) killPid();
       done();
     };
@@ -487,4 +487,11 @@ export const layer = Layer.unwrap(
     );
     return NodeChildProcessSpawner.layerWithSpawn(pool.spawn);
   }),
+);
+
+/** Only Windows creates processes slowly enough on the calling thread to need workers. */
+export const layerServer = Layer.unwrap(
+  Effect.map(HostProcess.Platform, (platform) =>
+    platform === "win32" ? layer : NodeChildProcessSpawner.layer,
+  ),
 );
