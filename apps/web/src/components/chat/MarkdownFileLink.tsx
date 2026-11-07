@@ -46,7 +46,9 @@ interface MarkdownFileLinkProps {
   revealLabel?: string | undefined;
 }
 
-const MARKDOWN_FILE_LINK_CLASS_NAME = "chat-markdown-file-link";
+// Flex children end the line for triple-click selection, so this chip lays out inline.
+const MARKDOWN_FILE_LINK_CLASS_NAME =
+  "chat-markdown-file-link inline-block overflow-x-clip text-ellipsis whitespace-nowrap [&_svg]:inline [&_svg]:me-[0.2em] [&_svg]:align-[-0.107em] [&>[data-slot=context-chip-label]]:inline";
 
 export const MarkdownFileLink = memo(function MarkdownFileLink({
   environmentId,

@@ -7,7 +7,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { cn } from "../../lib/utils";
 import { sourceControlIcon } from "../../sourceControlPresentation";
 
-const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
+const MARKDOWN_LINK_FAVICON_CLASS_NAME = "inline size-full";
 
 const failedFaviconHosts = new Set<string>();
 
@@ -24,7 +24,7 @@ const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: 
   const faviconUrl = brandIcon ? null : faviconUrlForOrigin(`https://${host}`);
   return (
     <span
-      className="ms-[0.25em] me-[0.2em] inline-flex size-[14px] [vertical-align:-0.125em]"
+      className="ms-[0.25em] me-[0.2em] inline-block size-[14px] leading-none [vertical-align:0.111em]"
       aria-hidden
     >
       {brandIcon ? (

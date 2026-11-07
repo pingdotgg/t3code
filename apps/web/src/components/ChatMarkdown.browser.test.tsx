@@ -461,3 +461,26 @@ describe("ChatMarkdown Windows file links", () => {
     }
   });
 });
+
+describe("ChatMarkdown line selection", () => {
+  it.each([
+    ["external link", "Before [#7879](https://github.com/pingdotgg/t3code/pull/7879) after words."],
+    ["file link", "Before [file.ts](/tmp/project/src/file.ts) after words."],
+  ])("selects the whole line on triple-click across a %s", async (_name, markdown) => {
+    setup();
+    await using screen = await renderText(markdown);
+    const line = screen.container.querySelector("p")!;
+    const trailingText = line.lastChild!;
+    const range = document.createRange();
+    range.selectNodeContents(trailingText);
+    const lineBounds = line.getBoundingClientRect();
+    const textBounds = range.getBoundingClientRect();
+    await userEvent.tripleClick(line, {
+      position: {
+        x: textBounds.left - lineBounds.left + textBounds.width / 2,
+        y: textBounds.top - lineBounds.top + textBounds.height / 2,
+      },
+    });
+    expect(window.getSelection()?.toString().trim()).toBe(line.textContent?.trim());
+  });
+});
