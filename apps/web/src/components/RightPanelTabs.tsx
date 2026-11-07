@@ -40,15 +40,14 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  FileDiff,
   Files,
-  Globe2,
   MessagesSquare,
   Plus,
   TerminalSquare,
 } from "lucide-react";
 import { Volume2, VolumeOff } from "lucide";
 import {
+  type ComponentType,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -60,6 +59,7 @@ import {
 } from "react";
 
 import { isElectron } from "~/env";
+import { getSidePanelMetadata, type SidePanelId } from "~/panels/bundledPanels";
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
@@ -132,20 +132,17 @@ export interface RightPanelTabsProps {
   onCloseAllSurfaces: () => void;
   onMoveSurface?: (surfaceId: string, toIndex: number) => void;
   onCopyFilePath: (relativePath: string) => void;
-  onAddBrowser: () => void;
-  /** Keep separate from the DOM click handler so a MouseEvent cannot become a profile id. */
+  /** Whether each registered panel can open here, and how; titles and icons come from its definition. */
+  panels: Readonly<Record<SidePanelId, SidePanelLauncher>>;
   onAddBrowserInProfile: (profileId: string) => void;
   onAddTerminal: () => void;
-  onAddDiff: () => void;
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
-  browserAvailable: boolean;
   terminalAvailable: boolean;
-  diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
@@ -171,17 +168,6 @@ function shouldOpenDefaultBrowserProfileFromMenuClick(pointerType: string | unde
   return pointerType !== "touch";
 }
 
-const SURFACE_DISABLED_REASONS = {
-  browser: "Browser previews are only available in the T3 Code desktop app.",
-  terminal: "Terminal surfaces are only available from a project thread.",
-  files: "Files are only available when a project is open.",
-  diff: "Diff is only available for server threads in Git repositories.",
-  pullRequest: "This thread's branch has no pull request yet.",
-  pullRequests: "No linked pull requests are available for this thread.",
-  device: "Devices are only available from a thread.",
-  sideChat: "Side chats start after the first message.",
-} as const;
-
 // Closed keepMounted popups must stop blocking shortcuts once their exit transition ends.
 const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
   "dialog-popup",
@@ -196,16 +182,135 @@ const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
   .map((slot) => `[data-slot="${slot}"]:is([data-open],[data-ending-style])`)
   .join(",");
 
-const SURFACE_UNAVAILABLE_HINTS = {
-  browser: "Only available in the desktop app.",
-  terminal: "Available when a project is open.",
-  files: "Available when a project is open.",
-  diff: "Available for Git repositories.",
-  pullRequest: "No pull request on this branch yet.",
-  pullRequests: "No linked pull requests available.",
-  device: "Available from a thread.",
-  sideChat: "Available after the first message.",
-} as const;
+interface SidePanelLauncher {
+  available: boolean;
+  onOpen: () => void;
+}
+
+interface SurfaceAction {
+  id: string;
+  label: string;
+  description?: string;
+  icon: ComponentType<{ className?: string }>;
+  shortcut: string;
+  available: boolean;
+  /** One-line reason for the empty launcher rows. */
+  unavailableHint: string;
+  /** Full reason for the add menu tooltip. */
+  unavailableReason: string;
+  onClick: () => void;
+}
+
+type SurfaceActionInputs = Pick<
+  RightPanelTabsProps,
+  | "panels"
+  | "onAddTerminal"
+  | "onAddFiles"
+  | "onAddPullRequest"
+  | "onAddPullRequests"
+  | "onAddDevice"
+  | "terminalAvailable"
+  | "filesAvailable"
+  | "pullRequestAvailable"
+  | "pullRequestsAvailable"
+  | "deviceAvailable"
+  | "onAddSideChat"
+  | "sideChatAvailable"
+  | "sideChatDisabledReason"
+>;
+
+/**
+ * The surfaces the empty launcher and the add menu offer, in launcher order.
+ * Registered panels describe themselves; the rest are listed here until they
+ * move onto the panel registry.
+ */
+export function rightPanelSurfaceActions(props: SurfaceActionInputs): SurfaceAction[] {
+  const registered = (id: SidePanelId): SurfaceAction => {
+    const panel = getSidePanelMetadata(id);
+    const launcher = props.panels[id];
+    return {
+      id,
+      label: panel.title,
+      icon: panel.icon,
+      shortcut: panel.launcherKey,
+      available: (panel.isSupported?.() ?? true) && launcher.available,
+      unavailableHint: panel.unavailableHint,
+      unavailableReason: panel.unavailableReason,
+      // Never forward the click event as an argument.
+      onClick: () => launcher.onOpen(),
+    };
+  };
+  return [
+    registered("preview"),
+    {
+      id: "terminal",
+      label: "Terminal",
+      icon: TerminalSquare,
+      shortcut: "T",
+      available: props.terminalAvailable,
+      unavailableHint: "Available when a project is open.",
+      unavailableReason: "Terminal surfaces are only available from a project thread.",
+      onClick: props.onAddTerminal,
+    },
+    {
+      id: "files",
+      label: "Files",
+      icon: Files,
+      shortcut: "F",
+      available: props.filesAvailable,
+      unavailableHint: "Available when a project is open.",
+      unavailableReason: "Files are only available when a project is open.",
+      onClick: props.onAddFiles,
+    },
+    registered("diff"),
+    {
+      id: "pull-request",
+      label: "Pull request",
+      icon: PullRequestGlyph.pullRequest,
+      shortcut: "P",
+      available: props.pullRequestAvailable,
+      unavailableHint: "No pull request on this branch yet.",
+      unavailableReason: "This thread's branch has no pull request yet.",
+      onClick: props.onAddPullRequest,
+    },
+    {
+      id: "pull-requests",
+      label: "Linked pull requests",
+      icon: PullRequestGlyph.link,
+      shortcut: "L",
+      available: props.pullRequestsAvailable,
+      unavailableHint: "No linked pull requests available.",
+      unavailableReason: "No linked pull requests are available for this thread.",
+      onClick: props.onAddPullRequests,
+    },
+    {
+      id: "device",
+      label: "Device",
+      description: "Watch an iOS Simulator or Android Emulator.",
+      icon: Smartphone,
+      shortcut: "M",
+      available: props.deviceAvailable,
+      unavailableHint: "Available from a thread.",
+      unavailableReason: "Devices are only available from a thread.",
+      onClick: props.onAddDevice,
+    },
+    ...(props.onAddSideChat
+      ? [
+          {
+            id: "side-chat",
+            label: "Side chat",
+            icon: MessagesSquare,
+            shortcut: "S",
+            available: props.sideChatAvailable === true && !props.sideChatDisabledReason,
+            unavailableHint: props.sideChatDisabledReason ?? "Available after the first message.",
+            unavailableReason:
+              props.sideChatDisabledReason ?? "Side chats start after the first message.",
+            onClick: () => props.onAddSideChat?.(),
+          },
+        ]
+      : []),
+  ];
+}
 
 type TabContextMenuAction =
   | "rename"
@@ -313,103 +418,12 @@ function SurfaceMenuItem(props: {
 }
 
 function RightPanelEmptyState(props: {
-  onAddBrowser: () => void;
+  actions: readonly SurfaceAction[];
   onAddBrowserInProfile: (profileId: string) => void;
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
-  onAddTerminal: () => void;
-  onAddDiff: () => void;
-  onAddFiles: () => void;
-  onAddPullRequest: () => void;
-  onAddPullRequests: () => void;
-  onAddDevice: () => void;
-  /** Absent where side chats are not offered. */
-  onAddSideChat?: (() => void) | undefined;
-  browserAvailable: boolean;
-  terminalAvailable: boolean;
-  diffAvailable: boolean;
-  filesAvailable: boolean;
-  pullRequestAvailable: boolean;
-  pullRequestsAvailable: boolean;
-  deviceAvailable: boolean;
-  sideChatAvailable: boolean;
-  sideChatDisabledReason: string | null;
 }) {
   const [highlight, setHighlight] = useState(-1);
-
-  const actions = [
-    {
-      label: "Browser",
-      icon: Globe2,
-      shortcut: "B",
-      available: props.browserAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.browser,
-      onClick: props.onAddBrowser,
-    },
-    {
-      label: "Terminal",
-      icon: TerminalSquare,
-      shortcut: "T",
-      available: props.terminalAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.terminal,
-      onClick: props.onAddTerminal,
-    },
-    {
-      label: "Files",
-      icon: Files,
-      shortcut: "F",
-      available: props.filesAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.files,
-      onClick: props.onAddFiles,
-    },
-    {
-      label: "Diff",
-      icon: FileDiff,
-      shortcut: "D",
-      available: props.diffAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.diff,
-      onClick: props.onAddDiff,
-    },
-    {
-      label: "Pull request",
-      icon: PullRequestGlyph.pullRequest,
-      shortcut: "P",
-      available: props.pullRequestAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequest,
-      onClick: props.onAddPullRequest,
-    },
-    {
-      label: "Linked pull requests",
-      icon: PullRequestGlyph.link,
-      shortcut: "L",
-      available: props.pullRequestsAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequests,
-      onClick: props.onAddPullRequests,
-    },
-    {
-      label: "Device",
-      description: "Watch an iOS Simulator or Android Emulator.",
-      icon: Smartphone,
-      shortcut: "M",
-      available: props.deviceAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
-      onClick: props.onAddDevice,
-    },
-    ...(props.onAddSideChat
-      ? [
-          {
-            label: "Side chat",
-            description: "Ask a side question while this thread keeps working.",
-            icon: MessagesSquare,
-            shortcut: "S",
-            available: props.sideChatAvailable && !props.sideChatDisabledReason,
-            disabledReason: props.sideChatDisabledReason ?? SURFACE_UNAVAILABLE_HINTS.sideChat,
-            onClick: props.onAddSideChat,
-          },
-        ]
-      : []),
-  ] as const;
-
-  type SurfaceAction = (typeof actions)[number];
+  const actions = props.actions;
 
   const availableActions = actions.filter((action) => action.available);
   const highlightIndex =
@@ -488,7 +502,7 @@ function RightPanelEmptyState(props: {
           {actions.map((action) =>
             action.available ? (
               <div
-                key={action.label}
+                key={action.id}
                 className="group relative"
                 onMouseEnter={() => setHighlight(availableActions.indexOf(action))}
                 onMouseLeave={() =>
@@ -509,14 +523,14 @@ function RightPanelEmptyState(props: {
                   <span
                     className={cn(
                       "min-w-0 flex-1 truncate",
-                      action.label === "Browser" && props.browserProfiles.length > 1 && "pr-7",
+                      action.id === "preview" && props.browserProfiles.length > 1 && "pr-7",
                     )}
                   >
                     {action.label}
                   </span>
                   <Kbd>{action.shortcut}</Kbd>
                 </button>
-                {action.label === "Browser" && props.browserProfiles.length > 1 ? (
+                {action.id === "preview" && props.browserProfiles.length > 1 ? (
                   <Menu>
                     <MenuTrigger
                       render={
@@ -545,8 +559,8 @@ function RightPanelEmptyState(props: {
               </div>
             ) : (
               <DisabledReasonTooltip
-                key={action.label}
-                reason={action.disabledReason}
+                key={action.id}
+                reason={action.unavailableHint}
                 trigger={
                   <div
                     tabIndex={0}
@@ -574,7 +588,7 @@ function surfaceTitle(
 ): string {
   switch (surface.kind) {
     case "diff":
-      return "Diff";
+      return getSidePanelMetadata("diff").title;
     case "files":
       return "Files";
     case "file":
@@ -595,13 +609,14 @@ function surfaceTitle(
     case "side-chat":
       return "Side chat";
     case "preview": {
+      const fallback = getSidePanelMetadata("preview").title;
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
-      if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
+      if (!snapshot || snapshot.navStatus._tag === "Idle") return fallback;
       if (snapshot.navStatus.title.trim().length > 0) return snapshot.navStatus.title;
       try {
-        return new URL(snapshot.navStatus.url).host || "Browser";
+        return new URL(snapshot.navStatus.url).host || fallback;
       } catch {
-        return "Browser";
+        return fallback;
       }
     }
   }
@@ -609,10 +624,11 @@ function surfaceTitle(
 
 function PreviewFavicon({ capturedUrl, url }: { capturedUrl: string | null; url: string | null }) {
   const publicProviderUrl = faviconUrlForOrigin(url, 32);
+  const Icon = getSidePanelMetadata("preview").icon;
   return (
     <FaviconImage
       sources={[capturedUrl, publicProviderUrl]}
-      fallback={<Globe2 className="size-3 shrink-0" />}
+      fallback={<Icon className="size-3 shrink-0" />}
       className="size-3 shrink-0 rounded-sm object-contain"
     />
   );
@@ -657,8 +673,10 @@ function SurfaceIcon({
   switch (surface.kind) {
     case "preview":
       return <PreviewFavicon capturedUrl={previewCapturedUrl} url={previewUrl} />;
-    case "diff":
-      return <FileDiff className="size-3 shrink-0" />;
+    case "diff": {
+      const Icon = getSidePanelMetadata("diff").icon;
+      return <Icon className="size-3 shrink-0" />;
+    }
     case "files":
       return <Files className="size-3 shrink-0" />;
     case "file":
@@ -1090,76 +1108,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     });
   };
 
-  const addSurfaceActions = [
-    {
-      label: "Browser",
-      icon: Globe2,
-      shortcut: "B",
-      available: props.browserAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.browser,
-      onClick: props.onAddBrowser,
-    },
-    {
-      label: "Terminal",
-      icon: TerminalSquare,
-      shortcut: "T",
-      available: props.terminalAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.terminal,
-      onClick: props.onAddTerminal,
-    },
-    {
-      label: "Files",
-      icon: Files,
-      shortcut: "F",
-      available: props.filesAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.files,
-      onClick: props.onAddFiles,
-    },
-    {
-      label: "Diff",
-      icon: FileDiff,
-      shortcut: "D",
-      available: props.diffAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.diff,
-      onClick: props.onAddDiff,
-    },
-    {
-      label: "Pull request",
-      icon: PullRequestGlyph.pullRequest,
-      shortcut: "P",
-      available: props.pullRequestAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
-      onClick: props.onAddPullRequest,
-    },
-    {
-      label: "Linked pull requests",
-      icon: PullRequestGlyph.link,
-      shortcut: "L",
-      available: props.pullRequestsAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.pullRequests,
-      onClick: props.onAddPullRequests,
-    },
-    {
-      label: "Device",
-      icon: Smartphone,
-      shortcut: "M",
-      available: props.deviceAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.device,
-      onClick: props.onAddDevice,
-    },
-    ...(props.onAddSideChat
-      ? [
-          {
-            label: "Side chat",
-            icon: MessagesSquare,
-            shortcut: "S",
-            available: props.sideChatAvailable === true && !props.sideChatDisabledReason,
-            disabledReason: props.sideChatDisabledReason ?? SURFACE_DISABLED_REASONS.sideChat,
-            onClick: props.onAddSideChat,
-          },
-        ]
-      : []),
-  ] as const;
+  const addSurfaceActions = rightPanelSurfaceActions(props);
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const action = surfaceShortcutActionForKey(addSurfaceActions, event.nativeEvent);
@@ -1413,9 +1362,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 >
                   {addSurfaceActions.map((action) => {
                     const Icon = action.icon;
-                    if (action.label === "Browser" && action.available) {
+                    if (action.id === "preview" && action.available) {
                       return (
-                        <MenuSub key={action.label}>
+                        <MenuSub key={action.id}>
                           <MenuSubTrigger
                             className="[&>svg:last-child]:ms-0"
                             aria-keyshortcuts={action.shortcut}
@@ -1450,9 +1399,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     }
                     return (
                       <SurfaceMenuItem
-                        key={action.label}
+                        key={action.id}
                         available={action.available}
-                        disabledReason={action.disabledReason}
+                        disabledReason={action.unavailableReason}
                         shortcut={action.shortcut}
                         onClick={action.onClick}
                       >
@@ -1524,25 +1473,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
-            onAddBrowser={props.onAddBrowser}
+            actions={addSurfaceActions}
             onAddBrowserInProfile={props.onAddBrowserInProfile}
             browserProfiles={browserProfiles}
-            onAddTerminal={props.onAddTerminal}
-            onAddDiff={props.onAddDiff}
-            onAddFiles={props.onAddFiles}
-            onAddPullRequest={props.onAddPullRequest}
-            onAddPullRequests={props.onAddPullRequests}
-            onAddDevice={props.onAddDevice}
-            onAddSideChat={props.onAddSideChat}
-            browserAvailable={props.browserAvailable}
-            terminalAvailable={props.terminalAvailable}
-            diffAvailable={props.diffAvailable}
-            filesAvailable={props.filesAvailable}
-            pullRequestAvailable={props.pullRequestAvailable}
-            pullRequestsAvailable={props.pullRequestsAvailable}
-            deviceAvailable={props.deviceAvailable}
-            sideChatAvailable={props.sideChatAvailable === true}
-            sideChatDisabledReason={props.sideChatDisabledReason ?? null}
           />
         ) : (
           props.children
