@@ -1855,6 +1855,16 @@ const program = Effect.gen(function* () {
         .sessionUpdate(params as AcpSchema.SessionNotification)
         .pipe(Effect.as({}));
     }
+    if (method === "_test/emit-ext-notification") {
+      // Test hook: the client asks, the agent answers with an extension notification
+      // ({ method, params }) exactly as a Hermes-style agent would.
+      const payload = params as { readonly method?: unknown; readonly params?: unknown };
+      const extMethod = payload?.method;
+      if (typeof extMethod !== "string") {
+        return Effect.void;
+      }
+      return agent.client.extNotification(extMethod, payload.params).pipe(Effect.as({}));
+    }
     if (method === "_test/startup-metadata") {
       return Effect.gen(function* () {
         for (const [metadataSessionId, commandName, modeId] of [

@@ -5,6 +5,7 @@ import {
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2PlanStep,
   type OrchestrationV2ProviderCapabilities,
@@ -891,6 +892,29 @@ function acpMcpActivation(context: AcpMcpContext) {
   };
 }
 
+// Hermes Agent reports run boundaries and its background process roster over this
+// opt-in extension notification (agentclientprotocol v2 state_update semantics on a
+// v1 connection; the Python SDK prefixes extension methods with "_").
+const HERMES_STATE_UPDATE_METHOD = "_hermes-agent/state_update";
+
+const HermesStateUpdateExt = Schema.Struct({
+  sessionId: Schema.String,
+  state: Schema.Literals(["running", "idle"]),
+  stopReason: Schema.optional(Schema.NullOr(Schema.String)),
+  background: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        status: Schema.Literals(["running", "completed", "failed"]),
+        exitCode: Schema.optional(Schema.Number),
+      }),
+    ),
+  ),
+  _meta: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+});
+
+type HermesStateUpdate = typeof HermesStateUpdateExt.Type;
+
 function nativeThreadId(
   driver: ProviderDriverKind,
   thread: OrchestrationV2ProviderThread,
@@ -1712,6 +1736,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver,
+    // Awaited background work: Hermes-style agents report their roster over the
+    // _hermes-agent/state_update extension; ids they never report come back unmatched.
+    supportsBackgroundWait: true,
     getCapabilities: Effect.fn("AcpAdapter.getCapabilities")(function () {
       return Effect.succeed(flavor.capabilities);
     }),
@@ -2261,6 +2288,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return next;
           }).pipe(Effect.andThen(setBackgroundTaskRunning(taskId, false)));
 
+        // Hermes Agent background roster, keyed by native session id: taskId -> pending task.
+        // Awaited task ids are marked only by awaitBackgroundTasks (the t3_background_wait
+        // path), so an unowned roster entry can never hold a thread in Working.
+        const pendingBackgroundTasksByNativeSession = yield* Ref.make(
+          new Map<string, Map<string, OrchestrationV2PendingBackgroundTask>>(),
+        );
+        const awaitedBackgroundTasksByNativeSession = yield* Ref.make(
+          new Map<string, Set<string>>(),
+        );
+
         const applyBackgroundTaskMutationRunning = (mutation: {
           readonly taskId: string;
           readonly status: "running" | "completed" | "failed";
@@ -2289,6 +2326,115 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           Queue.offer(events, event).pipe(Effect.asVoid);
         let scheduleDeferredFinalize: (context: ActiveAcpTurn) => Effect.Effect<void> = () =>
           Effect.void;
+
+        // Emits the Hermes background roster onto the provider thread. Roster entries are
+        // inert until awaitBackgroundTasks marks them awaited, so an unowned command never
+        // holds a thread in Working.
+        const emitBackgroundRoster = Effect.fnUntraced(function* (nativeSessionId: string) {
+          const baseThread = (yield* Ref.get(providerThreadByNativeSessionId)).get(nativeSessionId);
+          if (baseThread === undefined) return;
+          const roster = (yield* Ref.get(pendingBackgroundTasksByNativeSession)).get(
+            nativeSessionId,
+          );
+          const awaitedTaskIds = (yield* Ref.get(awaitedBackgroundTasksByNativeSession)).get(
+            nativeSessionId,
+          );
+          const now = yield* DateTime.now;
+          const providerThread: OrchestrationV2ProviderThread = {
+            ...baseThread,
+            ...(roster === undefined || roster.size === 0
+              ? { pendingBackgroundTasks: [] }
+              : {
+                  pendingBackgroundTasks: [...roster.values()].map((task) => ({
+                    ...task,
+                    ...(awaitedTaskIds?.has(task.taskId) === true
+                      ? { awaited: true as const }
+                      : {}),
+                  })),
+                }),
+            updatedAt: now,
+          };
+          yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+            new Map(current).set(nativeSessionId, providerThread),
+          );
+          yield* emitProviderEvent({
+            type: "provider_thread.updated",
+            driver,
+            providerThread,
+          });
+        });
+
+        const clearBackgroundRoster = Effect.fn("AcpAdapterV2.clearBackgroundRoster")(function* (
+          nativeSessionId: string,
+        ) {
+          const hadRoster =
+            (yield* Ref.get(pendingBackgroundTasksByNativeSession)).has(nativeSessionId) ||
+            (yield* Ref.get(awaitedBackgroundTasksByNativeSession)).has(nativeSessionId);
+          if (!hadRoster) return;
+          yield* Ref.update(pendingBackgroundTasksByNativeSession, (current) => {
+            if (!current.has(nativeSessionId)) return current;
+            const next = new Map(current);
+            next.delete(nativeSessionId);
+            return next;
+          });
+          yield* Ref.update(awaitedBackgroundTasksByNativeSession, (current) => {
+            if (!current.has(nativeSessionId)) return current;
+            const next = new Map(current);
+            next.delete(nativeSessionId);
+            return next;
+          });
+          yield* emitBackgroundRoster(nativeSessionId);
+        });
+
+        // Session transitions (restart, replace, fork) drop the old session's roster so a
+        // dead native id can never keep matching await requests or hold a thread.
+        const setActiveSessionId = Effect.fn("AcpAdapterV2.setActiveSessionId")(function* (
+          sessionId: string | null,
+        ) {
+          const previous = yield* Ref.get(activeSessionId);
+          if (previous !== null && previous !== sessionId) {
+            yield* clearBackgroundRoster(previous).pipe(Effect.ignore);
+          }
+          yield* Ref.set(activeSessionId, sessionId);
+        });
+
+        const handleHermesStateUpdate = Effect.fnUntraced(function* (update: HermesStateUpdate) {
+          if (update.sessionId !== (yield* Ref.get(activeSessionId))) return;
+          // Runtime evidence, stronger than any negotiated capability flag: this agent
+          // speaks the extension, so its run boundaries and roster are authoritative.
+          if (!followsAgentWorkState && continuationRequests !== undefined) {
+            followsAgentWorkState = true;
+          }
+          if (update.background !== undefined) {
+            const roster = new Map<string, OrchestrationV2PendingBackgroundTask>();
+            for (const item of update.background) {
+              if (item.status !== "running") continue; // finished work is not pending
+              roster.set(item.id, {
+                taskId: item.id,
+                kind: "command",
+                description: item.id,
+              });
+            }
+            yield* Ref.update(pendingBackgroundTasksByNativeSession, (current) =>
+              new Map(current).set(update.sessionId, roster),
+            );
+            yield* emitBackgroundRoster(update.sessionId);
+          }
+          const notification: EffectAcpSchema.SessionNotification = {
+            sessionId: update.sessionId,
+            update:
+              update.state === "running"
+                ? { sessionUpdate: "state_update", state: "running" }
+                : {
+                    sessionUpdate: "state_update",
+                    state: "idle",
+                    ...(update.stopReason === undefined || update.stopReason === null
+                      ? {}
+                      : { stopReason: update.stopReason }),
+                  },
+          };
+          yield* handleSessionUpdate(notification);
+        });
 
         const nativeLogging = options.nativeLogging?.(input.threadId);
         const promptInactivityTimeoutMillis =
@@ -6445,6 +6591,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               projectAcpRuntimeSessionUpdate(handlerGeneration, rawNotification),
             );
           }
+          // Hermes-style agents report run boundaries and background work over this
+          // extension; handlers for agents that never send it stay dormant.
+          yield* targetRuntime.handleExtNotification(
+            HERMES_STATE_UPDATE_METHOD,
+            HermesStateUpdateExt,
+            (update) =>
+              runRuntimeCallbackAtGeneration(
+                handlerGeneration,
+                handleHermesStateUpdate(update),
+              ).pipe(Effect.asVoid, Effect.orDie),
+          );
           yield* targetRuntime.handleRequestPermission((nativeParams, requestContext) =>
             Effect.gen(function* () {
               const trackedTurn = yield* Ref.get(activeTurn);
@@ -7067,7 +7224,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           ) {
             rememberTerminalEnvironment(candidate.sessionId, yield* readMcpContext(threadId));
             yield* Ref.set(runtimeRestartRequired, false);
-            yield* Ref.set(activeSessionId, candidate.sessionId);
+            yield* setActiveSessionId(candidate.sessionId);
             yield* setActiveSessionSetup(candidate);
             yield* Ref.set(activeSelection, null);
             yield* Ref.set(activeInteractionMode, null);
@@ -7123,7 +7280,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               prepareClaimableTerminalEnvironment(yield* readMcpContext(input.threadId));
               return yield* startAcpRuntime(input.threadId);
             });
-        yield* Ref.set(activeSessionId, started.sessionId);
+        yield* setActiveSessionId(started.sessionId);
         yield* setActiveSessionSetup(started);
         rememberTerminalEnvironment(started.sessionId, yield* readMcpContext(input.threadId));
         const capabilities = negotiatedCapabilities(
@@ -8014,7 +8171,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (!restartRequired) return false;
           yield* restartAcpRuntime(threadId);
           yield* Ref.set(runtimeRestartRequired, false);
-          yield* Ref.set(activeSessionId, null);
+          yield* setActiveSessionId(null);
           yield* Ref.set(activeSessionSetup, null);
           yield* Ref.set(activeSelection, null);
           yield* Ref.set(activeInteractionMode, null);
@@ -8050,7 +8207,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               (yield* Ref.get(activeSessionId)) !== requestedSessionId || restartAfterInterrupt;
             if (needsSessionActivation) {
               const activated = yield* activateSession(requestedSessionId, turnInput.threadId);
-              yield* Ref.set(activeSessionId, activated.sessionId);
+              yield* setActiveSessionId(activated.sessionId);
               yield* setActiveSessionSetup(activated);
               yield* configureSession(activated, turnInput.modelSelection, turnInput.runtimePolicy);
               yield* Ref.set(activeSelection, turnInput.modelSelection);
@@ -8549,6 +8706,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }),
               );
             }
+            // The session is gone: its background roster must not keep holding the thread
+            // (no permanent spinner after cancel, restart, or disconnect).
+            const closedSessionId = yield* Ref.get(activeSessionId);
+            if (closedSessionId !== null) {
+              yield* clearBackgroundRoster(closedSessionId).pipe(Effect.ignore);
+            }
             if (flavor.assertComplete !== undefined) {
               yield* flavor.assertComplete.pipe(Effect.orDie);
             }
@@ -8574,44 +8737,45 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     : flavor.getModelContextWindow?.(selection, session);
                 },
               }),
-          ...(postSettleContinuationEnabled || followsAgentWorkState
-            ? {
-                hasPendingBackgroundWork: Effect.gen(function* () {
-                  const rootSessionId = yield* Ref.get(activeSessionId);
-                  if (
-                    followsAgentWorkState &&
-                    rootSessionId !== null &&
-                    hasWorkingDescendant(rootSessionId)
-                  )
-                    return true;
-                  if (
-                    followsAgentWorkState &&
-                    (agentWork?.state === "running" ||
-                      agentWork?.state === "requires_action" ||
-                      agentRequests.size > 0)
-                  )
-                    return true;
-                  if ((yield* Ref.get(wakeBuffer)).length > 0) return true;
-                  if (yield* Ref.get(continuationRequested)) return true;
-                  if ((yield* Ref.get(runningBackgroundTaskIds)).size > 0) return true;
-                  const active = yield* Ref.get(activeTurn);
-                  if (
-                    active !== null &&
-                    [...active.subagents.values()].some(acpSubagentHasPendingBackgroundWork)
-                  ) {
-                    return true;
-                  }
-                  const carryover = yield* Ref.get(carryoverSubagents);
-                  if (
-                    carryover !== null &&
-                    carryover.subagents.some(acpSubagentHasPendingBackgroundWork)
-                  ) {
-                    return true;
-                  }
-                  return false;
-                }),
-              }
-            : {}),
+          // Unconditional: the roster (Hermes state_update) and follow-state flags can
+          // both flip at runtime, after this record is built; the body re-reads them.
+          hasPendingBackgroundWork: Effect.gen(function* () {
+            for (const roster of (yield* Ref.get(pendingBackgroundTasksByNativeSession)).values()) {
+              if (roster.size > 0) return true;
+            }
+            const rootSessionId = yield* Ref.get(activeSessionId);
+            if (
+              followsAgentWorkState &&
+              rootSessionId !== null &&
+              hasWorkingDescendant(rootSessionId)
+            )
+              return true;
+            if (
+              followsAgentWorkState &&
+              (agentWork?.state === "running" ||
+                agentWork?.state === "requires_action" ||
+                agentRequests.size > 0)
+            )
+              return true;
+            if ((yield* Ref.get(wakeBuffer)).length > 0) return true;
+            if (yield* Ref.get(continuationRequested)) return true;
+            if ((yield* Ref.get(runningBackgroundTaskIds)).size > 0) return true;
+            const active = yield* Ref.get(activeTurn);
+            if (
+              active !== null &&
+              [...active.subagents.values()].some(acpSubagentHasPendingBackgroundWork)
+            ) {
+              return true;
+            }
+            const carryover = yield* Ref.get(carryoverSubagents);
+            if (
+              carryover !== null &&
+              carryover.subagents.some(acpSubagentHasPendingBackgroundWork)
+            ) {
+              return true;
+            }
+            return false;
+          }),
           ensureThread: Effect.fn("AcpAdapterV2.ensureThread")(
             function* (threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput) {
               return yield* runtimeTransitionPermit.withPermit(
@@ -8712,7 +8876,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       sessionId,
                       threadInput.providerThread.appThreadId,
                     ).pipe(Effect.tapError(() => restorePreviousItemIdentity));
-                    yield* Ref.set(activeSessionId, activated.sessionId);
+                    yield* setActiveSessionId(activated.sessionId);
                     yield* setActiveSessionSetup(activated);
                     const nextSelection = threadInput.modelSelection ?? input.modelSelection;
                     const nextRuntimePolicy = threadInput.runtimePolicy ?? input.runtimePolicy;
@@ -9141,6 +9305,35 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ),
               ),
           ),
+          awaitBackgroundTasks: Effect.fn("AcpAdapterV2.awaitBackgroundTasks")(function* ({
+            providerThread,
+            taskIds,
+            awaited,
+          }: {
+            readonly providerThread: OrchestrationV2ProviderThread;
+            readonly taskIds: ReadonlyArray<string>;
+            readonly awaited: boolean;
+          }) {
+            const nativeSessionId = providerThread.nativeThreadRef?.nativeId;
+            if (nativeSessionId == null) return { matched: [] };
+            const roster = (yield* Ref.get(pendingBackgroundTasksByNativeSession)).get(
+              nativeSessionId,
+            );
+            if (roster === undefined) return { matched: [] };
+            const matched = [...new Set(taskIds)].filter((taskId) => roster.has(taskId));
+            if (matched.length === 0) return { matched };
+            yield* Ref.update(awaitedBackgroundTasksByNativeSession, (current) => {
+              const next = new Map(current);
+              const ids = new Set(next.get(nativeSessionId));
+              for (const taskId of matched) {
+                if (awaited) ids.add(taskId);
+                else ids.delete(taskId);
+              }
+              return next.set(nativeSessionId, ids);
+            });
+            yield* emitBackgroundRoster(nativeSessionId);
+            return { matched };
+          }),
           respondToRuntimeRequest: (requestInput) =>
             Effect.uninterruptibleMask((restore) =>
               Effect.gen(function* () {
@@ -9224,7 +9417,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       activated.sessionId,
                       yield* readMcpContext(snapshotInput.providerThread.appThreadId),
                     );
-                    yield* Ref.set(activeSessionId, activated.sessionId);
+                    yield* setActiveSessionId(activated.sessionId);
                     yield* setActiveSessionSetup(activated);
                     yield* Ref.set(activeSelection, null);
                     yield* Ref.set(activeInteractionMode, null);
@@ -9358,7 +9551,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     forked.sessionId,
                     yield* readMcpContext(forkInput.targetThreadId),
                   );
-                  yield* Ref.set(activeSessionId, forked.sessionId);
+                  yield* setActiveSessionId(forked.sessionId);
                   yield* setActiveSessionSetup(forked);
                   yield* Ref.set(activeSelection, null);
                   yield* Ref.set(activeInteractionMode, null);

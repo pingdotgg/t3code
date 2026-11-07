@@ -9486,3 +9486,196 @@ describe("acpPostSettleContinuationOfferEvidence", () => {
     );
   });
 });
+
+describe("AcpAdapterV2 background wait (Hermes state_update)", () => {
+  const makeBackgroundWaitHarness = Effect.fnUntraced(function* () {
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const path = yield* Path.Path;
+    const selfInvocation = yield* resolveSelfInvocation();
+    const mockAgentPath = yield* path.fromFileUrl(
+      new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+    );
+    const continuationRequests: Array<
+      ProviderContinuationRequests.ProviderContinuationRequest
+    > = [];
+    const natives: Array<AcpSessionRuntime.AcpSessionRuntime["Service"]> = [];
+    const instanceId = ProviderInstanceId.make("acp-test-background-wait");
+    const adapter = yield* makeAcpAdapterV2({
+      instanceId,
+      flavor: {
+        driver: ACP_TEST_DRIVER,
+        capabilities: AcpProviderCapabilitiesV2,
+        makeRuntime: makeMockRuntime({
+          childProcessSpawner,
+          mockAgentPath,
+          wrapRuntime: (runtime) => {
+            natives.push(runtime);
+            return runtime;
+          },
+        }),
+      },
+      selfInvocation,
+      continuationRequests: {
+        offer: (request) =>
+          Effect.sync(() => {
+            continuationRequests.push(request);
+          }),
+      },
+    });
+    const threadId = ThreadId.make("thread-acp-background-wait");
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: process.cwd(),
+    });
+    const modelSelection = { instanceId, model: "default" } as const;
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("provider-session-acp-background-wait"),
+      modelSelection,
+      runtimePolicy,
+    });
+    const providerThread = yield* runtime.ensureThread({
+      threadId,
+      modelSelection,
+      runtimePolicy,
+    });
+    const emitExt = (params: Record<string, unknown>) =>
+      natives.at(-1)!.request("_test/emit-ext-notification", {
+        method: "_hermes-agent/state_update",
+        params,
+      });
+    return { runtime, providerThread, emitExt, continuationRequests };
+  });
+
+  // Single-consumer stream: one subscription per test, collecting the full expected
+  // sequence of roster emissions in order.
+  const rosterEvents = (
+    runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+    count: number,
+  ) =>
+    runtime.events.pipe(
+      Stream.filter((event) => event.type === "provider_thread.updated"),
+      Stream.take(count),
+      Stream.runCollect,
+      Effect.map((events) =>
+        Array.from(events, (event) => {
+          if (event.type !== "provider_thread.updated") {
+            throw new Error("expected provider_thread.updated");
+          }
+          return event.providerThread.pendingBackgroundTasks ?? [];
+        }),
+      ),
+    );
+
+  it.effect(
+    "reports the roster, matches only live ids, and drops finished work",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeBackgroundWaitHarness();
+        const nativeSessionId =
+          harness.providerThread.nativeThreadRef?.nativeId ?? "mock-session-1";
+        yield* harness.emitExt({
+          sessionId: nativeSessionId,
+          state: "running",
+          background: [{ id: "proc-1", status: "running" }],
+        });
+        const awaited = yield* harness.runtime.awaitBackgroundTasks!({
+          providerThread: harness.providerThread,
+          taskIds: ["proc-unknown"],
+          awaited: true,
+        });
+        assert.deepEqual(awaited, { matched: [] });
+        yield* harness.runtime.awaitBackgroundTasks!({
+          providerThread: harness.providerThread,
+          taskIds: ["proc-1"],
+          awaited: true,
+        });
+        yield* harness.emitExt({
+          sessionId: nativeSessionId,
+          state: "idle",
+          stopReason: "end_turn",
+          background: [{ id: "proc-1", status: "completed", exitCode: 0 }],
+        });
+        assert.deepEqual(
+          yield* rosterEvents(harness.runtime, 3),
+          [
+            [{ taskId: "proc-1", kind: "command", description: "proc-1" }],
+            [
+              {
+                taskId: "proc-1",
+                kind: "command",
+                description: "proc-1",
+                awaited: true,
+              },
+            ],
+            [],
+          ],
+        );
+        const finished = yield* harness.runtime.awaitBackgroundTasks!({
+          providerThread: harness.providerThread,
+          taskIds: ["proc-1"],
+          awaited: true,
+        });
+        assert.deepEqual(finished, { matched: [] });
+        // The running boundary arrived with no active turn and no prior route, so
+        // there is nothing to offer a continuation for — the wake stays buffered,
+        // which is exactly the pending work hasPendingBackgroundWork reports.
+        assert.lengthOf(harness.continuationRequests, 0);
+        assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("clearing the wait unmarks the task without dropping the roster", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeBackgroundWaitHarness();
+      const nativeSessionId =
+        harness.providerThread.nativeThreadRef?.nativeId ?? "mock-session-1";
+      yield* harness.emitExt({
+        sessionId: nativeSessionId,
+        state: "running",
+        background: [{ id: "proc-1", status: "running" }],
+      });
+      yield* harness.runtime.awaitBackgroundTasks!({
+        providerThread: harness.providerThread,
+        taskIds: ["proc-1"],
+        awaited: true,
+      });
+      yield* harness.runtime.awaitBackgroundTasks!({
+        providerThread: harness.providerThread,
+        taskIds: ["proc-1"],
+        awaited: false,
+      });
+      assert.deepEqual(yield* rosterEvents(harness.runtime, 3), [
+        [{ taskId: "proc-1", kind: "command", description: "proc-1" }],
+        [
+          {
+            taskId: "proc-1",
+            kind: "command",
+            description: "proc-1",
+            awaited: true,
+          },
+        ],
+        [{ taskId: "proc-1", kind: "command", description: "proc-1" }],
+      ]);
+      assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.provide(layerTest), Effect.scoped));
+
+  it.effect("ignores state updates for a foreign session id", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeBackgroundWaitHarness();
+      yield* harness.emitExt({
+        sessionId: "foreign-session",
+        state: "running",
+        background: [{ id: "proc-foreign", status: "running" }],
+      });
+      const matched = yield* harness.runtime.awaitBackgroundTasks!({
+        providerThread: harness.providerThread,
+        taskIds: ["proc-foreign"],
+        awaited: true,
+      });
+      assert.deepEqual(matched, { matched: [] });
+      assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+      assert.lengthOf(harness.continuationRequests, 0);
+    }).pipe(Effect.provide(layerTest), Effect.scoped));
+});
