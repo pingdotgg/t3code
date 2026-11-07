@@ -492,6 +492,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string) => {
     disclosureAnchorKeyRef.current = anchorKey;
     setDisclosureToggleSettling(true);
+    // Legend keeps its initial end target until an imperative scroll supersedes it and
+    // re-pins to it on the next data change; scrolling to the current offset ends it in place.
+    const list = listRef.current;
+    if (list) void list.scrollToOffset({ offset: list.getState().scroll, animated: false });
     scheduleDisclosureSettle();
   };
 
