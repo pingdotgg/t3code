@@ -556,31 +556,16 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   DesktopBackendManager.DesktopBackendStartConfig,
   never,
   | DesktopEnvironment.DesktopEnvironment
+  | DesktopServerExposure.DesktopServerExposure
   | DesktopWslEnvironment.DesktopWslEnvironment
   | DesktopWslServerTree.DesktopWslServerTree
   | FileSystem.FileSystem
 > {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const env = yield* HostProcess.Environment;
-
-  // wslhost loopback forwarding is unreliable on some Windows hosts; advertise the WSL IP instead.
-  const wslBindHost = "0.0.0.0";
-
-  const bootstrap = {
-    mode: "desktop" as const,
-    noBrowser: true,
-    port: input.port,
-    // Omit t3Home to keep the Linux backend from sharing the primary's Windows SQLite file.
-    host: wslBindHost,
-    desktopBootstrapToken: input.bootstrapToken,
-    desktopBootstrapSecret: input.bootstrapSecret,
-    // PortSchema rejects 0 even when Tailscale Serve is disabled.
-    tailscaleServeEnabled: false,
-    tailscaleServePort: 443,
-    ...buildObservabilityFragment(input.observabilitySettings),
-  };
 
   const archivePath = environment.path.join(environment.resourcesPath, WSL_RUNTIME_ARCHIVE_NAME);
   const archiveHashPath = environment.path.join(
@@ -630,6 +615,25 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     ? "127.0.0.1"
     : Option.getOrElse(distroIp, () => "127.0.0.1");
   const httpBaseUrl = new URL(`http://${rendererHost}:${input.port}`);
+  // wslhost loopback forwarding is unreliable on some Windows hosts, so NAT setups reach the
+  // distro IP, which a loopback bind cannot serve. Elsewhere follow the network access setting.
+  const windowsUsesLoopback = usesSharedNetworkStack || Option.isNone(distroIp);
+  const { bindHost: exposureBindHost } = yield* serverExposure.backendConfig;
+  const wslBindHost = windowsUsesLoopback ? exposureBindHost : "0.0.0.0";
+
+  const bootstrap = {
+    mode: "desktop" as const,
+    noBrowser: true,
+    port: input.port,
+    // Omit t3Home to keep the Linux backend from sharing the primary's Windows SQLite file.
+    host: wslBindHost,
+    desktopBootstrapToken: input.bootstrapToken,
+    desktopBootstrapSecret: input.bootstrapSecret,
+    // PortSchema rejects 0 even when Tailscale Serve is disabled.
+    tailscaleServeEnabled: false,
+    tailscaleServePort: 443,
+    ...buildObservabilityFragment(input.observabilitySettings),
+  };
 
   const distroArgs = distroForConfig ? ["-d", distroForConfig] : [];
   const forwardedEnv: Record<string, string> = {};
@@ -771,6 +775,7 @@ export const make = Effect.gen(function* () {
       distro: persistedSettings.wslDistro,
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+      Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
       Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
       Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -842,6 +847,7 @@ export const make = Effect.gen(function* () {
         const shared = yield* sharedInputs;
         return yield* resolveWslStartConfig({ ...shared, ...input }).pipe(
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+          Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
           Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
           Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
