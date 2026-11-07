@@ -552,12 +552,20 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     );
 
   const fetchDevices = Effect.fn("DeviceService.fetchDevices")(function* (ready: DeviceReadiness) {
-    const { devices, detail, androidDiscoveryIncomplete, incompletePlatforms } =
-      yield* ready.devices.list;
+    const {
+      devices,
+      detail,
+      androidDiscoveryIncomplete,
+      physicalAndroidDiscoveryIncomplete,
+      unreadablePhysicalAndroidDeviceIds,
+      incompletePlatforms,
+    } = yield* ready.devices.list;
     return {
       devices: devices.map((device): DeviceSummary => ({ ...device, hostId: ready.hostId })),
       detail,
       androidDiscoveryIncomplete,
+      physicalAndroidDiscoveryIncomplete,
+      unreadablePhysicalAndroidDeviceIds,
       incompletePlatforms: incompletePlatforms ?? [],
     };
   });
@@ -569,8 +577,14 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     const sessionKey = (session: DeviceSession) =>
       `${session.hostId}\u0000${session.deviceId}\u0000${session.threadId}\u0000${session.openedAt}`;
     const before = new Set((yield* SynchronizedRef.get(stateRef)).state.sessions.map(sessionKey));
-    const { devices, detail, androidDiscoveryIncomplete, incompletePlatforms } =
-      yield* fetchDevices(ready);
+    const {
+      devices,
+      detail,
+      androidDiscoveryIncomplete,
+      physicalAndroidDiscoveryIncomplete,
+      unreadablePhysicalAndroidDeviceIds,
+      incompletePlatforms,
+    } = yield* fetchDevices(ready);
     const hostSummaries = yield* Effect.forEach(hosts.values(), (host) => host.summary);
     return yield* lifecycleLock.withPermit(
       Effect.gen(function* () {
@@ -586,7 +600,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           devices: [
             ...state.devices.filter(
               (device) =>
-                device.hostId !== ready.hostId || incompletePlatforms.includes(device.platform),
+                device.hostId !== ready.hostId ||
+                incompletePlatforms.includes(device.platform) ||
+                ((physicalAndroidDiscoveryIncomplete ||
+                  unreadablePhysicalAndroidDeviceIds?.includes(device.id)) &&
+                  device.platform === "android" &&
+                  device.physical &&
+                  !devices.some((listed) => listed.id === device.id)),
             ),
             ...devices.filter((device) => !incompletePlatforms.includes(device.platform)),
           ],

@@ -219,20 +219,30 @@ it.effect("lists Android devices without probing the host again once it reports 
                   ),
                 )
               : "";
-          const mode = /const mode = "([^"]+)"/.exec(script)?.[1] ?? "";
+          const mode =
+            /const mode = "([^"]+)"/.exec(script)?.[1] ??
+            (command.args.join(" ").includes("getprop")
+              ? "getprop"
+              : command.args.join(" ").includes("adb")
+                ? "adb"
+                : "emulator");
           modes.push(mode);
           output =
-            mode === ""
-              ? "Pixel_8\n"
-              : JSON.stringify({
-                  nodePath: "/node",
-                  platforms: [
-                    { platform: "ios", available: true },
-                    { platform: "android", available: androidInstalled },
-                  ],
-                  hubPort: 1234,
-                  helpers: { serveSimAxSettings: null, serveSimCli: null },
-                });
+            mode === "adb"
+              ? "List of devices attached\nphone device\n"
+              : mode === "getprop"
+                ? "[ro.product.model]: [Physical phone]\n"
+                : mode === "emulator"
+                  ? "Pixel_8\n"
+                  : JSON.stringify({
+                      nodePath: "/node",
+                      platforms: [
+                        { platform: "ios", available: true },
+                        { platform: "android", available: androidInstalled },
+                      ],
+                      hubPort: 1234,
+                      helpers: { serveSimAxSettings: null, serveSimCli: null },
+                    });
         }
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(123),
@@ -282,31 +292,31 @@ it.effect("lists Android devices without probing the host again once it reports 
 
     modes.splice(0);
 
-    expect(yield* androidNames).toEqual([]);
-    expect(modes.splice(0)).toEqual(["probe"]);
-    expect(yield* androidNames).toEqual([]);
-    expect(modes.splice(0)).toEqual(["probe"]);
+    expect(yield* androidNames).toEqual(["Physical phone"]);
+    expect(modes.splice(0)).toEqual(["probe", "adb", "getprop"]);
+    expect(yield* androidNames).toEqual(["Physical phone"]);
+    expect(modes.splice(0)).toEqual(["probe", "adb", "getprop"]);
 
     // The SDK appears after connecting, so the next listing still probes the host.
     androidInstalled = true;
     expect(yield* androidNames).toEqual(["Pixel_8"]);
-    expect(modes.splice(0)).toEqual(["probe", ""]);
+    expect(modes.splice(0)).toEqual(["probe", "emulator"]);
 
     // Android is now known to be available, so listing only runs `emulator -list-avds`.
     expect(yield* androidNames).toEqual(["Pixel_8"]);
-    expect(modes.splice(0)).toEqual([""]);
+    expect(modes.splice(0)).toEqual(["emulator"]);
 
     androidInstalled = false;
     expect((yield* host.platformAvailability("android")).available).toBe(false);
     expect(modes.splice(0)).toEqual(["probe"]);
-    expect(yield* androidNames).toEqual([]);
-    expect(modes.splice(0)).toEqual(["probe"]);
+    expect(yield* androidNames).toEqual(["Physical phone"]);
+    expect(modes.splice(0)).toEqual(["probe", "adb", "getprop"]);
 
     androidInstalled = true;
     yield* host.inspect;
     expect(modes.splice(0)).toEqual(["probe"]);
     expect(yield* androidNames).toEqual(["Pixel_8"]);
-    expect(modes.splice(0)).toEqual([""]);
+    expect(modes.splice(0)).toEqual(["emulator"]);
     yield* host.stop;
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
