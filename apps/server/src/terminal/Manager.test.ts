@@ -1948,11 +1948,13 @@ it.layer(
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const home = yield* HostProcess.HomeDirectory;
-      const { manager, ptyAdapter } = yield* createManager(5);
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { GROK_HOME: "C:\\inherited-grok" },
+      });
 
       yield* manager.open(openInput({ env: { grok_home: "~/.grok-work" } }));
 
-      expect(ptyAdapter.spawnInputs[0]?.env.grok_home).toBe(path.join(home, ".grok-work"));
+      expect(ptyAdapter.spawnInputs[0]?.env.GROK_HOME).toBe(path.join(home, ".grok-work"));
     }).pipe(Effect.provide(layerWithHostPlatform("win32"))),
   );
 
