@@ -32,6 +32,7 @@ const hosts = {
 function countingResolver() {
   const reads: Array<string> = [];
   const resolver = SecretResolver.SecretResolver.of({
+    label: (provider) => Effect.succeed(provider),
     read: (references) =>
       Effect.sync(() =>
         references.map((reference) => {
@@ -109,6 +110,7 @@ it.effect("reads a collected reference again once it is invalidated", () =>
     let current = "stale";
     const cache = new Map<string, string>();
     const resolver = SecretResolver.SecretResolver.of({
+      label: (provider) => Effect.succeed(provider),
       read: (references) =>
         Effect.sync(() =>
           references.map((reference) => {
@@ -162,6 +164,7 @@ it.effect("reads a collected reference again once it is invalidated", () =>
       },
     ];
     cache.set("cliproxy#key", "stale");
+    cache.set("voice#key", "stale");
     cache.set("expo#token", "stale");
     cache.set("simlock#token", "stale");
     assert.deepEqual((yield* read()).bitbucket, {
@@ -173,12 +176,14 @@ it.effect("reads a collected reference again once it is invalidated", () =>
       resolver,
       Effect.succeed({
         sourceControlHosts: hosts,
+        cloudSpeechCredentials: { openai: source("voice#key"), xai: "", openrouter: "" },
         usageLimitSources,
         easDeviceHosts,
         simlockDeviceHosts,
       }),
     );
     assert.isFalse(cache.has("cliproxy#key"));
+    assert.isFalse(cache.has("voice#key"));
     assert.isFalse(cache.has("expo#token"));
     assert.isFalse(cache.has("simlock#token"));
     assert.deepEqual((yield* read()).bitbucket, {
