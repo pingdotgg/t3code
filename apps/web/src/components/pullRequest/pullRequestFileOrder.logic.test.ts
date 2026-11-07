@@ -55,6 +55,19 @@ describe("orderDiffFiles", () => {
     ]);
   });
 
+  it("falls back to the whole dotted module name, not its first segment", () => {
+    expect(
+      order([file("src/a.ts", ['import { b } from "~/z/b.logic";']), file("z/b.logic.ts")]),
+    ).toEqual(["z/b.logic.ts", "src/a.ts"]);
+    expect(
+      order([
+        file("src/a.ts", ['import { b } from "~/z/b.logic";']),
+        file("z/b.logic.ts"),
+        file("other/b.ts"),
+      ]),
+    ).toEqual(["other/b.ts", "z/b.logic.ts", "src/a.ts"]);
+  });
+
   it("ignores an ambiguous last segment rather than guessing", () => {
     expect(
       order([
