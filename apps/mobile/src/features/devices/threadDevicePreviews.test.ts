@@ -151,6 +151,29 @@ describe("thread device previews", () => {
     ).toEqual([false, false, false, false]);
   });
 
+  it("holds an Android session whose device the host stopped listing until it is identified", () => {
+    const thisPhone = { name: "Google Pixel 7", version: "Android 17.0" };
+    const unlisted: DeviceServiceState = {
+      ...state,
+      sessions: [
+        ...state.sessions,
+        {
+          threadId,
+          hostId: "local",
+          deviceId: "192.168.1.20:5555",
+          platform: "android",
+          openedAt: "2026-09-18T00:03:00Z",
+        },
+      ],
+    };
+    expect(
+      threadDevicePreviews(unlisted, threadId, thisPhone).map((preview) => preview.identityPending),
+    ).toEqual([false, false, true]);
+    expect(
+      threadDevicePreviews(unlisted, threadId, null).map((preview) => preview.identityPending),
+    ).toEqual([false, false, false]);
+  });
+
   it("derives the name and version the device hub reports for this Android phone", () => {
     const pixel = {
       platform: "android",

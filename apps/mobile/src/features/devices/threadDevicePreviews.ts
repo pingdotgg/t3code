@@ -41,6 +41,12 @@ export function threadDevicePreviews(
           device?.physical === true &&
           device.name === thisPhone.name &&
           device.version === thisPhone.version,
+        // Local and SSH hosts keep sessions across a listing that misses their device.
+        identityPending:
+          thisPhone !== null &&
+          session.platform === "android" &&
+          device === undefined &&
+          (host?.kind === "local" || host?.kind === "ssh"),
       };
     });
 }
