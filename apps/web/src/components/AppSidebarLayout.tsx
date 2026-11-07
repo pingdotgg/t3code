@@ -31,7 +31,7 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode } from "../hooks/useSettings";
+import { useClientSettings, useEnvironmentIdentificationMode } from "../hooks/useSettings";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -49,6 +49,7 @@ import {
   resolveInitialThreadSidebarWidth,
   resolveThreadSidebarMaximumWidth,
   resolveThreadSidebarMinimumWidth,
+  TITLE_BAR_SEARCH_SIDEBAR_MIN_WIDTH,
   THREAD_MAIN_CONTENT_MIN_WIDTH,
   THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
 } from "./threadSidebarWidth";
@@ -319,6 +320,7 @@ function SidebarControl() {
   const { toggleSidebar, isMobile, mobileSheetMounted } = useSidebar();
   const isSidebarVisible = useSidebarVisibility();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
+  const searchInTitleBar = useClientSettings((settings) => settings.sidebarSearchInTitleBar);
   const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle", {
     context: { usagePageOpen },
@@ -375,8 +377,12 @@ function SidebarControl() {
     <div
       ref={appShellCommandsRef}
       className={cn(
-        "pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center",
+        "pointer-events-none fixed top-[var(--workspace-controls-top)] z-50 flex h-[var(--workspace-topbar-height)] items-center",
+        searchInTitleBar && isSidebarVisible && !isMobile
+          ? "left-[calc(var(--sidebar-width)-var(--workspace-titlebar-control-size)-0.5rem)]"
+          : "left-[var(--workspace-controls-left)] ml-px",
         isMobile && mobileSheetMounted && "hidden",
+        "[[data-slot=sidebar-wrapper]:has([data-sidebar-search-expanded])_&]:hidden",
       )}
       data-sidebar-control=""
     >
@@ -417,7 +423,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   // A clamped drag may not change width, so viewport changes need a separate subscription.
   const viewportWidth = useSyncExternalStore(subscribeToViewportWidth, readViewportWidth);
   const [brandWidth, setBrandWidth] = useState(0);
-  const sidebarMinimumWidth = resolveThreadSidebarMinimumWidth(brandWidth);
+  const searchInTitleBar = useClientSettings((settings) => settings.sidebarSearchInTitleBar);
+  const sidebarMinimumWidth = resolveThreadSidebarMinimumWidth(
+    searchInTitleBar ? TITLE_BAR_SEARCH_SIDEBAR_MIN_WIDTH : brandWidth,
+  );
   const sidebarMaximumWidth = resolveThreadSidebarMaximumWidth(viewportWidth, sidebarMinimumWidth);
   const resetSidebarWidth = () => {
     try {

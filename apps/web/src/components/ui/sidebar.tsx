@@ -465,10 +465,13 @@ function SidebarRail({
       sidebarRoot.querySelector<HTMLElement>("[data-slot='sidebar-gap']"),
       sidebarContainer,
     ].filter((element): element is HTMLElement => element !== null);
+    // The sidebar toggle sits outside the sidebar, so it gets its own copy of the width.
+    const control = wrapper.querySelector<HTMLElement>("[data-sidebar-control]");
     const setTargetWidth = (value: number) => {
       widthTargets.forEach((element) => {
         element.style.setProperty("width", `${value}px`);
       });
+      control?.style.setProperty("--sidebar-width", `${value}px`);
     };
     widthTargets.forEach((element) => {
       element.style.setProperty("transition-duration", "0ms");
@@ -508,6 +511,7 @@ function SidebarRail({
         options.onResize?.(finalWidth);
       },
       cleanup() {
+        control?.style.removeProperty("--sidebar-width");
         widthTargets.forEach((element) => {
           element.style.removeProperty("width");
           element.style.removeProperty("transition-duration");

@@ -469,6 +469,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta boring sidebar folder rows multiline branch pull request details"],
   },
   {
+    id: "sidebar-search-in-title-bar",
+    title: "Search in title bar",
+    to: "/settings/labs",
+    searchTerms: ["beta sidebar header search title bar toolbar compact back forward arrows"],
+  },
+
+  {
     id: "tool-call-visibility",
     title: "Tool calls in chat",
     to: "/settings/labs",
