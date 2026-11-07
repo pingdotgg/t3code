@@ -31,6 +31,7 @@ const AuthFile = Schema.Struct({
   provider: Schema.String,
   email: Schema.optional(Schema.String),
   disabled: Schema.optional(Schema.Boolean),
+  recent_requests: Schema.optional(Schema.Array(Schema.Struct({ success: Schema.Number }))),
   id_token: Schema.optional(
     Schema.Struct({
       chatgpt_account_id: Schema.optional(Schema.String),
@@ -39,6 +40,18 @@ const AuthFile = Schema.Struct({
     }),
   ),
 });
+// CLIProxyAPI counts each account's requests in 10-minute buckets aligned to the epoch, newest last.
+const RECENT_BUCKET_MS = 10 * 60 * 1000;
+
+function lastServedAt(account: typeof AuthFile.Type, now: number): string | undefined {
+  const buckets = account.recent_requests ?? [];
+  const index = buckets.findLastIndex((bucket) => bucket.success > 0);
+  if (index === -1) return undefined;
+  const current = Math.floor(now / RECENT_BUCKET_MS) * RECENT_BUCKET_MS;
+  const start = current - (buckets.length - 1 - index) * RECENT_BUCKET_MS;
+  return DateTime.formatIso(DateTime.makeUnsafe(start));
+}
+
 const AuthFiles = Schema.Struct({ files: Schema.Array(AuthFile) });
 const AuthFileModels = Schema.Struct({
   models: Schema.Array(Schema.Struct({ id: Schema.String })),
@@ -291,8 +304,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
     hub: CliproxyHub,
     account: typeof AuthFile.Type,
+    listedAt: number,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    const served = lastServedAt(account, listedAt);
     const models = yield* routedModels(hub, account).pipe(Effect.option);
     const base = {
       id: account.id,
@@ -302,6 +317,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
         ? { workspaceId: account.id_token.chatgpt_account_id.trim() }
         : {}),
       ...(Option.isSome(models) && models.value.length > 0 ? { models: models.value } : {}),
+      ...(served ? { lastServedAt: served } : {}),
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
@@ -403,12 +419,14 @@ export const makeCliproxyApi = Effect.gen(function* () {
           : new UsageLimitSourceError({ detail: "The hub could not list accounts." }),
       ),
     );
+    // Buckets are relative to the listing, so every account shares its time.
+    const listedAt = DateTime.toEpochMillis(yield* DateTime.now);
     return yield* Effect.forEach(
       accounts.filter(
         (account) =>
           !account.disabled && (account.provider === "codex" || account.provider === "claude"),
       ),
-      (account) => readAccount(hub, account),
+      (account) => readAccount(hub, account, listedAt),
       { concurrency: 4 },
     );
   });

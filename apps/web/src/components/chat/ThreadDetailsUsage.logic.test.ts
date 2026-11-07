@@ -75,6 +75,7 @@ interface HubAccountInput {
   readonly driver?: ProviderDriverKind;
   readonly models?: readonly string[];
   readonly workspaceId?: string;
+  readonly lastServedAt?: string;
   readonly limits: ServerProviderUsageLimits;
 }
 
@@ -94,6 +95,7 @@ function hub(
       ...(account.email ? { email: account.email } : {}),
       ...(account.models ? { models: account.models } : {}),
       ...(account.workspaceId ? { workspaceId: account.workspaceId } : {}),
+      ...(account.lastServedAt ? { lastServedAt: account.lastServedAt } : {}),
       usageLimits: account.limits,
     })),
     ...(error ? { error } : {}),
@@ -221,6 +223,27 @@ describe("resolveThreadDetailsLimits", () => {
         { label: "Session", left: 90, accounts: 1, from: ["Hub"] },
         { label: "Session", left: 70, accounts: 1, from: ["Hub"] },
       ],
+    },
+    {
+      name: "only the account the hub served last",
+      sources: [
+        hub("Hub", [
+          { id: "a.json", lastServedAt: "2026-10-30T11:50:00.000Z", limits: limitsAt(20) },
+          { id: "b.json", lastServedAt: "2026-10-30T10:00:00.000Z", limits: limitsAt(60) },
+          { id: "c.json", limits: limitsAt(0) },
+        ]),
+      ],
+      rows: [{ label: "Session", left: 80, accounts: 1, from: ["Hub"] }],
+    },
+    {
+      name: "every account the hub served in the same latest window",
+      sources: [
+        hub("Hub", [
+          { id: "a.json", lastServedAt: "2026-10-30T11:50:00.000Z", limits: limitsAt(20) },
+          { id: "b.json", lastServedAt: "2026-10-30T11:50:00.000Z", limits: limitsAt(60) },
+        ]),
+      ],
+      rows: [{ label: "Session", left: 60, accounts: 2, from: ["Hub"] }],
     },
     {
       name: "a hub workspace without the same login's other workspace",
