@@ -359,11 +359,11 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
         forbidArg: "--config features.shell_tool=false",
         mcpServers: [
           { name: "augmenter", enabled: true },
-          { name: "my.server", enabled: true },
+          { name: 'server"with\\slash and space', enabled: true },
           { name: "already-off", enabled: false },
         ],
         requireArg:
-          '--config features.plugins=false --config features.apps=false --config mcp_servers={"augmenter"={enabled=false},"my.server"={enabled=false}}',
+          '--config features.plugins=false --config features.apps=false --config mcp_servers.augmenter.enabled=false --config mcp_servers.server"with\\slash and space.enabled=false',
       },
       (textGeneration) =>
         Effect.gen(function* () {
@@ -380,6 +380,32 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           expect(result.title).toBe("Remove default shapes");
         }),
     ),
+  );
+
+  it.effect.each(["dotted.server", "equals=server", "null\0server"])(
+    "refuses text generation when Codex cannot address the MCP server %s safely",
+    (name) =>
+      withFakeCodexEnv(
+        {
+          output: JSON.stringify({ title: "Should not generate" }),
+          mcpServers: [{ name, enabled: true }],
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const result = yield* textGeneration
+              .generateThreadTitle({
+                cwd: process.cwd(),
+                message: "Name this thread",
+                modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+              })
+              .pipe(Effect.result);
+            expect(result._tag).toBe("Failure");
+            if (result._tag === "Failure") {
+              expect(result.failure.detail).toContain("cannot safely disable MCP server");
+              expect(result.failure.detail).toContain(JSON.stringify(name));
+            }
+          }),
+      ),
   );
 
   it.effect("still generates when Codex cannot list its MCP servers", () =>
