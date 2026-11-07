@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const CloudSpeechApiKey = TrimmedNonEmptyString.check(
@@ -120,6 +121,9 @@ export type SpeechLanguage = typeof SpeechLanguage.Type;
 
 export const SpeechGpuDevice = Schema.Struct({ id: Schema.String, name: Schema.String });
 
+export const SpeechBenchmarkTier = Schema.Literals(["cpu", "accelerated"]);
+export type SpeechBenchmarkTier = typeof SpeechBenchmarkTier.Type;
+
 export const EnvironmentSpeechModelState = Schema.Literals([
   "downloadable",
   "downloading",
@@ -127,6 +131,13 @@ export const EnvironmentSpeechModelState = Schema.Literals([
   "installed",
 ]);
 export type EnvironmentSpeechModelState = typeof EnvironmentSpeechModelState.Type;
+
+// A missing CPU field identifies a legacy server; null means a current catalog has no measurement.
+const SpeechBenchmarkTimes = Schema.Struct({
+  cpu: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
+  accelerated: Schema.NullOr(Schema.Finite),
+});
+const SpeechBenchmarkTimesWire = Schema.Union([SpeechBenchmarkTimes, Schema.NullOr(Schema.Finite)]);
 
 export const EnvironmentSpeechModel = Schema.Struct({
   id: SpeechModelId,
@@ -142,7 +153,19 @@ export const EnvironmentSpeechModel = Schema.Struct({
         Schema.String,
         Schema.Struct({ grade: Schema.String, errorPercent: Schema.Finite }),
       ),
-      secondsPer30s: Schema.NullOr(Schema.Finite),
+      secondsPer30s: SpeechBenchmarkTimesWire.pipe(
+        Schema.decodeTo(
+          SpeechBenchmarkTimes,
+          SchemaTransformation.transform<
+            typeof SpeechBenchmarkTimes.Type,
+            typeof SpeechBenchmarkTimesWire.Type
+          >({
+            decode: (value) =>
+              typeof value === "number" || value === null ? { accelerated: value } : value,
+            encode: (value) => value,
+          }),
+        ),
+      ),
     }),
   ),
   recommended: Schema.Boolean,
@@ -165,26 +188,52 @@ export const EnvironmentSpeechModelRequest = Schema.Struct({ modelId: SpeechMode
 export const EnvironmentSpeechState = Schema.Literals(["missing-model", "ready", "transcribing"]);
 export type EnvironmentSpeechState = typeof EnvironmentSpeechState.Type;
 
+const SupportedSpeechStatus = Schema.Struct({
+  supported: Schema.Literal(true),
+  state: EnvironmentSpeechState,
+  modelId: SpeechModelId,
+  model: Schema.String,
+  size: Schema.Finite,
+  supportsStreaming: Schema.Boolean,
+  supportsBufferedStreaming: Schema.optionalKey(Schema.Boolean),
+  supportsTranslation: Schema.Boolean,
+  languages: Schema.optionalKey(Schema.Array(Schema.String)),
+  supportsLanguageDetection: Schema.optionalKey(Schema.Boolean),
+  acceleration: SpeechAcceleration,
+  benchmarkTier: SpeechBenchmarkTier,
+  modelUnloadTimeout: SpeechModelUnloadTimeout,
+  gpuDevices: Schema.Array(SpeechGpuDevice),
+});
+const SupportedSpeechStatusWire = SupportedSpeechStatus.mapFields((fields) => ({
+  ...fields,
+  benchmarkTier: Schema.optionalKey(SpeechBenchmarkTier),
+}));
+
 export const EnvironmentSpeechStatus = Schema.Union([
   Schema.Struct({
     supported: Schema.Literal(false),
     reason: Schema.String,
   }),
-  Schema.Struct({
-    supported: Schema.Literal(true),
-    state: EnvironmentSpeechState,
-    modelId: SpeechModelId,
-    model: Schema.String,
-    size: Schema.Finite,
-    supportsStreaming: Schema.Boolean,
-    supportsBufferedStreaming: Schema.optionalKey(Schema.Boolean),
-    supportsTranslation: Schema.Boolean,
-    languages: Schema.optionalKey(Schema.Array(Schema.String)),
-    supportsLanguageDetection: Schema.optionalKey(Schema.Boolean),
-    acceleration: SpeechAcceleration,
-    modelUnloadTimeout: SpeechModelUnloadTimeout,
-    gpuDevices: Schema.Array(SpeechGpuDevice),
-  }),
+  SupportedSpeechStatusWire.pipe(
+    Schema.decodeTo(
+      Schema.toType(SupportedSpeechStatus),
+      SchemaTransformation.transform<
+        typeof SupportedSpeechStatus.Type,
+        typeof SupportedSpeechStatusWire.Type
+      >({
+        decode: (status) => ({
+          ...status,
+          benchmarkTier:
+            status.benchmarkTier ??
+            (status.acceleration === "cpu" ||
+            (status.acceleration === "auto" && status.gpuDevices.length === 0)
+              ? "cpu"
+              : "accelerated"),
+        }),
+        encode: (status) => status,
+      }),
+    ),
+  ),
 ]);
 export type EnvironmentSpeechStatus = typeof EnvironmentSpeechStatus.Type;
 
