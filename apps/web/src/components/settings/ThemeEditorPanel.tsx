@@ -155,6 +155,12 @@ const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
         role: "codeBackground",
         roles: ["codeBackground", "codeForeground"],
       },
+      {
+        id: "inline-code",
+        label: "Inline code",
+        role: "inlineCodeForeground",
+        roles: ["inlineCodeForeground"],
+      },
     ],
   },
   {

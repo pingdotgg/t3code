@@ -144,6 +144,38 @@ describe("theme files", () => {
     },
   );
 
+  it("keeps inline code on an older theme file's own text and round-trips a custom colour", () => {
+    const legacy = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Legacy",
+      appearance: "dark",
+      colors: { text: "#dddddd" },
+      variants: { light: { text: "#222222" } },
+    });
+    expect(legacy.colors.inlineCodeForeground).toBe(legacy.colors.text);
+    expect(legacy.variants?.light?.inlineCodeForeground).toBe(legacy.variants?.light?.text);
+
+    const theme = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Inline code",
+      appearance: "dark",
+      colors: { text: "#dddddd", inlineCodeForeground: "#66aaff" },
+    });
+    expect(theme.colors.inlineCodeForeground).not.toBe(theme.colors.text);
+    expect(parseThemeFile(JSON.parse(serializeThemeFile(theme))).colors).toEqual(theme.colors);
+  });
+
+  it("moves inline code with the text colour until it has its own", () => {
+    const original = getDefaultThemeColors("dark");
+    const retexted = updateThemeColorFamily("dark", original, "text", "#eeeeee");
+    expect(retexted.inlineCodeForeground).toBe(retexted.text);
+
+    const custom = updateThemeColorFamily("dark", original, "inlineCodeForeground", "#66aaff");
+    expect(updateThemeColorFamily("dark", custom, "text", "#eeeeee").inlineCodeForeground).toBe(
+      custom.inlineCodeForeground,
+    );
+  });
+
   it("derives readable, distinctive vivid palettes from exact seeds", () => {
     const seeds: ReadonlyArray<["light" | "dark", string, string]> = [
       ["light", "#f4f9f2", "#1d8a4e"],
