@@ -1,7 +1,9 @@
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
-import { RotatingFileSink } from "@t3tools/shared/logging";
+import { RotatingFileSink, RotatingFileSinkError } from "@t3tools/shared/logging";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import * as Clock from "effect/Clock";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -98,6 +100,8 @@ interface ActiveConnector {
 }
 
 // An instantly failing relay client otherwise respawns ~100 times/sec and exhausts V8 via tracing.
+const isRotatingFileSinkError = Schema.is(RotatingFileSinkError);
+
 const RELAY_RESTART_STABLE_UPTIME_MS = 30_000;
 const RELAY_RESTART_BACKOFF_BASE_MS = 1_000;
 const RELAY_RESTART_BACKOFF_MAX_MS = 60_000;
@@ -225,7 +229,10 @@ export const make = Effect.gen(function* () {
   const retryLoopRunningRef = yield* Ref.make(false);
   const notReadyChecksBeforeRestartRef = yield* Ref.make(CONNECTOR_NOT_READY_CHECKS_BEFORE_RESTART);
   // An explicit cloudflared transport in the environment is the user's choice.
-  const transportChosenByUser = process.env.TUNNEL_TRANSPORT_PROTOCOL !== undefined;
+  const env = yield* HostProcess.Environment;
+  const transportChosenByUser = Option.isSome(
+    yield* Config.String("TUNNEL_TRANSPORT_PROTOCOL").pipe(Config.option),
+  );
   const previousFallback = transportChosenByUser
     ? Option.none()
     : yield* secrets.get(HTTP2_FALLBACK_STATE).pipe(
@@ -247,15 +254,23 @@ export const make = Effect.gen(function* () {
   // Synchronous appends avoid a flush timer for this low-volume log.
   const fallbackLoggers = yield* Effect.service(Logger.CurrentLoggers);
   let writeFailureReported = false;
-  const relayClientLog = yield* Effect.try(
-    () =>
+  const relayClientLog = yield* Effect.try({
+    try: () =>
       new RotatingFileSink({
         filePath: relayClientLogPath,
         maxBytes: 1024 * 1024,
         maxFiles: 2,
         throwOnError: true,
       }),
-  ).pipe(
+    catch: (cause) =>
+      isRotatingFileSinkError(cause)
+        ? cause
+        : new RotatingFileSinkError({
+            operation: "initialize",
+            filePath: relayClientLogPath,
+            cause,
+          }),
+  }).pipe(
     Effect.map((sink) =>
       Logger.make((options) => {
         try {
@@ -730,7 +745,7 @@ export const make = Effect.gen(function* () {
           {
             detached: false,
             env: {
-              ...process.env,
+              ...env,
               TUNNEL_TOKEN: config.connectorToken,
             },
             shell: false,

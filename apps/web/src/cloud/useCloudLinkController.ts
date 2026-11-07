@@ -22,7 +22,7 @@ import { stackedThreadToast } from "../components/ui/toastHelpers";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { readEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
-import { CloudEnvironmentLinkError } from "./linkEnvironment";
+import { isCloudEnvironmentLinkError } from "./linkEnvironment";
 import { refreshManagedTunnelUsage } from "./managedRelayState";
 import {
   linkEnvironment as linkEnvironmentAtom,
@@ -55,7 +55,7 @@ const isManagedRelayRequestFailedError = Schema.is(ManagedRelay.ManagedRelayRequ
 
 /** The account's tunnel cap when the relay refused a new tunnel for being at it. */
 function tunnelLimitFromLinkFailure(cause: unknown): number | null {
-  if (!(cause instanceof CloudEnvironmentLinkError)) return null;
+  if (!isCloudEnvironmentLinkError(cause)) return null;
   const relayCause = cause.cause;
   if (!isManagedRelayRequestFailedError(relayCause)) return null;
   return relayCause.relayError?._tag === "RelayEnvironmentLinkLimitExceededError"

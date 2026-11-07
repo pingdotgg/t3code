@@ -283,7 +283,7 @@ const make = Effect.gen(function* () {
     if (!body || !signature || extra !== undefined) return undefined;
     const verified = yield* signer.verify(`mcp-client-id.${body}`, signature);
     if (!verified) return undefined;
-    const json = yield* Effect.try(() => base64UrlDecodeUtf8(body)).pipe(Effect.option);
+    const json = Option.liftThrowable(base64UrlDecodeUtf8)(body);
     if (Option.isNone(json)) return undefined;
     return Option.getOrUndefined(
       decodeClientIdPayload(json.value).pipe(
