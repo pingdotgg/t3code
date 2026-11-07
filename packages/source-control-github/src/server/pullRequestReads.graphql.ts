@@ -1631,6 +1631,8 @@ export const PullRequestActionStateRepositoryPullRequestPullRequest = Schema.Str
   headRefOid: Shared.GitObjectID,
   /** Indicates whether the pull request's base ref has a merge queue enabled. */
   isMergeQueueEnabled: Schema.Boolean,
+  /** Indicates whether the pull request is in a merge queue */
+  isInMergeQueue: Schema.Boolean,
   /** Detailed information about the current pull request merge state status. */
   mergeStateStatus: GraphQL.enumLiterals(Shared.MergeStateStatus.literals),
   /** Identifies the base Ref associated with the pull request. */
@@ -1655,7 +1657,7 @@ export const PullRequestActionState = GraphQL.query("PullRequestActionState", {
       { name: "headRef", body: "String!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){id headRefOid isMergeQueueEnabled mergeStateStatus baseRef{compare(headRef:$", "headRef", "){behindBy}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){id headRefOid isMergeQueueEnabled isInMergeQueue mergeStateStatus baseRef{compare(headRef:$", "headRef", "){behindBy}}}}"] }
     ],
     fragments: []
   },

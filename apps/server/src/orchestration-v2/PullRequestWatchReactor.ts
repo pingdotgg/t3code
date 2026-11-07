@@ -769,7 +769,15 @@ export const make = Effect.gen(function* () {
           }),
         );
         lastReads.delete(group.key);
-        if (Exit.isSuccess(merged)) return;
+        if (Exit.isSuccess(merged)) {
+          // A withdrawal during the call looked before this landed, so it could not take it back.
+          const kept = yield* Effect.exit(record(target, { ...report.next, mergeHead: head }));
+          if (Exit.isFailure(kept)) {
+            if (Cause.hasInterruptsOnly(kept.cause)) return yield* Effect.failCause(kept.cause);
+            yield* pullRequests.withdrawMerge({ ...reference, stacked: stack !== null });
+          }
+          return;
+        }
         if (Cause.hasInterruptsOnly(merged.cause)) return yield* Effect.failCause(merged.cause);
         // Dropping mergeHead lets a later sweep try again, once the rate limit lifts.
         if (providerFailureReason(merged.cause) === "rate-limited") {

@@ -1684,6 +1684,73 @@ it.effect("keeps two hosts of one provider kind as two accounts", () =>
   }),
 );
 
+it.effect("withdrawing a merge clears the queued layers of a stack from the top down", () =>
+  Effect.gen(function* () {
+    const queued = new Set([2, 3]);
+    const removed: Array<number> = [];
+    const base = fakePullRequestProvider(SourceControlProviderKind.make("github"));
+    const layer = (number: number, state: "open" | "merged") => ({
+      number,
+      title: `Layer ${number}`,
+      url: `https://github.com/acme/web/pull/${number}`,
+      headBranch: `layer-${number}`,
+      state,
+    });
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        {
+          ...base,
+          capabilities: { ...base.capabilities, actions: ["disable-auto-merge"] },
+          getViewerPermissions: () =>
+            Effect.succeed({
+              actions: ["disable-auto-merge"],
+              comment: true,
+              resolve: true,
+              verdicts: [],
+              requestReviewers: false,
+            }),
+          getChangeRequestStack: () =>
+            Effect.succeed({
+              id: "stack",
+              number: 9,
+              url: "https://github.com/acme/web/stacks/9",
+              base: "main",
+              layers: [
+                layer(1, "merged"),
+                layer(2, "open"),
+                layer(3, "open"),
+                layer(4, "open"),
+                layer(5, "open"),
+              ],
+            }),
+          getChangeRequest: (input) =>
+            Effect.succeed({
+              ...hostedChangeRequest("Body"),
+              number: input.number,
+              isInMergeQueue: queued.has(input.number),
+            }),
+          runAction: (input) =>
+            Effect.sync(() => {
+              assert.strictEqual(input.action, "disable-auto-merge");
+              removed.push(input.number);
+              queued.delete(input.number);
+            }),
+        },
+      ],
+    });
+
+    yield* service.withdrawMerge({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 4,
+      stacked: true,
+    });
+
+    assert.deepEqual(removed, [3, 2]);
+  }),
+);
+
 it.effect("stops new reads after a rate limit while leaving manual actions available", () =>
   Effect.gen(function* () {
     let listCalls = 0;

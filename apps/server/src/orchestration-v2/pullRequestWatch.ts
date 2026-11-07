@@ -372,6 +372,20 @@ export function pullRequestAgentMergeMessage(input: {
   };
 }
 
+export function agentMergeWithdrawFailedMessage(input: { readonly number: number }): {
+  readonly text: string;
+  readonly notification: OrchestrationV2Notification;
+} {
+  return {
+    text: `Agent merge was turned off for pull request #${input.number}, but T3 Code could not take it out of the host's merge queue, so it may still merge. Tell the user, who can remove it on the host. Do not change the pull request yourself.`,
+    notification: {
+      source: { kind: "monitor" },
+      outcome: "failed",
+      summary: `#${input.number}: may still merge`,
+    },
+  };
+}
+
 export function pullRequestWatchMessage(input: {
   readonly number: number;
   readonly url: string;

@@ -3,6 +3,7 @@ import type { PullRequestComment, ThreadPullRequestAgentMerge } from "@t3tools/c
 
 import {
   agentMergeLeftQueueMessage,
+  agentMergeWithdrawFailedMessage,
   pullRequestAgentMergeMessage,
   pullRequestWatchMessage,
   type PullRequestWatchChange,
@@ -48,6 +49,10 @@ const WAKES: Record<
   "agent-merge-left-queue-does-not-merge": {
     mode: "merge",
     text: agentMergeLeftQueueMessage(PULL_REQUEST).text,
+  },
+  "agent-merge-withdraw-failed-does-not-touch-the-pr": {
+    mode: "merge",
+    text: agentMergeWithdrawFailedMessage(PULL_REQUEST).text,
   },
   "agent-merge-checks-mode-does-not-merge": { mode: "checks", change: CHECKS_PASSED },
   "agent-merge-feedback-mode-does-not-merge": { mode: "feedback", change: CHECKS_PASSED },

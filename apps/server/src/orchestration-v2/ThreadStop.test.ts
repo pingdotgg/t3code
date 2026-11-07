@@ -1035,6 +1035,69 @@ it.effect.each(Object.keys(withdrawals) as ReadonlyArray<keyof typeof withdrawal
     }).pipe(Effect.provide(layerTest)),
 );
 
+const withdrawalCommands = {
+  "stopping the watch": (threadId: ThreadId) => `stop-watch:${threadId}:4`,
+  "downgrading the mode": (threadId: ThreadId) => `downgrade:${threadId}`,
+  "unlinking the pull request": (threadId: ThreadId) => `unlink:${threadId}`,
+  "stopping the thread": (threadId: ThreadId) => `stop:${threadId}`,
+};
+
+const withdrawEffects = (commandId: string) =>
+  Effect.flatMap(EffectOutbox.EffectOutboxV2, (outbox) =>
+    outbox.listByCommandId(CommandId.make(commandId)),
+  ).pipe(
+    Effect.map((effects) =>
+      effects.flatMap(({ request }) =>
+        request.type === "pull-request-merge.withdraw" ? [request] : [],
+      ),
+    ),
+  );
+
+it.effect.each(Object.keys(withdrawals) as ReadonlyArray<keyof typeof withdrawals>)(
+  "%s takes back a merge the host already holds",
+  (withdrawal) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make(`thread:withdraw-queued:${withdrawal}`);
+      yield* createWatchingThread(threadId, 4);
+      yield* agentMerge(threadId, 4, "merge", `merge:${threadId}`);
+      const { thread } = yield* orchestrator.getThreadProjection(threadId);
+      const watch = thread.pullRequests?.find((link) => link.number === 4)?.watch;
+      assert.isDefined(watch);
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-watch.sync",
+        commandId: CommandId.make(`sync:${threadId}`),
+        threadId,
+        ...pullRequest(4),
+        startedAt: watch.startedAt,
+        watch: { ...watch, mergeHead: "aaaaaaa" },
+      });
+
+      yield* withdrawals[withdrawal](threadId);
+
+      assert.deepEqual(yield* withdrawEffects(withdrawalCommands[withdrawal](threadId)), [
+        {
+          type: "pull-request-merge.withdraw",
+          projectId: thread.projectId,
+          ...pullRequest(4),
+          stacked: false,
+        },
+      ]);
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("withdrawing agent merge asks the host for nothing when nothing was queued", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:withdraw-unqueued");
+    yield* createWatchingThread(threadId, 4);
+    yield* agentMerge(threadId, 4, "merge", `merge:${threadId}`);
+
+    yield* stopWatching(threadId, 4);
+
+    assert.deepEqual(yield* withdrawEffects(`stop-watch:${threadId}:4`), []);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("withdrawing agent merge leaves another pull request's brief queued", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

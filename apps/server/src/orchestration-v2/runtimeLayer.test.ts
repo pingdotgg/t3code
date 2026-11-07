@@ -3298,6 +3298,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         >,
         reviewDecision: null as PullRequestSummary["reviewDecision"],
         beforeRead: Effect.void as Effect.Effect<void>,
+        duringMerge: Effect.void as Effect.Effect<void>,
+        withdrawals: [] as Array<number>,
         merges: [] as Array<{
           readonly headSha: string;
           readonly stack?: {
@@ -3363,32 +3365,37 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               summary: () =>
                 Effect.sync(() => ({ reviewDecision: host.reviewDecision }) as PullRequestSummary),
               invalidate: () => Effect.void,
+              withdrawMerge: (input) => Effect.sync(() => void host.withdrawals.push(input.number)),
               mergeHead: (input) =>
-                Effect.suspend(() => {
-                  host.merges.push(input);
-                  if (host.rateLimited) {
-                    return Effect.fail(
-                      new PullRequestOperationError({
-                        operation: "runAction",
-                        detail: "Rate limited.",
-                        cause: new PullRequestProviderError({
-                          provider: SourceControlProviderKind.make("github"),
-                          operation: "runAction",
-                          reason: "rate-limited",
-                          detail: "Rate limited.",
-                        }),
-                      }),
-                    );
-                  }
-                  return host.refuse
-                    ? Effect.fail(
-                        new PullRequestOperationError({
-                          operation: "runAction",
-                          detail: "Required review is missing.",
-                        }),
-                      )
-                    : Effect.void;
-                }),
+                Effect.suspend(() => host.duringMerge).pipe(
+                  Effect.andThen(
+                    Effect.suspend(() => {
+                      host.merges.push(input);
+                      if (host.rateLimited) {
+                        return Effect.fail(
+                          new PullRequestOperationError({
+                            operation: "runAction",
+                            detail: "Rate limited.",
+                            cause: new PullRequestProviderError({
+                              provider: SourceControlProviderKind.make("github"),
+                              operation: "runAction",
+                              reason: "rate-limited",
+                              detail: "Rate limited.",
+                            }),
+                          }),
+                        );
+                      }
+                      return host.refuse
+                        ? Effect.fail(
+                            new PullRequestOperationError({
+                              operation: "runAction",
+                              detail: "Required review is missing.",
+                            }),
+                          )
+                        : Effect.void;
+                    }),
+                  ),
+                ),
             }),
           ),
         ),
@@ -3675,6 +3682,31 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       assert.deepEqual(host.merges, []);
       assert.isUndefined(yield* watched);
+    }),
+  );
+
+  it.effect("a stop landing during the merge call takes the merge back", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { host, reactor, settle, threadId, key } = yield* agentMergeFixture(
+        "withdrawn-mid-merge",
+        "merge",
+      );
+      yield* settle;
+      host.duringMerge = orchestrator
+        .dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make("agent-merge-gate-withdrawn-mid-merge-stop"),
+          threadId,
+          ...key,
+          watching: false,
+        })
+        .pipe(Effect.orDie, Effect.asVoid);
+
+      yield* reactor.sweep;
+
+      assert.lengthOf(host.merges, 1);
+      assert.deepEqual(host.withdrawals, [7]);
     }),
   );
 

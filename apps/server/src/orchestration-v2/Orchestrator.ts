@@ -63,6 +63,7 @@ import {
   parseGoalCommand,
   orchestrationV2RunWorkStartedAt,
   orchestrationV2WorktreePending,
+  type ProjectId,
   ProviderInstanceId,
   ProviderInteractionMode,
   isRuntimeModeAbove,
@@ -738,6 +739,36 @@ function withPullRequestWatch(
   if (watch !== undefined) return { ...rest, watch };
   const ended = previous ?? endedWatch;
   return ended === undefined ? rest : { ...rest, endedWatch: ended };
+}
+
+/** The host keeps what T3 Code queued after the watch ends, so withdrawing has to take it back. */
+function agentMergeWithdrawEffects(
+  command: { readonly commandId: CommandId; readonly threadId: ThreadId },
+  projectId: ProjectId,
+  links: ReadonlyArray<ThreadPullRequestLink>,
+): ReadonlyArray<PendingOrchestrationEffectV2> {
+  return links.flatMap((link) => {
+    const watch = link.watch;
+    if (
+      watch?.agentMerge !== "merge" ||
+      (watch.mergeHead === undefined && watch.queuedHead === undefined)
+    ) {
+      return [];
+    }
+    return [
+      {
+        id: `effect:${command.commandId}:pull-request-merge.withdraw:${threadPullRequestKeyOf(link)}`,
+        commandId: command.commandId,
+        threadId: command.threadId,
+        request: {
+          type: "pull-request-merge.withdraw",
+          projectId,
+          ...normalizeThreadPullRequestKey(link),
+          stacked: link.stack !== null,
+        },
+      },
+    ];
+  });
 }
 
 function legacyPullRequestLink(
@@ -3199,6 +3230,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* dispatchThreadMutation(command, events, effects);
       if (link !== undefined && current !== undefined && current !== next) {
         yield* withdrawAgentMerge(command, threadPullRequestKeyOf(link), events);
+      }
+      if (link !== undefined && next !== "merge") {
+        const withdrawn = agentMergeWithdrawEffects(command, thread.projectId, [link]);
+        yield* Ref.update(effects, (existing) => [...existing, ...withdrawn]);
       }
       if (link !== undefined && next !== undefined && next !== current) {
         yield* dispatchMessage(
@@ -11193,6 +11228,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       { readonly type: "run.interrupt" | "thread.stop" }
     >;
     readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+    readonly effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>;
     readonly projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "subagents">;
     readonly cohortRunIds: ReadonlyArray<RunId>;
     readonly now: DateTime.Utc;
@@ -11307,6 +11343,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
         },
       });
+      const withdrawn = agentMergeWithdrawEffects(input.command, thread.projectId, pullRequests);
+      yield* Ref.update(input.effects, (existing) => [...existing, ...withdrawn]);
     }
     const cohortRunIds = new Set(input.cohortRunIds);
     for (const run of runs) {
@@ -11728,6 +11766,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? holdStoppedThread({
             command,
             events,
+            effects,
             projection,
             cohortRunIds: [completionCohortRunId],
             now,
@@ -12352,7 +12391,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     for (const run of reached.values()) {
       yield* markStoppedRun({ command, events, thread: projection.thread, run, now });
     }
-    yield* holdStoppedThread({ command, events, projection, cohortRunIds: [], now });
+    yield* holdStoppedThread({ command, events, effects, projection, cohortRunIds: [], now });
     yield* cancelIdleOrphans({ command, events, projection });
     yield* stopDelegatedTasks;
     return undefined;

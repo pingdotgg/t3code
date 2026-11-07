@@ -1635,10 +1635,6 @@ export const make = Effect.gen(function* () {
       ).pipe(Effect.map(([, runs]) => runs));
 
   const simpleActionMutations = {
-    "disable-auto-merge": (pullRequestId: string) =>
-      client
-        .DisablePullRequestAutoMerge({ pullRequestId })
-        .pipe(Effect.map((result) => result.disablePullRequestAutoMerge?.pullRequest)),
     ready: (pullRequestId: string) =>
       client
         .MarkPullRequestReadyForReview({ pullRequestId })
@@ -2652,6 +2648,20 @@ export const make = Effect.gen(function* () {
               actionSummary,
               graphql(target),
             );
+        }
+        // A pull request the queue already holds has no auto-merge left to turn off.
+        if (action === "disable-auto-merge") {
+          return yield* actionSummary(
+            state.isInMergeQueue
+              ? client
+                  .DequeuePullRequest({ id: state.id })
+                  .pipe(
+                    Effect.map((result) => result.dequeuePullRequest?.mergeQueueEntry?.pullRequest),
+                  )
+              : client
+                  .DisablePullRequestAutoMerge({ pullRequestId: state.id })
+                  .pipe(Effect.map((result) => result.disablePullRequestAutoMerge?.pullRequest)),
+          ).pipe(graphql(target));
         }
         let body: string | undefined;
         let expectedHead = input.expectedHeadSha;

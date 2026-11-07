@@ -4,6 +4,8 @@ import {
   CommandId,
   MessageId,
   NodeId,
+  PositiveInt,
+  ProjectId,
   ProviderSessionId,
   RunAttemptId,
   ProviderApprovalDecision,
@@ -13,6 +15,7 @@ import {
   RunId,
   RuntimeRequestId,
   ThreadId,
+  TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -119,6 +122,14 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("delegated-tasks.stop"),
     reason: Schema.optional(Schema.String),
   }),
+  Schema.Struct({
+    type: Schema.Literal("pull-request-merge.withdraw"),
+    projectId: ProjectId,
+    host: TrimmedNonEmptyString,
+    repository: TrimmedNonEmptyString,
+    number: PositiveInt,
+    stacked: Schema.Boolean,
+  }),
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
@@ -133,6 +144,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "attachment.cleanup",
   "thread-title.generate",
   "delegated-tasks.stop",
+  "pull-request-merge.withdraw",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [

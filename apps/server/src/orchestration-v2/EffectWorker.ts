@@ -1,4 +1,4 @@
-import { CommandId } from "@t3tools/contracts";
+import { CommandId, MessageId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -26,7 +26,9 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { agentMergeWithdrawFailedMessage } from "./pullRequestWatch.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
@@ -68,6 +70,20 @@ export class OrchestrationEffectExecutorV2 extends Context.Service<
   OrchestrationEffectExecutorV2Shape
 >()("t3/orchestration-v2/EffectWorker/OrchestrationEffectExecutorV2") {}
 
+/** Runtimes without a pull request service have nothing queued to take back. */
+export class MergeWithdrawal extends Context.Reference<{
+  readonly withdraw: PullRequestService.PullRequestService["Service"]["withdrawMerge"];
+}>("t3/orchestration-v2/EffectWorker/MergeWithdrawal", {
+  defaultValue: () => ({ withdraw: () => Effect.void }),
+}) {}
+
+export const layerMergeWithdrawal = Layer.effect(
+  MergeWithdrawal,
+  Effect.map(PullRequestService.PullRequestService, (pullRequests) => ({
+    withdraw: pullRequests.withdrawMerge,
+  })),
+);
+
 export const layerExecutor: Layer.Layer<
   OrchestrationEffectExecutorV2,
   never,
@@ -94,6 +110,7 @@ export const layerExecutor: Layer.Layer<
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
+    const mergeWithdrawal = yield* MergeWithdrawal;
     return OrchestrationEffectExecutorV2.of({
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
@@ -555,6 +572,36 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "pull-request-merge.withdraw": {
+            const { type, ...reference } = effect.request;
+            const failed = (cause: unknown) =>
+              new OrchestrationEffectExecutionError({
+                effectId: effect.id,
+                effectType: type,
+                cause,
+              });
+            const withdrawn = mergeWithdrawal
+              .withdraw(reference)
+              .pipe(Effect.timeout(MERGE_WITHDRAWAL_TIMEOUT));
+            if (willRetry) return withdrawn.pipe(Effect.mapError(failed));
+            return withdrawn.pipe(
+              Effect.catch(() =>
+                threads.dispatch({
+                  type: "message.dispatch",
+                  commandId: CommandId.make(`${effect.id}:failed`),
+                  threadId: effect.threadId,
+                  messageId: MessageId.make(`message:pr-withdraw:${effect.id}`),
+                  ...agentMergeWithdrawFailedMessage({ number: reference.number }),
+                  attachments: [],
+                  dispatchMode: { type: "queue_after_active" },
+                  createdBy: "agent",
+                  creationSource: "server",
+                }),
+              ),
+              Effect.asVoid,
+              Effect.mapError(failed),
+            );
+          }
           case "delegated-tasks.stop":
             return threads
               .stopDelegatedTasks({
@@ -577,6 +624,8 @@ export const layerExecutor: Layer.Layer<
     });
   }),
 );
+
+const MERGE_WITHDRAWAL_TIMEOUT = Duration.seconds(30);
 
 // A running effect blocks later work on its thread and its lease is never reclaimed in-process,
 // so a stop that hangs must give up and fall through to the normal retry/fail path.

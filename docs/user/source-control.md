@@ -337,6 +337,9 @@ GitHub merges this way: other hosts cannot refuse a commit that landed after the
 pull requests are reported ready instead. So are ones you lack write access to. With a merge queue,
 it adds the pull request to the queue, and the agent is told if it leaves without merging. On a
 stacked review, it lands that layer and every open one below it, once each of them is ready too.
+Turning **Fix and merge when ready** off, unlinking the pull request, or stopping the thread takes
+it back out of the queue, along with its auto-merge and any stack layers queued with it. Archiving
+or settling the thread does not. If it cannot be removed, the agent tells you it may still merge.
 If the host refuses, such as for a missing approval or an out-of-date branch, the agent is told why,
 and T3 Code tries again after a new push or review.
 
