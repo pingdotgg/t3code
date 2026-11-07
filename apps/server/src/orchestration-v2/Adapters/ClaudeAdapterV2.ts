@@ -1911,9 +1911,9 @@ export function makeClaudeQueryOptions(input: {
 
 /**
  * Checks the append launch arguments the way the Claude CLI would and reads
- * the file relative to the process cwd. makeClaudeQueryOptions folds these
- * flags out of extraArgs, so a value the CLI would have rejected has to be
- * rejected here or it silently disappears.
+ * the file relative to the process cwd, expanding a leading ~.
+ * makeClaudeQueryOptions folds these flags out of extraArgs, so a value the CLI
+ * would have rejected has to be rejected here or it silently disappears.
  */
 const readClaudeAppendSystemPromptFile = Effect.fnUntraced(function* (input: {
   readonly settings: ClaudeSettings | undefined;
@@ -1938,7 +1938,10 @@ const readClaudeAppendSystemPromptFile = Effect.fnUntraced(function* (input: {
       flag: "--append-system-prompt-file",
     });
   }
-  const filePath = input.path.resolve(input.cwd ?? ".", file);
+  const filePath = input.path.resolve(
+    input.cwd ?? ".",
+    expandHomePath(file, yield* HostProcess.HomeDirectory),
+  );
   return yield* input.fileSystem
     .readFileString(filePath)
     .pipe(
@@ -1952,8 +1955,8 @@ const decodeClaudeLaunchArgSettings = Schema.decodeUnknownEffect(
 
 /**
  * Reads the --settings launch argument: a value starting with a brace is inline
- * JSON, anything else is a file path relative to the cwd. makeClaudeQueryOptions
- * merges the result beneath T3's own settings.
+ * JSON, anything else is a file path relative to the cwd, expanding a leading ~.
+ * makeClaudeQueryOptions merges the result beneath T3's own settings.
  */
 const readClaudeLaunchArgSettings = Effect.fn("ClaudeAdapterV2.readLaunchArgSettings")(
   function* (input: {
@@ -1974,7 +1977,10 @@ const readClaudeLaunchArgSettings = Effect.fn("ClaudeAdapterV2.readLaunchArgSett
         Effect.mapError((cause) => new ClaudeSettingsLaunchArgError({ cause })),
       )) as ClaudeSdkSettings;
     }
-    const filePath = input.path.resolve(input.cwd ?? ".", trimmed);
+    const filePath = input.path.resolve(
+      input.cwd ?? ".",
+      expandHomePath(trimmed, yield* HostProcess.HomeDirectory),
+    );
     return (yield* input.fileSystem.readFileString(filePath).pipe(
       Effect.flatMap(decodeClaudeLaunchArgSettings),
       Effect.mapError((cause) => new ClaudeSettingsLaunchArgError({ path: filePath, cause })),
