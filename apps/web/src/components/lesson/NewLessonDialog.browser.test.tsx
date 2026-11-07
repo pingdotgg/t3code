@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   type ModelSelection,
+  type RuntimeMode,
   type ServerConfig,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -37,18 +38,25 @@ vi.mock(import("../../state/server"), async (importOriginal) => ({
 vi.mock(import("../../hooks/useSettings"), async (importOriginal) => ({
   ...(await importOriginal()),
   useEnvironmentSettings: ((_environmentId: unknown, select: (value: unknown) => unknown) =>
-    select(DEFAULT_UNIFIED_SETTINGS)) as never,
+    select({
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: { "claude-public-pool": { driver: "claudeAgent", enabled: true } },
+    })) as never,
 }));
 vi.mock(import("../../state/use-atom-command"), () => ({
   useAtomCommand: () => state.createLesson,
 }));
 
-import { lessonModelSelection, NewLessonDialogHost, openNewLesson } from "./NewLessonDialog";
+import { NewLessonDialogHost, openNewLesson } from "./NewLessonDialog";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const PROJECT_ID = ProjectId.make("project-local");
 const LESSON_MODEL = "claude-sonnet-5-5";
-const DEFAULT_MODEL = "claude-opus-5-5";
+const PROJECT_DEFAULT: ModelSelection = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-6.1-sol",
+  options: [{ id: "reasoningEffort", value: "ultra" }],
+};
 const LESSON_SELECTION: ModelSelection = {
   instanceId: ProviderInstanceId.make("claude-public-pool"),
   model: LESSON_MODEL,
@@ -80,28 +88,20 @@ function provider(
   };
 }
 
-function setup(remembered: ModelSelection | null = null) {
+function setup(
+  remembered: ModelSelection | null,
+  providers: ReadonlyArray<ServerProvider>,
+  defaultRuntimeMode: RuntimeMode,
+) {
   vi.clearAllMocks();
-  state.providers = new Map([
-    [
-      ENVIRONMENT_ID,
-      [
-        provider("claudeAgent", "claudeAgent", [LESSON_MODEL, DEFAULT_MODEL]),
-        provider("claude-public-pool", "claudeAgent", [LESSON_MODEL]),
-      ],
-    ],
-  ]);
+  state.providers = new Map([[ENVIRONMENT_ID, providers]]);
   state.projects = new Map([
     [
       PROJECT_ID,
       {
         id: PROJECT_ID,
         title: "Project",
-        defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("claudeAgent"),
-          model: DEFAULT_MODEL,
-          options: [{ id: "effort", value: "ultracode" }],
-        },
+        defaultModelSelection: PROJECT_DEFAULT,
       },
     ],
   ]);
@@ -109,7 +109,7 @@ function setup(remembered: ModelSelection | null = null) {
     [
       ENVIRONMENT_ID,
       {
-        settings: DEFAULT_SERVER_SETTINGS,
+        settings: { ...DEFAULT_SERVER_SETTINGS, defaultRuntimeMode },
         environment: {
           capabilities: { lessonProjects: false },
         },
@@ -143,28 +143,80 @@ async function startLesson() {
   return screen;
 }
 
+const codex = provider("codex", "codex", ["gpt-6.1-sol"]);
+const claude = provider("claudeAgent", "claudeAgent", [LESSON_MODEL, "claude-opus-5-5"]);
+const pool = provider("claude-public-pool", "claudeAgent", [LESSON_MODEL]);
+const ALL = [codex, claude, pool];
+const NO_RUNNABLE_CLAUDE = [
+  codex,
+  { ...claude, status: "error" as const },
+  { ...pool, status: "error" as const },
+];
+
 describe("NewLessonDialog", () => {
   it.each([
-    ["prefers the public Claude pool", null, LESSON_SELECTION],
-    ["uses a remembered lesson model", LESSON_SELECTION, LESSON_SELECTION],
+    ["prefers the public Claude pool", null, ALL, "full-access", LESSON_SELECTION, "auto"],
+    [
+      "uses a remembered lesson model",
+      LESSON_SELECTION,
+      ALL,
+      "full-access",
+      LESSON_SELECTION,
+      "auto",
+    ],
     [
       "ignores a remembered model whose provider disappeared",
       { ...LESSON_SELECTION, instanceId: ProviderInstanceId.make("missing") },
+      ALL,
+      "full-access",
       LESSON_SELECTION,
+      "auto",
     ],
-  ])("%s", async (_label, remembered, expectedModel) => {
-    using _setup = setup(remembered);
-    expect(
-      lessonModelSelection(state.providers.get(ENVIRONMENT_ID) ?? [], remembered, null),
-    ).toEqual(expectedModel);
-    await startLesson();
-    expect(state.createLesson).toHaveBeenCalledExactlyOnceWith({
-      environmentId: ENVIRONMENT_ID,
-      input: expect.objectContaining({
-        modelSelection: expectedModel,
-        runtimeMode: "auto",
-        interactionMode: "default",
-      }),
-    });
-  });
+    [
+      "ignores a remembered model the provider no longer lists",
+      { ...LESSON_SELECTION, model: "claude-retired-4" },
+      ALL,
+      "full-access",
+      LESSON_SELECTION,
+      "auto",
+    ],
+    [
+      "falls back to the project default when no Claude can run",
+      null,
+      NO_RUNNABLE_CLAUDE,
+      "full-access",
+      PROJECT_DEFAULT,
+      "auto",
+    ],
+    [
+      "ignores a remembered model on a provider that can't run",
+      { ...LESSON_SELECTION, instanceId: ProviderInstanceId.make("claudeAgent") },
+      NO_RUNNABLE_CLAUDE,
+      "full-access",
+      PROJECT_DEFAULT,
+      "auto",
+    ],
+    [
+      "keeps a stricter default access mode",
+      null,
+      ALL,
+      "approval-required",
+      LESSON_SELECTION,
+      "approval-required",
+    ],
+  ] as const)(
+    "%s",
+    async (_label, remembered, providers, defaultRuntimeMode, expectedModel, expectedRuntime) => {
+      using _setup = setup(remembered, providers, defaultRuntimeMode);
+      await startLesson();
+      expect(state.createLesson).toHaveBeenCalledExactlyOnceWith({
+        environmentId: ENVIRONMENT_ID,
+        input: expect.objectContaining({
+          modelSelection: expectedModel,
+          runtimeMode: expectedRuntime,
+          interactionMode: "default",
+        }),
+      });
+    },
+  );
 });

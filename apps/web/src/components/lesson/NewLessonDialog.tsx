@@ -37,7 +37,7 @@ import { useProject, useServerConfigs } from "../../state/entities";
 import { useEnvironmentProviders } from "../../state/environments";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
-  deriveProviderInstanceEntries,
+  type ProviderInstanceEntry,
   providerInstanceEntriesFor,
   resolveProjectDefaultProviderModelSelection,
 } from "../../providerInstances";
@@ -61,27 +61,28 @@ export function openNewLesson(request: Request) {
 const LESSON_MODEL = "claude-sonnet-5-5";
 const LESSON_MODEL_SCHEMA = Schema.NullOr(ModelSelection);
 
-/** @public */
-export function lessonModelSelection(
-  providers: Parameters<typeof deriveProviderInstanceEntries>[0],
+function lessonModelSelection(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
   remembered: ModelSelection | null,
   fallback: ModelSelection | null,
 ): ModelSelection | null {
-  const entries = deriveProviderInstanceEntries(providers);
-  if (remembered && entries.some((entry) => entry.instanceId === remembered.instanceId)) {
+  const offers = (entry: ProviderInstanceEntry, model: string) =>
+    entry.enabled &&
+    entry.isAvailable &&
+    entry.status !== "error" &&
+    entry.models.some((candidate) => candidate.slug === model);
+  if (
+    remembered &&
+    entries.some(
+      (entry) => entry.instanceId === remembered.instanceId && offers(entry, remembered.model),
+    )
+  ) {
     return remembered;
   }
   const preferred =
     entries.find(
-      (entry) =>
-        entry.instanceId === "claude-public-pool" &&
-        entry.models.some((model) => model.slug === LESSON_MODEL),
-    ) ??
-    entries.find(
-      (entry) =>
-        entry.driverKind === "claudeAgent" &&
-        entry.models.some((model) => model.slug === LESSON_MODEL),
-    );
+      (entry) => entry.instanceId === "claude-public-pool" && offers(entry, LESSON_MODEL),
+    ) ?? entries.find((entry) => entry.driverKind === "claudeAgent" && offers(entry, LESSON_MODEL));
   return preferred
     ? createModelSelection(preferred.instanceId, LESSON_MODEL, [{ id: "effort", value: "high" }])
     : fallback;
@@ -133,8 +134,14 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
     request.projectRef.projectId,
     project ?? undefined,
   ).settings;
-  const modelSelection = lessonModelSelection(
+  const pickerSettings = useEnvironmentSettings(request.projectRef.environmentId, (value) => value);
+  const pickerEntries = providerInstanceEntriesFor(
     providers,
+    pickerSettings,
+    request.projectRef.projectId,
+  );
+  const modelSelection = lessonModelSelection(
+    pickerEntries,
     rememberedModel,
     projectSettings.defaultModelSelection ??
       resolveProjectDefaultProviderModelSelection(
@@ -142,12 +149,6 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
         serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
         request.projectRef.projectId,
       ),
-  );
-  const pickerSettings = useEnvironmentSettings(request.projectRef.environmentId, (value) => value);
-  const pickerEntries = providerInstanceEntriesFor(
-    providers,
-    pickerSettings,
-    request.projectRef.projectId,
   );
   const active = modelSelection
     ? pickerEntries.find((entry) => entry.instanceId === modelSelection.instanceId)
@@ -180,7 +181,11 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
             : {}),
         },
         modelSelection,
-        runtimeMode: "auto",
+        // Lessons rarely need to write, so never above Auto, and never above the user's own default.
+        runtimeMode:
+          projectSettings.defaultRuntimeMode === "full-access"
+            ? "auto"
+            : projectSettings.defaultRuntimeMode,
         interactionMode: "default",
       },
     });
@@ -243,10 +248,10 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
                   rows={4}
                 />
               </div>
-              <div className="flex flex-col gap-2">
-                <Label>Model</Label>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {modelSelection && active ? (
+              {modelSelection && active ? (
+                <div className="flex flex-col gap-2">
+                  <span className="text-sm font-medium">Model</span>
+                  <div className="flex flex-wrap items-center gap-1.5">
                     <ProviderModelPicker
                       environmentId={request.projectRef.environmentId}
                       activeInstanceId={modelSelection.instanceId}
@@ -260,8 +265,6 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
                         setRememberedModel(createModelSelection(instanceId, model))
                       }
                     />
-                  ) : null}
-                  {modelSelection && active ? (
                     <TraitsPicker
                       provider={active.driverKind}
                       models={active.models}
@@ -280,9 +283,9 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
                         )
                       }
                     />
-                  ) : null}
+                  </div>
                 </div>
-              </div>
+              ) : null}
               <ChoiceGroup
                 label="How deep?"
                 value={depth}
