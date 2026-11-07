@@ -46,7 +46,9 @@ import {
   COMPUTER_USE_TOOL_SOURCE,
   dynamicToolSurface,
   dynamicToolTitle,
+  formatReadToolLabel,
 } from "@t3tools/shared/toolActivity";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { appendGeneratedImageEmbeds } from "@t3tools/shared/generatedImageMarkdown";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -1334,6 +1336,8 @@ type PendingCodexRuntimeRequest =
       readonly type: "user_input";
       readonly answers: Deferred.Deferred<ProviderUserInputAnswers, never>;
     };
+
+type CodexImageViewItem = { readonly id: string; readonly path: string };
 
 type CodexWebSearchItem = {
   readonly id: string;
@@ -3826,6 +3830,67 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           },
         );
 
+        const buildImageViewArtifacts = Effect.fn("CodexAdapterV2.buildImageViewArtifacts")(
+          function* (context: ActiveCodexTurnContext, item: CodexImageViewItem) {
+            const updatedAt = yield* DateTime.now;
+            const nodeId = idAllocator.derive.nodeFromProviderItem({
+              driver: CODEX_PROVIDER,
+              nativeItemId: item.id,
+            });
+            const turnItemId = idAllocator.derive.turnItemFromProviderItem({
+              driver: CODEX_PROVIDER,
+              nativeItemId: item.id,
+            });
+            const { ordinal, startedAt } = yield* resolveItemPosition(context, item.id);
+            const path = item.path.trim();
+            const viewedImagePath =
+              path.length > 0 &&
+              path.length <= 4096 &&
+              !/[\r\n]/.test(path) &&
+              isWorkspaceImagePreviewPath(path)
+                ? path
+                : undefined;
+            const node: OrchestrationV2ExecutionNode = {
+              id: nodeId,
+              threadId: context.projectionThreadId,
+              runId: context.projectionRunId,
+              parentNodeId: context.itemParentNodeId,
+              rootNodeId: context.rootNodeId,
+              kind: "tool_call",
+              status: "completed",
+              countsForRun: false,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(item.id),
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt,
+              completedAt: updatedAt,
+            };
+            const turnItem: OrchestrationV2TurnItem = {
+              id: turnItemId,
+              threadId: context.projectionThreadId,
+              runId: context.projectionRunId,
+              nodeId,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(item.id),
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: formatReadToolLabel(path),
+              startedAt,
+              completedAt: updatedAt,
+              updatedAt,
+              type: "dynamic_tool",
+              toolName: "view_image",
+              ...(viewedImagePath === undefined ? {} : { viewedImagePath }),
+              input: { path: item.path },
+            };
+            return { node, turnItem };
+          },
+        );
+
         const buildDynamicToolArtifacts = Effect.fn("CodexAdapterV2.buildDynamicToolArtifacts")(
           function* (context: ActiveCodexTurnContext, item: CodexDynamicToolItem) {
             const updatedAt = yield* DateTime.now;
@@ -5150,12 +5215,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
 
-            if (payload.item.type === "webSearch") {
-              const artifacts = yield* buildWebSearchArtifacts({
-                context,
-                item: payload.item,
-                completed: true,
-              });
+            if (payload.item.type === "webSearch" || payload.item.type === "imageView") {
+              const artifacts =
+                payload.item.type === "imageView"
+                  ? yield* buildImageViewArtifacts(context, payload.item)
+                  : yield* buildWebSearchArtifacts({
+                      context,
+                      item: payload.item,
+                      completed: true,
+                    });
               yield* emitProviderEvent({
                 type: "node.updated",
                 driver: CODEX_PROVIDER,
