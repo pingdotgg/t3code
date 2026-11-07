@@ -247,7 +247,11 @@ export const make = Effect.gen(function* () {
           ) {
             return Effect.void;
           }
-          return input.onOutputLine(cleaned.slice(0, OUTPUT_LINE_MAX_LENGTH));
+          // Half an emoji reaches the setup card as a replacement character.
+          const last = cleaned.charCodeAt(OUTPUT_LINE_MAX_LENGTH - 1);
+          const end =
+            last >= 0xd800 && last <= 0xdbff ? OUTPUT_LINE_MAX_LENGTH - 1 : OUTPUT_LINE_MAX_LENGTH;
+          return input.onOutputLine(cleaned.slice(0, end));
         });
 
       const unsubscribe = yield* terminalManager.subscribe((event) => {
@@ -261,7 +265,12 @@ export const make = Effect.gen(function* () {
           lineBuffer = lines.pop() ?? "";
           // Bound newline-free output; the sentinel has its own line, so retaining the tail is safe.
           if (lineBuffer.length > PARTIAL_LINE_MAX_LENGTH) {
-            lineBuffer = lineBuffer.slice(-PARTIAL_LINE_MAX_LENGTH);
+            const first = lineBuffer.charCodeAt(lineBuffer.length - PARTIAL_LINE_MAX_LENGTH);
+            lineBuffer = lineBuffer.slice(
+              first >= 0xdc00 && first <= 0xdfff
+                ? 1 - PARTIAL_LINE_MAX_LENGTH
+                : -PARTIAL_LINE_MAX_LENGTH,
+            );
           }
           return Effect.forEach(lines, handleLine, { discard: true }).pipe(
             Effect.andThen(
