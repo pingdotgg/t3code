@@ -814,7 +814,7 @@ function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<Timeli
   return new Set(lastAssistantMessageIdByResponseKey.values());
 }
 
-export type TurnFoldEnding = "worked" | "stopped" | "failed" | "limited";
+export type TurnFoldEnding = "worked" | "stopped" | "failed" | "limited" | "waiting";
 
 interface TurnFold {
   runId: RunId;
@@ -1276,6 +1276,7 @@ function deriveMainTurnFolds(input: {
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestRun: TimelineLatestRun | null;
   unfoldedRunIds: ReadonlySet<RunId>;
+  latestRunAwaitsBackgroundWork: boolean;
   runlessWorkActive: boolean;
   liveSubagentEntryIds: ReadonlySet<string>;
   retainedAssistantReplyEntryIds: ReadonlySet<string>;
@@ -1454,9 +1455,13 @@ function deriveMainTurnFolds(input: {
       ? duration
         ? resolve(msg("You stopped after {duration}", { duration }))
         : resolve(msg("You stopped this response"))
-      : duration
-        ? resolve(msg("Worked for {duration}", { duration }))
-        : resolve(msg("Worked"));
+      : input.latestRunAwaitsBackgroundWork && input.latestRun?.runId === runId
+        ? duration
+          ? resolve(msg("Progress after {duration}", { duration }))
+          : resolve(msg("In progress"))
+        : duration
+          ? resolve(msg("Worked for {duration}", { duration }))
+          : resolve(msg("Worked"));
 
     // The top row keeps the whole turn's time, steers included. Work after a
     // steer folds under its own row below that steer, keyed apart from the run
@@ -1509,6 +1514,7 @@ function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestRun: TimelineLatestRun | null;
+  latestRunAwaitsBackgroundWork: boolean;
   unfoldedRunIds: ReadonlySet<RunId>;
   runlessWorkActive: boolean;
   failedRunIds: ReadonlySet<RunId>;
@@ -1743,7 +1749,9 @@ function deriveTurnFolds(input: {
         : "failed"
       : isLatestInterruptedTurn || interruptedRunIds.has(runId)
         ? "stopped"
-        : "worked";
+        : input.latestRunAwaitsBackgroundWork && input.latestRun?.runId === runId
+          ? "waiting"
+          : "worked";
     const label = turnFoldLabel(ending, elapsedMs, input.resolve);
     // The checkpoint diff is what the changed-files card shows; provider
     // counts are the fallback for turns without a checkpoint.
@@ -1791,6 +1799,10 @@ function turnFoldLabel(
       return duration
         ? resolve(msg("Limited at {duration}", { duration }))
         : resolve(msg("Limited", { $context: "how a turn ended, usage limit reached" }));
+    case "waiting":
+      return duration
+        ? resolve(msg("Progress after {duration}", { duration }))
+        : resolve(msg("In progress"));
     case "worked":
       return duration
         ? resolve(msg("Worked for {duration}", { duration }))
@@ -2166,6 +2178,7 @@ function deriveTimelineTurnFolds(
       terminalAssistantMessageIds,
       latestRun: input.latestRun ?? null,
       unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
+      latestRunAwaitsBackgroundWork: false,
       runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
       liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
       retainedAssistantReplyEntryIds: retainedAssistantReplyEntryIds(timelineEntries),
@@ -2178,6 +2191,7 @@ function deriveTimelineTurnFolds(
     latestRun: input.latestRun ?? null,
     unfoldedRunIds: activeVisualResponseRunIds,
     failedRunIds,
+    latestRunAwaitsBackgroundWork: false,
     runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
     // Fold membership does not depend on the diff stat the fold header shows.
     turnDiffSummaries: [],
@@ -2193,6 +2207,8 @@ export function deriveMessagesTimelineRows(
     timelineEntries: ReadonlyArray<TimelineEntry>;
     pendingApprovalRequestIds?: ReadonlySet<RuntimeRequestId>;
     latestRun?: TimelineLatestRun | null;
+    /** The latest run's provider turn ended, but its agent still awaits background work. */
+    awaitingBackgroundWork?: boolean;
     runningRunId?: RunId | null;
     expandedRunIds?: ReadonlySet<RunId>;
     expandedAttemptIds?: ReadonlySet<RunAttemptId>;
@@ -2291,6 +2307,7 @@ export function deriveMessagesTimelineRows(
             terminalAssistantMessageIds,
             latestRun: input.latestRun ?? null,
             unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
+            latestRunAwaitsBackgroundWork: input.awaitingBackgroundWork === true,
             runlessWorkActive,
             liveSubagentEntryIds,
             retainedAssistantReplyEntryIds: retainedAssistantReplyIds,
@@ -2302,6 +2319,7 @@ export function deriveMessagesTimelineRows(
             latestRun: input.latestRun ?? null,
             unfoldedRunIds: activeVisualResponseRunIds,
             failedRunIds,
+            latestRunAwaitsBackgroundWork: input.awaitingBackgroundWork === true,
             runlessWorkActive,
             turnDiffSummaries: input.turnDiffSummaries,
             liveSubagentEntryIds,
