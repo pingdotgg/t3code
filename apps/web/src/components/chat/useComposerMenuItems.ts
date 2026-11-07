@@ -24,6 +24,7 @@ import type { ComposerTrigger } from "../../composer-logic";
 import type { DraftId } from "../../composerDraftStore";
 import { basenameOfPath } from "../../pierre-icons";
 import {
+  filterProviderSystemSkills,
   getProviderSkillsForSlashMenu,
   getProviderSlashCommandsForSlashMenu,
 } from "@t3tools/client-runtime/providerSkills";
@@ -72,6 +73,7 @@ export function useComposerMenuItems({
   selectedProviderSkills,
   selectedProviderSlashCommands,
   showSkillsInSlashMenu,
+  showSystemSkills,
   workspaceSkillsScanning,
   questionAttachmentTarget,
 }: {
@@ -92,6 +94,7 @@ export function useComposerMenuItems({
   readonly selectedProviderSkills: ServerProvider["skills"];
   readonly selectedProviderSlashCommands: ServerProvider["slashCommands"];
   readonly showSkillsInSlashMenu: boolean;
+  readonly showSystemSkills: boolean;
   readonly workspaceSkillsScanning: boolean;
   readonly questionAttachmentTarget: DraftId | null;
 }) {
@@ -290,7 +293,11 @@ export function useComposerMenuItems({
         description: command.description ?? command.input?.hint ?? "Run provider command",
       }));
       const query = composerTrigger.query.trim().toLowerCase();
-      const skillItems = slashMenuSkills.map((skill) => ({
+      // Hide system skills before deduplicating, so a hidden one cannot shadow a same-name skill.
+      const skillItems = getProviderSkillsForSlashMenu(
+        filterProviderSystemSkills(selectedProviderSkills, showSystemSkills),
+        showSkillsInSlashMenu,
+      ).map((skill) => ({
         id: `skill:${selectedProvider}:${skill.name}`,
         type: "skill" as const,
         provider: selectedProvider,
@@ -314,7 +321,10 @@ export function useComposerMenuItems({
       return searchSlashCommandItems(slashCommandItems, query);
     }
     if (composerTrigger.kind === "skill") {
-      return searchProviderSkills(selectedProviderSkills, composerTrigger.query).map((skill) => ({
+      return searchProviderSkills(
+        filterProviderSystemSkills(selectedProviderSkills, showSystemSkills),
+        composerTrigger.query,
+      ).map((skill) => ({
         id: `skill:${selectedProvider}:${skill.name}`,
         type: "skill" as const,
         provider: selectedProvider,
