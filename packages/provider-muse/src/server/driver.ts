@@ -1,10 +1,13 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -22,7 +25,11 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { enrichMuseSnapshot, latestMuseVersion, museMaintenance } from "./maintenance.ts";
 import { makeMuseEnvironment } from "./sdk.ts";
+import type { MuseSubscriptionUsage } from "./protocol.ts";
+import { museUsageAccount, museUsageWindows, type MuseUsageAccount } from "./usageLimits.ts";
+import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import { museUsageReader } from "./usage.ts";
+import { refreshMuseUsage } from "./usageProbe.ts";
 import type * as MuseUsageHome from "./MuseUsageHome.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -105,6 +112,29 @@ export const MuseDriver: ProviderDriver<
       continuationGroupKey: continuationIdentity.continuationKey,
     });
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
+    // Keep CLI observations and streamed reports in the same account generation.
+    const usageAccount = yield* Ref.make<MuseUsageAccount>({
+      generation: 0,
+      identity: undefined,
+    });
+    const latestUsage = yield* Ref.make<
+      { readonly usage: MuseSubscriptionUsage; readonly generation: number } | undefined
+    >(undefined);
+    // Serialize state changes and publication; CLI reads run outside this permit
+    // so slow refreshes cannot block the adapter's notification stream.
+    const usagePermit = yield* Semaphore.make(1);
+    const withUsageLimits = Effect.fn("MuseDriver.withUsageLimits")(function* (
+      provider: ServerProviderDraft,
+    ) {
+      const refreshed = yield* refreshMuseUsage({
+        settings: effectiveConfig,
+        environment: processEnvironment,
+        cwd,
+        provider,
+        state: { account: usageAccount, latestUsage, permit: usagePermit },
+      });
+      return refreshed.provider;
+    });
     const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(
       resolveProviderMaintenanceCapabilitiesEffect(museMaintenance, {
         binaryPath: effectiveConfig.binaryPath,
@@ -146,6 +176,7 @@ export const MuseDriver: ProviderDriver<
       initialSnapshot: (settings) =>
         makePendingMuseProvider(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider: checkMuseProviderStatus(effectiveConfig, processEnvironment, cwd).pipe(
+        Effect.flatMap(withUsageLimits),
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -182,6 +213,36 @@ export const MuseDriver: ProviderDriver<
       settings: effectiveConfig,
       environment: processEnvironment,
       modelCatalog,
+      usageAccountGeneration: Ref.get(usageAccount).pipe(
+        Effect.map((account) => account.generation),
+      ),
+      // Per-notification work stays within the adapter's notification handling.
+      onSubscriptionUsage: Effect.fnUntraced(function* (
+        usage: MuseSubscriptionUsage,
+        hostGeneration: number,
+      ) {
+        const account = yield* Ref.get(usageAccount);
+        // A host from before a logout or another login reports for an account
+        // that is gone, and signed out there is no account to report for.
+        if (hostGeneration !== account.generation || account.identity === null) return;
+        // Every session's host reports; an older report arriving late must not win.
+        const newer = yield* Ref.modify(latestUsage, (previous) =>
+          previous && previous.usage.observedAtMs >= usage.observedAtMs
+            ? [false, previous]
+            : [true, { usage, generation: hostGeneration }],
+        );
+        const { auth } = yield* snapshot.getSnapshot;
+        // The probe may have advanced the generation before publishing its new account.
+        if (!newer || auth.type === "apiKey" || museUsageAccount(auth) !== account.identity) return;
+        const now = yield* DateTime.now;
+        yield* snapshot.applyUsageLimits({
+          windows: museUsageWindows(usage, DateTime.toEpochMillis(now)),
+          checkedAt: DateTime.formatIso(DateTime.makeUnsafe(usage.observedAtMs)),
+          // A report is the account's whole state, so a window that has reset
+          // since loses its old reset time instead of keeping it.
+          replace: true,
+        });
+      }, usagePermit.withPermits(1)),
       ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       continuationRequests,
     });
