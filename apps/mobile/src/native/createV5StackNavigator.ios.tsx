@@ -20,7 +20,7 @@ import {
   type NativeStackNavigatorProps,
   type NativeStackTypeBag,
 } from "@react-navigation/native-stack";
-import { use, useCallback, useRef, useState, type ComponentProps } from "react";
+import { use, useCallback, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { WorkspaceSlotOptionsContext, slotScreenOptions } from "./v5-workspace-context";
 import { StyleSheet, View } from "react-native";
 import { Stack } from "react-native-screens";
@@ -57,6 +57,8 @@ export function V5CardStackView(
     readonly onRootVisibilityChange?: (visible: boolean) => void;
     /** The card native Back is popping, which the router still shows until the pop finishes. */
     readonly onNativePopChange?: (key: string | null) => void;
+    /** Drawn on the root card so an interactive pop reveals it under the leaving screen. */
+    readonly rootFooter?: ReactNode;
   },
 ) {
   const { preventedRoutes } = usePreventRemoveContext();
@@ -253,6 +255,7 @@ export function V5CardStackView(
                       {descriptor.render()}
                     </NativeScrollEdgeEffectsContext>
                   </NativeColumnContent>
+                  {index === 0 ? props.rootFooter : null}
                 </NavigationRouteContext>
               </NavigationContext>
             </Stack.Screen>

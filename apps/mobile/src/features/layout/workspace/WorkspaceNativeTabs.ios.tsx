@@ -18,11 +18,7 @@ import {
   NativeWorkspaceTabActivityContext,
   WorkspaceSlotOptionsContext,
 } from "../../../native/v5-workspace-context";
-import {
-  useCompactWorkspaceTabs,
-  useFloatingWorkspaceTabs,
-  useSystemWorkspaceTabBar,
-} from "./useSystemWorkspaceTabBar";
+import { useFloatingWorkspaceTabs, useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
 import { useControlTheme } from "../../../components/ui/useControlTheme";
 import { useDeviceType } from "../../../native/native-layout-metrics";
 import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
@@ -84,7 +80,6 @@ export function WorkspaceNativeTabs(props: {
   const [provenance, setProvenance] = useState(0);
   const systemTabBar = useSystemWorkspaceTabBar();
   const deviceType = useDeviceType();
-  const compactTabs = useCompactWorkspaceTabs();
   const { layout, panes } = useAdaptiveWorkspaceLayout();
   // The tabs belong to the sidebar; over a page with the sidebar hidden they'd cover the composer.
   const hiddenWithSidebar =
@@ -92,7 +87,6 @@ export function WorkspaceNativeTabs(props: {
     layout.usesSplitView &&
     workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen) &&
     !panes.primarySidebarVisible;
-  const floatingTabs = useFloatingWorkspaceTabs();
   const { width } = useWindowDimensions();
   const { colors } = useControlTheme();
   const selectedTab = workspace.state.selectedTab;
@@ -157,10 +151,10 @@ export function WorkspaceNativeTabs(props: {
           );
         })}
       </Tabs.Host>
-      {(deviceType === "pad" ||
-        compactTabs ||
-        (layout.variant === "medium" &&
-          !workspaceUsesColumns(selectedTab, workspace.settingsOpen))) &&
+      {/* Split-view iPad keeps the dock in the sidebar column; the card stack draws it on the root
+          screen so interactive pops reveal it underneath. Only cover the rare in-place case here. */}
+      {deviceType === "pad" &&
+      layout.usesSplitView &&
       !props.hidden &&
       !props.tabsInSidebarColumn &&
       !hiddenWithSidebar ? (
@@ -171,10 +165,7 @@ export function WorkspaceNativeTabs(props: {
             left: 0,
             bottom: 0,
             // UIKit can shrink the sidebar to 280pt independently of its preferred width.
-            width:
-              deviceType === "pad" && (floatingTabs || layout.usesSplitView)
-                ? Math.min(280, layout.listPaneWidth ?? width, width)
-                : (layout.listPaneWidth ?? width),
+            width: Math.min(280, layout.listPaneWidth ?? width, width),
             height: 128,
           }}
         >
