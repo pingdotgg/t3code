@@ -16,9 +16,9 @@ function pendingLayout() {
 it.each([true, false])(
   "records Option symbols and refreshes the current layout (keyboard events: %s)",
   async (supportsEvents) => {
-    let layout = new Map([["KeyQ", "a"]]);
+    let layout = Promise.resolve(new Map([["KeyQ", "a"]]));
     const keyboard = Object.assign(supportsEvents ? new EventTarget() : {}, {
-      getLayoutMap: () => Promise.resolve(layout),
+      getLayoutMap: () => layout,
     });
     const focusTarget = new EventTarget();
     stop = trackKeyboardLayout(keyboard, focusTarget);
@@ -36,11 +36,19 @@ it.each([true, false])(
       keybindingFromKeyboardEvent(event, "MacIntel", { layoutCharacter: true }),
       "mod+alt+shift+a",
     );
-    layout = new Map([["KeyQ", "q"]]);
-    if (keyboard instanceof EventTarget) keyboard.dispatchEvent(new Event("layoutchange"));
-    else focusTarget.dispatchEvent(new Event("focus"));
-    await keyboard.getLayoutMap();
+    const pending = pendingLayout();
+    layout = pending.promise;
+    focusTarget.dispatchEvent(new Event("focus"));
+    assert.strictEqual(keybindingFromKeyboardEvent(event, "MacIntel"), "mod+alt+shift+a");
+    pending.resolve(new Map([["KeyQ", "q"]]));
+    await layout;
     assert.strictEqual(keybindingFromKeyboardEvent(event, "MacIntel"), "mod+alt+shift+q");
+    layout = Promise.reject(new Error("Permission denied"));
+    focusTarget.dispatchEvent(new Event("focus"));
+    assert.strictEqual(getKeyboardLayoutMap()?.get("KeyQ"), "q");
+    await layout.catch(() => undefined);
+    assert.strictEqual(getKeyboardLayoutMap(), undefined);
+    layout = Promise.resolve(new Map([["KeyQ", "a"]]));
     stop();
     focusTarget.dispatchEvent(new Event("focus"));
     await keyboard.getLayoutMap();
@@ -55,6 +63,7 @@ it("ignores an obsolete layout result and clears the map when access fails", asy
   stop = trackKeyboardLayout(keyboard);
   result = Promise.resolve(new Map([["KeyQ", "q"]]));
   keyboard.dispatchEvent(new Event("layoutchange"));
+  assert.strictEqual(getKeyboardLayoutMap(), undefined);
   await result;
   pending.resolve(new Map([["KeyQ", "a"]]));
   await pending.promise;
