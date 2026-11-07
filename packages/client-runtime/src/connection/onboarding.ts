@@ -30,9 +30,16 @@ import {
   type ConnectionAttemptError,
 } from "./model.ts";
 import * as Persistence from "../platform/persistence.ts";
+import { connectionCatalogDisplayUrl } from "./presentation.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
-import { connectionRoutes, routeEntry, sshTargetKey } from "./routes.ts";
+import {
+  connectionRoutes,
+  isLearned,
+  routeEntry,
+  routeHttpBaseUrl,
+  sshTargetKey,
+} from "./routes.ts";
 
 export interface PairingConnectionInput {
   readonly pairingUrl?: string;
@@ -168,6 +175,14 @@ const registerPairingConnection = Effect.fn(
   return registration.target.environmentId;
 });
 
+function sameHttpAddress(left: string, right: string): boolean {
+  try {
+    return normalizeHttpBaseUrl(left) === normalizeHttpBaseUrl(right);
+  } catch {
+    return false;
+  }
+}
+
 const isBearerCredential = Schema.is(BearerConnectionCredential);
 const isBearerProfile = Schema.is(BearerConnectionProfile);
 
@@ -177,19 +192,35 @@ const updateBearerConnection = Effect.fn(
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const saved = (yield* SubscriptionRef.get(registry.entries)).get(input.environmentId);
+  // A learned route borrows the paired route's token, so edits go to the paired route.
   const route =
     saved === undefined
       ? undefined
       : connectionRoutes(saved).find(
-          (candidate) => candidate.target._tag === "BearerConnectionTarget",
+          (candidate) =>
+            candidate.target._tag === "BearerConnectionTarget" && !isLearned(candidate),
         );
   const entry = saved === undefined || route === undefined ? saved : routeEntry(saved, route);
+  // The edit form shows the address in use, which can be a learned one. Submitting it unchanged
+  // is not a request to move the paired route there; typing any other address is.
+  const pairedUrl = route === undefined ? null : routeHttpBaseUrl(route);
+  const shownUrl = saved === undefined ? null : connectionCatalogDisplayUrl(saved);
+  const keepsShownLearnedAddress =
+    saved !== undefined &&
+    shownUrl !== null &&
+    sameHttpAddress(shownUrl, input.httpBaseUrl) &&
+    connectionRoutes(saved).some((candidate) => {
+      const url = routeHttpBaseUrl(candidate);
+      return isLearned(candidate) && url !== null && sameHttpAddress(url, shownUrl);
+    });
+  const update =
+    pairedUrl !== null && keepsShownLearnedAddress ? { ...input, httpBaseUrl: pairedUrl } : input;
   const credential =
     entry?.target._tag === "BearerConnectionTarget"
       ? yield* credentials.get(entry.target.connectionId)
       : Option.none();
   const registration = yield* prepareBearerConnectionUpdate({
-    input,
+    input: update,
     entry: Option.fromUndefinedOr(entry),
     credential,
   });

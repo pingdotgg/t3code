@@ -20,6 +20,8 @@ import {
   BearerConnectionCredential,
   BearerConnectionProfile,
   BearerConnectionRegistration,
+  type ConnectionProfile,
+  type ConnectionRegistration,
   PrimaryConnectionRegistration,
 } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
@@ -38,7 +40,7 @@ import {
 } from "./onboarding.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
-import { connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
+import { connectionRouteId, connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 
 const layerClientPresentation = Layer.succeed(
@@ -162,22 +164,38 @@ function layerPairingHttp(
 function layerPairingOnboarding(
   options?: Parameters<typeof layerPairingHttp>[1],
   calls: Array<{ readonly url: string; readonly init: RequestInit }> = [],
+  saved?: {
+    readonly targets: ReadonlyArray<BearerConnectionTarget>;
+    readonly profiles: ReadonlyArray<BearerConnectionProfile>;
+    readonly credentials: ReadonlyMap<string, BearerConnectionCredential>;
+    readonly registered: Array<ConnectionRegistration>;
+    readonly savedProfiles?: Array<ConnectionProfile>;
+  },
 ) {
   const dependencies = Layer.mergeAll(
     layerClientPresentation,
     layerPairingHttp(calls, options),
     Layer.mock(Persistence.ConnectionTargetStore)({
-      list: Effect.succeed([]),
+      list: Effect.succeed(saved?.targets ?? []),
       listDisabled: Effect.succeed([]),
     }),
     Layer.mock(Persistence.ConnectionRegistrationStore)({
-      register: () => Effect.void,
+      register: (registration) => Effect.sync(() => saved?.registered.push(registration)),
       setEnabled: () => Effect.void,
     }),
     Layer.mock(Persistence.EnvironmentCacheStore)({}),
-    Layer.mock(ConnectionProfileStore.ConnectionProfileStore)({}),
+    Layer.mock(ConnectionProfileStore.ConnectionProfileStore)({
+      put: (profile) => Effect.sync(() => saved?.savedProfiles?.push(profile)),
+      get: (connectionId) =>
+        Effect.succeed(
+          Option.fromUndefinedOr(
+            saved?.profiles.find((profile) => profile.connectionId === connectionId),
+          ),
+        ),
+    }),
     Layer.mock(ConnectionCredentialStore.ConnectionCredentialStore)({
-      get: () => Effect.succeedNone,
+      get: (connectionId) =>
+        Effect.succeed(Option.fromUndefinedOr(saved?.credentials.get(connectionId))),
       put: () => Effect.void,
     }),
     Layer.mock(ClientCapabilities.SshEnvironmentGateway)({}),
@@ -616,6 +634,197 @@ describe("connection onboarding", () => {
       });
     }),
   );
+
+  it.effect("edits the paired address, not one the server reported, with the paired token", () => {
+    const pairedTarget = new BearerConnectionTarget({
+      environmentId: PAIRED_ENVIRONMENT_ID,
+      connectionId: PAIRED_PROFILE.connectionId,
+      label: PAIRED_PROFILE.label,
+    });
+    const learnedId = `learned:${PAIRED_ENVIRONMENT_ID}:http://100.101.102.103:3773@${PAIRED_PROFILE.connectionId}`;
+    const learnedTarget = new BearerConnectionTarget({ ...pairedTarget, connectionId: learnedId });
+    const learnedProfile = new BearerConnectionProfile({
+      connectionId: learnedId,
+      environmentId: PAIRED_ENVIRONMENT_ID,
+      label: PAIRED_PROFILE.label,
+      httpBaseUrl: "http://100.101.102.103:3773/",
+      wsBaseUrl: "ws://100.101.102.103:3773/",
+      learned: true,
+      network: "tailscale",
+    });
+    const registered: Array<ConnectionRegistration> = [];
+    const savedProfiles: Array<ConnectionProfile> = [];
+    return Effect.gen(function* () {
+      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+      const onboarding = yield* Onboarding.ConnectionOnboarding;
+      const before = (yield* SubscriptionRef.get(registry.entries)).get(PAIRED_ENVIRONMENT_ID);
+      // The reported address sorts ahead of the paired one.
+      expect(before?.target).toEqual(learnedTarget);
+
+      yield* onboarding.updateBearer({
+        environmentId: PAIRED_ENVIRONMENT_ID,
+        label: "Renamed environment",
+        httpBaseUrl: "https://renamed.example.test",
+      });
+
+      const entry = (yield* SubscriptionRef.get(registry.entries)).get(PAIRED_ENVIRONMENT_ID);
+      const routes = entry === undefined ? [] : connectionRoutes(entry);
+      expect(routes.map((route) => route.target)).toEqual([
+        new BearerConnectionTarget({ ...learnedTarget, label: "Renamed environment" }),
+        new BearerConnectionTarget({ ...pairedTarget, label: "Renamed environment" }),
+      ]);
+      // The environment shows its first route's name, which is the learned one.
+      expect(entry?.target.label).toBe("Renamed environment");
+      expect(routes[1]?.profile).toEqual(
+        Option.some(
+          new BearerConnectionProfile({
+            ...PAIRED_PROFILE,
+            label: "Renamed environment",
+            httpBaseUrl: "https://renamed.example.test/",
+            wsBaseUrl: "wss://renamed.example.test/",
+          }),
+        ),
+      );
+      expect(registered).toMatchObject([
+        {
+          target: { connectionId: PAIRED_PROFILE.connectionId },
+          credential: { token: "paired-token" },
+        },
+      ]);
+      // Persisted routes carry targets only, so the relabeled learned profile is saved separately.
+      expect(savedProfiles).toEqual([
+        new BearerConnectionProfile({ ...learnedProfile, label: "Renamed environment" }),
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerPairingOnboarding(undefined, [], {
+          targets: [learnedTarget, pairedTarget],
+          profiles: [learnedProfile, PAIRED_PROFILE],
+          credentials: new Map([
+            [
+              PAIRED_PROFILE.connectionId,
+              new BearerConnectionCredential({ token: "paired-token" }),
+            ],
+          ]),
+          registered,
+          savedProfiles,
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "keeps the paired address when a label edit submits the learned address unchanged",
+    () => {
+      const pairedTarget = new BearerConnectionTarget({
+        environmentId: PAIRED_ENVIRONMENT_ID,
+        connectionId: PAIRED_PROFILE.connectionId,
+        label: PAIRED_PROFILE.label,
+      });
+      const learnedId = `learned:${PAIRED_ENVIRONMENT_ID}:http://192.168.1.10:3773@${PAIRED_PROFILE.connectionId}`;
+      const learnedProfile = new BearerConnectionProfile({
+        connectionId: learnedId,
+        environmentId: PAIRED_ENVIRONMENT_ID,
+        label: PAIRED_PROFILE.label,
+        httpBaseUrl: "http://192.168.1.10:3773/",
+        wsBaseUrl: "ws://192.168.1.10:3773/",
+        learned: true,
+      });
+      return Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const onboarding = yield* Onboarding.ConnectionOnboarding;
+        // The form pre-fills the address in use, which is the learned one.
+        yield* onboarding.updateBearer({
+          environmentId: PAIRED_ENVIRONMENT_ID,
+          label: "Renamed environment",
+          httpBaseUrl: "http://192.168.1.10:3773",
+        });
+
+        const entry = (yield* SubscriptionRef.get(registry.entries)).get(PAIRED_ENVIRONMENT_ID);
+        const paired = (entry === undefined ? [] : connectionRoutes(entry)).find(
+          (route) => connectionRouteId(route.target) === PAIRED_PROFILE.connectionId,
+        );
+        expect(Option.getOrNull(paired?.profile ?? Option.none())).toMatchObject({
+          label: "Renamed environment",
+          httpBaseUrl: PAIRED_PROFILE.httpBaseUrl,
+        });
+      }).pipe(
+        Effect.provide(
+          layerPairingOnboarding(undefined, [], {
+            targets: [
+              new BearerConnectionTarget({ ...pairedTarget, connectionId: learnedId }),
+              pairedTarget,
+            ],
+            profiles: [learnedProfile, PAIRED_PROFILE],
+            credentials: new Map([
+              [
+                PAIRED_PROFILE.connectionId,
+                new BearerConnectionCredential({ token: "paired-token" }),
+              ],
+            ]),
+            registered: [],
+            savedProfiles: [],
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("moves the paired address to a different learned address the user typed", () => {
+    const pairedTarget = new BearerConnectionTarget({
+      environmentId: PAIRED_ENVIRONMENT_ID,
+      connectionId: PAIRED_PROFILE.connectionId,
+      label: PAIRED_PROFILE.label,
+    });
+    const learnedRoute = (origin: string) => {
+      const connectionId = `learned:${PAIRED_ENVIRONMENT_ID}:${origin}@${PAIRED_PROFILE.connectionId}`;
+      return {
+        target: new BearerConnectionTarget({ ...pairedTarget, connectionId }),
+        profile: new BearerConnectionProfile({
+          connectionId,
+          environmentId: PAIRED_ENVIRONMENT_ID,
+          label: PAIRED_PROFILE.label,
+          httpBaseUrl: `${origin}/`,
+          wsBaseUrl: `${origin.replace(/^http:/, "ws:")}/`,
+          learned: true,
+        }),
+      };
+    };
+    const shown = learnedRoute("http://192.168.1.10:3773");
+    const other = learnedRoute("http://10.0.0.5:3773");
+    return Effect.gen(function* () {
+      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+      const onboarding = yield* Onboarding.ConnectionOnboarding;
+      yield* onboarding.updateBearer({
+        environmentId: PAIRED_ENVIRONMENT_ID,
+        label: PAIRED_PROFILE.label,
+        httpBaseUrl: "http://10.0.0.5:3773",
+      });
+
+      const entry = (yield* SubscriptionRef.get(registry.entries)).get(PAIRED_ENVIRONMENT_ID);
+      const paired = (entry === undefined ? [] : connectionRoutes(entry)).find(
+        (route) => connectionRouteId(route.target) === PAIRED_PROFILE.connectionId,
+      );
+      expect(Option.getOrNull(paired?.profile ?? Option.none())).toMatchObject({
+        httpBaseUrl: "http://10.0.0.5:3773/",
+      });
+    }).pipe(
+      Effect.provide(
+        layerPairingOnboarding(undefined, [], {
+          targets: [shown.target, other.target, pairedTarget],
+          profiles: [shown.profile, other.profile, PAIRED_PROFILE],
+          credentials: new Map([
+            [
+              PAIRED_PROFILE.connectionId,
+              new BearerConnectionCredential({ token: "paired-token" }),
+            ],
+          ]),
+          registered: [],
+          savedProfiles: [],
+        }),
+      ),
+    );
+  });
 
   it.effect("prepares an SSH registration from the provisioned platform environment", () =>
     Effect.gen(function* () {
