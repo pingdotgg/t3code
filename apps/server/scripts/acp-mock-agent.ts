@@ -18,6 +18,11 @@ import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
+// GitHub Copilot CLI advertises URL-shaped session mode ids.
+const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
+const copilotModeId = (name: string) =>
+  `https://agentclientprotocol.com/protocol/session-modes#${name}`;
+const modeOptionCategory = process.env.T3_ACP_MODE_OPTION_CATEGORY ?? "mode";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -44,6 +49,9 @@ const omitInitializeModelState = process.env.T3_ACP_OMIT_INITIALIZE_MODEL_STATE 
 const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
 const floodStderr = process.env.T3_ACP_FLOOD_STDERR === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
+const agentVersion = process.env.T3_ACP_AGENT_VERSION ?? "0.0.0";
+const geminiApiKey = process.env.GEMINI_API_KEY;
+const idleError = process.env.T3_ACP_IDLE_ERROR;
 const emitTrackedToolCallKindThenHang = process.env.T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG;
 const clientFsProbePath = process.env.T3_ACP_CLIENT_FS_PROBE_PATH;
 const clientFsProbeLogPath = process.env.T3_ACP_CLIENT_FS_PROBE_LOG_PATH;
@@ -80,7 +88,11 @@ const permissionOptionIds = {
 };
 const sessionId = "mock-session-1";
 
-let currentModeId = antigravityProfile ? "default" : "ask";
+let currentModeId = antigravityProfile
+  ? "default"
+  : copilotModesProfile
+    ? copilotModeId("agent")
+    : "ask";
 let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
@@ -269,7 +281,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
     {
       configId: "mode",
       name: "Mode",
-      category: "mode",
+      category: modeOptionCategory,
       type: "select" as const,
       currentValue: currentModeId,
       options: availableModes.map((mode) => ({
@@ -334,23 +346,29 @@ const availableModes: ReadonlyArray<AcpCompat.SessionMode> = antigravityProfile
       { id: "auto_edit", name: "Auto edit" },
       { id: "yolo", name: "YOLO" },
     ]
-  : [
-      {
-        id: "ask",
-        name: "Ask",
-        description: "Request permission before making any changes",
-      },
-      {
-        id: "architect",
-        name: "Architect",
-        description: "Design and plan software systems without implementation",
-      },
-      {
-        id: "code",
-        name: "Code",
-        description: "Write and modify code with full tool access",
-      },
-    ];
+  : copilotModesProfile
+    ? [
+        { id: copilotModeId("agent"), name: "Agent" },
+        { id: copilotModeId("plan"), name: "Plan" },
+        { id: copilotModeId("autopilot"), name: "Autopilot" },
+      ]
+    : [
+        {
+          id: "ask",
+          name: "Ask",
+          description: "Request permission before making any changes",
+        },
+        {
+          id: "architect",
+          name: "Architect",
+          description: "Design and plan software systems without implementation",
+        },
+        {
+          id: "code",
+          name: "Code",
+          description: "Write and modify code with full tool access",
+        },
+      ];
 
 function modeState(): AcpCompat.SessionModeState {
   return {
@@ -503,7 +521,7 @@ const program = Effect.gen(function* () {
       parameterizedModelPicker = request.capabilities?._meta?.parameterizedModelPicker === true;
       return {
         protocolVersion: 2,
-        info: { name: "t3-acp-mock-agent", version: "0.0.0" },
+        info: { name: "t3-acp-mock-agent", version: agentVersion },
         ...(omitInitializeModelState ? {} : { _meta: { modelState: modelState() } }),
         capabilities: {
           session: {
@@ -541,7 +559,7 @@ const program = Effect.gen(function* () {
       if (antigravityProfile) {
         if (
           request.methodId !== "oauth-personal" &&
-          !(request.methodId === "gemini-api-key" && process.env.GEMINI_API_KEY)
+          !(request.methodId === "gemini-api-key" && geminiApiKey)
         ) {
           return yield* AcpError.AcpRequestError.invalidParams(
             `Mock Antigravity rejected auth method ${request.methodId}.`,
@@ -802,7 +820,6 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
-      const idleError = process.env.T3_ACP_IDLE_ERROR;
       if (idleError === "grok-background" && promptCount === 1) {
         // The structured completion lands before the prompt settles, so it is buffered.
         const taskId = "call-idle-error-background";
@@ -1108,6 +1125,18 @@ const program = Effect.gen(function* () {
               type: "items",
               planId: "plan-b",
               entries: [{ content: "Ship B", priority: "high", status: "in_progress" }],
+            },
+          },
+          {
+            sessionUpdate: "plan_update",
+            plan: {
+              type: "items",
+              planId: "plan-c",
+              entries: [
+                { content: "Write the fix", priority: "high", status: "completed" },
+                { content: "Try another approach", priority: "low", status: "cancelled" },
+                { content: "Add a test", priority: "medium", status: "completed" },
+              ],
             },
           },
           { sessionUpdate: "plan_removed", planId: "plan-a" },
@@ -1830,6 +1859,11 @@ const program = Effect.gen(function* () {
     }
     if (method === "_test/finish-cancel") {
       return Deferred.succeed(nativeCancelRelease, undefined).pipe(Effect.as({}));
+    }
+    if (method === "_test/emit-update") {
+      return agent.client
+        .sessionUpdate(params as AcpSchema.SessionNotification)
+        .pipe(Effect.as({}));
     }
     if (method === "_test/startup-metadata") {
       return Effect.gen(function* () {

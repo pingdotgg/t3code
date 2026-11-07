@@ -365,6 +365,7 @@ export interface ServerConfigSubscriptionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
   readonly usageLimitsCommand?: boolean;
+  readonly providerCatalogsOnDemand?: boolean;
 }
 
 // Configs are JSON-shaped. Missing and undefined object fields persist identically.
@@ -486,6 +487,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       ...(subscription.environmentThemes === true ? { environmentThemes: true } : {}),
       ...(subscription.usageLimitSources === true ? { usageLimitSources: true } : {}),
       ...(subscription.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+      ...(subscription.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
     }).pipe(
       Stream.runForEach((event) =>
         Effect.gen(function* () {
@@ -755,6 +757,7 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly environmentThemes?: boolean;
     readonly usageLimitSources?: boolean;
     readonly usageLimitsCommand?: boolean;
+    readonly providerCatalogsOnDemand?: boolean;
   },
 ) {
   const configScheduler = createAtomCommandScheduler();
@@ -770,6 +773,7 @@ export function createServerEnvironmentAtoms<R, E>(
           ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
           ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
           ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+          ...(options.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
         }),
       )
       .pipe(
@@ -1078,6 +1082,26 @@ export function createServerEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:server:settings:${environmentId}`),
     ),
   );
+  const hiddenThreadTagsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const settings = get(settingsValueAtom(environmentId));
+      if (settings?.hideTaggedThreads !== true) return null;
+      // Tags are trimmed on write; trim hand-edited entries so " private" still matches.
+      const tags = settings.hiddenThreadTags.map((tag) => tag.trim()).filter((tag) => tag !== "");
+      return tags.length > 0 ? tags : null;
+    }).pipe(
+      // Trimming makes a new array on every settings push; keep equal lists stable.
+      Atom.withEquality(
+        (a: ReadonlyArray<string> | null, b: ReadonlyArray<string> | null) =>
+          a === b ||
+          (a !== null &&
+            b !== null &&
+            a.length === b.length &&
+            a.every((tag, index) => tag === b[index])),
+      ),
+      Atom.withLabel(`environment-data:server:hidden-thread-tags:${environmentId}`),
+    ),
+  );
   const usagePricesAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
       const overrides = get(settingsValueAtom(environmentId))?.usagePriceOverrides ?? {};
@@ -1111,6 +1135,13 @@ export function createServerEnvironmentAtoms<R, E>(
         settings?.cursorKeychainUsageEnabled ?? false,
       ]);
     }).pipe(Atom.withLabel(`environment-data:server:usage-scan-settings:${environmentId}`)),
+  );
+  // Settings snapshots rebuild the filter object; only a changed filter should touch the Usage tab.
+  const usageModelFilterAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => get(settingsValueAtom(environmentId))?.usageModelFilter).pipe(
+      Atom.withEquality((a, b) => JSON.stringify(a) === JSON.stringify(b)),
+      Atom.withLabel(`environment-data:server:usage-model-filter:${environmentId}`),
+    ),
   );
   const providersValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => get(configValueAtom(environmentId))?.providers ?? null).pipe(
@@ -1194,6 +1225,8 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     updateStateAtom,
     settingsValueAtom,
+    hiddenThreadTagsAtom,
+    usageModelFilterAtom,
     providersValueAtom,
     providerAuthState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:provider:auth-state",
@@ -1236,6 +1269,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:provider:auth-cancel",
       tag: WS_METHODS.providerAuthCancel,
     }),
+    removeProviderAuthMethod: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:provider:auth-remove-method",
+      tag: WS_METHODS.providerAuthRemoveMethod,
+    }),
     logoutProviderAuth: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:provider:auth-logout",
       tag: WS_METHODS.providerAuthLogout,
@@ -1250,7 +1287,7 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.providerInstallStart,
       concurrency: {
         mode: "singleFlight",
-        key: ({ environmentId }) => environmentId,
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input]),
       },
     }),
     cancelProviderInstall: createEnvironmentRpcCommand(runtime, {
@@ -1333,6 +1370,8 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:resource-telemetry-history",
       tag: WS_METHODS.serverGetResourceTelemetryHistory,
       staleTimeMs: 5_000,
+      refreshIntervalMs: 5_000,
+      idleTtlMs: 0,
     }),
     searchAcpRegistry: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:acp-registry:search",
@@ -1372,6 +1411,7 @@ export function createServerEnvironmentAtoms<R, E>(
           ...input,
           workspaceSnapshotsOnDemand: true,
           ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+          ...(options.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
         }),
       onSuccess: ({ environmentId, input }, registry, result) =>
         Effect.sync(() => {

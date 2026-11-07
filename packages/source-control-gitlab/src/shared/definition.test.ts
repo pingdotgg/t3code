@@ -63,12 +63,40 @@ describe("GitLab change request URLs", () => {
     ).toBe("https://gitlab.com/group/sub/project/-/merge_requests/4");
     expect(
       definition.changeRequestUrl({
+        host: "gitlab.internal",
+        repository: "team/app",
+        number: 5,
+        remoteUrl: "http://gitlab.internal:8080/team/app.git",
+      }),
+    ).toBe("http://gitlab.internal:8080/team/app/-/merge_requests/5");
+    expect(
+      definition.changeRequestUrl({
+        host: "gitlab.internal",
+        repository: "team/app",
+        number: 5,
+        remoteUrl: "git@gitlab.internal:team/app.git",
+      }),
+    ).toBe("https://gitlab.internal/team/app/-/merge_requests/5");
+    expect(
+      definition.changeRequestUrl({
         host: "gitlab.com",
         repository: "group/sub/project",
         number: 4,
         webUrl: "https://gitlab.com/group/sub/project",
       }),
     ).toBe("https://gitlab.com/group/sub/project/-/merge_requests/4");
+  });
+
+  it("links authors, bots included, to their profile on the repository's host", () => {
+    expect(definition.authorProfileUrl("TonybynMp4", "https://gitlab.com/group/sub/project")).toBe(
+      "https://gitlab.com/TonybynMp4",
+    );
+    expect(
+      definition.authorProfileUrl(
+        "project_278964_bot_89f97e2c",
+        "http://gitlab.internal:8080/team/app/-/merge_requests/5",
+      ),
+    ).toBe("http://gitlab.internal:8080/project_278964_bot_89f97e2c");
   });
 });
 
