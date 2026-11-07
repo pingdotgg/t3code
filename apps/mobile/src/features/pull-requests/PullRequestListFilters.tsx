@@ -27,11 +27,12 @@ const SORTS = {
   created: "Newest created",
   oldest: "Oldest updated",
 } as const;
-// A 12dp inset keeps 16dp chips concentric with Android's 28dp ScreenContent corner.
+// A 12dp inset keeps capsule chips concentric with Android's 28dp ScreenContent corner.
+// iOS gaps stay ≥10 so Liquid Glass capsules do not merge into one platter.
 const ROW_STYLE =
   Platform.OS === "android"
     ? { paddingHorizontal: 12, paddingTop: 12, paddingBottom: 8, gap: 8 }
-    : { paddingHorizontal: 16, paddingTop: 2, paddingBottom: 10, gap: 8 };
+    : { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 10, gap: 10 };
 const id = (field: string, value: string) => JSON.stringify([field, value]);
 function choices(field: string, options: Readonly<Record<string, string>>, selected: string) {
   return Object.entries(options).map(([value, title]) => ({

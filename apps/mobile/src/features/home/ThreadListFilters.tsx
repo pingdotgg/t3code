@@ -28,7 +28,8 @@ export function ThreadListFilters(props: {
       horizontal
       showsHorizontalScrollIndicator={false}
       style={{ marginHorizontal: -props.gutter, overflow: "visible" }}
-      contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 2, paddingBottom: 10, gap: 8 }}
+      // 10pt gaps keep glass capsules separate the way Fitness+/Files keep filter pills apart.
+      contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 4, paddingBottom: 10, gap: 10 }}
     >
       <ListFilterMenu
         label={selectedEnvironment?.label ?? "All environments"}
@@ -90,12 +91,13 @@ export function ThreadListFilters(props: {
           accessibilityRole="button"
           accessibilityLabel="Reset thread filters"
           className="h-8 w-8 items-center justify-center"
+          hitSlop={6}
           onPress={() => {
             props.onEnvironmentChange(null);
             props.onProjectChange(null);
           }}
         >
-          <SymbolView name="xmark.circle.fill" size={18} tintColorClassName="accent-icon-muted" />
+          <SymbolView name="xmark.circle.fill" size={20} tintColorClassName="accent-icon" />
         </Pressable>
       ) : null}
     </ScrollView>

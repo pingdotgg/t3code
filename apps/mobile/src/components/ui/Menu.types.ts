@@ -3,7 +3,10 @@ import type { ComponentProps, ReactNode } from "react";
 import type { AccessibilityProps } from "react-native";
 
 export type MenuProps = Omit<ComponentProps<typeof MenuView>, "children" | "themeVariant"> &
-  Pick<AccessibilityProps, "accessible" | "accessibilityLabel" | "accessibilityRole"> & {
+  Pick<
+    AccessibilityProps,
+    "accessible" | "accessibilityLabel" | "accessibilityRole" | "accessibilityState"
+  > & {
     readonly children: ReactNode;
     readonly className?: string;
   };

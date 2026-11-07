@@ -1,4 +1,4 @@
-import { Pressable } from "react-native";
+import { View } from "react-native";
 import { Chip } from "../../../components/ui/Chip";
 import { Menu } from "../../../components/ui/Menu";
 import type { MenuProps } from "../../../components/ui/Menu.types";
@@ -13,27 +13,36 @@ export function ListFilterMenu(props: {
   readonly onSelect: (id: string) => void;
 }) {
   const { themeAppearance } = useAppearancePreferences();
+  const active = Boolean(props.active);
   return (
     <Menu
-      title={props.accessibilityLabel}
+      // Selection menus omit a title so the UIMenu reads like Files/Music, not an alert.
+      title=""
       actions={props.actions}
       onPressAction={({ nativeEvent }) => props.onSelect(nativeEvent.event)}
+      accessible
+      accessibilityRole="button"
+      accessibilityLabel={props.accessibilityLabel}
+      accessibilityState={{ selected: active }}
     >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={props.accessibilityLabel}
-        accessibilityState={{ selected: Boolean(props.active) }}
-        hitSlop={6}
-      >
+      {/* collapsable={false} keeps a real host view for MenuView's native anchor. */}
+      <View collapsable={false}>
         <Chip
           label={props.label}
-          selected={props.active}
-          icon={props.icon ? "line.3.horizontal.decrease" : undefined}
+          selected={active}
+          shape="capsule"
+          icon={
+            props.icon
+              ? active
+                ? "line.3.horizontal.decrease.circle.fill"
+                : "line.3.horizontal.decrease"
+              : undefined
+          }
           trailingIcon={props.icon ? undefined : "chevron.down"}
           glass
           colorScheme={themeAppearance}
         />
-      </Pressable>
+      </View>
     </Menu>
   );
 }

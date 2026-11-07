@@ -18,6 +18,8 @@ export function Chip(props: {
   readonly icon?: AppSymbolName;
   readonly trailingIcon?: AppSymbolName;
   readonly size?: "small" | "default";
+  /** Capsule matches UIButton.Configuration cornerStyle .capsule (filter/menu triggers). */
+  readonly shape?: "rounded" | "capsule";
   readonly glass?: boolean;
   readonly colorScheme?: "light" | "dark";
   readonly onPress?: () => void;
@@ -25,30 +27,41 @@ export function Chip(props: {
   readonly disabled?: boolean;
 }) {
   const small = props.size === "small";
+  const capsule = props.shape === "capsule";
   const layout = cn(
-    "flex-row items-center gap-1.5 rounded-2xl px-3",
-    small ? "py-1" : "min-h-8 py-1.5",
+    "flex-row items-center px-3",
+    capsule ? "gap-1 rounded-full" : "gap-1.5 rounded-2xl",
+    small ? "py-1" : capsule ? "min-h-8 py-1" : "min-h-8 py-1.5",
   );
-  const iconColor = props.selected ? "accent-primary-foreground" : "accent-icon-muted";
+  // Glass menu buttons use label color; selected prominent glass flips to primary-foreground.
+  const labelColor = props.selected
+    ? "text-primary-foreground"
+    : props.glass
+      ? "text-foreground"
+      : "text-foreground-muted";
+  const iconColor = props.selected
+    ? "accent-primary-foreground"
+    : props.glass
+      ? "accent-icon"
+      : "accent-icon-muted";
   const content = (
     <>
       {props.icon ? (
-        <SymbolView name={props.icon} size={15} tintColorClassName={iconColor} />
+        <SymbolView name={props.icon} size={capsule ? 14 : 15} tintColorClassName={iconColor} />
       ) : null}
       <AppText
         textRole={small ? "caption" : "footnote"}
         numberOfLines={small ? undefined : 1}
-        className={cn(
-          "shrink",
-          !small && "max-w-[180px]",
-          !small && "font-t3-medium",
-          props.selected ? "text-primary-foreground" : "text-foreground-muted",
-        )}
+        className={cn("shrink", !small && "max-w-[180px]", !small && "font-t3-medium", labelColor)}
       >
         {props.label}
       </AppText>
       {props.trailingIcon ? (
-        <SymbolView name={props.trailingIcon} size={11} tintColorClassName={iconColor} />
+        <SymbolView
+          name={props.trailingIcon}
+          size={capsule ? 9 : 11}
+          tintColorClassName={iconColor}
+        />
       ) : null}
     </>
   );
@@ -57,6 +70,7 @@ export function Chip(props: {
       <ChipGlass
         isInteractive
         colorScheme={props.colorScheme}
+        // Selected ≈ UIButton.Configuration.prominentGlass(); idle ≈ .glass().
         tintColorClassName={props.selected ? "accent-primary" : undefined}
         className={layout}
       >

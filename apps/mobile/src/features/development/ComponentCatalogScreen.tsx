@@ -141,6 +141,10 @@ export function ComponentCatalogScreen() {
                 <Chip
                   label="Selected filter"
                   selected={enabled}
+                  shape="capsule"
+                  glass
+                  colorScheme={appearance.themeAppearance}
+                  trailingIcon="chevron.down"
                   onPress={() => setEnabled(!enabled)}
                 />
                 <Chip label="Label" size="small" />
@@ -255,7 +259,15 @@ export function ComponentCatalogScreen() {
                   nativeEvent.event === "discard" ? confirm() : announceAction()
                 }
               >
-                <Chip label="Menu" trailingIcon="chevron.down" />
+                <View collapsable={false}>
+                  <Chip
+                    label="Menu"
+                    shape="capsule"
+                    glass
+                    colorScheme={appearance.themeAppearance}
+                    trailingIcon="chevron.down"
+                  />
+                </View>
               </Menu>
             </View>
             <Progress value={0.6} label="Example upload" />
