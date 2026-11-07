@@ -944,6 +944,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  getContextUsage: Effect.die("unexpected context usage read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -1070,6 +1071,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
               readMcpResource: () => Effect.die("unexpected MCP resource read"),
               callMcpTool: () => Effect.die("unexpected MCP tool call"),
               listPermissionRules: Effect.die("unexpected permission rules read"),
+              getContextUsage: Effect.die("unexpected context usage read"),
               stopTask: () => Effect.void,
               interrupt: Effect.void,
               close: Effect.void,
@@ -1383,6 +1385,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
             readMcpResource: () => Effect.die("unexpected MCP resource read"),
             callMcpTool: () => Effect.die("unexpected MCP tool call"),
             listPermissionRules: Effect.die("unexpected permission rules read"),
+            getContextUsage: Effect.die("unexpected context usage read"),
             stopTask: () => Effect.void,
             interrupt: Effect.void,
             close: Effect.void,
@@ -1574,6 +1577,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  getContextUsage: Effect.die("unexpected context usage read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -1964,6 +1968,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
                     listPermissionRules: Effect.die("unexpected permission rules read"),
+                    getContextUsage: Effect.die("unexpected context usage read"),
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(messages),
@@ -2475,6 +2480,7 @@ describe("ClaudeAdapterV2 native fork", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  getContextUsage: Effect.die("unexpected context usage read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -2817,6 +2823,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  getContextUsage: Effect.die("unexpected context usage read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -3155,6 +3162,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       "mcpServerStatus" | "readMcpResource" | "callMcpTool"
     > &
       Partial<Pick<ClaudeAdapterV2.ClaudeAgentSdkQuerySession, "listPermissionRules">>;
+    readonly getContextUsage?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["getContextUsage"];
     readonly environment?: NodeJS.ProcessEnv;
     readonly subagentLaunchToolUseId?: string;
     readonly nativeSessionId?: string;
@@ -3284,6 +3292,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  getContextUsage: Effect.die("unexpected context usage read"),
                   stopTask: options?.stopTask ?? (() => Effect.void),
                   interrupt: Effect.void,
                   close: Queue.shutdown(processMessages),
@@ -3318,6 +3327,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 callMcpTool:
                   options?.mcp?.callMcpTool ?? (() => Effect.die("unexpected MCP tool call")),
                 listPermissionRules: options?.mcp?.listPermissionRules ?? Effect.succeed([]),
+                getContextUsage:
+                  options?.getContextUsage ?? Effect.die("unexpected context usage read"),
                 stopTask: options?.stopTask ?? (() => Effect.void),
                 interrupt: options?.interrupt ?? Effect.void,
                 close: options?.close?.(sdkMessages) ?? Effect.void,
@@ -3415,6 +3426,68 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect("reads context composition from the live Claude query on demand", () =>
+    Effect.gen(function* () {
+      let getContextUsageCalls = 0;
+      const harness = yield* makeWakeHarnessWithOptions({
+        getContextUsage: Effect.sync(() => {
+          getContextUsageCalls += 1;
+          return {
+            model: "claude-test",
+            totalTokens: 31_200,
+            maxTokens: 200_000,
+            categories: [
+              { name: "System tools", tokens: 19_200, deferred: false },
+              { name: "Messages", tokens: 12_000, deferred: false },
+              { name: "Free space", tokens: 168_800, deferred: false },
+            ],
+            groups: [
+              {
+                label: "MCP tools",
+                tokens: 400,
+                items: [{ name: "preview_click", tokens: 400, detail: "t3-code" }],
+              },
+            ],
+          };
+        }),
+      });
+      assert.isDefined(harness.runtime.getContextUsage);
+      const beforeTurn = yield* Effect.exit(
+        harness.runtime.getContextUsage!({ providerThread: harness.providerThread }),
+      );
+      assert.equal(beforeTurn._tag, "Failure");
+      assert.equal(getContextUsageCalls, 0);
+
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("context-usage"),
+          text: "hello",
+          attachments: [],
+        }),
+      );
+      const usage = yield* harness.runtime.getContextUsage!({
+        providerThread: harness.providerThread,
+      });
+      assert.equal(getContextUsageCalls, 1);
+      assert.equal(usage.model, "claude-test");
+      assert.equal(usage.totalTokens, 31_200);
+      assert.equal(usage.groups[0]?.items[0]?.name, "preview_click");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
 
   it.effect.each(["release-after", "cancel-after", "release-before", "resume-pending"] as const)(
     "keeps attachment reservations across compaction: %s boundary",
@@ -10751,6 +10824,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  getContextUsage: Effect.die("unexpected context usage read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: isFirstProcess
@@ -10952,6 +11026,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
                     listPermissionRules: Effect.die("unexpected permission rules read"),
+                    getContextUsage: Effect.die("unexpected context usage read"),
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(queue),
@@ -13200,6 +13275,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),
+                getContextUsage: Effect.die("unexpected context usage read"),
                 interrupt: Effect.void,
                 close:
                   closeSignal === undefined
@@ -16140,6 +16216,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  getContextUsage: Effect.die("unexpected context usage read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(sdkMessages),
@@ -16318,6 +16395,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
                     listPermissionRules: Effect.die("unexpected permission rules read"),
+                    getContextUsage: Effect.die("unexpected context usage read"),
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),
@@ -16499,6 +16577,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  getContextUsage: Effect.die("unexpected context usage read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(sdkMessages),
@@ -16698,6 +16777,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  getContextUsage: Effect.die("unexpected context usage read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.sync(() => {
@@ -16845,6 +16925,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
                     listPermissionRules: Effect.die("unexpected permission rules read"),
+                    getContextUsage: Effect.die("unexpected context usage read"),
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),

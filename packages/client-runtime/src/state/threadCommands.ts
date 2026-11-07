@@ -16,6 +16,7 @@ import {
   createAtomCommandScheduler,
   createEnvironmentCommand,
   createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
 } from "./runtime.ts";
 import {
   type InterruptThreadTurnInput,
@@ -381,10 +382,23 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    getContextUsage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:get-context-usage",
+      tag: WS_METHODS.providerGetContextUsage,
+      scheduler,
+      concurrency,
+    }),
   };
   const optimistic = createOptimisticThreadLifecycle(snapshotAtom);
   return {
     ...commands,
+    contextUsage: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:queries:thread:context-usage",
+      tag: WS_METHODS.providerGetContextUsage,
+      // On-demand only; Insights refreshes explicitly. Never refetch after turns.
+      staleTimeMs: Number.POSITIVE_INFINITY,
+      idleTtlMs: 0,
+    }),
     snapshotAtom: optimistic.snapshotAtom,
     pendingThreadIdsAtom: optimistic.pendingThreadIdsAtom,
     settle: optimistic.wrap(commands.settle, (thread, _input, now, accepted) =>

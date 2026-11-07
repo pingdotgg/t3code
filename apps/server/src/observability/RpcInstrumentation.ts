@@ -173,6 +173,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.attachmentsCreateUploadUrl]: "workspace",
   [WS_METHODS.attachmentsDelete]: "workspace",
   [WS_METHODS.providerUploadFeedback]: "provider",
+  [WS_METHODS.providerGetContextUsage]: "provider",
   [WS_METHODS.mcpAppsCallTool]: "provider",
   [WS_METHODS.mcpAppsToolInfo]: "provider",
   [WS_METHODS.mcpAppsUpdateModelContext]: "provider",

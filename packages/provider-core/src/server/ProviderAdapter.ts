@@ -1,4 +1,4 @@
-import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
+import type { OrchestrationV2HistoricalMessage, ProviderContextUsage } from "@t3tools/contracts";
 import {
   ChatAttachment,
   CheckpointId,
@@ -696,6 +696,13 @@ export interface ProviderAdapterV2SessionRuntime {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly reason?: string;
   }) => Effect.Effect<{ readonly feedbackId: string }, ProviderAdapterV2Error>;
+  /**
+   * Read the provider's own breakdown of what fills a thread's context window.
+   * Only adapters whose runtime reports per-category usage implement this.
+   */
+  readonly getContextUsage?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+  }) => Effect.Effect<ProviderContextUsage, ProviderAdapterV2Error>;
   /** Absent means non-interactive apps with plain tool rows. */
   readonly mcpApps?: ProviderAdapterV2McpApps;
   readonly rollbackThread: (
