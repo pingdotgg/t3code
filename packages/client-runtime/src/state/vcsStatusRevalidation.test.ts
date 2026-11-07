@@ -6,15 +6,28 @@ import { createVcsStatusRevalidationAtomFamily } from "./vcsStatusRevalidation.t
 
 const environmentId = EnvironmentId.make("environment-1");
 
-function setup(options: { readonly connected: boolean }) {
-  const connectedAtom = Atom.make(options.connected);
+function setup(options: { readonly connected?: boolean; readonly wake?: boolean }) {
+  const connectedAtom = Atom.make(options.connected ?? false);
+  const wakes = new Set<() => void>();
   const run = vi.fn(async () => AsyncResult.success(null));
   const family = createVcsStatusRevalidationAtomFamily({
     refreshStatus: { label: "refresh-status", run },
-    connected: () => connectedAtom,
+    ...(options.connected === undefined ? {} : { connected: () => connectedAtom }),
+    ...(options.wake
+      ? {
+          subscribeWake: (wake: () => void) => {
+            wakes.add(wake);
+            return () => wakes.delete(wake);
+          },
+          wakeDebounceMs: 250,
+        }
+      : {}),
   });
   const registry = AtomRegistry.make();
-  return { registry, family, connectedAtom, run };
+  const wake = () => {
+    for (const listener of wakes) listener();
+  };
+  return { registry, family, connectedAtom, run, wakes, wake };
 }
 
 describe("createVcsStatusRevalidationAtomFamily", () => {
@@ -46,9 +59,35 @@ describe("createVcsStatusRevalidationAtomFamily", () => {
     unmount();
   });
 
+  it("debounces wake signals and stops listening with the last subscriber", () => {
+    vi.useFakeTimers();
+    try {
+      const { registry, family, run, wakes, wake } = setup({ wake: true });
+      const unmount = registry.mount(family({ environmentId, cwd: "/repo" }));
+      expect(run).not.toHaveBeenCalled();
+
+      wake();
+      vi.advanceTimersByTime(100);
+      wake();
+      vi.advanceTimersByTime(249);
+      expect(run).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(run).toHaveBeenCalledTimes(1);
+
+      wake();
+      unmount();
+      vi.runAllTimers();
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(wakes.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does nothing for an idle target", () => {
-    const { registry, family, run } = setup({ connected: true });
+    const { registry, family, run, wakes } = setup({ connected: true, wake: true });
     registry.mount(family(null))();
     expect(run).not.toHaveBeenCalled();
+    expect(wakes.size).toBe(0);
   });
 });

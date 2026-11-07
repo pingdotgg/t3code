@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as NodeDns from "node:dns";
 import * as NodeOS from "node:os";
 import * as NodeSea from "node:sea";
@@ -12,6 +13,22 @@ export const Architecture = Context.Reference<NodeJS.Architecture>(
   "@t3tools/shared/HostProcess/Architecture",
   {
     defaultValue: () => process.arch,
+  },
+);
+
+export const LinuxLibc = Context.Reference<"gnu" | "musl">(
+  "@t3tools/shared/HostProcess/LinuxLibc",
+  {
+    defaultValue: () => {
+      try {
+        const report = process.report?.getReport() as
+          | { header?: { glibcVersionRuntime?: unknown } }
+          | undefined;
+        return typeof report?.header?.glibcVersionRuntime === "string" ? "gnu" : "musl";
+      } catch {
+        return "musl";
+      }
+    },
   },
 );
 
@@ -73,23 +90,34 @@ export const IsExecutable = Context.Reference<boolean>("@t3tools/shared/HostProc
   defaultValue: () => NodeSea.isSea(),
 });
 
+export class HostnameLookupError extends Schema.TaggedError<HostnameLookupError>()(
+  "HostnameLookupError",
+  { hostname: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not resolve ${this.hostname}.`;
+  }
+}
+
 /** Includes hostname-resolved addresses absent from interfaces, such as Debian's 127.0.1.1 used by Firefox locks. */
 export const Addresses = Context.Reference<Effect.Effect<ReadonlySet<string>>>(
   "@t3tools/shared/HostProcess/Addresses",
   {
-    defaultValue: () =>
-      Effect.gen(function* () {
-        const interfaces = Object.values(NodeOS.networkInterfaces())
-          .flat()
-          .flatMap((entry) => (entry ? [entry.address] : []));
-        const resolved = yield* Effect.tryPromise(() =>
-          NodeDns.promises.lookup(NodeOS.hostname(), { all: true }),
-        ).pipe(
-          Effect.map((entries) => entries.map((entry) => entry.address)),
-          Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
-        );
-        return new Set([...interfaces, ...resolved]);
-      }),
+    // The enclosing operation owns the span for this inline handler.
+    defaultValue: Effect.fnUntraced(function* () {
+      const interfaces = Object.values(NodeOS.networkInterfaces())
+        .flat()
+        .flatMap((entry) => (entry ? [entry.address] : []));
+      const hostname = NodeOS.hostname();
+      const resolved = yield* Effect.tryPromise({
+        try: () => NodeDns.promises.lookup(hostname, { all: true }),
+        catch: (cause) => new HostnameLookupError({ hostname, cause }),
+      }).pipe(
+        Effect.map((entries) => entries.map((entry) => entry.address)),
+        Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+      );
+      return new Set([...interfaces, ...resolved]);
+    }),
   },
 );
 
