@@ -14,6 +14,7 @@ interface NativeSecretInputProps extends ViewProps {
   readonly cursorColor: number;
   readonly fontSize: number;
   readonly editable: boolean;
+  readonly revealed: boolean;
   readonly onChangeText: (event: NativeSyntheticEvent<{ readonly value: string }>) => void;
   readonly onSubmit: (event: NativeSyntheticEvent<{ readonly value: string }>) => void;
 }
@@ -47,6 +48,7 @@ export function SecretTextInput(props: SecretTextInputProps) {
         cursorColor={nativeColor(flattenThemeColor(theme["--color-focus"], surface))}
         fontSize={FONT_SIZE}
         editable={props.editable}
+        revealed={props.revealed}
         onChangeText={(event) => props.onChangeText(event.nativeEvent.value)}
         onSubmit={(event) => props.onSubmitEditing(event.nativeEvent.value)}
         style={{ height: LINE_HEIGHT }}

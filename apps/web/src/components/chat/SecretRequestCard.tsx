@@ -21,7 +21,7 @@ import type {
   SecretProviderId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { CheckIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
+import { CheckIcon, EyeIcon, EyeOffIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
 import { useId, useRef, useState, type FormEvent } from "react";
 
 import { isSecretsFeatureEnabled } from "../../env";
@@ -29,6 +29,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { SecretSourceSelect } from "../settings/SecretSourceInput";
 import { WorkLogRow } from "./WorkLog";
 
@@ -88,6 +89,7 @@ function PendingSecretRequestForm(props: {
   const [sourceId, setSourceId] = useState<SecretProviderId | null>(null);
   const source = sources.find((candidate) => candidate.id === sourceId) ?? null;
   const [secret, setSecret] = useState("");
+  const [revealed, setRevealed] = useState(false);
   const [reference, setReference] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -107,6 +109,7 @@ function PendingSecretRequestForm(props: {
     if (result._tag === "Success") {
       setSecret("");
       setReference("");
+      setRevealed(false);
       return;
     }
     if (!isAtomCommandInterrupted(result)) {
@@ -166,24 +169,40 @@ function PendingSecretRequestForm(props: {
         ) : null}
         <div className="min-w-0 flex-1">
           {source === null ? (
-            <Input
-              id={inputId}
-              // A CSS-masked text field still exposes its value to screen readers.
-              type="password"
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              data-1p-ignore
-              data-lpignore="true"
-              data-bwignore
-              placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
-              value={secret}
-              disabled={submitting}
-              aria-invalid={error !== null || undefined}
-              aria-describedby={describedBy}
-              onChange={(event) => setSecret(event.currentTarget.value)}
-            />
+            <InputGroup>
+              <InputGroupInput
+                id={inputId}
+                // A CSS-masked text field still exposes its value to screen readers.
+                type={revealed ? "text" : "password"}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                data-1p-ignore
+                data-lpignore="true"
+                data-bwignore
+                placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
+                value={secret}
+                disabled={submitting}
+                aria-invalid={error !== null || undefined}
+                aria-describedby={describedBy}
+                onChange={(event) => setSecret(event.currentTarget.value)}
+              />
+              <InputGroupAddon align="inline-end">
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  aria-label={revealed ? "Hide secret" : "Show secret"}
+                  aria-controls={inputId}
+                  aria-pressed={revealed}
+                  disabled={submitting}
+                  onClick={() => setRevealed((current) => !current)}
+                >
+                  {revealed ? <EyeOffIcon /> : <EyeIcon />}
+                </Button>
+              </InputGroupAddon>
+            </InputGroup>
           ) : (
             <Input
               id={inputId}

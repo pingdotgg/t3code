@@ -10,7 +10,7 @@ export function SecretTextInput(props: SecretTextInputProps) {
       value={props.value}
       onChangeText={props.onChangeText}
       editable={props.editable}
-      secureTextEntry
+      secureTextEntry={!props.revealed}
       autoCorrect={false}
       autoCapitalize="none"
       autoComplete="off"
