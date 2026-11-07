@@ -254,7 +254,7 @@ describe("localSwitchBlockReason", () => {
     const nightly = "0.1.4-nightly.20261027.3796";
 
     const windows = { connected: true, databaseMigration: 69 };
-    expect(localSwitchBlockReason(nightly, stable, [windows], 1)).toBeNull();
+    expect(localSwitchBlockReason(nightly, stable, [windows], 1, true)).toBeNull();
     // A WSL server's newer migration blocks the reinstall that would restart it.
     expect(
       localSwitchBlockReason(
@@ -262,17 +262,39 @@ describe("localSwitchBlockReason", () => {
         stable,
         [windows, { connected: true, databaseMigration: 72 }],
         2,
+        true,
       ),
     ).toContain("does not support yet");
     // A WSL backend still starting has no client entry, so its database is unchecked.
-    expect(localSwitchBlockReason(nightly, stable, [windows], 2)).toBe(
+    expect(localSwitchBlockReason(nightly, stable, [windows], 2, true)).toBe(
       "its server is not connected, so its database cannot be checked",
     );
     // A cached head from a disconnected server proves nothing.
     expect(
-      localSwitchBlockReason(nightly, stable, [{ connected: false, databaseMigration: 69 }], 1),
+      localSwitchBlockReason(
+        nightly,
+        stable,
+        [{ connected: false, databaseMigration: 69 }],
+        1,
+        true,
+      ),
     ).toBe("its server is not connected, so its database cannot be checked");
-    expect(localSwitchBlockReason("0.1.3", stable, [], 1)).toBeNull();
+    expect(localSwitchBlockReason("0.1.3", stable, [], 1, true)).toBeNull();
+  });
+
+  it("does not block an app with Local environment off, which hosts no server", () => {
+    const nightly = {
+      channel: "nightly" as const,
+      version: "0.1.8-nightly.20261029.1",
+      databaseMigration: 72,
+    };
+    const stable = "0.1.7";
+
+    expect(localSwitchBlockReason(stable, nightly, [], 0, false)).toBeNull();
+    // With Local environment on, a primary backend still starting has no entry or bootstrap yet.
+    expect(localSwitchBlockReason(stable, nightly, [], 0, true)).toBe(
+      "its server is not connected, so its database cannot be checked",
+    );
   });
 });
 
