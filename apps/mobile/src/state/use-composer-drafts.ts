@@ -1372,28 +1372,46 @@ export function appendComposerDraftText(draftKey: string, value: string): void {
   });
 }
 
-/** Restore with allowOverflow to preserve every attachment after failed sends. */
+function attachmentDedupKey(attachment: DraftComposerAttachment): string {
+  return `${attachment.mimeType}\u0000${attachment.sizeBytes}\u0000${attachment.name}`;
+}
+
+/**
+ * Restore puts back attachments after failed sends, so it skips the duplicate check and the caps.
+ * Returns how many attachments the caps rejected.
+ */
 export function appendComposerDraftAttachments(
   draftKey: string,
-  attachments: ReadonlyArray<DraftComposerAttachment>,
+  incoming: ReadonlyArray<DraftComposerAttachment>,
   options?: {
-    readonly allowOverflow?: boolean;
+    readonly restore?: boolean;
     readonly appendReference?: boolean;
     readonly insertion?: ComposerDraftInsertion;
     readonly maxAttachments?: number;
   },
 ): number {
-  if (attachments.length === 0) {
+  if (incoming.length === 0) {
     return 0;
   }
   let rejected: ReadonlyArray<DraftComposerAttachment> = [];
   let removed: ReadonlyArray<DraftComposerAttachment> = [];
+  let duplicates: ReadonlyArray<DraftComposerAttachment> = [];
   updateComposerDrafts((current) => {
     const existing = normalizeDraft(current[draftKey]);
     const retained = options?.appendReference
       ? draftWithoutInsertionSelection(draftKey, existing, options.insertion)
       : existing;
-    const remaining = options?.allowOverflow
+    const keys = new Set(retained.attachments.map(attachmentDedupKey));
+    const attachments = options?.restore
+      ? incoming
+      : incoming.filter((attachment) => {
+          const key = attachmentDedupKey(attachment);
+          if (keys.has(key)) return false;
+          keys.add(key);
+          return true;
+        });
+    duplicates = incoming.filter((attachment) => !attachments.includes(attachment));
+    const remaining = options?.restore
       ? attachments.length
       : Math.max(
           0,
@@ -1436,7 +1454,7 @@ export function appendComposerDraftAttachments(
       [draftKey]: draft,
     };
   });
-  scheduleUnusedComposerAttachmentCleanup([...rejected, ...removed]);
+  scheduleUnusedComposerAttachmentCleanup([...rejected, ...removed, ...duplicates]);
   return rejected.length;
 }
 

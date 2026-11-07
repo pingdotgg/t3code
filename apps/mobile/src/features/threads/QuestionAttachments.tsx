@@ -105,10 +105,7 @@ export function QuestionAttachments(props: {
       props.question.id,
     );
     changeQuestionAttachmentPreparation(key, 1);
-    void convertPastedImagesToAttachments({
-      uris,
-      existingCount: appAtomRegistry.get(composerDraftsAtom)[key]?.attachments.length ?? 0,
-    })
+    void convertPastedImagesToAttachments({ uris })
       .then(async (images) => {
         if (
           scope.active &&

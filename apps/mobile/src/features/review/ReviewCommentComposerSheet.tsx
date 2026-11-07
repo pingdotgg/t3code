@@ -89,10 +89,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   const handleNativePaste = useNativePaste((uris) => {
     void (async () => {
       try {
-        const images = await convertPastedImagesToAttachments({
-          uris,
-          existingCount: attachments.length,
-        });
+        const images = await convertPastedImagesToAttachments({ uris });
         if (images.length > 0) {
           setAttachments((current) => [...current, ...images]);
         }
