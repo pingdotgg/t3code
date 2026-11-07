@@ -922,7 +922,36 @@ layer("GitHubPullRequestApi.layer", (it) => {
       const activity = yield* cli.getPullRequestActivity(pullRequestInput);
 
       expect(activity.commits[0]).toMatchObject({ additions: 3, deletions: 1 });
+      expect(activity.truncated).toBe(false);
       expect(mockedExecute).toHaveBeenCalledTimes(3);
+    }),
+  );
+
+  it.effect("reports activity as truncated when comment pages remain past the page cap", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((call) => {
+        const head = call.kind === "graphql" && call.variables?.["head"] === true;
+        return Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                repository: {
+                  pullRequest: {
+                    ...(head ? { author: null, commits: { nodes: [] } } : {}),
+                    comments: { nodes: [], pageInfo: { hasNextPage: true, endCursor: "c1" } },
+                    ...(head ? { reviews: { nodes: [], pageInfo: lastPage } } : {}),
+                  },
+                },
+              },
+            }),
+          ),
+        );
+      });
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const activity = yield* cli.getPullRequestActivity(pullRequestInput);
+
+      expect(activity.truncated).toBe(true);
     }),
   );
 
