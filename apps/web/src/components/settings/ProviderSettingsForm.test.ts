@@ -52,6 +52,23 @@ describe("ProviderSettingsForm helpers", () => {
     expect(next).toEqual({ forkOwned: 1 });
   });
 
+  it("hides ignored Codex path overrides only while using the separate installation", () => {
+    const codex = providerClients.get(ProviderDriverKind.make("codex"))!;
+    const paths = ["binaryPath", "homePath", "shadowHomePath"];
+    const automatic = deriveProviderSettingsFields(codex, { isolateRuntime: false }).map(
+      (field) => field.key,
+    );
+    const isolated = deriveProviderSettingsFields(codex, { isolateRuntime: true }).map(
+      (field) => field.key,
+    );
+    for (const key of paths) {
+      expect(automatic).toContain(key);
+      expect(isolated).not.toContain(key);
+    }
+    expect(isolated).toContain("isolateRuntime");
+    expect(isolated).toContain("launchArgs");
+  });
+
   it("stores false boolean fields when true is the default", () => {
     const next = nextProviderConfigWithFieldValue(
       undefined,

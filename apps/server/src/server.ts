@@ -599,17 +599,23 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
   Effect.gen(function* () {
     const antigravity = yield* AntigravityInstallation.AntigravityInstallation;
     const codex = yield* CodexInstallation.CodexInstallation;
+    const managedCodex = yield* codex.managed;
     const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     const providers = yield* ProviderRegistry.ProviderRegistry;
+    const codexChanges = (changes: typeof codex.changes) =>
+      changes.pipe(
+        Stream.changesWith(
+          (a, b) =>
+            a.installedVersion === b.installedVersion && a.executablePath === b.executablePath,
+        ),
+        Stream.drop(1),
+      );
     yield* Stream.merge(
       antigravity.changes.pipe(
         Stream.changesWith((a, b) => a.installedVersion === b.installedVersion),
         Stream.drop(1),
       ),
-      codex.changes.pipe(
-        Stream.changesWith((a, b) => a.installedVersion === b.installedVersion),
-        Stream.drop(1),
-      ),
+      Stream.merge(codexChanges(codex.changes), codexChanges(managedCodex.changes)),
     ).pipe(
       Stream.runForEach((state) =>
         instances.listInstances.pipe(

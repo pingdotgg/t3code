@@ -28,6 +28,7 @@ import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/
 
 const ANTIGRAVITY = ProviderDriverKind.make("antigravity");
 const hasBinaryPath = Schema.is(Schema.Struct({ binaryPath: Schema.String }));
+const isolatedCodexConfig = Schema.is(Schema.Struct({ isolateRuntime: Schema.Literal(true) }));
 const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
 const decodeAntigravitySettings = Schema.decodeUnknownEffect(AntigravitySettings);
 
@@ -91,7 +92,6 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
         detail: "Managed installation is not available for this provider instance.",
       });
     }
-    const installation = isCodex ? codexInstallation : antigravityInstallation;
     const entries = yield* readEntries(instanceId, operation);
     const invalidConfig = () =>
       new ProviderSetupError({
@@ -106,14 +106,25 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
       : yield* decodeAntigravitySettings(entries[instanceId]?.config ?? {}).pipe(
           Effect.mapError(invalidConfig),
         );
-    if (isCodex && (!("setupMode" in config) || config.setupMode !== "managed")) {
+    const isolated = isCodex && isolatedCodexConfig(config);
+    const installation = isCodex
+      ? isolated
+        ? yield* codexInstallation.managed
+        : codexInstallation
+      : antigravityInstallation;
+    if (isCodex && !isolated && (!("setupMode" in config) || config.setupMode !== "managed")) {
       return yield* new ProviderSetupError({
         instanceId,
         operation,
         detail: "Choose managed setup to install Codex in T3 Code.",
       });
     }
-    if (managedOnly && config.binaryPath && (!isCodex || config.binaryPath !== "codex")) {
+    if (
+      managedOnly &&
+      !isolated &&
+      config.binaryPath &&
+      (!isCodex || config.binaryPath !== "codex")
+    ) {
       return yield* new ProviderSetupError({
         instanceId,
         operation,
@@ -203,7 +214,11 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
     const protectedPaths = yield* Effect.forEach(
       Object.values(entries),
       Effect.fnUntraced(function* (entry) {
-        if (!hasBinaryPath(entry.config) || !entry.config.binaryPath.trim()) {
+        if (
+          (entry.driver === "codex" && isolatedCodexConfig(entry.config)) ||
+          !hasBinaryPath(entry.config) ||
+          !entry.config.binaryPath.trim()
+        ) {
           return [];
         }
         const binaryPath = entry.config.binaryPath.trim();

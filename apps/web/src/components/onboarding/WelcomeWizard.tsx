@@ -917,13 +917,18 @@ function OnboardingCodexSetup({
     config: createdAccount ? { enabled: true, setupMode: "managed" } : {},
   };
   const mode = readCodexSetupMode(instance.config);
+  const isolated =
+    instance.config !== null &&
+    typeof instance.config === "object" &&
+    "isolateRuntime" in instance.config &&
+    instance.config.isolateRuntime === true;
   const existingChosen =
     mode === "existing" &&
     instance.config !== null &&
     typeof instance.config === "object" &&
     "setupMode" in instance.config &&
     instance.config.setupMode === "existing";
-  const changeMode = (setupMode: "managed" | "existing") => {
+  const updateConfig = (patch: Record<string, unknown>) => {
     void update({
       environmentId,
       input: {
@@ -938,14 +943,14 @@ function OnboardingCodexSetup({
                 ? instance.config
                 : {}),
               enabled: true,
-              setupMode,
+              ...patch,
             },
           },
         }),
       },
     });
   };
-  return existingChosen ? (
+  return existingChosen && !isolated ? (
     <AgentCard
       driver="codex"
       provider={provider}
@@ -964,7 +969,9 @@ function OnboardingCodexSetup({
       provider={provider}
       mode={mode}
       enabled={provider?.enabled ?? true}
-      onModeChange={changeMode}
+      isolated={isolated}
+      onIsolationChange={(isolateRuntime) => updateConfig({ isolateRuntime })}
+      onModeChange={(setupMode) => updateConfig({ setupMode })}
     />
   );
 }

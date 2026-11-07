@@ -5,7 +5,37 @@ import {
   settleAuthorizationPage,
   settleHandoffAuthorizationPage,
   settleProviderInstall,
+  isolatedCodexLoginCommand,
 } from "./CodexSetupSection.logic";
+
+describe("isolatedCodexLoginCommand", () => {
+  it("scopes POSIX device sign-in to the separate home and quotes shell metacharacters", () => {
+    expect(isolatedCodexLoginCommand("/opt/Codex $tools/codex", "/home/it's mine", "linux")).toBe(
+      `env CODEX_HOME='/home/it'"'"'s mine' CODEX_SQLITE_HOME='/home/it'"'"'s mine/sqlite' '/opt/Codex $tools/codex' login --device-auth`,
+    );
+  });
+
+  it("encodes a child PowerShell command for both PowerShell and Command Prompt", () => {
+    for (const [executablePath, homePath, expectedScript] of [
+      [
+        "C:\\Tools & Apps\\codex.exe",
+        "C:\\O'Brien\\home",
+        "$env:CODEX_HOME='C:\\O''Brien\\home'; $env:CODEX_SQLITE_HOME='C:\\O''Brien\\home\\sqlite'; & 'C:\\Tools & Apps\\codex.exe' login --device-auth",
+      ],
+      [
+        "C:\\工具\\🚀\\codex.exe",
+        "C:\\用户\\Chai $data (100%)!\\home",
+        "$env:CODEX_HOME='C:\\用户\\Chai $data (100%)!\\home'; $env:CODEX_SQLITE_HOME='C:\\用户\\Chai $data (100%)!\\home\\sqlite'; & 'C:\\工具\\🚀\\codex.exe' login --device-auth",
+      ],
+    ] as const) {
+      const command = isolatedCodexLoginCommand(executablePath, homePath, "windows");
+      expect(command).toMatch(/^powershell -NoProfile -EncodedCommand [A-Za-z0-9+/]+=*$/);
+      const payload = command?.split(" ").at(-1) ?? "";
+      expect(Buffer.from(payload, "base64").toString("utf16le")).toBe(expectedScript);
+    }
+    expect(isolatedCodexLoginCommand("/codex", "/home", "unknown")).toBeNull();
+  });
+});
 
 const install = (overrides: Partial<ProviderInstallState>) =>
   ({
