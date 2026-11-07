@@ -8,6 +8,7 @@ import {
   deriveLogicalProjectKeyFromSettings,
   pickableProjectGroups,
   derivePhysicalProjectKey,
+  resolveProjectIconSource,
   resolveScratchProjectScopeKey,
   sortProjectsByGroupOrder,
   type ProjectGroupingSettings,
@@ -419,5 +420,37 @@ describe("sortProjectsByGroupOrder", () => {
       [{ memberProjectRefs: [ref("shared", remote)] }, { memberProjectRefs: [ref("shared")] }],
     );
     expect(sorted.map((entry) => entry.environmentId)).toEqual([remote, environmentId]);
+  });
+});
+
+describe("resolveProjectIconSource", () => {
+  const rocket = { kind: "lucide" as const, name: "rocket", color: "blue" as const };
+  const group = (...projects: EnvironmentProject[]) =>
+    buildProjectGroups({ projects, settings: settings("repository") })[0]!;
+
+  it("shows the group's icon for a checkout without one of its own", () => {
+    const iconed = makeProject("a", "/work/a", { projectIcon: rocket });
+    const plain = makeProject("b", "/work/b", { projectIcon: null, faviconPath: null });
+    const { representative } = group(iconed, plain);
+    expect(representative).toBe(iconed);
+    expect(resolveProjectIconSource(plain, representative)).toBe(iconed);
+  });
+
+  it("keeps a checkout's own icon", () => {
+    const iconed = makeProject("a", "/work/a", { projectIcon: rocket });
+    const own = makeProject("b", "/work/b", { faviconPath: "public/logo.svg" });
+    expect(resolveProjectIconSource(own, group(iconed, own).representative)).toBe(own);
+  });
+
+  it("keeps the checkout when the group has no custom icon", () => {
+    const first = makeProject("a", "/work/a");
+    const second = makeProject("b", "/work/b");
+    expect(resolveProjectIconSource(second, group(first, second).representative)).toBe(second);
+  });
+
+  it("keeps an ungrouped project", () => {
+    const project = makeProject("a", "/work/a");
+    expect(resolveProjectIconSource(project, group(project).representative)).toBe(project);
+    expect(resolveProjectIconSource(project, undefined)).toBe(project);
   });
 });

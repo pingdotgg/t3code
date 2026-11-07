@@ -20,7 +20,10 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
 import { persistClientSettingsUpdate, useClientSettings } from "../../hooks/useSettings";
 import { readLocalApi } from "../../localApi";
-import { derivePhysicalProjectKey } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  derivePhysicalProjectKey,
+  resolveProjectIconSource,
+} from "@t3tools/client-runtime/state/project-grouping";
 import {
   PROJECT_GROUPING_MODE_LABELS,
   withProjectGroupingOverride,
@@ -30,7 +33,7 @@ import {
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useThreadShells, waitForProjectRemoval } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
-import { ProjectFavicon } from "../ProjectFavicon";
+import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -245,6 +248,7 @@ export function ProjectSettingsPanel({
     <ProjectDetail
       key={`${selected.projectKey}:${environmentId ?? "all"}:${checkoutKey ?? "all"}`}
       group={scopedGroup}
+      groupIcon={selected}
       allMembers={selected.memberProjects}
       hasOtherMembers={members.length < selected.memberProjects.length}
     />
@@ -253,10 +257,13 @@ export function ProjectSettingsPanel({
 
 function ProjectDetail({
   group,
+  groupIcon,
   allMembers,
   hasOtherMembers,
 }: {
   group: SidebarProjectSnapshot;
+  /** The unscoped group, whose icon an iconless checkout shows everywhere else. */
+  groupIcon: ProjectFaviconProject;
   /** Pin and archive belong to the whole project, even when one machine is picked. */
   allMembers: ReadonlyArray<SidebarProjectGroupMember>;
   hasOtherMembers: boolean;
@@ -281,8 +288,8 @@ function ProjectDetail({
   });
   const projectNameEditedRef = useRef(false);
 
-  const faviconPath = representative.faviconPath ?? null;
-  const projectIcon = representative.projectIcon ?? null;
+  const iconSource = resolveProjectIconSource<ProjectFaviconProject>(representative, groupIcon);
+  const shownProjectIcon = iconSource.projectIcon ?? null;
   const pickProjectFavicon =
     typeof window !== "undefined" &&
     group.memberProjects.every(
@@ -563,13 +570,13 @@ function ProjectDetail({
           <SettingsRow
             title="Project icon"
             description={
-              projectIcon?.kind === "lucide"
-                ? `${projectIcon.name} · ${projectIcon.color}`
-                : projectIcon?.kind === "monogram"
-                  ? `${projectIcon.text} · ${projectIcon.color}`
-                  : projectIcon?.kind === "emoji"
-                    ? projectIcon.emoji
-                    : (faviconPath ?? "Automatic")
+              shownProjectIcon?.kind === "lucide"
+                ? `${shownProjectIcon.name} · ${shownProjectIcon.color}`
+                : shownProjectIcon?.kind === "monogram"
+                  ? `${shownProjectIcon.text} · ${shownProjectIcon.color}`
+                  : shownProjectIcon?.kind === "emoji"
+                    ? shownProjectIcon.emoji
+                    : (iconSource.faviconPath ?? "Automatic")
             }
             resetAction={
               group.memberProjects.some((member) => !hasDefaultProjectIcon(member)) ? (
@@ -582,7 +589,7 @@ function ProjectDetail({
             }
             control={
               <div className="flex items-center gap-2">
-                <ProjectFavicon project={representative} className="size-6" />
+                <ProjectFavicon project={iconSource} className="size-6" />
                 <Button
                   size="sm"
                   variant="outline"
@@ -706,7 +713,7 @@ function ProjectDetail({
       {iconPickerOpen && canEditGroup ? (
         <Suspense fallback={null}>
           <ProjectIconPickerDialog
-            current={projectIcon}
+            current={shownProjectIcon}
             projectName={representative.title}
             open
             onOpenChange={setIconPickerOpen}

@@ -6,6 +6,7 @@ import {
   pickableProjectGroups,
 } from "@t3tools/client-runtime/state/project-grouping";
 import {
+  buildProjectIconSourceByKey,
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
   resolveSidebarProjectScopeKey,
@@ -300,5 +301,36 @@ describe("environment grouping", () => {
       preferredProjectRef: { environmentId: current.environmentId, projectId: current.id },
     });
     expect(entries.map((entry) => entry.group.displayName)).toEqual(["pinned", "current", "other"]);
+  });
+
+  it("maps an iconless checkout to its group's icon and keeps a checkout's own", () => {
+    const iconed = makeProject({
+      repositoryIdentity,
+      projectIcon: { kind: "lucide", name: "rocket", color: "blue" },
+    });
+    const iconless = makeProject({
+      environmentId: remoteEnvironmentId,
+      workspaceRoot: "/remote/shared-repo",
+      repositoryIdentity,
+    });
+    const own = makeProject({
+      id: ProjectId.make("project-own"),
+      workspaceRoot: "/tmp/shared-repo-own",
+      repositoryIdentity,
+      projectIcon: { kind: "emoji", emoji: "🦊" },
+    });
+    const projects = [iconed, iconless, own];
+    const groups = buildSidebarProjectSnapshots({
+      projects,
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ environmentId: iconed.environmentId, id: iconed.id });
+
+    const iconByKey = buildProjectIconSourceByKey(projects, groups);
+    expect(iconByKey.get(`${iconless.environmentId}:${iconless.id}`)).toBe(groups[0]);
+    expect(iconByKey.get(`${own.environmentId}:${own.id}`)).toBe(own);
   });
 });

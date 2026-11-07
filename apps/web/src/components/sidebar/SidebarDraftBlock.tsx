@@ -7,7 +7,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useShallow } from "zustand/react/shallow";
 import { cn } from "~/lib/utils";
 import { resolveSidebarRowAccessibility } from "../Sidebar.logic";
@@ -140,7 +139,7 @@ interface SidebarDraftRowData {
 }
 
 export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
-  projectByKey: ReadonlyMap<string, EnvironmentProject>;
+  projectIconByKey: ReadonlyMap<string, ProjectFaviconProject>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
   scopedProjectKeys: ReadonlySet<string> | null;
   routeDraftId: string | null;
@@ -213,7 +212,7 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
             key={draftId}
             draftId={draftId}
             composer={composer}
-            project={props.projectByKey.get(projectKey) ?? null}
+            project={props.projectIconByKey.get(projectKey) ?? null}
             projectDisplayName={props.projectDisplayNameByKey.get(projectKey) ?? null}
             isActive={draftId === props.routeDraftId}
             onNavigate={props.onNavigateToDraft}

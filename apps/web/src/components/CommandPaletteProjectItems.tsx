@@ -1,3 +1,4 @@
+import { resolveProjectIconSource } from "@t3tools/client-runtime/state/project-grouping";
 import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
 
 import type { SidebarProjectSnapshot } from "../sidebarProjectGrouping";
@@ -33,8 +34,16 @@ interface ProjectItemsInput {
   readonly pin?: (project: CommandPaletteProject) => CommandPaletteItemPin | null;
 }
 
-function projectFaviconIcon(project: Project) {
-  return <ProjectFavicon project={project} className={ITEM_ICON_CLASS} />;
+function projectFaviconIcon(input: ProjectItemsInput) {
+  return (project: CommandPaletteProject) => (
+    <ProjectFavicon
+      project={resolveProjectIconSource<Project>(
+        project,
+        input.projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`),
+      )}
+      className={ITEM_ICON_CLASS}
+    />
+  );
 }
 
 /** Projects as root search results; a grouped project matches on every member. */
@@ -66,7 +75,7 @@ export function buildProjectSearchItems(input: ProjectItemsInput) {
         />
       );
     },
-    icon: projectFaviconIcon,
+    icon: projectFaviconIcon(input),
     runProject: input.runProject,
     ...(input.pin ? { pin: input.pin } : {}),
   });
@@ -91,7 +100,7 @@ export function buildNewThreadInProjectItems(input: ProjectItemsInput) {
         workspaceRoot={project.workspaceRoot}
       />
     ),
-    icon: projectFaviconIcon,
+    icon: projectFaviconIcon(input),
     runProject: input.runProject,
     ...(input.pin ? { pin: input.pin } : {}),
   });

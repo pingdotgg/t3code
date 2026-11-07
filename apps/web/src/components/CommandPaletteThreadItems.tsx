@@ -35,6 +35,7 @@ import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { formatRelativeTimeLabel } from "../timestampFormat";
+import type { Project } from "../types";
 import { buildThreadActionItems, ITEM_ICON_CLASS } from "./CommandPalette.logic";
 import { useEnvironmentLookups, useProjectLookups } from "./CommandPaletteLookups";
 import { ThreadCommandSubtitle } from "./ThreadCommandSubtitle";
@@ -96,8 +97,9 @@ function useConnectedThreadSearch(query: string) {
 export function useCommandPaletteThreadItems(input: {
   readonly activeThread: { readonly environmentId: EnvironmentId; readonly id: ThreadId } | null;
   readonly threadSearchQuery: string;
+  readonly projectIconByKey: ReadonlyMap<string, Project>;
 }) {
-  const { activeThread, threadSearchQuery } = input;
+  const { activeThread, threadSearchQuery, projectIconByKey } = input;
   const navigate = useNavigate();
   const threads = useVisibleThreadShells();
   const { projectEnvironmentLocationById } = useEnvironmentLookups();
@@ -139,7 +141,7 @@ export function useCommandPaletteThreadItems(input: {
         null;
       return (
         <ThreadCommandSubtitle
-          project={projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null}
+          project={projectIconByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null}
           projectTitle={projectTitle ?? null}
           environmentLabel={
             projectEnvironmentLocationById.get(thread.environmentId)?.label ?? "Remote"
