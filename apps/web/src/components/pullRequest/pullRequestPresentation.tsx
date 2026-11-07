@@ -507,20 +507,6 @@ export function PullRequestDiffStat({
   );
 }
 
-export function PullRequestMetaLine({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <span className={cn("flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5", className)}>
-      {children}
-    </span>
-  );
-}
-
 export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {
   if (checks.length === 0) return "No checks reported";
   const actionRequired = checks.filter((check) => check.status === "action-required");
