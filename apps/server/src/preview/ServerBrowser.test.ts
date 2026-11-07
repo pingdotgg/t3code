@@ -654,47 +654,92 @@ it.effect("a desktop page that loaded before the server attached reports its loa
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("Stop settles an initial navigation before its request event", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { browser } = yield* ready;
-      const manager = yield* Manager.PreviewManager;
-      const events = yield* manager.subscribeEvents;
-      const started = Promise.withResolvers<void>();
-      const committed = Promise.withResolvers<void>();
-      initialNavigation = () => {
-        started.resolve();
-        return committed.promise;
-      };
-      yield* Effect.addFinalizer(() => Effect.sync(() => committed.resolve()));
-      const { tabId } = yield* manager.open({
-        threadId: scope.thread.threadId,
-        runtime: "server",
-        url: "https://example.com/pending",
-      });
-      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
-      yield* Effect.promise(() => started.promise);
-      const cdp = contexts.at(-1)!.sessions.at(-1)!;
-      const send = cdp.send.getMockImplementation()!;
-      cdp.send.mockImplementation(async (operation, input) => {
-        if (operation === "Page.stopLoading") committed.reject(new Error("net::ERR_ABORTED"));
-        return send(operation, input);
-      });
-      yield* viewer.input({ type: "stopLoading" });
-      let settled = yield* PubSub.take(events);
-      while (
-        settled.type !== "navigated" ||
-        settled.tabId !== tabId ||
-        settled.snapshot.navStatus._tag !== "Idle"
-      ) {
-        settled = yield* PubSub.take(events);
-      }
-      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
-      expect(sessions.find((session) => session.tabId === tabId)?.navStatus).toEqual({
-        _tag: "Idle",
-      });
-    }),
-  ).pipe(Effect.provide(layer)),
+it.live.each(["none", "during", "after", "after-fragment", "corrected", "same-url"])(
+  "Stop settles an initial navigation with its request event $0",
+  (requestTiming) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { browser, broker } = yield* ready;
+        const manager = yield* Manager.PreviewManager;
+        const events = yield* manager.subscribeEvents;
+        const started = Promise.withResolvers<void>();
+        const committed = Promise.withResolvers<void>();
+        initialNavigation = () => {
+          started.resolve();
+          return committed.promise;
+        };
+        yield* Effect.addFinalizer(() => Effect.sync(() => committed.resolve()));
+        const { tabId } = yield* manager.open({
+          threadId: scope.thread.threadId,
+          runtime: "server",
+          url:
+            requestTiming === "after-fragment"
+              ? "https://example.com/pending#section"
+              : "https://example.com/pending",
+        });
+        const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+        yield* Effect.promise(() => started.promise);
+        const page = contexts.at(-1)!.page;
+        const request = {
+          url: () => "https://example.com/pending",
+          method: () => "GET",
+          isNavigationRequest: () => true,
+          frame: () => page,
+          failure: () => ({ errorText: "net::ERR_ABORTED" }),
+        };
+        const cdp = contexts.at(-1)!.sessions.at(-1)!;
+        const send = cdp.send.getMockImplementation()!;
+        cdp.send.mockImplementation(async (operation, input) => {
+          if (operation === "Page.stopLoading") {
+            committed.reject(new Error("net::ERR_ABORTED"));
+            if (requestTiming === "during") page.emit("request", request);
+          }
+          return send(operation, input);
+        });
+        yield* viewer.input({ type: "stopLoading" });
+        const stopped = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        });
+        expect(stopped.loading).toBe(false);
+        let settled = yield* PubSub.take(events);
+        while (
+          settled.type !== "navigated" ||
+          settled.tabId !== tabId ||
+          settled.snapshot.navStatus._tag !== "Idle"
+        ) {
+          settled = yield* PubSub.take(events);
+        }
+        const corrected = requestTiming === "corrected" || requestTiming === "same-url";
+        using timeout = vi.spyOn(globalThis, "setTimeout");
+        if (corrected) {
+          const url = requestTiming === "same-url" ? request.url() : "https://example.com/fixed";
+          page.goto.mockImplementationOnce(async () => {
+            page.emit("request", { ...request, url: () => url });
+          });
+          yield* viewer.input({ type: "navigate", url });
+        } else if (requestTiming !== "none") {
+          if (requestTiming.startsWith("after")) page.emit("request", request);
+          page.emit("requestfailed", request);
+        }
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        });
+        expect(status.loading).toBe(corrected);
+        expect(timeout).not.toHaveBeenCalledWith(expect.any(Function), 5_000);
+        if (!corrected) {
+          const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+          expect(sessions.find((session) => session.tabId === tabId)?.navStatus).toEqual({
+            _tag: "Idle",
+          });
+        }
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.live.each([
@@ -780,7 +825,9 @@ it.live.each([
       if (abortEvent === "none" && !blank) committed.resolve();
       yield* viewer.input({ type: "stopLoading" });
       expect(cancelled).toBe(true);
+      using timeout = vi.spyOn(globalThis, "setTimeout");
       if (abortEvent === "after") page.emit("requestfailed", request);
+      expect(timeout).not.toHaveBeenCalledWith(expect.any(Function), 5_000);
       const status = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         tabId,
