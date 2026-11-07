@@ -191,6 +191,66 @@ export async function installLocalUpdate(
   }
 }
 
+/** Confirms and runs update-everything for this app's pending update and every machine behind it. */
+export function useDesktopUpdateEverything(state: DesktopUpdateState | null) {
+  const [isConfirming, setIsConfirming] = useState(false);
+  const [isPending, setIsPending] = useState(false);
+  const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
+  const localUpdateVersion =
+    state && action !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
+  const everything = useUpdateEverything(localUpdateVersion);
+
+  const runEverything = async () => {
+    const bridge = window.desktopBridge;
+    setIsConfirming(false);
+    setIsPending(true);
+    const result = await settlePromise(() =>
+      everything.run({
+        ...(bridge && action === "download"
+          ? {
+              downloadLocal: (reportError) =>
+                downloadLocalUpdate(bridge, { notifyDownloaded: false, reportError }),
+            }
+          : {}),
+        ...(bridge && action !== "none"
+          ? { installLocal: (reportError) => installLocalUpdate(bridge, reportError) }
+          : {}),
+      }),
+    );
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not update everything",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        }),
+      );
+    }
+    setIsPending(false);
+  };
+
+  return {
+    action,
+    localUpdateVersion,
+    everything,
+    runsEverything: everything.hasUpdates && state?.status !== "downloading",
+    isPending,
+    confirm: () => setIsConfirming(true),
+    dialog: (
+      <UpdateEverythingDialog
+        open={isConfirming}
+        onOpenChange={setIsConfirming}
+        version={everything.version}
+        providerCount={everything.providerCount}
+        rows={everything.rows}
+        restarts={everything.restarts}
+        onConfirm={() => void runEverything()}
+      />
+    ),
+  };
+}
+
 export function SidebarUpdatePill() {
   return <SidebarUpdateControl />;
 }
@@ -200,7 +260,6 @@ function SidebarUpdateControl() {
   // The desktop updates this machine, whose policy the primary environment reports.
   const updatesDenial = managedUpdatesDenial(usePrimaryManagedPolicy());
   const [isActionPending, setIsActionPending] = useState(false);
-  const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
   const suppressReleaseNotesFocusOpen = useRef(false);
@@ -225,12 +284,16 @@ function SidebarUpdateControl() {
     }
   }
 
-  const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
   const isDownloading = state?.status === "downloading";
-  const localUpdateVersion =
-    state && action !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
-  const everything = useUpdateEverything(localUpdateVersion);
-  const runsEverything = everything.hasUpdates && !isDownloading;
+  const {
+    action,
+    localUpdateVersion,
+    everything,
+    runsEverything,
+    isPending: isEverythingPending,
+    confirm: confirmEverything,
+    dialog: confirmDialog,
+  } = useDesktopUpdateEverything(state);
   const run = useUpdateEverythingRun();
   const isRunningEverything = run !== null;
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
@@ -263,7 +326,8 @@ function SidebarUpdateControl() {
       : showUpdateDetails
         ? isDesktopUpdateButtonDisabled(state)
         : !canCheckForUpdate(state);
-  const isInteractionDisabled = disabled || isActionPending || isRunningEverything;
+  const isInteractionDisabled =
+    disabled || isActionPending || isEverythingPending || isRunningEverything;
   const showReleaseNotesPopover =
     !isRunningEverything && shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state);
 
@@ -282,7 +346,7 @@ function SidebarUpdateControl() {
     if (isInteractionDisabled) return;
 
     if (runsEverything) {
-      setIsConfirmingEverything(true);
+      confirmEverything();
       return;
     }
 
@@ -352,36 +416,6 @@ function SidebarUpdateControl() {
       .finally(() => setIsActionPending(false));
   };
 
-  const runEverything = async () => {
-    const bridge = window.desktopBridge;
-    setIsConfirmingEverything(false);
-    setIsActionPending(true);
-    const result = await settlePromise(() =>
-      everything.run({
-        ...(bridge && action === "download"
-          ? {
-              downloadLocal: (reportError) =>
-                downloadLocalUpdate(bridge, { notifyDownloaded: false, reportError }),
-            }
-          : {}),
-        ...(bridge && action !== "none"
-          ? { installLocal: (reportError) => installLocalUpdate(bridge, reportError) }
-          : {}),
-      }),
-    );
-    if (result._tag === "Failure") {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not update everything",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
-        }),
-      );
-    }
-    setIsActionPending(false);
-  };
-
   const handleCheckAnimationIteration = () => {
     setIsCheckAnimationLatched(
       shouldContinueDesktopUpdateCheckAnimation({
@@ -402,18 +436,6 @@ function SidebarUpdateControl() {
       status={iconStatus}
     />
   );
-  const confirmDialog = (
-    <UpdateEverythingDialog
-      open={isConfirmingEverything}
-      onOpenChange={setIsConfirmingEverything}
-      version={everything.version}
-      providerCount={everything.providerCount}
-      rows={everything.rows}
-      restarts={everything.restarts}
-      onConfirm={() => void runEverything()}
-    />
-  );
-
   if (run !== null) {
     const local: UpdateRunLocalState =
       run.localVersion === null
