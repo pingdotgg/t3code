@@ -171,7 +171,11 @@ describe("XAiAcpExtension", () => {
     });
   });
 
-  it("hydrates subagent completion from get_command_or_subagent_output", () => {
+  it.each([
+    "SUBAGENT_MARKER: 35 entries",
+    "An earlier command reported Status: failed before the fix succeeded.",
+    "An earlier command reported Exit Code: 1 before the fix succeeded.",
+  ])("hydrates subagent completion from get_command_or_subagent_output: %s", (output) => {
     expect(
       extractXAiAcpSubagentUpdate({
         toolCallId: "call-get-1",
@@ -190,7 +194,7 @@ describe("XAiAcpExtension", () => {
               "Exit Code: 0",
               "",
               "=== Output ===",
-              "SUBAGENT_MARKER: 35 entries",
+              output,
             ].join("\n"),
           },
         },
@@ -202,7 +206,7 @@ describe("XAiAcpExtension", () => {
       model: null,
       status: "completed",
       childSessionId: "019f44a6-4820-7402-925d-bc862ee711dd",
-      result: "SUBAGENT_MARKER: 35 entries",
+      result: output,
       suppressNormalTool: true,
     });
   });

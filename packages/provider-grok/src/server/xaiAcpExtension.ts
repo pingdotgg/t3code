@@ -775,13 +775,14 @@ function statusFromGetOutputTool(
     return result.exit_code === 0 ? "completed" : "failed";
   }
   if (output !== undefined) {
-    if (/Status:\s*failed/i.test(output) || /Exit Code:\s*-?(?!0\b)\d+/i.test(output)) {
+    const header = output.split(/=== Output ===/i, 1)[0] ?? output;
+    if (/Status:\s*failed/i.test(header) || /Exit Code:\s*-?(?!0\b)\d+/i.test(header)) {
       return "failed";
     }
-    if (/Status:\s*completed/i.test(output) || /Status:\s*success/i.test(output)) {
+    if (/Status:\s*completed/i.test(header) || /Status:\s*success/i.test(header)) {
       return "completed";
     }
-    if (/Status:\s*running/i.test(output) || /Status:\s*pending/i.test(output)) {
+    if (/Status:\s*running/i.test(header) || /Status:\s*pending/i.test(header)) {
       return "running";
     }
   }
