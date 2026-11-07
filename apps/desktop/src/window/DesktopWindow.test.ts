@@ -667,6 +667,50 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("zooms in from macOS command-plus before renderer shortcuts consume it", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const beforeInput = fakeWindow.webContentsListeners.get("before-input-event");
+        if (!beforeInput)
+          return yield* Effect.die("before-input-event listener was not registered");
+        const preventDefault = vi.fn();
+        const input = {
+          type: "keyDown",
+          key: "+",
+          code: "BracketRight",
+          meta: true,
+          control: false,
+          alt: false,
+          shift: false,
+          isAutoRepeat: false,
+        };
+        beforeInput({ preventDefault }, input);
+        assert.equal(fakeWindow.window.webContents.getZoomLevel(), 0.5);
+        assert.equal(preventDefault.mock.calls.length, 1);
+
+        beforeInput({ preventDefault }, { ...input, shift: true, code: "Equal" });
+        assert.equal(fakeWindow.window.webContents.getZoomLevel(), 1);
+        for (const overrides of [
+          { meta: false },
+          { alt: true },
+          { control: true },
+          { type: "keyUp" },
+        ]) {
+          beforeInput({ preventDefault }, { ...input, ...overrides });
+        }
+        assert.equal(fakeWindow.window.webContents.getZoomLevel(), 1);
+        assert.equal(preventDefault.mock.calls.length, 2);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   // Chromium hands the main window's zoom level down to embedded preview
   // guests, so every app zoom has to put the preview browser back at its own
   // zoom or zooming the UI drags the previewed page with it.
