@@ -1272,14 +1272,11 @@ export function sessionUpdateCountsAsLoadReplayActivity(
     case "plan":
     case "plan_update":
     case "plan_removed":
-    case "available_commands_update":
-    case "current_mode_update":
-    case "config_option_update":
-    case "session_info_update":
-    case "usage_update":
     case "compaction_update":
     case "compaction_summary_chunk":
       return true;
+    // Copilot pushes session metadata, then loads for seconds before replaying
+    // untagged history, so metadata must not arm the replay-idle fallback.
     default:
       return false;
   }

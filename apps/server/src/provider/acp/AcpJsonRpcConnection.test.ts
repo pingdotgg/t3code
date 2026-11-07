@@ -1153,6 +1153,52 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  // Live clock: the agent's quiet load phase is subprocess wall time racing the idle gap.
+  it.live("keeps untagged history replayed after a quiet session/load out of the next prompt", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      yield* runtime.prompt({
+        prompt: [{ type: "text", text: "hi" }],
+      });
+      const notes = Array.from(
+        yield* Stream.runCollect(
+          runtime
+            .getEvents()
+            .pipe(
+              Stream.takeUntil(
+                (note) => note._tag === "ContentDelta" && note.text === "hello from mock",
+              ),
+            ),
+        ),
+      );
+      expect(notes.flatMap((note) => (note._tag === "ContentDelta" ? [note.text] : []))).toEqual([
+        "hello from mock",
+      ]);
+      expect(notes.map((note) => note._tag)).not.toContain("ToolCallUpdated");
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_EMIT_SLOW_UNTAGGED_LOAD_REPLAY: "1",
+            },
+          },
+          cwd: process.cwd(),
+          resumeSessionId: "mock-session-1",
+          sessionLoadReplayIdleGap: "200 millis",
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("rejects invalid config option values before sending session/set_config_option", () => {
     const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "acp-runtime-"));
     const requestLogPath = NodePath.join(tempDir, "requests.ndjson");

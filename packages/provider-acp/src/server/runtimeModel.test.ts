@@ -91,6 +91,20 @@ describe("AcpRuntimeModel", () => {
     ).toBe(true);
   });
 
+  it("does not count untagged session metadata as load replay activity", () => {
+    const metadata = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [{ name: "compact", description: "Compact history" }],
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+    expect(sessionUpdateCountsAsLoadReplayActivity(metadata)).toBe(false);
+    expect(
+      sessionUpdateCountsAsLoadReplayActivity({ ...metadata, _meta: { isReplay: true } }),
+    ).toBe(true);
+  });
+
   it("ignores load-replay activity from other sessions while a load gate is active", () => {
     expect(
       sessionUpdateCountsAsLoadReplayActivity(
