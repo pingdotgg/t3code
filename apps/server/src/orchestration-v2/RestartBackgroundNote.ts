@@ -197,11 +197,11 @@ export function delegatedTaskResultRun(
   const awaited = taskRuns.filter(
     (run) => !cancelledBeforeStart(run) && !(run.status === "queued" && run.queueHeld === true),
   );
-  // A reordered queue can finish a newer run first; older unfinished work still holds the result.
-  const unfinished = awaited.find((run) =>
-    ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
+  // Executing work reports the task's state; a reordered queue can finish a newer run before an older one.
+  const executing = awaited.find((run) =>
+    ["preparing", "starting", "running", "waiting"].includes(run.status),
   );
-  return unfinished ?? awaited[0] ?? taskRuns[0];
+  return executing ?? awaited.find((run) => run.status === "queued") ?? awaited[0] ?? taskRuns[0];
 }
 
 /** The provider never accepted this continuation's prompt, so starting it again repeats nothing. */

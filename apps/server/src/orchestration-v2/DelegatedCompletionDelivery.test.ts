@@ -2360,6 +2360,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           runId: later.id,
           beforeRunId: followup.selfQueuedRun.id,
         });
+        assert.equal((yield* followup.readFollowup).status, "running");
         yield* followup.finishRun("handoff", followup.followupRun, "HANDOFF-C");
         yield* followup.finishRun("later", later, "PART-ONE");
         const waiting = yield* followup.readFollowup;
