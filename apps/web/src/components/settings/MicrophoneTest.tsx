@@ -3,7 +3,7 @@ import { MicIcon, PauseIcon, PlayIcon, RotateCcwIcon, SquareIcon, XIcon } from "
 import { useEffect, useRef, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { openMicrophone } from "../../speech/browserPcmCapture";
+import { requestMicrophone } from "../../speech/requestMicrophone";
 import workletUrl from "../../speech/pcmWorklet.ts?worker&url";
 import { VoiceWaveform } from "../chat/VoiceInputPill";
 import { cn } from "../../lib/utils";
@@ -92,7 +92,7 @@ export function MicrophoneTest({
     const current: Capture = {};
     capture.current = current;
     try {
-      const stream = await openMicrophone(microphoneId);
+      const stream = await requestMicrophone(microphoneId);
       if (capture.current !== current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
