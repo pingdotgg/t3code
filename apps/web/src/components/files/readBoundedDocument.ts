@@ -5,8 +5,10 @@ export async function readBoundedDocument(
   cache: RequestCache = "default",
 ) {
   const response = await fetch(src, { signal, cache });
-  if (!response.ok || Number(response.headers.get("content-length")) > limit)
+  if (!response.ok || Number(response.headers.get("content-length")) > limit) {
+    void response.body?.cancel().catch(() => undefined);
     throw new Error("This file is unavailable or too large to preview.");
+  }
   const reader = response.body?.getReader();
   if (!reader) throw new Error("This file is unavailable.");
   const chunks: Uint8Array<ArrayBuffer>[] = [];
