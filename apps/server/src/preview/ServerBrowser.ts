@@ -630,7 +630,7 @@ const make = Effect.gen(function* () {
             liveTabs: [...tabs.values()].map((tab) => ({
               threadId: tab.threadId,
               tabId: tab.tabId,
-              visible: isVisible(tab),
+              visible: tab.viewers.size > 0,
             })),
           }),
         ),
