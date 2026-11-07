@@ -1,6 +1,7 @@
 import type { OrchestrationV2ThreadShell, ScopedThreadRef } from "@t3tools/contracts";
 
 import type { ToolCallDiffTarget } from "../diffPanelStore";
+import type { ChatShellCommandRunner } from "../components/chat/chatShellRun";
 import { useRightPanelStore } from "../rightPanelStore";
 
 /** Whether an event started in the side chat pane (`data-side-chat-pane`), which the main chat ignores. */
@@ -15,7 +16,7 @@ export function isInSideChatPane(target: EventTarget | null): boolean {
  */
 export interface SideChatParentPanel {
   readonly openToolDiff: (target: ToolCallDiffTarget) => void;
-  readonly runShellCommand: (command: string) => void;
+  readonly runShellCommand: ChatShellCommandRunner;
 }
 
 /** Opens `thread` in its tab when it is a side chat of `parentRef`; false for any other thread. */

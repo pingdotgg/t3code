@@ -189,7 +189,7 @@ import { shortcutLabelForCommand } from "../keybindings";
 import { cn } from "~/lib/utils";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
-import { toastManager } from "./ui/toast";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
 import { isInSideChatPane, type SideChatParentPanel } from "~/lib/sideChatPane";
@@ -281,6 +281,9 @@ import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { useSideChat } from "./chat/useSideChat";
+import { ChatChaptersMenu } from "./chat/ChatChaptersMenu";
+import { chatShellRunResultMessage, type ChatShellCommandRunner } from "./chat/chatShellRun";
+import { watchChatShellRun } from "./chat/chatShellRunStore";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -1865,17 +1868,23 @@ export default function ChatView(props: ChatViewProps) {
     scheduleComposerFocus();
   };
   const insertArtifactTemplateStable = useStableCallback(insertArtifactTemplate);
-  const sendAppMessage = async (text: string) => {
-    if (!isServerThread || activeThreadId === null) {
-      throw new Error("Messages from apps need a started thread.");
-    }
+  // The target is captured by the caller, so a delayed send never reads another thread's modes.
+  const sendThreadMessage = async (
+    target: {
+      environmentId: EnvironmentId;
+      threadId: ThreadId;
+      runtimeMode: RuntimeMode;
+      interactionMode: ProviderInteractionMode;
+    },
+    text: string,
+  ) => {
     const result = await startThreadTurn({
-      environmentId,
+      environmentId: target.environmentId,
       input: {
-        threadId: activeThreadId,
+        threadId: target.threadId,
         message: { messageId: newMessageId(), role: "user", text, attachments: [] },
-        runtimeMode,
-        interactionMode,
+        runtimeMode: target.runtimeMode,
+        interactionMode: target.interactionMode,
         dispatchMode: "queue",
       },
     });
@@ -1883,6 +1892,16 @@ export default function ChatView(props: ChatViewProps) {
       const error = squashAtomCommandFailure(result);
       throw error instanceof Error ? error : new Error("Could not send the app's message.");
     }
+  };
+  const sendThreadMessageStable = useStableCallback(sendThreadMessage);
+  const sendAppMessage = async (text: string) => {
+    if (!isServerThread || activeThreadId === null) {
+      throw new Error("Messages from apps need a started thread.");
+    }
+    await sendThreadMessageStable(
+      { environmentId, threadId: activeThreadId, runtimeMode, interactionMode },
+      text,
+    );
   };
   const sendAppMessageStable = useStableCallback(sendAppMessage);
   const queuedRunsControlRef = useRef<QueuedRunsControlHandle>(null);
@@ -2799,10 +2818,42 @@ export default function ChatView(props: ChatViewProps) {
     },
   });
   // A maximized panel covers the terminal drawer the command runs in.
-  const runSideChatShellCommandStable = useStableCallback((command: string) => {
+  const runSideChatShellCommand: ChatShellCommandRunner = (command, onStarted, terminalId) => {
     if (activeThreadRef) useRightPanelStore.getState().setMaximized(activeThreadRef, false);
-    runShellCommandStable(command);
-  });
+    runShellCommandStable(command, onStarted, terminalId);
+  };
+  const runSideChatShellCommandStable = useStableCallback(runSideChatShellCommand);
+  const runCodeBlockCommand: ChatShellCommandRunner = (command, onStarted, terminalId) => {
+    // Captured now: the output goes to the thread and modes that started the command.
+    const target =
+      activeThreadId === null
+        ? null
+        : { environmentId, threadId: activeThreadId, runtimeMode, interactionMode };
+    const runInTerminal = parentPanel?.runShellCommand ?? runShellCommandStable;
+    runInTerminal(
+      command,
+      (run) => {
+        onStarted(run);
+        if (target === null) return;
+        watchChatShellRun(run, (output) => {
+          void sendThreadMessage(target, chatShellRunResultMessage(command, output)).catch(
+            (cause) => {
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Couldn't send the output to the thread",
+                  description:
+                    cause instanceof Error ? cause.message : "An unexpected error occurred.",
+                }),
+              );
+            },
+          );
+        });
+      },
+      terminalId,
+    );
+  };
+  const runCodeBlockCommandStable = useStableCallback(runCodeBlockCommand);
   // Main-thread surfaces show this reason; `/side` sent anyway gets it as a toast.
   const sideChatDisabledReason =
     activeThread?.lineage.sideChat === true
@@ -3373,6 +3424,11 @@ export default function ChatView(props: ChatViewProps) {
                 ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
                 : {})}
               {...(threadFindEnabled ? { onFindInThread: openThreadFindStable } : {})}
+              chapters={
+                isServerThread && activeThreadRef ? (
+                  <ChatChaptersMenu threadRef={activeThreadRef} />
+                ) : null
+              }
             />
           </header>
         )}
@@ -3436,9 +3492,7 @@ export default function ChatView(props: ChatViewProps) {
                   citationRequest={citationRequest}
                   citationHistory={citationHistory}
                   onCiteAssistantText={citeAssistantTextStable}
-                  {...(activeProject
-                    ? { onRunShellCommand: parentPanel?.runShellCommand ?? runShellCommandStable }
-                    : {})}
+                  {...(activeProject ? { onRunShellCommand: runCodeBlockCommandStable } : {})}
                   isWorking={isWorking}
                   runlessWorkActive={runlessWorkStartedAt !== null}
                   isCompacting={isCompacting}

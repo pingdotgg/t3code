@@ -3,6 +3,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import { AudioPreviewUnmountContext } from "../files/AudioPreview";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
+import { useChatChapterStore } from "~/chatChapterStore";
 import { MarkdownFindContext } from "./markdownFindContext";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock } from "./WorkLog";
@@ -133,6 +134,7 @@ import {
   type TimelineListOpening,
   type TimelineViewport,
 } from "./timelineViewport";
+import type { ChatShellCommandRunner } from "./chatShellRun";
 import { useThreadFindPositionReader } from "./useThreadFindPositionReader";
 import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
 import { useStableHandoffRuns, useIncrementalTimelineRows, useStableRows } from "./useTimelineRows";
@@ -282,7 +284,7 @@ interface MessagesTimelineProps {
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   onSendAppMessage?: (text: string) => Promise<void>;
-  onRunShellCommand?: (command: string) => void;
+  onRunShellCommand?: ChatShellCommandRunner;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen?: (attachment: ChatFileAttachment) => void;
@@ -577,7 +579,25 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const preferredToolCallVisibility = useClientSettings((settings) => settings.toolCallVisibility);
   const toolCallVisibility =
     findActive && preferredToolCallVisibility === "zen" ? "hideAll" : preferredToolCallVisibility;
-  const revealedMessageId = citationRequest?.citation.messageId ?? null;
+  const chapterReveal = useChatChapterStore((state) => state.revealRequest);
+  const clearChapterReveal = useChatChapterStore((state) => state.clearReveal);
+  // The store request is cleared once the scroll starts, but zen mode must keep the
+  // target row visible afterwards, so the target is remembered here for this thread.
+  const [revealedChapter, setRevealedChapter] = useState<{
+    threadKey: string;
+    messageId: MessageId;
+  } | null>(null);
+  if (
+    chapterReveal &&
+    chapterReveal.threadKey === routeThreadKey &&
+    (revealedChapter?.threadKey !== routeThreadKey ||
+      revealedChapter.messageId !== chapterReveal.messageId)
+  ) {
+    setRevealedChapter({ threadKey: routeThreadKey, messageId: chapterReveal.messageId });
+  }
+  const revealedMessageId =
+    citationRequest?.citation.messageId ??
+    (revealedChapter?.threadKey === routeThreadKey ? revealedChapter.messageId : null);
   // Imported turns and post-steer work fold under synthetic keys, not the entries' run ids.
   const findFoldRunIds = findActive
     ? timelineTurnFoldRunIdsByEntryId({
@@ -1210,6 +1230,109 @@ const ConversationTimeline = memo(function ConversationTimeline({
     listRef,
     contentInsetEndAdjustment,
   });
+
+  const handledChapterRevealRef = useRef<number | null>(null);
+  const historyRequestedForChapterRef = useRef<{
+    nonce: number;
+    cursor: string | null;
+  } | null>(null);
+  // A chapter's message can be loaded but hidden inside a collapsed turn fold
+  // or a superseded attempt. Expand its fold here, during render like the
+  // citation reveal above, so the next render's `rows` includes its row
+  // before the effect below tries to scroll to it.
+  const [chapterFoldExpandedFor, setChapterFoldExpandedFor] = useState<number | null>(null);
+  if (!chapterReveal && chapterFoldExpandedFor !== null) setChapterFoldExpandedFor(null);
+  if (
+    chapterReveal &&
+    chapterReveal.threadKey === routeThreadKey &&
+    chapterFoldExpandedFor !== chapterReveal.nonce
+  ) {
+    const chapterEntry = timelineEntries.find(
+      (entry) => entry.kind === "message" && entry.message.id === chapterReveal.messageId,
+    );
+    if (chapterEntry) {
+      setChapterFoldExpandedFor(chapterReveal.nonce);
+      const owningRunId = (
+        findFoldRunIds ??
+        timelineTurnFoldRunIdsByEntryId({
+          timelineEntries,
+          latestRun,
+          runningRunId,
+          isWorking,
+          runlessWorkActive,
+          toolCallVisibility,
+          revealedMessageId,
+        })
+      ).get(chapterEntry.id);
+      if (owningRunId) {
+        setExpandedRunIds((previous) =>
+          previous.has(owningRunId) ? previous : new Set(previous).add(owningRunId),
+        );
+      }
+      const chapterAttempt = chapterEntry.attempt;
+      if (chapterAttempt?.status === "superseded") {
+        setExpandedAttemptIds((previous) =>
+          previous.has(chapterAttempt.id) ? previous : new Set(previous).add(chapterAttempt.id),
+        );
+      }
+    }
+  }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- syncs the list to a chapter reveal request held in the chapter store, which has no callback into this component; the target row can be missing until earlier history loads, so the effect re-runs as rows change and scrolls once the row exists
+  useEffect(() => {
+    if (
+      !chapterReveal ||
+      chapterReveal.threadKey !== routeThreadKey ||
+      handledChapterRevealRef.current === chapterReveal.nonce
+    ) {
+      return;
+    }
+    const rowIndex = rows.findIndex(
+      (row) => row.kind === "message" && row.message.id === chapterReveal.messageId,
+    );
+    if (rowIndex < 0) {
+      const isAlreadyInHistory = timelineEntries.some(
+        (entry) => entry.kind === "message" && entry.message.id === chapterReveal.messageId,
+      );
+      if (isAlreadyInHistory) {
+        return;
+      }
+      const cursor = timelineEntries[0]?.id ?? null;
+      const requested = historyRequestedForChapterRef.current;
+      const alreadyRequested =
+        requested?.nonce === chapterReveal.nonce && requested.cursor === cursor;
+      if (
+        historyControls?.hasMoreHistory &&
+        !historyControls.loading &&
+        !historyControls.error &&
+        !alreadyRequested
+      ) {
+        historyRequestedForChapterRef.current = {
+          nonce: chapterReveal.nonce,
+          cursor,
+        };
+        historyControls.onLoadEarlier(chapterReveal.messageId);
+      }
+      return;
+    }
+    handledChapterRevealRef.current = chapterReveal.nonce;
+    navigateTimeline();
+    void listRef.current?.scrollToIndex({
+      index: rowIndex,
+      animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+      viewOffset: 96,
+    });
+    // Clear the request so a remount does not scroll again over the remembered position.
+    clearChapterReveal(chapterReveal.nonce);
+  }, [
+    chapterReveal,
+    clearChapterReveal,
+    historyControls,
+    listRef,
+    navigateTimeline,
+    routeThreadKey,
+    rows,
+    timelineEntries,
+  ]);
 
   // LegendList moves rows one commit late; per-row providers prevent thread context leaks.
   const onAudioPlaybackChange = (rowId: string, event: SyntheticEvent) => {

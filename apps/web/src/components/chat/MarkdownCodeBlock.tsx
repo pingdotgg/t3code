@@ -20,12 +20,15 @@ import {
 import { MorphIcon } from "../MorphIcon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ChatCodeBlockRunOutput } from "./ChatCodeBlockRunOutput";
 import { HighlightedCodeLines } from "./HighlightedCodeLines";
 import {
   createHighlightCacheKey,
   estimateHighlightedSize,
   extractFenceLanguage,
 } from "./MarkdownCodeBlock.logic";
+import type { ChatShellCommandRunner } from "./chatShellRun";
+import { isChatShellRunFinished, useChatShellRunStore } from "./chatShellRunStore";
 import { reportMarkdownActionFailure } from "./markdownActionFailure";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 
@@ -134,6 +137,7 @@ export function MarkdownCodeBlock({
   fenceTitle,
   theme,
   onRunShellCommand,
+  shellRunScope,
   isStreaming,
   viewToggle,
   canWrap = true,
@@ -144,7 +148,8 @@ export function MarkdownCodeBlock({
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
-  onRunShellCommand?: ((command: string) => void) | undefined;
+  onRunShellCommand?: ChatShellCommandRunner | undefined;
+  shellRunScope?: string | undefined;
   isStreaming: boolean;
   viewToggle?: ReactNode;
   canWrap?: boolean;
@@ -167,6 +172,9 @@ export function MarkdownCodeBlock({
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
   const copyLabel = copied ? "Copied" : "Copy code";
   const command = code.trim();
+  const shellRunKey = `${shellRunScope}:${command}`;
+  const shellRun = useChatShellRunStore((state) => state.runs[shellRunKey]);
+  const setShellRun = useChatShellRunStore((state) => state.setRun);
   const canRun =
     onRunShellCommand !== undefined &&
     !isStreaming &&
@@ -176,9 +184,15 @@ export function MarkdownCodeBlock({
     !command.endsWith("\\") &&
     // Control and invisible format characters (bidi overrides, zero-width) can
     // make the rendered command differ from what the terminal would receive.
-    !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1));
+    !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1).replace(/[\n\t]/g, ""));
 
   const handleCopy = () => copyToClipboard(code);
+  const handleRun = () =>
+    onRunShellCommand?.(
+      command,
+      (run) => setShellRun(shellRunKey, run),
+      shellRun && isChatShellRunFinished(shellRun) ? shellRun.terminalId : undefined,
+    );
 
   const copyButton = (
     <Tooltip>
@@ -212,58 +226,65 @@ export function MarkdownCodeBlock({
   }
 
   return (
-    <MarkdownCodeBlockFrame
-      language={language}
-      fenceTitle={fenceTitle}
-      theme={theme}
-      wrapped={wrapped}
-      headerProps={THREAD_FIND_IGNORE_PROPS}
-      actions={
-        <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
-          {canWrap ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant={wrapped ? "secondary" : "ghost-muted"}
-                    size="icon-xs"
-                    aria-pressed={wrapped}
-                    onClick={() => setWrapped((value) => !value)}
-                    aria-label={wrapLabel}
-                  />
-                }
-              >
-                <WrapTextIcon className="size-3" />
-              </TooltipTrigger>
-              <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
-            </Tooltip>
-          ) : null}
-          {canRun ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="ghost-muted"
-                    size="icon-xs"
-                    onClick={() => onRunShellCommand(command)}
-                    aria-label="Run in terminal"
-                  />
-                }
-              >
-                <PlayIcon className="size-3" />
-              </TooltipTrigger>
-              <TooltipPopup side="top">Run in terminal</TooltipPopup>
-            </Tooltip>
-          ) : null}
-          {viewToggle}
-          {copyButton}
-        </span>
-      }
-    >
-      {children}
-    </MarkdownCodeBlockFrame>
+    <>
+      <MarkdownCodeBlockFrame
+        language={language}
+        fenceTitle={fenceTitle}
+        theme={theme}
+        wrapped={wrapped}
+        headerProps={THREAD_FIND_IGNORE_PROPS}
+        actions={
+          <span
+            className="flex items-center gap-0.5"
+            role="toolbar"
+            aria-label="Code block actions"
+          >
+            {canWrap ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant={wrapped ? "secondary" : "ghost-muted"}
+                      size="icon-xs"
+                      aria-pressed={wrapped}
+                      onClick={() => setWrapped((value) => !value)}
+                      aria-label={wrapLabel}
+                    />
+                  }
+                >
+                  <WrapTextIcon className="size-3" />
+                </TooltipTrigger>
+                <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
+              </Tooltip>
+            ) : null}
+            {canRun ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost-muted"
+                      size="icon-xs"
+                      onClick={handleRun}
+                      aria-label="Run in terminal and send output to Claude"
+                    />
+                  }
+                >
+                  <PlayIcon className="size-3" />
+                </TooltipTrigger>
+                <TooltipPopup side="top">Run in terminal and send output to Claude</TooltipPopup>
+              </Tooltip>
+            ) : null}
+            {viewToggle}
+            {copyButton}
+          </span>
+        }
+      >
+        {children}
+      </MarkdownCodeBlockFrame>
+      {shellRun ? <ChatCodeBlockRunOutput key={shellRun.id} run={shellRun} /> : null}
+    </>
   );
 }
 

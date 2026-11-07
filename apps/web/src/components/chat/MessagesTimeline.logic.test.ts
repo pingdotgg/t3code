@@ -1,3 +1,4 @@
+import { chatShellRunResultMessage } from "./chatShellRun";
 import { ThreadId, type WorktreeSetupSnapshot } from "@t3tools/contracts";
 import {
   CheckpointRef,
@@ -55,6 +56,36 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("hides a code block run's result but keeps Claude's reply to it", () => {
+    const at = "2026-10-01T06:19:10Z";
+    const message = (id: string, role: "user" | "assistant", text: string): TimelineEntry => ({
+      kind: "message",
+      id,
+      createdAt: at,
+      message: {
+        id: MessageId.make(id),
+        role,
+        text,
+        runId: RunId.make("run-result"),
+        streaming: false,
+        createdAt: at,
+        updatedAt: at,
+      },
+    });
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        message("result", "user", chatShellRunResultMessage("ls", { text: "a", exitCode: 0 })),
+        message("reply", "assistant", "It listed one file."),
+      ],
+      runningRunId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    const shown = rows.flatMap((row) => (row.kind === "message" ? [row.id] : []));
+    expect(shown).toEqual(["reply"]);
+  });
   it.each(["alone", "before tool", "before commentary and tool"])(
     "keeps an unfinished task update static %s",
     (placement) => {

@@ -1,3 +1,4 @@
+import { isChatShellRunResultMessage } from "./chatShellRun";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
@@ -125,6 +126,7 @@ export function buildComposerPromptHistoryEntries(
     if (message.role !== "user") continue;
     // Automations and other agents send user-role messages; recall only what the user typed.
     if (resolveUserMessagePresentation(message).attribution !== null) continue;
+    if (isChatShellRunResultMessage(message.text)) continue;
     const prompt = recallableComposerPrompt(message.text);
     if (prompt.length === 0) continue;
     const previous = entries[entries.length - 1];
