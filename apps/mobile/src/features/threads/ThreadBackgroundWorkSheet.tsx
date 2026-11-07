@@ -60,9 +60,11 @@ export function ThreadBackgroundWorkSheet({ route }: StaticScreenProps<Backgroun
     </ScrollView>
   );
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      <SheetHeader title="Background work" onClose={() => navigation.goBack()} />
+    // Material sheet drags follow the first nested-scrolling native view, and the Android
+    // header's Compose button is one, so Android renders content first and reverses the column.
+    <View collapsable={false} className="flex-1 bg-sheet android:flex-col-reverse">
       <ScreenContent>{content}</ScreenContent>
+      <SheetHeader title="Background work" onClose={() => navigation.goBack()} />
     </View>
   );
 }

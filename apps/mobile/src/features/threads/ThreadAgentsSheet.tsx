@@ -126,9 +126,11 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
   );
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      <SheetHeader title="Agents" onClose={() => navigation.goBack()} />
+    // Material sheet drags follow the first nested-scrolling native view, and the Android
+    // header's Compose button is one, so Android renders content first and reverses the column.
+    <View collapsable={false} className="flex-1 bg-sheet android:flex-col-reverse">
       <ScreenContent>{content}</ScreenContent>
+      <SheetHeader title="Agents" onClose={() => navigation.goBack()} />
     </View>
   );
 }
