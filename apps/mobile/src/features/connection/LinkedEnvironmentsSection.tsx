@@ -1,9 +1,10 @@
+import { RegistryContext } from "@effect/atom-react";
 import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
 import { peerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
 import { useFocusEffect } from "@react-navigation/native";
 import { AuthAccessReadScope, type EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { useCallback, useState } from "react";
+import { useCallback, useContext, useState } from "react";
 import { AppState, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -20,8 +21,25 @@ export function LinkedEnvironmentsSection(props: {
   const config = useEnvironmentServerConfig(props.environmentId);
   const canRead = useEnvironmentScope(props.environmentId, AuthAccessReadScope);
   const supported = canRead && offersLinkedEnvironments(config);
-  const links = useEnvironmentQuery(
-    supported ? peerLinkEnvironment.list({ environmentId: props.environmentId, input: {} }) : null,
+  const listAtom = supported
+    ? peerLinkEnvironment.list({ environmentId: props.environmentId, input: {} })
+    : null;
+  const links = useEnvironmentQuery(listAtom);
+  const registry = useContext(RegistryContext);
+  // Links change outside this client, and the shared list only revalidates when built, so
+  // showing the screen and bringing the app back ask again.
+  useFocusEffect(
+    useCallback(() => {
+      if (listAtom === null) return;
+      const askAgain = () => {
+        if (!registry.get(listAtom).waiting) registry.refresh(listAtom);
+      };
+      askAgain();
+      const subscription = AppState.addEventListener("change", (state) => {
+        if (state === "active") askAgain();
+      });
+      return () => subscription.remove();
+    }, [listAtom, registry]),
   );
   const [nowMs, setNowMs] = useState(Date.now);
   const hasLinks = supported && (links.data?.links.length ?? 0) > 0;
