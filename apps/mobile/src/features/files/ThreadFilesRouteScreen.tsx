@@ -213,6 +213,7 @@ function FileContent(props: {
   readonly threadId: ThreadId | null;
   readonly initialLine: number | null;
   readonly truncated: boolean;
+  readonly selectable: boolean;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
   // Reopening a mutable host file must not reuse a poster from an earlier visit.
@@ -313,6 +314,7 @@ function FileContent(props: {
           path={props.relativePath}
           initialLine={props.initialLine}
           headerInsetTop={props.truncated ? 0 : undefined}
+          selectable={props.selectable}
           onRefresh={props.onRefresh}
         />
       )}
@@ -711,6 +713,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       : null,
   );
   const fileData = fileQuery.data as ProjectReadFileResult | null;
+  // Android numbered rows are separate text views, so selection spanning lines needs the
+  // continuous renderer. It stays opt-in because it lays out the whole file at once.
+  const selectionScope = JSON.stringify([environmentId, cwd, relativePath]);
+  const [textSelectionScope, setTextSelectionScope] = useState<string | null>(null);
+  const canSelectText =
+    Platform.OS === "android" && resolvedActiveMode === "source" && fileData?.contents != null;
+  const selectingText = canSelectText && textSelectionScope === selectionScope;
 
   const handleSelectFile = (path: string) => {
     const targetPath =
@@ -799,6 +808,15 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             onPress: () => setCodeWordBreak(!appearance.codeWordBreak),
           } as const)
         : null,
+      canSelectText
+        ? ({
+            id: "select-text",
+            title: selectingText ? "Done selecting text" : "Select text",
+            icon: selectingText ? "checkmark" : "doc.text",
+            inline: false,
+            onPress: () => setTextSelectionScope(selectingText ? null : selectionScope),
+          } as const)
+        : null,
       ...(mediaSource
         ? mediaActions.actions
             .filter(({ id }) => id !== "open-file")
@@ -857,14 +875,19 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             onPress: () => tryOpenExternalUrl(assetPreviewUri, "file-preview"),
           } as const)
         : null,
-      resolvedActiveMode === "preview" &&
-      (isBrowserFile || isImageFile || isVideoFile || isAudioFile)
+      selectingText ||
+      (resolvedActiveMode === "preview" &&
+        (isBrowserFile || isImageFile || isVideoFile || isAudioFile))
         ? ({
             id: "refresh",
             title: "Refresh",
             icon: "arrow.clockwise",
             inline: false,
             onPress: async () => {
+              if (selectingText) {
+                await fileQuery.refresh();
+                return;
+              }
               if (isVideoFile || isAudioFile) await assetPreview.refresh();
               setPreviewRevision((current) => current + 1);
             },
@@ -998,6 +1021,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           relativePath={relativePath}
           threadId={threadId}
           truncated={fileData?.truncated ?? false}
+          selectable={selectingText}
           onRefresh={() => fileQuery.refresh()}
         />
       </ScreenContent>
