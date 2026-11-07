@@ -130,7 +130,11 @@ function useCopyMcpUrl() {
 }
 
 /** Copies the MCP URL this environment's own T3 Connect tunnel answered on. */
-export function ConnectMcpUrlMenuItem({ environmentId }: { readonly environmentId: EnvironmentId }) {
+export function ConnectMcpUrlMenuItem({
+  environmentId,
+}: {
+  readonly environmentId: EnvironmentId;
+}) {
   const { linkState, managedTunnelActive } = useCloudLinkController(environmentId);
   const copyMcpUrl = useCopyMcpUrl();
   const reachability = managedTunnelActive ? linkState.data?.reachability : undefined;
