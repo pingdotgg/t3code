@@ -47,6 +47,7 @@ interface FakeCodexInput {
   stderr?: string;
   requireImage?: boolean;
   requireServiceTier?: string;
+  requireApprovalPolicy?: string;
   requireReasoningEffort?: string;
   forbidReasoningEffort?: boolean;
   requireArg?: string;
@@ -62,6 +63,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
   const check = JSON.stringify({
     requireImage: input.requireImage ?? false,
     requireServiceTier: input.requireServiceTier ?? null,
+    requireApprovalPolicy: input.requireApprovalPolicy ?? null,
     requireReasoningEffort: input.requireReasoningEffort ?? null,
     forbidReasoningEffort: input.forbidReasoningEffort ?? false,
     requireArg: input.requireArg ?? null,
@@ -103,6 +105,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "let outputPath = null;",
         "let seenImage = false;",
         'let seenServiceTier = "";',
+        'let seenApprovalPolicy = "";',
         'let seenReasoningEffort = "";',
         'let instructions = "";',
         "for (let index = 0; index < args.length; index += 1) {",
@@ -114,6 +117,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         '    const value = args[index] ?? "";',
         '    if (value.startsWith("developer_instructions=")) instructions = JSON.parse(value.slice("developer_instructions=".length));',
         '    if (value.startsWith("service_tier=")) seenServiceTier = value;',
+        '    if (value.startsWith("approval_policy=")) seenApprovalPolicy = value;',
         '    if (value.startsWith("model_reasoning_effort=")) seenReasoningEffort = value;',
         '  } else if (args[index] === "--output-last-message") {',
         "    index += 1;",
@@ -141,6 +145,12 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         '  seenServiceTier !== `service_tier="${check.requireServiceTier}"`',
         ") {",
         '  fail("unexpected service tier config: " + seenServiceTier, 5);',
+        "}",
+        "if (",
+        "  check.requireApprovalPolicy !== null &&",
+        '  seenApprovalPolicy !== `approval_policy="${check.requireApprovalPolicy}"`',
+        ") {",
+        '  fail("unexpected approval policy config: " + seenApprovalPolicy, 12);',
         "}",
         "if (",
         "  check.requireReasoningEffort !== null &&",
@@ -409,6 +419,25 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
         launchArgs: "--config features.plugins=true --config features.apps=true",
         requireArg:
           "--config features.plugins=true --config features.apps=true --config features.plugins=false --config features.apps=false --ephemeral",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Remove default shapes from characters",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          expect(result.title).toBe("Remove default shapes");
+        }),
+    ),
+  );
+
+  it.effect("keeps approval policy never over launch args that allow escalation", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Remove default shapes" }),
+        launchArgs: "--config 'approval_policy=\"on-request\"'",
+        requireApprovalPolicy: "never",
       },
       (textGeneration) =>
         Effect.gen(function* () {
