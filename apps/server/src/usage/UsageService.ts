@@ -278,7 +278,15 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const ensureRates = (force: boolean) => ratesLock.withPermit(loadRates(force));
+  // A still-valid table must not wait behind another caller's forced refresh.
+  const ensureRates = (force: boolean) =>
+    Clock.currentTimeMillis.pipe(
+      Effect.flatMap((now) =>
+        !force && ratesFetchedAtMs !== null && now - ratesFetchedAtMs < RATES_TTL_MS
+          ? Effect.void
+          : ratesLock.withPermit(loadRates(force)),
+      ),
+    );
 
   const refreshRates = ensureRates(true).pipe(
     Effect.map(pricing),
@@ -720,6 +728,8 @@ export const make = Effect.gen(function* () {
       { concurrency: 2 },
     );
 
+    // Report the metadata of the table these buckets are priced with, not a later refresh's.
+    const pricingSnapshot = pricing();
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
@@ -886,7 +896,7 @@ export const make = Effect.gen(function* () {
       untilDay: input.untilDay,
       buckets: aggregated.buckets,
       sources,
-      pricing: pricing(),
+      pricing: pricingSnapshot,
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
     } satisfies UsageSummary;
@@ -905,6 +915,8 @@ export const make = Effect.gen(function* () {
       settings,
       input.awaitRefresh === true,
       input.modelFilter ?? null,
+      // A scan priced before a rate publication must not answer a read that follows it.
+      ratesFetchedAtMs,
     ]);
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (

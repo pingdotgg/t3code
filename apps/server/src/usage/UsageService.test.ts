@@ -22,6 +22,7 @@ import {
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -390,6 +391,41 @@ const seedCodexHistory = (input: {
       })}`;
     }
   });
+
+const PRICING_NOW = Date.parse("2026-08-02T00:00:00Z");
+
+const fableRates = (outputCostPerToken: number) => ({
+  "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: outputCostPerToken },
+});
+
+function totalCost(summary: UsageSummary) {
+  return summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0);
+}
+
+// Serves `document`; the request after `hold` waits until its gate is released.
+function makeRatesGate() {
+  const state = { document: {} as unknown, requests: 0 };
+  let pending: { started: Deferred.Deferred<void>; release: Deferred.Deferred<void> } | undefined;
+  const ratesResponse = () =>
+    Effect.suspend(() => {
+      state.requests += 1;
+      const gate = pending;
+      pending = undefined;
+      const respond = Effect.sync(() => Response.json(state.document));
+      return gate === undefined
+        ? respond
+        : Deferred.succeed(gate.started, undefined).pipe(
+            Effect.andThen(Deferred.await(gate.release)),
+            Effect.andThen(respond),
+          );
+    });
+  const hold = Effect.gen(function* () {
+    const gate = { started: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() };
+    pending = gate;
+    return gate;
+  });
+  return { state, ratesResponse, hold };
+}
 
 describe("Codex usage history", () => {
   const historyLayer = CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory));
@@ -3259,6 +3295,180 @@ describe("UsageService", () => {
         assert.deepStrictEqual(cached.buckets, summary.buckets);
         assert.strictEqual(requests.length, 2);
       }).pipe(Effect.scoped),
+  );
+
+  it.live("serves an ordinary read from valid rates while a forced refresh is in flight", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(PRICING_NOW);
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const rates = makeRatesGate();
+      rates.state.document = fableRates(5e-5);
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-rates-refresh-overlap-test",
+            home,
+            settings,
+            ratesResponse: rates.ratesResponse,
+          }),
+        ),
+      );
+
+      const initial = yield* service.readSummary(WINDOW);
+      assert.closeTo(totalCost(initial), 0.00035, 1e-12);
+
+      yield* TestClock.adjust(Duration.minutes(2));
+      rates.state.document = fableRates(1.5e-4);
+      const gate = yield* rates.hold;
+      const refresh = yield* service.refreshRates.pipe(Effect.forkChild);
+      yield* Deferred.await(gate.started);
+
+      const during = yield* service.readSummary(WINDOW);
+      assert.closeTo(totalCost(during), 0.00035, 1e-12);
+      assert.deepStrictEqual(during.pricing, initial.pricing);
+
+      yield* Deferred.succeed(gate.release, undefined);
+      const refreshed = yield* Fiber.join(refresh);
+      assert.notStrictEqual(refreshed.fetchedAt, initial.pricing.fetchedAt);
+      const after = yield* service.readSummary(WINDOW);
+      assert.closeTo(totalCost(after), 0.00085, 1e-12);
+      assert.deepStrictEqual(after.pricing, refreshed);
+      assert.strictEqual(rates.state.requests, 2);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("waits for rates when the cache is missing or has reached its 24-hour expiry", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(PRICING_NOW);
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const rates = makeRatesGate();
+      rates.state.document = fableRates(5e-5);
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-rates-expiry-test",
+            home,
+            settings,
+            ratesResponse: rates.ratesResponse,
+          }),
+        ),
+      );
+
+      const missingGate = yield* rates.hold;
+      const missing = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
+      yield* Deferred.await(missingGate.started);
+      yield* Deferred.succeed(missingGate.release, undefined);
+      assert.closeTo(totalCost(yield* Fiber.join(missing)), 0.00035, 1e-12);
+
+      yield* TestClock.adjust(Duration.hours(24).pipe(Duration.subtract(Duration.millis(1))));
+      rates.state.document = fableRates(1.5e-4);
+      assert.closeTo(totalCost(yield* service.readSummary(WINDOW)), 0.00035, 1e-12);
+      assert.strictEqual(rates.state.requests, 1);
+
+      yield* TestClock.adjust(Duration.millis(1));
+      const expiredGate = yield* rates.hold;
+      const expired = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
+      yield* Deferred.await(expiredGate.started);
+      yield* Deferred.succeed(expiredGate.release, undefined);
+      const refreshed = yield* Fiber.join(expired);
+      assert.closeTo(totalCost(refreshed), 0.00085, 1e-12);
+      assert.strictEqual(refreshed.pricing.status, "fresh");
+      assert.strictEqual(
+        refreshed.pricing.fetchedAt,
+        DateTime.formatIso(DateTime.makeUnsafe(PRICING_NOW + 24 * HOUR_MS)),
+      );
+      assert.strictEqual(rates.state.requests, 2);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("reports the pricing metadata of the rates a summary was priced with", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(PRICING_NOW);
+      const { home, settings } = yield* setup;
+      const sessions = NodePath.join(home, "codex", "sessions");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(sessions, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(sessions, "rollout.jsonl"),
+          [
+            { type: "session_meta", payload: { id: "session", model_provider: "openai" } },
+            { type: "turn_context", payload: { model: "gpt-6-astra", turn_id: "turn" } },
+            {
+              type: "event_msg",
+              timestamp: "2026-08-01T10:00:00Z",
+              payload: {
+                type: "token_count",
+                info: { last_token_usage: { input_tokens: 0, output_tokens: 5 } },
+              },
+            },
+          ]
+            .map((record) => encodeUnknownJsonString(record))
+            .join("\n") + "\n",
+        );
+      });
+      const astraRates = (outputCostPerToken: number) => ({
+        "gpt-6-astra": { input_cost_per_token: 0, output_cost_per_token: outputCostPerToken },
+      });
+      const rates = makeRatesGate();
+      rates.state.document = astraRates(1);
+      let resolverGate:
+        | { entered: Deferred.Deferred<void>; release: Deferred.Deferred<void> }
+        | undefined;
+      const service = yield* UsageService.make.pipe(
+        // The unresolved service tier gives the scan an await after its aggregator exists.
+        Effect.provideService(
+          CodexUsageHistory.CodexUsageHistory,
+          CodexUsageHistory.CodexUsageHistory.of({
+            resolve: () =>
+              Effect.suspend(() => {
+                const gate = resolverGate;
+                resolverGate = undefined;
+                const unresolved = Effect.succeed(
+                  new Map<CodexUsageHistory.CodexUsageHistoryRequest, never>(),
+                );
+                return gate === undefined
+                  ? unresolved
+                  : Deferred.succeed(gate.entered, undefined).pipe(
+                      Effect.andThen(Deferred.await(gate.release)),
+                      Effect.andThen(unresolved),
+                    );
+              }),
+          }),
+        ),
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-rates-snapshot-test",
+            home,
+            settings,
+            ratesResponse: rates.ratesResponse,
+          }),
+        ),
+      );
+
+      const initial = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalCost(initial), 5);
+
+      yield* TestClock.adjust(Duration.minutes(2));
+      const gate = { entered: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() };
+      resolverGate = gate;
+      const read = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
+      yield* Deferred.await(gate.entered);
+      rates.state.document = astraRates(2);
+      const refreshed = yield* service.refreshRates;
+      assert.notStrictEqual(refreshed.fetchedAt, initial.pricing.fetchedAt);
+
+      // A manual refresh's follow-up read must not join the scan priced before it.
+      const after = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalCost(after), 10);
+      assert.deepStrictEqual(after.pricing, refreshed);
+
+      yield* Deferred.succeed(gate.release, undefined);
+      const raced = yield* Fiber.join(read);
+      assert.strictEqual(totalCost(raced), 5);
+      assert.deepStrictEqual(raced.pricing, initial.pricing);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.live("does not orphan an in-flight scan when its first caller is interrupted", () =>
