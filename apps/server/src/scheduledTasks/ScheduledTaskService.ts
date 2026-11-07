@@ -356,6 +356,17 @@ function errorMessage(error: unknown): string {
   return failure instanceof Error ? failure.message : String(failure);
 }
 
+// SQLite stores half an emoji as U+FFFD, a character the request never had.
+function deliveryLogPrompt(prompt: string): string {
+  if (prompt.length <= WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT) return prompt;
+  const last = prompt.charCodeAt(WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT - 1);
+  const end =
+    last >= 0xd800 && last <= 0xdbff
+      ? WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT - 1
+      : WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT;
+  return prompt.slice(0, end);
+}
+
 function webhookPath(taskId: string, token: string): string {
   return `${WEBHOOK_ROUTE_PREFIX}/${encodeURIComponent(taskId)}/${token}`;
 }
@@ -1743,7 +1754,7 @@ export const layer = Layer.effect(
                 ${loggedBody},
                 ${input.request.body.byteLength}, ${truncated ? 1 : 0}, ${input.outcome},
                 ${input.signatureVerified ? 1 : 0}, ${encodeMissingFieldsJson(input.missing)},
-                ${input.renderedPrompt?.slice(0, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT) ?? null},
+                ${input.renderedPrompt === null ? null : deliveryLogPrompt(input.renderedPrompt)},
                 ${input.error ?? null}
               WHERE EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_id = ${input.taskId})
               -- A held request retried after a rate limit reuses its relay
@@ -2434,7 +2445,7 @@ export const layer = Layer.effect(
               } else {
                 if (taskJson !== null)
                   yield* sql`UPDATE scheduled_task_webhook_pending SET task_json = ${taskJson} WHERE delivery_id = ${entry.delivery_id}`;
-                yield* sql`UPDATE scheduled_task_webhook_deliveries SET outcome = 'accepted', error = NULL, rendered_prompt = ${rendered.prompt.slice(0, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT)}, missing_fields_json = ${encodeMissingFieldsJson(rendered.missing)} WHERE delivery_id = ${entry.delivery_id}`;
+                yield* sql`UPDATE scheduled_task_webhook_deliveries SET outcome = 'accepted', error = NULL, rendered_prompt = ${deliveryLogPrompt(rendered.prompt)}, missing_fields_json = ${encodeMissingFieldsJson(rendered.missing)} WHERE delivery_id = ${entry.delivery_id}`;
                 if (!(yield* runWebhookDelivery(task, entry.delivery_id, rendered.prompt))) return;
               }
               yield* remove;
