@@ -104,6 +104,15 @@ export function PullRequestCardRow(props: {
   );
 }
 
+/**
+ * The vertical bar shares its height with the tab bar, which UIKit draws over it without
+ * overflowing the bar's items, so Changed files moves into the screen's actions menu there.
+ */
+export function usePullRequestFilesInMenu() {
+  const metrics = useNativeLayoutMetrics();
+  return Platform.OS === "ios" && metrics !== null && metrics.verticalBarEdge !== "none";
+}
+
 export function PullRequestActionToolbar(props: {
   readonly pr: PullRequestDetail | null;
   readonly params: PullRequestParams;
@@ -115,8 +124,7 @@ export function PullRequestActionToolbar(props: {
   const { draft } = usePullRequestReviewDraft(props.params);
   const { themeVariables: colors } = useAppearancePreferences();
   const insets = useSafeAreaInsets();
-  const nativeMetrics = useNativeLayoutMetrics();
-  const verticalControls = nativeMetrics !== null && nativeMetrics.verticalBarEdge !== "none";
+  const verticalControls = usePullRequestFilesInMenu();
   const permissions = usePullRequestPermissions(props.params, props.pr);
   const agent = usePullRequestAgentActions(props.params, props.pr, props.filePath);
   const canReview = permissions.verdicts.length > 0;
@@ -293,7 +301,6 @@ export function PullRequestActionToolbar(props: {
   if (verticalControls)
     return (
       <Toolbar placement="bottom">
-        {filesControl}
         {agentControl}
         {primaryControl}
       </Toolbar>

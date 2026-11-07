@@ -89,7 +89,11 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import { useNativeReviewDiffBridge } from "../review/useNativeReviewDiffBridge";
 import { pullRequestTimelineRows } from "./PullRequestTimeline";
-import { PullRequestActionToolbar, PullRequestCardGroup } from "./PullRequestControls";
+import {
+  PullRequestActionToolbar,
+  PullRequestCardGroup,
+  usePullRequestFilesInMenu,
+} from "./PullRequestControls";
 import {
   pullRequestTarget as requestTarget,
   usePullRequestDiff,
@@ -327,6 +331,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const filesInMenu = usePullRequestFilesInMenu();
   const [toolbarHeight, setToolbarHeight] = usePullRequestToolbarHeight(insets.bottom);
   const contentTopInset = useContentTopInset();
   // Only iOS lists run under the bottom safe area; Android's floating toolbar pads its own.
@@ -470,6 +475,9 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
               title: `${capitalizeTerm(terminology.singular)} actions`,
               icon: "ellipsis",
               items: [
+                ...(filesInMenu
+                  ? [{ id: "files", title: "Changed files", icon: "plusminus", onPress: openFiles }]
+                  : []),
                 ...(permissions.verdicts.length
                   ? [
                       {
@@ -837,6 +845,7 @@ export function PullRequestFileRouteScreen(props: PullRequestFileRouteProps) {
 function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const filesInMenu = usePullRequestFilesInMenu();
   const contentTopInset = useContentTopInset();
   const [toolbarHeight, setToolbarHeight] = usePullRequestToolbarHeight(insets.bottom);
   const commit = route.params.commit;
@@ -1023,6 +1032,16 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
             title: "Diff options",
             icon: "ellipsis",
             items: [
+              ...(filesInMenu
+                ? [
+                    {
+                      id: "files",
+                      title: "Changed files",
+                      icon: "plusminus",
+                      onPress: () => navigation.navigate("PullRequestFiles", route.params),
+                    },
+                  ]
+                : []),
               ...(permissions.verdicts.length
                 ? [
                     {
