@@ -1,9 +1,12 @@
+import { useState } from "react";
 import type { SnapShotSource } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
+import { MediaActions } from "../media/MediaActions";
+import { TooltipScrollDismissArea } from "../ui/tooltip";
 import { ExpandedImageDialog } from "./ExpandedImageDialog";
 
 const PIXEL =
@@ -19,7 +22,75 @@ const snapShotSource: SnapShotSource = {
 const D2_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1174 920"><rect width="1174" height="920"/></svg>';
 
+function ImagePreviewTimeline() {
+  const [open, setOpen] = useState(false);
+  const source = {
+    kind: "image" as const,
+    name: "shot.png",
+    src: PIXEL,
+    reference: { kind: "file" as const, path: "/work/shot.png" },
+  };
+  return (
+    <>
+      <TooltipScrollDismissArea data-testid="timeline" className="mt-16 h-80 overflow-y-auto">
+        <MediaActions source={source}>
+          <img
+            src={PIXEL}
+            alt="Timeline image"
+            width={200}
+            height={200}
+            role="button"
+            tabIndex={0}
+            aria-label="Preview Timeline image"
+            onClick={() => setOpen(true)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                event.stopPropagation();
+                setOpen(true);
+              }
+            }}
+          />
+        </MediaActions>
+        <div className="h-[600px]" />
+      </TooltipScrollDismissArea>
+      <button type="button">Next timeline action</button>
+      {open && (
+        <ExpandedImageDialog
+          preview={{ images: [{ src: PIXEL, name: "shot.png", actionsSource: source }], index: 0 }}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
 describe("ExpandedImageDialog", () => {
+  it("dismisses the image path tooltip on scroll after returning focus from the preview", async () => {
+    await using screen = await render(<ImagePreviewTimeline />);
+    const image = screen.getByRole("button", { name: "Preview Timeline image" });
+    await userEvent.click(image);
+    await expect.element(page.getByRole("button", { name: "Close image preview" })).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(image).toHaveFocus();
+    expect(image.element().matches(":focus-visible")).toBe(false);
+    await expect.element(page.getByText("/work/shot.png", { exact: true })).not.toBeInTheDocument();
+    await userEvent.unhover(image);
+    await userEvent.hover(image);
+    await expect.element(page.getByText("/work/shot.png", { exact: true })).toBeVisible();
+    screen.getByTestId("timeline").element().scrollTop = 20;
+    await expect.element(page.getByText("/work/shot.png", { exact: true })).not.toBeInTheDocument();
+    await expect.element(image).toHaveFocus();
+    await userEvent.keyboard("{Tab}{Shift>}{Tab}{/Shift}");
+    await expect.element(image).toHaveFocus();
+    expect(image.element().matches(":focus-visible")).toBe(true);
+    await userEvent.keyboard("{Enter}");
+    await expect.element(page.getByRole("button", { name: "Close image preview" })).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(image).toHaveFocus();
+    expect(image.element().matches(":focus-visible")).toBe(true);
+  });
+
   it.each(["/work/pipeline.svg", "/work/diagram#v2.svg", "/work/diagram?v2.svg"])(
     "fits a markdown SVG without intrinsic size to the viewer: %s",
     async (path) => {
