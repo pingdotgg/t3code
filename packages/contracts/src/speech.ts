@@ -307,6 +307,31 @@ export const SpeechConversationEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("speech-start") }),
   Schema.Struct({ type: Schema.Literal("utterance"), text: Schema.String }),
   Schema.Struct({ type: Schema.Literal("idle") }),
+  // Binary frames for this seq follow; see encodeSpeechAudioFrame.
+  Schema.Struct({
+    type: Schema.Literal("speak"),
+    seq: Schema.Int,
+    text: Schema.String,
+    sampleRate: Schema.Int,
+  }),
+  // Drop this seq's audio and every earlier seq's, including anything already buffered.
+  Schema.Struct({ type: Schema.Literal("cut"), seq: Schema.Int }),
   Schema.Struct({ type: Schema.Literal("error"), message: Schema.String }),
 ]);
 export type SpeechConversationEvent = typeof SpeechConversationEvent.Type;
+
+/** Server-to-client speech audio: `[seq u32 LE][Float32 PCM, native little-endian]`. */
+export function encodeSpeechAudioFrame(seq: number, pcm: Float32Array): Uint8Array {
+  const frame = new Uint8Array(4 + pcm.byteLength);
+  new DataView(frame.buffer).setUint32(0, seq, true);
+  frame.set(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength), 4);
+  return frame;
+}
+
+export function decodeSpeechAudioFrame(frame: Uint8Array): { seq: number; pcm: Float32Array } {
+  if (frame.byteLength < 4 || frame.byteLength % 4 !== 0)
+    throw new Error("Invalid speech audio frame.");
+  const seq = new DataView(frame.buffer, frame.byteOffset, 4).getUint32(0, true);
+  // Copy so the samples are 4-byte aligned whatever the frame's offset.
+  return { seq, pcm: new Float32Array(frame.slice(4).buffer) };
+}
