@@ -23,6 +23,7 @@ import {
   type SourceControlUnknownRemoteRefinementInput,
 } from "@t3tools/source-control-core/server/discovery";
 import { findAuthenticatedGitLabHost, parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
+import { gitLabRemoteHost } from "./gitLabHost.ts";
 
 const decodeLinkSubject = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
@@ -151,14 +152,7 @@ export const discovery = {
   authRetryArgs: ["auth", "status", "--all"],
   // glab host matching requires the remote's exact spelling.
   remoteRefinementArgs: ({ provider, remoteUrl }) => {
-    const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/iu.exec(remoteUrl.trim())?.[1];
-    const remoteHost = authority
-      ? authority.slice(authority.lastIndexOf("@") + 1)
-      : remoteUrl.trim().replace(/^[^@:/]+@/u, "");
-    const host = remoteHost.toLowerCase().startsWith(provider.name.toLowerCase())
-      ? remoteHost.slice(0, provider.name.length)
-      : provider.name;
-    return ["auth", "status", "--hostname", host];
+    return ["auth", "status", "--hostname", gitLabRemoteHost(remoteUrl) ?? provider.name];
   },
   parseAuth: parseGitLabAuth,
   refineUnknownRemote: refineUnknownGitLabRemote,
@@ -216,6 +210,28 @@ export const make = Effect.gen(function* () {
       },
     ),
     refineRepositoryIdentity,
+    resolveRemoteWebHost: Effect.fn("GitLabSourceControlProvider.resolveRemoteWebHost")(function* ({
+      cwd,
+      context,
+    }) {
+      const host = gitLabRemoteHost(context.remoteUrl);
+      if (host === null) return null;
+      const resolved = yield* gitlab.resolveHost({ cwd, host, remoteUrl: context.remoteUrl }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new SourceControlProviderError({
+              provider: SourceControlProviderKind.make("gitlab"),
+              operation: "resolveRemoteWebHost",
+              cwd,
+              detail: cause.detail,
+              cause,
+            }),
+        ),
+      );
+      return context.requestedHost?.toLowerCase() === resolved.cliHost.toLowerCase()
+        ? resolved.cliHost.toLowerCase()
+        : resolved.webHost;
+    }),
     resolveLink: (input) => {
       // Automatic enrichment must not send ambient CLI credentials to a host from message text.
       if (input.url.host !== "gitlab.com") return undefined;
