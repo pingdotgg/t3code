@@ -2979,6 +2979,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const projectSubagentNotification = Effect.fnUntraced(function* (
           subagent: ActiveAcpSubagent,
           notification: EffectAcpSchema.SessionNotification,
+          owner: ActiveAcpTurn,
         ) {
           const update = notification.update;
           if (update.sessionUpdate === "agent_message_chunk") {
@@ -2987,7 +2988,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* emitSubagentAssistant(subagent, text, "append", update.messageId);
             }
           } else if (update.sessionUpdate === "tool_call_content_chunk") {
-            yield* projectSubagentTool(subagent, notification.sessionId, update);
+            yield* projectSubagentTool(subagent, notification.sessionId, update, undefined, owner);
           } else if (update.sessionUpdate === "agent_message") {
             if (update.content === undefined) return;
             const text = (update.content ?? [])
@@ -3007,6 +3008,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             | AcpToolCallState
             | Extract<EffectAcpSchema.SessionUpdate, { sessionUpdate: "tool_call_content_chunk" }>,
           projectedStatus?: ProjectedToolStatus,
+          owner?: ActiveAcpTurn,
         ) {
           const nativeTaskId = subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
           const key =
@@ -3020,17 +3022,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if ("sessionUpdate" in toolCall) {
             if (toolCall.content.type !== "content") return;
             const text = acpContentBlockDisplayText(toolCall.content.content);
-            if (text === undefined) return;
-            toolCall = appendToolOutputText(
+            if (text === undefined || text.length === 0) return;
+            toolCall = setToolOutputText(
               previous ?? {
                 toolCallId: toolCall.toolCallId,
                 status: "inProgress",
                 data: { toolCallId: toolCall.toolCallId },
               },
-              text,
+              `${previous?.data.rawOutput == null ? (textFromUnknown(previous?.data.content) ?? "") : toolOutputText(previous)}${text}`,
             );
+          } else if (toolCall.data.content !== undefined && toolCall.data.rawOutput === undefined) {
+            toolCall = { ...toolCall, data: { ...toolCall.data, rawOutput: null } };
           }
           const merged = mergeToolCallState(previous, toolCall);
+          projectedStatus ??= owner === undefined ? undefined : stoppedToolStatus(owner, merged);
           context.tools.set(key, merged);
           if (
             projectedStatus === undefined &&
@@ -3300,7 +3305,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             context.pendingSubagentNotifications.delete(childSessionId);
             yield* Effect.forEach(
               buffered,
-              (notification) => projectSubagentNotification(subagent, notification),
+              (notification) => projectSubagentNotification(subagent, notification, context),
               { concurrency: 1, discard: true },
             );
           }
@@ -3625,7 +3630,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
             }
           } else {
-            yield* projectSubagentNotification(subagent, notification);
+            yield* projectSubagentNotification(subagent, notification, owner.owner);
           }
         });
 
@@ -5289,12 +5294,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               (update.sessionUpdate === "agent_message" && update.content !== undefined);
             if (
               !isDisplayableAssistantUpdate &&
-              update.sessionUpdate !== "tool_call_content_chunk"
+              !(subagent !== undefined && update.sessionUpdate === "tool_call_content_chunk")
             ) {
               return;
             }
             if (subagent !== undefined) {
-              yield* projectSubagentNotification(subagent, notification);
+              yield* projectSubagentNotification(subagent, notification, context);
               return;
             }
             const buffered = context.pendingSubagentNotifications.get(notification.sessionId) ?? [];

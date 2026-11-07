@@ -1816,6 +1816,22 @@ describe("AcpRegistryAdapterV2", () => {
         [
           ...claudeFrames.open,
           ...claudeFrames.prompt(1),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "early-tool",
+            status: "in_progress",
+            rawInput: { command: "echo early" },
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_content_chunk",
+            toolCallId: "early-tool",
+            content: { type: "content", content: { type: "text", text: "early" } },
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "early-tool",
+            status: "completed",
+          }),
           update(CLAUDE_ROOT_SESSION, {
             sessionUpdate: "tool_call_update",
             toolCallId: "spawn",
@@ -1830,19 +1846,30 @@ describe("AcpRegistryAdapterV2", () => {
               kind: "execute",
               status: "in_progress",
               rawInput: { command: "cat package.json" },
+              ...(sessionId === "child-1"
+                ? { content: [{ type: "content", content: { type: "text", text: "one" } }] }
+                : {}),
             }),
           ),
-          ...["one", "two"].map((text) =>
-            update("child-1", {
-              sessionUpdate: "tool_call_content_chunk",
-              toolCallId: "shared-tool",
-              content: { type: "content", content: { type: "text", text } },
-            }),
-          ),
+          update("child-1", {
+            sessionUpdate: "tool_call_content_chunk",
+            toolCallId: "shared-tool",
+            content: { type: "content", content: { type: "text", text: "two" } },
+          }),
           update("child-1", {
             sessionUpdate: "tool_call_update",
             toolCallId: "shared-tool",
             status: "completed",
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            content: [{ type: "content", content: { type: "text", text: "replacement" } }],
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            content: [],
           }),
           claudeMarker("tools complete"),
           claudeFrames.idle("end_turn"),
@@ -1866,10 +1893,11 @@ describe("AcpRegistryAdapterV2", () => {
       assert.deepEqual(
         childTools.map((item) => item.output),
         [
-          null,
-          { type: "Text", text: "one" },
+          [{ type: "content", content: { type: "text", text: "one" } }],
           { type: "Text", text: "onetwo" },
           { type: "Text", text: "onetwo" },
+          [{ type: "content", content: { type: "text", text: "replacement" } }],
+          [],
         ],
       );
       assert.equal(new Set(childTools.map((item) => item.id)).size, 1);
@@ -1891,6 +1919,106 @@ describe("AcpRegistryAdapterV2", () => {
           (event) => event.type === "message.updated" && event.message.text.includes("onetwo"),
         ),
       );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("keeps stopped child tools interrupted when a late output chunk arrives", () =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open.map((entry) =>
+            entry.frame.method === "initialize" && entry.type === "emit_inbound"
+              ? {
+                  ...entry,
+                  frame: {
+                    ...entry.frame,
+                    result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+                  },
+                }
+              : entry,
+          ),
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "spawn",
+            status: "in_progress",
+            _meta: { "cognition.ai/subagent_started": { agentId: "child-1", task: "Review" } },
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "stopped-tool",
+            status: "in_progress",
+          }),
+          claudeMarker("before cancel"),
+          {
+            type: "expect_outbound",
+            frame: {
+              kind: "notification",
+              method: "session/cancel",
+              params: { sessionId: CLAUDE_ROOT_SESSION },
+            },
+          },
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "stopped-tool",
+            status: "failed",
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_content_chunk",
+            toolCallId: "stopped-tool",
+            content: { type: "content", content: { type: "text", text: "cancelled" } },
+          }),
+          claudeMarker("late output"),
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "spawn",
+            status: "failed",
+            _meta: { "cognition.ai/subagent_completed": { agentId: "child-1", success: false } },
+          }),
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "cancelled" },
+            },
+          },
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        undefined,
+        false,
+        "devin",
+      );
+      const starting = yield* session.runtime
+        .startTurn(session.turnInput(1))
+        .pipe(Effect.forkScoped);
+      const started = yield* session.throughMarker("before cancel");
+      const running = started.findLast((event) => event.type === "provider_turn.updated");
+      if (running?.type !== "provider_turn.updated") throw new Error("Missing active turn");
+      const closing = yield* session.runtime
+        .interruptTurn({
+          providerThread: session.providerThread,
+          providerTurnId: running.providerTurn.id,
+        })
+        .pipe(Effect.forkScoped);
+      const events = yield* session.throughMarker("late output");
+      yield* Fiber.join(closing);
+      yield* Fiber.join(starting);
+      const tools = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        tools.map((item) => item.status),
+        ["interrupted", "interrupted"],
+      );
+      assert.deepEqual(tools.at(-1)?.output, { type: "Text", text: "cancelled" });
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
