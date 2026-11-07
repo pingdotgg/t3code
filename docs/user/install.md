@@ -39,6 +39,9 @@ Run `t3 help` or `t3 --help` for the full reference. To start in a new working
 directory, use an explicit path such as `t3 ./my-project`. A bare directory name
 is accepted only if it already exists.
 
+On macOS, you can also drop a folder on the T3 Code Dock icon, or use **Open With**
+in Finder, to open it as a project in a new thread.
+
 If `t3` or `t3 start` reports an already running server, connect to that server
 instead. Stop it before starting a replacement, or use a different `--base-dir`
 for an independent server.

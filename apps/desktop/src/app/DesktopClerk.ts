@@ -19,6 +19,7 @@ import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/rela
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { openClerkTokenStorage } from "./ClerkTokenStore.ts";
@@ -60,6 +61,7 @@ export class DesktopClerk extends Context.Service<
       never,
       | ElectronApp.ElectronApp
       | ElectronWindow.ElectronWindow
+      | DesktopAppActivation.DesktopAppActivation
       | DesktopWebLinks.DesktopWebLinks
       | Scope.Scope
     >;
@@ -133,6 +135,15 @@ export const make = Effect.gen(function* () {
   yield* electronApp.on("open-url", (event: { preventDefault: () => void }, url: string) => {
     if (handleOpenUrl(url)) event.preventDefault();
   });
+  // A Dock drop that launches the app can also arrive before configure runs.
+  const pendingOpenFiles: Array<string> = [];
+  let handleOpenFile = (path: string) => {
+    pendingOpenFiles.push(path);
+  };
+  yield* electronApp.on("open-file", (event: { preventDefault: () => void }, path: string) => {
+    event.preventDefault();
+    handleOpenFile(path);
+  });
 
   yield* Effect.acquireRelease(
     Effect.try({
@@ -162,6 +173,7 @@ export const make = Effect.gen(function* () {
       const electronApp = yield* ElectronApp.ElectronApp;
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
+      const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
       const context = yield* Effect.context<ElectronWindow.ElectronWindow>();
       const runPromise = Effect.runPromiseWith(context);
 
@@ -228,11 +240,14 @@ export const make = Effect.gen(function* () {
         openWebLink(url) ||
         openAppLink(url);
       for (const url of pendingOpenUrls.splice(0)) handleOpenUrl(url);
-      yield* electronApp.on("open-file", (event: { preventDefault: () => void }, path: string) => {
-        if (!DesktopWebLinks.isWebPageFile(path)) return;
-        event.preventDefault();
-        void runPromise(webLinks.receive(NodeURL.pathToFileURL(path).href));
-      });
+      handleOpenFile = (path) => {
+        void runPromise(
+          DesktopWebLinks.isWebPageFile(path)
+            ? webLinks.receive(NodeURL.pathToFileURL(path).href)
+            : appActivation.openWorkspace(path),
+        );
+      };
+      for (const path of pendingOpenFiles.splice(0)) handleOpenFile(path);
       handleSecondInstance = (argv) => {
         if (
           argv?.some(
