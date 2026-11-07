@@ -35,6 +35,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       # setup-vp's own cache restores a Linux-shaped store on Windows, which is

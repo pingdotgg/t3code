@@ -127,6 +127,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - name: Setup dependencies
@@ -243,6 +244,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - name: Setup dependencies
@@ -275,6 +277,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - name: Setup dependencies
@@ -311,6 +314,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - name: Setup dependencies
@@ -369,6 +373,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - name: Setup dependencies
@@ -422,6 +427,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - name: Setup dependencies
@@ -532,6 +538,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       # pnpm checks the lockfile and policy before reusing this result. A missing
@@ -819,6 +826,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - name: Setup dependencies
@@ -1148,6 +1156,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - name: Setup dependencies
@@ -1246,6 +1255,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
@@ -1316,6 +1326,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - name: Setup dependencies
@@ -1382,6 +1393,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
@@ -1430,6 +1442,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - id: app_bot
@@ -1500,6 +1513,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - name: Setup dependencies
