@@ -546,6 +546,16 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         yield* workspaceFileSystem.writeFile({
           cwd,
           relativePath: "src/main.ts",
+          contents: "keep existing",
+          overwrite: false,
+        });
+        expect(yield* fileSystem.readFileString(path.join(cwd, "src/main.ts"))).toBe(
+          "export {};\n",
+        );
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "src/main.ts",
           contents: "export const edited = true;\n",
         });
 
