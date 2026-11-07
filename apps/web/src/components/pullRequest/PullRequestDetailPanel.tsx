@@ -1150,6 +1150,7 @@ export function PullRequestDetailPanel({
     ? resolvePullRequestPrimaryControl({
         state: detail.state,
         isDraft: detail.isDraft,
+        inMergeQueue: detail.inMergeQueue,
         mergeability: detail.mergeability,
         checksState,
         autoMergeEnabled: detail.autoMergeEnabled,
@@ -1192,6 +1193,7 @@ export function PullRequestDetailPanel({
     ? resolvePullRequestState({
         state: detail.state,
         isDraft: detail.isDraft,
+        inMergeQueue: detail.inMergeQueue,
       })
     : null;
   const showsDeleteBranch = detail !== null && canDeletePullRequestBranch(detail);
