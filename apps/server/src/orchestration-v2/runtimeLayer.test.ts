@@ -6506,6 +6506,24 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 occurredAt: yield* DateTime.now,
                 payload: { ...source, status: "running", startedAt: yield* DateTime.now },
               },
+              {
+                id: EventId.make(`${threadId}:accepted`),
+                type: "provider-turn.updated",
+                threadId,
+                runId: source.id,
+                occurredAt: yield* DateTime.now,
+                payload: {
+                  id: ProviderTurnId.make(`${threadId}:turn`),
+                  providerThreadId: source.providerThreadId!,
+                  nodeId: source.rootNodeId!,
+                  runAttemptId: source.activeAttemptId,
+                  nativeTurnRef: null,
+                  ordinal: 1,
+                  status: "running",
+                  startedAt: yield* DateTime.now,
+                  completedAt: null,
+                },
+              },
             ],
           });
         }
@@ -6624,6 +6642,122 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           "resume retries must not duplicate messages or runs",
         );
         assert.lengthOf(afterRetries.messages, before.messages.length);
+      }),
+  );
+
+  it.effect.each(["startup", "shutdown"] as const)(
+    "sends a delegated task's prompt again after a %s cut it before the provider accepted it",
+    (trigger) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const parentThreadId = ThreadId.make(`delegate-resend-${trigger}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${parentThreadId}:create`),
+          threadId: parentThreadId,
+          projectId: ProjectId.make(`${parentThreadId}:project`),
+          title: "Delegating parent",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${parentThreadId}:message`),
+          threadId: parentThreadId,
+          messageId: MessageId.make(`${parentThreadId}:message`),
+          text: "Delegate a review",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+        yield* orchestrator.dispatch({
+          type: "delegated_task.request",
+          commandId: CommandId.make(`${parentThreadId}:delegate`),
+          parentThreadId,
+          parentRunId: parentRun.id,
+          parentNodeId: parentRun.rootNodeId!,
+          task: "Review the diff",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          completionWake: "always",
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        const threadId = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!
+          .childThreadId!;
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const run = before.runs[0]!;
+        const attempt = before.attempts.find((row) => row.id === run.activeAttemptId)!;
+        const rootNode = before.nodes.find((row) => row.id === run.rootNodeId)!;
+        // What a provider turn start commits before the provider accepts the prompt.
+        const startedAt = yield* DateTime.now;
+        yield* (yield* EventSink.EventSinkV2).write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:running:run`),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: startedAt,
+              payload: { ...run, status: "running", startedAt },
+            },
+            {
+              id: EventId.make(`${threadId}:running:attempt`),
+              type: "run-attempt.updated",
+              threadId,
+              runId: run.id,
+              nodeId: rootNode.id,
+              occurredAt: startedAt,
+              payload: { ...attempt, status: "running", startedAt },
+            },
+            {
+              id: EventId.make(`${threadId}:running:node`),
+              type: "node.updated",
+              threadId,
+              runId: run.id,
+              nodeId: rootNode.id,
+              occurredAt: startedAt,
+              payload: { ...rootNode, status: "running", startedAt },
+            },
+          ],
+        });
+        const expectResent = Effect.gen(function* () {
+          const child = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(
+            child.runs.map((row) => [row.id, row.status, row.startedAt]),
+            [[run.id, "starting", null]],
+          );
+          assert.deepEqual(child.messages, before.messages);
+          const starts = yield* outbox.listByCommandId(
+            CommandId.make(`command:restart-resend:${run.id}`),
+          );
+          assert.deepEqual(
+            starts.filter((effect) => effect.status === "pending").map((effect) => effect.request),
+            [{ type: "provider-turn.start", runId: run.id }],
+          );
+        });
+        yield* recovery.reconcile(trigger);
+        yield* expectResent;
+        // The server stops again before the worker sent the prompt.
+        yield* TestClock.adjust("1 second");
+        yield* recovery.reconcile("startup");
+        yield* orchestrator.recoverDelegatedTasks;
+        yield* expectResent;
+        assert.deepInclude((yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0], {
+          status: "running",
+          result: null,
+        });
       }),
   );
 
@@ -8640,6 +8774,24 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
                 runId: continuation.id,
                 occurredAt: startedAt,
                 payload: { ...continuation, status: "running", startedAt },
+              },
+              {
+                id: EventId.make("recovery:continuation-accepted:resume-started"),
+                type: "provider-turn.updated",
+                threadId,
+                runId: continuation.id,
+                occurredAt: startedAt,
+                payload: {
+                  id: ProviderTurnId.make("recovery:continuation-turn:resume-started"),
+                  providerThreadId: continuation.providerThreadId!,
+                  nodeId: continuation.rootNodeId!,
+                  runAttemptId: continuation.activeAttemptId,
+                  nativeTurnRef: null,
+                  ordinal: 1,
+                  status: "running",
+                  startedAt,
+                  completedAt: null,
+                },
               },
             ],
           });
