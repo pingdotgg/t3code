@@ -21,7 +21,7 @@ import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { providerInstanceEntriesFor } from "../../providerInstances";
 import {
-  getCustomModelOptionsByInstance,
+  getTextGenerationModelOptionsByInstance,
   resolveAppModelSelectionState,
   selectsPlanAgent,
 } from "../../modelSelection";
@@ -139,13 +139,13 @@ export function SourceControlWritingSettingsSection() {
     (entry) =>
       entry.instanceId === defaultModelSelection.instanceId && entry.enabled && entry.isAvailable,
   );
-  const modelOptionsByInstance = getCustomModelOptionsByInstance(
+  const modelOptionsByInstance = getTextGenerationModelOptionsByInstance(
     settings,
     projectEffectiveTextGenerationProviders,
     activeSelection.instanceId,
     activeSelection.model,
   );
-  const writerModelDisabledReason = useScopedModelDisabledReason(settings, instanceEntries);
+  const writerModelDisabledReason = useScopedModelDisabledReason(settings, instanceEntries, true);
   const writerInstanceEntry = instanceEntries.find(
     (entry) => entry.instanceId === activeSelection.instanceId,
   );
@@ -161,7 +161,7 @@ export function SourceControlWritingSettingsSection() {
     },
     textGenerationProviders,
   );
-  const reviewGuideModelOptionsByInstance = getCustomModelOptionsByInstance(
+  const reviewGuideModelOptionsByInstance = getTextGenerationModelOptionsByInstance(
     settings,
     textGenerationProviders,
     reviewGuideSelection.instanceId,
@@ -577,7 +577,21 @@ export function SourceControlWritingSettingsSection() {
                 <Switch
                   checked={usesDedicatedModel}
                   disabled={!usesDedicatedModel && !canEnableDedicatedModel}
-                  onCheckedChange={(checked) =>
+                  onCheckedChange={(checked) => {
+                    if (checked) {
+                      const reason = writerModelDisabledReason(
+                        defaultModelSelection.instanceId,
+                        defaultModelSelection.model,
+                      );
+                      if (reason) {
+                        toastManager.add({
+                          type: "error",
+                          title: "Writer model not saved",
+                          description: reason,
+                        });
+                        return;
+                      }
+                    }
                     updateSettings({
                       sourceControlWriterModelSelection: checked
                         ? createModelSelection(
@@ -586,8 +600,8 @@ export function SourceControlWritingSettingsSection() {
                             defaultModelSelection.options,
                           )
                         : null,
-                    })
-                  }
+                    });
+                  }}
                   aria-label="Use a separate source control writer model"
                 />
               </div>
