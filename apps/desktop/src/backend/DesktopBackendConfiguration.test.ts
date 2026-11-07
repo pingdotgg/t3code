@@ -275,6 +275,8 @@ describe("DesktopBackendConfiguration", () => {
             isPackaged: true,
             appName: "T3 Code (Nightly)",
             launcher: "resources/backend-launcher/t3-backend-launcher",
+            helperExists: true,
+            launcherExists: true,
           },
           {
             name: "development Electron",
@@ -282,6 +284,26 @@ describe("DesktopBackendConfiguration", () => {
             isPackaged: false,
             appName: "Electron",
             launcher: "repo/native/backend-launcher/build/t3-backend-launcher",
+            helperExists: true,
+            launcherExists: true,
+          },
+          {
+            name: "launcher missing",
+            platform: "darwin",
+            isPackaged: true,
+            appName: "T3 Code (Beta)",
+            launcher: "resources/backend-launcher/t3-backend-launcher",
+            helperExists: true,
+            launcherExists: false,
+          },
+          {
+            name: "Helper missing",
+            platform: "darwin",
+            isPackaged: true,
+            appName: "T3 Code (Beta)",
+            launcher: "resources/backend-launcher/t3-backend-launcher",
+            helperExists: false,
+            launcherExists: true,
           },
           {
             name: "Linux",
@@ -289,6 +311,8 @@ describe("DesktopBackendConfiguration", () => {
             isPackaged: true,
             appName: "T3 Code",
             launcher: null,
+            helperExists: true,
+            launcherExists: true,
           },
         ] as const;
 
@@ -298,6 +322,21 @@ describe("DesktopBackendConfiguration", () => {
           });
           const contentsPath = path.join(baseDir, `${testCase.appName}.app/Contents`);
           const executablePath = path.join(contentsPath, "MacOS", testCase.appName);
+          const helperPath = path.join(
+            contentsPath,
+            "Frameworks",
+            `${testCase.appName} Helper.app/Contents/MacOS/${testCase.appName} Helper`,
+          );
+          const launcherPath =
+            testCase.launcher === null ? null : path.join(baseDir, testCase.launcher);
+          const resources = [
+            ...(testCase.helperExists ? [helperPath] : []),
+            ...(testCase.launcherExists && launcherPath !== null ? [launcherPath] : []),
+          ];
+          for (const resource of resources) {
+            yield* fileSystem.makeDirectory(path.dirname(resource), { recursive: true });
+            yield* fileSystem.writeFileString(resource, "");
+          }
           const { config, environment } = yield* Effect.gen(function* () {
             const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
             return {
@@ -332,17 +371,9 @@ describe("DesktopBackendConfiguration", () => {
           ];
           assert.deepEqual(
             [config.executablePath, ...config.args],
-            testCase.launcher === null
+            testCase.launcher === null || !testCase.helperExists || !testCase.launcherExists
               ? [executablePath, ...backendArgs]
-              : [
-                  path.join(baseDir, testCase.launcher),
-                  path.join(
-                    contentsPath,
-                    "Frameworks",
-                    `${testCase.appName} Helper.app/Contents/MacOS/${testCase.appName} Helper`,
-                  ),
-                  ...backendArgs,
-                ],
+              : [launcherPath, helperPath, ...backendArgs],
             testCase.name,
           );
         }

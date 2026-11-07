@@ -214,18 +214,22 @@ const resolveBackendExecutable = Effect.fn("desktop.backendConfiguration.resolve
     const { path } = environment;
     // Electron and electron-builder name the generic helper after the main executable.
     const executableName = path.basename(executablePath);
-    return {
-      executablePath: environment.isPackaged
-        ? path.join(environment.resourcesPath, "backend-launcher", "t3-backend-launcher")
-        : path.join(environment.rootDir, "native/backend-launcher/build/t3-backend-launcher"),
-      leadingArgs: [
-        path.join(
-          path.dirname(executablePath),
-          "../Frameworks",
-          `${executableName} Helper.app/Contents/MacOS/${executableName} Helper`,
-        ),
-      ],
-    };
+    const helperPath = path.join(
+      path.dirname(executablePath),
+      "../Frameworks",
+      `${executableName} Helper.app/Contents/MacOS/${executableName} Helper`,
+    );
+    const launcherPath = environment.isPackaged
+      ? path.join(environment.resourcesPath, "backend-launcher", "t3-backend-launcher")
+      : path.join(environment.rootDir, "native/backend-launcher/build/t3-backend-launcher");
+    const fileSystem = yield* FileSystem.FileSystem;
+    if (!(yield* fileSystem.exists(launcherPath)) || !(yield* fileSystem.exists(helperPath))) {
+      yield* Effect.logWarning(
+        "macOS backend launcher or Helper is missing; processes the backend starts will be attributed to T3 Code.",
+      );
+      return { executablePath, leadingArgs: [] as ReadonlyArray<string> };
+    }
+    return { executablePath: launcherPath, leadingArgs: [helperPath] };
   },
 );
 
