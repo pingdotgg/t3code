@@ -1,9 +1,10 @@
 import type { PullRequestInvolvement, PullRequestListState } from "@t3tools/contracts";
-import { Plug2Icon, SearchIcon } from "lucide-react";
+import { ArrowLeftIcon, Plug2Icon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { isElectron } from "~/env";
 import { cn } from "~/lib/utils";
+import { useNavigateToMainApp } from "../sidebar/mainAppLocation";
 import { Button } from "../ui/button";
 import { RefreshIcon } from "../ui/refresh-icon";
 import {
@@ -110,6 +111,7 @@ export function PullRequestsColumn({
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
   const contentArea = workspaceAreaProps("pull-requests", 1, "Pull requests");
+  const navigateToMainApp = useNavigateToMainApp();
   const markerRef = useRef<HTMLDivElement | null>(null);
   const [condensed, setCondensed] = useState(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- IntersectionObserver on the scroll marker condenses the topbar
@@ -173,6 +175,14 @@ export function PullRequestsColumn({
         className="relative bg-background"
       >
         {titlebarControls}
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label="Back to threads"
+          onClick={() => void navigateToMainApp()}
+        >
+          <ArrowLeftIcon className="size-4" />
+        </Button>
         {condensed ? (
           <WorkspaceBreadcrumb ariaLabel="Pull request scope" className="overflow-hidden">
             <WorkspaceBreadcrumbItem current className={cn(searchExpanded && "sr-only")}>

@@ -450,7 +450,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         defaultOpen
         style={sidebarProviderStyle}
       >
-        <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
+        <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
         <Sidebar
           side="left"
           collapsible="offcanvas"
