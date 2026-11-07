@@ -1625,6 +1625,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
   searchMatchQuery?: string;
   onHighlight: () => void;
   onSelect: () => void;
+  onContextMenu: (threadRef: ScopedThreadRef, position: { x: number; y: number }) => void;
   onFileDropThreads: (threadRef: ScopedThreadRef, files: File[]) => void;
 }) {
   const thread =
@@ -1705,6 +1706,10 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
               aria-label={accessibility.label}
               onMouseMove={props.onHighlight}
               onClick={props.onSelect}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                props.onContextMenu(threadRef, { x: event.clientX, y: event.clientY });
+              }}
               className={cn(
                 "group/sidebar-row group/v2-row flex min-h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1 text-left text-sm outline-none",
                 props.isHighlighted || props.isRouteActive
