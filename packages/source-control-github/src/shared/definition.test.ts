@@ -15,6 +15,7 @@ describe("GitHub change request URLs", () => {
     });
     expect(parse("https://GHE.Example.com:8443/acme/web/pull/42/")).toEqual({
       host: "ghe.example.com",
+      authority: "ghe.example.com:8443",
       repository: "acme/web",
       number: 42,
       repositoryUrl: "https://ghe.example.com:8443/acme/web",

@@ -1421,18 +1421,28 @@ export function readPullRequestDetailSnapshot(
   reference: PullRequestDetailSnapshotRef,
 ): PullRequestDetail | null {
   try {
-    const raw =
-      storage?.getItem(pullRequestDetailSnapshotKey(environmentId, reference)) ??
-      (reference.host === undefined
-        ? null
-        : storage?.getItem(
-            pullRequestDetailSnapshotKey(environmentId, { ...reference, host: undefined }),
-          ));
-    if (!raw) return null;
-    const decoded = decodeDetailSnapshot(JSON.parse(raw));
-    return decoded._tag === "Some"
-      ? resolveDisplayedPullRequestDetail({ live: null, cached: decoded.value, reference })
-      : null;
+    const candidates = [reference];
+    if (reference.host !== undefined) {
+      candidates.push({ ...reference, host: undefined });
+      // Older keys omitted custom web ports; the cached URL must still match the requested one.
+      const hostname = new URL(`https://${reference.host}`).hostname;
+      if (hostname !== reference.host.toLowerCase()) {
+        candidates.push({ ...reference, host: hostname });
+      }
+    }
+    for (const candidate of candidates) {
+      const raw = storage?.getItem(pullRequestDetailSnapshotKey(environmentId, candidate));
+      if (!raw) continue;
+      const decoded = decodeDetailSnapshot(JSON.parse(raw));
+      if (decoded._tag !== "Some") continue;
+      const detail = resolveDisplayedPullRequestDetail({
+        live: null,
+        cached: decoded.value,
+        reference,
+      });
+      if (detail !== null) return detail;
+    }
+    return null;
   } catch {
     return null;
   }

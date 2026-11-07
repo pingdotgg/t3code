@@ -9,6 +9,7 @@ import {
   legacyThreadPullRequestKey,
   threadPullRequestSearchTerms,
   resolveThreadCurrentPullRequest,
+  resolveThreadCurrentPullRequestLink,
   resolveThreadPullRequestChains,
   resolveThreadPullRequestBadge,
   threadPullRequestKeysEqual,
@@ -101,6 +102,30 @@ describe("threadPullRequestKeysEqual", () => {
       }),
     ).toBe(true);
   });
+});
+
+describe("resolveThreadCurrentPullRequestLink", () => {
+  it.each(["pull", "-/merge_requests", "pulls"])(
+    "recovers a matching saved web authority for %s links without redirecting other identities",
+    (route) => {
+      const url = `http://code.example:4000/team/repo/${route}/1`;
+      for (const [host, storedUrl, expected] of [
+        ["code.example", url, "code.example:4000"],
+        ["code.example:4000", url, "code.example:4000"],
+        ["code.example:3000", url, "code.example:3000"],
+        ["other.example", url, "other.example"],
+        ["code.example", "invalid URL", "code.example"],
+        ["code.example", url.replace("team/repo", "team/other"), "code.example"],
+        ["code.example", url.replace(/1$/, "2"), "code.example"],
+      ] as const) {
+        const stored = link(1, { host, repository: "team/repo", url: storedUrl });
+        const resolved = resolveThreadCurrentPullRequestLink([stored]);
+        expect(resolved?.host).toBe(expected);
+        expect(resolveThreadCurrentPullRequestLink([stored])).toBe(resolved);
+        expect(stored.host).toBe(host);
+      }
+    },
+  );
 });
 
 describe("resolveThreadCurrentPullRequest", () => {

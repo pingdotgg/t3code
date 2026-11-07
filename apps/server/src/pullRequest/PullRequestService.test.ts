@@ -39,6 +39,8 @@ import {
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./PullRequestService.ts";
+import { makeThreadPullRequests } from "@t3tools/source-control-core/shared/threadPullRequests";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 
 function project(input: {
@@ -1878,34 +1880,63 @@ it.effect("names an SSH remote's web host from a later checkout when the first c
   }),
 );
 
-it.effect("rejects a different Forgejo HTTP port for an HTTP checkout", () =>
+it.effect("routes matching HTTP authorities and rejects a different web port", () =>
   Effect.gen(function* () {
-    const service = yield* makeService({
-      projects: [
-        project({
-          id: "http",
-          title: "http",
-          workspaceRoot: "/http",
-          repository: "team/repo",
-          provider: SourceControlProviderKind.make("forgejo"),
-          host: "code.example",
-          remoteUrl: "http://code.example:4000/team/repo.git",
-        }),
-      ],
-      providers: [fakePullRequestProvider(SourceControlProviderKind.make("forgejo"))],
-    });
-    const failure = yield* service
-      .summary(
+    for (const kind of ["forgejo", "github", "gitlab"] as const) {
+      const reads: string[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "http",
+            title: "http",
+            workspaceRoot: "/http",
+            repository: "team/repo",
+            provider: kind,
+            host: "code.example",
+            remoteUrl: "http://code.example:4000/team/repo.git",
+          }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make(kind), {
+            getChangeRequestPreview: (input) => {
+              reads.push(input.host);
+              return Effect.succeed(changeRequest(42, "2026-07-02T00:00:00Z"));
+            },
+            getChangeRequest: (input) => {
+              reads.push(input.host);
+              return Effect.succeed({ ...hostedChangeRequest("Port detail"), number: 42 });
+            },
+          }),
+        ],
+      });
+      const selected = makeThreadPullRequests(
+        sourceControlDefinitions,
+      ).resolveThreadCurrentPullRequestLink([
         {
-          projectId: "http" as ProjectId,
-          host: "code.example:3000",
+          host: "code.example",
           repository: "team/repo",
           number: 42,
+          url: `http://code.example:4000/team/repo/${kind === "gitlab" ? "-/merge_requests" : kind === "forgejo" ? "pulls" : "pull"}/42`,
+          source: "manual",
+          linkedAt: "2026-01-01T00:00:00.000Z",
+          snapshot: null,
+          stack: null,
         },
-        { recoverTransientFailure: false },
-      )
-      .pipe(Effect.flip);
-    assert.strictEqual(failure._tag, "PullRequestUnavailableError");
+      ])!;
+      const ref = {
+        projectId: "http" as ProjectId,
+        host: selected.host,
+        repository: selected.repository,
+        number: selected.number,
+      };
+      assert.strictEqual((yield* service.preview(ref)).number, 42);
+      assert.strictEqual((yield* service.detail(ref)).body, "Port detail");
+      assert.deepStrictEqual(reads, ["code.example:4000", "code.example:4000"]);
+      const failure = yield* service
+        .summary({ ...ref, host: "code.example:3000" }, { recoverTransientFailure: false })
+        .pipe(Effect.flip);
+      assert.strictEqual(failure._tag, "PullRequestUnavailableError");
+    }
   }),
 );
 
