@@ -7,6 +7,7 @@ import {
   EventId,
   ProviderInstanceId,
   RuntimeRequestId,
+  DeviceHostUnavailableError,
   RunId,
   ThreadId,
   TurnItemId,
@@ -563,6 +564,7 @@ interface HarnessOptions {
     input: ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput,
   ) => Effect.Effect<void>;
   readonly onCloseIdle?: () => Effect.Effect<void>;
+  readonly deviceCloseError?: DeviceHostUnavailableError;
   readonly currentThreads?: ReadonlyArray<OrchestrationV2AppThread>;
 }
 
@@ -690,7 +692,10 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
         Queue.offer(closedIdle, input).pipe(Effect.andThen(options.onCloseIdle?.() ?? Effect.void)),
     }),
     Layer.mock(DeviceService.DeviceService)({
-      close: (input) => Ref.update(deviceCloses, (closes) => [...closes, input]),
+      close: (input) =>
+        Ref.update(deviceCloses, (closes) => [...closes, input]).pipe(
+          Effect.andThen(options.deviceCloseError ?? Effect.void),
+        ),
     }),
     Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
       runForThread: (input) =>
@@ -1508,6 +1513,33 @@ describe("ThreadSettlementServiceV2 terminals", () => {
             closes.filter((close) => close.threadId === settled.id),
             [{ threadId: settled.id }],
           );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("runs the settle script when releasing the thread's devices fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const settled = appThread("reconnecting-host-thread", "settled", "/worktrees/thread");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          currentThreads: [settled],
+          existingWorktreePaths: ["/worktrees/thread"],
+          deviceCloseError: new DeviceHostUnavailableError({
+            hostId: "ssh-host",
+            reason: "Device host is reconnecting. Retry close after it reconnects.",
+          }),
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(settledEvent(settled));
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: settled.id });
+          const run = yield* Queue.take(fixture.scriptRuns);
+          assert.strictEqual(run.threadId, settled.id);
+          assert.deepStrictEqual(yield* Ref.get(fixture.deviceCloses), [{ threadId: settled.id }]);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
