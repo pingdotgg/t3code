@@ -2,6 +2,7 @@ import { AppWindowIcon, Columns2Icon, Layers2Icon, Rows2Icon } from "lucide-reac
 import { createPortal } from "react-dom";
 
 import { PANE_TAB_CLASS } from "../components/PaneNotch";
+import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { cn } from "../lib/utils";
 import {
   LAYOUT_DROP_CHROME_HEIGHT,
@@ -143,6 +144,7 @@ function PaneGrips({ pane, target }: { pane: LayoutDragPane; target: LayoutDropT
 }
 
 function ExtendBars({ state }: { state: LayoutDragState }) {
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const { strip, target } = state;
   const active = target?.kind === "extend" ? target.edge : null;
   const maxX = window.innerWidth - EXTEND_THICKNESS;
@@ -170,18 +172,20 @@ function ExtendBars({ state }: { state: LayoutDragState }) {
       height: EXTEND_THICKNESS,
     },
   ] as const;
-  return bars.map((bar) => (
-    <div
-      key={bar.edge}
-      className={cn(
-        "absolute rounded-model-tag inset-ring",
-        bar.edge === active
-          ? "bg-foreground/35 inset-ring-foreground/50"
-          : "bg-foreground/12 inset-ring-foreground/20",
-      )}
-      style={{ left: bar.left, top: bar.top, width: bar.width, height: bar.height }}
-    />
-  ));
+  return bars
+    .filter((bar) => bar.edge !== "bottom" || scrollingWorkspaces)
+    .map((bar) => (
+      <div
+        key={bar.edge}
+        className={cn(
+          "absolute rounded-model-tag inset-ring",
+          bar.edge === active
+            ? "bg-foreground/35 inset-ring-foreground/50"
+            : "bg-foreground/12 inset-ring-foreground/20",
+        )}
+        style={{ left: bar.left, top: bar.top, width: bar.width, height: bar.height }}
+      />
+    ));
 }
 
 /** The lifted, tilted tab under the pointer (pen G1JJK). */
