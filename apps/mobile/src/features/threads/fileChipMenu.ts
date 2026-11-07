@@ -58,20 +58,30 @@ function fileChipMetadata(target: FileChipTarget) {
 }
 
 /** Use literal resolved paths so encoded filename characters are not decoded twice. */
-export function fileChipShareSource(target: FileChipTarget, threadId: ThreadId) {
+export function fileChipShareSource(
+  target: FileChipTarget,
+  threadId: ThreadId | null,
+  draftCwd?: string | null,
+) {
   const metadata = fileChipMetadata(target);
-  return metadata
-    ? {
-        name: metadata.name,
-        mimeType: metadata.mimeType,
-        resource: {
+  if (!metadata) return null;
+  const resource =
+    threadId !== null
+      ? {
           _tag: "media-file" as const,
           threadId,
           path: metadata.path,
           disposition: "attachment" as const,
-        },
-      }
-    : null;
+        }
+      : draftCwd
+        ? {
+            _tag: "draft-workspace-file" as const,
+            cwd: draftCwd,
+            path: target.relativePath ?? metadata.path,
+            disposition: "attachment" as const,
+          }
+        : null;
+  return resource ? { name: metadata.name, mimeType: metadata.mimeType, resource } : null;
 }
 
 export function fileChipMenu(target: FileChipTarget): MarkdownFileContextMenu {

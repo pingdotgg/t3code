@@ -99,4 +99,18 @@ describe("file chip downloads", () => {
       });
     },
   );
+
+  it("uses the draft workspace resource when there is no thread", () => {
+    const target = resolveFileChipTarget("notes.txt", "/repo")!;
+    expect(fileChipShareSource(target, null, "/repo")).toMatchObject({
+      name: "notes.txt",
+      resource: {
+        _tag: "draft-workspace-file",
+        cwd: "/repo",
+        path: "notes.txt",
+        disposition: "attachment",
+      },
+    });
+    expect(fileChipShareSource(target, null, null)).toBeNull();
+  });
 });

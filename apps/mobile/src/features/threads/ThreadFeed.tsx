@@ -3077,7 +3077,7 @@ export const ThreadFeed = memo(function ThreadFeed({
           onMarkdownLinkPress(href);
           return;
         case "save":
-          shareFileChip(target);
+          void shareFileChip(target);
           return;
       }
     },
