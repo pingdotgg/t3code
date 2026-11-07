@@ -42,6 +42,7 @@ import { composerContextImportsAtom } from "../../state/use-composer-drafts";
 import { abortComposerDraftOperations } from "../../state/composerDraftOperations";
 import { composerContextSendBlockReason } from "../../lib/composerContext";
 import { ComposerInlineControl } from "../../components/ComposerToolbar";
+import { ProjectFavicon } from "../../components/ProjectFavicon";
 
 import {
   composerAttachmentUploadBlockReason,
@@ -754,13 +755,23 @@ export function NewTaskDraftScreen(props: {
         </Text>
         <View className="max-w-full flex-row items-center justify-center">
           <Text className="text-2xl font-t3-medium tracking-tight text-foreground">in </Text>
+          <View className="mr-2 shrink-0">
+            <ProjectFavicon
+              environmentId={selectedProject.environmentId}
+              faviconPath={selectedProject.faviconPath}
+              projectIcon={selectedProject.projectIcon}
+              projectTitle={selectedProject.title}
+              workspaceRoot={selectedProject.workspaceRoot}
+              size={24}
+            />
+          </View>
           <Pressable
             accessibilityHint="Opens the project picker"
             accessibilityLabel={selectedProjectLabel ?? selectedProject.title}
             accessibilityRole="button"
             disabled={isComposerInteractionLocked}
             onPress={chooseProject}
-            className="min-w-0 max-w-[250px] border-b border-foreground-muted active:opacity-65"
+            className="min-w-0 max-w-[250px] shrink border-b border-foreground-muted active:opacity-65"
           >
             <Text
               className="text-2xl font-t3-medium tracking-tight text-foreground"
