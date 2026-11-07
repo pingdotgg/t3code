@@ -72,6 +72,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import { Tool } from "effect/ai";
 import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -2437,6 +2438,125 @@ describe("ClaudeAdapterV2 attachments", () => {
         ),
       ),
   );
+});
+
+describe("ClaudeAdapterV2 query exit", () => {
+  // The query's open span has ended by the time its stream ends, so finalization needs its own.
+  it.effect("records why a query ended during a turn on the trace", () => {
+    const spans: Array<Tracer.NativeSpan> = [];
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-v2-query-exit-",
+        });
+        const prompted = yield* Deferred.make<void>();
+        const startupFailure = new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+          method: "setMcpServers",
+          cause: new Error("Query closed before response received"),
+        });
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path: yield* Path.Path,
+          random: yield* SecureRandom.SecureRandom,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("query-exit-native-session"),
+            open: () =>
+              Effect.succeed({
+                messages: Stream.fromEffect(Deferred.await(prompted)).pipe(
+                  Stream.flatMap(() => Stream.fail(startupFailure)),
+                ),
+                offer: () => Deferred.succeed(prompted, undefined).pipe(Effect.asVoid),
+                setModel: () => Effect.void,
+                applyFlagSettings: () => Effect.void,
+                setPermissionMode: () => Effect.void,
+                backgroundTasks: () => Effect.succeed(false),
+                mcpServerStatus: Effect.succeed([]),
+                readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                listPermissionRules: Effect.succeed([]),
+                stopTask: () => Effect.void,
+                interrupt: Effect.void,
+                close: Effect.void,
+              }),
+            forkSession: () => Effect.die("unused forkSession"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-query-exit");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-query-exit"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const terminal =
+          yield* Deferred.make<
+            Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }>
+          >();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) =>
+            event.type === "turn.terminal" ? Deferred.succeed(terminal, event) : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-query-exit"),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        const settled = yield* Deferred.await(terminal);
+
+        assert.equal(settled.status, "failed");
+        if (settled.status !== "failed") return;
+        assert.equal(settled.failure.class, "transport_error");
+        const finalized = spans.find(
+          (span) => span.name === "ClaudeAdapterV2.finalizeActiveTurnAfterQueryExit",
+        );
+        const warning = finalized?.events.find(([name]) =>
+          name.includes("orchestration-v2.claude-query-stream-failed"),
+        );
+        assert.isDefined(warning);
+        assert.include(
+          String(warning?.[2]["effect.cause"]),
+          "Query closed before response received",
+        );
+      }),
+    ).pipe(
+      Effect.withTracer(tracer),
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    );
+  });
 });
 
 describe("ClaudeAdapterV2 native fork", () => {
