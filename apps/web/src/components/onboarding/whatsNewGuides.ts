@@ -64,24 +64,22 @@ export const whatsNewGuides: readonly WhatsNewGuide[] = [
 
 export function resolveWhatsNewGuides({
   seen,
-  existingInstall,
+  legacySeen,
+  legacyInstall,
   chatSyncAvailable,
 }: {
   readonly seen: readonly string[] | null;
-  readonly existingInstall: boolean;
+  readonly legacySeen: readonly string[] | null;
+  readonly legacyInstall: boolean;
   readonly chatSyncAvailable: boolean;
 }) {
+  // v1 records were seeded as "all seen" on any install without the v1 welcome key; only trust
+  // them where that key proves the install predates What's new.
+  const record = seen ?? (legacyInstall ? legacySeen : null);
   const available = whatsNewGuides.filter((guide) => guide.id !== "chat-sync" || chatSyncAvailable);
-  if (seen === null) {
-    return {
-      available,
-      guides: existingInstall ? available : [],
-      seed: existingInstall ? null : whatsNewGuides.map((guide) => guide.id),
-    };
-  }
   return {
     available,
-    guides: available.filter((guide) => !seen.includes(guide.id)),
-    seed: null,
+    guides: available.filter((guide) => !record?.includes(guide.id)),
+    seen: record,
   };
 }

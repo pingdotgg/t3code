@@ -1,10 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { create } from "zustand";
 import { useNavigate } from "@tanstack/react-router";
 
-import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { useLocalStorage, writeLocalStorageValue } from "~/hooks/useLocalStorage";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { openCommandPalette } from "~/commandPaletteBus";
 import {
@@ -22,7 +22,8 @@ import { Button } from "../ui/button";
 import { Dialog, DialogDescription } from "../ui/dialog";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
 
-const WHATS_NEW_SEEN_STORAGE_KEY = "t3learn:whats-new-seen:v1";
+const WHATS_NEW_SEEN_STORAGE_KEY = "t3learn:whats-new-seen:v2";
+const LEGACY_WHATS_NEW_SEEN_STORAGE_KEY = "t3learn:whats-new-seen:v1";
 const WhatsNewSeenSchema = Schema.NullOr(Schema.Array(Schema.String));
 const nullableStringSchema = Schema.NullOr(Schema.String);
 // Pinned to v1: the welcome key can be bumped, but only installs from before What's new have this one.
@@ -31,6 +32,16 @@ const useWhatsNewRequest = create<{ requested: boolean }>(() => ({ requested: fa
 
 export function openWhatsNew() {
   useWhatsNewRequest.setState({ requested: true });
+}
+
+/** A fresh install gets only the welcome tour, so it starts with every current guide seen. */
+export function seedWhatsNewForNewInstall() {
+  writeLocalStorageValue(
+    WHATS_NEW_SEEN_STORAGE_KEY,
+    (current) => current ?? whatsNewGuides.map((guide) => guide.id),
+    null,
+    WhatsNewSeenSchema,
+  );
 }
 
 if (typeof window !== "undefined") {
@@ -42,6 +53,7 @@ if (typeof window !== "undefined") {
 export function WhatsNewHost({ hostedStatic }: { readonly hostedStatic: boolean }) {
   const requested = useWhatsNewRequest((state) => state.requested);
   const [seen, setSeen] = useLocalStorage(WHATS_NEW_SEEN_STORAGE_KEY, null, WhatsNewSeenSchema);
+  const [legacySeen] = useLocalStorage(LEGACY_WHATS_NEW_SEEN_STORAGE_KEY, null, WhatsNewSeenSchema);
   const [welcomeSeenAt] = useLocalStorage(
     WELCOME_GUIDE_SEEN_STORAGE_KEY,
     null,
@@ -63,16 +75,10 @@ export function WhatsNewHost({ hostedStatic }: { readonly hostedStatic: boolean 
   const [dismissed, setDismissed] = useState(false);
   const resolved = resolveWhatsNewGuides({
     seen,
-    existingInstall: legacyWelcomeSeenAt !== null,
+    legacySeen,
+    legacyInstall: legacyWelcomeSeenAt !== null,
     chatSyncAvailable,
   });
-
-  const seedNewInstall = resolved.seed !== null;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- seed the guide record once for new installs.
-  useEffect(() => {
-    // New installs get only the welcome tour.
-    if (seedNewInstall) setSeen(whatsNewGuides.map((guide) => guide.id));
-  }, [seedNewInstall, setSeen]);
 
   const autoOpen =
     !requested &&
@@ -88,7 +94,7 @@ export function WhatsNewHost({ hostedStatic }: { readonly hostedStatic: boolean 
   const close = () => {
     useWhatsNewRequest.setState({ requested: false });
     setDismissed(true);
-    setSeen((current) => [...new Set([...(current ?? []), ...guides.map((guide) => guide.id)])]);
+    setSeen([...new Set([...(resolved.seen ?? []), ...guides.map((guide) => guide.id)])]);
   };
   return <WhatsNewDialog key={requested ? "all" : "unseen"} guides={guides} onClose={close} />;
 }

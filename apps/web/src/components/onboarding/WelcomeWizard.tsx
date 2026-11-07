@@ -44,6 +44,7 @@ import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { completeOnboarding } from "../../onboarding/firstRun";
+import { seedWhatsNewForNewInstall } from "./WhatsNewDialog";
 import {
   groupOnboardingProjects,
   partitionOnboardingProjects,
@@ -181,6 +182,7 @@ export function WelcomeWizard({
       completionErrorToastIdRef.current = null;
     }
 
+    seedWhatsNewForNewInstall();
     const completion = completeOnboarding()
       .then(async () => {
         if (completionErrorToastIdRef.current !== null) {
