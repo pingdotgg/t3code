@@ -52,6 +52,7 @@ import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usa
 import * as UsageService from "./UsageService.ts";
 import * as MuseSdk from "../../../../packages/provider-muse/src/server/sdk.ts";
 import { MuseUsageHome } from "@t3tools/provider-muse/server";
+import { DevinUsage } from "@t3tools/provider-acp-registry/server";
 import { makeScanCacheWriter, SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
 
 vi.mock("node:fs/promises", { spy: true });
@@ -161,6 +162,7 @@ const layerService = (input: {
   layerCursorUsageAccounts(CursorAccountReader.layer).pipe(
     Layer.provideMerge(AntigravityUsage.layer),
     Layer.provideMerge(MuseUsageHome.layer),
+    Layer.provideMerge(DevinUsage.layer),
     Layer.provideMerge(ProviderHostLive.layer),
     Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
@@ -483,6 +485,148 @@ describe("Codex usage history", () => {
 });
 
 describe("UsageService", () => {
+  it.live("includes Devin Fusion history with Devin pricing and custom overrides", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const dataHome = NodePath.join(home, "data");
+      const dir = NodePath.join(dataHome, "devin", "cli");
+      yield* Effect.promise(() => NodeFSP.mkdir(dir, { recursive: true }));
+      const db = yield* Effect.acquireRelease(
+        Effect.sync(() => new NodeSqlite.DatabaseSync(NodePath.join(dir, "sessions.db"))),
+        (db) => Effect.sync(() => db.close()),
+      );
+      db.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY, model TEXT, last_activity_at INTEGER)");
+      db.exec(
+        "CREATE TABLE message_nodes (row_id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, node_id INTEGER, chat_message TEXT, created_at INTEGER, UNIQUE(session_id, node_id))",
+      );
+      db.exec("CREATE INDEX idx_message_nodes_session ON message_nodes(session_id)");
+      const time = Date.parse("2026-08-01T10:00:00Z");
+      db.prepare("INSERT INTO sessions VALUES (?, ?, ?)").run(
+        "fusion",
+        "fusion-opus-swe",
+        time / 1000,
+      );
+      const insert = db.prepare(
+        "INSERT INTO message_nodes (session_id, node_id, chat_message, created_at) VALUES (?, ?, ?, ?)",
+      );
+      const models = [
+        "claude-opus-5-5-medium",
+        "claude-opus-5-5-medium",
+        "swe-2-high",
+        "compactor",
+      ];
+      for (const [index, model] of models.entries()) {
+        insert.run(
+          "fusion",
+          index,
+          encodeUnknownJsonString({
+            role: "assistant",
+            metadata: {
+              request_id: index < 2 ? "opus-request" : `request-${index}`,
+              generation_model: model,
+              created_at: "2026-08-01T10:00:00Z",
+              metrics: {
+                input_tokens: 100,
+                output_tokens: 20,
+                cache_read_tokens: 300,
+                cache_creation_tokens: 50,
+              },
+            },
+          }),
+          time / 1000,
+        );
+      }
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make.pipe(
+          Effect.provideService(DevinUsage.DevinUsage, {
+            history: ({ dir, sinceMs }) =>
+              DevinUsage.readDevinUsage({ dir, sinceMs }).pipe(
+                Effect.map((read) => read.result),
+                Effect.provide(NodeServices.layer),
+              ),
+            awaitPersisted: Effect.void,
+            prices: () =>
+              Effect.succeed(
+                DevinUsage.parseDevinModelRates({
+                  families: [
+                    {
+                      variants: [
+                        {
+                          model_uid: "claude-opus-5-5-medium",
+                          cost_summary: "$4 / 1M Input · $0.2 / 1M Cached input · $20 / 1M Output",
+                        },
+                        { model_uid: "swe-2-high", cost_tier: "Free" },
+                      ],
+                    },
+                  ],
+                }),
+              ),
+          }),
+        );
+        const summary = yield* service.readSummary(WINDOW);
+        const buckets = summary.buckets.filter((bucket) => bucket.provider === "devin");
+        assert.strictEqual(buckets.length, 3);
+        const lead = buckets.find((bucket) => bucket.model === "claude-opus-5-5-medium");
+        assert.strictEqual(lead?.records, 1);
+        assert.strictEqual(lead?.costSource, "modelPriced");
+        assert.strictEqual(totalTokens(lead!.totals), 470);
+        assert.closeTo(lead?.costUsd ?? NaN, 0.00106, 1e-12);
+        assert.strictEqual(
+          buckets.find((bucket) => bucket.model === "swe-2-high")?.unpricedRecords,
+          0,
+        );
+        assert.strictEqual(
+          buckets.find((bucket) => bucket.model === "compactor")?.unpricedRecords,
+          1,
+        );
+        const sources = summary.sources.filter((source) => source.fingerprint.provider === "devin");
+        assert.strictEqual(sources.length, 1);
+        assert.strictEqual(sources[0]?.distinctSessions, 1);
+        const settingsService = yield* ServerSettings.ServerSettingsService;
+        yield* settingsService.updateSettings({
+          usagePriceOverrides: {
+            "claude-opus-5-5-medium": {
+              inputCostPerMillionTokens: 2,
+              outputCostPerMillionTokens: 5,
+              cacheReadCostPerMillionTokens: 0.1,
+              cacheWriteCostPerMillionTokens: 3,
+            },
+          },
+        });
+        const repriced = (yield* service.readSummary(WINDOW)).buckets.find(
+          (bucket) => bucket.provider === "devin" && bucket.model === "claude-opus-5-5-medium",
+        );
+        assert.closeTo(repriced?.costUsd ?? NaN, 0.00048, 1e-12);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-devin",
+            home,
+            settings: {
+              ...settings,
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("devin-one")]: {
+                  driver: ProviderDriverKind.make("acpRegistry"),
+                  config: { agentId: "devin" },
+                },
+                [ProviderInstanceId.make("devin-disabled")]: {
+                  driver: ProviderDriverKind.make("acpRegistry"),
+                  config: { agentId: "devin" },
+                  enabled: false,
+                },
+              },
+            },
+            environment: { XDG_DATA_HOME: dataHome },
+            ratesDocument: {
+              "claude-opus-5-5-medium": { input_cost_per_token: 1, output_cost_per_token: 2 },
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("counts compressed Codex rollouts across refresh, rewrites, and cache restarts", () =>
     Effect.gen(function* () {
       const { home, settings } = yield* setup;

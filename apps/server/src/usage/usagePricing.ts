@@ -5,14 +5,9 @@ import type {
   UsageTokenTotals,
 } from "@t3tools/contracts";
 
-import type { UsageRecord, UsageSpeed } from "@t3tools/provider-core/server/usage";
+import type { UsageRecord, UsageSpeed, UsageTokenRates } from "@t3tools/provider-core/server/usage";
 
-export interface TokenRates {
-  readonly inputCostPerToken: number;
-  readonly outputCostPerToken: number;
-  readonly cacheReadCostPerToken: number;
-  readonly cacheCreationCostPerToken: number;
-}
+export type TokenRates = UsageTokenRates;
 
 /** Omits LiteLLM's above_272k_tokens, flex and batches variants, which transcripts do not record. */
 export interface ModelRate extends TokenRates {

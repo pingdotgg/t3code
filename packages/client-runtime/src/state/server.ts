@@ -1341,24 +1341,26 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetUsageSummary,
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
-      execute: (input, emit) =>
-        request(WS_METHODS.serverGetUsageSummary, input).pipe(
-          Effect.filterOrElse(
-            (summary) => !summary.sources.some((source) => source.refreshing === true),
-            (summary) =>
-              emit(summary).pipe(
-                Effect.andThen(
-                  request(WS_METHODS.serverGetUsageSummary, { ...input, awaitRefresh: true }),
-                ),
-                Effect.catch((error) =>
-                  Effect.logWarning("Could not refresh slow usage sources.").pipe(
-                    Effect.annotateLogs({ ...safeErrorLogAttributes(error) }),
-                    Effect.as(summary),
-                  ),
-                ),
+      execute: Effect.fn("Server.usageSummary")(function* (input, emit) {
+        let summary = yield* request(WS_METHODS.serverGetUsageSummary, input);
+        while (summary.sources.some((source) => source.refreshing === true)) {
+          yield* emit(summary);
+          const next = yield* request(WS_METHODS.serverGetUsageSummary, {
+            ...input,
+            awaitRefresh: true,
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("Could not refresh slow usage sources.").pipe(
+                Effect.annotateLogs({ ...safeErrorLogAttributes(error) }),
+                Effect.as(undefined),
               ),
-          ),
-        ),
+            ),
+          );
+          if (next === undefined) return summary;
+          summary = next;
+        }
+        return summary;
+      }),
     }),
     resourceTelemetry: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:resource-telemetry",

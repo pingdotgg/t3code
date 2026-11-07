@@ -38,6 +38,7 @@ import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/ser
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { isModelPickerOpen } from "../../modelPickerVisibility";
 import { shortcutLabelForCommand } from "../../keybindings";
+import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -56,6 +57,7 @@ import {
 } from "@t3tools/shared/usageFormat";
 import { Button, InlineButton } from "../ui/button";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { ActivityShimmerOverlay } from "../chat/TimelineRowParts";
 import {
   Menu,
   MenuCheckboxItem,
@@ -720,7 +722,20 @@ function UsageOverview({
                     />
                     <ProviderMark provider={provider} className="size-4" />
                     <span className="flex min-w-0 items-baseline gap-1.5">
-                      <span className="truncate">{PROVIDER_PRESENTATION[provider].label}</span>
+                      <span
+                        ref={providerLoading ? observeVisibleAnimation : undefined}
+                        className={cn(
+                          "relative truncate",
+                          providerLoading && "text-muted-foreground",
+                        )}
+                      >
+                        {PROVIDER_PRESENTATION[provider].label}
+                        {providerLoading ? (
+                          <ActivityShimmerOverlay>
+                            {PROVIDER_PRESENTATION[provider].label}
+                          </ActivityShimmerOverlay>
+                        ) : null}
+                      </span>
                       <span
                         className={cn(
                           "shrink-0 whitespace-nowrap text-2xs text-muted-foreground tabular-nums",
@@ -1035,6 +1050,7 @@ function ProviderMark({
   return (
     <ProviderInstanceIcon
       driverKind={presentation.driverKind}
+      {...(provider === "devin" ? { acpRegistryAgentId: "devin" } : {})}
       displayName={presentation.label}
       iconClassName={className}
     />

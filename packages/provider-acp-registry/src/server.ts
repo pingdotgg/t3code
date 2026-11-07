@@ -4,3 +4,4 @@ export {
   type AcpRegistryAdapterV2DriverEnv,
 } from "./server/adapter.ts";
 export { acpRegistryManagedBinaryDirectories } from "./server/AcpRegistrySupport.ts";
+export * as DevinUsage from "./server/devinUsage.ts";

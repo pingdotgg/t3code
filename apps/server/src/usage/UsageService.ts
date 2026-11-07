@@ -38,6 +38,7 @@ import type {
   ProviderUsageInstance,
   TranscriptUsageFormat,
   UsageRecord,
+  UsageTokenRates,
 } from "@t3tools/provider-core/server/usage";
 import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
@@ -554,6 +555,7 @@ export const make = Effect.gen(function* () {
         }[]
       | null;
     readonly refreshing?: true;
+    readonly modelRates?: ReadonlyMap<string, UsageTokenRates>;
   }
 
   const scanTranscriptDir = Effect.fn("UsageService.scanTranscriptDir")(function* (
@@ -719,13 +721,20 @@ export const make = Effect.gen(function* () {
       { concurrency: 2 },
     );
 
+    const providerRates = scannedDirs.flatMap((source) =>
+      Array.from(
+        source.modelRates ?? [],
+        ([model, rate]) => [model, { ...rate, fast: null, ultrafast: null }] as const,
+      ),
+    );
+    const scanRates = providerRates.length === 0 ? rates : new Map([...rates, ...providerRates]);
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
-      rates,
+      rates: scanRates,
       priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
       modelAliases: resolveModelAliases(settings.usageModelAliases),
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),

@@ -93,6 +93,15 @@ export interface ProviderUsageScan {
     | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
     | null;
   readonly refreshing?: true;
+  /** Provider-specific estimates keyed by each record's rateModel. */
+  readonly modelRates?: ReadonlyMap<string, UsageTokenRates>;
+}
+
+export interface UsageTokenRates {
+  readonly inputCostPerToken: number;
+  readonly outputCostPerToken: number;
+  readonly cacheReadCostPerToken: number;
+  readonly cacheCreationCostPerToken: number;
 }
 
 export interface ProviderUsageScanInput<Config> {

@@ -9,13 +9,14 @@ describe("buildPeriodColumns", () => {
       "2026-08-01",
       {
         day: "2026-08-01",
-        costUsd: 42,
-        totalTokens: 420,
+        costUsd: 45,
+        totalTokens: 450,
         byProvider: new Map([
           ["codex" as const, { costUsd: 10, totalTokens: 100 }],
           ["claude" as const, { costUsd: 20, totalTokens: 200 }],
           ["pi" as const, { costUsd: 5, totalTokens: 50 }],
           ["muse" as const, { costUsd: 7, totalTokens: 70 }],
+          ["devin" as const, { costUsd: 3, totalTokens: 30 }],
         ]),
       },
     ],
@@ -42,6 +43,7 @@ describe("buildPeriodColumns", () => {
       { provider: "antigravity", value: 0 },
       { provider: "pi", value: 5 },
       { provider: "muse", value: 7 },
+      { provider: "devin", value: 3 },
     ]);
   });
 });

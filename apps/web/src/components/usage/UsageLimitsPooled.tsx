@@ -86,6 +86,7 @@ function AccountAvatar({
     return (
       <ProviderInstanceIcon
         driverKind={account.driver}
+        acpRegistryIconUrl={account.iconUrl}
         displayName={
           account.displayName ??
           providerClients.get(account.driver)?.label ??
@@ -571,13 +572,16 @@ function PoolWindowCard({
 
 function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
   const color = barColor(pool.driver);
-  const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
+  const registryAccount = pool.driver === "acpRegistry" ? pool.accounts[0] : undefined;
+  const label =
+    registryAccount?.displayName ?? providerClients.get(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
   return (
     <section className="flex flex-col gap-3">
       <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
         <ProviderInstanceIcon
           driverKind={pool.driver}
+          acpRegistryIconUrl={registryAccount?.iconUrl}
           displayName={label}
           indicatorBackground="var(--background)"
           className="size-5"
