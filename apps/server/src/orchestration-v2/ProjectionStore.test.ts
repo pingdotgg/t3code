@@ -6587,6 +6587,304 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect(
+    "reads the shell of a thread with a long finished run history without scanning it",
+    () =>
+      Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const sql = yield* SqlClient.SqlClient;
+        const suffix = "shell-long-history";
+        const threadId = ThreadId.make(`thread:${suffix}`);
+        const now = yield* DateTime.now;
+        yield* projectionStore.apply({
+          id: EventId.make(`event:${suffix}:thread-created`),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make(`project:${suffix}`),
+            title: "Long finished history",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+        for (let ordinal = 1; ordinal <= 3; ordinal++) {
+          const runId = RunId.make(`run:${suffix}:${ordinal}`);
+          const rootNodeId = NodeId.make(`node:${suffix}:${ordinal}`);
+          yield* projectionStore.apply({
+            id: EventId.make(`event:${suffix}:run-${ordinal}`),
+            type: "run.created",
+            threadId,
+            runId,
+            nodeId: rootNodeId,
+            driver,
+            providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: runId,
+              threadId,
+              ordinal,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: MessageId.make(`message:${suffix}:${ordinal}`),
+              rootNodeId,
+              activeAttemptId: null,
+              status: "completed" as const,
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          });
+        }
+
+        const { statements, tracer } = traceSqlStatements();
+        const shell = yield* projectionStore
+          .getThreadShell(threadId)
+          .pipe(Effect.withTracer(tracer));
+        assert.isNotNull(shell);
+        const statement = statements.find((query) => query.includes("AS activity_run_status"));
+        assert.isDefined(statement);
+        const plan = yield* sql.unsafe<{
+          readonly id: number;
+          readonly parent: number;
+          readonly detail: string;
+        }>(`EXPLAIN QUERY PLAN ${statement}`);
+        // With no live run, a lookup that walks the ordinal index reads every run the thread has had.
+        const liveRunLookups = plan.filter(
+          (row) =>
+            row.detail.startsWith("SEARCH r USING INDEX orchestration_v2_projection_runs_") &&
+            row.detail.includes("(thread_id=?"),
+        );
+        assert.lengthOf(liveRunLookups, 4);
+        assert.isFalse(plan.some((row) => /^SCAN (?:r|candidate)\b/.test(row.detail)));
+        for (const lookup of liveRunLookups) {
+          assert.include(
+            lookup.detail,
+            "orchestration_v2_projection_runs_thread_status_idx (thread_id=? AND status=?)",
+          );
+        }
+        // The newest run needs no sort, but the run that ended last must come from an ordered index.
+        const candidateLookups = plan.filter((row) =>
+          row.detail.startsWith("SEARCH candidate USING INDEX orchestration_v2_projection_runs_"),
+        );
+        assert.isAbove(candidateLookups.length, 0);
+        const sortedCandidates = plan.filter(
+          (row) =>
+            row.detail === "USE TEMP B-TREE FOR ORDER BY" &&
+            candidateLookups.some((lookup) => lookup.parent === row.parent),
+        );
+        assert.deepEqual(sortedCandidates, []);
+
+        // A turn-start guard needs one run, not the thread's whole recovery projection.
+        const runRead = traceSqlStatements();
+        const run = yield* projectionStore
+          .getRun(threadId, RunId.make(`run:${suffix}:2`))
+          .pipe(Effect.withTracer(runRead.tracer));
+        assert.equal(run?.ordinal, 2);
+        assert.isFalse(
+          runRead.statements.some((query) => /turn_items|projection_nodes|messages/.test(query)),
+        );
+        assert.isUndefined(
+          yield* projectionStore.getRun(threadId, RunId.make(`run:${suffix}:absent`)),
+        );
+      }),
+  );
+
+  it.effect("reads a long thread's records for a command without touching every row", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const suffix = "command-long-history";
+      const threadId = ThreadId.make(`thread:${suffix}`);
+      const now = yield* DateTime.now;
+      yield* projectionStore.apply({
+        id: EventId.make(`event:${suffix}:thread-created`),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make(`project:${suffix}`),
+          title: "Long command history",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      for (const ordinal of [1, 2]) {
+        const messageId = MessageId.make(`message:${suffix}:${ordinal}`);
+        yield* projectionStore.apply({
+          id: EventId.make(`event:${suffix}:message-${ordinal}`),
+          type: "message.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: messageId,
+            threadId,
+            runId: null,
+            nodeId: null,
+            role: "user",
+            text: `prompt ${ordinal}`,
+            attachments: [],
+            streaming: false,
+            createdBy: "user",
+            creationSource: "web",
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make(`event:${suffix}:item-${ordinal}`),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`${suffix}:item:${ordinal}`),
+            threadId,
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal,
+            status: "completed",
+            title: "prompt",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "user_message",
+            createdBy: "user",
+            creationSource: "web",
+            messageId,
+            inputIntent: "turn_start",
+            text: `prompt ${ordinal}`,
+            attachments: [],
+          },
+        });
+      }
+
+      const { statements, tracer } = traceSqlStatements();
+      yield* projectionStore
+        .getThreadRecords(threadId, ["runs", "nodes", "providerThreads", "messages", "turnItems"], {
+          turnItemTypes: ["user_message", "error"],
+          messageRoles: ["user"],
+          omitSettledLeafNodes: true,
+          omitSettledSubagents: true,
+        })
+        .pipe(Effect.withTracer(tracer));
+      yield* projectionStore
+        .getThreadRecords(threadId, ["turnItems"], {
+          turnItemTypes: ["command_execution"],
+          turnItemRunId: RunId.make(`run:${suffix}`),
+        })
+        .pipe(Effect.withTracer(tracer));
+      yield* projectionStore
+        .getThreadRecords(threadId, ["turnItems"], {
+          turnItemTypes: ["run_interrupt_request"],
+          turnItemRunIds: [RunId.make(`run:${suffix}`)],
+        })
+        .pipe(Effect.withTracer(tracer));
+      yield* projectionStore
+        .getThreadRecords(threadId, ["turnItems"], {
+          turnItemTypes: ["subagent"],
+          turnItemNodeIds: [NodeId.make(`node:${suffix}`)],
+        })
+        .pipe(Effect.withTracer(tracer));
+      yield* projectionStore
+        .getThreadRecords(threadId, ["subagents"], {
+          subagentChildThreadId: ThreadId.make(`thread:${suffix}:child`),
+        })
+        .pipe(Effect.withTracer(tracer));
+      yield* projectionStore.getThreadShell(threadId).pipe(Effect.withTracer(tracer));
+      const planOf = Effect.fnUntraced(function* (marker: string) {
+        const statement = statements.find((query) => query.includes(marker));
+        assert.isDefined(statement, marker);
+        return (yield* sql.unsafe<{ readonly detail: string }>(
+          `EXPLAIN QUERY PLAN ${statement}`,
+        )).map((row) => row.detail);
+      });
+      // Each read must reach only the rows it returns; a thread can hold tens of thousands.
+      const expectations = [
+        {
+          marker: "(type || '') IN (SELECT value FROM json_each",
+          uses: "turn_items_thread_type_idx (<expr>=? AND <expr>=?)",
+          avoids: "turn_items_thread_ordinal_idx",
+        },
+        {
+          marker: "AND run_id = ?",
+          uses: "turn_items_thread_run_idx (thread_id=? AND run_id=?)",
+          avoids: "turn_items_thread_ordinal_idx",
+        },
+        {
+          marker: "AND run_id IN (SELECT value FROM json_each",
+          uses: "turn_items_thread_run_idx (thread_id=? AND run_id=?)",
+          avoids: "turn_items_thread_ordinal_idx",
+        },
+        {
+          marker: "AND node_id IN (SELECT value FROM json_each",
+          uses: "turn_items_node_ordinal_idx (node_id=?)",
+          avoids: "turn_items_thread_ordinal_idx",
+        },
+        {
+          marker: "AND child_thread_id = ?",
+          uses: "subagents_child_thread_idx (child_thread_id=?)",
+          avoids: "subagents_thread_idx",
+        },
+        {
+          marker: "MIN(ordinal) AS ordinal",
+          uses: "turn_items_thread_type_idx (<expr>=? AND <expr>=?)",
+          avoids: "turn_items_thread_run_idx",
+        },
+        {
+          marker: "AS runless_item_count",
+          uses: "r USING COVERING INDEX orchestration_v2_projection_runs_id_status_idx (<expr>=?)",
+          avoids: "sqlite_autoindex_orchestration_v2_projection_runs_1",
+        },
+      ] as const;
+      for (const { marker, uses, avoids } of expectations) {
+        const plan = (yield* planOf(marker)).join("\n");
+        assert.include(plan, uses, marker);
+        assert.notInclude(plan, avoids, marker);
+      }
+    }),
+  );
+
   it.effect("selects the latest waiting secret only from active runs", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;

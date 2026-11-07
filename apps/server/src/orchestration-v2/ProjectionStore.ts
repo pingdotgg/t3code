@@ -353,6 +353,8 @@ export interface ProjectionRecordFilter {
   readonly contextTransferStatuses?: ReadonlyArray<OrchestrationV2ContextTransfer["status"]>;
   readonly subagentIds?: ReadonlyArray<NodeId>;
   readonly subagentRunIds?: ReadonlyArray<RunId>;
+  /** Only the tasks whose child thread this is. */
+  readonly subagentChildThreadId?: ThreadId;
   readonly nodeIds?: ReadonlyArray<NodeId>;
   readonly turnItemRequestIds?: ReadonlyArray<RuntimeRequestId>;
   readonly turnItemTypes?: ReadonlyArray<OrchestrationV2TurnItem["type"]>;
@@ -612,6 +614,10 @@ export interface ProjectionStoreV2Shape {
   readonly getRuntimeRecoveryProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<ProjectionRuntimeRecoveryState, ProjectionStoreV2Error>;
+  readonly getRun: (
+    threadId: ThreadId,
+    runId: RunId,
+  ) => Effect.Effect<OrchestrationV2Run | undefined, ProjectionStoreV2Error>;
   readonly getPendingNativeUserInputs: (
     threadId: ThreadId,
     providerTurnId: ProviderTurnId,
@@ -3141,6 +3147,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           readonly work_last_ordinal?: number | null;
           readonly work_item_count?: number | null;
         };
+        const byRun =
+          filter?.turnItemRunId !== undefined ||
+          (filter?.turnItemRunIds !== undefined && !filter.turnItemRunIds.includes(null));
+        const byNode = !byRun && filter?.turnItemNodeIds !== undefined;
+        const byTypeOnly =
+          filter?.turnItemTypes !== undefined &&
+          filter.turnItemRunId === undefined &&
+          filter.turnItemRunIds === undefined &&
+          filter.turnItemNodeIds === undefined;
         const boundedTurnItemRows: ReadonlyArray<WindowPayloadRow> =
           (fields !== undefined && !fields.includes("turnItems")) ||
           (window === undefined &&
@@ -3156,13 +3171,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? yield* sql<PayloadRow>`
                 SELECT payload_json
                 FROM orchestration_v2_projection_turn_items
-                WHERE thread_id = ${threadId}
+                ${
+                  // Without statistics SQLite walks the thread's ordinal index and reads every
+                  // item of a long thread; each filter names the index that reaches only its rows.
+                  byRun
+                    ? sql`INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx`
+                    : byNode
+                      ? sql`INDEXED BY orchestration_v2_projection_turn_items_node_ordinal_idx`
+                      : byTypeOnly
+                        ? sql`INDEXED BY orchestration_v2_projection_turn_items_thread_type_idx`
+                        : sql``
+                }
+                WHERE ${byTypeOnly ? sql`(thread_id || '') = ${threadId}` : sql`thread_id = ${threadId}`}
                   ${filter?.turnItemRequestIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.requestId') IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRequestIds)}))`}
-                  ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
+                  ${filter?.turnItemTypes === undefined ? sql`` : byTypeOnly ? sql`AND (type || '') IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
                   ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
                   ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
                   ${filter?.turnItemNodeIds === undefined ? sql`` : sql`AND node_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemNodeIds)}))`}
-                  ${filter?.turnItemRunIds === undefined ? sql`` : sql`AND (run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))})) OR (${filter.turnItemRunIds.includes(null) ? 1 : 0} = 1 AND run_id IS NULL))`}
+                  ${filter?.turnItemRunIds === undefined ? sql`` : filter.turnItemRunIds.includes(null) ? sql`AND (run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))})) OR run_id IS NULL)` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))}))`}
                 ORDER BY ordinal ASC, turn_item_id ASC
               `
               : yield* sql<PayloadRow>`
@@ -3448,7 +3474,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_subagents AS subagent
+            ${filter?.subagentChildThreadId === undefined ? sql`` : sql`INDEXED BY orchestration_v2_projection_subagents_child_thread_idx`}
             WHERE thread_id = ${threadId}
+              ${filter?.subagentChildThreadId === undefined ? sql`` : sql`AND child_thread_id = ${filter.subagentChildThreadId}`}
               ${filter?.subagentIds === undefined ? sql`` : sql`AND subagent_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentIds)}))`}
               ${filter?.subagentRunIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentRunIds)}))`}
               ${
@@ -3746,7 +3774,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           const rows = yield* sql<{ message_id: string; ordinal: number }>`
             SELECT json_extract(payload_json, '$.messageId') AS message_id, MIN(ordinal) AS ordinal
             FROM orchestration_v2_projection_turn_items
-            WHERE thread_id = ${threadId} AND type IN ('user_message', 'assistant_message')
+            INDEXED BY orchestration_v2_projection_turn_items_thread_type_idx
+            WHERE (thread_id || '') = ${threadId} AND (type || '') IN ('user_message', 'assistant_message')
               ${loadedMessageIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.messageId') IN (SELECT value FROM json_each(${encodeIdList(loadedMessageIds)}))`}
             GROUP BY json_extract(payload_json, '$.messageId')
           `;
@@ -5494,6 +5523,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    const getRun: ProjectionStoreV2Shape["getRun"] = (threadId, runId) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* requireThread(threadId);
+            const rows = yield* sql<PayloadRow>`
+          SELECT payload_json FROM orchestration_v2_projection_runs
+          WHERE run_id = ${runId} AND thread_id = ${threadId}`;
+            return rows[0] === undefined
+              ? undefined
+              : yield* decodeRunPayload(rows[0].payload_json);
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
+
     const canStartQueuedRun: ProjectionStoreV2Shape["canStartQueuedRun"] = (threadId) =>
       sql
         .withTransaction(
@@ -6225,6 +6269,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               (
                 SELECT r.status
                 FROM orchestration_v2_projection_runs r
+                INDEXED BY orchestration_v2_projection_runs_thread_status_idx
                 WHERE r.thread_id = t.thread_id
                   AND r.status IN ('preparing', 'starting', 'running', 'waiting')
                   AND NOT ${isSilentShellRun("r")}
@@ -6239,6 +6284,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   r.requested_at
                 )
                 FROM orchestration_v2_projection_runs r
+                INDEXED BY orchestration_v2_projection_runs_thread_status_idx
                 WHERE r.thread_id = t.thread_id
                   AND r.status IN ('preparing', 'starting', 'running', 'waiting')
                   AND NOT ${isSilentShellRun("r")}
@@ -6300,6 +6346,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT secret.payload_json
                 -- Keep runs outermost so completed history is never scanned for a pending secret.
                 FROM orchestration_v2_projection_runs r
+                INDEXED BY orchestration_v2_projection_runs_thread_status_idx
                 CROSS JOIN orchestration_v2_projection_turn_items secret
                   INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx
                 WHERE r.thread_id = t.thread_id
@@ -6348,6 +6395,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             LEFT JOIN orchestration_v2_projection_runs active ON active.run_id = (
               SELECT r.run_id
               FROM orchestration_v2_projection_runs r
+              INDEXED BY orchestration_v2_projection_runs_thread_status_idx
               WHERE r.thread_id = t.thread_id
                 AND r.status IN ('preparing', 'starting', 'running')
                 AND NOT ${isSilentShellRun("r")}
@@ -6448,7 +6496,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           WHERE thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
           GROUP BY thread_id, run_id
         ) counts
-        LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = counts.run_id
+        -- The covering index answers each run from a compact page set instead of the runs table.
+        LEFT JOIN orchestration_v2_projection_runs r
+          INDEXED BY orchestration_v2_projection_runs_id_status_idx
+          ON (r.run_id || '') = (counts.run_id || '')
         GROUP BY counts.thread_id
       `;
 
@@ -7498,6 +7549,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getCheckpointCaptureContext: readOnReader(getCheckpointCaptureContext),
       getCheckpointRollbackContext: readOnReader(getCheckpointRollbackContext),
       getRunMessage: readOnReader(getRunMessage),
+      getRun: readOnReader(getRun),
       canStartQueuedRun: readOnReader(canStartQueuedRun),
       getHeldQueuedRuns: readOnReader(getHeldQueuedRuns),
       getPendingNativeUserInputs: readOnReader(getPendingNativeUserInputs),

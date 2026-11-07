@@ -12812,21 +12812,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         turnItems: childResult.turnItems,
       };
       const parentThreadId = childControls.thread.lineage.parentThreadId;
-      const parentProjection = yield* projectionStore.getThreadRecords(
+      // A dispatcher parent holds thousands of tasks, runs and prompts, so read only this task's
+      // records and the delivery cohort the completion plan joins.
+      const taskRecords = yield* projectionStore.getThreadRecords(
         parentThreadId,
-        [
-          "runs",
-          "messages",
-          "subagents",
-          "providerThreads",
-          "providerTurns",
-          "nodes",
-          "turnItems",
-          "contextTransfers",
-        ],
-        { turnItemTypes: ["subagent"], messageRoles: ["user"] },
+        ["subagents", "nodes", "turnItems"],
+        {
+          subagentIds: [options.task.id],
+          nodeIds: [options.task.id],
+          turnItemNodeIds: [options.task.id],
+          turnItemTypes: ["subagent"],
+        },
       );
-      const task = parentProjection.subagents.find(
+      const task = taskRecords.subagents.find(
         (candidate) =>
           candidate.id === options.task.id &&
           candidate.origin === "app_owned" &&
@@ -12835,7 +12833,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (task === undefined) {
         return;
       }
-      const existingResultTransfer = parentProjection.contextTransfers.find(
+      // The result transfer runs from the child, so the child's side lists it too.
+      const { contextTransfers } = yield* projectionStore.getThreadRecords(childThreadId, [
+        "contextTransfers",
+      ]);
+      const existingResultTransfer = contextTransfers.find(
         (transfer) =>
           transfer.type === "subagent_result" &&
           transfer.sourceThreadId === childThreadId &&
@@ -12849,12 +12851,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
       const now = yield* DateTime.now;
       const result = subagentResultForRun(childProjection, { ...childRun, status: outcome });
-      const parentRun =
-        task.runId === null
+      const taskRunRecords = yield* projectionStore.getThreadRecords(parentThreadId, ["runs"], {
+        runIds: task.runId === null ? [] : [task.runId],
+      });
+      const parentRun = taskRunRecords.runs.find((candidate) => candidate.id === task.runId);
+      const delivery = parentRun?.delegatedCompletion?.delivery;
+      const deliveryRecords =
+        delivery == null
           ? undefined
-          : parentProjection.runs.find((candidate) => candidate.id === task.runId);
-      const parentNode = parentProjection.nodes.find((candidate) => candidate.id === task.id);
-      const parentTurnItem = parentProjection.turnItems.find(
+          : yield* projectionStore.getThreadRecords(parentThreadId, ["messages", "subagents"], {
+              messageIds: [delivery.messageId],
+              subagentIds: [...new Set([...delivery.taskIds, task.id])],
+            });
+      const deliveryRunId = deliveryRecords?.messages[0]?.runId ?? null;
+      const deliveryRun =
+        deliveryRunId === null || deliveryRunId === parentRun?.id
+          ? undefined
+          : (yield* projectionStore.getThreadRecords(parentThreadId, ["runs"], {
+              runIds: [deliveryRunId],
+            })).runs[0];
+      const parentProjection = {
+        thread: taskRecords.thread,
+        runs: [
+          ...(parentRun === undefined ? [] : [parentRun]),
+          ...(deliveryRun ? [deliveryRun] : []),
+        ],
+        messages: deliveryRecords?.messages ?? [],
+        subagents: deliveryRecords?.subagents ?? [task],
+        providerTurns: [],
+      };
+      const parentNode = taskRecords.nodes.find((candidate) => candidate.id === task.id);
+      const parentTurnItem = taskRecords.turnItems.find(
         (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
       );
       const updatedTask: OrchestrationV2Subagent = {
@@ -13015,8 +13042,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     )
       return;
     const progress = delegatedTaskProgress(childControls);
-    const parent = yield* projectionStore.getThreadRecords(parentThreadId, [
-      "subagents",
+    // A dispatcher parent holds thousands of tasks and transfers; this child owns a few of each.
+    const parent = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"], {
+      subagentChildThreadId: childThreadId,
+    });
+    const { contextTransfers } = yield* projectionStore.getThreadRecords(childThreadId, [
       "contextTransfers",
     ]);
     for (const task of parent.subagents) {
@@ -13026,9 +13056,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (task.id === childControls.thread.forkedFrom.nodeId &&
           progress.state !== "result_available") ||
         (task.result !== null &&
-          parent.contextTransfers.some(
+          contextTransfers.some(
             (transfer) =>
-              transfer.type === "subagent_result" && transfer.sourceThreadId === childThreadId,
+              transfer.type === "subagent_result" &&
+              transfer.sourceThreadId === childThreadId &&
+              transfer.targetThreadId === parentThreadId,
           ))
       )
         continue;
