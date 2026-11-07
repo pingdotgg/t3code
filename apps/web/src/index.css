@@ -441,10 +441,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+/* No backdrop-filter here: it can make open dialogs flash away while scrolling on high-refresh macOS displays (#25552). */
 @utility dialog-backdrop {
   background: color-mix(in srgb, var(--background) 60%, transparent);
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
 
   @variant dark {
     background: color-mix(in srgb, var(--background) 64%, transparent);
