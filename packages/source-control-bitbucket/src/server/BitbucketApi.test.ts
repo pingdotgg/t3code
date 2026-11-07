@@ -737,6 +737,36 @@ it.effect("reports saved credentials as configured when Bitbucket cannot confirm
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("reports a token Bitbucket accepts without account scope as authenticated", () => {
+  // Bitbucket answers 401 for a credential it rejects; 403 means it accepted the credential but
+  // that credential cannot read the account, as with repository, project, or workspace tokens.
+  const { layer } = makeLayer({
+    response: () => new Response(null, { status: 403 }),
+    env: { T3CODE_BITBUCKET_API_BASE_URL: "https://api.test.local/2.0" },
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
+
+    yield* settings.update({
+      sourceControlHosts: { bitbucket: { accessToken: "saved-access-token" } },
+    });
+    const auth = yield* bitbucket.probeAuth;
+    assert.strictEqual(auth.status, "authenticated");
+    assert.deepStrictEqual(auth.account, Option.none());
+
+    yield* settings.update({
+      sourceControlHosts: {
+        bitbucket: { accessToken: "", email: "saved@example.com", apiToken: "saved-api-token" },
+      },
+    });
+    const apiTokenAuth = yield* bitbucket.probeAuth;
+    assert.strictEqual(apiTokenAuth.status, "authenticated");
+    assert.deepStrictEqual(apiTokenAuth.account, Option.some("saved@example.com"));
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("keeps Bitbucket response bodies out of checkout diagnostics", () => {
   const responseBody = '{"error":{"message":"credential=secret-value"}}';
   const { layer } = makeLayer({

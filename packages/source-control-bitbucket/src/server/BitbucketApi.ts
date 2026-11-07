@@ -1048,7 +1048,19 @@ export const make = Effect.gen(function* () {
                 host: Option.some("bitbucket.org"),
                 detail: Option.none<string>(),
               })),
-              Effect.catch(() => currentCredential.pipe(Effect.map(authFromCredential))),
+              // 403 means Bitbucket accepted the credential but it cannot read the account, as
+              // with repository, project, or workspace access tokens.
+              Effect.catch((error) =>
+                (error._tag === "BitbucketResponseError" ||
+                  error._tag === "BitbucketResponseBodyReadError") &&
+                error.status === 403
+                  ? Effect.succeed<SourceControlProviderAuth>({
+                      ...authFromCredential(credential),
+                      status: "authenticated",
+                      detail: Option.none(),
+                    })
+                  : currentCredential.pipe(Effect.map(authFromCredential)),
+              ),
             ),
       ),
       Effect.catchTags({
