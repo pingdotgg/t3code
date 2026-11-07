@@ -88,7 +88,7 @@ const requireDeviceAccess = McpInvocationContext.requireThreadMcpCapability("dev
     () =>
       new DeviceToolUnavailableError({
         reason:
-          "Agent device access is turned off for this environment. Ask the user to turn on Agent device access in Settings > Integrations > Devices; it applies when the agent session next starts, such as in a new thread.",
+          "Agent device access is turned off for this environment. Ask the user to turn on the Device hub and Agent device access in Settings > Integrations > Devices; it applies when the agent session next starts, such as in a new thread.",
       }),
   ),
 );

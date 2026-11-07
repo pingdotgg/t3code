@@ -4397,6 +4397,17 @@ it.effect("ProviderSessionManagerV2 withholds device tools while device support 
       project?.capabilities?.has("device"),
       "project agent device access granted device tools with device support off",
     );
+    const missingProject = yield* runBrowserAccessScenario({
+      enableAgentBrowserAccess: false,
+      projectOverride: false,
+      enableAgentDeviceAccess: true,
+      enableDeviceSupport: false,
+      projectExists: false,
+    });
+    assert.isFalse(
+      missingProject?.capabilities?.has("device"),
+      "agent device access granted device tools with device support off for a missing project",
+    );
   }),
 );
 
