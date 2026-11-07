@@ -28,6 +28,7 @@ describe("referencedThreadContexts", () => {
 
 describe("autoBalanceLabel", () => {
   it.each([
+    ["checks machines while a candidate is pending", true, 2, remote, "Checking machines…"],
     ["stays neutral with no candidate machine", false, 0, null, "Auto balance"],
     ["stays neutral once a machine is picked", false, 2, remote, "Auto balance"],
     ["is unavailable when every candidate is too busy", false, 2, null, "Auto balance unavailable"],
