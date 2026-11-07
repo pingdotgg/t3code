@@ -143,6 +143,13 @@ export function startTimelinePositionRestore({
         },
         () => cancelled,
       );
+    } else if (position?.atEnd === false) {
+      // The DOM may still have the previous thread's height and have clamped the offset.
+      await settleListScroll(
+        list,
+        (element) => Math.max(0, Math.min(position.scrollOffset, measuredEndOffset(element))),
+        () => cancelled,
+      );
     }
     if (!cancelled) finish();
   });
