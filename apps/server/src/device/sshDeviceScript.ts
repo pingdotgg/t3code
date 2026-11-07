@@ -5,7 +5,8 @@ export const quoteRemoteArg = (value: string) => `'${value.replaceAll("'", "'\"'
 
 export const remoteDeviceEnvironment = `export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if [ -z "$ANDROID_HOME" ]; then
-  if [ -d "$HOME/Library/Android/sdk" ]; then export ANDROID_HOME="$HOME/Library/Android/sdk";
+  if [ -n "$ANDROID_SDK_ROOT" ]; then export ANDROID_HOME="$ANDROID_SDK_ROOT";
+  elif [ -d "$HOME/Library/Android/sdk" ]; then export ANDROID_HOME="$HOME/Library/Android/sdk";
   elif [ -d "$HOME/Android/Sdk" ]; then export ANDROID_HOME="$HOME/Android/Sdk"; fi
 fi
 if [ -n "$ANDROID_HOME" ]; then export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"; fi
@@ -133,10 +134,19 @@ async function install(name, version, entry) {
 }
 (async () => {
   const ios = process.platform === 'darwin' && run('xcrun', ['simctl', 'help']).status === 0;
-  const android = run('adb', ['version']).status === 0;
+  // The SSH shell setup chose ANDROID_HOME, so later commands use the SDK accepted here.
+  const sdk = process.env.ANDROID_HOME;
+  const executable = (relative) => { try { const file = path.join(sdk, relative); fs.accessSync(file, fs.constants.X_OK); return fs.statSync(file).isFile(); } catch { return false; } };
+  const androidReason = !sdk ? 'Android SDK was not found. Install it with Android Studio or set ANDROID_HOME on the SSH host.'
+    : !executable('platform-tools/adb') ? 'Android SDK Platform-Tools are missing from ' + sdk + '. Install them in Android Studio SDK Manager.'
+    : !executable('emulator/emulator') ? 'Android Emulator is missing from ' + sdk + '. Install it in Android Studio SDK Manager.'
+    : !executable('cmdline-tools/latest/bin/avdmanager') ? 'Android SDK Command-line Tools (latest) are missing from ' + sdk + '. Install them in Android Studio SDK Manager.'
+    : run(path.join(sdk, 'platform-tools', 'adb'), ['version']).status !== 0 ? 'adb in ' + sdk + ' failed to run. Reinstall Android SDK Platform-Tools.'
+    : null;
+  const android = androidReason === null;
   const platforms = [
     { platform: 'ios', available: ios, ...(!ios ? { reason: 'iOS needs macOS with Xcode and working xcrun simctl.' } : {}) },
-    { platform: 'android', available: android, ...(!android ? { reason: 'Android SDK missing. Set ANDROID_HOME or put adb on the SSH PATH.' } : {}) },
+    { platform: 'android', available: android, ...(!android ? { reason: androidReason } : {}) },
   ];
   if (mode === 'probe') {
     if (Number(process.versions.node.split('.')[0]) < 22) throw Error('Node 22 or newer is required on the device host.');
