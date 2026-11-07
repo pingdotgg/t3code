@@ -192,6 +192,8 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     href: [
       ...(defaultSchema.protocols?.href ?? []),
       "file",
+      // Shape is checked by the client URL transform and opener; see isLinearAppLinkHref.
+      "linear",
       "t3-citation",
       "t3-context",
       THREAD_LINK_PROTOCOL,
