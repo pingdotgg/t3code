@@ -89,7 +89,9 @@ query ReviewThreads($owner: String!, $name: String!, $number: Int!, $requestedRe
   }
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      reviewThreads(first: 100) {
+      # GitHub prices a page by the rows it may return, not the rows that exist, so a page of
+      # twenty-five threads costs 6 points even on a pull request with none.
+      reviewThreads(first: 25) {
         ...ReviewThreadPage
       }
       viewerCanUpdate
@@ -204,7 +206,7 @@ query ReviewThreadPages($owner: String!, $name: String!, $number: Int!, $after: 
   }
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      reviewThreads(first: 100, after: $after) {
+      reviewThreads(first: 25, after: $after) {
         ...ReviewThreadPage
       }
     }

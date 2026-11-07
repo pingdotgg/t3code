@@ -416,7 +416,7 @@ export const ReviewThreads = GraphQL.query("ReviewThreads", {
     ],
     selections: [
       { name: "viewer", body: ["{login}"] },
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){reviewThreads(first:100){...ReviewThreadPage}viewerCanUpdate viewerDidAuthor author{__typename login avatarUrl}...Reactions comments(first:100){nodes{id lastEditedAt author{__typename login avatarUrl}...Reactions}}reviews(first:100){nodes{id lastEditedAt author{__typename login avatarUrl}...Reactions}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name avatarUrl}...on Bot{login avatarUrl}...on Team{combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}latestReviews(first:50){nodes{state author{__typename login avatarUrl}}}reviewDismissals:timelineItems(itemTypes:[REVIEW_DISMISSED_EVENT]first:100){pageInfo{hasNextPage endCursor}nodes{__typename...on ReviewDismissedEvent{dismissalMessage review{id}}}}commits(last:100){nodes{commit{oid messageHeadline committedDate authors(first:3){nodes{name avatarUrl user{login}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){reviewThreads(first:25){...ReviewThreadPage}viewerCanUpdate viewerDidAuthor author{__typename login avatarUrl}...Reactions comments(first:100){nodes{id lastEditedAt author{__typename login avatarUrl}...Reactions}}reviews(first:100){nodes{id lastEditedAt author{__typename login avatarUrl}...Reactions}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name avatarUrl}...on Bot{login avatarUrl}...on Team{combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}latestReviews(first:50){nodes{state author{__typename login avatarUrl}}}reviewDismissals:timelineItems(itemTypes:[REVIEW_DISMISSED_EVENT]first:100){pageInfo{hasNextPage endCursor}nodes{__typename...on ReviewDismissedEvent{dismissalMessage review{id}}}}commits(last:100){nodes{commit{oid messageHeadline committedDate authors(first:3){nodes{name avatarUrl user{login}}}}}}}}"] }
     ],
     fragments: [
       { name: "ReviewThreadPage", body: ["on PullRequestReviewThreadConnection{totalCount pageInfo{hasNextPage endCursor}nodes{id isResolved isOutdated path line diffSide comments(first:10){totalCount pageInfo{hasNextPage endCursor}nodes{...ThreadComment}}}}"] },
@@ -467,7 +467,7 @@ export const ReviewThreadPages = GraphQL.query("ReviewThreadPages", {
     ],
     selections: [
       { name: "viewer", body: ["{login}"] },
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){reviewThreads(first:100 after:$", "after", "){...ReviewThreadPage}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){reviewThreads(first:25 after:$", "after", "){...ReviewThreadPage}}}"] }
     ],
     fragments: [
       { name: "ReviewThreadPage", body: ["on PullRequestReviewThreadConnection{totalCount pageInfo{hasNextPage endCursor}nodes{id isResolved isOutdated path line diffSide comments(first:10){totalCount pageInfo{hasNextPage endCursor}nodes{...ThreadComment}}}}"] },

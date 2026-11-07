@@ -366,6 +366,9 @@ export const NODE_ID_CACHE_CAPACITY = 128;
 
 const REVIEW_THREAD_PAGES = 10;
 
+// `ReviewThreads` reads 25 threads a page; forty pages keep the 1,000-thread ceiling.
+const REVIEW_THREAD_LIST_PAGES = 40;
+
 const CHECK_CONTEXT_PAGES = 10;
 
 export interface GitHubPullRequestListBatch {
@@ -2231,7 +2234,7 @@ export const make = Effect.gen(function* () {
         let cursor = first.nextCursor;
         let page = 1;
         // Later pages carry the threads alone; the PR-wide fields above come from the first.
-        while (cursor !== null && page < REVIEW_THREAD_PAGES) {
+        while (cursor !== null && page < REVIEW_THREAD_LIST_PAGES) {
           const later: Pick<
             GitHubReviewThreadPage,
             "threads" | "nextCursor" | "avatarsByLogin" | "botLogins"
