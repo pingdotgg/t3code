@@ -144,7 +144,9 @@ it.each(["click", "Enter", " "])(
       const event = new MouseEvent("click", { bubbles: true, cancelable: true, ...init });
       // Keep the browser on the test page while exercising the link's modifier handling.
       chip.element().addEventListener("click", (event) => event.preventDefault(), { once: true });
-      chip.element().dispatchEvent(event);
+      await act(() => {
+        chip.element().dispatchEvent(event);
+      });
       await expect.element(page.getByLabelText("Comment on selected text")).not.toBeInTheDocument();
     }
     if (activation === "click") {
