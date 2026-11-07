@@ -847,20 +847,10 @@ export class Launcher {
     throw new Error(`Active child exited unexpectedly (${String(code ?? signal ?? "unknown")}).`);
   }
 
-  // Stay idle until the lock frees to avoid supervisor restart loops; never restore backups over another owner's possible writes.
+  // Stay idle until the lock frees to avoid supervisor restart loops. A pending update keeps its
+  // backup and resumes its trial, since the other owner may have migrated the database past fromVersion.
   async #idleWhileStateDirOwned(): Promise<void> {
     this.#clearTimer();
-    const pending = this.#state.update;
-    if (pending?.status === "pending") {
-      const next: ServiceState = {
-        ...this.#state,
-        activeVersion: pending.fromVersion,
-        update: terminalUpdate({ pending, status: "failed", reason: "state-dir-owned" }),
-      };
-      await writeServiceState(this.#statePath, next);
-      this.#state = next;
-      await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
-    }
     process.stderr.write(
       "[service-launcher] Another T3 Code server owns this T3 home. This service starts again once it stops.\n",
     );
@@ -881,7 +871,9 @@ export class Launcher {
     if ((await stateDirOwned(this.#baseDir)) || this.#timer === undefined) return;
     this.#clearTimer();
     process.stderr.write("[service-launcher] The T3 home is free again. Starting the server.\n");
-    await this.#startChild(this.#state.activeVersion, "active", this.#state.update);
+    const update = this.#state.update;
+    if (update?.status === "pending") await this.#startTrial(update);
+    else await this.#startChild(this.#state.activeVersion, "active", update);
   }
 
   async #returnToPrevious(
