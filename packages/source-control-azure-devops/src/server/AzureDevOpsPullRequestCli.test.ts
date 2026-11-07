@@ -1,5 +1,7 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -11,10 +13,13 @@ const mockedExecute = vi.fn<AzureDevOpsCli.AzureDevOpsCli["Service"]["execute"]>
 
 const layer = it.layer(
   AzureDevOpsPullRequestCli.layer.pipe(
-    Layer.provide(
-      Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
-        execute: mockedExecute,
-      }),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
+          execute: mockedExecute,
+        }),
+        NodeServices.layer,
+      ),
     ),
   ),
 );
@@ -104,6 +109,30 @@ function changeEntries(count: number): ReadonlyArray<Record<string, unknown>> {
     };
   });
 }
+
+/** Read the body while az would: its file is gone once the write returns. */
+function answerWrite(fileSystem: FileSystem.FileSystem, bodies: Array<unknown>) {
+  mockedExecute.mockImplementationOnce((input) => {
+    const file = input.args[input.args.indexOf("--in-file") + 1];
+    assert.isDefined(file);
+    return fileSystem.readFileString(file).pipe(
+      Effect.map((text) => {
+        bodies.push(JSON.parse(text));
+        return output("{}");
+      }),
+      Effect.orDie,
+    );
+  });
+}
+
+function bodyFileOfCall(index: number): string {
+  const args = argsOfCall(index);
+  const file = args[args.indexOf("--in-file") + 1];
+  assert.isDefined(file);
+  return file;
+}
+
+const LOCATION = { project: "platform", repository: "web" };
 
 afterEach(() => {
   mockedExecute.mockReset();
@@ -803,6 +832,213 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         ["a.ts", "8f80"],
         ["b.ts", "0ca4"],
       ]);
+    }),
+  );
+
+  it.effect("tracks the threads to the push named, against the merge base", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(json({ value: [] }))));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      yield* cli.listThreads({ cwd: "/w", location: LOCATION, number: 42, iterationId: 3 });
+
+      expect(argsOfCall(0)).toEqual([
+        "devops",
+        "invoke",
+        "--detect",
+        "true",
+        "--area",
+        "git",
+        "--resource",
+        "pullRequestThreads",
+        "--api-version",
+        "7.1",
+        "--route-parameters",
+        "project=platform",
+        "repositoryId=web",
+        "pullRequestId=42",
+        "--query-parameters",
+        "$iteration=3",
+        "$baseIteration=0",
+        "--only-show-errors",
+        "--output",
+        "json",
+      ]);
+    }),
+  );
+
+  it.effect("opens a thread on the conversation with its words in a file, never in argv", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const bodies: Array<unknown> = [];
+      answerWrite(fileSystem, bodies);
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const body = '- a bullet first, and "quotes"\n\nthen more';
+
+      yield* cli.createThread({ cwd: "/w", location: LOCATION, number: 42, body });
+
+      expect(argsOfCall(0)).toEqual([
+        "devops",
+        "invoke",
+        "--detect",
+        "true",
+        "--area",
+        "git",
+        "--resource",
+        "pullRequestThreads",
+        "--api-version",
+        "7.1",
+        "--route-parameters",
+        "project=platform",
+        "repositoryId=web",
+        "pullRequestId=42",
+        "--http-method",
+        "POST",
+        "--in-file",
+        bodyFileOfCall(0),
+        "--only-show-errors",
+        "--output",
+        "json",
+      ]);
+      expect(argsOfCall(0).some((arg) => arg.includes("bullet"))).toBe(false);
+      expect(bodies).toEqual([
+        {
+          comments: [{ parentCommentId: 0, content: body, commentType: "text" }],
+          status: "active",
+        },
+      ]);
+      // The file lives only as long as the request that reads it.
+      expect(yield* fileSystem.exists(bodyFileOfCall(0))).toBe(false);
+    }),
+  );
+
+  it.effect("pins a thread to one line, on the side of the diff it was written against", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const bodies: Array<unknown> = [];
+      answerWrite(fileSystem, bodies);
+      answerWrite(fileSystem, bodies);
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      yield* cli.createThread({
+        cwd: "/w",
+        location: LOCATION,
+        number: 42,
+        body: "Rename this.",
+        anchor: { path: "src/app.ts", line: 12, side: "right" },
+      });
+      yield* cli.createThread({
+        cwd: "/w",
+        location: LOCATION,
+        number: 42,
+        body: "Why was this dropped?",
+        anchor: { path: "src/old.ts", line: 3, side: "left" },
+      });
+
+      expect(bodies).toEqual([
+        {
+          comments: [{ parentCommentId: 0, content: "Rename this.", commentType: "text" }],
+          status: "active",
+          // In Azure's own spelling of the path, which leads with a slash.
+          threadContext: {
+            filePath: "/src/app.ts",
+            rightFileStart: { line: 12, offset: 1 },
+            rightFileEnd: { line: 12, offset: 1 },
+          },
+        },
+        {
+          comments: [{ parentCommentId: 0, content: "Why was this dropped?", commentType: "text" }],
+          status: "active",
+          threadContext: {
+            filePath: "/src/old.ts",
+            leftFileStart: { line: 3, offset: 1 },
+            leftFileEnd: { line: 3, offset: 1 },
+          },
+        },
+      ]);
+    }),
+  );
+
+  it.effect("replies under the comment that opened the thread", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const bodies: Array<unknown> = [];
+      answerWrite(fileSystem, bodies);
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      yield* cli.replyToThread({
+        cwd: "/w",
+        location: LOCATION,
+        number: 42,
+        threadId: "7",
+        body: "Renamed.",
+      });
+
+      expect(argsOfCall(0)).toEqual([
+        "devops",
+        "invoke",
+        "--detect",
+        "true",
+        "--area",
+        "git",
+        "--resource",
+        "pullRequestThreadComments",
+        "--api-version",
+        "7.1",
+        "--route-parameters",
+        "project=platform",
+        "repositoryId=web",
+        "pullRequestId=42",
+        "threadId=7",
+        "--http-method",
+        "POST",
+        "--in-file",
+        bodyFileOfCall(0),
+        "--only-show-errors",
+        "--output",
+        "json",
+      ]);
+      expect(bodies).toEqual([{ content: "Renamed.", parentCommentId: 1, commentType: "text" }]);
+    }),
+  );
+
+  it.effect("resolves a thread as fixed and reopens it as active", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const bodies: Array<unknown> = [];
+      answerWrite(fileSystem, bodies);
+      answerWrite(fileSystem, bodies);
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const thread = { cwd: "/w", location: LOCATION, number: 42, threadId: "7" };
+
+      yield* cli.setThreadResolution({ ...thread, resolved: true });
+      yield* cli.setThreadResolution({ ...thread, resolved: false });
+
+      expect(argsOfCall(0)).toEqual([
+        "devops",
+        "invoke",
+        "--detect",
+        "true",
+        "--area",
+        "git",
+        "--resource",
+        "pullRequestThreads",
+        "--api-version",
+        "7.1",
+        "--route-parameters",
+        "project=platform",
+        "repositoryId=web",
+        "pullRequestId=42",
+        "threadId=7",
+        "--http-method",
+        "PATCH",
+        "--in-file",
+        bodyFileOfCall(0),
+        "--only-show-errors",
+        "--output",
+        "json",
+      ]);
+      expect(bodies).toEqual([{ status: "fixed" }, { status: "active" }]);
     }),
   );
 

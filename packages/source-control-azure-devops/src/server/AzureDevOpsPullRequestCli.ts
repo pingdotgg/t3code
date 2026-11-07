@@ -1,11 +1,12 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
   PullRequestAction,
-  PullRequestComment,
+  PullRequestDiffSide,
   PullRequestInvolvement,
   PullRequestListState,
   PullRequestMergeMethod,
@@ -25,6 +26,7 @@ import {
   type AzureDevOpsIteration,
   type AzureDevOpsPullRequest,
   type AzureDevOpsRepositoryLocation,
+  type AzureDevOpsThreads,
 } from "./azureDevOpsPullRequestJson.ts";
 import type { ProviderListCursor } from "@t3tools/source-control-core/server/PullRequestProvider";
 
@@ -117,6 +119,17 @@ const CHANGE_ENTRIES_PER_PAGE = 2000;
 /** Count raw entries, including folders and malformed rows. */
 const MAX_CHANGE_ENTRIES = 10_000;
 
+interface RestWrite {
+  readonly method: "POST" | "PATCH";
+  readonly body: unknown;
+}
+
+export interface AzureDevOpsThreadAnchor {
+  readonly path: string;
+  readonly line: number;
+  readonly side: PullRequestDiffSide;
+}
+
 export interface AzureDevOpsIterationChanges {
   readonly changes: ReadonlyArray<AzureDevOpsChangeEntry>;
   readonly truncated: boolean;
@@ -161,7 +174,34 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
       readonly number: number;
-    }) => Effect.Effect<ReadonlyArray<PullRequestComment>, AzureDevOpsPullRequestCliError>;
+      /** Track thread lines to this push; without it, lines are where they were written. */
+      readonly iterationId?: number | undefined;
+    }) => Effect.Effect<AzureDevOpsThreads, AzureDevOpsPullRequestCliError>;
+
+    /** On a line when `anchor` is set, otherwise on the pull request. */
+    readonly createThread: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+      readonly body: string;
+      readonly anchor?: AzureDevOpsThreadAnchor | undefined;
+    }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
+
+    readonly replyToThread: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+      readonly threadId: string;
+      readonly body: string;
+    }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
+
+    readonly setThreadResolution: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+      readonly threadId: string;
+      readonly resolved: boolean;
+    }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
 
     readonly listIterations: (input: {
       readonly cwd: string;
@@ -276,6 +316,7 @@ function isReviewerName(value: string): boolean {
 /** @public */
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   // Let `az` parse all three remote formats.
   const detectArgs = ["--detect", "true"] as const;
@@ -291,6 +332,24 @@ export const make = Effect.gen(function* () {
       ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
     });
 
+  /** The extension reads a body only from `--in-file`; Windows has no `/dev/stdin`. */
+  const bodyArgs = (cwd: string, send: RestWrite) =>
+    fileSystem.makeTempFileScoped({ prefix: "t3-azure-devops-", suffix: ".json" }).pipe(
+      Effect.tap((path) => fileSystem.writeFileString(path, JSON.stringify(send.body))),
+      Effect.map((path) => ["--http-method", send.method, "--in-file", path]),
+      Effect.mapError(
+        (cause) =>
+          new AzureDevOpsCli.AzureDevOpsCommandFailedError({
+            operation: "execute",
+            command: "az",
+            cwd,
+            // The body never reached a file, so az was never run.
+            argumentCount: 0,
+            cause,
+          }),
+      ),
+    );
+
   /** Use the extension's credentials; `az rest` uses the default tenant. */
   const invoke = <A>(input: {
     readonly cwd: string;
@@ -299,28 +358,33 @@ export const make = Effect.gen(function* () {
     readonly routeParameters: ReadonlyArray<string>;
     readonly queryParameters?: ReadonlyArray<string>;
     readonly maxOutputBytes?: number;
+    readonly send?: RestWrite;
     readonly decode: (raw: string) => Result.Result<A, unknown>;
   }): Effect.Effect<A, AzureDevOpsPullRequestCliError> =>
-    executeJson({
-      cwd: input.cwd,
-      ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
-      args: [
-        "devops",
-        "invoke",
-        ...detectArgs,
-        "--area",
-        "git",
-        "--resource",
-        input.resource,
-        "--api-version",
-        REST_API_VERSION,
-        "--route-parameters",
-        ...input.routeParameters,
-        ...(input.queryParameters === undefined
-          ? []
-          : ["--query-parameters", ...input.queryParameters]),
-      ],
-    }).pipe(
+    (input.send === undefined ? Effect.succeed([]) : bodyArgs(input.cwd, input.send)).pipe(
+      Effect.flatMap((sendArgs) =>
+        executeJson({
+          cwd: input.cwd,
+          ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+          args: [
+            "devops",
+            "invoke",
+            ...detectArgs,
+            "--area",
+            "git",
+            "--resource",
+            input.resource,
+            "--api-version",
+            REST_API_VERSION,
+            "--route-parameters",
+            ...input.routeParameters,
+            ...(input.queryParameters === undefined
+              ? []
+              : ["--query-parameters", ...input.queryParameters]),
+            ...sendArgs,
+          ],
+        }),
+      ),
       Effect.flatMap((result) => {
         const decoded = input.decode(result.stdout.trim());
         return Result.isSuccess(decoded)
@@ -334,10 +398,21 @@ export const make = Effect.gen(function* () {
               }),
             );
       }),
+      Effect.scoped,
     );
+
+  const ignoreAnswer = () => Result.void;
 
   /** Azure's items route requires a leading slash. */
   const toItemPath = (path: string) => (path.startsWith("/") ? path : `/${path}`);
+
+  /** A one-line span on one side; Azure adds the change tracking ID and iterations itself. */
+  const threadContext = (anchor: AzureDevOpsThreadAnchor) => {
+    const position = { line: anchor.line, offset: 1 };
+    return anchor.side === "right"
+      ? { filePath: toItemPath(anchor.path), rightFileStart: position, rightFileEnd: position }
+      : { filePath: toItemPath(anchor.path), leftFileStart: position, leftFileEnd: position };
+  };
 
   const repositoryRoute = (location: AzureDevOpsRepositoryLocation): ReadonlyArray<string> => [
     `project=${location.project}`,
@@ -551,10 +626,61 @@ export const make = Effect.gen(function* () {
         operation: "listThreads",
         resource: "pullRequestThreads",
         routeParameters: pullRequestRoute(input),
+        // Threads come back on the line of the push they were written against; tracked to
+        // the latest push against the merge base, they land on the line the Code tab shows.
+        ...(input.iterationId === undefined
+          ? {}
+          : { queryParameters: [`$iteration=${input.iterationId}`, "$baseIteration=0"] }),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
-        decode: decodeThreadsJson,
+        decode: (raw: string) => decodeThreadsJson(raw, input.iterationId),
       });
     }),
+
+    createThread: Effect.fn("AzureDevOpsPullRequestCli.createThread")(function (input) {
+      return invoke({
+        cwd: input.cwd,
+        operation: "createThread",
+        resource: "pullRequestThreads",
+        routeParameters: pullRequestRoute(input),
+        send: {
+          method: "POST",
+          body: {
+            comments: [{ parentCommentId: 0, content: input.body, commentType: "text" }],
+            status: "active",
+            ...(input.anchor === undefined ? {} : { threadContext: threadContext(input.anchor) }),
+          },
+        },
+        decode: ignoreAnswer,
+      });
+    }),
+
+    replyToThread: Effect.fn("AzureDevOpsPullRequestCli.replyToThread")(function (input) {
+      return invoke({
+        cwd: input.cwd,
+        operation: "replyToThread",
+        resource: "pullRequestThreadComments",
+        routeParameters: [...pullRequestRoute(input), `threadId=${input.threadId}`],
+        // Comment 1 is the one that opened the thread.
+        send: {
+          method: "POST",
+          body: { content: input.body, parentCommentId: 1, commentType: "text" },
+        },
+        decode: ignoreAnswer,
+      });
+    }),
+
+    setThreadResolution: Effect.fn("AzureDevOpsPullRequestCli.setThreadResolution")(
+      function (input) {
+        return invoke({
+          cwd: input.cwd,
+          operation: "setThreadResolution",
+          resource: "pullRequestThreads",
+          routeParameters: [...pullRequestRoute(input), `threadId=${input.threadId}`],
+          send: { method: "PATCH", body: { status: input.resolved ? "fixed" : "active" } },
+          decode: ignoreAnswer,
+        });
+      },
+    ),
 
     listIterations: Effect.fn("AzureDevOpsPullRequestCli.listIterations")(function (input) {
       return invoke({

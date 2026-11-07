@@ -189,6 +189,195 @@ describe("getChangeRequest", () => {
   );
 });
 
+describe("getChangeRequestActivity", () => {
+  it.effect.each([
+    { iterations: "read", trackedTo: ITERATION.id },
+    { iterations: "failed", trackedTo: undefined },
+  ] as const)("carries the threads pinned to files when the push list is $iterations", (input) =>
+    Effect.gen(function* () {
+      const remark = {
+        id: "4:1",
+        author: null,
+        body: "Rename this.",
+        createdAt: "2026-07-02T00:00:00Z",
+        url: null,
+      };
+      const thread = {
+        id: "4",
+        path: "src/app.ts",
+        line: 12,
+        side: "right" as const,
+        isResolved: false,
+        isOutdated: false,
+        comments: [remark],
+      };
+      const askedFor: Array<number | undefined> = [];
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            listIterations: () =>
+              input.iterations === "read"
+                ? Effect.succeed([{ ...ITERATION, id: 1 }, { ...ITERATION, id: 2 }, ITERATION])
+                : Effect.fail(
+                    new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
+                      command: "az",
+                      cwd: "/w",
+                      operation: "listIterations",
+                      cause: "unavailable",
+                    }),
+                  ),
+            listThreads: (threads) => {
+              askedFor.push(threads.iterationId);
+              return Effect.succeed({
+                comments: [
+                  { ...remark, kind: "review-comment", path: "src/app.ts", reviewState: null },
+                ],
+                reviewThreads: [thread],
+              });
+            },
+          }),
+        ),
+      );
+
+      const activity = yield* provider.getChangeRequestActivity({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "dev.azure.com",
+        number: 7,
+      });
+
+      expect(activity.reviewThreads).toEqual([thread]);
+      expect(activity.comments.map((comment) => comment.id)).toEqual(["4:1"]);
+      expect(activity.commentsTruncated).toBe(false);
+      // The Code tab diffs the latest push, so the lines are the ones that push has.
+      expect(askedFor).toEqual([input.trackedTo]);
+    }),
+  );
+});
+
+describe("writing a review", () => {
+  const ref = { cwd: "/w", repository: "acme/web", host: "dev.azure.com", number: 7 };
+
+  /** A provider whose thread writes are recorded, and fail from the `failAt`th one on. */
+  const recordingProvider = (input: { readonly failAt?: number } = {}) =>
+    Effect.gen(function* () {
+      const posted: Array<{ readonly body: string; readonly anchor: unknown }> = [];
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            createThread: (thread) => {
+              if (input.failAt !== undefined && posted.length + 1 >= input.failAt) {
+                return Effect.fail(
+                  new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
+                    command: "az",
+                    cwd: "/w",
+                    operation: "createThread",
+                    cause: "refused",
+                  }),
+                );
+              }
+              posted.push({ body: thread.body, anchor: thread.anchor });
+              return Effect.void;
+            },
+          }),
+        ),
+      );
+      return { provider, posted };
+    });
+
+  it.effect("posts the line comments in order, then the summary, and no blank summary", () =>
+    Effect.gen(function* () {
+      const { provider, posted } = yield* recordingProvider();
+      const comments = [
+        { path: "src/a.ts", position: { kind: "added" as const, newLine: 4 }, body: "First." },
+        { path: "src/b.ts", position: { kind: "deleted" as const, oldLine: 9 }, body: "Second." },
+      ];
+
+      yield* provider.submitReview({ ...ref, verdict: "comment", body: "Overall.", comments });
+      yield* provider.submitReview({ ...ref, verdict: "comment", body: "  \n", comments });
+
+      expect(posted).toEqual([
+        { body: "First.", anchor: { path: "src/a.ts", line: 4, side: "right" } },
+        { body: "Second.", anchor: { path: "src/b.ts", line: 9, side: "left" } },
+        { body: "Overall.", anchor: undefined },
+        { body: "First.", anchor: { path: "src/a.ts", line: 4, side: "right" } },
+        { body: "Second.", anchor: { path: "src/b.ts", line: 9, side: "left" } },
+      ]);
+    }),
+  );
+
+  it.effect("pins an unchanged line to the copy of it the reviewer picked", () =>
+    Effect.gen(function* () {
+      const { provider, posted } = yield* recordingProvider();
+      const context = (side: "left" | "right") => ({
+        path: "src/a.ts",
+        position: { kind: "context" as const, oldLine: 10, newLine: 14, side },
+        body: side,
+      });
+
+      yield* provider.submitReview({
+        ...ref,
+        verdict: "comment",
+        body: "",
+        comments: [context("left"), context("right")],
+      });
+
+      expect(posted.map((thread) => thread.anchor)).toEqual([
+        { path: "src/a.ts", line: 10, side: "left" },
+        { path: "src/a.ts", line: 14, side: "right" },
+      ]);
+    }),
+  );
+
+  it.effect("stops at the first thread Azure refuses, and says so", () =>
+    Effect.gen(function* () {
+      const { provider, posted } = yield* recordingProvider({ failAt: 2 });
+      const draft = (body: string) => ({
+        path: "src/a.ts",
+        position: { kind: "added" as const, newLine: 1 },
+        body,
+      });
+
+      const error = yield* provider
+        .submitReview({
+          ...ref,
+          verdict: "comment",
+          body: "Overall.",
+          comments: [draft("First."), draft("Second.")],
+        })
+        .pipe(Effect.flip);
+
+      expect(error.operation).toBe("submitReview");
+      // What went before the failure stays posted; nothing after it is sent.
+      expect(posted.map((thread) => thread.body)).toEqual(["First."]);
+    }),
+  );
+
+  it.effect("refuses to write to a pull request Azure cannot place", () =>
+    Effect.gen(function* () {
+      let writes = 0;
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () => Effect.succeed({ ...PULL_REQUEST, location: null }),
+            createThread: () => {
+              writes += 1;
+              return Effect.void;
+            },
+          }),
+        ),
+      );
+
+      const error = yield* provider.comment({ ...ref, body: "Hello." }).pipe(Effect.flip);
+
+      expect(error.operation).toBe("comment");
+      expect(writes).toBe(0);
+    }),
+  );
+});
+
 describe("getDiff reads", () => {
   it.effect("holds every reader together to one request's worth of processes", () =>
     Effect.gen(function* () {
