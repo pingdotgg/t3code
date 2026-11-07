@@ -1580,6 +1580,31 @@ export function resizeLayoutColumn(
   });
 }
 
+export function resizeLayoutColumnEdge(
+  state: LayoutState,
+  columnId: string,
+  width: number,
+  cameraWidth: number,
+  drawnUnitWidth = cameraWidth,
+): LayoutState {
+  const scale = drawnUnitWidth / cameraWidth;
+  const rebased =
+    scale === 1
+      ? state
+      : mapWorkspaces(state, (workspace) =>
+          workspace.columns.some((column) => column.id === columnId)
+            ? {
+                ...workspace,
+                columns: workspace.columns.map((column) => ({
+                  ...column,
+                  width: column.width * scale,
+                })),
+              }
+            : workspace,
+        );
+  return arrangeLayoutWorkspaces(state, resizeLayoutColumn(rebased, columnId, width), cameraWidth);
+}
+
 /** Step to the next width preset, wrapping from 2/3 back to 1/3. A lone column keeps filling the window. */
 export function cycleLayoutColumnWidth(state: LayoutState, columnId: string): LayoutState {
   const workspace = state.workspaces.find((candidate) =>
