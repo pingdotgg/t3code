@@ -43,23 +43,28 @@ function submitThinking(
 /** Voice is off per device until chosen; choosing here sends audio to the lesson's environment, as Settings → Voice would. */
 function VoiceOptIn(props: { readonly environmentId: EnvironmentId; readonly disabled: boolean }) {
   const grant = useAudioGrant();
-  const supported =
-    useEnvironment(props.environmentId)?.serverConfig?.environment.capabilities
-      .voiceTranscription === true;
+  const environment = useEnvironment(props.environmentId);
+  const supported = environment?.serverConfig?.environment.capabilities.voiceTranscription === true;
   if (grant !== null || !supported) return null;
   return (
-    <Button
-      type="button"
-      variant="outline"
-      size="sm"
-      className="mt-2"
-      disabled={props.disabled}
-      onClick={() =>
-        chooseAudioDestination({ kind: "environment", environmentId: props.environmentId })
-      }
-    >
-      Answer by voice
-    </Button>
+    <div className="mt-2">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={props.disabled}
+        onClick={() =>
+          chooseAudioDestination({ kind: "environment", environmentId: props.environmentId })
+        }
+      >
+        Answer by voice
+      </Button>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Turns on voice input on this device; audio goes to{" "}
+        {environment?.label ?? "this environment"} to be transcribed. Turn it off in Settings →
+        Voice.
+      </p>
+    </div>
   );
 }
 
