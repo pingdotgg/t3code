@@ -135,6 +135,8 @@ export function HostedBrowserWebview(props: {
 
   const [webviewGeneration, setWebviewGeneration] = useState(0);
   const [recoverySrc, setRecoverySrc] = useState(initialSrc);
+  // A guest with no document is transparent, so the host paints the panel until the first commit.
+  const [committedGeneration, setCommittedGeneration] = useState<number | null>(null);
   const active = presentation.visible && presentation.rect !== null;
   const shown = active || pictureInPicture;
   const reportedShown = useEffectEvent(() => serverDriven && shown);
@@ -186,8 +188,13 @@ export function HostedBrowserWebview(props: {
         new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }),
       );
     };
+    const markCommitted = (event: Event) => {
+      if ((event as Event & { url?: string }).url === "about:blank") return;
+      setCommittedGeneration(webviewGeneration);
+    };
     webview.addEventListener("did-attach", register);
     webview.addEventListener("dom-ready", register);
+    webview.addEventListener("did-navigate", markCommitted);
     webview.addEventListener("render-process-gone", recoverGuest);
     webview.addEventListener("focus", dismissHostPopups);
     register();
@@ -196,16 +203,11 @@ export function HostedBrowserWebview(props: {
       if (recoveryTimeout !== null) clearTimeout(recoveryTimeout);
       webview.removeEventListener("did-attach", register);
       webview.removeEventListener("dom-ready", register);
+      webview.removeEventListener("did-navigate", markCommitted);
       webview.removeEventListener("render-process-gone", recoverGuest);
       webview.removeEventListener("focus", dismissHostPopups);
     };
-  }, [
-    clientSettingsHydrated,
-    config,
-    runtimeTabId,
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A crash recovery remounts the webview under a new key, so the listeners attach to the new element.
-    webviewGeneration,
-  ]);
+  }, [clientSettingsHydrated, config, runtimeTabId, webviewGeneration]);
 
   const lastRect = presentation.rect;
   const layoutZoomFactor = useBrowserLayoutZoomFactor(zoomFactor);
@@ -362,7 +364,9 @@ export function HostedBrowserWebview(props: {
           }
           aria-hidden={active ? undefined : true}
           className={cn(
-            "absolute flex overflow-hidden bg-white",
+            "absolute flex overflow-hidden",
+            // White is the browser canvas behind transparent pages once a document exists.
+            committedGeneration === webviewGeneration ? "bg-white" : "bg-background",
             active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",
           )}
           style={{
