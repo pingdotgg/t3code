@@ -730,6 +730,7 @@ jobs:
       rust_target: aarch64-unknown-linux-gnu
       resource_key: linux-arm64
       cli_archive: true
+      launch_check: true
 
   # The Windows jobs start with the other platforms and wait for the same-arch
   # Linux CLI archive after their other setup. Packaging is mostly CPU and

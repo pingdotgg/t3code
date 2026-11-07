@@ -3568,6 +3568,154 @@ export const validateMacPackagedPayload = Effect.fn("desktopArtifact.validateMac
   },
 );
 
+export class LinuxPackagedPayloadValidationError extends Schema.TaggedError<LinuxPackagedPayloadValidationError>()(
+  "LinuxPackagedPayloadValidationError",
+  { filePath: Schema.String, detail: Schema.String, cause: Schema.optional(Schema.Unknown) },
+) {
+  override get message(): string {
+    return `Invalid packaged Linux payload at ${this.filePath}: ${this.detail}`;
+  }
+}
+
+export const validateLinuxPackagedPayload = Effect.fn(
+  "desktopArtifact.validateLinuxPackagedPayload",
+)(function* (input: {
+  readonly stageDistDir: string;
+  readonly targetArch: typeof BuildArch.Type;
+  readonly verbose?: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const packagedAppDir = path.join(
+    input.stageDistDir,
+    input.targetArch === "x64" ? "linux-unpacked" : `linux-${input.targetArch}-unpacked`,
+  );
+  const resourcesDir = path.join(packagedAppDir, "resources");
+  const asarPath = path.join(resourcesDir, "app.asar");
+  const requireFile = Effect.fn("desktopArtifact.requireLinuxPayloadFile")(function* (
+    filePath: string,
+    executable = false,
+  ) {
+    const stat = yield* fs.stat(filePath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LinuxPackagedPayloadValidationError({
+            filePath,
+            detail: "Required file is missing.",
+            cause,
+          }),
+      ),
+    );
+    if (stat.type !== "File" || (executable && (stat.mode & 0o111) === 0)) {
+      return yield* new LinuxPackagedPayloadValidationError({
+        filePath,
+        detail: executable ? "Expected an executable file." : "Expected a file.",
+      });
+    }
+  });
+  const requireElf = Effect.fn("desktopArtifact.requireLinuxPayloadElf")(function* (
+    filePath: string,
+    executable = false,
+  ) {
+    yield* requireFile(filePath, executable);
+    const header = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const file = yield* fs.open(filePath);
+        return yield* file.readAlloc(20);
+      }),
+    );
+    const bytes = Option.getOrElse(header, () => new Uint8Array());
+    const machine = input.targetArch === "arm64" ? 183 : input.targetArch === "x64" ? 62 : -1;
+    if (
+      bytes.length < 20 ||
+      bytes[0] !== 0x7f ||
+      bytes[1] !== 0x45 ||
+      bytes[2] !== 0x4c ||
+      bytes[3] !== 0x46 ||
+      bytes[4] !== 2 ||
+      bytes[5] !== 1 ||
+      (bytes[18]! | (bytes[19]! << 8)) !== machine
+    ) {
+      return yield* new LinuxPackagedPayloadValidationError({
+        filePath,
+        detail: `Expected a 64-bit little-endian Linux ${input.targetArch} ELF binary.`,
+      });
+    }
+  });
+
+  yield* requireFile(asarPath);
+  const nativeEntries = [
+    "node_modules/node-pty/build/Release/pty.node",
+    `node_modules/@napi-rs/keyring/keyring.linux-${input.targetArch}-gnu.node`,
+    `node_modules/@ff-labs/fff-bin-linux-${input.targetArch}-gnu/libfff_c.so`,
+  ];
+  for (const entry of [
+    "package.json",
+    "apps/desktop/dist-electron/boot.cjs",
+    "apps/desktop/dist-electron/main.cjs",
+    "apps/desktop/dist-electron/preload.cjs",
+    "apps/server/dist/bin.mjs",
+    "apps/server/dist/client/index.html",
+    ...nativeEntries,
+  ]) {
+    yield* Effect.try({
+      try: () => {
+        const stat = statFile(asarPath, entry);
+        if (
+          !("size" in stat) ||
+          stat.size === 0 ||
+          (nativeEntries.includes(entry) && !stat.unpacked)
+        )
+          throw new Error("Missing or not unpacked");
+      },
+      catch: (cause) =>
+        new LinuxPackagedPayloadValidationError({
+          filePath: `${asarPath}/${entry}`,
+          detail: "Required archive entry is missing, empty or not unpacked for native loading.",
+          cause,
+        }),
+    });
+  }
+  const unpackedFiles = yield* Effect.try({
+    try: () => collectUnpackedAsarFiles(getRawHeader(asarPath).header),
+    catch: (cause) =>
+      new LinuxPackagedPayloadValidationError({
+        filePath: asarPath,
+        detail: "Cannot read archive.",
+        cause,
+      }),
+  });
+  for (const entry of unpackedFiles) {
+    yield* requireFile(path.join(`${asarPath}.unpacked`, entry));
+  }
+  for (const entry of nativeEntries) {
+    yield* requireElf(path.join(`${asarPath}.unpacked`, entry));
+  }
+  for (const executable of [
+    path.join(packagedAppDir, "t3code"),
+    path.join(resourcesDir, "resource-monitor/t3-resource-monitor"),
+    path.join(resourcesDir, "kde-capture/t3-kde-snap-shot"),
+    path.join(resourcesDir, "hyprland-capture/t3-hyprland-snap-shot"),
+    path.join(resourcesDir, "browser-secret/t3-browser-secret"),
+  ]) {
+    yield* requireElf(executable, true);
+  }
+  for (const file of gnomeCaptureBundle.files) {
+    yield* requireFile(path.join(resourcesDir, "gnome-extension", file));
+  }
+  if (
+    (yield* HostProcess.Platform) === "linux" &&
+    (yield* HostProcess.Architecture) === input.targetArch
+  ) {
+    yield* verifyPackagedBundleIsSelfContained({ asarPath, verbose: input.verbose ?? false });
+  } else {
+    yield* Effect.log(
+      "[desktop-artifact] Skipped the Linux bundle self-check on a different host platform/architecture.",
+    );
+  }
+  yield* Effect.log(`[desktop-artifact] Validated Linux ${input.targetArch} payload.`);
+});
+
 const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(function* (
   options: ResolvedBuildOptions,
 ) {
@@ -4060,6 +4208,13 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
         platform: options.platform,
         runtimeArchivePath: options.wslRuntime,
       }),
+      verbose: options.verbose,
+    });
+  }
+  if (options.platform === "linux") {
+    yield* validateLinuxPackagedPayload({
+      stageDistDir,
+      targetArch: options.arch,
       verbose: options.verbose,
     });
   }

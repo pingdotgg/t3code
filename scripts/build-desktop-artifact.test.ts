@@ -50,6 +50,8 @@ import {
   MacPackagedAppMissingError,
   stageBrowserSecret,
   validateMacPackagedPayload,
+  validateLinuxPackagedPayload,
+  LinuxPackagedPayloadValidationError,
   validateWindowsPackagedPayload,
   verifyPackagedBundleIsSelfContained,
   WindowsPrimaryNativeProbeError,
@@ -233,6 +235,91 @@ const makeMacPayloadFixture = Effect.fn("test.makeMacPayloadFixture")(function* 
     createPackageWithOptions(sourceDir, path.join(resourcesDir, "app.asar"), {}),
   );
   return { stageDistDir } as const;
+});
+
+const linuxExecutables = [
+  "t3code",
+  "resources/resource-monitor/t3-resource-monitor",
+  "resources/kde-capture/t3-kde-snap-shot",
+  "resources/hyprland-capture/t3-hyprland-snap-shot",
+  "resources/browser-secret/t3-browser-secret",
+];
+const linuxAsarEntries = [
+  "package.json",
+  "apps/desktop/dist-electron/boot.cjs",
+  "apps/desktop/dist-electron/main.cjs",
+  "apps/desktop/dist-electron/preload.cjs",
+  "apps/server/dist/bin.mjs",
+  "apps/server/dist/client/index.html",
+];
+const linuxNativeEntries = (arch: "arm64" | "x64") => [
+  "node_modules/node-pty/build/Release/pty.node",
+  `node_modules/@napi-rs/keyring/keyring.linux-${arch}-gnu.node`,
+  `node_modules/@ff-labs/fff-bin-linux-${arch}-gnu/libfff_c.so`,
+];
+const linuxGnomeFiles = [
+  "metadata.json",
+  "extension.js",
+  "captureService.js",
+  "captureFeedback.js",
+  "feedbackGeometry.js",
+];
+const linuxElfHeader = (arch: "arm64" | "x64") => {
+  const header = new Uint8Array(64);
+  header.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
+  header[18] = arch === "arm64" ? 183 : 62;
+  return header;
+};
+const makeLinuxPayloadFixture = Effect.fn("test.makeLinuxPayloadFixture")(function* (input: {
+  readonly arch: "arm64" | "x64";
+  readonly omitEntry?: string;
+  readonly serverEntrySource?: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-linux-payload-test-" });
+  const packagedAppDir = path.join(
+    root,
+    input.arch === "x64" ? "linux-unpacked" : "linux-arm64-unpacked",
+  );
+  const source = path.join(root, "source");
+  for (const entry of [
+    ...linuxAsarEntries,
+    ...linuxNativeEntries(input.arch),
+    "node_modules/extra/addon.node",
+  ]) {
+    if (entry === input.omitEntry) continue;
+    const filePath = path.join(source, entry);
+    yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+    yield* fs.writeFile(
+      filePath,
+      entry.startsWith("node_modules/")
+        ? linuxElfHeader(input.arch)
+        : new TextEncoder().encode(
+            entry === "apps/server/dist/bin.mjs"
+              ? (input.serverEntrySource ?? "console.log('1.2.3');")
+              : "{}",
+          ),
+    );
+  }
+  yield* fs.makeDirectory(path.join(packagedAppDir, "resources"), { recursive: true });
+  yield* Effect.promise(() =>
+    createPackageWithOptions(source, path.join(packagedAppDir, "resources/app.asar"), {
+      unpack: "{**/*.node,**/*.so}",
+    }),
+  );
+  for (const entry of linuxExecutables) {
+    const filePath = path.join(packagedAppDir, entry);
+    yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+    yield* fs.writeFile(filePath, linuxElfHeader(input.arch));
+    yield* fs.chmod(filePath, 0o755);
+  }
+  for (const entry of linuxGnomeFiles) {
+    const filePath = path.join(packagedAppDir, "resources/gnome-extension", entry);
+    yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+    yield* fs.writeFileString(filePath, "{}");
+  }
+  return { stageDistDir: root, packagedAppDir };
 });
 
 it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
@@ -1331,6 +1418,138 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.instanceOf(error, BundleNotSelfContainedError);
         assert.include(error.output, "t3code-deliberately-missing-package");
       }),
+    ),
+  );
+
+  it.effect("validates Linux payloads for both release architectures", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        for (const arch of ["arm64", "x64"] as const) {
+          const fixture = yield* makeLinuxPayloadFixture({ arch });
+          yield* validateLinuxPackagedPayload({
+            stageDistDir: fixture.stageDistDir,
+            targetArch: arch,
+          });
+        }
+      }),
+    ),
+  );
+
+  it.effect("rejects missing Linux payload files and archive entries", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        for (const arch of ["arm64", "x64"] as const) {
+          const fixture = yield* makeLinuxPayloadFixture({ arch });
+          const files = [
+            "resources/app.asar",
+            ...linuxExecutables,
+            ...linuxGnomeFiles.map((file) => `resources/gnome-extension/${file}`),
+            ...linuxNativeEntries(arch).map((file) => `resources/app.asar.unpacked/${file}`),
+            "resources/app.asar.unpacked/node_modules/extra/addon.node",
+          ];
+          for (const file of files) {
+            const filePath = path.join(fixture.packagedAppDir, file);
+            yield* fs.rename(filePath, `${filePath}.saved`);
+            const error = yield* validateLinuxPackagedPayload({
+              stageDistDir: fixture.stageDistDir,
+              targetArch: arch,
+            }).pipe(Effect.flip);
+            assert.instanceOf(error, LinuxPackagedPayloadValidationError);
+            assert.include(error.filePath, file);
+            yield* fs.rename(`${filePath}.saved`, filePath);
+          }
+          for (const omitEntry of [...linuxAsarEntries, ...linuxNativeEntries(arch)]) {
+            const missing = yield* makeLinuxPayloadFixture({ arch, omitEntry });
+            const error = yield* validateLinuxPackagedPayload({
+              stageDistDir: missing.stageDistDir,
+              targetArch: arch,
+            }).pipe(Effect.flip);
+            assert.instanceOf(error, LinuxPackagedPayloadValidationError);
+            assert.include(error.filePath, omitEntry);
+          }
+          yield* fs.writeFileString(
+            path.join(fixture.packagedAppDir, "resources/app.asar"),
+            "invalid archive",
+          );
+          const invalidArchive = yield* validateLinuxPackagedPayload({
+            stageDistDir: fixture.stageDistDir,
+            targetArch: arch,
+          }).pipe(Effect.flip);
+          assert.instanceOf(invalidArchive, LinuxPackagedPayloadValidationError);
+          assert.include(invalidArchive.filePath, "app.asar");
+        }
+      }),
+    ),
+  );
+
+  it.effect(
+    "rejects Linux binaries of the wrong architecture, invalid ELF headers and non-executable helpers",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          for (const arch of ["arm64", "x64"] as const) {
+            const fixture = yield* makeLinuxPayloadFixture({ arch });
+            for (const file of [
+              ...linuxExecutables,
+              ...linuxNativeEntries(arch).map((entry) => `resources/app.asar.unpacked/${entry}`),
+            ]) {
+              const filePath = path.join(fixture.packagedAppDir, file);
+              for (const header of [
+                linuxElfHeader(arch === "arm64" ? "x64" : "arm64"),
+                new Uint8Array(),
+                new Uint8Array(64),
+              ]) {
+                yield* fs.writeFile(filePath, header);
+                const error = yield* validateLinuxPackagedPayload({
+                  stageDistDir: fixture.stageDistDir,
+                  targetArch: arch,
+                }).pipe(Effect.flip);
+                assert.instanceOf(error, LinuxPackagedPayloadValidationError);
+                assert.equal(error.filePath, filePath);
+              }
+              yield* fs.writeFile(filePath, linuxElfHeader(arch));
+            }
+            for (const file of linuxExecutables) {
+              const filePath = path.join(fixture.packagedAppDir, file);
+              yield* fs.chmod(filePath, 0o644);
+              const error = yield* validateLinuxPackagedPayload({
+                stageDistDir: fixture.stageDistDir,
+                targetArch: arch,
+              }).pipe(Effect.flip);
+              assert.instanceOf(error, LinuxPackagedPayloadValidationError);
+              assert.equal(error.filePath, filePath);
+              yield* fs.chmod(filePath, 0o755);
+            }
+          }
+        }),
+      ),
+  );
+
+  it.effect("rejects a Linux app whose packaged server cannot resolve", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeLinuxPayloadFixture({
+          arch: "arm64",
+          serverEntrySource: 'import "t3code-deliberately-missing-package";',
+        });
+        const error = yield* validateLinuxPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          targetArch: "arm64",
+        }).pipe(Effect.flip);
+        assert.instanceOf(error, BundleNotSelfContainedError);
+        assert.include(error.output, "t3code-deliberately-missing-package");
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(HostProcess.Platform, "linux"),
+          Layer.succeed(HostProcess.Architecture, "arm64"),
+        ),
+      ),
     ),
   );
 
