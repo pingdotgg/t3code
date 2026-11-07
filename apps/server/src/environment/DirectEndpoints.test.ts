@@ -150,6 +150,20 @@ describe("resolveBoundEndpoints", () => {
     ]);
   });
 
+  it("keeps a Windows alias matching a Linux container prefix eligible", () => {
+    const interfaces = {
+      ...INTERFACES,
+      "ve-office": virtualInterface("192.168.1.30"),
+    };
+    expect(
+      resolveBoundEndpoints({ platform: "win32", host: "0.0.0.0", port: 3773, interfaces }),
+    ).toEqual([
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+      { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.30:3773/" },
+    ]);
+  });
+
   it("omits Windows host-only adapters without excluding guest NICs or explicit binds", () => {
     const interfaces = {
       ...INTERFACES,
