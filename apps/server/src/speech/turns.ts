@@ -12,10 +12,12 @@ export type TurnSettings = {
   readonly maxUtteranceMs: number;
 };
 
+// Streaming Parakeet adds a sentence's period only once the next sentence starts,
+// so the plain pause, not the finished-sentence one, ends most turns.
 export const DEFAULT_TURN_SETTINGS: TurnSettings = {
-  finishedSilenceMs: 1000,
-  endSilenceMs: 3000,
-  endSilenceLongMs: 4000,
+  finishedSilenceMs: 800,
+  endSilenceMs: 1500,
+  endSilenceLongMs: 3000,
   maxUtteranceMs: 120_000,
 };
 

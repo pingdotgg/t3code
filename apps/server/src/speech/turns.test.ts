@@ -4,14 +4,14 @@ import { DEFAULT_TURN_SETTINGS, makeTurnDetector, requiredSilenceMs } from "./tu
 const ms = (value: number) => value * 16;
 
 it.each([
-  ["Run the tests.", 1000],
-  ["Is it green?", 1000],
-  ['He said "done."', 1000],
-  ["Run the tests,", 4000],
-  ["Open the file and", 4000],
-  ["check the", 4000],
-  ["Run the tests", 3000],
-  ["Sandy", 3000],
+  ["Run the tests.", 800],
+  ["Is it green?", 800],
+  ['He said "done."', 800],
+  ["Run the tests,", 3000],
+  ["Open the file and", 3000],
+  ["check the", 3000],
+  ["Run the tests", 1500],
+  ["Sandy", 1500],
 ])("waits for the pause that %j calls for", (text, wait) => {
   expect(requiredSilenceMs(text, DEFAULT_TURN_SETTINGS)).toBe(wait);
 });
@@ -23,10 +23,10 @@ it("ends an utterance once the silence after speech reaches the required pause",
     speechStarted: true,
     ended: false,
   });
-  expect(turns.observe({ samples: ms(3000), voicedUntil: ms(450), text: "Run the tests" })).toEqual(
+  expect(turns.observe({ samples: ms(1900), voicedUntil: ms(450), text: "Run the tests" })).toEqual(
     { heard: false, speechStarted: false, ended: false },
   );
-  expect(turns.observe({ samples: ms(3450), voicedUntil: ms(450), text: "Run the tests" })).toEqual(
+  expect(turns.observe({ samples: ms(1950), voicedUntil: ms(450), text: "Run the tests" })).toEqual(
     { heard: false, speechStarted: false, ended: true },
   );
 });
@@ -40,11 +40,11 @@ it("ends a finished sentence sooner and holds an unfinished one longer", () => {
   const unfinished = makeTurnDetector();
   unfinished.observe({ samples: ms(500), voicedUntil: ms(500), text: "Run the tests and" });
   expect(
-    unfinished.observe({ samples: ms(4000), voicedUntil: ms(500), text: "Run the tests and" })
+    unfinished.observe({ samples: ms(3400), voicedUntil: ms(500), text: "Run the tests and" })
       .ended,
   ).toBe(false);
   expect(
-    unfinished.observe({ samples: ms(4500), voicedUntil: ms(500), text: "Run the tests and" })
+    unfinished.observe({ samples: ms(3500), voicedUntil: ms(500), text: "Run the tests and" })
       .ended,
   ).toBe(true);
 });
