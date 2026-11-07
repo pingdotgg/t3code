@@ -53,8 +53,11 @@ import { requestUrl } from "../requestUrl.ts";
 const SIGNING_SECRET_NAME = "mcp-oauth-signing-key";
 const AUTHORIZATION_CODE_TTL_MS = 60_000;
 const MAX_CLIENT_NAME_LENGTH = 100;
-const MAX_REDIRECT_URIS = 5;
+const MAX_REDIRECT_URIS = 10;
 const MAX_REDIRECT_URI_LENGTH = 512;
+// The client_id rides in the authorize URL; this leaves room under Node's 16 KB header cap for an
+// encoded redirect_uri and state.
+const MAX_CLIENT_ID_LENGTH = 10_240;
 const DEFAULT_CLIENT_NAME = "MCP client";
 const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const CODE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
@@ -346,8 +349,15 @@ const make = Effect.gen(function* () {
             "Linked environments is off on that machine. Turn it on in its Settings → Labs.",
         });
       }
+      const clientId = yield* signClientId(name, redirectUris, peerLink);
+      if (clientId.length > MAX_CLIENT_ID_LENGTH) {
+        return yield* new AuthMcpRegistrationError({
+          error: "invalid_redirect_uri",
+          error_description: "Redirect URIs are too long to fit in an authorization request.",
+        });
+      }
       return {
-        clientId: yield* signClientId(name, redirectUris, peerLink),
+        clientId,
         name,
         redirectUris,
         peerLink,

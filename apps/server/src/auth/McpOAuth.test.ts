@@ -200,6 +200,33 @@ it.live("registers loopback and https clients and never redirects for an unverif
         expect(response.status).toBe(400);
         expect(yield* json<unknown>(response)).toMatchObject({ error: "invalid_redirect_uri" });
       }
+      // JSON escaping can inflate the signed client_id past what an authorize URL can carry.
+      const oversized = yield* handler(
+        at("/oauth/mcp/register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: encodeJson({
+            redirect_uris: Array.from(
+              { length: 10 },
+              (_, index) => `https://bot.example/${index}/${'"'.repeat(480)}`,
+            ),
+          }),
+        }),
+      );
+      expect(oversized.status).toBe(400);
+      const unicode = yield* handler(
+        at("/oauth/mcp/register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: encodeJson({
+            redirect_uris: Array.from(
+              { length: 5 },
+              (_, index) => `https://bot.example/${index}/${"漢".repeat(420)}`,
+            ),
+          }),
+        }),
+      );
+      expect(unicode.status).toBe(201);
 
       const registered = yield* register(handler);
       expect(registered.status).toBe(201);
@@ -378,6 +405,43 @@ it.live("signs in a hosted agent with an https callback that asked for a client 
         ),
       );
       expect(signedIn).toMatchObject({ label: "Hosted bot", access: "approval-required" });
+    }),
+  ),
+);
+
+it.live("signs in Gemini, which registers six user-bound redirect URIs for one client", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const redirectUris = Array.from(
+        { length: 6 },
+        (_, index) =>
+          `https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-test${index}`,
+      );
+      const registered = yield* handler(
+        at("/oauth/mcp/register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: encodeJson({
+            client_name: "Google",
+            redirect_uris: redirectUris,
+            token_endpoint_auth_method: "client_secret_basic",
+          }),
+        }),
+      );
+      const client = (yield* json<unknown>(registered)) as { client_id: string };
+      expect(client).toMatchObject({ redirect_uris: redirectUris });
+      expect(registered.status).toBe(201);
+
+      const callbackUrl = redirectUris[5]!;
+      const params = authorizeParams(client.client_id, callbackUrl);
+      const pairing = yield* auth.issuePairingCredential();
+      const approved = yield* decide(handler, params, {
+        _tag: "pairing-code",
+        access: "approval-required",
+        code: pairing.credential,
+      });
+      const callback = new URL(approved.redirectTo!);
+      expect(`${callback.origin}${callback.pathname}`).toBe(callbackUrl);
     }),
   ),
 );
