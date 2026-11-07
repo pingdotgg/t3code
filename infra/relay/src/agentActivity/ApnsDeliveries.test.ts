@@ -1074,10 +1074,11 @@ describe("ApnsDeliveries", () => {
         },
       });
       // Superseded completions omit phase/updatedAt so the push survives resume.
-      const supersededNotification = queuedJobs[0]?.payload;
+      const supersededPayload = queuedJobs[0]?.payload;
+      expect(supersededPayload?.kind).toBe("push_notification");
       expect(
-        supersededNotification && "notification" in supersededNotification
-          ? supersededNotification.notification.phase
+        supersededPayload?.kind === "push_notification"
+          ? supersededPayload.notification?.phase
           : "missing",
       ).toBeUndefined();
     }).pipe(
