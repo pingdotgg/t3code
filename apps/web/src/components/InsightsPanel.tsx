@@ -382,9 +382,9 @@ function FlameChartPanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* Flame stays outside the scroller so wheel zoom never fights panel scroll. */}
-      <div className="flex max-h-[45%] shrink-0 flex-col gap-2 overflow-y-auto border-b border-border/40 p-3">
-        <section aria-label="Timeline" className="flex min-h-0 flex-col gap-1.5">
+      {/* Timeline stays fixed; only DetailCard content may scroll when tall. */}
+      <div className="flex shrink-0 flex-col gap-2 border-b border-border/40 p-3">
+        <section aria-label="Timeline" className="flex shrink-0 flex-col gap-1.5">
           <div className="flex min-w-0 items-center gap-1">
             <h3 className="shrink-0 text-sm font-medium text-foreground">Timeline</h3>
             <p className="mr-auto min-w-0 truncate text-2xs text-muted-foreground">
@@ -1295,9 +1295,9 @@ function DetailCard({
   return (
     <section
       aria-label="Selection detail"
-      className="flex shrink-0 flex-col gap-2 rounded-lg border border-border/60 bg-card/40 p-2.5"
+      className="flex max-h-44 shrink-0 flex-col gap-2 overflow-hidden rounded-lg border border-border/60 bg-card/40 p-2.5"
     >
-      <header className="flex items-start justify-between gap-2">
+      <header className="flex shrink-0 items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">
             {span === null
@@ -1324,71 +1324,70 @@ function DetailCard({
         </div>
       </header>
 
-      {span === null ? (
-        <div className="grid grid-cols-2 gap-2 text-2xs @[22rem]:grid-cols-3">
-          <span className="text-muted-foreground">
-            Duration{" "}
-            <span className="tabular-nums text-foreground/80">
-              {formatDuration(turn.durationMs)}
-            </span>
-          </span>
-          <span className="text-muted-foreground">
-            Work{" "}
-            <span className="tabular-nums text-foreground/80">{formatDuration(turn.workMs)}</span>
-          </span>
-          <span className="text-muted-foreground">
-            Wait{" "}
-            <span className="tabular-nums text-foreground/80">{formatDuration(turn.waitMs)}</span>
-          </span>
-          {tokenLabel !== null ? (
+      <div className="flex min-h-0 flex-col gap-2 overflow-y-auto">
+        {span === null ? (
+          <div className="grid grid-cols-2 gap-2 text-2xs @[22rem]:grid-cols-3">
             <span className="text-muted-foreground">
-              Tokens <span className="tabular-nums text-foreground/80">{tokenLabel}</span>
+              Duration{" "}
+              <span className="tabular-nums text-foreground/80">
+                {formatDuration(turn.durationMs)}
+              </span>
             </span>
-          ) : null}
-          {costLabel !== null ? (
             <span className="text-muted-foreground">
-              Est. cost <span className="tabular-nums text-foreground/80">{costLabel}</span>
+              Work{" "}
+              <span className="tabular-nums text-foreground/80">{formatDuration(turn.workMs)}</span>
             </span>
-          ) : null}
-          {usage?.model != null ? (
-            <span className="min-w-0 truncate text-muted-foreground">
-              Model <span className="text-foreground/80">{usage.model}</span>
+            <span className="text-muted-foreground">
+              Wait{" "}
+              <span className="tabular-nums text-foreground/80">{formatDuration(turn.waitMs)}</span>
             </span>
-          ) : null}
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-2xs @[22rem]:grid-cols-3">
-          {facts?.map((fact) => (
-            <div key={fact.label} className="min-w-0">
-              <p className="text-muted-foreground">{fact.label}</p>
-              <p className="truncate tabular-nums text-foreground/85">{fact.value}</p>
-            </div>
-          ))}
-        </div>
-      )}
+            {tokenLabel !== null ? (
+              <span className="text-muted-foreground">
+                Tokens <span className="tabular-nums text-foreground/80">{tokenLabel}</span>
+              </span>
+            ) : null}
+            {costLabel !== null ? (
+              <span className="text-muted-foreground">
+                Est. cost <span className="tabular-nums text-foreground/80">{costLabel}</span>
+              </span>
+            ) : null}
+            {usage?.model != null ? (
+              <span className="min-w-0 truncate text-muted-foreground">
+                Model <span className="text-foreground/80">{usage.model}</span>
+              </span>
+            ) : null}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-2xs @[22rem]:grid-cols-3">
+            {facts?.map((fact) => (
+              <div key={fact.label} className="min-w-0">
+                <p className="text-muted-foreground">{fact.label}</p>
+                <p className="truncate tabular-nums text-foreground/85">{fact.value}</p>
+              </div>
+            ))}
+          </div>
+        )}
 
-      {preview !== null ? (
-        <pre className="line-clamp-6 overflow-hidden rounded-md bg-muted/40 px-2 py-1.5 font-mono text-2xs leading-4.5 whitespace-pre-wrap text-muted-foreground">
-          {preview}
-        </pre>
-      ) : null}
+        {preview !== null ? (
+          <pre className="rounded-md bg-muted/40 px-2 py-1.5 font-mono text-2xs leading-4.5 whitespace-pre-wrap text-muted-foreground">
+            {preview}
+          </pre>
+        ) : null}
 
-      {span === null ? (
-        <ol
-          className="flex max-h-28 flex-col gap-1 overflow-y-auto"
-          aria-label={`Spans in turn ${turn.ordinal}`}
-        >
-          {turn.spans.map((entry) => (
-            <li
-              key={entry.id}
-              className="flex items-center justify-between gap-2 text-xs text-muted-foreground"
-            >
-              <span className="min-w-0 truncate">{entry.label}</span>
-              <span className="shrink-0 tabular-nums">{formatDuration(entry.durationMs)}</span>
-            </li>
-          ))}
-        </ol>
-      ) : null}
+        {span === null ? (
+          <ol className="flex flex-col gap-1" aria-label={`Spans in turn ${turn.ordinal}`}>
+            {turn.spans.map((entry) => (
+              <li
+                key={entry.id}
+                className="flex items-center justify-between gap-2 text-xs text-muted-foreground"
+              >
+                <span className="min-w-0 truncate">{entry.label}</span>
+                <span className="shrink-0 tabular-nums">{formatDuration(entry.durationMs)}</span>
+              </li>
+            ))}
+          </ol>
+        ) : null}
+      </div>
     </section>
   );
 }
