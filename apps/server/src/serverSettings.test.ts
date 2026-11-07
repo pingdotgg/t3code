@@ -1859,6 +1859,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       yield* Effect.exit(serverSettings.getSettings);
 
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), legacy);
+
+      yield* serverSettings.updateSettings({ defaultAutoPull: true });
+
+      const written = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
+      assert.deepEqual(written.bitbucket, JSON.parse(legacy).bitbucket);
+      assert.equal(written.defaultAutoPull, true);
     }).pipe(Effect.provide(layerSettings));
   });
 
@@ -1891,7 +1897,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.deepEqual(loaded.github?.tokens, { "github.com": "ghp_saved" });
       assert.deepEqual(loaded.github?.hosts, { "github.com": { account: "work" } });
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-      assert.notInclude(raw, '"bitbucket":{"email"');
+      assert.doesNotHaveAnyKeys(JSON.parse(raw), ["bitbucket", "github"]);
       assert.include(raw, "sourceControlHosts");
       assert.isTrue(Option.isNone(yield* secrets.get("bitbucket-access-token")));
     }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
