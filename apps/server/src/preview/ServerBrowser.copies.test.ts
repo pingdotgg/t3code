@@ -45,7 +45,8 @@ describe("server browser page copies", () => {
   });
 
   const takeCopy = async (click: boolean) =>
-    (await ServerBrowser.takeSessionCopies(cdp, click)).find((text) => text.length > 0) ?? "";
+    (await ServerBrowser.takeSessionCopies(cdp, click)).find((copy) => copy && copy.text.length > 0)
+      ?.text ?? "";
   const inPage = async (expression: string) =>
     (await cdp.send("Runtime.evaluate", { expression, returnByValue: true })).result.value;
 
@@ -234,6 +235,40 @@ describe("server browser page copies", () => {
       expect(await takeCopy(true)).toBe(`delegated ${command}`);
       expect(await takeCopy(false)).toBe("");
     }
+  });
+
+  it.each([
+    { kind: "cross-origin", host: "other.example" },
+    { kind: "srcdoc", host: "copy.example" },
+    { kind: "blank", host: "copy.example" },
+    { kind: "opaque", host: "" },
+  ])("attributes a $kind frame's copies to its own origin", async ({ kind, host }) => {
+    await page.route("https://other.example/", (route) =>
+      route.fulfill({ contentType: "text/html", body: PAGE }),
+    );
+    await inPage(`
+      const frame = document.createElement("iframe");
+      if ("${kind}" === "cross-origin") frame.src = "https://other.example/";
+      else if ("${kind}" !== "blank") {
+        if ("${kind}" === "opaque") frame.setAttribute("sandbox", "allow-scripts");
+        frame.srcdoc = ${JSON.stringify(PAGE)};
+      }
+      document.body.append(frame);
+      if ("${kind}" === "blank") {
+        frame.contentDocument.open();
+        frame.contentDocument.write(${JSON.stringify(PAGE)});
+        frame.contentDocument.close();
+      }
+    `);
+    const frame = page.frameLocator("iframe");
+    await frame.locator("#exec").waitFor();
+    const child = page.frames().find((frame) => frame.parentFrame() === page.mainFrame())!;
+    const session = await context.newCDPSession(child).catch(() => cdp);
+    await ServerBrowser.recordCopies(session);
+    await frame.locator("#exec").click();
+    const copies = await ServerBrowser.takeSessionCopies(session, true);
+    expect(copies.find((copy) => copy && copy.text.length > 0)).toEqual({ text: "executed", host });
+    expect(await takeCopy(false)).toBe("");
   });
 
   it.each(["right", "middle"] as const)(

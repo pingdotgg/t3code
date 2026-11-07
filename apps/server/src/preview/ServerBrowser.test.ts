@@ -145,13 +145,13 @@ function makeSession(
       ) {
         const value = pageClickCopy;
         pageClickCopy = "";
-        return { result: { value } };
+        return { result: { value: { text: value, host: "other.example" } } };
       }
       if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 7) {
         const value = frame ? frame.copy : pageCopy;
         if (frame) frame.copy = "";
         else pageCopy = "";
-        return { result: { value } };
+        return { result: { value: { text: value, host: "other.example" } } };
       }
       if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 9)
         return desktopSizeAnswer?.() ?? { result: { value: { ...viewport } } };
@@ -1369,7 +1369,7 @@ it.live("text the page copies after the controlling viewer's click is only offer
             action === "up" ? 0 : button === "left" ? 1 : button === "right" ? 2 : 4,
           ),
         );
-      const offer = (text: string) => ({ _tag: "copyOffer", text, host: "copy.example" });
+      const offer = (text: string) => ({ _tag: "copyOffer", text, host: "other.example" });
       pageClickCopy = "before the click";
       yield* click("left");
       yield* advance(5_000);

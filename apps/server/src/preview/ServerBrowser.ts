@@ -500,7 +500,7 @@ const CLIPBOARD_SCRIPT = `(() => {
     const text = click ? clickCopy : keyCopy;
     if (click) clickCopy = "";
     else keyCopy = "";
-    return text;
+    return { text, host: URL.canParse(globalThis.origin) ? new URL(globalThis.origin).host : "" };
   };
 })();`;
 // navigator.clipboard.writeText fires no copy event, so the page's own world reports its text.
@@ -599,14 +599,17 @@ export const takeSessionCopies = async (cdp: CDPSession, click = false) => {
           }),
         )
         .then(
-          ({ result }) => (typeof result.value === "string" ? result.value : ""),
-          () => "",
+          ({ result }) => {
+            const copy = asRecord(result.value);
+            return typeof copy?.text === "string" && typeof copy.host === "string"
+              ? { text: copy.text, host: copy.host }
+              : null;
+          },
+          () => null,
         ),
     ),
   );
 };
-
-const hostOf = (url: string) => (URL.canParse(url) ? new URL(url).host : "");
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
@@ -1434,11 +1437,11 @@ const make = Effect.gen(function* () {
     await recordCopies(cdp).catch(constVoid);
   };
 
-  const takeCopiedText = async (tab: ServerTab, click = false) => {
+  const takeCopy = async (tab: ServerTab, click = false) => {
     const copies = await Promise.all(
       [tab.cdp, ...tab.frameSessions.values()].map((cdp) => takeSessionCopies(cdp, click)),
     );
-    return copies.flat().find((text) => text.length > 0);
+    return copies.flat().find((copy) => copy !== null && copy.text.length > 0);
   };
 
   /** Offers this viewer what the page copies after its click, until another click or a control change. */
@@ -1456,10 +1459,10 @@ const make = Effect.gen(function* () {
       await new Promise((resolve) => setTimeout(resolve, at - waited));
       waited = at;
       if (!current()) return;
-      const copied = await takeCopiedText(tab, true);
+      const copied = await takeCopy(tab, true);
       if (!current()) return;
       if (copied) {
-        viewer.push({ _tag: "copyOffer", text: copied, host: hostOf(tab.page.url()) });
+        viewer.push({ _tag: "copyOffer", ...copied });
         return;
       }
     }
@@ -2535,7 +2538,7 @@ const make = Effect.gen(function* () {
         if (!tab.desktop && button !== "none" && action === "down") {
           viewer.clicks++;
           viewer.leftPress = offers && viewer.pressedButtons.size === 0 ? viewer.clicks : null;
-          if (offers) await takeCopiedText(tab, true);
+          if (offers) await takeCopy(tab, true);
         }
         await session.send("Input.dispatchMouseEvent", {
           type,
@@ -2582,7 +2585,7 @@ const make = Effect.gen(function* () {
         const copying =
           !tab.desktop && (command?.commands[0] === "copy" || command?.commands[0] === "cut");
 
-        if (copying) await takeCopiedText(tab);
+        if (copying) await takeCopy(tab);
         await session.send("Input.dispatchKeyEvent", {
           type: text ? "keyDown" : "rawKeyDown",
           key,
@@ -2597,8 +2600,8 @@ const make = Effect.gen(function* () {
         });
         viewer.pressedKeys.set(code || key, { key, code });
         if (copying) {
-          const copied = await takeCopiedText(tab);
-          if (copied) viewer.push({ _tag: "clipboard", text: copied });
+          const copied = await takeCopy(tab);
+          if (copied) viewer.push({ _tag: "clipboard", text: copied.text });
         }
         return;
       }
