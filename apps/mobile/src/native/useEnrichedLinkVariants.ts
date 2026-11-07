@@ -40,8 +40,8 @@ export function enrichedContextLinkCustomization(
   return chipCustomization(enrichedContextLinkPresentation(href, records));
 }
 
-export function enrichedThreadLinkCustomization(href: string) {
-  return chipCustomization(enrichedThreadLinkPresentation(href));
+export function enrichedThreadLinkCustomization(href: string, available = true) {
+  return chipCustomization(enrichedThreadLinkPresentation(href, available));
 }
 
 export function withChipIcon(
