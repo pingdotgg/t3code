@@ -129,6 +129,7 @@ import {
 import {
   isBufferedProviderNotification,
   isUndeliveredMailboxSteer,
+  pendingDelegatedCompletionWake,
 } from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import {
@@ -1478,18 +1479,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         messageIds: [delivery.messageId],
       });
       const message = messages.messages[0];
-      if (message !== undefined) {
-        if (message.delegatedCompletion === undefined || message.runId === null) return;
-        const runs = yield* projectionStore.getThreadRecords(threadId, ["runs"], {
-          runIds: [message.runId],
-        });
-        const run = runs.runs[0];
-        const turns = yield* projectionStore.getThreadRecords(threadId, ["providerTurns"], {
-          providerTurnAttemptIds: run?.activeAttemptId == null ? [] : [run.activeAttemptId],
-        });
-        if (!isUndeliveredMailboxSteer({ ...messages, ...runs, ...turns }, delivery.messageId))
-          return;
-      }
+      const runs =
+        message?.delegatedCompletion === undefined || message.runId === null
+          ? []
+          : (yield* projectionStore.getThreadRecords(threadId, ["runs"], {
+              runIds: [message.runId],
+            })).runs;
+      const attemptId = runs[0]?.activeAttemptId;
+      const providerTurns =
+        attemptId == null
+          ? []
+          : (yield* projectionStore.getThreadRecords(threadId, ["providerTurns"], {
+              providerTurnAttemptIds: [attemptId],
+            })).providerTurns;
+      if (
+        pendingDelegatedCompletionWake(
+          { messages: messages.messages, runs, providerTurns },
+          parentRun,
+        ) === undefined
+      )
+        return;
       const projection = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"], {
         providerThreadIds: parentRun.providerThreadId === null ? [] : [parentRun.providerThreadId],
       });

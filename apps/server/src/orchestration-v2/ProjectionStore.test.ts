@@ -10,6 +10,8 @@ import {
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadShellSnapshot,
@@ -1340,6 +1342,238 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
   );
 });
 
+const delegatedCompletionWakeHoldsEveryShell = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const now = yield* DateTime.now;
+  const threadId = yield* addRolledBackRecoveryCandidate("delegated-wake-hold");
+  const providerThreadId = ProviderThreadId.make("provider-thread:delegated-wake-hold");
+  yield* store.apply({
+    id: EventId.make("event:delegated-wake-hold:provider-thread"),
+    type: "provider-thread.updated",
+    threadId,
+    occurredAt: now,
+    payload: {
+      id: providerThreadId,
+      appThreadId: threadId,
+      driver,
+      providerInstanceId,
+      providerSessionId: null,
+      ownerNodeId: null,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      lastRunOrdinal: null,
+      handoffIds: [],
+      forkedFrom: null,
+      status: "active",
+      firstRunOrdinal: 1,
+      createdAt: now,
+      updatedAt: now,
+    },
+  });
+  const taskId = NodeId.make("node:delegated-wake-hold:task");
+  const wakeMessageId = MessageId.make("message:delegated-wake-hold:wake");
+  const parentRun = {
+    ...(yield* store.getThreadProjection(threadId)).runs[0]!,
+    id: RunId.make("run:delegated-wake-hold:parent"),
+    ordinal: 2,
+    providerThreadId,
+    userMessageId: MessageId.make("message:delegated-wake-hold:parent"),
+    rootNodeId: NodeId.make("node:delegated-wake-hold:parent"),
+    status: "completed" as const,
+    completedAt: now,
+    delegatedCompletion: {
+      disposition: "open" as const,
+      nextGeneration: 2,
+      delivery: { generation: 1, messageId: wakeMessageId, taskIds: [taskId] },
+    },
+  };
+  const applyRun = (name: string, run: OrchestrationV2Run) =>
+    store.apply({
+      id: EventId.make(`event:delegated-wake-hold:${name}`),
+      type: "run.updated",
+      threadId,
+      runId: run.id,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: run,
+    });
+  yield* applyRun("parent", parentRun);
+  const itemId = TurnItemId.make("item:delegated-wake-hold:task");
+  yield* store.apply({
+    id: EventId.make("event:delegated-wake-hold:item"),
+    type: "turn-item.updated",
+    threadId,
+    runId: parentRun.id,
+    nodeId: taskId,
+    driver,
+    occurredAt: now,
+    payload: {
+      id: itemId,
+      type: "subagent",
+      threadId,
+      runId: parentRun.id,
+      nodeId: taskId,
+      providerThreadId,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 10,
+      status: "completed",
+      title: "Delegated task",
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      subagentId: taskId,
+      origin: "app_owned",
+      driver,
+      providerInstanceId,
+      childThreadId: null,
+      prompt: "Do the work",
+      result: "done",
+    },
+  });
+  const applyTask = (
+    name: string,
+    policy: Pick<OrchestrationV2Subagent, "completionWake" | "completionDelivery">,
+  ) =>
+    store.apply({
+      id: EventId.make(`event:delegated-wake-hold:${name}`),
+      type: "subagent.updated",
+      threadId,
+      runId: parentRun.id,
+      nodeId: taskId,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: taskId,
+        threadId,
+        runId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver,
+        providerInstanceId,
+        providerThreadId: null,
+        childThreadId: null,
+        nativeTaskRef: null,
+        prompt: "Do the work",
+        title: "Delegated task",
+        model: null,
+        ...policy,
+        status: "completed",
+        result: "done",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      },
+    });
+  yield* applyTask("task", {
+    completionWake: "always",
+    completionDelivery: { state: "claimed", observedByRunId: null },
+  });
+  const heldTaskIds = Effect.gen(function* () {
+    yield* assertShellIndexCoversShells();
+    const taskIds = (
+      shell:
+        | {
+            readonly pendingBackgroundTasks?:
+              | ReadonlyArray<{ readonly taskId: string }>
+              | undefined;
+          }
+        | null
+        | undefined,
+    ) => (shell?.pendingBackgroundTasks ?? []).map((task) => task.taskId);
+    const producers = [
+      taskIds(yield* store.getThreadShell(threadId)),
+      taskIds((yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId)),
+      taskIds(
+        ProjectionStore.threadShellFromProjection(yield* store.getThreadProjection(threadId)),
+      ),
+      taskIds((yield* store.getSettlementCandidates(threadId))[0]),
+      taskIds((yield* store.getAgentAwarenessSnapshot(threadId)).threads[0]),
+    ];
+    for (const held of producers) assert.deepEqual(held, producers[0]);
+    return producers[0];
+  });
+
+  assert.deepEqual(yield* heldTaskIds, [itemId]);
+
+  // No provider thread means no wake is ever offered.
+  yield* applyRun("missing-provider-thread", {
+    ...parentRun,
+    providerThreadId: ProviderThreadId.make("provider-thread:delegated-wake-hold:missing"),
+  });
+  assert.deepEqual(yield* heldTaskIds, []);
+  yield* applyRun("parent-restored", parentRun);
+
+  const wakeRun = {
+    ...parentRun,
+    id: RunId.make("run:delegated-wake-hold:wake"),
+    ordinal: 3,
+    userMessageId: wakeMessageId,
+    rootNodeId: NodeId.make("node:delegated-wake-hold:wake"),
+    delegatedCompletion: { disposition: "open" as const, nextGeneration: 1, delivery: null },
+  };
+  yield* applyRun("wake-run", wakeRun);
+  yield* store.apply({
+    id: EventId.make("event:delegated-wake-hold:wake-message"),
+    type: "message.updated",
+    threadId,
+    runId: wakeRun.id,
+    occurredAt: now,
+    payload: {
+      id: wakeMessageId,
+      threadId,
+      runId: wakeRun.id,
+      nodeId: null,
+      role: "user",
+      text: "Delegated task finished",
+      attachments: [],
+      streaming: false,
+      createdBy: "agent",
+      creationSource: "server",
+      delegatedCompletion: { parentRunId: parentRun.id, generation: 1, taskIds: [taskId] },
+      createdAt: now,
+      updatedAt: now,
+    },
+  });
+  assert.deepEqual(yield* heldTaskIds, []);
+
+  // A wake steered into a run that ended before reading it is offered again.
+  yield* applyRun("wake-run-steered", {
+    ...wakeRun,
+    userMessageId: MessageId.make("message:delegated-wake-hold:steered-into"),
+  });
+  assert.deepEqual(yield* heldTaskIds, [itemId]);
+  yield* applyRun("wake-run-read", { ...wakeRun, status: "completed" });
+  assert.deepEqual(yield* heldTaskIds, []);
+
+  // A sibling that finished behind that wake waits for the successor its end reserves.
+  yield* applyTask("task-pending", {
+    completionWake: "always",
+    completionDelivery: { state: "pending", observedByRunId: null },
+  });
+  assert.deepEqual(yield* heldTaskIds, [itemId]);
+
+  // A live parent's blocking wait takes a settled_only result instead.
+  yield* applyTask("task-settled-only", {
+    completionWake: "settled_only",
+    completionDelivery: { state: "pending", observedByRunId: null },
+  });
+  assert.deepEqual(yield* heldTaskIds, [itemId]);
+  yield* applyRun("parent-live", { ...parentRun, status: "running", completedAt: null });
+  assert.deepEqual(yield* heldTaskIds, []);
+
+  // With no wake outstanding, nothing reserves one.
+  yield* applyRun("parent-settled", {
+    ...parentRun,
+    delegatedCompletion: { disposition: "open", nextGeneration: 2, delivery: null },
+  });
+  assert.deepEqual(yield* heldTaskIds, []);
+});
+
 const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const now = yield* DateTime.now;
@@ -2520,6 +2754,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
   it.effect(
     "keeps restart-cancelled work through a stale run.updated",
     () => restartCancelledWorkSurvivesStaleRunUpdate,
+  );
+  it.effect(
+    "every shell holds a finished delegated task until its completion wake starts",
+    () => delegatedCompletionWakeHoldsEveryShell,
   );
   it.effect("records restart-cancelled work without regressing a run that completed since", () =>
     Effect.gen(function* () {
