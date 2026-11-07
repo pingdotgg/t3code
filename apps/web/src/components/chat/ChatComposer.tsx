@@ -189,10 +189,19 @@ import {
 } from "~/lib/composerContextRecords";
 import { rememberCopiedComposerAttachments } from "~/lib/copiedComposerAttachments";
 import { useThreadContextDrop, threadContextDropTargetProps } from "./threadContextDrag";
-import { readThreadShell } from "~/state/entities";
+import { readProjects, readThreadShell } from "~/state/entities";
+import { resolvePullRequestPreviewTarget } from "@t3tools/client-runtime/change-request-links";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { environmentServerConfigsAtom } from "~/state/server";
+import { pullRequestEnvironment, readSharedPullRequestSummary } from "~/state/pullRequests";
+import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useLinkedEnvironments } from "~/state/peerLinks";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import type { ComposerContextRecord, ThreadPullRequestLink } from "@t3tools/contracts";
+import type {
+  ComposerContextRecord,
+  PullRequestContextMetadata,
+  ThreadPullRequestLink,
+} from "@t3tools/contracts";
 import { threadContextAttachment } from "~/lib/threadContextAttachment";
 import {
   type ComposerCommandItem,
@@ -213,6 +222,15 @@ import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
+import {
+  cursorAfterRangeReplacement,
+  findPullRequestLinks,
+  isPullRequestPage,
+  mapCursor,
+  mapUntouchedRange,
+  type PastedLink,
+  pullRequestContextFromSummary,
+} from "./pullRequestLinkPaste";
 import { getComposerPromptInjectionState, getComposerReasoningStep } from "./composerProviderState";
 import { readPromptUltrathink } from "./TraitsPicker";
 import {
@@ -285,6 +303,12 @@ import {
 import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 
+interface PastedPullRequests {
+  readonly targetKey: string;
+  snapshot: string;
+  links: PastedLink[];
+}
+
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   const armed = Date.now() <= deadline.current;
   deadline.current = 0;
@@ -299,7 +323,11 @@ export interface ChatComposerHandle {
   hasPendingAttachments: () => boolean;
   insertTextAtEnd: (
     text: string,
-    options?: { ensureLeadingBoundary?: boolean; clipboardData?: DataTransfer },
+    options?: {
+      ensureLeadingBoundary?: boolean;
+      clipboardData?: DataTransfer;
+      pasteAsText?: boolean;
+    },
   ) => boolean;
   pasteTextAtEnd: (text: string, options?: { bypassAutoAttachment?: boolean }) => boolean;
   citeAssistantText: (
@@ -2507,6 +2535,150 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       )
     : bannerItems;
 
+  const readPullRequestDetail = useAtomQueryRunner(pullRequestEnvironment.detail, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  // The focused paste decides plain text before the editor imports the same event's text.
+  const pastingAsTextRef = useRef(false);
+  const swappedCursorRef = useRef<{ prompt: string; cursor: number } | null>(null);
+  const resolvePastedPullRequest = (url: string) =>
+    resolvePullRequestPreviewTarget({
+      environmentId,
+      projects: readProjects(),
+      pullRequestsEnabled: appAtomRegistry.get(environmentServerConfigsAtom).has(environmentId),
+      url,
+    });
+  const pullRequestChip = (pullRequest: PullRequestContextMetadata) => {
+    const comment = buildPullRequestReferenceContext(pullRequest);
+    return { comment, text: formatInlineContextReference(reviewCommentContextReference(comment)) };
+  };
+  const finishPastedPullRequest = useStableCallback(
+    (paste: PastedPullRequests, url: string, pullRequest: PullRequestContextMetadata) => {
+      if (composerDraftTargetKeyRef.current !== paste.targetKey) return;
+      const prompt = promptRef.current;
+      const tracked = paste.links.flatMap(
+        (link) => mapUntouchedRange(link, paste.snapshot, prompt) ?? [],
+      );
+      const current = findPullRequestLinks(prompt);
+      const chip = pullRequestChip(pullRequest);
+      let remaining = tracked.filter((link) => link.url !== url);
+      // The editor catches up with an earlier swap only after React commits it.
+      const shown = readComposerSnapshot();
+      const swapped = swappedCursorRef.current;
+      let cursor =
+        shown.value === prompt
+          ? shown.expandedCursor
+          : swapped?.prompt === prompt
+            ? swapped.cursor
+            : mapCursor(shown.expandedCursor, shown.value, prompt);
+      let applied = false;
+      for (const link of tracked.filter((candidate) => candidate.url === url).toReversed()) {
+        if (!current.some((found) => found.start === link.start && found.end === link.end)) {
+          continue;
+        }
+        const nextCursor = cursorAfterRangeReplacement(cursor, link, chip.text.length);
+        if (
+          !applyPromptReplacement(link.start, link.end, chip.text, {
+            expandedCursorAfterReplace: nextCursor,
+            focusEditorAfterReplace: false,
+          })
+        ) {
+          continue;
+        }
+        applied = true;
+        cursor = nextCursor;
+        const shift = chip.text.length - (link.end - link.start);
+        remaining = remaining.map((other) =>
+          other.start >= link.end
+            ? { ...other, start: other.start + shift, end: other.end + shift }
+            : other,
+        );
+      }
+      paste.links = remaining;
+      paste.snapshot = promptRef.current;
+      if (applied) swappedCursorRef.current = { prompt: promptRef.current, cursor };
+      if (applied) {
+        addComposerDraftReviewComment(composerDraftTarget, chip.comment, {
+          appendReference: false,
+        });
+      }
+    },
+  );
+  const convertPullRequestLinksOnceLoaded = (
+    targets: ReadonlyMap<string, NonNullable<ReturnType<typeof resolvePastedPullRequest>>>,
+    selection: { start: number; end: number },
+  ) => {
+    const before = promptRef.current;
+    const targetKey = composerDraftTargetKey;
+    // The editor inserts the paste synchronously, so by now the prompt holds it.
+    queueMicrotask(() => {
+      const after = promptRef.current;
+      const insertedEnd = after.length - (before.length - selection.end);
+      const paste: PastedPullRequests = {
+        targetKey,
+        snapshot: after,
+        links: findPullRequestLinks(after).filter(
+          (link) =>
+            targets.has(link.url) && link.start >= selection.start && link.end <= insertedEnd,
+        ),
+      };
+      const queue = [...new Set(paste.links.map((link) => link.url))];
+      const readNext = async () => {
+        for (let url = queue.shift(); url !== undefined; url = queue.shift()) {
+          const result = await readPullRequestDetail(targets.get(url)!);
+          if (result._tag === "Success") {
+            finishPastedPullRequest(paste, url, pullRequestContextFromSummary(result.value));
+          }
+        }
+      };
+      for (let reader = 0; reader < Math.min(4, queue.length); reader += 1) void readNext();
+    });
+  };
+  /**
+   * Pasted pull request links become the chip the `#` menu inserts, as thread links do. One this
+   * client has not seen stays text until it loads, then converts if it is still where it landed.
+   */
+  const importPastedPullRequestLinks = (
+    text: string,
+    pasteAsText: boolean,
+    selection: { start: number; end: number },
+  ): string => {
+    if (pasteAsText || isLiteralPendingAnswer) return text;
+    const links = findPullRequestLinks(text);
+    if (links.length === 0) return text;
+    const unknown = new Map<string, NonNullable<ReturnType<typeof resolvePastedPullRequest>>>();
+    let imported = "";
+    let copiedUpTo = 0;
+    for (const link of links) {
+      const target = resolvePastedPullRequest(link.url);
+      if (target === null || !isPullRequestPage(link.url, target.input.number)) continue;
+      const known = readSharedPullRequestSummary(
+        appAtomRegistry,
+        target.environmentId,
+        target.input,
+      );
+      if (known === null) {
+        unknown.set(link.url, target);
+        continue;
+      }
+      const chip = pullRequestChip(pullRequestContextFromSummary(known));
+      addComposerDraftReviewComment(composerDraftTarget, chip.comment, { appendReference: false });
+      imported += text.slice(copiedUpTo, link.start) + chip.text;
+      copiedUpTo = link.end;
+    }
+    if (unknown.size > 0) convertPullRequestLinksOnceLoaded(unknown, selection);
+    return imported + text.slice(copiedUpTo);
+  };
+  const importFocusedPastePullRequestLinks = useStableCallback((text: string) => {
+    const end = promptRef.current.length;
+    return importPastedPullRequestLinks(
+      text,
+      pastingAsTextRef.current,
+      composerEditorRef.current?.readSelectionRange() ?? { start: end, end },
+    );
+  });
+
   const insertComposerText = (
     text: string,
     position: "cursor" | "end",
@@ -2514,6 +2686,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ensureLeadingBoundary?: boolean;
       citationCommentAnchor?: AssistantCitationSourceAnchor;
       clipboardData?: DataTransfer;
+      pasteAsText?: boolean;
     },
   ): boolean => {
     if (
@@ -2525,11 +2698,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ) {
       return false;
     }
-    if (options?.clipboardData) {
-      text = importPastedComposerText(options.clipboardData, importContextFragment);
-    }
     const prompt = promptRef.current;
     const cursor = position === "cursor" ? readComposerSnapshot().expandedCursor : prompt.length;
+    if (options?.clipboardData) {
+      text = importPastedPullRequestLinks(
+        importPastedComposerText(options.clipboardData, importContextFragment),
+        options.pasteAsText === true || consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef),
+        { start: cursor, end: cursor },
+      );
+    }
     const needsLeadingSpace =
       (options?.ensureLeadingBoundary ?? false) &&
       cursor > 0 &&
@@ -2668,6 +2845,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const { files, folders } = splitTransferredFiles(event.clipboardData);
     const plainText = event.clipboardData.getData("text/plain");
     const bypassAutoAttachment = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
+    pastingAsTextRef.current = bypassAutoAttachment;
     if (
       folders.length > 0 ||
       (activeThreadId &&
@@ -2952,8 +3130,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         pendingDraftWork.has(attachmentTargetKey),
       insertTextAtEnd: insertComposerTextAtEndStable,
       pasteTextAtEnd: (text: string, options) => {
-        const shortcutArmed = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
-        const bypassAutoAttachment = options?.bypassAutoAttachment === true || shortcutArmed;
+        const bypassAutoAttachment =
+          options?.bypassAutoAttachment === true ||
+          Date.now() <= pasteAsTextShortcutUntilRef.current;
         const promptLength = promptRef.current.length;
         if (
           !foldPastedText(text, bypassAutoAttachment, {
@@ -2961,8 +3140,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             end: promptLength,
           })
         ) {
+          // The text insert that follows reads the shortcut to keep links as text.
           return false;
         }
+        pasteAsTextShortcutUntilRef.current = 0;
         focusComposer();
         return true;
       },
@@ -3511,6 +3692,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     contextRecords={composerContextRecords}
                     buildContextClipboardFragment={buildContextClipboardFragmentStable}
                     importContextFragment={importContextFragmentStable}
+                    importPullRequestLinks={importFocusedPastePullRequestLinks}
                     skills={selectedProviderSkills}
                     className={cn(showMobilePendingAnswerActions && "max-sm:pb-12")}
                     onChange={onPromptChangeStable}
