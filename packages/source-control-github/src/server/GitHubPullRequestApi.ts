@@ -1890,16 +1890,16 @@ export const make = Effect.gen(function* () {
           }),
         );
       // Unindexed repositories silently return no search rows; fall back to the repository listing.
+      // Authored lists skip search: the index lags merges and opens, so a refresh would otherwise
+      // keep closed rows and miss new ones. Text search still needs the index.
       const hasQuery = (input.query?.trim().length ?? 0) > 0;
-      const listed = read(true).pipe(
-        Effect.filterOrElse(
-          (batch) => batch.items.length > 0 || input.cursor !== undefined || hasQuery,
-          () => read(false),
-        ),
-        Effect.filterOrElse(
-          (batch) => !stacks || batch.items.length === 0,
-          (batch) =>
-            Effect.forEach(
+      const preferListing = input.involvement === "authored" && !hasQuery;
+      const withStacks = (
+        batch: GitHubPullRequestListBatch,
+      ): Effect.Effect<GitHubPullRequestListBatch, GitHubPullRequestApiError> =>
+        !stacks || batch.items.length === 0
+          ? Effect.succeed(batch)
+          : Effect.forEach(
               batch.items,
               (item) => {
                 const lookup = pullRequestLookup({
@@ -1929,9 +1929,17 @@ export const make = Effect.gen(function* () {
                 operation: "listPullRequestStackMemberships",
               }),
               Effect.map((items) => ({ ...batch, items })),
-            ),
-        ),
-      );
+            );
+      const listed = (
+        preferListing
+          ? read(false)
+          : read(true).pipe(
+              Effect.filterOrElse(
+                (batch) => batch.items.length > 0 || input.cursor !== undefined || hasQuery,
+                () => read(false),
+              ),
+            )
+      ).pipe(Effect.flatMap(withStacks));
       // GitHub answers a private repository the token cannot see as missing, and its error names
       // the credential that request carried. A personal credential is pinned for the whole
       // read, so a token changed mid-read does not split it; the app keeps the policy's fallback.

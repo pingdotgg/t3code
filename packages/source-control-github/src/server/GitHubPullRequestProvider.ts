@@ -396,8 +396,17 @@ export const make = Effect.gen(function* () {
           })),
         ),
 
-    listChangeRequestsAcross: (input) =>
-      cli
+    listChangeRequestsAcross: (input) => {
+      // Search lags merges and opens. Authored without a text query leaves every repository to
+      // the per-repository listing, which reads current pull request state.
+      if (input.involvement === "authored" && (input.query?.trim().length ?? 0) === 0) {
+        return Effect.succeed({
+          items: [],
+          truncated: false,
+          unresolved: input.repositories,
+        });
+      }
+      return cli
         .searchPullRequests({
           cwd: input.cwd,
           host: input.host,
@@ -422,7 +431,8 @@ export const make = Effect.gen(function* () {
               unresolved,
             })),
           ),
-        ),
+        );
+    },
 
     listChangeRequestStats: (input) =>
       cli

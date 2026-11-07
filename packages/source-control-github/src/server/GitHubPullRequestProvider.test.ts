@@ -899,6 +899,22 @@ describe("listChangeRequestsAcross", () => {
     }),
   );
 
+  // regression: authored refresh kept closed rows and missed new ones when search lagged
+  it.effect("authored lists leave every repository to the per-repository reader", () =>
+    Effect.gen(function* () {
+      const checks: Array<string> = [];
+      const read = yield* providerAnswering({
+        pages: [{ items: [searched("acme/web")], truncated: false }],
+        covered: () => true,
+        checks,
+      });
+      const result = yield* read({ ...across, involvement: "authored" });
+      expect(result.items).toEqual([]);
+      expect(result.unresolved).toEqual(["acme/web", "acme/docs"]);
+      expect(checks).toEqual([]);
+    }),
+  );
+
   it.effect("leaves a repository search does not cover to be read on its own", () =>
     Effect.gen(function* () {
       const read = yield* providerAnswering({
