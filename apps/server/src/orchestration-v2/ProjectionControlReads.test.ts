@@ -376,8 +376,12 @@ it.effect.each(
           messageId,
         });
         const deliveredCommandText = calls.at(-1);
-        if (commandDriver === "pi") assert.equal(deliveredCommandText, commandText);
-        else {
+        if (commandDriver === "pi") {
+          assert.isTrue(deliveredCommandText?.startsWith("/compact [Message from"));
+          assert.include(deliveredCommandText, 'thread "thread:sender"');
+          assert.include(deliveredCommandText, "not a message from the human user");
+          assert.isTrue(deliveredCommandText?.endsWith("\n\nkeep the tests"));
+        } else {
           assert.include(deliveredCommandText, "not a message from the human user");
           assert.isTrue(deliveredCommandText?.endsWith(`\n\n${commandText}`));
         }

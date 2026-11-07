@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  parseGoalCommand,
   CheckpointScopeId,
   ChatAttachmentId,
   ChatFileAttachment,
@@ -1083,6 +1084,18 @@ it.effect(
         },
         { text: "/compact", attachments: [attachment], expected: "prompt" },
         { text: "/goal finish the work", attachments: [], expected: "goal" },
+        { text: "  /goal   finish the work  ", attachments: [], expected: "goal" },
+        {
+          text: "/goal finish the work",
+          attachments: [],
+          expected: "goal",
+          driver: ProviderDriverKind.make("claudeAgent"),
+        },
+        ...["/goal", "/goal edit", "/goal clear", "/goal pause", "/goal resume"].map((text) => ({
+          text,
+          attachments: [],
+          expected: "control",
+        })),
         { text: "/goal finish the work", attachments: [attachment], expected: "prompt" },
         { text: "Continue the work", attachments: [], expected: "prompt" },
       ]
@@ -1163,14 +1176,23 @@ it.effect(
         const prompt = prompts[0];
         if (prompt !== undefined) {
           if (
-            testCase.expected !== "goal" &&
-            testCase.expected !== "command" &&
+            testCase.expected !== "control" &&
             testCase.createdBy === "agent" &&
             testCase.senderThreadId !== undefined
           ) {
             assert.include(prompt.message.text, 'thread "thread:sender"');
             assert.include(prompt.message.text, "not a message from the human user");
-            assert.isTrue(prompt.message.text.endsWith(`\n\n${testCase.text}`));
+            if (testCase.expected === "goal") {
+              const goal = parseGoalCommand(prompt.message);
+              assert.equal(goal?.type, "set");
+              if (goal?.type === "set")
+                assert.isTrue(goal.objective.endsWith("\n\nfinish the work"));
+            } else if (testCase.expected === "command") {
+              assert.isTrue(prompt.message.text.startsWith("/compact [Message from"));
+              assert.isTrue(prompt.message.text.endsWith("\n\nkeep the tests"));
+            } else {
+              assert.isTrue(prompt.message.text.endsWith(`\n\n${testCase.text}`));
+            }
           } else {
             assert.equal(prompt.message.text, testCase.text);
           }
