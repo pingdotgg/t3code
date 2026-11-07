@@ -7,6 +7,7 @@ export const T3_MCP_URL_ENV = "T3_MCP_URL";
 export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
+export const T3_PI_MCP_CREDENTIAL_PATH_ENV = "T3_PI_MCP_CREDENTIAL_PATH";
 
 // These tools trigger file-change approvals, bypassed by Auto-accept edits.
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
@@ -21,6 +22,7 @@ const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
+const CREDENTIAL_PATH_ENV = ${JSON.stringify(T3_PI_MCP_CREDENTIAL_PATH_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
@@ -366,7 +368,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   let deferOptionalTools = supportsExposure;
   let catalog: ReadonlyArray<McpTool> = [];
 
-  const client = createMcpClient(endpoint, token);
+  let currentToken = token;
+  let client = createMcpClient(endpoint, currentToken);
   let started: Promise<void> | undefined;
 
   const registerTools = () => {
@@ -463,7 +466,17 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   });
 
   // Keep guidance in the system prompt so leading slash commands still expand.
-  pi.on("before_agent_start", (event, ctx) => {
+  pi.on("before_agent_start", async (event, ctx) => {
+    const credentialPath = env(CREDENTIAL_PATH_ENV);
+    if (credentialPath !== undefined) {
+      const nextToken = (await NodeFSP.readFile(credentialPath, "utf8")).replace(/^Bearer\\s+/, "");
+      if (nextToken !== currentToken) {
+        currentToken = nextToken;
+        client = createMcpClient(endpoint, currentToken);
+        started = undefined;
+      }
+      await ensureStarted();
+    }
     reconcileDiscovery(ctx);
     const sections = event.systemPromptOptions?.sections;
     if (sections && typeof sections === "object" && event.systemPromptOptions?.forceSystemPrompt === undefined) {
