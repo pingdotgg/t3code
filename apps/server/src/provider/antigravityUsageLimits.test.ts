@@ -558,13 +558,17 @@ describe("Antigravity subscription limits", () => {
               modelProvider: "MODEL_PROVIDER_GOOGLE",
               quotaInfo: { remainingFraction: 0.6, resetTime: "2026-10-10T12:00:00Z" },
             },
+            "gemini-c": {
+              modelProvider: "MODEL_PROVIDER_GOOGLE",
+              quotaInfo: { resetTime: "2026-10-10T12:00:00Z" },
+            },
             "claude-a": { quotaInfo: { remainingFraction: 0.2 } },
           },
         },
       });
       const limits = yield* probe;
       expect(limits.windows).toHaveLength(2);
-      expect(limits.windows.find((window) => window.id === "gemini-quota")?.usedPercent).toBe(40);
+      expect(limits.windows.find((window) => window.id === "gemini-quota")?.usedPercent).toBe(100);
       expect(
         limits.windows.every(
           (window) => window.kind === "other" && window.windowDurationMins === undefined,
@@ -573,13 +577,14 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("skips disabled and missing fractions and clamps valid percentages", () =>
+  it.effect("skips disabled and unreadable buckets, reads exhausted ones, and clamps", () =>
     Effect.gen(function* () {
       const { probe } = yield* fixture({
         summary: {
           buckets: [
             { bucketId: "disabled", remainingFraction: 0, disabled: true },
-            { bucketId: "missing", resetTime: "2026-10-10T12:00:00Z" },
+            { bucketId: "missing" },
+            { bucketId: "gemini-weekly", window: "weekly", resetTime: "2026-10-10T12:00:00Z" },
             { bucketId: "gemini-5h", window: "5h", remainingFraction: 2, resetTime: "invalid" },
           ],
         },
@@ -591,6 +596,14 @@ describe("Antigravity subscription limits", () => {
           label: "Gemini · 5-hour",
           usedPercent: 0,
           windowDurationMins: 300,
+        },
+        {
+          id: "gemini-weekly",
+          kind: "weekly",
+          label: "Gemini · Weekly",
+          usedPercent: 100,
+          resetsAt: "2026-10-10T12:00:00.000Z",
+          windowDurationMins: 10080,
         },
       ]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),

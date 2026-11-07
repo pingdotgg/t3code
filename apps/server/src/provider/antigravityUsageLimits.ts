@@ -87,15 +87,17 @@ function quotaWindow(
   kind: ServerProviderUsageWindow["kind"] = "other",
   windowDurationMins?: number,
 ): ServerProviderUsageWindow | undefined {
-  if (quota.remainingFraction === undefined || !Number.isFinite(quota.remainingFraction)) {
+  const resetsAt = iso(quota.resetTime);
+  // Proto3 JSON omits a zero fraction, so an exhausted quota arrives with only its reset time.
+  const remainingFraction = quota.remainingFraction ?? (resetsAt ? 0 : undefined);
+  if (remainingFraction === undefined || !Number.isFinite(remainingFraction)) {
     return undefined;
   }
-  const resetsAt = iso(quota.resetTime);
   return {
     id,
     label,
     kind,
-    usedPercent: (1 - Math.max(0, Math.min(1, quota.remainingFraction))) * 100,
+    usedPercent: (1 - Math.max(0, Math.min(1, remainingFraction))) * 100,
     ...(resetsAt ? { resetsAt } : {}),
     ...(windowDurationMins === undefined ? {} : { windowDurationMins }),
   };
