@@ -14,8 +14,7 @@ export const CACHE_OBJECT_CLASS_NAME = "CacheObject";
 
 export const BINDING_CACHE_OBJECT = "OBJECT";
 export const BINDING_CACHE_BLOBS = "BLOBS";
-export const BINDING_CACHE_ENABLE_CONTROL_ENDPOINTS =
-  "ENABLE_CONTROL_ENDPOINTS";
+export const BINDING_CACHE_ENABLE_CONTROL_ENDPOINTS = "ENABLE_CONTROL_ENDPOINTS";
 
 /**
  * Header set by workerd on Cache API requests made through `caches.open(<n>)`

@@ -64,7 +64,7 @@ Ingest dominates. Every object was inflated and hashed on the one
 thread that received the body. Swap the hasher and deploy:
 
 ```diff lang="typescript"
-+import * as GitHasher from "alchemy/Git/Hasher";
++import * as GitHasher from "@alchemy.run/git/Hasher";
 
 const GitLive = Git.ApiLive.pipe(
   Layer.provide(Git.ApiHandlersLive),
