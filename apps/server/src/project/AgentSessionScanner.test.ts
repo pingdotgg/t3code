@@ -2384,6 +2384,84 @@ describe("parseAgentSessionTranscript", () => {
     });
   });
 
+  it("drops Claude background task notifications injected as user turns", () => {
+    const notification = [
+      "<task-notification>",
+      "<task-id>task-1</task-id>",
+      "<status>completed</status>",
+      '<summary>Background command "Run tests" completed</summary>',
+      "</task-notification>",
+    ].join("\n");
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        JSON.stringify({
+          type: "user",
+          sessionId: "claude-session",
+          origin: { kind: "task-notification" },
+          message: { role: "user", content: notification },
+        }),
+        JSON.stringify({
+          type: "user",
+          sessionId: "claude-session",
+          message: { role: "user", content: "Run the tests in the background" },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          sessionId: "claude-session",
+          message: { role: "assistant", content: [{ type: "text", text: "Started the tests" }] },
+        }),
+        JSON.stringify({
+          type: "user",
+          sessionId: "claude-session",
+          message: { role: "user", content: notification },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          sessionId: "claude-session",
+          message: { role: "assistant", content: [{ type: "text", text: "All tests passed" }] },
+        }),
+        JSON.stringify({
+          type: "user",
+          sessionId: "claude-session",
+          message: { role: "user", content: "Why does <task-notification> show up in logs?" },
+        }),
+        JSON.stringify({
+          type: "user",
+          sessionId: "claude-session",
+          message: { role: "user", content: `${notification}\nCompare with\n${notification}` },
+        }),
+        JSON.stringify({
+          type: "user",
+          sessionId: "claude-session",
+          message: { role: "user", content: "<task-notification>" },
+        }),
+        JSON.stringify({
+          type: "user",
+          sessionId: "claude-session",
+          message: { role: "user", content: `<task-notification> is in my logs:\n${notification}` },
+        }),
+      ].join("\n"),
+      source: "claudeAgent",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread).toMatchObject({
+      title: "Run the tests in the background",
+      omittedMessageCount: 0,
+      messages: [
+        { role: "user", text: "Run the tests in the background" },
+        { role: "assistant", text: "Started the tests" },
+        { role: "assistant", text: "All tests passed" },
+        { role: "user", text: "Why does <task-notification> show up in logs?" },
+        { role: "user", text: `${notification}\nCompare with\n${notification}` },
+        { role: "user", text: "<task-notification>" },
+        { role: "user", text: `<task-notification> is in my logs:\n${notification}` },
+      ],
+    });
+  });
+
   it.each([
     { customTitles: ["Refactor auth module"], expected: "Refactor auth module" },
     // Claude writes an empty customTitle when the user clears a rename.

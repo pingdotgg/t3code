@@ -301,8 +301,27 @@ function codexTurnId(metadata: unknown): string | null {
   return decoded.value.turn_id;
 }
 
+// Claude records background task completions as user turns it injected itself; its UI
+// shows them as task status, not as something the user typed.
+function isClaudeTaskNotification(record: DecodedTranscriptRecord): boolean {
+  if (record.type !== "user") return false;
+  const text = extractText(record.message?.content);
+  const closingTag = "</task-notification>";
+  // Exactly one block: user text around a pasted block keeps the message.
+  return (
+    text.lastIndexOf("<task-notification>") === 0 &&
+    text.endsWith(closingTag) &&
+    text.indexOf(closingTag) === text.length - closingTag.length
+  );
+}
+
 function isHiddenClaudeRecord(record: DecodedTranscriptRecord): boolean {
-  return record.isSidechain === true || record.isMeta === true || record.isCompactSummary === true;
+  return (
+    record.isSidechain === true ||
+    record.isMeta === true ||
+    record.isCompactSummary === true ||
+    isClaudeTaskNotification(record)
+  );
 }
 
 // Claude repeats session fields on records that need not be retained.
