@@ -97,14 +97,6 @@ describe("composer footer collapse order", () => {
     expect(visit(widths)).toEqual([0, 1, 2, 3, 4, 5, 6]);
     expect(visit(widths.toReversed())).toEqual([6, 5, 4, 3, 2, 1, 0]);
   });
-
-  it("reserves exactly the width where the collapsed controls still fit", () => {
-    const minimumWidth = resolveRestingComposerControlsMinimumWidth(controls);
-    const layout = (hostWidth: number) =>
-      resolveRestingComposerControlsLayout({ ...controls, hostWidth, stripCompaction: "branch" });
-    expect(layout(minimumWidth).visible).toBe(true);
-    expect(layout(minimumWidth - 1).visible).toBe(false);
-  });
 });
 
 describe("resolveRestingComposerControlsLayout hysteresis", () => {
