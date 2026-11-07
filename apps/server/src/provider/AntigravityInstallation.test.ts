@@ -17,6 +17,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -843,6 +844,55 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           path.join(installation.managedDirectory, "active.json"),
         ]);
       }),
+  );
+
+  it.effect("publishes a Windows release once a transient EPERM on the release rename clears", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const archive = Buffer.from(zipFixtures.windows, "base64");
+      const releaseRenameDenied = yield* Deferred.make<void>();
+      let releaseRenameDenials = 3;
+      const { installation } = yield* makeHarness({
+        platform: "win32",
+        archive,
+        fileSystem: FileSystem.FileSystem.of({
+          ...fs,
+          rename: (source, target) =>
+            Effect.suspend(() => {
+              if (
+                path.basename(path.dirname(target)) !== "versions" ||
+                releaseRenameDenials === 0
+              ) {
+                return fs.rename(source, target);
+              }
+              releaseRenameDenials -= 1;
+              return Deferred.succeed(releaseRenameDenied, undefined).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "Unknown",
+                      module: "FileSystem",
+                      method: "rename",
+                      pathOrDescriptor: source,
+                      description: "EPERM: operation not permitted, rename",
+                    }),
+                  ),
+                ),
+              );
+            }),
+        }),
+      });
+      yield* installation.start;
+      const terminal = yield* terminalState(installation).pipe(Effect.forkChild);
+      yield* Deferred.await(releaseRenameDenied);
+      yield* TestClock.adjust("30 seconds");
+      expect(yield* Fiber.join(terminal)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "fixture-new",
+      });
+      expect((yield* installation.resolve()).version).toBe("fixture-new");
+    }),
   );
 
   it.effect("reports unsupported hosts without downloading or changing state", () =>
