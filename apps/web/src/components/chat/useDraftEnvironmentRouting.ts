@@ -12,6 +12,7 @@ import {
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toastManager } from "../ui/toast";
+import { autoBalanceLabel } from "./composerSend.logic";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
@@ -156,13 +157,11 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
   };
   const onAutoEnvironmentStable = useStableCallback(onAutoEnvironment);
   const autoEnvironmentLabel = automaticEnvironment
-    ? draftThread?.loadBalancedEnvironmentId
-      ? "Auto balance"
-      : loadBalancing.pending
-        ? "Checking machines…"
-        : loadBalancing.failed
-          ? "Auto balance unavailable"
-          : "Auto balance"
+    ? autoBalanceLabel({
+        pending: loadBalancing.pending,
+        candidateCount: loadBalancingCandidates.length,
+        environmentId: loadBalancing.environmentId,
+      })
     : undefined;
 
   // A change in flight belongs to the draft and project it started on.

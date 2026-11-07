@@ -11,6 +11,18 @@ export function referencedThreadContexts(draft: {
   return draft.threadContexts.filter((record) => referenced.has(record.contextId));
 }
 
+/** Auto's label: unavailable once every checked candidate machine is too busy or failed. */
+export function autoBalanceLabel(input: {
+  readonly pending: boolean;
+  readonly candidateCount: number;
+  readonly environmentId: EnvironmentId | null;
+}) {
+  if (input.pending) return "Checking machines…";
+  return input.candidateCount > 0 && input.environmentId === null
+    ? "Auto balance unavailable"
+    : "Auto balance";
+}
+
 /** Why a send waits for the user to pick a machine when no machine was chosen automatically. */
 export function loadBalancingSendWarning(input: {
   readonly pending: boolean;
