@@ -81,6 +81,7 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
     readonly body?: Stream.Stream<Uint8Array>;
     readonly wait?: Duration.Input;
     readonly unsupported?: boolean;
+    readonly environment?: NodeJS.ProcessEnv;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -93,19 +94,22 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
   const requests: Array<string> = [];
   const browser = yield* PreviewBrowser.makePreviewBrowser({
     baseDir,
-    release: options.unsupported
-      ? null
+    ...(options.unsupported
+      ? {}
       : {
-          version: options.version ?? "1.2.3",
-          platform: "fixture",
-          url: "https://storage.googleapis.com/chrome-headless-shell-fixture.zip",
-          bytes: archive.byteLength,
-          sha256,
-        },
+          release: {
+            version: options.version ?? "1.2.3",
+            platform: "fixture",
+            url: "https://storage.googleapis.com/chrome-headless-shell-fixture.zip",
+            bytes: archive.byteLength,
+            sha256,
+          },
+        }),
     ...(options.wait === undefined ? {} : { wait: options.wait }),
   }).pipe(
-    Effect.provideService(HostProcess.Platform, hostPlatform),
+    Effect.provideService(HostProcess.Platform, options.unsupported ? "freebsd" : hostPlatform),
     Effect.provideService(HostProcess.Architecture, "x64"),
+    Effect.provideService(HostProcess.Environment, options.environment ?? {}),
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
@@ -124,6 +128,98 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
 });
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PreviewBrowser", (it) => {
+  it.effect.each([false, true])(
+    "uses the configured executable without installing (unsupported platform: %s)",
+    (unsupported) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        const executable = path.join(directory, "custom chromium");
+        const target = path.join(directory, "chromium");
+        yield* fs.writeFileString(target, "#!/bin/sh\n", { mode: 0o755 });
+        yield* hostPlatform === "win32"
+          ? fs.copyFile(target, executable)
+          : fs.symlink(target, executable);
+        const { browser, baseDir, requests } = yield* makeHarness({
+          unsupported,
+          environment: { T3CODE_BROWSER_EXECUTABLE_PATH: executable },
+        });
+
+        expect(yield* browser.installed).toEqual(Option.some(executable));
+        expect(yield* browser.executable).toBe(executable);
+        expect(requests).toEqual([]);
+        expect(yield* fs.exists(path.join(baseDir, "tools"))).toBe(false);
+      }),
+  );
+
+  it.effect.each([
+    { name: "an empty path", value: "", absolute: false },
+    { name: "a whitespace path", value: " ", absolute: false },
+    { name: "a relative path", value: "./chromium", absolute: false },
+    { name: "a missing file", value: "missing", absolute: true },
+    { name: "a directory", value: "directory", absolute: true },
+    ...(hostPlatform === "win32"
+      ? []
+      : [{ name: "a non-executable file", value: "not-executable", absolute: true }]),
+    ...(hostPlatform === "win32" || HostProcess.UserId.defaultValue() === 0
+      ? []
+      : [{ name: "execution denied to its owner", value: "owner-denied", absolute: true }]),
+  ])("rejects $name without falling back to a download", (testCase) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      yield* fs.makeDirectory(path.join(directory, "directory"));
+      yield* fs.writeFileString(path.join(directory, "not-executable"), "", { mode: 0o644 });
+      yield* fs.writeFileString(path.join(directory, "owner-denied"), "", { mode: 0o655 });
+      const { browser, baseDir, requests } = yield* makeHarness({
+        environment: {
+          T3CODE_BROWSER_EXECUTABLE_PATH: testCase.absolute
+            ? path.join(directory, testCase.value)
+            : testCase.value,
+        },
+      });
+
+      expect(yield* browser.installed).toEqual(Option.none());
+      const error = yield* browser.executable.pipe(Effect.flip);
+      expect(error._tag).toBe("PreviewBrowserInstallError");
+      expect(error.message).toContain("T3CODE_BROWSER_EXECUTABLE_PATH");
+      expect(yield* browser.installed).toEqual(Option.none());
+      expect(requests).toEqual([]);
+      expect(yield* fs.exists(path.join(baseDir, "tools"))).toBe(false);
+    }),
+  );
+
+  it.effect("keeps the unsupported-platform error when the override is unset", () =>
+    Effect.gen(function* () {
+      const { browser, fs, path, baseDir, requests } = yield* makeHarness({ unsupported: true });
+
+      expect(yield* browser.installed).toEqual(Option.none());
+      expect(yield* browser.executable.pipe(Effect.flip)).toMatchObject({
+        _tag: "PreviewBrowserUnsupportedError",
+        platform: "freebsd",
+        arch: "x64",
+      });
+      expect(requests).toEqual([]);
+      expect(yield* fs.exists(path.join(baseDir, "tools"))).toBe(false);
+    }),
+  );
+
+  it.effect("reuses a managed executable when the override is unset", () =>
+    Effect.gen(function* () {
+      const { browser, fs, path, installRoot, requests } = yield* makeHarness();
+      const directory = path.join(installRoot, "1.2.3");
+      const executable = path.join(directory, executableName);
+      yield* fs.makeDirectory(directory, { recursive: true });
+      yield* fs.writeFileString(executable, "#!/bin/sh\n", { mode: 0o755 });
+
+      expect(yield* browser.installed).toEqual(Option.some(executable));
+      expect(yield* browser.executable).toBe(executable);
+      expect(requests).toEqual([]);
+    }),
+  );
+
   it.effect.each(["0.8.0", "1.2.3"])("retains another version when installing %s", (current) =>
     Effect.gen(function* () {
       const { browser, fs, path, installRoot, requests } = yield* makeHarness({ version: current });
