@@ -3,6 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import { assert, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -31,6 +32,8 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
 } from "../cloud/serviceProtocol.ts";
 import { deriveServerPaths } from "../config.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import { acquireServerOwnership } from "../serverOwnership.ts";
 import { resolveServerConfig } from "./config.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
@@ -173,44 +176,100 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
+  const acquireOwnership = (baseDir: string) =>
+    acquireServerOwnership(NodePath.join(baseDir, "userdata", "server-runtime.json")).pipe(
+      Effect.provide(ProcessRunner.layer),
+      Effect.provideService(HostProcess.HomeDirectory, baseDir),
+      Effect.provideService(HostProcess.Environment, {}),
+    );
+
+  const resolveManualWebLaunch = (baseDir: string, cwd: string) =>
+    resolveServerConfig({ ...minimalWebFlags(baseDir), cwd: Option.some(cwd) }, Option.none(), {
+      rejectRunningServer: true,
+    }).pipe(
+      Effect.provide(
+        Layer.merge(NetService.layer, ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+      ),
+      Effect.mapError(String),
+      Effect.result,
+    );
+
+  it.effect("refuses a manual web launch while a lock-aware server owns the T3 home", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-live-" });
+      const child = yield* liveProcess;
+      assert(child.pid !== undefined);
+      const owner = yield* acquireOwnership(baseDir);
+      yield* owner.publish({
+        version: 1,
+        pid: child.pid,
+        port: 3773,
+        origin: "http://127.0.0.1:3773",
+        startedAt: "2026-10-01T00:00:00.000Z",
+      });
+      const cwd = path.join(baseDir, "project");
+      const result = yield* resolveManualWebLaunch(baseDir, cwd);
+      assert(Result.isFailure(result));
+      expect(result.failure).toContain("A T3 Code server is already running");
+      expect(result.failure).toContain(`pid ${child.pid}`);
+      expect(yield* fs.exists(cwd)).toBe(false);
+    }),
+  );
+
+  it.effect("refuses a manual web launch when a pre-lock record belongs to a live process", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-legacy-" });
+      const child = yield* liveProcess;
+      assert(child.pid !== undefined);
+      const stateDir = path.join(baseDir, "userdata");
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(stateDir, "server-runtime.json"),
+        yield* encodeUnknownJson({
+          version: 1,
+          pid: child.pid,
+          port: 3773,
+          origin: "http://127.0.0.1:3773",
+          startedAt: "2026-10-01T00:00:00.000Z",
+        }),
+      );
+      const cwd = path.join(baseDir, "project");
+      const result = yield* resolveManualWebLaunch(baseDir, cwd);
+      assert(Result.isFailure(result));
+      expect(result.failure).toContain(`pid ${child.pid}`);
+      expect(yield* fs.exists(cwd)).toBe(false);
+    }),
+  );
+
   it.effect(
-    "refuses a manual web launch when a runtime record belongs to another live process",
+    "allows a manual web launch when a lock-aware record's PID was reused by an unrelated process",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-live-" });
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-reused-" });
         const child = yield* liveProcess;
         assert(child.pid !== undefined);
-        const stateDir = path.join(baseDir, "userdata");
-        yield* fs.makeDirectory(stateDir, { recursive: true });
+        // The killed server's lock file stays behind, released.
+        yield* Effect.scoped(acquireOwnership(baseDir));
         yield* fs.writeFileString(
-          path.join(stateDir, "server-runtime.json"),
+          path.join(baseDir, "userdata", "server-runtime.json"),
           yield* encodeUnknownJson({
             version: 1,
             pid: child.pid,
+            ownerId: "4ec9f94a-0000-4000-8000-000000000000",
             port: 3773,
             origin: "http://127.0.0.1:3773",
             startedAt: "2026-10-01T00:00:00.000Z",
           }),
         );
         const cwd = path.join(baseDir, "project");
-        const error = yield* resolveServerConfig(
-          { ...minimalWebFlags(baseDir), cwd: Option.some(cwd) },
-          Option.none(),
-          { rejectRunningServer: true },
-        ).pipe(
-          Effect.provide(
-            Layer.merge(
-              NetService.layer,
-              ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
-            ),
-          ),
-          Effect.flip,
-        );
-        expect(String(error)).toContain("A T3 Code server is already running");
-        expect(String(error)).toContain(`pid ${child.pid}`);
-        expect(yield* fs.exists(cwd)).toBe(false);
+        const result = yield* resolveManualWebLaunch(baseDir, cwd);
+        expect(result).toEqual(Result.succeed(expect.objectContaining({ cwd })));
       }),
   );
 
