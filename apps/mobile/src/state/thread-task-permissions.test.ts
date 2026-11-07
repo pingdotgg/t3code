@@ -11,6 +11,7 @@ import {
   type ModelSelection,
   type OrchestrationMessageContext,
   type OrchestrationV2ThreadProjection,
+  type RuntimeMode,
   type ServerConfig,
 } from "@t3tools/contracts";
 import {
@@ -32,6 +33,7 @@ const state = vi.hoisted(() => ({
     attachments: [] as DraftComposerImageAttachment[],
     modelSelection: undefined as ModelSelection | undefined,
     context: undefined as OrchestrationMessageContext | undefined,
+    runtimeMode: undefined as RuntimeMode | undefined,
   },
   serverConfig: null as ServerConfig | null,
   projection: null as OrchestrationV2ThreadProjection | null,
@@ -187,6 +189,7 @@ vi.mock("../lib/commandMetadata", () => ({
 vi.mock("../lib/copyTextWithHaptic", () => ({ copyTextWithHaptic: vi.fn() }));
 vi.mock("./use-remote-environment-registry", () => ({ setPendingConnectionError: vi.fn() }));
 
+import { Alert } from "react-native";
 import { useThreadComposerState } from "./use-thread-composer-state";
 import { useSelectedThreadRequests } from "./use-selected-thread-requests";
 
@@ -200,6 +203,7 @@ beforeEach(() => {
     attachments: [],
     modelSelection: undefined,
     context: undefined,
+    runtimeMode: undefined,
   };
   state.freshPending = false;
   state.compactDue = false;
@@ -357,11 +361,19 @@ describe("mobile task permissions", () => {
       version: 1,
       records: [{ kind: "image", attachmentId: "screenshot" }],
     } as unknown as OrchestrationMessageContext;
+    // The thread gets the composer's mode and model only on its next send.
+    const selection: ModelSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4",
+      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    };
     state.draft = {
       ...state.draft,
       text: "/side why does this fail?",
       attachments: [screenshot],
       context: screenshotContext,
+      modelSelection: selection,
+      runtimeMode: "approval-required",
     };
     const startSideChat = vi.fn(async () => true);
     const composer = useThreadComposerState({ startSideChat });
@@ -370,6 +382,7 @@ describe("mobile task permissions", () => {
     expect(startSideChat).toHaveBeenCalledExactlyOnceWith(
       { environmentId: "secondary", threadId: "thread" },
       { text: "why does this fail?", attachments: [screenshot], context: screenshotContext },
+      { runtimeMode: "approval-required", modelSelection: selection },
     );
     expect(state.enqueue).not.toHaveBeenCalled();
     expect(state.clearDraft).toHaveBeenCalled();
@@ -400,6 +413,16 @@ describe("mobile task permissions", () => {
     expect(await useThreadComposerState({ startSideChat }).onSendMessage()).toBeNull();
     expect(startSideChat).toHaveBeenCalledOnce();
     expect(state.clearDraft).not.toHaveBeenCalled();
+    // A model the send would refuse does not start a side chat either.
+    vi.clearAllMocks();
+    state.serverConfig = {
+      ...state.serverConfig,
+      providers: [{ instanceId: "codex", driver: "codex", enabled: false }],
+    } as unknown as ServerConfig;
+    state.draft = { ...state.draft, attachments: [] };
+    expect(await useThreadComposerState({ startSideChat }).onSendMessage()).toBeNull();
+    expect(startSideChat).not.toHaveBeenCalled();
+    expect(Alert.alert).toHaveBeenCalledOnce();
   });
 
   it("rechecks a retained send callback before clearing or queueing the draft", async () => {
