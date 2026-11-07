@@ -3577,12 +3577,18 @@ describe("AcpAdapterV2", () => {
   );
 
   it.effect.each([
-    { name: "wrapped text", imageOnly: false, matches: true },
-    { name: "image-only input", imageOnly: true, matches: true },
-    { name: "an unmatched message", imageOnly: false, matches: false },
+    { name: "wrapped text", imageOnly: false, matches: true, stateOnlyWake: false },
+    { name: "image-only input", imageOnly: true, matches: true, stateOnlyWake: false },
+    { name: "an unmatched message", imageOnly: false, matches: false, stateOnlyWake: false },
+    {
+      name: "a state-only pre-acceptance wake",
+      imageOnly: false,
+      matches: true,
+      stateOnlyWake: true,
+    },
   ])(
     "handles Copilot acceptance for $name without a spurious continuation",
-    ({ imageOnly, matches }) =>
+    ({ imageOnly, matches, stateOnlyWake }) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const path = yield* Path.Path;
@@ -3696,6 +3702,10 @@ describe("AcpAdapterV2", () => {
           },
         });
         yield* Deferred.await(dispatched);
+        if (stateOnlyWake) {
+          yield* event!({ sessionId: "mock-session-1", type: "assistant.turn_start" });
+          yield* event!({ sessionId: "mock-session-1", type: "assistant.idle" });
+        }
         yield* event!({
           sessionId: "mock-session-1",
           type: "user.message",
@@ -3734,16 +3744,49 @@ describe("AcpAdapterV2", () => {
   );
 
   it.effect.each([
-    { scenario: "a late lost-session error", accepted: true, wake: false, restart: true },
+    {
+      scenario: "a late lost-session error",
+      accepted: true,
+      wake: false,
+      restart: true,
+      stop: false,
+    },
     {
       scenario: "a rejected prompt with a buffered wake",
       accepted: false,
-      wake: true,
+      wake: "output",
       restart: false,
+      stop: false,
     },
-    { scenario: "a rejected prompt without a wake", accepted: false, wake: false, restart: false },
-    { scenario: "a lost runtime with a buffered wake", accepted: false, wake: true, restart: true },
-  ])("handles a Copilot prompt failure with $scenario", ({ accepted, wake, restart }) =>
+    {
+      scenario: "a rejected prompt without a wake",
+      accepted: false,
+      wake: false,
+      restart: false,
+      stop: false,
+    },
+    {
+      scenario: "a lost runtime with a buffered wake",
+      accepted: false,
+      wake: "output",
+      restart: true,
+      stop: false,
+    },
+    {
+      scenario: "a state-only buffered wake",
+      accepted: false,
+      wake: "state",
+      restart: false,
+      stop: false,
+    },
+    {
+      scenario: "a prompt rejected during Stop close",
+      accepted: false,
+      wake: "output",
+      restart: false,
+      stop: true,
+    },
+  ])("handles a Copilot prompt failure with $scenario", ({ accepted, wake, restart, stop }) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
@@ -3800,9 +3843,26 @@ describe("AcpAdapterV2", () => {
                   runtime.start().pipe(
                     Effect.map((setup) => ({
                       ...setup,
-                      initializeResult: { ...setup.initializeResult, protocolVersion: 1 },
+                      initializeResult: {
+                        ...setup.initializeResult,
+                        protocolVersion: 1,
+                        agentCapabilities: {
+                          ...setup.initializeResult.agentCapabilities,
+                          sessionCapabilities: { close: {} },
+                        },
+                      },
                     })),
                   ),
+                closeSession: () =>
+                  stop
+                    ? Deferred.fail(
+                        response,
+                        new EffectAcpErrors.AcpRequestError({
+                          code: -32800,
+                          errorMessage: "cancelled before insertion",
+                        }),
+                      ).pipe(Effect.andThen(Deferred.await(failed)), Effect.as({}))
+                    : runtime.closeSession(),
                 handleSessionUpdate: (handler) =>
                   Effect.sync(() => {
                     sessionUpdate = handler;
@@ -3850,28 +3910,40 @@ describe("AcpAdapterV2", () => {
       }
       if (wake) {
         yield* update!({ sessionId: "mock-session-1", state: "running" });
-        yield* sessionUpdate!({
-          sessionId: "mock-session-1",
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: "buffered wake output" },
-          },
-        });
+        if (wake === "output")
+          yield* sessionUpdate!({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "buffered wake output" },
+            },
+          });
         yield* update!({ sessionId: "mock-session-1", state: "idle" });
       }
       assert.deepEqual(offered, [], "a wake must remain buffered before acceptance");
-      yield* Deferred.fail(
-        response,
-        new EffectAcpErrors.AcpRequestError({ code: -32603, errorMessage: "lost session" }),
-      );
+      if (stop) {
+        const snapshot = yield* runtime.readThreadSnapshot({ providerThread });
+        const running = snapshot.providerTurns.at(-1);
+        if (running === undefined) return yield* Effect.die("missing running turn");
+        yield* runtime.interruptTurn({
+          providerThread,
+          providerTurnId: running.id,
+          requestRuntimeRestart: true,
+        });
+      } else {
+        yield* Deferred.fail(
+          response,
+          new EffectAcpErrors.AcpRequestError({ code: -32603, errorMessage: "lost session" }),
+        );
+      }
       yield* Deferred.await(failed);
-      const shouldContinue = wake && !restart;
+      const shouldContinue = wake === "output" && !restart && !stop;
       assert.deepEqual(
         offered,
         shouldContinue ? [{ threadId, providerThreadId: providerThread.id }] : [],
         "only a surviving runtime's buffered wake can continue after rejection",
       );
-      if (!restart) {
+      if (!restart && !stop) {
         const failedSnapshot = yield* runtime.readThreadSnapshot({ providerThread });
         assert.equal(failedSnapshot.providerTurns.at(-1)?.status, "failed");
       }
@@ -3887,7 +3959,7 @@ describe("AcpAdapterV2", () => {
           : {}),
       });
       yield* runtime.startTurn(next);
-      assert.equal(runtimeCount, restart ? 2 : 1);
+      assert.equal(runtimeCount, restart || stop ? 2 : 1);
       if (shouldContinue) {
         const snapshot = yield* runtime.readThreadSnapshot({ providerThread });
         assert.equal(snapshot.providerTurns.at(-1)?.status, "completed");

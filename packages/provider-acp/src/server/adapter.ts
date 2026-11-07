@@ -6849,11 +6849,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         const continuationAlreadyRequested = yield* Ref.get(continuationRequested);
                         yield* Ref.update(wakeBuffer, (buffer) =>
                           !continuationAlreadyRequested &&
-                          buffer.every(
-                            (item) =>
-                              item.update.sessionUpdate === "state_update" &&
-                              item.update.state === "running",
-                          )
+                          !buffer.some(acpRootSessionUpdateIngestsOutput)
                             ? []
                             : buffer,
                         );
@@ -8634,7 +8630,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       !context.workAccepted &&
                       !interrupted &&
                       !(yield* Ref.get(runtimeRestartRequired)) &&
-                      (yield* Ref.get(wakeBuffer)).length > 0
+                      (yield* Ref.get(wakeBuffer)).some(acpRootSessionUpdateIngestsOutput)
                     ) {
                       yield* offerContinuationRun(requestedSessionId);
                     }
