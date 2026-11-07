@@ -945,7 +945,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       }),
     );
 
-    it.effect("drops a snapshot that arrives after the account changed", () =>
+    it.effect("drops a snapshot that arrives after a sign-out, even on re-sign-in", () =>
       Effect.gen(function* () {
         const requested = yield* Deferred.make<void>();
         const response = yield* Deferred.make<{ readonly aggregate: typeof aggregate }>();
@@ -958,7 +958,8 @@ describe("makeRelayDeviceRegistrationRequest", () => {
           refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(relay)),
         );
         yield* Deferred.await(requested);
-        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-b"), "user-b");
+        setAgentAwarenessRelayTokenProvider(null);
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-a"), "user-a");
         publishWidgetMock.mockClear();
         yield* Deferred.succeed(response, { aggregate });
         yield* Fiber.join(refresh);
