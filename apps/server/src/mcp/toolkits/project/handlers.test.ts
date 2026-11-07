@@ -113,6 +113,15 @@ const clientLaunchHarness = (input: {
     Layer.mock(ThreadLaunch.ThreadLaunchService)({
       checkWorktreeBase: input.checkWorktreeBase ?? (() => Effect.void),
       launch: (launch) => {
+        if (launch.projectId !== projectId)
+          return Effect.fail(
+            new ThreadLaunch.ThreadLaunchError({
+              operation: "resolve-project",
+              commandId: launch.commandId,
+              projectId: launch.projectId,
+              cause: "Project not found.",
+            }),
+          );
         input.launched.push(launch);
         if (input.refusedByCeiling) {
           return Effect.fail(
@@ -526,6 +535,40 @@ it.effect("a launch into a new worktree creates nothing when its base ref has no
 
     expect((yield* launchFrom("main")).at(-1)?.result).toMatchObject({ projectId });
     expect(launched).toHaveLength(1);
+  }),
+);
+
+it.effect("a launch into an unknown project says the project was not found", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { modelSelection, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    for (const workspaceStrategy of [
+      undefined,
+      { type: "worktree", baseRef: "main", startFromOrigin: false } as const,
+    ]) {
+      const result = yield* toolkit
+        .handle("t3_thread_launch", {
+          title: "Fix",
+          message: "Fix the bug",
+          projectId: ProjectId.make("current"),
+          modelSelection,
+          ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      expect(result.at(-1)?.result).toMatchObject({
+        code: "invalid_request",
+        message: "The project was not found.",
+      });
+    }
+    expect(launched).toHaveLength(0);
   }),
 );
 
