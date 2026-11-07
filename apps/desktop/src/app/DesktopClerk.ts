@@ -5,6 +5,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
@@ -106,10 +107,19 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const electronApp = yield* ElectronApp.ElectronApp;
   const shell = yield* ElectronShell.ElectronShell;
+  const path = yield* Path.Path;
+  const localMacKeychainName = environment.localMacKeychainName;
+  const tokenDirectory =
+    localMacKeychainName === undefined
+      ? environment.stateDir
+      : path.join(environment.stateDir, "local-keychains", localMacKeychainName);
 
   // Must not yield: the bridge registers a scheme Electron rejects once ready.
   const userDataPath = yield* DesktopUserData.resolveUserDataPath(environment);
   yield* electronApp.setPath("userData", userDataPath);
+  if (localMacKeychainName !== undefined) {
+    yield* electronApp.setPath("sessionData", userDataPath);
+  }
 
   // Clerk skips the profile lock on macOS. Interrupt before runtime construction because quit is asynchronous.
   if (!(yield* electronApp.requestSingleInstanceLock)) {
@@ -136,8 +146,7 @@ export const make = Effect.gen(function* () {
 
   yield* Effect.acquireRelease(
     Effect.try({
-      try: () =>
-        createDesktopClerkBridge(environment.stateDir, environment.isDevelopment, userDataPath),
+      try: () => createDesktopClerkBridge(tokenDirectory, environment.isDevelopment, userDataPath),
       catch: (cause) =>
         new DesktopClerkBridgeInitializationError({
           stateDir: environment.stateDir,
