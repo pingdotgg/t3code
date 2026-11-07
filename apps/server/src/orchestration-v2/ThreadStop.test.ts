@@ -25,6 +25,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as EventStore from "./EventStore.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -49,7 +50,38 @@ const adapter = {
   driver: ProviderDriverKind.make("codex"),
   getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
-  openSession: () => Effect.die("Runs here never reach a provider"),
+  openSession: (input) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const unused = () => Effect.die("Runs here never reach a provider");
+      return {
+        instanceId,
+        driver: ProviderDriverKind.make("codex"),
+        providerSessionId: input.providerSessionId,
+        providerSession: {
+          id: input.providerSessionId,
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: instanceId,
+          status: "ready",
+          cwd: process.cwd(),
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+        events: Stream.never,
+        ensureThread: unused,
+        resumeThread: unused,
+        startTurn: unused,
+        steerTurn: unused,
+        interruptTurn: unused,
+        respondToRuntimeRequest: unused,
+        readThreadSnapshot: unused,
+        rollbackThread: unused,
+        forkThread: unused,
+      };
+    }),
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 const layerDatabase = SqlitePersistence.layerMemory;
 const layerTest = ThreadManagementService.layer.pipe(
@@ -1743,91 +1775,158 @@ it.effect.each(["Stop", "Force stop"] as const)(
     }).pipe(Effect.provide(layerTest)),
 );
 
+// A finished delegated child whose native subagent the provider never reported ending,
+// with no open turn item, and a nested native subagent on that agent's own thread.
+const finishedChildWithNativeSubagent = (liveSessionId?: ProviderSessionId) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const parentThreadId = ThreadId.make("thread:held-row");
+    yield* createWatchingThread(parentThreadId, 30);
+    yield* send(parentThreadId, "parent", "start_immediately");
+    const childThreadId = yield* delegate(parentThreadId, "held child");
+    const child = yield* orchestrator.getThreadProjection(childThreadId);
+    const childRun = child.runs[0]!;
+    const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
+    const now = yield* DateTime.now;
+    const nativeThreadId = ThreadId.make("thread:held-row-native");
+    const nestedThreadId = ThreadId.make("thread:held-row-nested");
+    yield* createWatchingThread(nativeThreadId, 31);
+    yield* createWatchingThread(nestedThreadId, 32);
+    const nativeProviderThreadId = ProviderThreadId.make("provider-thread:held-row-native");
+    if (liveSessionId !== undefined) {
+      const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      yield* sessions.open({
+        threadId: childThreadId,
+        providerSessionId: liveSessionId,
+        modelSelection,
+        runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+      });
+      yield* projections.apply({
+        id: EventId.make("event:held-row:native-provider-thread"),
+        type: "provider-thread.updated",
+        threadId: nativeThreadId,
+        occurredAt: now,
+        payload: {
+          ...child.providerThreads[0]!,
+          id: nativeProviderThreadId,
+          appThreadId: nativeThreadId,
+          providerSessionId: liveSessionId,
+          status: "active",
+        },
+      });
+    }
+    const runningRoot = (threadId: ThreadId, id: NodeId) => ({
+      ...child.nodes.find((node) => node.id === childRun.rootNodeId)!,
+      id,
+      rootNodeId: id,
+      threadId,
+      runId: null,
+      parentNodeId: null,
+      status: "running" as const,
+      countsForRun: false,
+      completedAt: null,
+    });
+    const nativeRoot = runningRoot(nativeThreadId, NodeId.make("node:held-row-native-root"));
+    const nestedRoot = runningRoot(nestedThreadId, NodeId.make("node:held-row-nested-root"));
+    for (const root of [nativeRoot, nestedRoot]) {
+      yield* projections.apply({
+        id: EventId.make(`event:held-row:${root.id}`),
+        type: "node.updated",
+        threadId: root.threadId,
+        nodeId: root.id,
+        occurredAt: now,
+        payload: root,
+      });
+    }
+    yield* projections.apply({
+      id: EventId.make("event:held-row:native-turn"),
+      type: "provider-turn.updated",
+      threadId: nativeThreadId,
+      nodeId: nativeRoot.id,
+      occurredAt: now,
+      payload: {
+        id: ProviderTurnId.make("turn:held-row-native"),
+        providerThreadId: nativeProviderThreadId,
+        nodeId: nativeRoot.id,
+        runAttemptId: null,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "running",
+        startedAt: now,
+        completedAt: null,
+      },
+    });
+    const native = {
+      ...task,
+      id: NodeId.make("node:held-row-native"),
+      threadId: childThreadId,
+      runId: childRun.id,
+      parentNodeId: childRun.rootNodeId!,
+      origin: "provider_native" as const,
+      providerThreadId: nativeProviderThreadId,
+      childThreadId: nativeThreadId,
+      status: "running" as const,
+      completionDelivery: undefined,
+    };
+    yield* projections.apply({
+      id: EventId.make("event:held-row:native"),
+      type: "subagent.updated",
+      threadId: childThreadId,
+      runId: childRun.id,
+      occurredAt: now,
+      payload: native,
+    });
+    yield* projections.apply({
+      id: EventId.make("event:held-row:nested"),
+      type: "subagent.updated",
+      threadId: nativeThreadId,
+      occurredAt: now,
+      payload: {
+        ...native,
+        id: NodeId.make("node:held-row-nested"),
+        threadId: nativeThreadId,
+        runId: null,
+        parentNodeId: nativeRoot.id,
+        childThreadId: nestedThreadId,
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make("event:held-row:child-completed"),
+      type: "run.updated",
+      threadId: childThreadId,
+      runId: childRun.id,
+      occurredAt: now,
+      payload: { ...childRun, status: "completed", startedAt: now, completedAt: now },
+    });
+    yield* orchestrator.recoverDelegatedTasks;
+    assert.equal(
+      (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]?.status,
+      "running",
+    );
+    const statuses = Effect.gen(function* () {
+      const nativeAfter = yield* orchestrator.getThreadProjection(nativeThreadId);
+      const nestedAfter = yield* orchestrator.getThreadProjection(nestedThreadId);
+      return {
+        row: (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]?.status,
+        native: (yield* orchestrator.getThreadProjection(childThreadId)).subagents.find(
+          (subagent) => subagent.id === native.id,
+        )?.status,
+        nativeRoot: nativeAfter.nodes.find((node) => node.id === nativeRoot.id)?.status,
+        nested: nativeAfter.subagents[0]?.status,
+        nestedRoot: nestedAfter.nodes.find((node) => node.id === nestedRoot.id)?.status,
+      };
+    });
+    return { parentThreadId, childThreadId, task, statuses };
+  });
+
 it.effect(
   "Stop settles a delegated row whose finished child still records a running native subagent",
   () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const projections = yield* ProjectionStore.ProjectionStoreV2;
-      const parentThreadId = ThreadId.make("thread:held-row");
-      yield* createWatchingThread(parentThreadId, 30);
-      yield* send(parentThreadId, "parent", "start_immediately");
-      const childThreadId = yield* delegate(parentThreadId, "held child");
-      const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
-      const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
-      const now = yield* DateTime.now;
-      const nativeThreadId = ThreadId.make("thread:held-row-native");
-      yield* createWatchingThread(nativeThreadId, 31);
-      const nativeRoot = {
-        ...(yield* orchestrator.getThreadProjection(childThreadId)).nodes.find(
-          (node) => node.id === childRun.rootNodeId,
-        )!,
-        id: NodeId.make("node:held-row-native-root"),
-        threadId: nativeThreadId,
-        runId: null,
-        parentNodeId: null,
-        status: "running" as const,
-        countsForRun: false,
-        completedAt: null,
-      };
-      yield* projections.apply({
-        id: EventId.make("event:held-row:native-root"),
-        type: "node.updated",
-        threadId: nativeThreadId,
-        nodeId: nativeRoot.id,
-        occurredAt: now,
-        payload: nativeRoot,
-      });
-      yield* projections.apply({
-        id: EventId.make("event:held-row:native-turn"),
-        type: "provider-turn.updated",
-        threadId: nativeThreadId,
-        nodeId: nativeRoot.id,
-        occurredAt: now,
-        payload: {
-          id: ProviderTurnId.make("turn:held-row-native"),
-          providerThreadId: ProviderThreadId.make("provider-thread:held-row-native"),
-          nodeId: nativeRoot.id,
-          runAttemptId: null,
-          nativeTurnRef: null,
-          ordinal: 1,
-          status: "running",
-          startedAt: now,
-          completedAt: null,
-        },
-      });
-      // A native subagent the provider never reported ending, with no open turn item.
-      yield* projections.apply({
-        id: EventId.make("event:held-row:native"),
-        type: "subagent.updated",
-        threadId: childThreadId,
-        runId: childRun.id,
-        occurredAt: now,
-        payload: {
-          ...task,
-          id: NodeId.make("node:held-row-native"),
-          threadId: childThreadId,
-          runId: childRun.id,
-          parentNodeId: childRun.rootNodeId!,
-          origin: "provider_native",
-          childThreadId: nativeThreadId,
-          status: "running",
-          completionDelivery: undefined,
-        },
-      });
-      yield* projections.apply({
-        id: EventId.make("event:held-row:child-completed"),
-        type: "run.updated",
-        threadId: childThreadId,
-        runId: childRun.id,
-        occurredAt: now,
-        payload: { ...childRun, status: "completed", startedAt: now, completedAt: now },
-      });
-      yield* orchestrator.recoverDelegatedTasks;
-      assert.equal(
-        (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]?.status,
-        "running",
-      );
+      const { parentThreadId, childThreadId, task, statuses } =
+        yield* finishedChildWithNativeSubagent();
 
       // The row's Stop: the parent's task, then the child thread.
       yield* orchestrator.dispatch({
@@ -1844,16 +1943,34 @@ it.effect(
       });
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       yield* worker.drain();
-      assert.equal(
-        (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]?.status,
-        "completed",
-        "Stop leaves the finished child's row working",
-      );
-      assert.equal(
-        (yield* orchestrator.getThreadProjection(nativeThreadId)).nodes.find(
-          (node) => node.id === nativeRoot.id,
-        )?.status,
-        "interrupted",
-      );
+      assert.deepEqual(yield* statuses, {
+        row: "completed",
+        native: "interrupted",
+        nativeRoot: "interrupted",
+        nested: "interrupted",
+        nestedRoot: "interrupted",
+      });
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("Stop leaves a native subagent running while its provider session is live", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const { childThreadId, statuses } = yield* finishedChildWithNativeSubagent(
+      ProviderSessionId.make("session:held-row-live"),
+    );
+
+    yield* orchestrator.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("held-row:stop-live-child"),
+      threadId: childThreadId,
+    });
+    assert.deepEqual(yield* statuses, {
+      row: "running",
+      native: "running",
+      nativeRoot: "running",
+      nested: "running",
+      nestedRoot: "running",
+    });
+  }).pipe(Effect.provide(layerTest)),
 );
