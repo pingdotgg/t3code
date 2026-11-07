@@ -62,7 +62,7 @@ export function ChatGptWelcomeCoordinator() {
         if (!open) dismiss();
       }}
     >
-      <DialogPopup className="sm:max-w-md" initialFocus={continueRef}>
+      <DialogPopup className="sm:max-w-md" showCloseButton={false} initialFocus={continueRef}>
         <DialogHeader>
           <OpenAI aria-hidden className="mb-3 size-8 text-strong-foreground" />
           <div className="flex min-w-0 flex-col gap-1.5">
@@ -77,7 +77,10 @@ export function ChatGptWelcomeCoordinator() {
           </div>
         </DialogHeader>
         <DialogFooter className="sm:items-center">
-          <ChatGptUsageButton size="default" />
+          <ChatGptUsageButton size="default" variant="secondary" className="sm:mr-auto" />
+          <Button variant="secondary" onClick={dismiss}>
+            Close
+          </Button>
           <Button ref={continueRef} onClick={dismiss}>
             Continue
           </Button>
