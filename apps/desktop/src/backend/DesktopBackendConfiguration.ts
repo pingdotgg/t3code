@@ -826,6 +826,7 @@ export const make = Effect.gen(function* () {
     );
     const shellEnvironmentPrepared = yield* shellEnvironment.installIntoProcess;
     const backendExecutable = yield* resolveBackendExecutable().pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
     return yield* resolvePrimaryStartConfig({
