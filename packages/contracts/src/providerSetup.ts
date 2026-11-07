@@ -19,6 +19,7 @@ const SetupOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 export const ProviderAuthMethod = Schema.Struct({
   id: SetupOperationId,
   accountEmail: Schema.optional(TrimmedNonEmptyString),
+  canRemove: Schema.optionalKey(Schema.Boolean),
   name: TrimmedNonEmptyString,
   description: Schema.NullOr(Schema.String),
   type: Schema.Literals(["agent", "terminal", "credentials"]),
@@ -91,6 +92,11 @@ export const ProviderAuthStartInput = Schema.Struct({
   callbackMode: Schema.optionalKey(Schema.Literals(["server", "client"])),
 });
 export type ProviderAuthStartInput = typeof ProviderAuthStartInput.Type;
+
+export const ProviderAuthRemoveMethodInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  methodId: SetupOperationId,
+});
 
 export const ProviderAuthRespondInput = Schema.Struct({
   instanceId: ProviderInstanceId,

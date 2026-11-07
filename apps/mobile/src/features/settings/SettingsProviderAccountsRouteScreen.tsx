@@ -167,6 +167,10 @@ function ProviderAccount({
   const canCancelInstall = useAtomValue(
     serverEnvironment.cancelProviderInstall.permissionAtom(environmentId),
   );
+  const removeMethod = useAtomCommand(serverEnvironment.removeProviderAuthMethod, options);
+  const canRemoveMethod = useAtomValue(
+    serverEnvironment.removeProviderAuthMethod.permissionAtom(environmentId),
+  );
   // Matches ListRowLayout: large text stacks the action below instead of squeezing the status.
   const stacked = useWindowDimensions().fontScale >= 1.5;
   const [pending, setPending] = useState(false);
@@ -320,6 +324,21 @@ function ProviderAccount({
     id: `method:${method.id}`,
     title: method.name,
   }));
+  const removableMethods = methods.filter((method) => method.canRemove);
+  const removeActions: MenuAction[] = removableMethods.length
+    ? [
+        {
+          id: "remove",
+          title: "Remove incomplete connection",
+          attributes: { disabled: disabled || active || !canRemoveMethod },
+          subactions: removableMethods.map((method) => ({
+            id: `remove:${method.id}`,
+            title: method.name,
+            attributes: { destructive: true, disabled: disabled || active || !canRemoveMethod },
+          })),
+        },
+      ]
+    : [];
   function startSignIn(methodId?: string) {
     void run(() => start(methodId ? { environmentId, input: { instanceId, methodId } } : target));
   }
@@ -357,10 +376,16 @@ function ProviderAccount({
     if (id === "signOut") signOut();
     // iOS keeps a disabled submenu's children selectable, so sign-in guards here too.
     else if (signInDisabled) return;
-    else if (id.startsWith("method:")) startSignIn(id.slice("method:".length));
+    else if (id.startsWith("remove:")) {
+      if (active || !canRemoveMethod) return;
+      const methodId = id.slice("remove:".length);
+      if (!removableMethods.some((method) => method.id === methodId)) return;
+      void run(() => removeMethod({ environmentId, input: { instanceId, methodId } }));
+    } else if (id.startsWith("method:")) startSignIn(id.slice("method:".length));
     else if (id === "change") startSignIn();
   }
   const accountActions: MenuAction[] = [
+    ...removeActions,
     ...(canSignIn
       ? [
           {
@@ -431,7 +456,7 @@ function ProviderAccount({
       accessibilityRole="button"
       accessibilityLabel={`Sign in to ${name}`}
       title="Sign in with"
-      actions={methodActions}
+      actions={[...methodActions, ...removeActions]}
       onPressAction={({ nativeEvent }) => onMenuAction(nativeEvent.event)}
     >
       <ControlPill variant="primary" label="Sign in" accessibilityLabel={`Sign in to ${name}`} />

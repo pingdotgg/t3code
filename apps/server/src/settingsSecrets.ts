@@ -1,6 +1,7 @@
 import {
   AntigravitySettings,
   ClaudeSettings,
+  CloudSpeechCredentials,
   CodexSettings,
   type ProviderDriverKind,
   EasDeviceHostConfig,
@@ -65,6 +66,7 @@ export const providerSettingsFieldPolicy = (
   driver: ProviderDriverKind,
 ): ProviderSettingsFieldPolicy | undefined => providerFieldPolicies.get(driver);
 const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
+const voiceSecretFields = secretSettingsFields(CloudSpeechCredentials);
 const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
 const simlockDeviceHostSecretFields = secretSettingsFields(SimlockDeviceHostConfig);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
@@ -252,6 +254,11 @@ function mapSecretFieldGroups(
 
   return {
     ...settings,
+    cloudSpeechCredentials: mapFields(
+      settings.cloudSpeechCredentials,
+      voiceSecretFields,
+      (provider) => `voice-cloud-${provider}`,
+    ) as ServerSettings["cloudSpeechCredentials"],
     providerInstances,
     sourceControlHosts,
     usageLimitSources,

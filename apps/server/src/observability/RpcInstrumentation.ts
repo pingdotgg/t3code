@@ -66,6 +66,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.providerAccountImport]: "provider",
   [WS_METHODS.providerAuthRespond]: "provider",
   [WS_METHODS.providerAuthCancel]: "provider",
+  [WS_METHODS.providerAuthRemoveMethod]: "provider",
   [WS_METHODS.providerAuthLogout]: "provider",
   [WS_METHODS.providerAuthSubscribe]: "provider",
   [WS_METHODS.providerInstallStart]: "provider",

@@ -295,6 +295,10 @@ function ManagedCodexSetup({
   const completeAuth = useAtomCommand(serverEnvironment.completeProviderAuth, options);
   const cancelAuth = useAtomCommand(serverEnvironment.cancelProviderAuth, options);
   const logoutAuth = useAtomCommand(serverEnvironment.logoutProviderAuth, options);
+  const removeAuthMethod = useAtomCommand(serverEnvironment.removeProviderAuthMethod, options);
+  const canRemoveAuthMethod = useAtomValue(
+    serverEnvironment.removeProviderAuthMethod.permissionAtom(environmentId),
+  );
   const startInstall = useAtomCommand(serverEnvironment.startProviderInstall, options);
   const canStartInstall = useAtomValue(
     serverEnvironment.startProviderInstall.permissionAtom(environmentId),
@@ -784,6 +788,12 @@ function ManagedCodexSetup({
       open={accountPickerOpen}
       methods={auth?.methods ?? []}
       onClose={() => setAccountPickerOpen(false)}
+      disabled={unavailable || busy}
+      canRemove={canRemoveAuthMethod}
+      error={error}
+      onRemove={(methodId) => {
+        void run(() => removeAuthMethod({ environmentId, input: { instanceId, methodId } }));
+      }}
       onSelect={(methodId) => {
         setAccountPickerOpen(false);
         void setup(

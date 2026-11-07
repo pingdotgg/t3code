@@ -63,7 +63,7 @@ export function SettingsLabsRouteScreen() {
   );
 }
 
-const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
+const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays ?? 7;
 
 /**
  * Usage-limit and auto-settle rows. The Threads page owns their writes, so they share its queue

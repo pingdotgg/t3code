@@ -22,6 +22,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectCodeFileHistory]: AuthOrchestrationReadScope,
   [WS_METHODS.projectKnowledgeMutate]: AuthOrchestrationOperateScope,
   [WS_METHODS.modelEvaluationsClear]: AuthSettingsWriteScope,
+  [WS_METHODS.providerAuthRemoveMethod]: AuthProvidersManageScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,

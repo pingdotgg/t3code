@@ -93,6 +93,7 @@ import {
   ProviderAuthCompleteInput,
   ProviderAuthState,
   ProviderAuthStartInput,
+  ProviderAuthRemoveMethodInput,
   ProviderAuthRespondInput,
   ProviderInstallCancelInput,
   ProviderInstallState,
@@ -525,6 +526,7 @@ export const WS_METHODS = {
   providerAccountImport: "provider.account.import",
   providerAuthRespond: "provider.auth.respond",
   providerAuthCancel: "provider.auth.cancel",
+  providerAuthRemoveMethod: "provider.auth.removeMethod",
   providerAuthLogout: "provider.auth.logout",
   providerAuthSubscribe: "provider.auth.subscribe",
   providerInstallStart: "provider.install.start",
@@ -814,6 +816,12 @@ const WsProviderAccountImportRpc = Rpc.make(WS_METHODS.providerAccountImport, {
 
 const WsProviderAuthCancelRpc = Rpc.make(WS_METHODS.providerAuthCancel, {
   payload: ProviderAuthCancelInput,
+  success: ProviderAuthState,
+  error: ProviderSetupRpcError,
+});
+
+const WsProviderAuthRemoveMethodRpc = Rpc.make(WS_METHODS.providerAuthRemoveMethod, {
+  payload: ProviderAuthRemoveMethodInput,
   success: ProviderAuthState,
   error: ProviderSetupRpcError,
 });
@@ -2265,6 +2273,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderAccountImportRpc,
   WsProviderAuthRespondRpc,
   WsProviderAuthCancelRpc,
+  WsProviderAuthRemoveMethodRpc,
   WsProviderAuthLogoutRpc,
   WsProviderAuthSubscribeRpc,
   WsProviderInstallStartRpc,

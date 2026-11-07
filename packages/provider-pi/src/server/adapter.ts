@@ -2484,6 +2484,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
         if (baselineThinking === null && appliedThinking === null) {
           baselineThinking = recordString(stateData, "thinkingLevel") ?? null;
+          appliedThinking = baselineThinking;
         }
         // switch_session accepts a file path, not Pi's display session UUID.
         const nativeId = recordString(stateData, "sessionFile");
@@ -2546,6 +2547,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         if (modelSelection.model === PI_INHERIT_MODEL_SLUG) {
           if (appliedModel !== null && baselineModel !== null) {
             const restoredModel = yield* request({ type: "set_model", ...baselineModel });
+            appliedThinking = null;
             contextWindow = rememberModelContextWindow(restoredModel);
             appliedModel = null;
             const updatedAt = yield* DateTime.now;
@@ -2558,12 +2560,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           }
           if (
             thinking === undefined &&
-            appliedThinking !== null &&
             baselineThinking !== null &&
             appliedThinking !== baselineThinking
           ) {
             yield* request({ type: "set_thinking_level", level: baselineThinking });
-            appliedThinking = null;
+            appliedThinking = baselineThinking;
           }
         } else if (modelSelection.model !== appliedModel) {
           const parsed = parsePiModelSlug(modelSelection.model);
@@ -2577,6 +2578,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             provider: parsed.provider,
             modelId: parsed.modelId,
           });
+          // Pi resets thinking to the target model's configured default on set_model.
+          appliedThinking = null;
           contextWindow = rememberModelContextWindow(selectedModel);
           appliedModel = modelSelection.model;
           const updatedAt = yield* DateTime.now;

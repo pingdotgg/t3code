@@ -58,6 +58,9 @@ export class ProviderAuthService extends Context.Service<
       input: ProviderAuthTarget & { readonly flowId: string },
       ownerSessionId: string,
     ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+    readonly removeMethod: (
+      input: ProviderAuthTarget & { readonly methodId: string },
+    ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
     readonly logout: (
       input: ProviderAuthTarget,
     ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
@@ -177,7 +180,7 @@ export const makeProviderAuthService = Effect.gen(function* () {
 
   const checkSharedBinding = Effect.fnUntraced(function* (
     instanceId: ProviderInstanceId,
-    operation: "start" | "logout",
+    operation: "start" | "logout" | "removeMethod",
     auth: ProviderAuthController,
   ) {
     const binding = auth.credentialBinding;
@@ -273,6 +276,21 @@ export const makeProviderAuthService = Effect.gen(function* () {
     cancel: Effect.fn("ProviderAuthService.cancel")(function* (input, ownerSessionId) {
       const auth = yield* getController(input.instanceId, "cancel");
       return yield* auth.cancel(ownerSessionId, input.flowId);
+    }),
+    removeMethod: Effect.fn("ProviderAuthService.removeMethod")(function (input) {
+      return credentialChanges.withPermit(
+        Effect.gen(function* () {
+          const auth = yield* getController(input.instanceId, "removeMethod");
+          yield* checkSharedBinding(input.instanceId, "removeMethod", auth);
+          if (!auth.removeMethod)
+            return yield* new ProviderSetupError({
+              instanceId: input.instanceId,
+              operation: "removeMethod",
+              detail: "This provider does not support removing saved sign-in methods.",
+            });
+          return yield* auth.removeMethod(input.methodId);
+        }),
+      );
     }),
     logout: Effect.fn("ProviderAuthService.logout")(function* (input) {
       return yield* credentialChanges.withPermit(

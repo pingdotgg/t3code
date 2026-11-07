@@ -69,6 +69,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
     context: ProviderAuthFlowContext,
   ) => Effect.Effect<void, ProviderSetupError, Scope.Scope>;
   readonly logout: Effect.Effect<void | string, ProviderSetupError>;
+  readonly removeMethod?: (methodId: string) => Effect.Effect<void, ProviderSetupError>;
   readonly timeoutMs?: number;
 }) {
   const scope = yield* Scope.Scope;
@@ -177,6 +178,27 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
       return state;
     }, Effect.uninterruptible),
     refreshMethods,
+    ...(options.removeMethod
+      ? {
+          removeMethod: Effect.fn("providerAuthFlow.removeMethod")(function* (methodId: string) {
+            return yield* lock.withPermit(
+              Effect.gen(function* () {
+                if (operation !== "idle")
+                  return yield* new ProviderSetupError({
+                    instanceId: options.instanceId,
+                    operation: "removeMethod",
+                    detail: "Finish or cancel the existing sign-in first.",
+                  });
+                yield* options.removeMethod!(methodId);
+                const methods = yield* options.methods;
+                const state = { ...empty, methods };
+                yield* SubscriptionRef.set(snapshot, { owner: null, state });
+                return state;
+              }),
+            );
+          }, Effect.uninterruptible),
+        }
+      : {}),
     invalidate: lock.withPermit(
       Effect.gen(function* () {
         if (operation !== "idle") return;

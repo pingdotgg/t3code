@@ -34,6 +34,9 @@ export interface ProviderAuthController {
   >;
   readonly invalidate?: Effect.Effect<void>;
   readonly refreshMethods?: Effect.Effect<void>;
+  readonly removeMethod?: (
+    methodId: string,
+  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
   readonly withAccess?: <A, E, R>(
     task: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | ProviderSetupError, R | Scope.Scope>;
