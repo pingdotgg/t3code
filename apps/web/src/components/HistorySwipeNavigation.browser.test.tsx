@@ -58,4 +58,42 @@ describe("HistorySwipeNavigation", () => {
 
     expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
   });
+
+  // A vertical scroll 15° off vertical; a real swipe's first events are often diagonal.
+  const drift = Array.from({ length: 30 }, () => [-4, 15] as const);
+  const straightBack = Array.from({ length: 15 }, () => [-12, 0] as const);
+  it.each([
+    [
+      "a vertical scroll that starts slightly diagonally keeps the thread",
+      [[-5, 3], ...drift],
+      false,
+    ],
+    ["a swipe that turns into a vertical scroll keeps the thread", [[-10, 0], ...drift], false],
+    [
+      "a swipe whose first events lean diagonally navigates",
+      [[-1, -1], [-2, -1], [-3, -1], ...straightBack],
+      true,
+    ],
+    [
+      "a swipe that leans diagonally for two events navigates",
+      [
+        [-5, 3],
+        [-2, 2],
+        [-150, 0],
+      ],
+      true,
+    ],
+    ["a single diagonal event past the trigger keeps the thread", [[-130, 100]], false],
+  ] as const)("%s", async (_name, events, navigates) => {
+    navigateHistory.mockReset();
+    await using screen = await render(<HistorySwipeNavigation />);
+    const panel = screen.container.appendChild(document.createElement("div"));
+    for (const [deltaX, deltaY] of [...events, [0, 0] as const]) {
+      panel.dispatchEvent(
+        new WheelEvent("wheel", { deltaX, deltaY, bubbles: true, composed: true }),
+      );
+    }
+
+    expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
+  });
 });
