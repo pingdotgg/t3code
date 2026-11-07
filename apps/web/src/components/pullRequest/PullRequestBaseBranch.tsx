@@ -1,9 +1,10 @@
 import type { PullRequestUpdateMethod } from "@t3tools/contracts";
-import { TriangleAlertIcon } from "lucide-react";
+import { ChevronDownIcon, TriangleAlertIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -12,6 +13,59 @@ import { PullRequestGlyph } from "./pullRequestIcons";
 interface BaseFreshness {
   readonly behindBy: number | null;
   readonly methods: ReadonlyArray<PullRequestUpdateMethod>;
+}
+
+function pullRequestUpdateMethodLabel(method: PullRequestUpdateMethod): string {
+  return method === "rebase" ? "Update with rebase" : "Update with merge commit";
+}
+
+function PullRequestBaseUpdateAction({
+  methods,
+  pending,
+  onUpdate,
+}: {
+  readonly methods: ReadonlyArray<PullRequestUpdateMethod>;
+  readonly pending: boolean;
+  readonly onUpdate: (method: PullRequestUpdateMethod) => void;
+}) {
+  if (methods.length === 0) return null;
+  const only = methods.length === 1 ? methods[0] : undefined;
+  if (only !== undefined) {
+    const label = pullRequestUpdateMethodLabel(only);
+    return (
+      <Button
+        size="xs"
+        variant="outline"
+        disabled={pending}
+        aria-label={label}
+        title={label}
+        onClick={() => onUpdate(only)}
+      >
+        <PullRequestGlyph.merged aria-hidden className="size-3" />
+        Update
+      </Button>
+    );
+  }
+  return (
+    <Menu>
+      <MenuTrigger
+        disabled={pending}
+        render={<Button size="xs" variant="outline" aria-label="Update branch from base" />}
+      >
+        <PullRequestGlyph.merged aria-hidden className="size-3" />
+        Update
+        <ChevronDownIcon aria-hidden className="size-3 text-muted-foreground" />
+      </MenuTrigger>
+      <MenuPopup align="start" side="bottom">
+        {methods.map((method) => (
+          <MenuItem key={method} disabled={pending} onClick={() => onUpdate(method)}>
+            <PullRequestGlyph.merged aria-hidden className="size-3.5" />
+            {pullRequestUpdateMethodLabel(method)}
+          </MenuItem>
+        ))}
+      </MenuPopup>
+    </Menu>
+  );
 }
 
 function PullRequestBaseFreshnessWarning({
@@ -39,46 +93,36 @@ function PullRequestBaseFreshnessWarning({
         }`;
   const summary = `This branch is out-of-date with ${baseBranch}${behind}.`;
   return (
-    <Popover>
-      <PopoverTrigger
-        openOnHover
-        delay={0}
-        closeDelay={120}
-        render={
-          <button
-            type="button"
-            aria-label={summary}
-            className={cn(
-              "inline-flex min-w-0 shrink-0 cursor-help items-center gap-1 rounded-sm text-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-              className,
-            )}
-          />
-        }
-      >
-        {children}
-        <TriangleAlertIcon aria-hidden className={cn("size-3.5 shrink-0", iconClassName)} />
-      </PopoverTrigger>
-      <PopoverPopup align="start" side="bottom" className="max-w-80" padding="compact">
-        <p className="text-xs text-foreground">{summary}</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">Changes can be cleanly merged.</p>
-        {freshness.methods.length > 0 ? (
-          <span className="mt-2 flex flex-wrap items-center gap-1.5">
-            {freshness.methods.map((method) => (
-              <Button
-                key={method}
-                size="xs"
-                variant="outline"
-                disabled={pending}
-                onClick={() => onUpdate(method)}
-              >
-                <PullRequestGlyph.merged aria-hidden className="size-3" />
-                {method === "rebase" ? "Update with rebase" : "Update branch"}
-              </Button>
-            ))}
-          </span>
-        ) : null}
-      </PopoverPopup>
-    </Popover>
+    <span className={cn("inline-flex min-w-0 items-center gap-1.5", className)}>
+      <Popover>
+        <PopoverTrigger
+          openOnHover
+          delay={0}
+          closeDelay={120}
+          render={
+            <button
+              type="button"
+              aria-label={summary}
+              className="inline-flex min-w-0 max-w-full shrink cursor-help items-center gap-1 rounded-sm text-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            />
+          }
+        >
+          {children}
+          <TriangleAlertIcon aria-hidden className={cn("size-3.5 shrink-0", iconClassName)} />
+        </PopoverTrigger>
+        <PopoverPopup align="start" side="bottom" className="max-w-80" padding="compact">
+          <p className="text-xs text-foreground">{summary}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">Changes can be cleanly merged.</p>
+        </PopoverPopup>
+      </Popover>
+      <span className="shrink-0">
+        <PullRequestBaseUpdateAction
+          methods={freshness.methods}
+          pending={pending}
+          onUpdate={onUpdate}
+        />
+      </span>
+    </span>
   );
 }
 
