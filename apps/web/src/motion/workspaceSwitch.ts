@@ -165,7 +165,7 @@ function placeRow(id: string, from: WorkspaceStackRow, direction: 1 | -1): Works
   return row;
 }
 
-export function placeStackRow(
+function placeStackRow(
   rows: readonly WorkspaceStackRow[],
   row: WorkspaceStackRow,
   from: WorkspaceStackRow,
