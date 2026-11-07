@@ -1,4 +1,3 @@
-import { Settings2Icon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import {
@@ -6,7 +5,7 @@ import {
   useClientSettingsHydrationStatus,
 } from "../hooks/useSettings";
 import { Button } from "./ui/button";
-import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from "./ui/empty";
+import { Empty, EmptyContent, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { RefreshIcon } from "./ui/refresh-icon";
 import { StandalonePage } from "./ui/standalone-page";
 
@@ -17,10 +16,7 @@ export function ClientSettingsRecoveryGate({ children }: { readonly children: Re
   const retrying = status === "retrying";
   return (
     <StandalonePage size="bare">
-      <Empty size="compact">
-        <EmptyMedia variant="icon">
-          <Settings2Icon />
-        </EmptyMedia>
+      <Empty>
         <EmptyHeader>
           <EmptyTitle>Couldn't load your settings</EmptyTitle>
         </EmptyHeader>
