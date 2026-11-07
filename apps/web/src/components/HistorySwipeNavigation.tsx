@@ -57,7 +57,11 @@ function lockSwipeAxis(
 ): Exclude<SwipeGesture, { kind: "pending" }> {
   const { path, sumX, sumY } = pending;
   if (Math.abs(sumX) <= Math.abs(sumY)) return { kind: "ignored" };
-  if (path.some((node) => node instanceof Element && node.matches('[role="dialog"]'))) {
+  if (
+    path.some(
+      (node) => node instanceof Element && node.matches('[role="dialog"], [role="alertdialog"]'),
+    )
+  ) {
     return { kind: "ignored" };
   }
   if (canScrollHorizontally(path, sumX)) return { kind: "ignored" };
