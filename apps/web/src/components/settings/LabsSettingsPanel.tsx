@@ -125,7 +125,12 @@ function KeepRunningInTrayRow() {
   return (
     <SettingsRow
       {...searchableSetting("keep-running-in-tray")}
-      description="Closing the window keeps T3 Code running in the system tray, so agents and remote connections keep working. Open or quit it from the tray icon."
+      description={
+        "Closing the window keeps T3 Code running in the system tray, so agents and remote connections keep working. Open or quit it from the tray icon." +
+        (navigator.platform.toLowerCase().includes("linux")
+          ? " Linux requires system tray support. If no icon appears, launch T3 Code again to restore the window."
+          : "")
+      }
       control={
         <Switch
           checked={settings.keepRunningInTray}
