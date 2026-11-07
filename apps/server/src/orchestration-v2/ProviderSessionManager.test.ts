@@ -604,6 +604,9 @@ function layerTest(input: {
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly adapterRegistry?: (
+    adapter: ProviderAdapter.ProviderAdapterV2["Service"],
+  ) => ProviderAdapterRegistry.ProviderAdapterRegistryV2Shape;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -643,7 +646,16 @@ function layerTest(input: {
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
-    }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
+    }).pipe(
+      Effect.map((adapter) =>
+        input.adapterRegistry === undefined
+          ? ProviderAdapterRegistry.layerSingle(adapter)
+          : Layer.succeed(
+              ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+              input.adapterRegistry(adapter),
+            ),
+      ),
+    ),
   );
   const layerConfiguredMcpRegistry =
     input.pauseResolve === undefined
@@ -954,6 +966,144 @@ function makePendingRuntimeRequestEvents(input: {
     return { events, providerEvents, requestId, nodeId };
   });
 }
+
+it.effect.each(["idle", "background", "probe-error", "sibling-starting"] as const)(
+  "ProviderSessionManagerV2 refreshes provider credentials after %s becomes idle",
+  (scenario) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const updated = yield* Ref.make(false);
+      const pending = yield* Ref.make<string>(scenario);
+      const hasPendingBackgroundWork = Ref.get(pending).pipe(
+        Effect.flatMap((status) =>
+          status === "probe-error"
+            ? Effect.die("fixture background probe failed")
+            : Effect.succeed(status === "background"),
+        ),
+      );
+      const opens: Array<{
+        token: string;
+        input: ProviderAdapter.ProviderAdapterV2OpenSessionInput;
+      }> = [];
+      const adapterRegistry = (base: ProviderAdapter.ProviderAdapterV2["Service"]) => {
+        const adapters = ["", "saved-test-token"].map((token) => ({
+          ...base,
+          openSession: (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) =>
+            Effect.sync(() => {
+              opens.push({ token, input });
+            }).pipe(Effect.andThen(base.openSession(input))),
+        }));
+        return {
+          get: () => Ref.get(updated).pipe(Effect.map((changed) => adapters[changed ? 1 : 0]!)),
+          list: () => Effect.succeed([modelSelection.instanceId]),
+        };
+      };
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-credentials-change");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const input = { threadId, providerSessionId, modelSelection, runtimePolicy };
+        const first = yield* manager.open(input);
+        assert.strictEqual(yield* manager.open(input), first);
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+          nativeThreadId: "native-before-key-save",
+        });
+        yield* first.resumeThread({ threadId, providerThread, modelSelection, runtimePolicy });
+        const sibling = ThreadId.make("credentials-change-sibling");
+        const siblingRunId = idAllocator.derive.run({ threadId: sibling, ordinal: 1 });
+        const siblingMessageId = yield* idAllocator.allocate.message({
+          threadId: sibling,
+          ordinal: 1,
+        });
+        const siblingRun = (status: "starting" | "completed") =>
+          Effect.gen(function* () {
+            yield* eventSink.write({
+              events: [
+                {
+                  id: yield* idAllocator.allocate.event({ threadId: sibling }),
+                  type: "run.updated",
+                  threadId: sibling,
+                  occurredAt: now,
+                  payload: {
+                    id: siblingRunId,
+                    threadId: sibling,
+                    ordinal: 1,
+                    providerInstanceId: modelSelection.instanceId,
+                    modelSelection,
+                    providerThreadId: null,
+                    userMessageId: siblingMessageId,
+                    rootNodeId: null,
+                    activeAttemptId: null,
+                    status,
+                    requestedAt: now,
+                    startedAt: now,
+                    completedAt: status === "completed" ? now : null,
+                    checkpointId: null,
+                    contextHandoffId: null,
+                  },
+                },
+              ],
+            });
+          });
+        if (scenario === "sibling-starting") {
+          yield* eventSink.write({
+            events: [yield* makeThreadCreatedEvent({ idAllocator, threadId: sibling, now })],
+          });
+          yield* manager.open({ ...input, threadId: sibling });
+          yield* siblingRun("starting");
+        }
+        yield* Ref.set(updated, true);
+        const resumedInput = {
+          ...input,
+          resumeFromSession: first.providerSession,
+          initialNativeThreadId: "native-before-key-save",
+        };
+        if (scenario !== "idle") {
+          assert.strictEqual(yield* manager.open(resumedInput), first);
+          assert.equal((yield* Ref.get(state)).closeCount, 0);
+          yield* Ref.set(pending, "idle");
+          if (scenario === "sibling-starting") yield* siblingRun("completed");
+        }
+        const refreshed = yield* manager.open(resumedInput);
+        assert.deepEqual(
+          opens.map(({ token }) => token),
+          ["", "saved-test-token"],
+        );
+        assert.notStrictEqual(refreshed, first);
+        assert.strictEqual(opens[1]?.input.resumeFromSession, first.providerSession);
+        assert.equal(opens[1]?.input.initialNativeThreadId, "native-before-key-save");
+        assert.deepEqual(
+          yield* refreshed.resumeThread({
+            threadId,
+            providerThread,
+            modelSelection,
+            runtimePolicy,
+          }),
+          providerThread,
+        );
+        assert.equal((yield* Ref.get(state)).resumeCount, 2);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        assert.strictEqual(yield* manager.open(resumedInput), refreshed);
+      }).pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 60_000, adapterRegistry, hasPendingBackgroundWork }),
+        ),
+      );
+    }),
+);
 
 it.effect("ProviderSessionManagerV2 opens independent sessions concurrently", () =>
   Effect.gen(function* () {
@@ -1528,6 +1678,14 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
+      const updated = yield* Ref.make(false);
+      const adapterRegistry = (base: ProviderAdapter.ProviderAdapterV2["Service"]) => {
+        const replacement = { ...base };
+        return {
+          get: () => Ref.get(updated).pipe(Effect.map((changed) => (changed ? replacement : base))),
+          list: () => Effect.succeed([modelSelection.instanceId]),
+        };
+      };
       yield* Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -1592,6 +1750,17 @@ it.effect(
             reason: "manual_shutdown",
           });
 
+        yield* Ref.set(updated, true);
+        assert.strictEqual(
+          yield* manager.open({
+            threadId: stopping,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy,
+          }),
+          runtime,
+        );
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
         assert.isFalse(yield* release(stopping));
         assert.isTrue(yield* manager.isLive(providerSessionId));
         assert.isTrue(yield* release(sibling));
@@ -1633,7 +1802,7 @@ it.effect(
         });
         assert.equal((yield* startOnReleasedRuntime)._tag, "ProviderAdapterTurnStartError");
         assert.isTrue(yield* release(sibling));
-      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60 * 60_000 })));
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60 * 60_000, adapterRegistry })));
     }),
 );
 

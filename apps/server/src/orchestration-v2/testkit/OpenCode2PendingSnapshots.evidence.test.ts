@@ -62,12 +62,16 @@ const tappedHarness = (
       ProviderAdapterRegistry.ProviderAdapterRegistryV2,
       Effect.gen(function* () {
         const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
+        // Session reuse compares adapter identity, so wrap each adapter once.
+        const wrapped = new WeakMap<object, ProviderAdapter.ProviderAdapterV2["Service"]>();
         return ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
           ...registry,
           get: (instanceId: ProviderInstanceId) =>
             registry.get(instanceId).pipe(
-              Effect.map((adapter) =>
-                ProviderAdapter.ProviderAdapterV2.of({
+              Effect.map((adapter) => {
+                const cached = wrapped.get(adapter);
+                if (cached !== undefined) return cached;
+                const next = ProviderAdapter.ProviderAdapterV2.of({
                   ...adapter,
                   openSession: (input) =>
                     adapter.openSession(input).pipe(
@@ -78,8 +82,10 @@ const tappedHarness = (
                         ),
                       })),
                     ),
-                }),
-              ),
+                });
+                wrapped.set(adapter, next);
+                return next;
+              }),
             ),
         });
       }),
