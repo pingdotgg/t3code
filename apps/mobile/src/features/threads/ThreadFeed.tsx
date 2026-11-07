@@ -294,16 +294,23 @@ const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
 } as const;
 
-const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
-  hour: "numeric",
-  minute: "2-digit",
-});
+// A formatter pins the default zone when built, and Hermes keeps Date's local offset until a cold
+// start (react/react-native#59131), so rebuild when Intl reports a different zone.
+let messageTimeFormatter: Intl.DateTimeFormat | null = null;
 function formatMessageTime(input: string): string {
   const timestamp = Date.parse(input);
   if (Number.isNaN(timestamp)) {
     return "";
   }
-  return MESSAGE_TIME_FORMATTER.format(timestamp);
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (messageTimeFormatter?.resolvedOptions().timeZone !== timeZone) {
+    messageTimeFormatter = new Intl.DateTimeFormat(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone,
+    });
+  }
+  return messageTimeFormatter.format(timestamp);
 }
 
 const TURN_FOLD_HEIGHT = 42;
