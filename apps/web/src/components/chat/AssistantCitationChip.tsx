@@ -224,6 +224,7 @@ export function AssistantCitationChip({
                 {...(sourceAnchor?.initialComment === undefined
                   ? {}
                   : { initialComment: sourceAnchor.initialComment })}
+                commentInput={sourceAnchor?.commentInput}
                 inputRef={commentInputRef}
                 onVoiceSetupOpenChange={setVoiceSetupOpen}
                 onDraftChange={(comment) => {

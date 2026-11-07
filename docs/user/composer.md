@@ -130,6 +130,8 @@ On web and desktop, select text within one assistant response and choose
 **Cite in composer**. You can add a comment about the quote and write instructions
 around it.
 
+In **Settings → Appearance**, **Typing with text selected** defaults to **Goes to the composer**. Choose **Cites the selection** to start a citation comment by typing or pasting plain text while Cite is available. Further typing continues at the end of the comment.
+
 Select the quote in a draft or sent message to return to its source. If the source
 is unavailable or has changed, the saved quote remains readable.
 
@@ -408,5 +410,3 @@ including filenames or folders containing `#` or `?`.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
-
-In Settings ? Appearance, **Typing with text selected** defaults to **Goes to the composer**. Choose **Cites the selection** to start a citation comment by typing or pasting plain text while Cite is available. Further typing continues at the end of the comment.

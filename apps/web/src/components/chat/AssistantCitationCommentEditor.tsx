@@ -1,7 +1,16 @@
 import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
-import { use, useEffect, useRef, useState, type RefObject } from "react";
+import {
+  use,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
+import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { textDirection } from "~/textDirection";
 
 import { ComposerContextActionsContext } from "../composerContextActions";
@@ -10,6 +19,7 @@ import { Button } from "../ui/button";
 export function AssistantCitationCommentEditor({
   citation,
   initialComment,
+  commentInput,
   inputRef,
   onSubmit,
   onSubmitAndSend,
@@ -19,6 +29,7 @@ export function AssistantCitationCommentEditor({
 }: {
   citation: AssistantCitation;
   initialComment?: string;
+  commentInput?: AssistantCitationSourceAnchor["commentInput"];
   inputRef?: RefObject<HTMLTextAreaElement | null>;
   onSubmit: (comment: string) => boolean;
   onSubmitAndSend?: (comment: string) => boolean;
@@ -26,7 +37,9 @@ export function AssistantCitationCommentEditor({
   onDraftChange?: (comment: string) => void;
   onVoiceSetupOpenChange?: (open: boolean) => void;
 }) {
-  const [comment, setComment] = useState(initialComment ?? citation.comment ?? "");
+  const [comment, setComment] = useState(
+    commentInput?.text ?? initialComment ?? citation.comment ?? "",
+  );
   const localInputRef = useRef<HTMLTextAreaElement | null>(null);
   const textareaRef = inputRef ?? localInputRef;
   const { environmentId, projectId } = use(ComposerContextActionsContext);
@@ -34,6 +47,11 @@ export function AssistantCitationCommentEditor({
     setComment(text);
     onDraftChange?.(text);
   };
+  const receiveCommentInput = useEffectEvent(updateComment);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- transfers input buffered while the citation popover was mounting into its editor
+  useLayoutEffect(() => {
+    return commentInput?.subscribe(receiveCommentInput);
+  }, [commentInput]);
   const speech = useTextFieldSpeech({
     environmentId: environmentId ?? citation.environmentId,
     projectId,
@@ -82,6 +100,9 @@ export function AssistantCitationCommentEditor({
     >
       <textarea
         ref={textareaRef}
+        onFocus={() => {
+          commentInput?.release();
+        }}
         readOnly={speech.freezesEditor}
         aria-label="Comment on selected text"
         aria-description="Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line."

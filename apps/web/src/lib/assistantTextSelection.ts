@@ -15,6 +15,7 @@ export type AssistantCitationSourceAnchor = {
   range: Range;
   viewport: HTMLElement;
   initialComment?: string;
+  commentInput?: ReturnType<typeof createCitationCommentInput>;
 };
 
 export function findAssistantCitationSourceAnchor(
@@ -287,4 +288,32 @@ export function resolveAssistantCitationRange(
   if (isText(last.node)) range.setEnd(last.node, Math.min(last.node.length, end - last.start));
   else range.setEndAfter(last.node);
   return isUsableRange(root, range) ? range : null;
+}
+
+export function createCitationCommentInput(initialText: string) {
+  let text = initialText;
+  let pending = true;
+  let onChange: ((text: string) => void) | undefined;
+  return {
+    get text() {
+      return text;
+    },
+    get pending() {
+      return pending;
+    },
+    append(chunk: string) {
+      text += chunk;
+      onChange?.(text);
+    },
+    release() {
+      pending = false;
+    },
+    subscribe(listener: (text: string) => void) {
+      onChange = listener;
+      return () => {
+        pending = false;
+        onChange = undefined;
+      };
+    },
+  };
 }

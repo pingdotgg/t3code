@@ -1,3 +1,8 @@
+import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
+import {
+  COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  encodeComposerContextFragment,
+} from "@t3tools/shared/composerContextClipboard";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { page } from "vite-plus/test/browser";
 import {
@@ -77,23 +82,62 @@ it("routes selected assistant text through Cite only when enabled", async () => 
     "composer paste",
   );
   settings.typingWithSelection = "cite";
+  const copied = threadChipCopyTarget(
+    { environmentId: EnvironmentId.make("environment"), threadId: ThreadId.make("thread") },
+    "Copied thread",
+  );
+  const context = new DataTransfer();
+  context.setData("text/plain", copied.value);
+  context.setData(
+    COMPOSER_CONTEXT_CLIPBOARD_MIME,
+    encodeComposerContextFragment(copied.fragment!)!,
+  );
+  const pasteContext = new ClipboardEvent("paste", { clipboardData: context, cancelable: true });
+  expect(pasteTextToFocusComposer(pasteContext)).toBe(copied.value);
+  expect(pasteContext.defaultPrevented).toBe(false);
+  const files = new DataTransfer();
+  files.items.add(new File(["file"], "test.txt", { type: "text/plain" }));
+  files.setData("text/plain", "file text");
+  expect(
+    pasteTextToFocusComposer(new ClipboardEvent("paste", { clipboardData: files })),
+  ).toBeNull();
   for (const modifiers of [
     { ctrlKey: true },
     { metaKey: true },
     { altKey: true },
     { isComposing: true },
+    { keyCode: 229 },
   ]) {
     expect(
       shouldTypeToFocusComposer(new KeyboardEvent("keydown", { key: "a", ...modifiers })),
     ).toBe(false);
   }
   expect(onCite).not.toHaveBeenCalled();
+  viewport.dataset.surfaceLauncherKeys = "a";
+  const launcherKey = new KeyboardEvent("keydown", { key: "a", cancelable: true });
+  expect(shouldTypeToFocusComposer(launcherKey)).toBe(false);
+  expect(launcherKey.defaultPrevented).toBe(false);
+  expect(onCite).not.toHaveBeenCalled();
+  delete viewport.dataset.surfaceLauncherKeys;
   await act(async () => {
     expect(
       shouldTypeToFocusComposer(new KeyboardEvent("keydown", { key: "a", cancelable: true })),
     ).toBe(false);
+    expect(
+      shouldTypeToFocusComposer(
+        new KeyboardEvent("keydown", { key: "b", repeat: true, cancelable: true }),
+      ),
+    ).toBe(false);
+    const chunk = new DataTransfer();
+    chunk.setData("text/plain", "cd");
+    expect(
+      pasteTextToFocusComposer(
+        new ClipboardEvent("paste", { clipboardData: chunk, cancelable: true }),
+      ),
+    ).toBeNull();
   });
-  expect(onCite.mock.lastCall?.[1]).toMatchObject({ initialComment: "a" });
+  expect(onCite).toHaveBeenCalledTimes(1);
+  expect(onCite.mock.lastCall?.[1]).toMatchObject({ initialComment: "abcd" });
   await select();
   const data = new DataTransfer();
   data.setData("text/plain", "dictated comment");
@@ -103,8 +147,14 @@ it("routes selected assistant text through Cite only when enabled", async () => 
         new ClipboardEvent("paste", { clipboardData: data, cancelable: true }),
       ),
     ).toBeNull();
+    data.setData("text/plain", " continued");
+    expect(
+      pasteTextToFocusComposer(
+        new ClipboardEvent("paste", { clipboardData: data, cancelable: true }),
+      ),
+    ).toBeNull();
   });
-  expect(onCite.mock.lastCall?.[1]).toMatchObject({ initialComment: "dictated comment" });
+  expect(onCite.mock.lastCall?.[1]).toMatchObject({ initialComment: "dictated comment continued" });
   source.textContent = "x".repeat(ASSISTANT_CITATION_MAX_TEXT_LENGTH + 1);
   await select("Selection is too long to cite");
   expect(shouldTypeToFocusComposer(new KeyboardEvent("keydown", { key: "a" }))).toBe(true);

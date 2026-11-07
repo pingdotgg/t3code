@@ -107,5 +107,3 @@ view.
 
 Write updates to a temporary file and rename it into place so clients never read a partial theme.
 Invalid files are not published.
-
-In Settings ? Appearance, **Typing with text selected** defaults to **Goes to the composer**. Choose **Cites the selection** to start a citation comment by typing or pasting plain text while Cite is available. Further typing continues at the end of the comment.

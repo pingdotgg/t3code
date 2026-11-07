@@ -9,6 +9,7 @@ import { use, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   captureAssistantTextSelection,
+  createCitationCommentInput,
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
 import {
@@ -182,15 +183,18 @@ export function AssistantSelectionToolbar({
     actionsRef.current?.cancel();
     setSelection(null);
   };
-  const cite = (comment?: string) => {
-    if (
-      tooLong ||
-      !onCite(selection.citation, {
-        ...selection.sourceAnchor,
-        ...(comment === undefined ? {} : { initialComment: comment }),
-      })
-    )
-      return false;
+  const cite = (comment?: string, accept?: (anchor: AssistantCitationSourceAnchor) => void) => {
+    const anchor = {
+      ...selection.sourceAnchor,
+      ...(comment === undefined
+        ? {}
+        : {
+            initialComment: comment,
+            commentInput: createCitationCommentInput(comment),
+          }),
+    };
+    if (tooLong || !onCite(selection.citation, anchor)) return false;
+    accept?.(anchor);
     window.getSelection()?.removeAllRanges();
     dismiss();
     return true;
@@ -202,9 +206,13 @@ export function AssistantSelectionToolbar({
         toolbarRef.current = element;
         if (!element) return;
         const handler = (event: Event) => {
-          const text: unknown = (event as CustomEvent<unknown>).detail;
-          if (typeof text !== "string") return;
-          if (cite(text)) event.preventDefault();
+          const { text, accept } = (
+            event as CustomEvent<{
+              text: string;
+              accept: (anchor: AssistantCitationSourceAnchor) => void;
+            }>
+          ).detail;
+          if (cite(text, accept)) event.preventDefault();
         };
         element.addEventListener("cite-selection-input", handler);
         return () => {
