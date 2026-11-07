@@ -107,4 +107,26 @@ do {
   )
 }
 
+// Send flush commits marked text before the snapshot, so a later blur has nothing to refill.
+do {
+  let view = makeEditor("hello ")
+  view.editor.selectedRange = NSRange(location: 6, length: 0)
+  view.editor.setMarkedText("wor", selectedRange: NSRange(location: 3, length: 0))
+  check(view.editor.markedTextRange != nil, "Harness could not start a composition")
+  let state = view.readState()
+  check(view.editor.markedTextRange == nil, "readState left the composition marked")
+  check(state["value"] as? String == "hello wor", "readState did not include the committed composition")
+  let committedCount = state["eventCount"] as? Int ?? -1
+  check(committedCount > 0, "readState did not advance the revision for the commit")
+  view.setControlledDocumentJson(document("", revision: committedCount, resetGeneration: 1))
+  view.blurEditor()
+  check(view.text == "", "Blur after a flushed composition refill: \(view.text)")
+  check(
+    !view.onComposerChange.payloads.contains {
+      ($0["value"] as? String) == "hello wor" && ($0["resetGeneration"] as? Int) == 1
+    },
+    "Blur republished the flushed composition under the send reset"
+  )
+}
+
 print("composer editor tests passed")

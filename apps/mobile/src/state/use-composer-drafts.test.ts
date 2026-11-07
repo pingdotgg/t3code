@@ -131,6 +131,20 @@ const incomingShareStorageMocks = vi.hoisted(() => ({
   ),
 }));
 
+const appStateMocks = vi.hoisted(() => ({
+  listeners: new Set<(state: string) => void>(),
+}));
+
+vi.mock("react-native", () => ({
+  AppState: {
+    currentState: "active",
+    addEventListener: (_event: string, listener: (state: string) => void) => {
+      appStateMocks.listeners.add(listener);
+      return { remove: () => appStateMocks.listeners.delete(listener) };
+    },
+  },
+}));
+
 vi.mock("expo-file-system", () => ({
   Directory: composerDraftFileMocks.Directory,
   File: composerDraftFileMocks.File,
@@ -172,6 +186,7 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import { appAtomRegistry } from "./atom-registry";
 import { startComposerDraftOperation } from "./composerDraftOperations";
+import { installComposerDraftsForegroundFlush } from "./composer-drafts-foreground-flush";
 import { threadOutboxManager } from "./thread-outbox";
 import {
   appendComposerDraftAttachments,
@@ -181,6 +196,7 @@ import {
   archiveCloudComposerDrafts,
   clearComposerDraftContent,
   clearComposerDraftContentState,
+  releaseClearedComposerDraftText,
   subscribeComposerDraftModelReconciliation,
   clearComposerDraftsEnvironment,
   ComposerDraftPersistenceError,
@@ -195,6 +211,7 @@ import {
   findNewTaskDraftKeys,
   flushComposerDrafts,
   getComposerDraftSnapshot,
+  mergeComposerDraftContent,
   mergeComposerDraftContentState,
   migrateLegacyNewTaskDraft,
   modelOptionMemoryAtom,
@@ -226,6 +243,7 @@ const DRAFT: ComposerDraft = {
 afterEach(() => {
   vi.useRealTimers();
   resetComposerDraftsLoadState();
+  appStateMocks.listeners.clear();
   composerDraftFileMocks.setDocument({ schemaVersion: 1, drafts: {} });
   composerDraftFileMocks.setReadError(null);
   composerDraftFileMocks.setWriteError(null);
@@ -2106,6 +2124,55 @@ describe("mobile composer drafts", () => {
       },
     });
   });
+
+  it("keeps a cleared send empty when the exact sent text is written back", async () => {
+    const draftKey = "environment-1:thread-1";
+    setComposerDraftText(draftKey, "Ship the release notes");
+    clearComposerDraftContent(draftKey);
+    expect(getComposerDraftSnapshot(draftKey).text).toBe("");
+
+    setComposerDraftText(draftKey, "Ship the release notes");
+    expect(getComposerDraftSnapshot(draftKey).text).toBe("");
+
+    setComposerDraftText(draftKey, "Ship the release notes!");
+    expect(getComposerDraftSnapshot(draftKey).text).toBe("Ship the release notes!");
+  });
+
+  it("allows restoring a cleared send after a failed outbox write", async () => {
+    const draftKey = "environment-1:thread-1";
+    setComposerDraftText(draftKey, "Ship the release notes");
+    clearComposerDraftContent(draftKey);
+    await mergeComposerDraftContent(draftKey, { text: "Ship the release notes", attachments: [] });
+    expect(getComposerDraftSnapshot(draftKey).text).toBe("Ship the release notes");
+  });
+
+  it("allows retyping the sent text after the composer is focused again", () => {
+    const draftKey = "environment-1:thread-1";
+    setComposerDraftText(draftKey, "Ship the release notes");
+    clearComposerDraftContent(draftKey);
+    releaseClearedComposerDraftText(draftKey);
+    setComposerDraftText(draftKey, "Ship the release notes");
+    expect(getComposerDraftSnapshot(draftKey).text).toBe("Ship the release notes");
+  });
+
+  it.each(["inactive", "background"] as const)(
+    "persists a cleared send before the app goes %s",
+    async (state) => {
+      vi.useFakeTimers();
+      onTestFinished(installComposerDraftsForegroundFlush());
+      const draftKey = "environment-1:thread-1";
+      setComposerDraftText(draftKey, "Ship the release notes");
+      await flushComposerDrafts();
+      expect(composerDraftFileMocks.getDocument()).toContain("Ship the release notes");
+
+      clearComposerDraftContent(draftKey);
+      appStateMocks.listeners.forEach((listener) => listener(state));
+      // One macrotask lets a started flush land; the 200 ms debounce stays pending.
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(composerDraftFileMocks.getDocument()).not.toContain("Ship the release notes");
+    },
+  );
 
   it("drops another environment's upload stamp when a draft moves across machines", () => {
     const uploadedElsewhere: DraftComposerAttachment = {

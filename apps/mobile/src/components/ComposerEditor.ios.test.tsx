@@ -198,6 +198,35 @@ it("keeps a sent draft cleared when an autocorrection lands in the same batch as
   expect(native.text).toBe("n");
 });
 
+it("keeps a cleared send empty when a post-reset native event republishes the sent text", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.assign(native, { text: "", eventCount: 0, resetGeneration: 0, props: null });
+  const root = createRoot(document.createElement("div"));
+  await using _root = { [Symbol.asyncDispose]: async () => act(() => root.unmount()) };
+  await act(async () =>
+    root.render(
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <ThreadComposer />
+      </RegistryContext.Provider>,
+    ),
+  );
+
+  await act(async () => emit("Ship the release notes"));
+  expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("Ship the release notes");
+
+  // Clear first so the native view takes the new reset generation, then a blur/IME
+  // commit emits the same text under that generation. Reset alone would accept it;
+  // the cleared-text tombstone must still drop it.
+  await act(async () => clearComposerDraftContent(DRAFT_KEY));
+  expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("");
+  expect(native.text).toBe("");
+
+  await act(async () => emit("Ship the release notes"));
+  // The draft store must stay empty so Send cannot resubmit; the native mock may
+  // briefly show the rejected event until the next controlled empty payload.
+  expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("");
+});
+
 it("keeps a pending event from the previous native editor out of the selected draft", async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const first = "switch-draft:first";

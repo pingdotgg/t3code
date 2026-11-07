@@ -814,6 +814,15 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   func readState() -> [String: Any] {
+    // Commit an active IME composition now, while the send reads the draft. Left
+    // marked, it is committed when the send blurs the editor, before the cleared
+    // draft reaches this view, and that commit's change event refills the draft.
+    if textView.markedTextRange != nil {
+      isApplyingControlledValue = true
+      textView.unmarkText()
+      isApplyingControlledValue = false
+      emitTextChange()
+    }
     let selection = sourceSelection()
     return [
       "value": value,

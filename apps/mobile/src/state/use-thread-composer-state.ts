@@ -769,8 +769,9 @@ export function useThreadComposerState(input: {
         now: metadata.createdAt,
       });
     const messageId = MessageId.make(metadata.messageId);
-    onWillEnqueue?.();
     clearThreadComposerError(threadKey);
+    // Publish the queued message and clear the draft in one turn so a message cannot
+    // land while the composer still shows what was sent (and the reverse on failure).
     const enqueuePromise = enqueueThreadOutboxMessage({
       environmentId: selectedThreadShell.environmentId,
       threadId: selectedThreadShell.id,
@@ -794,6 +795,9 @@ export function useThreadComposerState(input: {
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });
+    // After the clear: keyboard dismissal / blur can commit IME or dictation, and those
+    // events must see the bumped reset generation and the cleared-text tombstone.
+    onWillEnqueue?.();
     if (freshContext) setFreshSessionPending(threadKey, false);
     enqueuePromise.then(
       () => scheduleUnusedComposerAttachmentCleanup(attachments),

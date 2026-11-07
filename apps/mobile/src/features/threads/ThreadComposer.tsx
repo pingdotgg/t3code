@@ -59,6 +59,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import {
   getComposerDraftSnapshot,
   composerDraftsAtom,
+  releaseClearedComposerDraftText,
   setComposerDraftText,
   composerContextImportsAtom,
   countComposerDraftAttachmentsAfterSelection,
@@ -656,6 +657,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
 
   const onEditorFocusChange = props.onEditorFocusChange;
   const handleFocus = () => {
+    releaseClearedComposerDraftText(composerDraftKey);
     setIsFocused(true);
     settingsSheetPresentation.onEditorFocusChange(true);
     onEditorFocusChange?.(true);
