@@ -49,6 +49,7 @@ import { RootStack, rootPathnameFromState, workspaceLocationFromState } from "./
 import { appAtomRegistry } from "./state/atom-registry";
 import { subscribeComposerDraftModelReconciliation } from "./state/use-composer-drafts";
 import { environmentThreadShells } from "./state/threads";
+import { serverEnvironment } from "./state/server";
 import { environmentShell } from "./state/shell";
 import { OverlayPortalHost } from "./components/ui/OverlayPortal";
 import { shouldHandleAppLink, restoreDraftLinkState } from "./lib/appLinking";
@@ -186,6 +187,7 @@ const appServiceDisposers = [
     threadShellAtom: environmentThreadShells.threadShellAtom,
     threadRefsAtom: environmentThreadShells.threadRefsAtom,
     shellStateAtom: environmentShell.stateAtom,
+    providersAtom: serverEnvironment.providersValueAtom,
   }),
   installAppearanceRuntime(),
   installSubscriptionUsageRefresh(),
