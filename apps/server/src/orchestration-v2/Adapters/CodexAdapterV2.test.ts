@@ -5566,12 +5566,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   );
 
   it.effect.each([
-    {
-      name: "usage",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-    },
     // regression: #27773 a first-request 429 only notifies the reset-less premium limit
     {
       name: "first-request-reset",
@@ -5698,6 +5692,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         };
         const readsReset =
           scenario.name === "first-request-reset" || scenario.name === "newer-reset-during-read";
+        // Usage limits with no known reset read the account before publishing their terminal.
+        const readsAccount =
+          scenario.expectedClass === "usage_limit" &&
+          !("expectedCode" in scenario) &&
+          scenario.name !== "deferred-reset";
         const premium = {
           ...snapshot,
           frame: {
@@ -5831,7 +5830,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 },
               },
             },
-            ...(readsReset || scenario.name === "late-reset" ? [readRequest] : []),
+            ...(readsAccount ? [readRequest] : []),
             ...(scenario.name === "newer-reset-during-read" ? [newerSnapshot] : []),
             ...(readsReset
               ? [
@@ -5848,15 +5847,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   },
                 ]
               : []),
-            ...(scenario.name === "late-reset"
+            ...(readsAccount && !readsReset
               ? [
                   {
                     type: "emit_inbound" as const,
                     label: "account/rateLimits/read",
                     frame: { id: 4, error: { code: -32600, message: "Not signed in." } },
                   },
-                  { ...snapshot, label: "account/rateLimits/updated/late" },
                 ]
+              : []),
+            ...(scenario.name === "late-reset"
+              ? [{ ...snapshot, label: "account/rateLimits/updated/late" }]
               : []),
             ...("resetAfter" in scenario ? [snapshot] : []),
             ...(scenario.name === "deferred-reset"
