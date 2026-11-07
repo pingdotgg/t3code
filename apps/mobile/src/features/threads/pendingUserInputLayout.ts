@@ -26,3 +26,23 @@ export function derivePendingUserInputMaxHeight(input: {
     Math.max(PENDING_USER_INPUT_MIN_HEIGHT, availableHeight),
   );
 }
+
+/** Content offset that brings a child fully into view, or null when it already is. */
+export function deriveRevealScrollOffset(input: {
+  readonly top: number;
+  readonly height: number;
+  readonly viewportHeight: number;
+  readonly offset: number;
+}): number | null {
+  const bottom = input.top + input.height;
+  const viewportBottom = input.offset + input.viewportHeight;
+  // A child that cannot fit is left where it overlaps, so its caret stays where the user put it.
+  if (input.height > input.viewportHeight && input.top < viewportBottom && bottom > input.offset) {
+    return null;
+  }
+  if (input.top < input.offset) return input.top;
+  if (bottom > viewportBottom) {
+    return Math.min(input.top, bottom - input.viewportHeight);
+  }
+  return null;
+}
