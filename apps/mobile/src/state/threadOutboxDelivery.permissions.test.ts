@@ -10,7 +10,7 @@ import {
 import * as Cause from "effect/Cause";
 import { AsyncResult, type Atom } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { QueuedThreadMessage } from "./thread-outbox-model";
+import { threadOutboxRetryDelayMs, type QueuedThreadMessage } from "./thread-outbox-model";
 
 const state = vi.hoisted(() => ({
   draftText: "Keep this draft separate",
@@ -496,6 +496,54 @@ describe("queued task operation access", () => {
       expect(state.prepare).toHaveBeenCalledOnce();
       expect(state.start).not.toHaveBeenCalled();
       expect(remaining()).toEqual([queued]);
+    },
+  );
+});
+
+describe("queued task whose launch reply is lost", () => {
+  it.each([{ edited: false }, { edited: true }])(
+    "hands only an edit back to the composer once the created thread appears (edited: $edited)",
+    async ({ edited }) => {
+      setOperateGrant("secondary", true);
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      state.cleanups.push(() => vi.useRealTimers());
+      const queued = message({
+        threadId: ThreadId.make("new-thread"),
+        text: "My dictated idea",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        creation: {
+          projectId: ProjectId.make("project"),
+          projectCwd: "/repo",
+          workspaceMode: "local",
+          branch: null,
+          worktreePath: null,
+        },
+      });
+      await state.manager.enqueue(queued);
+      // The server creates the thread, but its reply is lost.
+      state.start.mockImplementationOnce(async () => {
+        if (edited) await state.manager.update({ ...queued, text: "Edited idea" });
+        return AsyncResult.failure(Cause.fail(new Error("Socket is not connected")));
+      });
+      await runDrain();
+      expect(remaining()).toHaveLength(1);
+
+      appAtomRegistry.set(state.threadShells, [
+        state.thread,
+        { ...state.thread, id: "new-thread" },
+      ]);
+      const settled = Promise.withResolvers<void>();
+      const release = appAtomRegistry.subscribe(dispatchingQueuedMessageIdAtom, (id) => {
+        if (id === null) settled.resolve();
+      });
+      vi.advanceTimersByTime(threadOutboxRetryDelayMs(1));
+      await settled.promise.finally(release);
+
+      expect(state.draftText).toBe(
+        edited ? "Keep this draft separate\nEdited idea" : "Keep this draft separate",
+      );
+      expect(state.start).toHaveBeenCalledOnce();
+      expect(remaining()).toEqual([]);
     },
   );
 });
