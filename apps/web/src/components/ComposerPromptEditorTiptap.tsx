@@ -126,6 +126,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerCodeBlockNodeView } from "./chat/ComposerCodeBlockNodeView";
 import { resolveAssistantCitationCommentDismissal } from "./chat/assistantCitationCommentDismissal";
 import { composerCodeBlockHighlight } from "./composerCodeBlockHighlight";
+import { ComposerLinkExtension } from "./composerLinkDecorations";
 import { importPastedComposerText } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
@@ -780,6 +781,7 @@ function createComposerExtensions(richText: boolean) {
           ComposerBoldExtension,
           ComposerStrikeExtension,
           ComposerCodeExtension,
+          ComposerLinkExtension,
           ComposerCodeBlockExtension.extend({
             addNodeView() {
               return ReactNodeViewRenderer(ComposerCodeBlockNodeView, {

@@ -2446,6 +2446,11 @@ code {
   padding: 0.05em 0.25em;
 }
 
+.composer-tiptap .composer-link,
+.composer-tiptap .composer-link-icon {
+  color: var(--info-foreground);
+}
+
 /* Markdown delimiters shown, as editable text, around styled text with the caret in it. */
 .composer-rich-marker {
   color: var(--muted-foreground);
