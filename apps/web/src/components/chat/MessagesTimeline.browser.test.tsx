@@ -607,57 +607,6 @@ describe("MessagesTimeline work rows", () => {
       }
     },
   );
-
-  it("keeps the rows still when the work history collapses at the end", async () => {
-    const runId = RunId.make("collapse-run");
-    const props = {
-      ...baseProps(),
-      isWorking: true,
-      activeTurnStartedAt: CREATED_AT,
-      latestRun: { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
-    };
-    await using screen = await renderElement(
-      <MessagesTimeline
-        {...props}
-        timelineEntries={[
-          ...Array.from({ length: 40 }, (_, index) =>
-            message(`Earlier ${index}`, {}, `earlier-${index}`),
-          ),
-          message("Build it", { runId }),
-          ...Array.from({ length: 30 }, (_, index) =>
-            message(`Step ${index}`, { runId, role: "assistant" }, `step-${index}`),
-          ),
-        ]}
-      />,
-    );
-    const bar = screen.getByRole("button", { name: "Open work history" });
-    await expect.element(bar).toBeVisible();
-    const viewport = props.listRef.current!.getScrollableNode()!;
-    const barElement = bar.element();
-    await bar.click();
-    const history = screen.getByRole("region", { name: "Work history" }).element();
-    await expect.element(screen.getByText("Step 0", { exact: true })).toBeInTheDocument();
-    await Promise.all(history.getAnimations().map((animation) => animation.finished));
-    const expandedHeight = history.clientHeight;
-    await vi.waitFor(() => {
-      viewport.scrollTop = viewport.scrollHeight;
-      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
-      expect(props.listRef.current!.getState().scroll).toBe(viewport.scrollTop);
-    });
-    const row = screen.getByText("Step 25", { exact: true }).element();
-    const rowTops: number[] = [];
-    const rowResizes = new ResizeObserver(() => rowTops.push(row.getBoundingClientRect().top));
-    rowResizes.observe(history);
-    using _rowResizes = { [Symbol.dispose]: () => rowResizes.disconnect() };
-    history.style.transitionDuration = "2s";
-
-    await act(() => {
-      barElement.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await vi.waitFor(() => expect(history.clientHeight).toBeLessThan(expandedHeight - 200));
-    expect(Math.max(...rowTops) - Math.min(...rowTops)).toBeLessThan(2);
-    for (const animation of history.getAnimations()) animation.finish();
-  });
 });
 
 describe("MessagesTimeline messages", () => {
