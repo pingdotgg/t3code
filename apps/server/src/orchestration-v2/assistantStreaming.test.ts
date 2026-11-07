@@ -12,6 +12,19 @@ describe("V2 assistant streaming", () => {
       rest: "rest",
     });
   });
+
+  it("streams past a line that starts with inline triple-backtick code", () => {
+    expect(
+      splitBufferedAssistantText("```npm test``` runs the suite.\n\nNext paragraph.\n\nTail"),
+    ).toEqual({
+      ready: "```npm test``` runs the suite.\n\nNext paragraph.\n\n",
+      rest: "Tail",
+    });
+    expect(splitBufferedAssistantText("```a``` is inline.\n\n```\ncode\n\nmore\n")).toEqual({
+      ready: "```a``` is inline.\n\n",
+      rest: "```\ncode\n\nmore\n",
+    });
+  });
 });
 
 it("holds a streamed section heading until its content has a boundary", () => {
