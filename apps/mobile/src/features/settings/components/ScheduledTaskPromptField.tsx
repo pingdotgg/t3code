@@ -1,6 +1,7 @@
 import { TextInput, View } from "react-native";
 
 import { AppText as Text } from "../../../components/ui/AppText";
+import { cn } from "../../../lib/cn";
 import type { ComposerEditorSelection } from "../../../components/ComposerEditor";
 import {
   ComposerDictationCancelAction,
@@ -42,7 +43,11 @@ export function ScheduledTaskPromptField(props: {
           textAlignVertical="top"
           placeholder="What should the agent do each time?"
           placeholderTextColorClassName="accent-foreground-muted"
-          className="max-h-40 min-h-24 font-sans text-base text-foreground"
+          // Reserves the mic's 44px even while dictating so the prompt never reflows under it.
+          className={cn(
+            "max-h-40 min-h-24 font-sans text-base text-foreground",
+            voice.isAvailable && "pr-[44px]",
+          )}
         />
         {showsIdleTrigger ? (
           <View className="absolute right-0 bottom-0 rounded-full bg-card">
