@@ -46,9 +46,18 @@ export function sortChecks(
   );
 }
 
+// Runs of one check for different events: a failure outranks a run in progress, which outranks a
+// pass, which outranks a run cancelled beside it (a concurrency group superseding it).
+function eventSeverity(status: PullRequestCheck["status"]): number {
+  if (status === "failure" || status === "action-required") return 3;
+  if (status === "pending") return 2;
+  return status === "success" ? 1 : 0;
+}
+
 /**
  * Rollups repeat checks during reruns or overlapping runs, and checks carry no ids.
  * Identify checks by workflow plus name because different workflows may share job names.
+ * Within one event the newest run wins; across events the worse run does.
  */
 export function dedupeChecks(
   entries: ReadonlyArray<{
@@ -57,12 +66,15 @@ export function dedupeChecks(
     readonly at: string | null;
     // Hosts with one-second timestamps can date a final and an earlier status alike.
     readonly sequence?: number;
+    /** What triggered the run, where the host says (GitHub's `push` or `pull_request`). */
+    readonly event?: string | null;
   }>,
 ): ReadonlyArray<PullRequestCheck> {
-  const newestByCheck = new Map<string, (typeof entries)[number]>();
+  type Entry = (typeof entries)[number];
+  const newestByRun = new Map<string, Entry>();
   for (const entry of entries) {
-    const key = JSON.stringify([entry.workflowName ?? "", entry.check.name]);
-    const kept = newestByCheck.get(key);
+    const key = JSON.stringify([entry.workflowName ?? "", entry.check.name, entry.event ?? null]);
+    const kept = newestByRun.get(key);
     if (kept !== undefined) {
       if (!isAtLeastAsNew(entry.at, kept.at)) continue;
       if (
@@ -73,7 +85,29 @@ export function dedupeChecks(
       )
         continue;
     }
-    newestByCheck.set(key, entry);
+    newestByRun.set(key, entry);
+  }
+  const newestByCheck = new Map<string, Entry>();
+  for (const entry of newestByRun.values()) {
+    const key = JSON.stringify([entry.workflowName ?? "", entry.check.name]);
+    const kept = newestByCheck.get(key);
+    if (kept === undefined) {
+      newestByCheck.set(key, entry);
+      continue;
+    }
+    const severity = eventSeverity(entry.check.status) - eventSeverity(kept.check.status);
+    const newer = isAtLeastAsNew(entry.at, kept.at);
+    // Equal times break on the event, so a reordered rollup cannot flip the run a watch was told.
+    const tied = newer && isAtLeastAsNew(kept.at, entry.at);
+    const later = tied ? (entry.event ?? "") > (kept.event ?? "") : newer;
+    const worse = severity > 0 || (severity === 0 && later);
+    const chosen = worse ? entry : kept;
+    newestByCheck.set(
+      key,
+      entry.check.required === true || kept.check.required === true
+        ? { ...chosen, check: { ...chosen.check, required: true } }
+        : chosen,
+    );
   }
   const survivors = [...newestByCheck.values()];
   const countsByName = new Map<string, number>();
