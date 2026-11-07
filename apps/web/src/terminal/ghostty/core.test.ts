@@ -9,7 +9,10 @@ import {
   type TerminalBufferState,
 } from "@t3tools/client-runtime/state/terminal";
 
-import { writeTerminalOutputUpdate } from "../../components/ThreadTerminalDrawer";
+import {
+  terminalPromptNavigationData,
+  writeTerminalOutputUpdate,
+} from "../../components/ThreadTerminalDrawer";
 import { GHOSTTY_CELL_WIDE, GhosttyTerminalCore, ghosttyCellText } from "./core";
 import { loadGhosttyRuntime } from "./runtime";
 import { terminalNavigationShortcutData } from "../../keybindings";
@@ -121,6 +124,37 @@ describe("GhosttyTerminalCore snapshots", () => {
 
     expect(terminalNavigationShortcutData(event, "Win32") ?? core.encodeKey(event)).toBe(expected);
   });
+
+  it.each([
+    { name: "Option+Left", key: "ArrowLeft", altKey: true, prompt: "\x1bb", app: "\x1b[1;3D" },
+    { name: "Option+Right", key: "ArrowRight", altKey: true, prompt: "\x1bf", app: "\x1b[1;3C" },
+    { name: "Cmd+Left", key: "ArrowLeft", metaKey: true, prompt: "\x01", app: "\x1b[1;9D" },
+    { name: "Cmd+Right", key: "ArrowRight", metaKey: true, prompt: "\x05", app: "\x1b[1;9C" },
+  ])(
+    "moves the shell prompt on $name but leaves it to full-screen apps",
+    async ({ key, altKey = false, metaKey = false, prompt, app }) => {
+      const core = await createCore();
+      const event = {
+        code: key,
+        key,
+        repeat: false,
+        shiftKey: false,
+        ctrlKey: false,
+        altKey,
+        metaKey,
+        isComposing: false,
+        getModifierState: () => false,
+      } as unknown as KeyboardEvent;
+      const send = () =>
+        terminalPromptNavigationData(core, event, "MacIntel") ?? core.encodeKey(event);
+
+      expect(send()).toBe(prompt);
+      core.write("\x1b[?1049h");
+      expect(send()).toBe(app);
+      core.write("\x1b[?1049l");
+      expect(send()).toBe(prompt);
+    },
+  );
 
   it.each([
     { code: "", key: "Backspace", expected: "\x7f" },
