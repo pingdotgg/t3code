@@ -298,6 +298,8 @@ export function PullRequestsScreen(
         // UIKit owns the bar's inset, so a minimizing bar and a resized column move
         // the list in the same frame as the bar.
         contentInsetAdjustmentBehavior="automatic"
+        // RN scrollTo clamps against raw insets and ignores the automatic bar inset.
+        scrollToOverflowEnabled
         // A plain offset: LegendList adds the list header to an index-based restore, which
         // landed every return one header lower.
         initialScrollOffset={
