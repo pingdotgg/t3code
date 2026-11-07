@@ -1054,6 +1054,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         mergedAt: null,
         closedAt: null,
         commits: { nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }] },
+        stack: number === 7 ? { number: 3, size: 2, baseRefName: "main" } : null,
+        stackEntry: number === 7 ? { position: 1 } : null,
       });
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
@@ -1106,6 +1108,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
         },
       );
       assert.strictEqual(eight?.headBranch, "feat/8");
+      assert.deepStrictEqual(
+        [seven?.stack, eight?.stack],
+        [{ number: 3, size: 2, base: "main", position: 1 }, null],
+      );
       expect(mockedExecute).toHaveBeenCalledOnce();
       expect(queryAt(0)).toContain(
         "_0_repository:repository(owner:$_0_owner name:$_0_name){pullRequest(number:$_0_number)",
@@ -1114,9 +1120,48 @@ layer("GitHubPullRequestApi.layer", (it) => {
         _0_owner: "acme",
         _0_name: "web",
         _0_number: 7,
-        _0_stacks: true,
         _1_number: 8,
       });
+    }),
+  );
+
+  it.effect("names no stack field in any pull request read sent to Enterprise Server", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          call.kind === "graphql" && call.query.includes("_0_repository:")
+            ? output(encodeJson({ data: { _0_repository: { pullRequest: null } } }))
+            : call.kind === "graphql" && call.query.includes("pullRequests(")
+              ? output(listedPullRequests(1, 7))
+              : emptySearch(),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const host = "ghe.example.com";
+      const listing = {
+        cwd: "/w",
+        host,
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+      } as const;
+
+      yield* cli.listPullRequests({ ...listing, repository: "acme/web", limit: 10 });
+      yield* cli.searchPullRequests({ ...listing, repositories: ["acme/web"], limit: 10 });
+      const summary = yield* cli
+        .getPullRequestSummary({ cwd: "/w", repository: "acme/web", host, number: 7 })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      yield* Fiber.await(summary);
+
+      const queries = mockedExecute.mock.calls.flatMap(([call]) =>
+        call.kind === "graphql" ? [call.query] : [],
+      );
+      expect(queries.map((query) => /PullRequest(Search|List|Summary)\b/.exec(query)?.[0])).toEqual(
+        ["PullRequestSearch", "PullRequestList", "PullRequestSearch", "PullRequestSummary"],
+      );
+      for (const query of queries) expect(query).not.toMatch(/\bstack(Entry)?\b/);
+      expect(mockedStackMemberships).not.toHaveBeenCalled();
     }),
   );
 
@@ -1572,7 +1617,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
       mockedExecute.mockReturnValue(
         Effect.succeed(
           searchPage([
-            searchItem(7, "acme/web", "2026-07-03T00:00:00Z"),
+            {
+              ...searchItem(7, "acme/web", "2026-07-03T00:00:00Z"),
+              stack: { number: 3, size: 2, baseRefName: "main" },
+              stackEntry: { position: 2 },
+            },
             searchItem(9, "pingdotgg/t3code", "2026-07-02T00:00:00Z"),
             {},
           ]),
@@ -1604,6 +1653,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
           [0, 0],
         ],
       );
+      assert.deepStrictEqual(
+        batch.items.map((item) => item.stack),
+        [{ number: 3, size: 2, base: "main", position: 2 }, undefined],
+      );
+      expect(queryAt(0)).toContain("stack{number size baseRefName}stackEntry{position}");
       assert.isFalse(batch.truncated);
     }),
   );
