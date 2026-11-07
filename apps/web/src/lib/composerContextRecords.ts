@@ -3,6 +3,7 @@ import {
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import {
+  COMPOSER_CONTEXT_PREVIEW_COMMENT_MAX_CHARS,
   COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS,
   COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS,
@@ -254,7 +255,10 @@ export function previewAnnotationContextRecord(
     annotationId: annotation.id,
     pageUrl: annotation.pageUrl,
     pageTitle: annotation.pageTitle,
-    comment: annotation.comment.trim(),
+    comment: clampContextText(
+      annotation.comment.trim(),
+      COMPOSER_CONTEXT_PREVIEW_COMMENT_MAX_CHARS,
+    ),
     targetSummary: previewAnnotationTargetSummary(annotation),
     styleChanges: annotation.styleChanges.map(
       (change) => `${change.property}: ${change.previousValue || "(unset)"} → ${change.value}`,
