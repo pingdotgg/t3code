@@ -1,3 +1,4 @@
+import { ClaudeCloudDialog } from "./chat/ClaudeCloudDialog";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -3359,6 +3360,42 @@ export default function ChatView(props: ChatViewProps) {
             {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
             {inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
             <ChatHeader
+              cloudAction={
+                isServerThread &&
+                isGitRepo &&
+                (serverConfig?.environment.platform.os === "darwin" ||
+                  serverConfig?.environment.platform.os === "linux") &&
+                canOperateTerminal &&
+                serverConfig &&
+                selectedProviderEntry?.driverKind === "claudeAgent" ? (
+                  <ClaudeCloudDialog
+                    key={`${activeThreadKey}:${selectedProviderEntry.instanceId}`}
+                    provider={selectedProviderEntry.snapshot}
+                    settings={serverConfig.settings}
+                    platform={serverConfig.environment.platform.os}
+                    onRun={async (command) => {
+                      const ran = await runProjectScriptStable(
+                        {
+                          id: "claude-cloud",
+                          name: "Claude Cloud",
+                          command,
+                          icon: "play",
+                          runOnWorktreeCreate: false,
+                        },
+                        {
+                          preferNewTerminal: true,
+                          rememberAsLastInvoked: false,
+                          providerInstanceId: selectedProviderEntry.instanceId,
+                        },
+                      );
+                      if (!ran)
+                        throw new Error(
+                          "Could not run the cloud command. Check the thread's terminal error.",
+                        );
+                    }}
+                  />
+                ) : null
+              }
               activeThreadEnvironmentId={activeThread.environmentId}
               activeThreadId={activeThread.id}
               isServerThread={isServerThread}

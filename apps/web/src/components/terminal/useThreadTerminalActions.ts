@@ -2,6 +2,7 @@ import {
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
   type ScopedThreadRef,
+  type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
@@ -87,6 +88,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     readonly terminalId?: string;
     readonly location?: TerminalLaunchLocation | null;
     readonly extraEnv?: Record<string, string>;
+    readonly providerInstanceId?: ProviderInstanceId;
     readonly stopOnSettle?: boolean;
     readonly size?: { readonly cols: number; readonly rows: number };
   }) => {
@@ -101,6 +103,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
         threadId: threadRef.threadId,
         terminalId,
         cwd: location.cwd,
+        ...(input.providerInstanceId ? { providerInstanceId: input.providerInstanceId } : {}),
         ...(location.worktreePath !== null ? { worktreePath: location.worktreePath } : {}),
         env: projectScriptRuntimeEnv({
           project: { cwd: project.workspaceRoot },
@@ -134,11 +137,12 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     })();
   };
 
-  const writeToTerminal = (terminalId: string, data: string) => {
-    if (!threadRef || !canWrite()) return null;
+  const writeToTerminal = (terminalId: string, data: string, target = threadRef) => {
+    if (!target || !readEnvironmentScope(target.environmentId, AuthTerminalOperateScope))
+      return null;
     return writeTerminal({
-      environmentId: threadRef.environmentId,
-      input: { threadId: threadRef.threadId, terminalId, data },
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, terminalId, data },
     });
   };
 

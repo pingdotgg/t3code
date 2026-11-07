@@ -139,3 +139,25 @@ config directory and put the router's endpoint and credential variables in that
 instance's **Environment variables**. The router must run where the environment
 can reach it. Follow the [Claude Code Router instructions](https://github.com/musistudio/claude-code-router)
 for its installation and routing configuration.
+
+## Run a task in Claude Cloud
+
+In a saved Claude thread in a Git repository, choose **Claude Cloud** in the thread header.
+Enter a task to create a new cloud session. To send a follow-up, enter the existing cloud
+session's ID or `https://claude.ai/code/…` link and a message instead.
+
+The command runs in a new T3 terminal on the environment's machine, using the selected
+Claude instance's executable, configuration directory, and environment variables. Sign in
+with your Claude subscription first. New tasks use the thread's repository and worktree;
+Claude may clone the pushed branch or upload tracked files. They do not inherit the T3
+conversation. Tasks and messages must fit on one line.
+
+The terminal retains the session link or JSON delivery receipt. A successful receipt means
+the message was queued, not that the task completed. Open the link in Claude to read replies,
+check progress, or stop the task. Save the link before closing the terminal: closing deletes
+its history but does not cancel the cloud task.
+
+This initial integration is available in the web and desktop clients connected to macOS or
+Linux environments. Native mobile controls, Windows hosts, live cloud transcripts, and
+cloud task status are not supported yet. See [Claude's cloud documentation](https://code.claude.com/docs/en/claude-code-on-the-web)
+for account requirements and repository upload behavior.
