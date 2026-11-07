@@ -33,10 +33,10 @@ import {
   useClientSettingsHydrated,
   useEnvironmentSettings,
 } from "../hooks/useSettings";
-import { runtime } from "../lib/runtime";
 import { useEnvironment } from "../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../state/session";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
+import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { bindAudioGrant, readCleanupGrant, useAudioGrant } from "./voiceConsent";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
@@ -54,7 +54,7 @@ const statusProbes = new WeakMap<PreparedConnection, Promise<EnvironmentSpeechSt
 function probeSpeechStatus(prepared: PreparedConnection, refresh = false) {
   const cached = refresh ? undefined : statusProbes.get(prepared);
   if (cached) return cached;
-  const probe = runtime.runPromise(getEnvironmentSpeechStatus(prepared));
+  const probe = runEnvironmentSpeech(getEnvironmentSpeechStatus(prepared));
   statusProbes.set(prepared, probe);
   probe.catch(() => {
     if (statusProbes.get(prepared) === probe) statusProbes.delete(prepared);
@@ -296,18 +296,16 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         return Promise.reject(
           new Error("The draft's environment is unavailable for transcript cleanup."),
         );
-      return runtime
-        .runPromise(
-          postProcessEnvironmentTranscript(
-            target,
-            transcript,
-            cleanupContext(options.draft),
-            preferences.cleanup,
-            () => hasAudioConsent() && preferences.cleanupGrant === readCleanupGrant(),
-          ),
-          options,
-        )
-        .then((result) => result.text);
+      return runEnvironmentSpeech(
+        postProcessEnvironmentTranscript(
+          target,
+          transcript,
+          cleanupContext(options.draft),
+          preferences.cleanup,
+          () => hasAudioConsent() && preferences.cleanupGrant === readCleanupGrant(),
+        ),
+        options,
+      ).then((result) => result.text);
     };
     controller = new VoiceInputController({
       retryFailedRecording: true,
@@ -374,8 +372,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     const timer = window.setInterval(() => {
       if (refreshing) return;
       refreshing = true;
-      void runtime
-        .runPromise(getEnvironmentSpeechModels(prepared))
+      void runEnvironmentSpeech(getEnvironmentSpeechModels(prepared))
         .then((result) => {
           if (disposed) return;
           const model = result.models.find((candidate) => candidate.id === modelId) ?? null;
@@ -471,7 +468,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     const request = ++startRequestRef.current;
     setSetup((current) => ({ ...current, downloading: true, error: null }));
     try {
-      await runtime.runPromise(downloadEnvironmentSpeechModel(prepared, currentStatus.modelId));
+      await runEnvironmentSpeech(downloadEnvironmentSpeechModel(prepared, currentStatus.modelId));
       if (request !== startRequestRef.current) return;
       const next = await probeSpeechStatus(prepared, true);
       if (request !== startRequestRef.current) return;
@@ -500,7 +497,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     startRequestRef.current += 1;
     setSetup((current) => ({ ...current, open: false, downloading: false }));
     try {
-      await runtime.runPromise(
+      await runEnvironmentSpeech(
         cancelEnvironmentSpeechModelDownload(prepared, currentStatus.modelId),
       );
     } catch (error) {
