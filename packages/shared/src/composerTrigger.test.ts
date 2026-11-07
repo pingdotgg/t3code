@@ -46,6 +46,24 @@ describe("detectComposerTrigger", () => {
     (text) => expect(detectComposerTrigger(text, text.length)).toBeNull(),
   );
 
+  it.each(["Ask &", "Ask &vps"])("detects the machine trigger in %j", (text) => {
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "environment",
+      query: text.slice(5),
+      rangeStart: 4,
+      rangeEnd: text.length,
+    });
+  });
+
+  it.each([
+    ["build &&", 8],
+    ["build &&", 7],
+    ["R&D", 3],
+    ["&&next", 6],
+  ])("leaves %j out of the machine menu", (text, cursor) =>
+    expect(detectComposerTrigger(text, cursor)).toBeNull(),
+  );
+
   it.each(["$", "€", "𑿝"])("detects %s skill prefixes and their source range", (prefix) => {
     const text = `Use ${prefix}review`;
     expect(detectComposerTrigger(text, text.length)).toEqual({

@@ -215,8 +215,10 @@ export function composerCommandKeyHandler(input: {
       return true;
     }
     const { trigger } = resolveActiveComposerTrigger();
+    // A machine trigger keeps its menu hidden until a machine matches.
     const menuIsActive =
-      !isLiteralPendingAnswer && (composerMenuOpenRef.current || trigger !== null);
+      !isLiteralPendingAnswer &&
+      (composerMenuOpenRef.current || (trigger !== null && trigger.kind !== "environment"));
     if (key === "Escape") {
       if (!menuIsActive || event.isComposing || event.keyCode === 229) return false;
       dismissComposerTrigger(trigger);
@@ -225,7 +227,9 @@ export function composerCommandKeyHandler(input: {
     }
     if (menuIsActive && (submissionIntent === null || submissionIntent === "foreground")) {
       const currentItems = composerMenuItemsRef.current;
-      const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
+      const bareMachineTrigger = trigger?.kind === "environment" && trigger.query === "";
+      const selectedItem =
+        activeComposerMenuItemRef.current ?? (bareMachineTrigger ? undefined : currentItems[0]);
       if (key === "ArrowDown" && currentItems.length > 0) {
         nudgeComposerMenuHighlight("ArrowDown");
         return true;

@@ -53,7 +53,7 @@ const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
 const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> =
   [];
 
-/** Builds the @, /, $ and # suggestion lists, running the searches each trigger needs. */
+/** Builds the @, &, /, $ and # suggestion lists, running the searches each trigger needs. */
 export function useComposerMenuItems({
   composerTrigger,
   environmentId,
@@ -216,6 +216,16 @@ export function useComposerMenuItems({
           description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
         })),
       ];
+    }
+    if (composerTrigger.kind === "environment") {
+      return questionAttachmentTarget === null && offersMachines
+        ? matchComposerEnvironmentItems({
+            environments: mentionableEnvironments,
+            environmentId,
+            query: composerTrigger.query,
+            listAllWhenEmpty: true,
+          })
+        : [];
     }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [

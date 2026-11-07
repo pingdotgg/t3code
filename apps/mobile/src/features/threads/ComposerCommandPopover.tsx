@@ -136,6 +136,8 @@ function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
       return "Skills";
     case "path":
       return "Files";
+    case "environment":
+      return "Machines";
     default:
       return null;
   }
