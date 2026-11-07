@@ -264,7 +264,11 @@ import { serverEnvironment } from "../../state/server";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { environmentThreadShells, threadEnvironment } from "../../state/threads";
+import {
+  environmentThreadShells,
+  threadEnvironment,
+  useThreadQueueWorkflow,
+} from "../../state/threads";
 import { ThreadWorkflowOpening, useWorkflowOpening } from "./thread-workflow-opening";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
@@ -1374,6 +1378,7 @@ function AgentMessageFoldHeader(props: {
   readonly senderThreadId?: ThreadId;
   readonly summary: string;
   readonly expanded: boolean;
+  readonly queued: boolean;
   readonly onToggle: () => void;
   readonly iconSubtleColor: ColorValue;
 }) {
@@ -1384,7 +1389,7 @@ function AgentMessageFoldHeader(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${label}: ${props.summary}`}
+      accessibilityLabel={`${label}: ${props.summary}${props.queued && !props.expanded ? ", Queued" : ""}`}
       accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the message.`}
       accessibilityState={{ expanded: props.expanded }}
       hitSlop={4}
@@ -1410,6 +1415,9 @@ function AgentMessageFoldHeader(props: {
       <Text numberOfLines={1} className="min-w-0 shrink text-sm text-user-bubble-foreground">
         {props.summary}
       </Text>
+      {props.queued && !props.expanded ? (
+        <Text className="font-t3-medium text-xs text-user-bubble-foreground-muted">Queued</Text>
+      ) : null}
       <ThreadDisclosureChevron
         expanded={props.expanded}
         collapsedDirection="down"
@@ -1449,6 +1457,7 @@ function ThreadAutomationMessageRow(props: {
   readonly scheduledTaskId: ScheduledTaskId | undefined;
   readonly timestampLabel: string;
   readonly expanded: boolean;
+  readonly queued: boolean;
   readonly onToggle: () => void;
   readonly bubbleColor: ColorValue;
   readonly bubbleMaxWidth: number | "85%";
@@ -1481,7 +1490,7 @@ function ThreadAutomationMessageRow(props: {
       >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Automation: ${summary}`}
+          accessibilityLabel={`Automation: ${summary}${props.queued && !props.expanded ? ", Queued" : ""}`}
           accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the prompt.`}
           accessibilityState={{ expanded: props.expanded }}
           hitSlop={4}
@@ -1504,6 +1513,9 @@ function ThreadAutomationMessageRow(props: {
           <Text numberOfLines={1} className="min-w-0 shrink text-sm text-user-bubble-foreground">
             {summary}
           </Text>
+          {props.queued && !props.expanded ? (
+            <Text className="font-t3-medium text-xs text-user-bubble-foreground-muted">Queued</Text>
+          ) : null}
           <ThreadDisclosureChevron
             expanded={props.expanded}
             collapsedDirection="down"
@@ -1873,7 +1885,9 @@ function renderFeedEntry(
     const presentation = resolveUserMessagePresentation(message);
     const renderedText = renderAssistantCitationsAsText(presentation.text);
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
-    const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
+    const timestampLabel = entry.queued
+      ? "Queued"
+      : formatMessageTime(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];
     const hasReviewCommentContext = presentation.text.includes("<review_comment");
     // Android does not reposition children after maxWidth clamps bubbles; definite width prevents wide-block overlap.
@@ -1925,6 +1939,7 @@ function renderFeedEntry(
           context={message.context}
           scheduledTaskId={presentation.scheduledTaskId}
           timestampLabel={timestampLabel}
+          queued={entry.queued === true}
           expanded={props.expandedWorkRows[rowId] ?? false}
           onToggle={() => props.onToggleWorkRow(rowId, entry.id)}
           bubbleColor={userBubbleColor}
@@ -2068,6 +2083,7 @@ function renderFeedEntry(
                       ?.trim() ?? ""
                   }
                   expanded={foldExpanded}
+                  queued={entry.queued === true}
                   onToggle={() => props.onToggleWorkRow(foldRowId, entry.id)}
                   iconSubtleColor={iconSubtleColor}
                 />
@@ -2576,6 +2592,7 @@ function useThreadFeedPresentation(
   revealedMessageId: MessageId | null,
 ) {
   const [feedCache] = useState(createThreadFeedCache);
+  const queueWorkflow = useThreadQueueWorkflow(props.detailRef);
   return appendPendingThreadMessages(
     deriveThreadFeedPresentation(
       props.feed,
@@ -2593,6 +2610,7 @@ function useThreadFeedPresentation(
     ),
     props.feed,
     props.queuedMessages,
+    queueWorkflow?.queuedRuns,
   );
 }
 

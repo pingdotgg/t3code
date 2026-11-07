@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { QueuedThreadRun } from "@t3tools/client-runtime/state/thread-workflows";
 import {
   CommandId,
   ComposerContextId,
   EnvironmentId,
   MessageId,
   ProjectId,
+  RunId,
+  ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
+import { DateTime } from "effect";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import {
   appendPendingThreadMessages,
@@ -24,6 +28,21 @@ const pending = (id: string): QueuedThreadMessage => ({
   attachments: [],
   createdAt: "2026-09-06T10:00:00.000Z",
 });
+
+const serverQueued = (id: string, overrides?: Partial<QueuedThreadRun>): QueuedThreadRun => ({
+  run: {
+    id: RunId.make(`run-${id}`),
+    status: "queued",
+    requestedAt: DateTime.makeUnsafe("2026-09-06T10:05:00.000Z"),
+  } as QueuedThreadRun["run"],
+  text: id,
+  attachments: [],
+  messageId: MessageId.make(id),
+  ...overrides,
+});
+
+const feedIds = (entries: ReadonlyArray<{ readonly id: string }>) =>
+  entries.map((entry) => entry.id);
 
 describe("pending timeline messages", () => {
   it("keeps unchanged row identities while text streams and updates adjacent grouping", () => {
@@ -178,6 +197,109 @@ describe("pending timeline messages", () => {
     const delivered = { ...optimistic, pendingMessage: undefined };
     expect(appendPendingThreadMessages([delivered], [delivered], [queued])).toEqual([delivered]);
     expect(appendPendingThreadMessages([], [delivered], [queued])).toEqual([]);
+    const serverCopy = serverQueued("sent");
+    expect(appendPendingThreadMessages([delivered], [delivered], [], [serverCopy])).toEqual([
+      delivered,
+    ]);
+    expect(appendPendingThreadMessages([], [delivered], [], [serverCopy])).toEqual([]);
+  });
+
+  it("keeps an accepted follow-up in the feed while the server queues it", () => {
+    const context = {
+      version: 1 as const,
+      records: [
+        {
+          version: 1 as const,
+          kind: "mention" as const,
+          contextId: ComposerContextId.make("file"),
+          label: "Checkout.tsx",
+          path: "src/Checkout.tsx",
+        },
+      ],
+    };
+    const attachment = {
+      type: "image" as const,
+      id: "attachment-1",
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+    };
+    const entries = appendPendingThreadMessages(
+      [],
+      [],
+      [],
+      [
+        serverQueued("follow-up", {
+          attachments: [attachment],
+          context,
+          message: {
+            createdBy: "agent",
+            creationSource: "server",
+            scheduledTaskId: ScheduledTaskId.make("sample-schedule"),
+            senderThreadId: ThreadId.make("sender-thread"),
+          } as NonNullable<QueuedThreadRun["message"]>,
+        }),
+      ],
+    );
+    expect(feedIds(entries)).toEqual(["follow-up"]);
+    const entry = entries[0];
+    if (entry?.type !== "message") throw new Error("Expected a queued message");
+    expect(entry.queued).toBe(true);
+    expect(entry.pendingMessage).toBeUndefined();
+    expect(entry.message).toMatchObject({
+      role: "user",
+      text: "follow-up",
+      attachments: [attachment],
+      context,
+      createdBy: "agent",
+      creationSource: "server",
+      scheduledTaskId: "sample-schedule",
+      senderThreadId: "sender-thread",
+    });
+  });
+
+  it("orders outbox, acknowledged and server-queued rows by the server queue", () => {
+    const mixed = appendPendingThreadMessages(
+      [],
+      [],
+      [pending("both"), pending("unsent")],
+      [serverQueued("both"), serverQueued("later")],
+    );
+    expect(feedIds(mixed)).toEqual(["both", "later", "unsent"]);
+    expect(mixed[0]?.pendingMessage).toEqual(pending("both"));
+    expect(mixed[0]?.queued).toBeUndefined();
+    expect(mixed[1]?.queued).toBe(true);
+
+    const activity = {
+      type: "thinking",
+      runId: null,
+      id: "thinking",
+      createdAt: "2026-09-06T11:00:00.000Z",
+    } as const;
+    const [acknowledged] = appendPendingThreadMessages([], [], [pending("newer")]).map((entry) => ({
+      ...entry,
+      acknowledged: true,
+    }));
+    const feed = [activity, acknowledged!];
+    const entries = appendPendingThreadMessages(
+      feed,
+      feed,
+      [],
+      [serverQueued("older"), serverQueued("newer")],
+    );
+    expect(feedIds(entries)).toEqual(["thinking", "older", "newer"]);
+    expect(entries[2]?.queued).toBe(true);
+  });
+
+  it("shows a queued compact command as its text until the run starts", () => {
+    const entry = appendPendingThreadMessages(
+      [],
+      [],
+      [],
+      [serverQueued("compact", { text: "/compact" })],
+    )[0]!;
+    expect(isCompactionCommandFeedEntry(entry)).toBe(false);
+    expect(isCompactionCommandFeedEntry({ ...entry, queued: undefined })).toBe(true);
   });
 
   it("stops showing an acknowledged message once the thread catches up, even when the feed hides it", () => {
