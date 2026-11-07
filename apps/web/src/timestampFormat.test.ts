@@ -37,6 +37,19 @@ describe("timestamps in an explicit time zone", () => {
 });
 
 describe("timestamps after the system time zone changes", () => {
+  // Built fresh with an explicit zone, so expectations follow the host locale but not a stale zone.
+  const timeIn = (iso: string, timeZone: string) =>
+    new Intl.DateTimeFormat(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZone,
+    }).format(new Date(iso));
+  const dayIn = (iso: string, timeZone: string) =>
+    new Intl.DateTimeFormat(undefined, { month: "numeric", day: "numeric", timeZone }).format(
+      new Date(iso),
+    );
+
   it("renders the gutter label in the new zone", () => {
     const sameDay = "2026-11-07T04:45:43.877Z";
     const earlierInWeek = "2026-11-04T20:00:00.000Z";
@@ -45,21 +58,31 @@ describe("timestamps after the system time zone changes", () => {
     expect([
       formatDayAwareTimestamp(sameDay, "12-hour", now),
       formatDayAwareTimestamp(earlierInWeek, "12-hour", now),
-    ]).toEqual(["11:45 PM", "11/4 3:00 PM"]);
+    ]).toEqual([
+      timeIn(sameDay, "America/New_York"),
+      `${dayIn(earlierInWeek, "America/New_York")} ${timeIn(earlierInWeek, "America/New_York")}`,
+    ]);
 
     process.env.TZ = "Asia/Bangkok";
     expect([
       formatDayAwareTimestamp(sameDay, "12-hour", now),
       formatDayAwareTimestamp(earlierInWeek, "12-hour", now),
-    ]).toEqual(["11:45 AM", "11/5 3:00 AM"]);
+    ]).toEqual([
+      timeIn(sameDay, "Asia/Bangkok"),
+      `${dayIn(earlierInWeek, "Asia/Bangkok")} ${timeIn(earlierInWeek, "Asia/Bangkok")}`,
+    ]);
   });
 
   it("renders the tooltip in the new zone", () => {
     const monthEnd = "2026-10-31T20:00:00.000Z";
     using _zone = useTimeZone("America/New_York");
-    expect(formatChatTimestampTooltip(monthEnd, "12-hour")).toBe("4:00 PM, 31st October 2026");
+    expect(formatChatTimestampTooltip(monthEnd, "12-hour")).toBe(
+      `${timeIn(monthEnd, "America/New_York")}, 31st October 2026`,
+    );
 
     process.env.TZ = "Asia/Bangkok";
-    expect(formatChatTimestampTooltip(monthEnd, "12-hour")).toBe("3:00 AM, 1st November 2026");
+    expect(formatChatTimestampTooltip(monthEnd, "12-hour")).toBe(
+      `${timeIn(monthEnd, "Asia/Bangkok")}, 1st November 2026`,
+    );
   });
 });
