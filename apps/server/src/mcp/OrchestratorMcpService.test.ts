@@ -904,6 +904,144 @@ describe("OrchestratorMcpService", () => {
     }),
   );
 
+  it.effect(
+    "checks each reused child once before cancelling and still refuses a raised descendant",
+    () =>
+      Effect.gen(function* () {
+        const parentThreadId = ThreadId.make("thread:mcp-cancel-reused-parent");
+        const childThreadId = ThreadId.make("thread:mcp-cancel-reused-child");
+        const grandchildThreadId = ThreadId.make("thread:mcp-cancel-reused-grandchild");
+        const descendantThreadId = ThreadId.make("thread:mcp-cancel-reused-descendant");
+        const threadIds = [parentThreadId, childThreadId, grandchildThreadId, descendantThreadId];
+        const taskId = NodeId.make(`${parentThreadId}:task:0`);
+        const shellReads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
+        const recordReads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
+        const dispatched = yield* Ref.make<ReadonlyArray<OrchestrationV2ServerCommand>>([]);
+        const stoppedBelow = yield* Ref.make(false);
+        const raised = yield* Ref.make(false);
+        const projections = new Map<ThreadId, OrchestrationV2ThreadProjection>();
+        for (const [index, threadId] of threadIds.entries()) {
+          const projection = idleThreadProjection(
+            liveThreadShell(threadId, { runtimeMode: "approval-required" }),
+          );
+          const nextChildId = threadIds[index + 1];
+          projections.set(threadId, {
+            ...projection,
+            subagents:
+              nextChildId === undefined
+                ? []
+                : Array.from({ length: 3 }, (_, taskIndex) => ({
+                    id: NodeId.make(`${threadId}:task:${taskIndex}`),
+                    threadId,
+                    runId: null,
+                    parentNodeId: NodeId.make(`${threadId}:root`),
+                    origin: "app_owned",
+                    createdBy: "user",
+                    driver: ProviderDriverKind.make("codex"),
+                    providerInstanceId: ProviderInstanceId.make("codex"),
+                    providerThreadId: null,
+                    childThreadId: nextChildId,
+                    nativeTaskRef: null,
+                    prompt: "Follow up",
+                    title: "Child",
+                    model: "gpt-5.6-terra",
+                    completionDelivery: { state: "disposed", observedByRunId: null },
+                    status: "completed",
+                    result: "Finished",
+                    startedAt: projection.thread.createdAt,
+                    completedAt: projection.thread.updatedAt,
+                    updatedAt: projection.thread.updatedAt,
+                  })),
+          });
+        }
+        const layerDependencies = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: (threadId, records) =>
+              Effect.gen(function* () {
+                if (records.length === 1 && records[0] === "subagents") {
+                  yield* Ref.update(recordReads, (reads) => [...reads, threadId]);
+                }
+                return projections.get(threadId)!;
+              }),
+            getThreadShell: (threadId) =>
+              Effect.gen(function* () {
+                yield* Ref.update(shellReads, (reads) => [...reads, threadId]);
+                return liveThreadShell(threadId, {
+                  runtimeMode:
+                    threadId === descendantThreadId && (yield* Ref.get(raised))
+                      ? "full-access"
+                      : "approval-required",
+                });
+              }),
+            dispatch: (command) =>
+              Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+                Effect.as({} as never),
+              ),
+            stopDelegatedTasks: () => Ref.set(stoppedBelow, true),
+          }),
+          ServerSettings.layerTest(),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+            list: () => Effect.succeed([]),
+          }),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        const scope: McpInvocationScope = {
+          environmentId: EnvironmentId.make("environment:mcp-cancel-reused"),
+          requestNamespace: "provider-session:mcp-cancel-reused",
+          thread: {
+            threadId: parentThreadId,
+            providerSessionId: "provider-session:mcp-cancel-reused",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+          },
+          client: undefined,
+          capabilities: new Set(["orchestration"]),
+          issuedAt: 1,
+        };
+
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const result = yield* service.cancelTask(scope, {
+            taskId,
+            clientRequestId: "cancel-reused",
+          });
+          assert.equal(result.status, "completed");
+          assert.isTrue(yield* Ref.get(stoppedBelow));
+          // Reusing a child must not multiply permission reads by completed task records.
+          assert.deepEqual(yield* Ref.get(shellReads), [
+            childThreadId,
+            grandchildThreadId,
+            descendantThreadId,
+          ]);
+          assert.deepEqual(yield* Ref.get(recordReads), [
+            childThreadId,
+            grandchildThreadId,
+            descendantThreadId,
+            parentThreadId,
+          ]);
+
+          yield* Ref.set(raised, true);
+          yield* Ref.set(dispatched, []);
+          yield* Ref.set(stoppedBelow, false);
+          const error = yield* service
+            .cancelTask(scope, { taskId, clientRequestId: "cancel-reused-raised" })
+            .pipe(Effect.flip);
+          assert.deepEqual(
+            {
+              code: error.code,
+              dispatched: yield* Ref.get(dispatched),
+              stoppedBelow: yield* Ref.get(stoppedBelow),
+            },
+            { code: "runtime_mode_escalation_denied", dispatched: [], stoppedBelow: false },
+          );
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+      }),
+  );
+
   const cancelOverRaisedGrandchild = (child: {
     readonly deleted: boolean;
     readonly raisedDuringStop?: boolean;

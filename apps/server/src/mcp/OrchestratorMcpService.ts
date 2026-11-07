@@ -2620,9 +2620,12 @@ const make = Effect.gen(function* () {
       // Cancelling stops the child and every task under it, each a write to a
       // thread its user may have raised above the parent's modes since it was
       // delegated. All of them are checked before anything is stopped.
+      const checkedThreadIds = new Set<ThreadId>();
       const assertStoppable = Effect.fn("OrchestratorMcpService.assertStoppable")(function* (
         threadId: ThreadId,
       ): Effect.fn.Return<void, OrchestratorMcpFailure> {
+        if (checkedThreadIds.has(threadId)) return;
+        checkedThreadIds.add(threadId);
         const shell = yield* threadManagement
           .getThreadShell(threadId)
           .pipe(Effect.mapError(threadManagementFailure));
