@@ -2391,6 +2391,14 @@ function OpenCommandPaletteDialog(props: {
   );
   const canCloneProject = canWriteSourceControl && canCreateClonedProject;
   const isCloneDestinationStep = addProjectCloneFlow?.step === "confirm";
+  const cloneEnvironmentLabel =
+    addProjectCloneFlow !== null && environments.length > 1
+      ? (addProjectEnvironmentOptions.find(
+          (option) => option.environmentId === addProjectCloneFlow.environmentId,
+        )?.label ??
+        environmentLabelById.get(addProjectCloneFlow.environmentId) ??
+        null)
+      : null;
   const canSubmitBrowsePath =
     isBrowsing &&
     !relativePathNeedsActiveProject &&
@@ -2899,6 +2907,7 @@ function OpenCommandPaletteDialog(props: {
             addProjectCloneFlow.repository?.nameWithOwner ?? addProjectCloneFlow.repositoryInput
           }
           description={addProjectCloneFlow.repository?.url ?? addProjectCloneFlow.remoteUrl}
+          environmentLabel={cloneEnvironmentLabel}
         />
       ) : null}
       {browseAccessError ? (

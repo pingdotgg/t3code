@@ -153,6 +153,7 @@ export function RemoteRepositorySummary(props: {
   readonly source: AddProjectRemoteSource;
   readonly title: string;
   readonly description: string;
+  readonly environmentLabel: string | null;
 }) {
   return (
     <div className="shrink-0 p-2 pb-0">
@@ -164,6 +165,11 @@ export function RemoteRepositorySummary(props: {
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-foreground text-sm">{props.title}</span>
           <span className="truncate text-muted-foreground/85 text-xs">{props.description}</span>
+          {props.environmentLabel === null ? null : (
+            <span className="truncate text-muted-foreground/85 text-xs">
+              Clones on {props.environmentLabel}
+            </span>
+          )}
         </span>
       </div>
     </div>

@@ -303,18 +303,21 @@ function rejectingSsh(
         const url = input.args.at(-2)!;
         urls.push(url);
         if (url.startsWith("https://") && !httpsFails) return processOutput();
+        const https = url.startsWith("https://");
         yield* (
           input.progress?.onStderrLine?.(
-            url.startsWith("https://")
+            https
               ? "fatal: could not read Username for 'https://github.com': terminal prompts disabled"
-              : "git@github.com: Permission denied (publickey).",
+              : reason === "host_key_unverified"
+                ? "Host key verification failed."
+                : "git@github.com: Permission denied (publickey).",
           ) ?? Effect.void
         );
         return yield* new GitCommandError({
           operation: input.operation,
           command: "git",
           cwd: input.cwd,
-          reason,
+          reason: https ? "authentication_failed" : reason,
           detail: "Git command exited with a non-zero status.",
         });
       }),
@@ -362,9 +365,82 @@ it.effect("reports both failures when the HTTPS retry fails too", () =>
     assert.strictEqual(urls.length, 2);
     assert.strictEqual(
       error.detail,
-      "git@github.com: Permission denied (publickey). Cloning over HTTPS instead also failed: fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+      "Clones use this environment's Git credentials, not a token saved in Settings. Git could not authenticate. git@github.com: Permission denied (publickey). Cloning over HTTPS instead also failed: Git could not authenticate. fatal: could not read Username for 'https://github.com': terminal prompts disabled",
     );
   }),
+);
+
+it.effect("leads with the credential note when only the HTTPS retry lacks credentials", () =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    const error = yield* Effect.flip(
+      cloneInTemporaryDirectory(rejectingSsh(urls, true, "host_key_unverified"), {
+        remoteUrl: CLONE_URLS.sshUrl,
+      }),
+    );
+
+    assert.strictEqual(
+      error.detail,
+      "Clones use this environment's Git credentials, not a token saved in Settings. Host key verification failed. Cloning over HTTPS instead also failed: Git could not authenticate. fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+    );
+  }),
+);
+
+it.effect.each([
+  [
+    "Git has no credentials for the remote",
+    "authentication_failed",
+    ["fatal: could not read Username for 'https://github.com': terminal prompts disabled"],
+  ],
+  [
+    "the host rejects the stored credentials",
+    "authentication_failed",
+    [
+      "remote: HTTP Basic: Access denied. The provided password or token is incorrect.",
+      "fatal: Authentication failed for 'https://gitlab.com/group/repo.git/'",
+    ],
+  ],
+  [
+    "the remote hides the repository",
+    "remote_unreachable",
+    [
+      "remote: Repository not found.",
+      "fatal: repository 'https://github.com/octocat/t3code/' not found",
+    ],
+  ],
+] as const)(
+  "explains that clones use this environment's Git credentials when %s",
+  ([, reason, stderrLines]) =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        cloneInTemporaryDirectory(
+          {
+            execute: (input) =>
+              Effect.gen(function* () {
+                for (const line of stderrLines) {
+                  yield* input.progress?.onStderrLine?.(line) ?? Effect.void;
+                }
+                return yield* new GitCommandError({
+                  operation: input.operation,
+                  command: "git",
+                  cwd: input.cwd,
+                  reason,
+                  detail: "Git command exited with a non-zero status.",
+                  exitCode: 128,
+                });
+              }),
+          },
+          { remoteUrl: CLONE_URLS.url },
+        ),
+      );
+
+      for (const line of stderrLines) assert.include(error.detail, line);
+      // Clients clamp the error, so the guidance must come before Git's lines.
+      const guidanceEnd = error.detail.indexOf("Settings");
+      assert.isAbove(guidanceEnd, -1);
+      assert.isBelow(guidanceEnd, error.detail.indexOf(stderrLines[0]));
+      assert.match(error.detail.slice(0, guidanceEnd), /credential/i);
+    }),
 );
 
 it.effect.each([
