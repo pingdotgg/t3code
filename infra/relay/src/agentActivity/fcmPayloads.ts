@@ -37,6 +37,7 @@ export function androidActivityData(aggregate: RelayAgentActivityAggregateState 
     activity_title: title,
     activity_phase: hero?.phase ?? "",
     activity_active_count: String(activeCount),
+    activity_done_count: String(aggregate?.doneCount ?? 0),
     activity_attention_count: String(attentionCount),
     activity_body: hero
       ? `${hero.status}: ${clean(hero.threadTitle)} · ${clean(hero.projectTitle)}`

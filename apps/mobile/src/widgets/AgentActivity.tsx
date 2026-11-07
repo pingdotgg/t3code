@@ -47,6 +47,7 @@ export interface AgentActivityProps {
   readonly title: string;
   readonly subtitle: string;
   readonly activeCount: number;
+  readonly doneCount?: number;
   readonly updatedAt: string;
   readonly activities: ReadonlyArray<AgentActivityRowProps>;
 }
@@ -140,6 +141,13 @@ function AgentActivity(
     attentionRows.length > 0
       ? `${attentionRows.length} need${attentionRows.length === 1 ? "s" : ""} attention`
       : "";
+  // Attention wins the header's one line; the done count is the lower-priority suffix.
+  const doneSuffix =
+    !allDone && !environment.isStale && !attentionSuffix && (props.doneCount ?? 0) > 0
+      ? `${props.doneCount} done`
+      : "";
+  const headerSuffix = attentionSuffix || doneSuffix;
+  const headerSuffixTint = attentionSuffix ? headerTint : phaseTint("completed");
   const activeLabel = allDone
     ? doneLabel
     : environment.isStale
@@ -261,18 +269,18 @@ function AgentActivity(
             >
               {agentsLabel}
             </Text>
-            {attentionSuffix ? (
+            {headerSuffix ? (
               <Text modifiers={[font({ size: 13 }), foregroundStyle(secondaryForeground)]}>·</Text>
             ) : null}
-            {attentionSuffix ? (
+            {headerSuffix ? (
               <Text
                 modifiers={[
                   font({ weight: "semibold", size: 13 }),
-                  foregroundStyle(headerTint),
+                  foregroundStyle(headerSuffixTint),
                   lineLimit(1),
                 ]}
               >
-                {attentionSuffix}
+                {headerSuffix}
               </Text>
             ) : null}
             <Spacer minLength={0} />
@@ -296,7 +304,11 @@ function AgentActivity(
               lineLimit(1),
             ]}
           >
-            {attentionRows.length > 0 ? summary : activeLabel}
+            {attentionRows.length > 0
+              ? summary
+              : doneSuffix
+                ? `${activeLabel} · ${doneSuffix}`
+                : activeLabel}
           </Text>
           <Spacer minLength={6} />
         </HStack>

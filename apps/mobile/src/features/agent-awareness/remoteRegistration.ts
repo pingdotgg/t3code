@@ -1000,6 +1000,7 @@ const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
                 title: aggregate.title,
                 subtitle: aggregate.subtitle,
                 activeCount: aggregate.activeCount,
+                ...(aggregate.doneCount ? { doneCount: aggregate.doneCount } : {}),
                 updatedAt: aggregate.updatedAt,
                 activities: aggregate.activities,
               },

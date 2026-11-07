@@ -290,17 +290,23 @@ describe("ApnsDeliveries", () => {
       ],
     },
     {
+      label: "only the completed count changes",
+      previousRows: aggregate.activities,
+      previousDoneCount: 1,
+    },
+    {
       label: "the same thread id moves to another environment",
       previousRows: [
         { ...aggregate.activities[0]!, environmentId: EnvironmentId.make("other-env") },
       ],
     },
-  ] as const)("queues an update inside the throttle window when $label", ({ previousRows }) => {
+  ] as const)("queues an update inside the throttle window when $label", (scenario) => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     const queuedJobs: Array<SignedApnsDeliveryJob> = [];
     const previousAggregate: RelayAgentActivityAggregateState = {
       ...aggregate,
-      activities: previousRows,
+      activities: scenario.previousRows,
+      ...("previousDoneCount" in scenario ? { doneCount: scenario.previousDoneCount } : {}),
     };
 
     return Effect.gen(function* () {
@@ -774,7 +780,7 @@ describe("ApnsDeliveries", () => {
     );
   });
 
-  it.effect("skips a queued Done Live Activity update after the thread resumes working", () => {
+  it.effect.each(["resumed", "count"])("skips stale queued updates: %s", (change) => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     let executeCount = 0;
     const completedAt = "1970-01-01T00:00:01.000Z";
@@ -796,7 +802,7 @@ describe("ApnsDeliveries", () => {
       userId: target.user_id,
       deviceId: target.device_id,
       token: target.activity_push_token ?? "activity-token",
-      aggregate: completedAggregate,
+      aggregate: change === "count" ? { ...aggregate, doneCount: 1 } : completedAggregate,
       alert: { title: "Thread", body: "Done: Project" },
       createdAt: completedAt,
       expiresAt: "1970-01-01T00:10:00.000Z",
@@ -833,14 +839,21 @@ describe("ApnsDeliveries", () => {
       Effect.provide(
         layerFor({
           attempts,
-          activityStates: [
-            {
-              ...state,
-              phase: "running",
-              headline: "Running",
-              updatedAt: "1970-01-01T00:00:02.000Z",
-            },
-          ],
+          activityStates:
+            change === "count"
+              ? [
+                  state,
+                  { ...state, threadId: ThreadId.make("done-1"), phase: "completed" },
+                  { ...state, threadId: ThreadId.make("done-2"), phase: "completed" },
+                ]
+              : [
+                  {
+                    ...state,
+                    phase: "running",
+                    headline: "Running",
+                    updatedAt: "1970-01-01T00:00:02.000Z",
+                  },
+                ],
           config: signingConfig,
           execute,
         }),
