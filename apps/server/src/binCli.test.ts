@@ -17,7 +17,7 @@ import {
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
 
-it.live("keeps migration warnings on stderr when a thread command prints JSON", () =>
+it.live("keeps migration warnings out of JSON thread output", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-json-" });
@@ -118,7 +118,5 @@ it.live("keeps migration warnings on stderr when a thread command prints JSON", 
     );
     assert.strictEqual(Number(exitCode), 0, stderr);
     assert.deepStrictEqual(JSON.parse(stdout), []);
-    assert.include(stderr, "Database migration history diverges from this build");
-    assert.include(stderr, "FutureMigration (unknown to this build)");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

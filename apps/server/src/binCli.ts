@@ -5,7 +5,6 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
 import { Argument, Command } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
@@ -118,7 +117,6 @@ export function runCli() {
   keepOutboundFetchOnHttp1();
   Command.run(cli, { version: packageJson.version }).pipe(
     Effect.scoped,
-    Effect.provideService(Logger.LogToStderr, true),
     Effect.provide(layerCliRuntime),
     NodeRuntime.runMain,
   );
