@@ -96,6 +96,27 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
   return "Custom";
 }
 
+/** "On for laptop · Off for vps": which value each selected environment holds. */
+export function mixedSettingSummary(
+  targets: readonly Pick<ScopedSettingsTarget, "label" | "settings">[],
+  key: keyof ServerSettings,
+): string | null {
+  const groups: { value: unknown; text: string; labels: string[] }[] = [];
+  for (const target of targets) {
+    const value = target.settings[key];
+    const group = groups.find((candidate) => Equal.equals(candidate.value, value));
+    if (group) group.labels.push(target.label);
+    else groups.push({ value, text: formatValue(key, value), labels: [target.label] });
+  }
+  // Repeated names, or distinct values that print alike, would make the summary misleading.
+  const ambiguous =
+    new Set(targets.map((target) => target.label)).size !== targets.length ||
+    new Set(groups.map((group) => group.text)).size !== groups.length;
+  return ambiguous
+    ? null
+    : groups.map((group) => `${group.text} for ${group.labels.join(", ")}`).join(" · ");
+}
+
 /** Matches resolveProjectSettings order. */
 export function settingInheritanceLayers(
   target: ScopedSettingsTarget,

@@ -17,7 +17,8 @@ be reset to inherit again. Settings that cannot be overridden by a project are s
 while a project is selected.
 
 When the selected environments disagree, the control shows **Mixed** in place of a value and the
-layers icon turns amber. Picking a value applies it to every selected environment.
+layers icon turns amber. On web and desktop, most rows also say which environments hold each value,
+such as "On for laptop · Off for vps". Picking a value applies it to every selected environment.
 
 Changing an environment value never touches a project's own override. When projects override the
 setting you are editing, the layers icon counts them and the chain lists each one with its value:
