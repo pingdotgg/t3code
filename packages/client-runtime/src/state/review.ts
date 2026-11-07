@@ -122,6 +122,7 @@ export function createReviewEnvironmentAtoms<R, E>(
             environmentId,
             input.cwd,
             input.sourceKind,
+            input.branchMode,
             input.baseRef,
             input.headRef,
             input.oldPath,

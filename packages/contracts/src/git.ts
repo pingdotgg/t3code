@@ -208,6 +208,8 @@ const VcsStatusChangeRequest = Schema.Struct({
   url: Schema.String,
   baseRef: TrimmedNonEmptyStringSchema,
   headRef: TrimmedNonEmptyStringSchema,
+  /** Local ref matched by a checkout PR lookup; standalone summaries have no local ref. */
+  localRefName: Schema.optional(TrimmedNonEmptyStringSchema),
   state: VcsStatusChangeRequestState,
   isDraft: Schema.optional(Schema.Boolean),
   updatedAt: Schema.optional(Schema.NullOr(Schema.String)),

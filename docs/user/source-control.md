@@ -7,8 +7,15 @@ and publish repositories, create pull requests, and review changes.
 
 A turn's changed files and diff show only the turn's own work. When a turn pulls, merges, or
 rebases, the files Git brought in are left out. A file stays in the list when the turn edited it,
-committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed
-against your base branch. Restore still returns the complete saved workspace.
+committed it, or fixed a conflict in it. By default, the branch comparison includes committed changes
+and local staged, unstaged, and untracked work against your base branch. Restore still returns the
+complete saved workspace.
+
+On web and desktop, set **Settings → Diffs & pull requests → Changes comparison** to **Current PR or committed branch**
+to keep local work out of **Changes**. It then shows and opens the checked-out branch's open pull
+request, or compares committed changes against the automatic base when there is no open pull request.
+Use **Uncommitted** for staged, unstaged, and untracked work. Choose **All changes, including local work**
+to restore the combined comparison.
 
 On web and desktop, open the Diff pane source picker and choose **Commits** to review one local
 commit at a time. The list shows the newest 100 commits in the branch comparison. A merge commit

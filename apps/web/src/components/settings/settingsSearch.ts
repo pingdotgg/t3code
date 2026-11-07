@@ -674,6 +674,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["collapsed expanded collapse expand files pull request pr code tab"],
   },
   {
+    id: "changes-comparison",
+    title: "Changes comparison",
+    to: "/settings/diffs",
+    searchTerms: ["all local work uncommitted current pull request pr committed branch comparison"],
+  },
+  {
     id: "diff-layout",
     title: "Diff layout",
     to: "/settings/diffs",

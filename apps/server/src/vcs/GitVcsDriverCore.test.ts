@@ -2217,6 +2217,114 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("review diff previews", () => {
+    it.effect("keeps committed branch review separate from staged, dirty, and untracked work", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/committed"]);
+        yield* writeTextFile(cwd, "README.md", "# test\ncommitted\n");
+        yield* git(cwd, ["commit", "-am", "committed change"]);
+        yield* writeTextFile(cwd, "README.md", "# test\ncommitted\nstaged\n");
+        yield* git(cwd, ["add", "README.md"]);
+        yield* writeTextFile(cwd, "README.md", "# test\ncommitted\nstaged\ndirty\n");
+        yield* writeTextFile(cwd, "untracked.txt", "untracked\n");
+        const combined = yield* driver.getReviewDiffPreview({ cwd, baseRef: initialBranch });
+        const combinedBranch = combined.sources.find((source) => source.kind === "branch-range")!;
+        assert.strictEqual(combinedBranch.branchMode, "working-tree");
+        assert.include(combinedBranch.diff, "+staged");
+        assert.include(combinedBranch.diff, "+dirty");
+        assert.include(combinedBranch.diff, "+untracked");
+        const combinedContents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, {
+            sourceKind: "branch-range",
+            baseRef: combinedBranch.baseRef,
+            headRef: combinedBranch.headRef,
+          }),
+        );
+        assert.strictEqual(combinedContents.newContents, "# test\ncommitted\nstaged\ndirty\n");
+        const invalidPin = yield* driver
+          .getReviewDiffPreview({
+            cwd,
+            baseRef: initialBranch,
+            branchMode: "committed",
+            headRef: "missing-branch-commit",
+          })
+          .pipe(Effect.result);
+        assert.isTrue(Result.isFailure(invalidPin));
+        const preview = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: initialBranch,
+          branchMode: "committed",
+        });
+        const branch = preview.sources.find((source) => source.kind === "branch-range")!;
+        assert.deepStrictEqual(branch.files, [
+          { path: "README.md", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+        assert.notInclude(branch.diff, "staged");
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, {
+            sourceKind: "branch-range",
+            branchMode: "committed",
+            baseRef: branch.baseRef,
+            headRef: branch.headRef,
+          }),
+        );
+        assert.deepStrictEqual(contents, {
+          oldContents: "# test\n",
+          newContents: "# test\ncommitted\n",
+        });
+        const working = preview.sources.find((source) => source.kind === "working-tree")!;
+        assert.include(working.diff, "+staged");
+        assert.include(working.diff, "+dirty");
+        assert.include(working.diff, "+untracked");
+        for (const metadataOnly of [false, true]) {
+          const lazy = yield* driver.getReviewDiffPreview({
+            cwd,
+            baseRef: initialBranch,
+            sourceKind: "branch-range",
+            branchMode: "committed",
+            metadataOnly,
+            trackedOnly: true,
+          });
+          assert.deepStrictEqual(lazy.sources[0]!.files, branch.files);
+          assert.isUndefined(lazy.incomplete);
+        }
+        const file = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: initialBranch,
+          branchMode: "committed",
+          file: { path: "README.md", previousPath: null, sourceKind: "branch-range" },
+        });
+        assert.strictEqual(
+          file.sources.find((source) => source.kind === "branch-range")!.diff,
+          branch.diff,
+        );
+        yield* git(cwd, ["commit", "-am", "advance branch"]);
+        const pinned = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, {
+            sourceKind: "branch-range",
+            branchMode: "committed",
+            baseRef: branch.baseRef,
+            headRef: branch.headRef,
+          }),
+        );
+        assert.deepStrictEqual(pinned, contents);
+        yield* git(cwd, ["checkout", initialBranch]);
+        const pinnedPatch = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: branch.baseRef!,
+          headRef: branch.headRef!,
+          branchMode: "committed",
+          file: { path: "README.md", previousPath: null, sourceKind: "branch-range" },
+        });
+        const pinnedSource = pinnedPatch.sources.find((source) => source.kind === "branch-range")!;
+        assert.strictEqual(pinnedSource.diff, branch.diff);
+        assert.strictEqual(pinnedSource.headRef, branch.headRef);
+        assert.deepStrictEqual(pinnedSource.files, branch.files);
+      }),
+    );
+
     it.effect("diffs a root commit against the empty tree but rejects a shallow boundary", () =>
       Effect.gen(function* () {
         const upstream = yield* makeTmpDir();
