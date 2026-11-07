@@ -2,7 +2,6 @@
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
-export const PI_T3_LIFECYCLE_EXTENSION_FILENAME = "pi-t3-lifecycle-extension.ts";
 
 export const T3_MCP_URL_ENV = "T3_MCP_URL";
 export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
@@ -11,31 +10,6 @@ export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
 
 // These tools trigger file-change approvals, bypassed by Auto-accept edits.
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
-
-/**
- * Pi has no RPC lifecycle events. These markers bracket shutdown callbacks,
- * which can still report progress until Pi invalidates their contexts.
- */
-export const PI_T3_SESSION_END_STATUS_KEY = "t3:session-end";
-export const PI_T3_SESSION_START_STATUS_KEY = "t3:session-start";
-
-/**
- * Pi runs lifecycle hooks in extension order, so this loads before user
- * extensions: the start marker must precede their new background work, while
- * the MCP and permission bridge keeps its later registration position.
- */
-export const PI_T3_LIFECYCLE_EXTENSION_SOURCE = `\
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-
-export default function t3LifecycleExtension(pi: ExtensionAPI) {
-  pi.on("session_shutdown", (event, ctx) => {
-    ctx.ui.setStatus(${JSON.stringify(PI_T3_SESSION_END_STATUS_KEY)}, event.reason ?? "ended");
-  });
-  pi.on("session_start", (_event, ctx) => {
-    ctx.ui.setStatus(${JSON.stringify(PI_T3_SESSION_START_STATUS_KEY)}, "started");
-  });
-}
-`;
 
 export const PI_T3_MCP_EXTENSION_SOURCE = `\
 import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -267,6 +241,20 @@ function createMcpClient(endpoint: string, token: string) {
 }
 
 export default async function t3McpExtension(pi: ExtensionAPI) {
+  // RPC has no trust prompt, so Pi skips an untrusted folder's protected resources. Session
+  // replacement reruns this factory without project_trust, and T3 drops notices outside a turn,
+  // so check each session's first turn. An explicit --no-approve is deliberate and stays quiet.
+  let projectTrustChecked = false;
+  pi.on("before_agent_start", (_event, ctx) => {
+    if (projectTrustChecked) return;
+    projectTrustChecked = true;
+    if (ctx.isProjectTrusted() || process.argv.some((arg) => arg === "--no-approve" || arg === "-na")) return;
+    ctx.ui.notify(
+      \`Pi did not load project settings, extensions, skills, prompts, MCP servers or system prompt files for \${ctx.cwd} because the folder is not trusted. To load them, run the configured Pi binary there with the same PI_CODING_AGENT_DIR (if set), trust the folder or its parent with /trust, then start a new thread in that same worktree. To trust every project, add --approve to Pi's launch arguments in T3 Code settings; to keep them off without this notice, add --no-approve.\`,
+      "warning",
+    );
+  });
+
   // Keep skill chips in the request. Pi expands only one leading /skill:
   // command, so use its own frontmatter loader for every selected chip here.
   pi.on("input", async (event, ctx) => {

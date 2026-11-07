@@ -1,4 +1,5 @@
 import {
+  type DesktopBridge,
   type DesktopPendingSnapShot,
   type DesktopSnapShotEvent,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -28,11 +29,7 @@ import {
 } from "../../lib/snapShotAnimation";
 import { resizeSnapShotSource } from "../../lib/snapShotSource";
 import { playSnapShotSound } from "../../lib/snapShotSound";
-import {
-  dispatchSnapShotComposerFocus,
-  getDesktopSnapShotBridge,
-  type DesktopSnapShotBridge,
-} from "../../lib/desktopSnapShot";
+import { dispatchSnapShotComposerFocus, getDesktopSnapShotBridge } from "../../lib/desktopSnapShot";
 import {
   countQuestionRequestAttachments,
   openQuestionAttachmentDraft,
@@ -154,7 +151,7 @@ async function afterNextPaint(): Promise<void> {
 }
 
 export async function deliverSnapShot(
-  bridge: DesktopSnapShotBridge,
+  bridge: DesktopBridge,
   item: DesktopPendingSnapShot,
   resolveTarget: () => CaptureTarget,
 ): Promise<void> {
@@ -404,7 +401,7 @@ export function SnapShotCoordinator() {
 
   const drainPending = useEffectEvent(() => drain());
   const handleSnapShotEvent = useEffectEvent(
-    (bridge: DesktopSnapShotBridge, event: DesktopSnapShotEvent) => {
+    (bridge: DesktopBridge, event: DesktopSnapShotEvent) => {
       if (!getClientSettings().snapShotEnabled) return;
       switch (event.type) {
         case "requested": {
@@ -470,6 +467,7 @@ export function SnapShotCoordinator() {
       }
     },
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to SnapShot events from the desktop bridge and drains pending ones while enabled
   useEffect(() => {
     const bridge = getDesktopSnapShotBridge();
     if (!bridge || !enabled) return;
@@ -477,6 +475,7 @@ export function SnapShotCoordinator() {
     return bridge.onSnapShotEvent((event) => handleSnapShotEvent(bridge, event));
   }, [enabled]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches window blur, focus and visibilitychange listeners to dismiss or drain SnapShot animations
   useEffect(() => {
     const dismissOnBlur = () => {
       pendingAnimationStartsRef.current.clear();

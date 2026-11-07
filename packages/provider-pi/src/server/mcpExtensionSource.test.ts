@@ -6,12 +6,7 @@ import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
 
-import {
-  PI_T3_LIFECYCLE_EXTENSION_SOURCE,
-  PI_T3_MCP_EXTENSION_SOURCE,
-  PI_T3_SESSION_END_STATUS_KEY,
-  PI_T3_SESSION_START_STATUS_KEY,
-} from "./mcpExtensionSource.ts";
+import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
 type RequestHook = (
@@ -30,7 +25,10 @@ type InputHook = (
   ctx: { ui: { notify: (message: string, level: string) => void } },
 ) => Promise<{ action: string; text: string; images?: ReadonlyArray<unknown> } | undefined>;
 
-async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
+async function loadHooks(
+  commands: ReadonlyArray<SkillCommand> = [],
+  argv: ReadonlyArray<string> = [],
+) {
   const handlers = new Map<string, unknown>();
   const source = NodeModule.stripTypeScriptTypes(
     PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
@@ -39,7 +37,7 @@ async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
     ),
   );
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
-    process: { env: {} },
+    process: { env: {}, argv },
     NodeFSP,
     NodePath,
     stripFrontmatter: (content: string) => content,
@@ -82,62 +80,29 @@ describe("Pi orchestration prompt section", () => {
   });
 });
 
-describe("Pi session teardown", () => {
-  type LifecycleHook = (
-    event: { systemPrompt: string; reason?: string },
-    ctx: { ui: { notify: () => void; setStatus: (key: string, text?: string) => void } },
-  ) => unknown;
-
-  async function loadLifecycleHooks() {
-    const handlers = new Map<string, LifecycleHook>();
-    const source = NodeModule.stripTypeScriptTypes(
-      PI_T3_LIFECYCLE_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
-        "export default function",
-        "function",
-      ),
-    );
-    NodeVM.runInNewContext(`${source}\nt3LifecycleExtension(pi)`, {
-      pi: { on: (name: string, handler: LifecycleHook) => handlers.set(name, handler) },
-    });
-    return handlers;
-  }
-
-  it("marks shutdown and replacement start from the lifecycle sentinel only", async () => {
-    const statuses: Array<readonly [string, string | undefined]> = [];
-    const ui = {
-      notify: () => undefined,
-      setStatus: (key: string, text: string | undefined) => statuses.push([key, text]),
+describe("Pi project trust", () => {
+  it.each([
+    { name: "a trusted folder", trusted: true, argv: [], notices: 0 },
+    { name: "an untrusted folder", trusted: false, argv: [], notices: 1 },
+    { name: "--no-approve", trusted: false, argv: ["--approve", "-na"], notices: 0 },
+  ])("sends $notices trust notice per session for $name", async ({ trusted, argv, notices }) => {
+    const sent: string[] = [];
+    const ctx = {
+      cwd: "/repo",
+      isProjectTrusted: () => trusted,
+      ui: { notify: (message: string) => sent.push(message) },
     };
-    const sentinel = await loadLifecycleHooks();
-    for (const reason of ["reload", "new"]) {
-      await sentinel.get("session_shutdown")!(Object.assign({ systemPrompt: "" }, { reason }), {
-        ui,
-      });
-      await sentinel.get("session_start")!({ systemPrompt: "" }, { ui });
+    // Pi reruns extension factories on session replacement without asking about trust again.
+    for (const _session of [1, 2]) {
+      const handlers = (await loadHooks([], ["node", "pi", ...argv])) as Map<
+        string,
+        (event: unknown, ctx: unknown) => unknown
+      >;
+      for (const _turn of [1, 2]) await handlers.get("before_agent_start")!({}, ctx);
     }
-    assert.deepStrictEqual(statuses, [
-      [PI_T3_SESSION_END_STATUS_KEY, "reload"],
-      [PI_T3_SESSION_START_STATUS_KEY, "started"],
-      [PI_T3_SESSION_END_STATUS_KEY, "new"],
-      [PI_T3_SESSION_START_STATUS_KEY, "started"],
-    ]);
-
-    // The bridge loads after user extensions; a marker from it would arrive
-    // after their new background work.
-    statuses.length = 0;
-    for (const handlers of [(await loadMcpBridge()).handlers, await loadHooks()]) {
-      await (handlers.get("session_shutdown") as LifecycleHook | undefined)?.(
-        Object.assign({ systemPrompt: "" }, { reason: "new" }),
-        { ui },
-      );
-      await (handlers.get("session_start") as LifecycleHook | undefined)?.(
-        { systemPrompt: "" },
-        {
-          ui,
-        },
-      );
-    }
-    assert.deepStrictEqual(statuses, []);
+    assert.equal(sent.length, notices * 2);
+    for (const message of sent)
+      assert.include(message, "for /repo because the folder is not trusted");
   });
 });
 
@@ -197,7 +162,7 @@ describe("Pi MCP tool results", () => {
 describe("Pi MCP tool exposure", () => {
   const discoveryContext = {
     model: { api: "anthropic-messages" },
-    ui: { notify: () => undefined, setStatus: () => undefined },
+    ui: { notify: () => undefined },
   };
 
   it("keeps orchestration direct and optional bridge tools discoverable on modern Pi", async () => {
