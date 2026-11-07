@@ -252,6 +252,8 @@ describe("OrchestratorMcpService", () => {
       const parentThreadId = ThreadId.make("thread:mcp-restart-parent");
       const childThreadId = ThreadId.make("thread:mcp-restart-child");
       const taskId = NodeId.make("node:mcp-restart-task");
+      const cutRunId = RunId.make("run:mcp-restart-child");
+      const continuationRunId = RunId.make("run:mcp-restart-continuation");
       const dispatched = yield* Ref.make(0);
       let awaitsRestart = true;
       let readFails = true;
@@ -277,10 +279,12 @@ describe("OrchestratorMcpService", () => {
         thread: { id: childThreadId, title: "Child" },
         runs: [
           {
-            id: RunId.make("run:mcp-restart-child"),
+            id: cutRunId,
             ordinal: 1,
             status: "cancelled",
             delegatedTaskId: taskId,
+            startedAt: DateTime.makeUnsafe("2026-10-03T10:00:00Z"),
+            completedAt: DateTime.makeUnsafe("2026-10-03T10:05:00Z"),
           },
           { id: RunId.make("run:mcp-restart-later"), ordinal: 2, status: "running" },
         ],
@@ -291,12 +295,17 @@ describe("OrchestratorMcpService", () => {
         runtimeRequests: [],
         turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
+      let childRuns = childProjection.runs;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
-            Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection
+                : { ...childProjection, runs: childRuns },
+            ),
           delegatedTaskResultPending: () =>
             readFails
               ? Effect.fail(new OrchestratorProjectionError({ threadId: childThreadId }))
@@ -336,11 +345,63 @@ describe("OrchestratorMcpService", () => {
         assert.equal(held.status, "running");
         assert.equal(held.workState, "working");
         assert.isNull(held.summary);
+        assert.isNull(held.latestTerminalRunId);
+        assert.isNull(held.latestTerminalStatus);
         assert.equal(yield* Ref.get(dispatched), 0);
+
+        const continuationRun = {
+          id: continuationRunId,
+          ordinal: 3,
+          status: "running",
+          delegatedTaskId: taskId,
+          startedAt: DateTime.makeUnsafe("2026-10-03T10:06:00Z"),
+          restartContinuationOfRunId: cutRunId,
+        } as unknown as (typeof childRuns)[number];
+        childRuns = [...childProjection.runs, continuationRun];
+        const continuing = yield* service.taskStatus(scope, taskId);
+        assert.equal(continuing.status, "running");
+        assert.isNull(continuing.latestTerminalRunId);
+        assert.isNull(continuing.latestTerminalStatus);
+
+        // A second restart cut the continuation, and its own continuation declined.
+        childRuns = [
+          ...childProjection.runs,
+          {
+            ...continuationRun,
+            status: "cancelled",
+            completedAt: DateTime.makeUnsafe("2026-10-03T10:10:00Z"),
+          },
+        ];
         awaitsRestart = false;
         const settled = yield* service.taskStatus(scope, taskId);
         assert.equal(settled.status, "cancelled");
+        assert.equal(settled.latestTerminalRunId, continuationRunId);
+        assert.equal(settled.latestTerminalStatus, "cancelled");
         assert.equal(yield* Ref.get(dispatched), 1);
+
+        // A continuation cancelled before it started leaves the cut run as the result.
+        childRuns = [
+          ...childProjection.runs,
+          { ...continuationRun, status: "cancelled", startedAt: null },
+        ];
+        const unstarted = yield* service.taskStatus(scope, taskId);
+        assert.equal(unstarted.latestTerminalRunId, cutRunId);
+        assert.equal(unstarted.latestTerminalStatus, "cancelled");
+
+        // That unstarted continuation was itself continued, so the whole chain is still live.
+        childRuns = [
+          ...childProjection.runs,
+          { ...continuationRun, status: "cancelled", startedAt: null },
+          {
+            ...continuationRun,
+            id: RunId.make("run:mcp-restart-continuation-2"),
+            ordinal: 4,
+            restartContinuationOfRunId: continuationRunId,
+          },
+        ];
+        const chained = yield* service.taskStatus(scope, taskId);
+        assert.isNull(chained.latestTerminalRunId);
+        assert.isNull(chained.latestTerminalStatus);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );
