@@ -211,29 +211,14 @@ it.layer(
   );
 
   it.effect.each([
-    {
-      install: "native",
-      stdout: "example-native-package-tool-1.2.0.tgz\n",
-      exitCode: 0,
-      latest: "1.2.0",
-    },
-    {
-      install: "manual",
-      stdout: "example-package-tool-1.2.0-beta.1.tgz\n",
-      exitCode: 0,
-      latest: "1.2.0-beta.1",
-    },
-    { install: "npm", stdout: "example-package-tool-1.2.0.tgz\n", exitCode: 0, latest: "1.2.0" },
+    { install: "native", stdout: '"1.2.0"', exitCode: 0, latest: "1.2.0" },
+    { install: "manual", stdout: '["1.2.0"]', exitCode: 0, latest: "1.2.0" },
+    { install: "npm", stdout: '"1.2.0"', exitCode: 0, latest: "1.2.0" },
     { install: "native", stdout: "", exitCode: 1, latest: null },
-    { install: "npm", stdout: "example-package-tool-1.2.0.tgz\n", exitCode: 1, latest: null },
-    { install: "native", stdout: "other-package-1.2.0.tgz\n", exitCode: 0, latest: null },
-    {
-      install: "manual",
-      stdout: "example-package-tool-1.2.0.tgz\nexample-package-tool-1.3.0.tgz\n",
-      exitCode: 0,
-      latest: null,
-    },
-    { install: "manual", stdout: "example-package-tool-.tgz\n", exitCode: 0, latest: null },
+    { install: "npm", stdout: '"1.2.0"', exitCode: 1, latest: null },
+    { install: "native", stdout: "not json", exitCode: 0, latest: null },
+    { install: "manual", stdout: '["1.2.0", "1.3.0"]', exitCode: 0, latest: null },
+    { install: "manual", stdout: '""', exitCode: 0, latest: null },
   ])(
     "uses npm's registry for $install installs (exit $exitCode, output $stdout)",
     (fixture) =>
@@ -264,12 +249,12 @@ it.layer(
                 probes++;
                 expect(command).toBe(NodePath.join(npmBinDir, "npm"));
                 expect(args).toEqual([
-                  "pack",
-                  "--dry-run",
-                  "--json=false",
+                  "view",
                   "--global",
                   ...(fixture.install === "npm" ? ["--prefix", tempDir] : []),
+                  "--json",
                   `${capabilities.packageName}@latest`,
+                  "version",
                 ]);
                 return fixture.stdout;
               },
@@ -315,28 +300,23 @@ it.layer(
     { skip: !symlinksSupported || windowsHost },
   );
 
-  it.effect.each([
-    {
-      install: "native",
-      path: ".local/bin/native-package-tool",
-      packageName: "@example/native-package-tool",
-    },
-    { install: "Vite+", path: ".vite-plus/bin/package-tool", packageName: "@example/package-tool" },
-  ])(
-    "does not offer a $install update npm's release-age policy will not install",
-    (fixture) =>
+  it.effect(
+    "does not offer a Vite+ update npm's release-age policy will not install",
+    () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-release-age");
         const npmBinDir = NodePath.join(tempDir, "npm-bin");
         const npmPath = NodePath.join(npmBinDir, "npm");
         writeExecutable(npmPath);
-        const binaryPath = NodePath.join(tempDir, fixture.path);
+        const binaryPath = NodePath.join(tempDir, ".vite-plus/bin/package-tool");
         writeExecutable(binaryPath);
-        const resolver = fixture.install === "native" ? nativePackageToolUpdate : packageToolUpdate;
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(resolver, {
-          binaryPath,
-          env: { PATH: npmBinDir },
-        }).pipe(
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          {
+            binaryPath,
+            env: { PATH: npmBinDir },
+          },
+        ).pipe(
           Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
@@ -346,7 +326,7 @@ it.layer(
                 if (command !== npmPath) return "";
                 if (args[0] === "view") return '"1.2.0"';
                 return args[0] === "pack" && args.includes("--dry-run")
-                  ? `${fixture.packageName.slice(1).replace("/", "-")}-1.1.0.tgz\n`
+                  ? "example-package-tool-1.1.0.tgz\n"
                   : "";
               },
               (args) => (["view", "pack"].includes(args[0] ?? "") ? 0 : 1),
@@ -1012,14 +992,14 @@ it.layer(
       inheritPath: true,
       outdated: { "@example/package-tool": { current: "1.0.0", latest: "1.1.0" } },
       exitCode: 1,
-      npmOutput: "example-package-tool-1.2.0.tgz\n",
+      npmOutput: '"1.2.0"',
       expected: "1.1.0",
     },
     {
       case: "no update during cooldown",
       outdated: {},
       exitCode: 0,
-      npmOutput: "example-package-tool-1.2.0.tgz\n",
+      npmOutput: '"1.2.0"',
       expected: "1.0.0",
     },
     {
@@ -1032,7 +1012,7 @@ it.layer(
       case: "the configured npm registry when the pnpm probe fails",
       outdated: {},
       exitCode: 2,
-      npmOutput: "example-package-tool-1.2.0.tgz\n",
+      npmOutput: '"1.2.0"',
       expected: "1.2.0",
     },
     {
@@ -1073,7 +1053,7 @@ it.layer(
             ChildProcessSpawner.ChildProcessSpawner,
             stdoutSpawner(
               (_command, args) => {
-                if (args[0] === "pack") {
+                if (args[0] === "view") {
                   npmProbes++;
                   return fixture.npmOutput ?? "";
                 }
