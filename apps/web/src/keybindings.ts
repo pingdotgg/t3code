@@ -447,6 +447,7 @@ export function terminalDeleteShortcutData(
 export function terminalNavigationShortcutData(
   event: ShortcutEventLike,
   platform = navigator.platform,
+  alternateScreen = false,
 ): string | null {
   if (event.type !== undefined && event.type !== "keydown") {
     return null;
@@ -462,9 +463,12 @@ export function terminalNavigationShortcutData(
   const moveWord = key === "arrowleft" ? TERMINAL_WORD_BACKWARD : TERMINAL_WORD_FORWARD;
   const moveLine = key === "arrowleft" ? TERMINAL_LINE_START : TERMINAL_LINE_END;
 
+  // Full-screen apps (vim, TUIs) read ESC b / ESC f as separate keys; let them get Alt+Arrow.
+  const wordData = alternateScreen ? null : moveWord;
+
   if (isMacPlatform(platform)) {
     if (event.altKey && !event.metaKey && !event.ctrlKey) {
-      return moveWord;
+      return wordData;
     }
     if (event.metaKey && !event.altKey && !event.ctrlKey) {
       return moveLine;
@@ -473,7 +477,7 @@ export function terminalNavigationShortcutData(
   }
 
   if (event.altKey && !event.metaKey && !event.ctrlKey) {
-    return moveWord;
+    return wordData;
   }
 
   return null;
