@@ -66,7 +66,22 @@ function basename(filePath: string): string {
   return filePath.split(/[\\/]/).at(-1) ?? filePath;
 }
 
+export const PULL_REQUEST_CHECKS_SECTION_PREFIX = "pull-request-checks:";
+export const PULL_REQUEST_FEEDBACK_SECTION_PREFIX = "pull-request-feedback:";
+
+export function isPullRequestCheckContext(comment: ReviewCommentPresentation): boolean {
+  return comment.sectionId.startsWith(PULL_REQUEST_CHECKS_SECTION_PREFIX);
+}
+
+export function isPullRequestFeedbackContext(comment: ReviewCommentPresentation): boolean {
+  return comment.sectionId.startsWith(PULL_REQUEST_FEEDBACK_SECTION_PREFIX);
+}
+
 export function reviewCommentContextLabel(comment: ReviewCommentPresentation): string {
+  // Check and feedback titles often contain slashes, so they are not paths to shorten.
+  if (isPullRequestCheckContext(comment) || isPullRequestFeedbackContext(comment)) {
+    return comment.filePath;
+  }
   const pullRequestNumber = pullRequestContextNumber(comment);
   if (isPullRequestSummaryContext(comment) && pullRequestNumber !== null) {
     return `#${pullRequestNumber}`;

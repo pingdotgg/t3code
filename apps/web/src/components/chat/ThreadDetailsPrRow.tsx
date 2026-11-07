@@ -27,16 +27,21 @@ import { useServerConfigs } from "~/state/entities";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useUiStateStore } from "~/uiStateStore";
 import {
+  useEnvironmentQuery,
   useEnvironmentQueryIsNewer,
   useEnvironmentQueryRefresh,
   useEnvironmentQuerySelector,
 } from "~/state/query";
 
 import {
-  buildFixFindingsHandoff,
+  buildFixChecksHandoff,
+  buildFixFeedbackHandoff,
   buildResolveConflictsPrompt,
   classifyPullRequestChecks,
   describePullRequestChecks,
+  describeThreadPanelFixAction,
+  gateThreadPanelMergeUntilFeedbackKnown,
+  hasActionablePullRequestFeedback,
   isPullRequestConflicting,
   resolvePullRequestMergeMethod,
   allowedPullRequestMergeMethods,
@@ -138,6 +143,18 @@ export function ThreadDetailsPrRow({
   const checksQuery = useEnvironmentQueryRefresh(checksAtom);
   const checksAreNewer = useEnvironmentQueryIsNewer(checksAtom, detailAtom);
   const detail = resolvePullRequestDetailChecks(detailData, checksData, checksAreNewer);
+  const activityAtom =
+    reference !== null && detailData !== null
+      ? pullRequestEnvironment.activity({ environmentId, input: reference })
+      : null;
+  const activityQuery = useEnvironmentQuery(activityAtom);
+  const activity = activityQuery.data;
+  const activityError = activity === null ? activityQuery.error : null;
+  const feedback = {
+    reviewThreads: activity?.reviewThreads ?? [],
+    comments: activity?.comments ?? [],
+  };
+  const hasFeedback = hasActionablePullRequestFeedback(feedback);
   const terminology = sourceControlClients.get(
     detail?.provider ?? project?.repositoryIdentity?.provider,
   ).changeRequest;
@@ -146,6 +163,7 @@ export function ThreadDetailsPrRow({
   useLiveRefresh(
     () => {
       if (!detailQuery.isPending()) detailQuery.refresh();
+      if (!activityQuery.isPending) activityQuery.refresh();
     },
     { enabled: open, key: `workspace-pr:${refreshKey}`, intervalMs: 10 * 60_000 },
   );
@@ -164,6 +182,7 @@ export function ThreadDetailsPrRow({
     terminology,
     onSuccess: () => {
       checksQuery.refresh();
+      activityQuery.refresh();
       onActed?.();
     },
   });
@@ -175,13 +194,24 @@ export function ThreadDetailsPrRow({
   );
   const [confirmingMerge, setConfirmingMerge] = useState(false);
 
-  const rowAction = resolveThreadPanelPullRequestAction(detail);
+  const rowAction = gateThreadPanelMergeUntilFeedbackKnown(
+    resolveThreadPanelPullRequestAction(detail, feedback),
+    activityQuery.isSuccess && !activityQuery.isPending,
+  );
   if (confirmingMerge && rowAction !== "merge") {
     setConfirmingMerge(false);
   }
   const conflicting = isPullRequestConflicting(detail);
   const checksState = detail === null ? "none" : classifyPullRequestChecks(detail.checks);
   const checksRollup = detail === null ? null : pullRequestChecksState(detail.checks);
+  const fixAction =
+    detail === null
+      ? null
+      : describeThreadPanelFixAction({
+          failingChecks: checksState === "failing",
+          hasFeedback,
+          inThisThread: false,
+        });
   const selectedMergeMethod = resolvePullRequestMergeMethod(
     allowedPullRequestMergeMethods(detail),
     null,
@@ -201,24 +231,37 @@ export function ThreadDetailsPrRow({
     });
   };
 
-  const startFixChecks = () => {
+  const startFixFindings = () => {
     if (detail === null) return;
-    void startHandoff(
-      "findings",
-      buildFixFindingsHandoff({
-        number: detail.number,
-        title: detail.title,
-        url: detail.url,
-        headBranch: detail.headBranch,
-        baseBranch: detail.baseBranch,
-        state: detail.state,
-        isDraft: detail.isDraft,
-        reviewThreads: [],
-        comments: [],
-        checks: detail.checks,
-        commentsTruncated: false,
-      }),
-    );
+    const reviewComments = [
+      ...(hasFeedback
+        ? buildFixFeedbackHandoff({
+            number: detail.number,
+            title: detail.title,
+            url: detail.url,
+            headBranch: detail.headBranch,
+            baseBranch: detail.baseBranch,
+            state: detail.state,
+            isDraft: detail.isDraft,
+            reviewThreads: feedback.reviewThreads,
+            comments: feedback.comments,
+            commentsTruncated: activity?.commentsTruncated ?? false,
+          }).reviewComments
+        : []),
+      ...(checksState === "failing"
+        ? buildFixChecksHandoff({
+            number: detail.number,
+            title: detail.title,
+            url: detail.url,
+            headBranch: detail.headBranch,
+            baseBranch: detail.baseBranch,
+            state: detail.state,
+            isDraft: detail.isDraft,
+            checks: detail.checks,
+          }).reviewComments
+        : []),
+    ];
+    void startHandoff("findings", { prompt: "", reviewComments });
   };
 
   const statePresentation =
@@ -298,6 +341,14 @@ export function ThreadDetailsPrRow({
                 </div>
               </div>
             ) : null}
+            {detail.state === "open" && activityError ? (
+              <div className="flex min-w-0 items-start gap-2 text-destructive">
+                <TriangleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
+                <div className="min-w-0 flex-1 wrap-break-word">
+                  Couldn't load review activity. Open the {terminology.singular} for details.
+                </div>
+              </div>
+            ) : null}
             <div className="flex min-w-0 items-center gap-2">
               <FileDiffIcon className="size-3 shrink-0 stroke-muted-foreground" />
               <div className="min-w-0 flex items-baseline gap-1 truncate text-foreground/75">
@@ -339,15 +390,15 @@ export function ThreadDetailsPrRow({
             tooltip: `Mark this ${terminology.singular} as ready for review`,
             onClick: () => void perform("ready"),
           }
-        : rowAction === "fix"
+        : rowAction === "fix" && fixAction !== null
           ? {
-              label: "Fix",
+              label: fixAction.label,
               pendingLabel: "Preparing...",
               pending: handoff === "findings",
               destructive: true,
               suffix: <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />,
-              tooltip: "Fix the failing checks in a new thread",
-              onClick: startFixChecks,
+              tooltip: fixAction.tooltip,
+              onClick: startFixFindings,
             }
           : rowAction === "merge"
             ? {

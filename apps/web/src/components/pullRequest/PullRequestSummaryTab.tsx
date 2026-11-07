@@ -66,6 +66,10 @@ import {
   pagePullRequestConversationItems,
   pullRequestConversationItemComments,
   pullRequestConversationItems,
+  PULL_REQUEST_FIX_CHECKS_KEY,
+  PULL_REQUEST_FIX_FEEDBACK_KEY,
+  classifyPullRequestChecks,
+  hasActionablePullRequestFeedback,
   pullRequestFindingKey,
   pullRequestReviewOutcome,
   visibleBody,
@@ -433,7 +437,11 @@ export function PullRequestSummaryTab({
   pendingFinding,
   fixFindingLabel = "Fix in a thread",
   fixCheckLabel = "Fix",
+  fixChecksLabel = "Fix all",
+  fixFeedbackLabel = "Fix all",
   onFixFinding,
+  onFixChecks,
+  onFixFeedback,
   onAddToChat,
   onRefresh,
   onRefreshChecks = onRefresh,
@@ -449,7 +457,11 @@ export function PullRequestSummaryTab({
   pendingFinding?: string | null;
   fixFindingLabel?: string;
   fixCheckLabel?: string;
+  fixChecksLabel?: string;
+  fixFeedbackLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
+  onFixChecks?: () => void;
+  onFixFeedback?: () => void;
   /** Absent where there is no composer beside the panel to add a remark to. */
   onAddToChat?: (subject: PullRequestChatSubject) => void;
   onRefresh: () => void;
@@ -634,7 +646,8 @@ export function PullRequestSummaryTab({
     const finding: PullRequestFinding | null =
       reply ||
       (comment.kind !== "review" && comment.kind !== "review-comment") ||
-      outcome === "approved"
+      outcome === "approved" ||
+      outcome === "dismissed"
         ? null
         : thread === undefined
           ? body === null
@@ -875,7 +888,25 @@ export function PullRequestSummaryTab({
         </div>
       </Section>
 
-      <Section key={`checks:${detail.url}`} title="Checks" defaultOpen={false}>
+      <Section
+        key={`checks:${detail.url}`}
+        title="Checks"
+        defaultOpen={false}
+        actions={
+          onFixChecks && !checksStale && classifyPullRequestChecks(detail.checks) === "failing" ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              className="shrink-0"
+              disabled={pendingFinding !== null && pendingFinding !== undefined}
+              onClick={onFixChecks}
+            >
+              <HammerIcon className="size-3" />
+              {pendingFinding === PULL_REQUEST_FIX_CHECKS_KEY ? "Preparing..." : fixChecksLabel}
+            </Button>
+          ) : undefined
+        }
+      >
         {checksStale ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span>Check details are out of date.</span>
@@ -938,6 +969,24 @@ export function PullRequestSummaryTab({
         title={`Comments (${detail.commentCount})`}
         actions={
           <div className="flex shrink-0 items-center gap-1">
+            {onFixFeedback &&
+            hasActionablePullRequestFeedback({
+              reviewThreads: detail.reviewThreads,
+              comments: detail.comments,
+            }) ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                className="shrink-0"
+                disabled={pendingFinding !== null && pendingFinding !== undefined}
+                onClick={onFixFeedback}
+              >
+                <HammerIcon className="size-3" />
+                {pendingFinding === PULL_REQUEST_FIX_FEEDBACK_KEY
+                  ? "Preparing..."
+                  : fixFeedbackLabel}
+              </Button>
+            ) : null}
             <Menu>
               <MenuTrigger
                 render={<Button size="xs" variant="ghost-muted" />}

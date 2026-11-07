@@ -115,6 +115,8 @@ import {
   buildAskAboutGuideStopHandoff,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
+  buildFixChecksHandoff,
+  buildFixFeedbackHandoff,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
   buildPullRequestCommentContext,
@@ -127,6 +129,8 @@ import {
   pullRequestActionNeedsHostRefresh,
   pullRequestCheckoutCommand,
   pullRequestFindingKey,
+  PULL_REQUEST_FIX_CHECKS_KEY,
+  PULL_REQUEST_FIX_FEEDBACK_KEY,
   pullRequestHandoffLabels,
   PULL_REQUEST_MERGE_METHOD_LABELS,
   checkoutFailureDescription,
@@ -826,7 +830,7 @@ export function PullRequestDetailPanel({
 
   const startHandoff = async (
     kind: string,
-    task: { prompt: string; reviewComments?: ReadonlyArray<ReviewCommentContext> } | null,
+    task: ThreadTask | null,
     mode: "worktree" | "local" = "worktree",
   ) => {
     if (!handoffSummary || handoff !== null) return;
@@ -1071,6 +1075,42 @@ export function PullRequestDetailPanel({
         state: detail.state,
         isDraft: detail.isDraft,
         finding,
+      }),
+    );
+  };
+
+  const startFixChecks = () => {
+    if (!detail) return;
+    void startHandoff(
+      PULL_REQUEST_FIX_CHECKS_KEY,
+      buildFixChecksHandoff({
+        number: detail.number,
+        title: detail.title,
+        url: detail.url,
+        headBranch: detail.headBranch,
+        baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
+        checks: detail.checks,
+      }),
+    );
+  };
+
+  const startFixFeedback = () => {
+    if (!detail) return;
+    void startHandoff(
+      PULL_REQUEST_FIX_FEEDBACK_KEY,
+      buildFixFeedbackHandoff({
+        number: detail.number,
+        title: detail.title,
+        url: detail.url,
+        headBranch: detail.headBranch,
+        baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
+        reviewThreads: detail.reviewThreads,
+        comments: detail.comments,
+        commentsTruncated: detail.commentsTruncated,
       }),
     );
   };
@@ -1756,7 +1796,15 @@ export function PullRequestDetailPanel({
                   pendingFinding={handoff}
                   fixFindingLabel={handoffLabels.fixFinding}
                   fixCheckLabel={handoffLabels.fixCheck}
-                  {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
+                  fixChecksLabel={handoffLabels.fixChecks}
+                  fixFeedbackLabel={handoffLabels.fixFeedback}
+                  {...(canFixFindings
+                    ? {
+                        onFixFinding: startFixFinding,
+                        onFixChecks: startFixChecks,
+                        onFixFeedback: startFixFeedback,
+                      }
+                    : {})}
                   {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
                   onRefresh={refreshDetail}
                   onRefreshChecks={refreshFromHost}

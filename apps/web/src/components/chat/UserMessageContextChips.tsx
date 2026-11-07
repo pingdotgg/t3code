@@ -24,7 +24,12 @@ import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown from "../ChatMarkdown";
 import { EnvironmentContextChip } from "../EnvironmentContextChip";
 import { ThreadContextChip } from "../ThreadContextChip";
-import { MessageCircleIcon, MousePointerClickIcon, PaintbrushIcon } from "lucide-react";
+import {
+  ListChecksIcon,
+  MessageCircleIcon,
+  MousePointerClickIcon,
+  PaintbrushIcon,
+} from "lucide-react";
 import type { ComposerContextId, KnownComposerContextRecord } from "@t3tools/contracts";
 import { buildExpandedImagePreview } from "./ExpandedImagePreview";
 import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
@@ -39,6 +44,8 @@ import {
   UnresolvedChip,
 } from "../contextChipParts";
 import {
+  isPullRequestCheckContext,
+  isPullRequestFeedbackContext,
   isPullRequestSummaryContext,
   pullRequestContextDisplayState,
   pullRequestContextKindLabel,
@@ -446,7 +453,15 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         }
         const isPullRequest = isPullRequestSummaryContext(record);
         const label = reviewCommentContextLabel(record);
-        const kindLabel = isPullRequest ? pullRequestContextKindLabel(record) : "Review comment";
+        const isCheck = isPullRequestCheckContext(record);
+        const isFeedback = isPullRequestFeedbackContext(record);
+        const kindLabel = isPullRequest
+          ? pullRequestContextKindLabel(record)
+          : isCheck
+            ? "Check"
+            : isFeedback
+              ? "Feedback"
+              : "Review comment";
         const pullRequestState = pullRequestContextDisplayState(record) ?? "unknown";
         if (isPullRequest && record.pullRequest !== undefined) {
           return (
@@ -462,7 +477,15 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
             copyMarkdown={context.copyMarkdown}
             accessibleLabel={`${kindLabel}, ${label}${record.pullRequest ? `, ${record.pullRequest.title}` : ""}`}
             kind={isPullRequest ? PULL_REQUEST_CHIP_KINDS[pullRequestState] : "review-comment"}
-            icon={isPullRequest ? <PullRequestGlyph.pullRequest /> : <MessageCircleIcon />}
+            icon={
+              isPullRequest ? (
+                <PullRequestGlyph.pullRequest />
+              ) : isCheck ? (
+                <ListChecksIcon />
+              ) : (
+                <MessageCircleIcon />
+              )
+            }
             label={label}
           >
             <UserMessageReviewCommentCard
@@ -549,7 +572,9 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
     <div className="space-y-2 rounded-lg border border-border/70 bg-background/70 p-3">
       <div className="space-y-1">
         <div className="text-xs font-medium text-foreground">
-          {formatWorkspaceRelativePath(comment.filePath, ctx.workspaceRoot)}
+          {isPullRequestCheckContext(comment) || isPullRequestFeedbackContext(comment)
+            ? comment.filePath
+            : formatWorkspaceRelativePath(comment.filePath, ctx.workspaceRoot)}
         </div>
         <div className="text-2xs text-muted-foreground">
           {comment.sectionTitle} · {comment.rangeLabel}
