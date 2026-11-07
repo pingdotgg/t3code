@@ -161,9 +161,10 @@ export function useProjectScriptSettings(
               (other) =>
                 other.environmentId === environmentId &&
                 other.id !== project?.id &&
-                (project ? resolveProjectScripts(settings, other) : other.scripts).some(
-                  (script) => script.id === id,
-                ),
+                resolveProjectScripts(
+                  project ? settings : { ...settings, defaultProjectScripts: effectiveScripts },
+                  other,
+                ).some((script) => script.id === id),
             ));
         const bindingResult = next
           ? await upsertKeybinding({

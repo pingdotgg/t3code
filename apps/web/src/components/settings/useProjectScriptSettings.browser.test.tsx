@@ -5,6 +5,7 @@ import {
   ProjectId,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
+  type ServerSettings,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -16,6 +17,7 @@ const commands = vi.hoisted(() => ({
   upsertKeybinding: vi.fn(),
   removeKeybinding: vi.fn(),
 }));
+const state = vi.hoisted(() => ({ projects: [] as unknown[] }));
 
 vi.mock(import("../../state/session"), async (original) => ({
   ...(await original()),
@@ -23,7 +25,7 @@ vi.mock(import("../../state/session"), async (original) => ({
 }));
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
-  useProjects: () => [],
+  useProjects: (() => state.projects) as never,
 }));
 vi.mock(import("../../state/server"), async (original) => {
   const actual = await original();
@@ -89,6 +91,7 @@ function Probe(props: {
 async function renderSettings(
   keybindings: ResolvedKeybindingsConfig,
   scope: "project" | "environment" = "project",
+  settingsPatch: Partial<ServerSettings> = {},
 ) {
   let settings: ProjectScriptSettings | undefined;
   const screen = await render(
@@ -99,6 +102,7 @@ async function renderSettings(
           settings: {
             ...DEFAULT_SERVER_SETTINGS,
             defaultProjectScripts: scope === "environment" ? [lint] : [],
+            ...settingsPatch,
           },
           keybindings,
           ...(scope === "project"
@@ -129,6 +133,7 @@ async function submitInAct(
 }
 function setup() {
   vi.clearAllMocks();
+  state.projects = [];
   for (const command of Object.values(commands))
     command.mockResolvedValue(AsyncResult.success(undefined));
 }
@@ -159,4 +164,28 @@ describe("useProjectScriptSettings", () => {
       expect(commands.upsertKeybinding).not.toHaveBeenCalled();
     },
   );
+
+  it("keeps a default action's shortcut when deleting it while a legacy project override still lists it", async () => {
+    setup();
+    const retaining = ProjectId.make("retaining");
+    state.projects = [{ id: retaining, environmentId, scripts: [] }];
+    await using screen = await renderSettings(lintBinding, "environment", {
+      projectSettingsFolded: false,
+      projectScriptOverrides: { [retaining]: [lint] },
+    });
+
+    await act(async () => {
+      await screen.settings.persist(
+        (current) => current.filter((script) => script.id !== lint.id),
+        lint.id,
+        null,
+      );
+    });
+
+    expect(commands.updateSettings).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { patch: { defaultProjectScripts: [] } },
+    });
+    expect(commands.removeKeybinding).not.toHaveBeenCalled();
+  });
 });
