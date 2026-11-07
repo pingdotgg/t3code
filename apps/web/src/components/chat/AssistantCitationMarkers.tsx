@@ -57,17 +57,20 @@ function CitationMarkers({
     const overlay = overlayRef.current;
     if (!viewport || !overlay || citations.length === 0) return;
     let frame: number | null = null;
+    viewport.setAttribute("data-has-draft-citations", "");
     const anchors = new Map<string, AssistantCitationSourceAnchor | null>();
     const update = () => {
       frame = null;
       const bounds = viewport.getBoundingClientRect();
       const occurrences = new Map<string, number>();
+      let resolvedSource = false;
       for (const [index, marker] of citations.entries()) {
         const { citation, key } = marker;
         const button = overlay.children[index] as HTMLButtonElement;
         if (!anchors.has(key)) {
           const anchor = findAssistantCitationSourceAnchor(viewport, citation);
           anchors.set(key, anchor);
+          resolvedSource = true;
           if (anchor)
             sourceMutations.observe(anchor.source, { subtree: true, characterData: true });
         }
@@ -89,28 +92,45 @@ function CitationMarkers({
           const rectKey = `${sourceRight}:${rect.bottom}`;
           const occurrence = occurrences.get(rectKey) ?? 0;
           occurrences.set(rectKey, occurrence + 1);
-          const base = Math.min(
-            Math.max(0, bounds.width - 20),
-            Math.max(0, sourceRight - bounds.left + 3),
-          );
-          const offset = occurrence * 22;
-          const left =
-            base + offset <= bounds.width - 20 ? base + offset : Math.max(0, base - offset);
-          const top = Math.min(
-            Math.max(0, bounds.height - 20),
-            Math.max(0, rect.bottom - bounds.top - 18),
-          );
+          const width = button.offsetWidth;
+          const height = button.offsetHeight;
+          const base = Math.max(0, sourceRight - bounds.left + 3);
+          const columns = Math.max(1, Math.floor((bounds.width - base + 2) / (width + 2)));
+          const left = base + (occurrence % columns) * (width + 2);
+          const top =
+            Math.max(0, rect.bottom - bounds.top - height) +
+            Math.floor(occurrence / columns) * (height + 2);
           button.style.left = `${left}px`;
           button.style.top = `${top}px`;
         }
       }
+      if (resolvedSource) rebuildSourceObservations();
     };
     const schedule = () => {
       if (frame === null) frame = requestAnimationFrame(update);
     };
     const stopResize = observeResize(viewport, schedule);
+    let stopSourceResize = () => {};
+    const invalidateText = (records: MutationRecord[]) => {
+      for (const [key, anchor] of anchors) {
+        if (anchor && records.some((record) => anchor.source.contains(record.target)))
+          anchors.delete(key);
+      }
+    };
     const rebuildSourceObservations = () => {
+      invalidateText(sourceMutations.takeRecords());
       sourceMutations.disconnect();
+      stopSourceResize();
+      const geometry = new Set<Element>();
+      for (const anchor of anchors.values()) {
+        for (
+          let node: Element | null = anchor?.source ?? null;
+          node && node !== viewport;
+          node = node.parentElement
+        )
+          geometry.add(node);
+      }
+      stopSourceResize = observeResize([...geometry], schedule);
       for (const anchor of anchors.values()) {
         if (anchor) sourceMutations.observe(anchor.source, { subtree: true, characterData: true });
       }
@@ -129,12 +149,14 @@ function CitationMarkers({
       rebuildSourceObservations();
       schedule();
     });
-    mutations.observe(viewport, { childList: true, subtree: true });
+    mutations.observe(viewport, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["style", "class"],
+    });
     const sourceMutations = new MutationObserver((records) => {
-      for (const [key, anchor] of anchors) {
-        if (anchor && records.some((record) => anchor.source.contains(record.target)))
-          anchors.delete(key);
-      }
+      invalidateText(records);
       rebuildSourceObservations();
       schedule();
     });
@@ -144,11 +166,14 @@ function CitationMarkers({
       anchors.set(key, anchor);
       if (anchor) sourceMutations.observe(anchor.source, { subtree: true, characterData: true });
     }
+    rebuildSourceObservations();
     viewport.addEventListener("scroll", schedule, true);
     window.addEventListener("resize", schedule);
     schedule();
     return () => {
       if (frame !== null) cancelAnimationFrame(frame);
+      viewport.removeAttribute("data-has-draft-citations");
+      stopSourceResize();
       stopResize();
       sourceMutations.disconnect();
       mutations.disconnect();
