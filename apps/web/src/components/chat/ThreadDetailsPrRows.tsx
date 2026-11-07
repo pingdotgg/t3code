@@ -28,12 +28,16 @@ function ThreadDetailsPrLinkRow({
   onOpen,
   onActed,
   onStopWatching,
+  composerTarget,
+  threadRef,
 }: {
   environmentId: EnvironmentId;
   link: ThreadPullRequestLink;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: (() => void) | undefined;
   onStopWatching?: (() => void) | undefined;
+  composerTarget: ComponentProps<typeof ThreadDetailsPrRow>["composerTarget"];
+  threadRef: ScopedThreadRef;
 }) {
   const projects = useProjects();
   const parsed = sourceControlClients.parseChangeRequestUrl(link.url)?.link;
@@ -58,6 +62,8 @@ function ThreadDetailsPrLinkRow({
       openAriaLabel={link.url}
       onOpen={onOpen}
       onStopWatching={onStopWatching}
+      composerTarget={composerTarget}
+      threadRef={threadRef}
       {...(onActed ? { onActed } : {})}
     />
   );
@@ -91,7 +97,9 @@ export function ThreadDetailsPrRows({
               watching: false,
             },
           });
-  const currentRow = <ThreadDetailsPrRow {...row} onStopWatching={stopWatching(currentLink)} />;
+  const currentRow = (
+    <ThreadDetailsPrRow {...row} threadRef={threadRef} onStopWatching={stopWatching(currentLink)} />
+  );
   const rest =
     currentLink === null
       ? []
@@ -113,6 +121,8 @@ export function ThreadDetailsPrRows({
               onOpen={(event) => onOpenLink(event, link.url)}
               onActed={row.onActed}
               onStopWatching={stopWatching(link)}
+              composerTarget={row.composerTarget}
+              threadRef={threadRef}
             />
           ))}
         </div>

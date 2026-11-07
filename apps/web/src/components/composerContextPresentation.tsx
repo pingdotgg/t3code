@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
-import { MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
+import { ListChecksIcon, MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
 import { createContext, type ReactElement, type ReactNode, use } from "react";
 import { ComposerContextActionsContext } from "./composerContextActions";
 
@@ -23,6 +23,7 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import {
   fileContextReference,
   imageContextReference,
+  isPullRequestCheckContext,
   isPullRequestSummaryContext,
   pullRequestContextDisplayState,
   pullRequestContextKindLabel,
@@ -425,9 +426,23 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
         }
         return (
           <ContextChip
-            icon={isPullRequest ? <PullRequestGlyph.pullRequest /> : <MessageCircleIcon />}
+            icon={
+              isPullRequest ? (
+                <PullRequestGlyph.pullRequest />
+              ) : isPullRequestCheckContext(entry.record) ? (
+                <ListChecksIcon />
+              ) : (
+                <MessageCircleIcon />
+              )
+            }
             label={reviewCommentContextLabel(entry.record)}
-            kindLabel={isPullRequest ? pullRequestContextKindLabel(entry.record) : "Review comment"}
+            kindLabel={
+              isPullRequest
+                ? pullRequestContextKindLabel(entry.record)
+                : isPullRequestCheckContext(entry.record)
+                  ? "Check"
+                  : "Review comment"
+            }
             details={<ComposerReviewCommentDetails comment={entry.record} />}
             detailsMode={definition.capabilities.details}
             kind={isPullRequest ? PULL_REQUEST_CHIP_KINDS[pullRequestState] : "review-comment"}
