@@ -125,6 +125,7 @@ export const layer = McpToolAccess.toLayer(
               status: result.run.status,
             };
           }),
+        { ownChildren: "at-their-runtime-mode" },
       ),
     };
   }),

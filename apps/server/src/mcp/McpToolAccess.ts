@@ -23,12 +23,17 @@ import {
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import { assertNotLinked, assertSameLink, callerLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
-import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
+import {
+  resolveInteractionMode,
+  resolveRuntimeMode,
+  runtimeModeRank,
+} from "./delegatedTaskModes.ts";
 import {
   assertFullAccess,
   assertLiveCaller,
   assertTargetWithinLimits,
   type Caller,
+  isOwnDelegatedChild,
   loadCaller,
   readCaller,
   unavailable,
@@ -176,25 +181,50 @@ export const writesWithCapability = <P, A, E, R>(handle: (params: P) => Effect.E
 export const writesThreads = <P, A, E, R>(
   threads: (params: P) => ReadonlyArray<ThreadId | undefined>,
   handle: (params: P) => Effect.Effect<A, E, R>,
+  options?: {
+    /**
+     * Whether the caller may act on its own delegated children whose runtime
+     * mode is above its own, at that mode, as moving one to another account
+     * and resuming it need. Interaction modes stay within the caller's.
+     */
+    readonly ownChildren?: "at-their-runtime-mode";
+  },
 ) =>
   declare(
     (params: P) =>
       Effect.gen(function* () {
         const caller = yield* writingCaller;
+        let runtimeMode = caller.limits.runtimeMode;
         for (const threadId of threads(params)) {
           if (threadId === undefined || threadId === caller.scope.thread?.threadId) continue;
           const target = yield* caller.threads
             .getThreadShell(threadId)
             .pipe(Effect.mapError(unavailable));
           if (target !== null && target.deletedAt === null) {
-            yield* assertTargetWithinLimits(caller.limits, target);
+            const ownChild =
+              options?.ownChildren === "at-their-runtime-mode" &&
+              runtimeModeRank(target.runtimeMode) > runtimeModeRank(caller.limits.runtimeMode) &&
+              (yield* isOwnDelegatedChild(caller.threads, caller.caller?.id, target));
+            if (ownChild && runtimeModeRank(target.runtimeMode) > runtimeModeRank(runtimeMode))
+              runtimeMode = target.runtimeMode;
+            yield* assertTargetWithinLimits(
+              ownChild ? { ...caller.limits, runtimeMode } : caller.limits,
+              target,
+            );
             yield* assertSameLink(caller, target);
           }
         }
         // Modes can rise after this check; the orchestrator rechecks under lock and records refusal before handlers wrap errors.
         const refused = yield* Ref.make<DispatchModeRefusal | undefined>(undefined);
         return yield* handle(params).pipe(
-          Effect.provideService(DispatchModeLimit, { ...caller.limits, refused }),
+          Effect.provideService(DispatchModeLimit, {
+            ...caller.limits,
+            runtimeMode,
+            ...(runtimeMode === caller.limits.runtimeMode
+              ? {}
+              : { ownChildRuntimeMode: runtimeMode }),
+            refused,
+          }),
           Effect.catch((error) =>
             Effect.flatMap(Ref.get(refused), (refusal) =>
               Effect.fail<E | OrchestratorMcpFailure>(

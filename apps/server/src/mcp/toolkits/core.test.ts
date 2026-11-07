@@ -2,14 +2,16 @@ import * as AssetSigner from "../../assets/AssetSigner.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   ChatImageAttachment,
   CommandId,
   EnvironmentId,
+  MessageId,
   NodeId,
   OrchestratorMcpThreadReadResult,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
@@ -38,6 +40,12 @@ import {
 } from "../../orchestration-v2/Orchestrator.ts";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import { CodexProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import * as CommandReceiptStore from "../../orchestration-v2/CommandReceiptStore.ts";
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
+import * as ProviderReplayHarness from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as ProviderRegistryMock from "../../provider/testUtils/providerRegistryMock.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
@@ -871,6 +879,182 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
       ),
     ),
 );
+
+describe("a thread's own delegated child above its modes", () => {
+  const codex = ProviderDriverKind.make("codex");
+  const accountA = ProviderInstanceId.make("account-a");
+  const accountB = ProviderInstanceId.make("account-b");
+  const parentId = ThreadId.make("thread:own-child-parent");
+  const layerDatabase = SqlitePersistence.layerMemory;
+  const layerSettings = ServerSettings.layerTest({
+    providerInstances: {
+      [accountA]: { driver: codex, enabled: true },
+      [accountB]: { driver: codex, enabled: true },
+    },
+  });
+  const layerAdapters = ProviderAdapterRegistry.layerFromAdapters(
+    [accountA, accountB].map((instanceId) => ({
+      instanceId,
+      driver: codex,
+      getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+      planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+      openSession: () => Effect.die("No provider process runs in these tests"),
+    })),
+  );
+  const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
+    { name: "mcp-own-child" },
+    layerAdapters,
+    { databaseLayer: layerDatabase, runEffectWorker: false },
+  );
+  const layerThreads = ThreadManagement.layer.pipe(
+    Layer.provide(layerOrchestrator),
+    Layer.provide(layerSettings),
+    Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+  );
+  const layerProviders = ProviderRegistryMock.layer(
+    [accountA, accountB].map((instanceId) => ({
+      instanceId,
+      driver: codex,
+      enabled: true,
+      installed: true,
+      version: "test",
+      status: "ready" as const,
+      auth: { status: "authenticated" as const },
+      checkedAt: "2026-11-03T00:00:00.000Z",
+      models: [{ slug: "gpt-5", name: "gpt-5", isCustom: false, capabilities: null }],
+      slashCommands: [],
+      skills: [],
+    })),
+  );
+  const layerToolkits = Layer.mergeAll(layerThreadToolkit, layerOrchestratorToolkit).pipe(
+    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+    Layer.provide(
+      Layer.mergeAll(
+        layerSettings,
+        layerAdapters,
+        layerProviders,
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(PeerForwarding.PeerForwarding)({}),
+        Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+        Layer.mock(PeerLinks.PeerLinks)({}),
+        NodeServices.layer,
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  const callAsParent = (name: string, args: Record<string, unknown>) =>
+    McpServer.McpServer.pipe(
+      Effect.flatMap((server) => server.callTool({ name, arguments: args })),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        ...scope,
+        thread: {
+          threadId: parentId,
+          providerSessionId: "own-child",
+          providerInstanceId: accountA,
+        },
+      }),
+      Effect.provideService(McpSchema.McpServerClient, client),
+    );
+
+  it.effect(
+    "an Auto parent moves its stopped Full-access child to another account and resumes it",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        let commands = 0;
+        const commandId = () => CommandId.make(`own-child:${commands++}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: commandId(),
+          threadId: parentId,
+          projectId: ProjectId.make("project:own-child"),
+          title: "parent",
+          modelSelection: { instanceId: accountA, model: "gpt-5" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: commandId(),
+          threadId: parentId,
+          messageId: MessageId.make("message:own-child-parent"),
+          text: "Coordinate the child.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const run = (yield* orchestrator.getThreadProjection(parentId)).runs.at(-1)!;
+        yield* orchestrator.dispatch({
+          type: "delegated_task.request",
+          commandId: commandId(),
+          parentThreadId: parentId,
+          parentRunId: run.id,
+          parentNodeId: run.rootNodeId!,
+          task: "Keep the delegated context.",
+          modelSelection: { instanceId: accountA, model: "gpt-5" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        const childId = (yield* orchestrator.getThreadProjection(parentId)).subagents[0]!
+          .childThreadId!;
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: commandId(),
+          threadId: childId,
+          reason: "Account A reached its usage limit.",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: commandId(),
+          threadId: parentId,
+          runtimeMode: "auto",
+        });
+
+        const moved = yield* callAsParent("t3_thread_configure", {
+          threadId: childId,
+          modelSelection: { instanceId: accountB, model: "gpt-5" },
+        });
+        expect(moved.isError).toBe(false);
+        const resumed = yield* callAsParent("t3_thread_send", {
+          threadId: childId,
+          message: "Go.",
+        });
+        expect(resumed.isError).toBe(false);
+        const child = yield* orchestrator.getThreadProjection(childId);
+        expect(child.thread).toMatchObject({
+          providerInstanceId: accountB,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        });
+        expect(child.runs.at(-1)?.modelSelection.instanceId).toBe(accountB);
+      }).pipe(
+        Effect.provide(
+          layerToolkits.pipe(
+            Layer.provideMerge(
+              Layer.mergeAll(
+                layerOrchestrator,
+                layerThreads,
+                ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-own-child-" }).pipe(
+                  Layer.provideMerge(NodeServices.layer),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+  );
+});
 
 it.effect("discovers workflow stop targets and requires orchestration capability", () => {
   const threadId = ThreadId.make("workflow-parent");

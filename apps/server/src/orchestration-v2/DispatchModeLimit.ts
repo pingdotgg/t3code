@@ -21,6 +21,8 @@ export interface DispatchModeRefusal extends DispatchModes {
 /** Recheck target modes under the command lock; the user can raise them after preflight. */
 export interface DispatchModeLimitValue extends DispatchModes {
   readonly refused?: Ref.Ref<DispatchModeRefusal | undefined>;
+  /** Set when `runtimeMode` was lifted above the caller's to its own delegated child's preflight mode. */
+  readonly ownChildRuntimeMode?: RuntimeMode;
 }
 
 export const DispatchModeLimit = Context.Reference<DispatchModeLimitValue | undefined>(
