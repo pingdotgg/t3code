@@ -220,8 +220,14 @@ it.effect(
         const directory = real!.directory!;
         const [name] = yield* fs.readDirectory(directory);
         const final = `${directory}/${name}`;
-        const beforeLink = `${directory}/secret-delivery-${"b".repeat(64)}.bin.11111111-1111-4111-8111-111111111111.tmp`;
-        const afterLink = `${final}.22222222-2222-4222-8222-222222222222.tmp`;
+        const beforeLink = ServerSecretStore.temporarySecretPath(
+          `${directory}/secret-delivery-${"b".repeat(64)}.bin`,
+          "11111111-1111-4111-8111-111111111111",
+        );
+        const afterLink = ServerSecretStore.temporarySecretPath(
+          final,
+          "22222222-2222-4222-8222-222222222222",
+        );
         yield* fs.copyFile(final, beforeLink);
         yield* fs.link(final, afterLink);
         state.failRecord = false;
