@@ -13,10 +13,11 @@ vi.mock(import("~/state/device"), async (original) => ({
 vi.mock(import("./DevicePhoneViewport"), () => ({
   DevicePhoneViewport: () => <></>,
 }));
-import { DeviceStreamView } from "./DeviceStreamView";
+import { DeviceStreamView, type DeviceViewControls } from "./DeviceStreamView";
+import { deviceStreamSessionAtom } from "./deviceStreamSession";
 
 const access = { httpBase: "http://test", wsBase: "ws://test", query: {}, credentials: true };
-function setup() {
+function setup(phoneView = false) {
   const registry = AtomRegistry.make();
   const touches: unknown[] = [];
   const image = vi.spyOn(HTMLImageElement.prototype, "src", "set").mockImplementation(() => {});
@@ -49,10 +50,19 @@ function setup() {
       close() {}
     },
   );
+  const sessionAtom = deviceStreamSessionAtom({
+    environmentId: EnvironmentId.make("test"),
+    hostId: "local",
+    platform: "ios",
+    deviceId: "test",
+    access,
+    serveSimOnly: false,
+    viewId: "test",
+  });
   return {
     view: () => (
       <RegistryContext.Provider value={registry}>
-        <div style={{ width: 400, height: 800 }}>{view()}</div>
+        <div style={{ width: 400, height: 800 }}>{view(phoneView)}</div>
       </RegistryContext.Provider>
     ),
     [Symbol.dispose]() {
@@ -73,11 +83,19 @@ function setup() {
       const input = await opened;
       input.onmessage?.({ data: Uint8Array.of(0x83).buffer });
       input.onmessage?.({ data: packet.buffer });
+      if (phoneView) {
+        // Presentation needs a canvas stream; the pointer fixture uses MJPEG.
+        const session = registry.get(sessionAtom);
+        registry.ensureNode(sessionAtom).setInitialValue({
+          ...session,
+          state: { ...session.state, status: "streaming", mjpegUrl: null },
+        });
+      }
     },
   };
 }
 
-function view() {
+function view(phoneView: boolean) {
   return (
     <DeviceStreamView
       hostId="local"
@@ -85,18 +103,58 @@ function view() {
       deviceId="test"
       platform="ios"
       visible
-      allowPhoneView={false}
-      renderControls={(controls) => (
-        <output>
-          {controls.handle?.inputConnected ? "Input connected" : "Input disconnected"}
-        </output>
-      )}
+      viewId="test"
+      allowPhoneView={phoneView}
+      {...(phoneView
+        ? {}
+        : {
+            renderControls: (controls: DeviceViewControls) => (
+              <output>
+                {controls.handle?.inputConnected ? "Input connected" : "Input disconnected"}
+              </output>
+            ),
+          })}
     />
   );
 }
 
 // router: false because the device view renders no links and never navigates.
 const options = { router: false } as const;
+
+it("remembers Flat and 3D choices after reopening the device view", async () => {
+  const key = "t3code:device-presentation";
+  const previous = localStorage.getItem(key);
+  using _storage = {
+    [Symbol.dispose]() {
+      if (previous === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, previous);
+    },
+  };
+  localStorage.removeItem(key);
+
+  for (const selected of ["Flat", "3D"] as const) {
+    {
+      using input = setup(true);
+      await using screen = await render(input.view(), options);
+      await act(() => input.configure());
+      await expect
+        .element(screen.getByRole("button", { name: "3D", exact: true }))
+        .toHaveAttribute("aria-pressed", selected === "Flat" ? "true" : "false");
+      await screen.getByRole("button", { name: selected, exact: true }).click();
+      await expect
+        .element(screen.getByRole("button", { name: selected, exact: true }))
+        .toHaveAttribute("aria-pressed", "true");
+    }
+    {
+      using input = setup(true);
+      await using screen = await render(input.view(), options);
+      await act(() => input.configure());
+      await expect
+        .element(screen.getByRole("button", { name: selected, exact: true }))
+        .toHaveAttribute("aria-pressed", "true");
+    }
+  }
+});
 
 function flatPointer(container: HTMLElement) {
   const surface = container.querySelector("canvas")!.parentElement!.parentElement!;
