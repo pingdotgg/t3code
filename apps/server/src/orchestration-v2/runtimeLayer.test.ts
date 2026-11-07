@@ -3544,7 +3544,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
       yield* watch(true, "start");
 
-      let remainingStatus: "pending" | "action-required" | "success" | "failure" = initialStatus;
+      let remainingStatus: "pending" | "action-required" | "success" = initialStatus;
       const approval = initialStatus === "action-required";
       const firstSummary = approval ? "#12: checks await approval" : "#12: checks passed";
       const runUrl = "https://github.com/pingdotgg/t3code/actions/runs/123";
@@ -3584,40 +3584,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       );
 
       const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
-      if (approval) {
-        const started = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
-        assert.isDefined(started);
-        if (started === undefined) return;
-        yield* orchestrator.dispatch({
-          type: "thread.pull-request-watch.sync",
-          commandId: CommandId.make("pr-watch-owed-legacy"),
-          threadId,
-          host: "github.com",
-          repository: "pingdotgg/t3code",
-          number: 12,
-          startedAt: started.startedAt,
-          watch: {
-            ...started,
-            headSha: "ad70160aaa",
-            failedChecks: ["test"],
-            passed: true,
-            passedChecks: ["lint"],
-            owedChecks: [],
-            checksAwaitedSince: null,
-          },
-        });
-        remainingStatus = "failure";
-        yield* reactor.sweep;
-        yield* worker.drain();
-        assert.deepEqual(yield* summaries, []);
-        assert.deepEqual(
-          (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch
-            ?.awaitingApproval,
-          [],
-        );
-        remainingStatus = initialStatus;
-        yield* TestClock.adjust("10 minutes");
-      }
       yield* reactor.sweep;
       yield* worker.drain();
       yield* TestClock.adjust("10 minutes");

@@ -102,6 +102,12 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(missing.changes, []);
     assert.isFalse(missing.next.passed);
     assert.deepEqual(evaluatePullRequestWatch(missing.next, gated, noRemarks).changes, []);
+    const later = { ...check("Preview", "action-required"), url: run(2) };
+    assert.deepEqual(
+      evaluatePullRequestWatch(missing.next, detail({ checks: [bot, approval, later] }), noRemarks)
+        .changes,
+      [{ kind: "checks-awaiting-approval", checks: [later] }],
+    );
     const pushed = detail({ headSha: "bbbbbbbbbb", checks: [bot] });
     assert.deepEqual(evaluatePullRequestWatch(missing.next, pushed, noRemarks).changes, [
       { kind: "checks-passed", count: 1, required: false },
@@ -125,32 +131,16 @@ describe("evaluatePullRequestWatch", () => {
     assert.isFalse(unread.next.passed);
     const read = evaluatePullRequestWatch(unread.next, detail({ checks: [bot] }), noRemarks);
     assert.deepEqual(read.changes, [{ kind: "checks-passed", count: 1, required: false }]);
-    for (const status of ["failure", "pending"] as const) {
-      const blocked = evaluatePullRequestWatch(
-        read.next,
-        detail({ checks: [{ ...bot, status }, unknown] }),
-        noRemarks,
-      );
-      assert.isFalse(blocked.next.passed);
-      assert.deepEqual(
-        evaluatePullRequestWatch(blocked.next, detail({ checks: [bot] }), noRemarks).changes,
-        [{ kind: "checks-passed", count: 1, required: false }],
-      );
-    }
-  });
-
-  it("still reports failures beside workflows awaiting approval", () => {
-    const approval = { ...check("CI", "action-required"), url: run(1) };
-    const broken = check("lint", "failure");
-    const report = evaluatePullRequestWatch(
-      watch(),
-      detail({ checks: [approval, broken] }),
+    const blocked = evaluatePullRequestWatch(
+      read.next,
+      detail({ checks: [{ ...bot, status: "pending" }, unknown] }),
       noRemarks,
     );
-    assert.deepEqual(report.changes, [
-      { kind: "checks-failed", failed: [broken] },
-      { kind: "checks-awaiting-approval", checks: [approval] },
-    ]);
+    assert.isFalse(blocked.next.passed);
+    assert.deepEqual(
+      evaluatePullRequestWatch(blocked.next, detail({ checks: [bot] }), noRemarks).changes,
+      [{ kind: "checks-passed", count: 1, required: false }],
+    );
   });
 
   it("reports each failure at once, even while another check never finishes", () => {
@@ -169,6 +159,13 @@ describe("evaluatePullRequestWatch", () => {
 
     const pushed = detail({ ...second, headSha: "bbbbbbbbbb" });
     assert.equal(evaluatePullRequestWatch(test.next, pushed, noRemarks).changes.length, 1);
+
+    const approval = { ...check("CI", "action-required"), url: run(1) };
+    const gated = detail({ checks: [approval, check("lint", "failure")] });
+    assert.deepEqual(evaluatePullRequestWatch(watch(), gated, noRemarks).changes, [
+      { kind: "checks-failed", failed: [check("lint", "failure")] },
+      { kind: "checks-awaiting-approval", checks: [approval] },
+    ]);
   });
 
   it("reports passed once the required checks pass, whatever the others do", () => {
@@ -507,7 +504,6 @@ describe("evaluatePullRequestWatch", () => {
       checks: [{ ...check("Workflow approval status", "action-required"), placeholder: true }],
     });
     assert.deepEqual(anHourLater(watch(), unknown).flat(), []);
-    assert.deepEqual(anHourLater(legacy, { ...unknown, headSha: "bbbbbbbbbb" }).flat(), []);
     const unread = evaluate(watch(), unknown, noRemarks, 0);
     assert.deepEqual(
       evaluate(unread.next, detail({ checks: [] }), noRemarks, 60 * 60_000).changes,
