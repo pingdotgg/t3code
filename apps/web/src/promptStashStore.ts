@@ -1,4 +1,8 @@
-import { ComposerContextRecord, ForwardCompatibleArray } from "@t3tools/contracts";
+import {
+  AssistantCitation,
+  ComposerContextRecord,
+  ForwardCompatibleArray,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { create } from "zustand";
 
@@ -20,6 +24,7 @@ const StashEntrySchema = Schema.Struct({
   id: Schema.String,
   createdAt: Schema.String,
   prompt: Schema.String,
+  trayCitations: Schema.optionalKey(Schema.Array(AssistantCitation)),
   attachments: Schema.Array(PersistedComposerImageAttachment),
   files: Schema.optionalKey(Schema.Array(PersistedComposerFileAttachment)),
   droppedImageNames: Schema.Array(Schema.String),

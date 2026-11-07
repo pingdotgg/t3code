@@ -1,3 +1,4 @@
+import { CitationDestinationSetting } from "./CitationDestinationSetting";
 import { useAtomValue } from "@effect/atom-react";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
@@ -1089,6 +1090,11 @@ export function ChatSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="composer" title="Composer">
+        <SettingsRow
+          title="New citations go"
+          description="Choose where newly cited assistant text is added on this client."
+          control={<CitationDestinationSetting />}
+        />
         <SettingsRow
           {...searchableSetting("composer-rich-text")}
           description="Show formatted Markdown as you type."

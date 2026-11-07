@@ -12,6 +12,8 @@ export function AssistantCitationCommentEditor({
   inputRef,
   onSubmit,
   onSubmitAndSend,
+  onMove,
+  moveLabel,
   onCancel,
   onDraftChange,
   onVoiceSetupOpenChange,
@@ -19,6 +21,8 @@ export function AssistantCitationCommentEditor({
   citation: AssistantCitation;
   inputRef?: RefObject<HTMLTextAreaElement | null>;
   onSubmit: (comment: string) => boolean;
+  onMove?: ((comment: string) => void) | undefined;
+  moveLabel?: string;
   onSubmitAndSend?: (comment: string) => boolean;
   onCancel: () => void;
   onDraftChange?: (comment: string) => void;
@@ -122,6 +126,16 @@ export function AssistantCitationCommentEditor({
         >
           <TextFieldSpeechControls speech={speech} />
         </div>
+        {onMove ? (
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={speech.blocksSubmission || commentTooLong}
+            onClick={() => onMove(comment)}
+          >
+            {moveLabel}
+          </Button>
+        ) : null}
         <Button
           variant="outline"
           size="xs"

@@ -45,6 +45,7 @@ export function AssistantCitationChip({
     sourceAnchor?: AssistantCitationSourceAnchor | undefined;
     onOpenChange: (open: boolean) => void;
     onCancel?: () => void;
+    onMoveToTray?: ((comment: string) => void) | undefined;
     onSave: (comment: string) => boolean;
     onSaveAndSend?: (comment: string) => boolean;
     onDraftChange?: (comment: string) => void;
@@ -219,6 +220,8 @@ export function AssistantCitationChip({
               <AssistantCitationCommentEditor
                 key={serializeAssistantCitation(citation)}
                 citation={citation}
+                onMove={commentEditor.onMoveToTray}
+                moveLabel="Move to tray"
                 inputRef={commentInputRef}
                 onVoiceSetupOpenChange={setVoiceSetupOpen}
                 onDraftChange={(comment) => {
@@ -255,7 +258,7 @@ export function AssistantCitationChip({
   );
 }
 
-function AssistantCitationQuote({ citation }: { citation: AssistantCitation }) {
+export function AssistantCitationQuote({ citation }: { citation: AssistantCitation }) {
   const [fade, setFade] = useState({ top: false, bottom: false });
   const updateFade = (element: HTMLElement) => {
     const top = element.scrollTop > 1;

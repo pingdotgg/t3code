@@ -180,6 +180,7 @@ export interface ComposerPromptEditorProps {
   onPageScrollKeyDown?: (key: "PageUp" | "PageDown") => void;
   onPageScrollKeyUp?: (key: string) => void;
   onPageScrollRelease?: () => void;
+  onMoveCitationToTray?: (citation: AssistantCitation) => void;
   onCitationSubmitAndSend?: () => void;
   /** Saves unsaved citation text into replacedValue when a controlled rewrite replaces the document. */
   onCitationDraftSave?: (replacedValue: string, savedValue: string) => void;
@@ -207,6 +208,7 @@ const ComposerCitationCommentContext = createContext<{
   openComment: OpenCitationComment | null;
   onOpenChange: (citeKey: string, open: boolean) => void;
   onDraftChange: (citeKey: string, comment: string) => void;
+  onMoveToTray?: ((citation: AssistantCitation) => void) | undefined;
   onSubmitAndSend: () => void;
 }>({
   openComment: null,
@@ -476,6 +478,18 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
             commentContext.onOpenChange(citeKey, open);
           },
           ...(removeOnCancel ? { onCancel: onRemove } : {}),
+          onMoveToTray: commentContext.onMoveToTray
+            ? (comment) => {
+                const pos = nodePos();
+                if (pos === null || !editor.isEditable) return;
+                commentContext.onMoveToTray?.(withAssistantCitationComment(citation, comment));
+                editor
+                  .chain()
+                  .focus()
+                  .deleteRange({ from: pos, to: pos + node.nodeSize })
+                  .run();
+              }
+            : undefined,
           onSave: onSaveComment,
           onDraftChange: (comment) => commentContext.onDraftChange(citeKey, comment),
           onSaveAndSend: (comment) => {
@@ -882,6 +896,7 @@ function ComposerPromptEditorTiptapInner(
     onPageScrollKeyDown,
     onPageScrollKeyUp,
     onPageScrollRelease,
+    onMoveCitationToTray,
     onCitationSubmitAndSend,
     onCitationDraftSave,
     onPaste,
@@ -930,6 +945,7 @@ function ComposerPromptEditorTiptapInner(
 
   const citationCommentActions = {
     openComment: openCitation,
+    onMoveToTray: onMoveCitationToTray,
     onOpenChange: (nodeKey: string, open: boolean) => {
       if (!open && citationDraftRef.current?.key === nodeKey) citationDraftRef.current = null;
       setOpenCitation((current) => {

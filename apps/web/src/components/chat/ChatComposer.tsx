@@ -1,3 +1,6 @@
+import { AssistantCitationTray } from "./AssistantCitationTray";
+import { useCitationDestination } from "./citationDestination";
+import { serializeComposerTray } from "./composerSubmission";
 import { VoiceInputSetup } from "./VoiceInputSetup";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
@@ -697,6 +700,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
   const questionPreparations = useQuestionAttachmentPreparation((state) => state.counts);
   const prompt = composerDraft.prompt;
+
   const composerImages = attachmentDraft.images;
   const composerFiles = attachmentDraft.files;
   const inlineFileIdSet = (() => {
@@ -831,6 +835,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (store) => store.syncPersistedAttachments,
   );
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
+  const [citationDestination] = useCitationDestination();
+  const setTrayCitations = useStableCallback((citations: ReadonlyArray<AssistantCitation>) =>
+    useComposerDraftStore.getState().setTrayCitations(composerDraftTarget, citations),
+  );
+  const appendTrayCitation = useStableCallback((citation: AssistantCitation) =>
+    setTrayCitations([...(getComposerDraft(composerDraftTarget)?.trayCitations ?? []), citation]),
+  );
+  const submissionPrompt = useStableCallback(() =>
+    serializeComposerTray(promptRef.current, getComposerDraft(composerDraftTarget)?.trayCitations),
+  );
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts or releases server attachment uploads as upload capability, limits and draft attachments change
   useEffect(() => {
@@ -1128,7 +1142,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [backgroundThread]);
 
   const composerSendState = deriveComposerSendState({
-    prompt,
+    prompt: serializeComposerTray(prompt, composerDraft.trayCitations),
     imageCount: composerImages.length + composerFiles.length,
     existingAttachmentCount: editingQueuedAttachments?.length ?? 0,
     terminalContexts: composerTerminalContexts,
@@ -2176,7 +2190,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     const submission = submitComposerDraft({
-      prompt: promptRef.current,
+      prompt: submissionPrompt(),
       submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
       event,
       onSend: (sendEvent) => {
@@ -2966,12 +2980,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         focusComposer();
         return true;
       },
-      citeAssistantText: (citation, sourceAnchor) =>
-        insertComposerTextStable(
+      citeAssistantText: (citation, sourceAnchor) => {
+        if (citationDestination === "tray") {
+          appendTrayCitation(citation);
+          return true;
+        }
+        return insertComposerTextStable(
           formatAssistantCitationForComposer(citation, citation.comment),
           "cursor",
           { ensureLeadingBoundary: true, citationCommentAnchor: sourceAnchor },
-        ),
+        );
+      },
       openModelPicker: openModelPickerStable,
       stepReasoningEffort: (direction) => {
         if (noProviderAvailable || pendingUserInputs.length > 0 || isEditingQueuedMessage) {
@@ -3099,7 +3118,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         shownPendingApprovalIds: pendingApprovals
           .map((approval) => approval.requestId)
           .filter((requestId) => !heldRequestIds.has(requestId)),
-        prompt: promptRef.current,
+        prompt: submissionPrompt(),
         images: composerImagesRef.current,
         files: composerFilesRef.current,
         terminalContexts: composerTerminalContextsRef.current,
@@ -3154,6 +3173,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerTerminalContexts,
       insertComposerDraftTerminalContext,
       insertComposerTextStable,
+      citationDestination,
+      appendTrayCitation,
+      submissionPrompt,
       insertComposerTextAtEndStable,
       promptRef,
       composerImagesRef,
@@ -3489,7 +3511,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   />
                 ) : null}
                 <ComposerContextActionsContext value={composerContextActions}>
+                  <AssistantCitationTray
+                    key={composerDraftTargetKey}
+                    citations={composerDraft.trayCitations ?? []}
+                    onChange={setTrayCitations}
+                    onInsertInline={(citation) =>
+                      insertComposerTextStable(
+                        formatAssistantCitationForComposer(citation, citation.comment),
+                        "cursor",
+                        { ensureLeadingBoundary: true },
+                      )
+                    }
+                  />
                   <ComposerPromptEditor
+                    onMoveCitationToTray={appendTrayCitation}
                     draftKey={composerDraftTargetKey}
                     // Switching threads lands focus here, so the label names the thread.
                     ariaLabel={activeThread ? `Message ${activeThread.title}` : "Message"}
@@ -3651,7 +3686,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     showPlanFollowUpPrompt={
                       pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                     }
-                    promptHasText={prompt.trim().length > 0 || voiceInputActive}
+                    promptHasText={
+                      prompt.trim().length > 0 ||
+                      !!composerDraft.trayCitations?.length ||
+                      voiceInputActive
+                    }
                     voiceInputActive={voiceInputActive}
                     isSendBusy={isSendBusy}
                     sendDisabledReason={voiceSendDisabledReason}

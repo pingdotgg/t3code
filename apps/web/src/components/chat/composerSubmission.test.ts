@@ -11,7 +11,7 @@ import {
 } from "@t3tools/shared/assistantCitations";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { submitComposerDraft } from "./composerSubmission";
+import { serializeComposerTray, submitComposerDraft } from "./composerSubmission";
 
 const assistantCitation = {
   version: 1 as const,
@@ -207,4 +207,16 @@ describe("submitComposerDraft", () => {
     expect(result).toEqual({ validationMessage: null, didDispatch: true });
     expect(onSend).toHaveBeenCalledOnce();
   });
+});
+
+it("serializes ordered tray citations before inline citations and text", () => {
+  const second = { ...assistantCitation, comment: "Second" };
+  const inline = serializeAssistantCitation({ ...assistantCitation, comment: "Inline" });
+  expect(serializeComposerTray(`Reply ${inline}`, [assistantCitation, second])).toBe(
+    `${serializeAssistantCitation(assistantCitation)}\n${serializeAssistantCitation(second)}\nReply ${inline}`,
+  );
+  expect(serializeComposerTray("Draft")).toBe("Draft");
+  expect(serializeComposerTray("", [assistantCitation])).toBe(
+    serializeAssistantCitation(assistantCitation),
+  );
 });

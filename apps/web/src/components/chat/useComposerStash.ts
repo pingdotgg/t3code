@@ -217,6 +217,13 @@ export function useComposerStash(input: {
           })
         : reference.source;
     });
+    const currentDraft = getComposerDraft(composerDraftTarget);
+    useComposerDraftStore
+      .getState()
+      .setTrayCitations(composerDraftTarget, [
+        ...(currentDraft?.trayCitations ?? []),
+        ...(entry.trayCitations ?? []),
+      ]);
     const currentPrompt = promptRef.current;
     const nextPrompt =
       restoredPrompt.length === 0
@@ -471,7 +478,12 @@ export function useComposerStash(input: {
         }),
       ),
     ];
-    if (prompt.length === 0 && images.length === 0 && files.length === 0) {
+    if (
+      prompt.length === 0 &&
+      !getComposerDraft(composerDraftTarget)?.trayCitations?.length &&
+      images.length === 0 &&
+      files.length === 0
+    ) {
       const entries = usePromptStashStore.getState().entries;
       const entry = entries.length === 1 ? entries[0] : undefined;
       if (entry && !entry.pendingImageCount) {
@@ -529,6 +541,7 @@ export function useComposerStash(input: {
         id: entryId,
         createdAt: new Date().toISOString(),
         prompt,
+        trayCitations: getComposerDraft(composerDraftTarget)?.trayCitations ?? [],
         attachments: [],
         ...(stashedFiles.length > 0 ? { files: stashedFiles } : {}),
         droppedImageNames: [],

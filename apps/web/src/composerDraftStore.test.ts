@@ -21,6 +21,7 @@ import {
   defaultInstanceIdForDriver,
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
+  MessageId,
   EnvironmentId,
   ProjectId,
   ProviderDriverKind,
@@ -2572,5 +2573,38 @@ describe("composerDraftStore attachment references", () => {
     expect(merged.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]?.prompt).toBe(
       prompt,
     );
+  });
+});
+
+describe("composer citation tray", () => {
+  beforeEach(resetComposerDraftStore);
+  it("persists a citation-only draft, moves drafts, and clears citations with sent content", () => {
+    const source = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("tray-source"));
+    const target = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("tray-target"));
+    const citation = {
+      version: 1 as const,
+      environmentId: TEST_ENVIRONMENT_ID,
+      threadId: source.threadId,
+      messageId: MessageId.make("message"),
+      text: "Quote",
+      start: 0,
+      end: 5,
+      prefix: "",
+      suffix: "",
+      comment: "Comment",
+    };
+    const store = useComposerDraftStore.getState();
+    store.setTrayCitations(source, [citation]);
+    const persisted = JSON.parse(
+      JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+    );
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+    const restored = merge(persisted, useComposerDraftStore.getInitialState());
+    expect(restored.draftsByThreadKey[scopedThreadKey(source)]?.trayCitations).toEqual([citation]);
+    store.moveComposerPromptAndImages(source, target);
+    expect(store.getComposerDraft(target)?.trayCitations).toEqual([citation]);
+    expect(store.getComposerDraft(source)?.trayCitations ?? []).toEqual([]);
+    store.clearComposerContent(target);
+    expect(store.getComposerDraft(target)?.trayCitations ?? []).toEqual([]);
   });
 });

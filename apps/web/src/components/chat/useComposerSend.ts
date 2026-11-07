@@ -607,10 +607,10 @@ export function useComposerSend(input: ComposerSendInput) {
     // A direct "send annotation" writes the draft and sends in the same tick; the reference
     // must be in the text now, not after the next render.
     const promptForSend = directAnnotation
-      ? ensureInlineContextReferences(promptRef.current, [
+      ? ensureInlineContextReferences(sendCtx.prompt, [
           previewAnnotationContextReference(directAnnotation.annotation),
         ])
-      : promptRef.current;
+      : sendCtx.prompt;
     const strandedThread = threadContextsOutsideEnvironment({
       text: promptForSend,
       records: composerThreadContexts,
@@ -760,7 +760,7 @@ export function useComposerSend(input: ComposerSendInput) {
       if (composerRef.current?.validateProviderInput(outgoingFollowUpText) === false) {
         return;
       }
-      const followUpPromptSnapshot = promptRef.current;
+      const followUpPromptSnapshot = sendCtx.prompt;
       const followUpTerminalContexts = [...sendableComposerTerminalContexts];
       const followUpReviewComments = [...composerReviewComments];
       const followUpPreviewAnnotations = [...composerPreviewAnnotations];

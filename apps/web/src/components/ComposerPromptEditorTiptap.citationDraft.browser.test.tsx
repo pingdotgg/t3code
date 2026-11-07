@@ -1,9 +1,10 @@
-import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { AssistantCitationTray } from "./chat/AssistantCitationTray";
+import { type AssistantCitation, EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import {
   serializeAssistantCitation,
   withAssistantCitationComment,
 } from "@t3tools/shared/assistantCitations";
-import { createRef, useState } from "react";
+import { createRef, useRef, useState } from "react";
 import { expect, it } from "vite-plus/test";
 
 import { page, userEvent } from "vite-plus/test/browser";
@@ -96,4 +97,51 @@ it("keeps an unsaved citation comment when a question takes the composer", async
     `See ${serializeAssistantCitation(withAssistantCitationComment(citation, "check this"))} `,
   );
   await expect.element(page.getByLabelText("Edit citation comment")).toBeInTheDocument();
+});
+
+function TrayComposer() {
+  const editorRef = useRef<ComposerPromptEditorHandle>(null);
+  const [prompt, setPrompt] = useState(promptBefore);
+  const [tray, setTray] = useState<ReadonlyArray<AssistantCitation>>([]);
+  return (
+    <>
+      <output data-tray-count={tray.length} data-prompt={prompt} />
+      <AssistantCitationTray
+        citations={tray}
+        onChange={setTray}
+        onInsertInline={(item) => {
+          setPrompt((text) => `${text}${serializeAssistantCitation(item)}`);
+          return true;
+        }}
+      />
+      <ComposerPromptEditor
+        editorRef={editorRef}
+        value={prompt}
+        cursor={0}
+        contextRecords={new Map()}
+        skills={[]}
+        disabled={false}
+        placeholder=""
+        onChange={setPrompt}
+        onPaste={() => {}}
+        onMoveCitationToTray={(item) => setTray((items) => [...items, item])}
+      />
+    </>
+  );
+}
+
+it("moves a citation and its edited comment from inline to tray and back", async () => {
+  await using screen = await render(<TrayComposer />);
+  await page.getByLabelText("Add comment to citation").click();
+  await page.getByLabelText("Comment on selected text").fill("Keep this comment");
+  await page.getByRole("button", { name: "Move to tray", exact: true }).click();
+  const state = () => screen.container.querySelector("output")?.dataset;
+  expect(state()?.trayCount).toBe("1");
+  expect(state()?.prompt).not.toContain("t3-citation");
+  await page.getByRole("button", { name: "1 annotation", exact: true }).click();
+  await page.getByRole("button", { name: "Insert inline", exact: true }).click();
+  expect(state()?.trayCount).toBe("0");
+  expect(state()?.prompt).toContain(
+    serializeAssistantCitation(withAssistantCitationComment(citation, "Keep this comment")),
+  );
 });
