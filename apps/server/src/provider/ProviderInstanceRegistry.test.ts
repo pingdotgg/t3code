@@ -5,6 +5,7 @@ import * as CodexInstallation from "./CodexInstallation.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
+import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -467,6 +468,87 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         version: "2.1.219",
         auth: { status: "authenticated" },
       });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("refreshes Claude quotas immediately after a local account switch", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "claude-quota-account-" });
+      const binaryPath = writeFakeCli({
+        directory: path.join(home, "bin"),
+        name: "claude",
+        source: 'process.stdout.write("2.1.219");',
+      });
+      let account = "a";
+      const writeAccount = () =>
+        fs.writeFileString(
+          path.join(home, ".claude.json"),
+          JSON.stringify({
+            oauthAccount: {
+              organizationUuid: "shared-org",
+              accountUuid: account,
+              emailAddress: `${account}@example.com`,
+            },
+          }),
+        );
+      yield* writeAccount();
+      let quotaReads = 0;
+      using _query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            initializationResult: async () => ({
+              commands: [],
+              account: {
+                email: `${account}@example.com`,
+                subscriptionType: "pro",
+                tokenSource: "oauth",
+              },
+            }),
+            usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => {
+              quotaReads++;
+              return {
+                rate_limits_available: true,
+                rate_limits: {
+                  five_hour: {
+                    utilization: account === "a" ? 100 : 25,
+                    resets_at: "2026-07-18T14:39:00Z",
+                  },
+                },
+              };
+            },
+          }) as unknown as ReturnType<typeof ClaudeSdk.query>,
+      );
+      const instanceId = ProviderInstanceId.make("claude-quota-account-switch");
+      const { registry } = yield* makeProviderInstanceRegistry<ClaudeDriverEnv>({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [instanceId]: {
+            driver: ClaudeDriver.driverKind,
+            enabled: true,
+            config: makeClaudeConfig({ enabled: true, binaryPath, homePath: home }),
+          },
+        },
+      });
+      const instance = (yield* registry.getInstance(instanceId))!;
+      yield* instance.snapshot.refresh;
+      yield* instance.snapshot.refreshUsage!;
+      const first = yield* instance.snapshot.getSnapshot;
+      expect(first.usageLimits?.windows[0]?.usedPercent).toBe(100);
+      expect(quotaReads).toBe(1);
+      yield* instance.snapshot.refreshUsage!;
+      expect(quotaReads).toBe(1);
+      account = "b";
+      yield* writeAccount();
+      yield* instance.snapshot.refreshUsage!;
+      const switched = yield* instance.snapshot.getSnapshot;
+      expect(switched.auth.email).toBe("b@example.com");
+      expect(switched.usageLimits?.windows[0]?.usedPercent).toBe(25);
+      expect(switched.auth.usageRefreshKey).not.toBe(first.auth.usageRefreshKey);
+      expect(quotaReads).toBe(2);
+      yield* instance.snapshot.refreshUsage!;
+      expect(quotaReads).toBe(2);
     }).pipe(Effect.provide(layerTest)),
   );
 

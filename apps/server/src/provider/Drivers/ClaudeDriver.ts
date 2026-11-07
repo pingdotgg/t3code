@@ -7,6 +7,8 @@ import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Digest from "effect/crypto/Digest";
+import * as Hex from "effect/encoding/Hex";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -79,6 +81,7 @@ export type ClaudeDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | ResetCreditCoordinator.ResetCreditCoordinator
   | SecureRandom.SecureRandom
+  | Digest.Digest
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | ProviderLatestVersions.ProviderLatestVersions
@@ -105,6 +108,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     config,
   }) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const digest = yield* Digest.Digest;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     // The server cwd is $HOME in packaged desktop builds, and `claude`
@@ -273,6 +277,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       Effect.provideService(Path.Path, path),
     );
 
+    const getUsageRefreshKey = ClaudeResetCredits.readClaudeAccountCacheKey(accountConfigPath).pipe(
+      Effect.flatMap((identity) =>
+        digest.digest(Digest.sha256, new TextEncoder().encode(identity)),
+      ),
+      Effect.map(Hex.encode),
+      Effect.orDie,
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+    );
+
     const checkProvider = catalogService.refreshInBackground.pipe(
       Effect.andThen(
         modelCatalog.pipe(
@@ -301,7 +314,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               ? Cache.invalidateAll(capabilitiesProbeCache)
               : Effect.void,
           ),
-          Effect.map(stampIdentity),
+          Effect.flatMap((provider) =>
+            getUsageRefreshKey.pipe(
+              Effect.map((usageRefreshKey) =>
+                stampIdentity({
+                  ...provider,
+                  auth: { ...provider.auth, usageRefreshKey },
+                }),
+              ),
+            ),
+          ),
         ),
       ),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -321,6 +343,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           Effect.map(stampIdentity),
         ),
       checkProvider,
+      getUsageRefreshKey,
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>
