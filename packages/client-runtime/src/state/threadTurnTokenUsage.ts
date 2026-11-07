@@ -29,8 +29,13 @@ export type ThreadTurnTokenUsageSummary = {
 export type ThreadTurnTokenUsageRow = {
   readonly runId: RunId;
   readonly ordinal: number;
-  /** Native model id when a turn reported one; otherwise the run's selected model. */
+  /** Label for the By turn row (a single model, Mixed models, or Unknown model). */
   readonly model: string | null;
+  /**
+   * Model id to price this run's totals. Null when models are mixed or unknown so we do not
+   * apply one rate to another model's tokens.
+   */
+  readonly priceModel: string | null;
   readonly usage: ThreadTurnTokenUsageSummary;
 };
 
@@ -69,6 +74,16 @@ function sumOther(
   return known === 0 ? null : sum;
 }
 
+function usageHasCounts(usage: TurnTokenUsage | undefined): boolean {
+  return (
+    usage?.inputTokens !== undefined ||
+    usage?.outputTokens !== undefined ||
+    usage?.cachedInputTokens !== undefined ||
+    usage?.cacheCreationTokens !== undefined ||
+    usage?.reasoningTokens !== undefined
+  );
+}
+
 /** complete only when every turn reports complete usage; partial when any turn has counts. */
 function combinedStatus(
   usages: ReadonlyArray<TurnTokenUsage | undefined>,
@@ -76,11 +91,7 @@ function combinedStatus(
   if (usages.length > 0 && usages.every((usage) => usage?.usageStatus === "complete")) {
     return "complete";
   }
-  return usages.some(
-    (usage) => usage?.inputTokens !== undefined || usage?.outputTokens !== undefined,
-  )
-    ? "partial"
-    : "unavailable";
+  return usages.some(usageHasCounts) ? "partial" : "unavailable";
 }
 
 function emptySummary(turnCount: number): ThreadTurnTokenUsageSummary {
@@ -169,19 +180,30 @@ export function threadTurnTokenUsageTotals(
   };
 }
 
-function reportedModels(
+function resolveRunModels(
   turns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "turnTokenUsage">>,
-): string | null {
+  fallbackModel: string,
+): { readonly label: string | null; readonly priceModel: string | null } {
+  const reported = new Set<string>();
   for (const turn of turns) {
-    const model = turn.turnTokenUsage?.models?.find((entry) => entry.trim().length > 0);
-    if (model !== undefined) return model.trim();
+    for (const entry of turn.turnTokenUsage?.models ?? []) {
+      const model = entry.trim();
+      if (model.length > 0) reported.add(model);
+    }
   }
-  return null;
+  if (reported.size > 1) return { label: "Mixed models", priceModel: null };
+  if (reported.size === 1) {
+    const model = [...reported][0]!;
+    return { label: model, priceModel: model };
+  }
+  const fallback = fallbackModel.trim();
+  if (fallback.length > 0) return { label: fallback, priceModel: fallback };
+  return { label: null, priceModel: null };
 }
 
 /**
- * One row per user run, summing provider turns on non-superseded attempts.
- * Retries that actually ran still count; superseded attempts do not.
+ * One row per user run, summing provider turns across every attempt that ran.
+ * Superseded attempts still count when they burned tokens before a restart.
  */
 export function listThreadTurnTokenUsageByRun(input: {
   readonly runs: ReadonlyArray<
@@ -212,14 +234,14 @@ export function listThreadTurnTokenUsageByRun(input: {
 
   const rows: ThreadTurnTokenUsageRow[] = [];
   for (const run of [...input.runs].sort((a, b) => a.ordinal - b.ordinal)) {
-    const attempts = (attemptsByRun.get(run.id) ?? []).filter(
-      (attempt) => attempt.status !== "superseded",
-    );
+    const attempts = attemptsByRun.get(run.id) ?? [];
     const turns = attempts.flatMap((attempt) => turnsByAttempt.get(attempt.id) ?? []);
+    const models = resolveRunModels(turns, run.modelSelection.model);
     rows.push({
       runId: run.id,
       ordinal: run.ordinal,
-      model: reportedModels(turns) ?? (run.modelSelection.model.trim() || null),
+      model: models.label,
+      priceModel: models.priceModel,
       usage: summarizeThreadTurnTokenUsage(turns),
     });
   }

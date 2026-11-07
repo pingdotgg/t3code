@@ -151,7 +151,9 @@ export class UsageService extends Context.Service<
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
     readonly refreshRates: Effect.Effect<UsagePricing>;
-    readonly priceUsage: (input: UsagePriceInput) => Effect.Effect<UsagePriceResult>;
+    readonly priceUsage: (
+      input: UsagePriceInput,
+    ) => Effect.Effect<UsagePriceResult, UsageReadError>;
   }
 >()("t3/usage/UsageService") {}
 

@@ -113,6 +113,20 @@ describe("summarizeThreadTurnTokenUsage", () => {
     expect(summary.measuredTurnCount).toBe(2);
   });
 
+  it("marks partial when only cache counters are present", () => {
+    const summary = summarizeThreadTurnTokenUsage([
+      turn({
+        usageScope: "main_agent",
+        usageStatus: "partial",
+        cachedInputTokens: 12,
+        hasSubagents: false,
+      }),
+    ]);
+    expect(summary.usageStatus).toBe("partial");
+    expect(summary.cachedInputTokens).toBe(12);
+    expect(summary.measuredTurnCount).toBe(1);
+  });
+
   it("sums native otherUsage when present", () => {
     const summary = summarizeThreadTurnTokenUsage([
       turn(
@@ -164,7 +178,7 @@ describe("threadTurnTokenUsageTotals", () => {
 });
 
 describe("listThreadTurnTokenUsageByRun", () => {
-  it("groups provider turns by non-superseded attempts and prefers reported models", () => {
+  it("includes superseded attempts and prices only a single reported model", () => {
     const rows = listThreadTurnTokenUsageByRun({
       runs: [
         {
@@ -209,12 +223,52 @@ describe("listThreadTurnTokenUsageByRun", () => {
     expect(rows[0]).toMatchObject({
       runId: "run-1",
       model: "claude-opus-4",
-      usage: { inputTokens: 40, outputTokens: 5, totalTokens: 45, measuredTurnCount: 1 },
+      priceModel: "claude-opus-4",
+      usage: { inputTokens: 1039, outputTokens: 14, totalTokens: 1053, measuredTurnCount: 2 },
     });
     expect(rows[1]).toMatchObject({
       runId: "run-2",
       model: "fallback-model",
+      priceModel: "fallback-model",
       usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 },
+    });
+  });
+
+  it("leaves mixed-model runs unpriced", () => {
+    const rows = listThreadTurnTokenUsageByRun({
+      runs: [
+        {
+          id: "run-1" as never,
+          ordinal: 1,
+          activeAttemptId: "attempt-1" as never,
+          modelSelection: { instanceId: "claude" as never, model: "fallback-model" },
+        },
+      ],
+      attempts: [{ id: "attempt-1" as never, runId: "run-1" as never, status: "completed" }],
+      providerTurns: [
+        {
+          runAttemptId: "attempt-1" as never,
+          turnTokenUsage: complete({
+            inputTokens: 10,
+            outputTokens: 1,
+            models: ["claude-opus-4"],
+          }),
+        },
+        {
+          runAttemptId: "attempt-1" as never,
+          turnTokenUsage: complete({
+            inputTokens: 20,
+            outputTokens: 2,
+            models: ["claude-sonnet-4"],
+          }),
+        },
+      ],
+    });
+
+    expect(rows[0]).toMatchObject({
+      model: "Mixed models",
+      priceModel: null,
+      usage: { totalTokens: 33 },
     });
   });
 });

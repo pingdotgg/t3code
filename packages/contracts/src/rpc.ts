@@ -1012,7 +1012,7 @@ const WsServerRefreshUsageRatesRpc = Rpc.make(WS_METHODS.serverRefreshUsageRates
 const WsServerPriceUsageRpc = Rpc.make(WS_METHODS.serverPriceUsage, {
   payload: UsagePriceInput,
   success: UsagePriceResult,
-  error: EnvironmentAuthorizationError,
+  error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
 });
 
 const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess, {
