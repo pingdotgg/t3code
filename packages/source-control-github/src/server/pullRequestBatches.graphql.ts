@@ -418,47 +418,5 @@ export declare namespace PullRequestWatchFingerprint {
   export type Result = typeof PullRequestWatchFingerprint.result.Type
 }
 
-/** A repository pull request. */
-export const PullRequestQueueMembershipRepositoryPullRequestPullRequest = Schema.Struct({
-  /** Indicates whether the pull request is in a merge queue */
-  isInMergeQueue: Schema.Boolean
-})
-export interface PullRequestQueueMembershipRepositoryPullRequestPullRequest extends Schema.Struct.Type<typeof PullRequestQueueMembershipRepositoryPullRequestPullRequest.fields> {}
-
-/** A repository contains the content for a project. */
-export const PullRequestQueueMembershipRepositoryRepository = Schema.Struct({
-  /** Returns a single pull request from the current repository by number. */
-  pullRequest: Schema.NullOr(PullRequestQueueMembershipRepositoryPullRequestPullRequest)
-})
-export interface PullRequestQueueMembershipRepositoryRepository extends Schema.Struct.Type<typeof PullRequestQueueMembershipRepositoryRepository.fields> {}
-
-/** `query PullRequestQueueMembership` */
-export const PullRequestQueueMembership = GraphQL.query("PullRequestQueueMembership", {
-  document: {
-    variables: [
-      { name: "owner", body: "String!" },
-      { name: "name", body: "String!" },
-      { name: "number", body: "Int!" }
-    ],
-    selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){isInMergeQueue}}"] }
-    ],
-    fragments: []
-  },
-  variables: {
-    owner: Schema.String,
-    name: Schema.String,
-    number: Shared.Int
-  },
-  result: Schema.Struct({
-    /** Lookup a given repository by the owner and repository name. */
-    repository: Schema.NullOr(PullRequestQueueMembershipRepositoryRepository)
-  })
-})
-export declare namespace PullRequestQueueMembership {
-  export type Variables = typeof PullRequestQueueMembership.variables.Type
-  export type Result = typeof PullRequestQueueMembership.result.Type
-}
-
 /** Every operation in pullRequestBatches.graphql. */
-export const PullRequestBatchesGraphQLGroup = GraphQLGroup.make(PullRequestSummary, PullRequestStats, PullRequestStackMembership, PullRequestWatchFingerprint, PullRequestQueueMembership)
+export const PullRequestBatchesGraphQLGroup = GraphQLGroup.make(PullRequestSummary, PullRequestStats, PullRequestStackMembership, PullRequestWatchFingerprint)

@@ -224,7 +224,6 @@ interface ResolvedPullRequest {
   baseBranch: string;
   headBranch: string;
   state: "open" | "closed" | "merged";
-  inMergeQueue?: boolean;
 }
 
 interface PullRequestHeadRemoteInfo {
@@ -627,7 +626,6 @@ function toResolvedPullRequest(pr: {
   baseRefName: string;
   headRefName: string;
   state?: "open" | "closed" | "merged";
-  inMergeQueue?: boolean | undefined;
 }): ResolvedPullRequest {
   return {
     number: pr.number,
@@ -636,7 +634,6 @@ function toResolvedPullRequest(pr: {
     baseBranch: pr.baseRefName,
     headBranch: pr.headRefName,
     state: pr.state ?? "open",
-    ...(pr.inMergeQueue === undefined ? {} : { inMergeQueue: pr.inMergeQueue }),
   };
 }
 

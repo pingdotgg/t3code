@@ -103,7 +103,6 @@ const GitResolvedPullRequest = Schema.Struct({
   baseBranch: TrimmedNonEmptyStringSchema,
   headBranch: TrimmedNonEmptyStringSchema,
   state: GitPullRequestState,
-  inMergeQueue: Schema.optional(Schema.Boolean),
 });
 export type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
 

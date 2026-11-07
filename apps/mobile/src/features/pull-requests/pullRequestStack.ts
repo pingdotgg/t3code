@@ -20,11 +20,9 @@ export function pullRequestStackMerge(
           ? "Reopen the closed layers before merging this stack."
           : layers.some((layer) => layer.isDraft)
             ? "Mark every layer being merged ready for review."
-            : layers.some((layer) => layer.inMergeQueue)
-              ? "Wait for queued layers to leave the merge queue before merging this stack."
-              : heads.length !== layers.length
-                ? "Refresh the stack to load its latest revisions before merging."
-                : null;
+            : heads.length !== layers.length
+              ? "Refresh the stack to load its latest revisions before merging."
+              : null;
   return { position: position + 1, layers, heads, reason };
 }
 
@@ -63,13 +61,7 @@ export function savedPullRequestStack(
         number: layer.number,
         headBranch: layer.headBranch,
         state: layer.state,
-        ...(snapshot
-          ? {
-              title: snapshot.title,
-              isDraft: snapshot.isDraft,
-              inMergeQueue: snapshot.inMergeQueue,
-            }
-          : {}),
+        ...(snapshot ? { title: snapshot.title, isDraft: snapshot.isDraft } : {}),
       };
     }),
   };
@@ -82,33 +74,6 @@ export function pullRequestLayerParams<Params extends { readonly initialSummary?
 ) {
   const { initialSummary: _, ...layer } = params;
   return { ...layer, number };
-}
-
-export function pullRequestStackView(
-  data: PullRequestStack | null,
-  saved: PullRequestStack | null,
-) {
-  if (
-    data === null ||
-    saved === null ||
-    !data.layers.some(
-      (layer) =>
-        layer.inMergeQueue === undefined &&
-        saved.layers.some(
-          (candidate) => candidate.number === layer.number && candidate.inMergeQueue !== undefined,
-        ),
-    )
-  )
-    return data;
-  return {
-    ...data,
-    layers: data.layers.map((layer) => {
-      const savedLayer = saved.layers.find((candidate) => candidate.number === layer.number);
-      return layer.inMergeQueue !== undefined || savedLayer?.inMergeQueue === undefined
-        ? layer
-        : { ...layer, inMergeQueue: savedLayer.inMergeQueue };
-    }),
-  };
 }
 
 export function singlePullRequestMergeAllowed(input: {

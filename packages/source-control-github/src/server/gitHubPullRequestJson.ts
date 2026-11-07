@@ -233,10 +233,8 @@ export function toPullRequestPreview(
 ): Omit<PullRequestPreview, "projectId" | "repository"> | null {
   const pullRequest = result.repository?.pullRequest;
   if (pullRequest == null) return null;
-  const { isInMergeQueue, ...preview } = pullRequest;
   return {
-    ...preview,
-    ...(isInMergeQueue === undefined ? {} : { inMergeQueue: isInMergeQueue }),
+    ...pullRequest,
     author: toActor(pullRequest.author),
     state: toState(pullRequest),
   };
@@ -1864,7 +1862,6 @@ const RawStackSchema = Schema.Struct({
 const decodeStacks = decodeJsonResult(Schema.Array(RawStackSchema));
 
 export interface GitHubPullRequestStackLayer {
-  readonly inMergeQueue?: boolean;
   readonly title?: string;
   readonly isDraft?: boolean;
   readonly headSha?: string;

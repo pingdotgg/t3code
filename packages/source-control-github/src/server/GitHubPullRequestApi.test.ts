@@ -976,7 +976,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
       expect(mockedExecute).toHaveBeenCalledTimes(1);
       expect(callAt(0)).toMatchObject({ kind: "graphql", host: "github.example" });
-      expect(varsAt(0)).toMatchObject({ mergeQueue: false });
     }),
   );
 
@@ -1246,53 +1245,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         path: "repos/acme/web/stacks?pull_request=7",
       });
     }),
-  );
-
-  it.effect.each(["available", "missing", "error"] as const)(
-    "reads detailed native stack layers when queue membership is %s",
-    (membership) =>
-      Effect.gen(function* () {
-        const stack = {
-          id: 3,
-          number: 3,
-          url: "https://api.github.com/repos/acme/web/stacks/3",
-          base: { ref: "main" },
-          pull_requests: [
-            { number: 7, head: { ref: "middle", sha: "bbb" }, state: "open", draft: false },
-            { number: 8, head: { ref: "top", sha: "ccc" }, state: "open", draft: false },
-          ],
-        };
-        mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson([stack]))));
-        mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(stack))));
-        mockedExecute.mockReturnValueOnce(
-          Effect.succeed(
-            output(
-              encodeJson(
-                membership === "error"
-                  ? { errors: [{ message: "Queue data unavailable", type: "NOT_FOUND" }] }
-                  : {
-                      data: {
-                        _0_repository: { pullRequest: { isInMergeQueue: true } },
-                        _1_repository: {
-                          pullRequest: membership === "missing" ? null : { isInMergeQueue: false },
-                        },
-                      },
-                    },
-              ),
-            ),
-          ),
-        );
-        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-        const detail = yield* cli.getPullRequestStack({
-          ...pullRequestInput,
-          includeDetails: true,
-        });
-        expect(detail?.number).toBe(3);
-        expect(detail?.layers.map((layer) => layer.inMergeQueue)).toEqual(
-          membership === "available" ? [true, false] : [undefined, undefined],
-        );
-        expect(mockedExecute).toHaveBeenCalledTimes(3);
-      }),
   );
 
   it.effect("revalidates a polled stack, per credential, so an unchanged one costs no quota", () =>
@@ -2474,29 +2426,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(variablesOf("mergePullRequest(")).toEqual([]);
       expect(variablesOf("closePullRequest(")).toEqual([]);
     }),
-  );
-
-  it.effect.each(["merge", "enable-auto-merge"] as const)(
-    "rejects %s when fresh mutation state is queued despite an earlier unqueued detail",
-    (action) =>
-      Effect.gen(function* () {
-        route(
-          ["query PullRequestCore", coreResponse({ isInMergeQueue: false })],
-          ["query PullRequestActionState", actionState({ isInMergeQueue: true })],
-        );
-        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-        const detail = yield* cli.getPullRequestDetail(pullRequestInput);
-        expect(detail.inMergeQueue).toBe(false);
-        const result = yield* cli
-          .runPullRequestAction({ ...pullRequestInput, action })
-          .pipe(Effect.result);
-        expect(result).toMatchObject({
-          _tag: "Failure",
-          failure: { _tag: "GitHubPullRequestQueuedError" },
-        });
-        expect(variablesOf("mergePullRequest(")).toEqual([]);
-        expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([]);
-      }),
   );
 
   it.effect.each(["merge", "enable-auto-merge"] as const)(

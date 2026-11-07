@@ -41,13 +41,7 @@ export function savedPullRequestStack(
         )[0]?.snapshot;
       return {
         ...layer,
-        ...(snapshot
-          ? {
-              title: snapshot.title,
-              isDraft: snapshot.isDraft,
-              inMergeQueue: snapshot.inMergeQueue,
-            }
-          : {}),
+        ...(snapshot ? { title: snapshot.title, isDraft: snapshot.isDraft } : {}),
       };
     }),
   };
@@ -63,28 +57,8 @@ export function pullRequestStackView(
   saved: PullRequestStack | null,
 ) {
   const data = query.isSuccess ? query.data : (query.data ?? saved);
-  const dataWithQueueStatus =
-    data === null ||
-    saved === null ||
-    !data.layers.some(
-      (layer) =>
-        layer.inMergeQueue === undefined &&
-        saved.layers.some(
-          (candidate) => candidate.number === layer.number && candidate.inMergeQueue !== undefined,
-        ),
-    )
-      ? data
-      : {
-          ...data,
-          layers: data.layers.map((layer) => {
-            const savedLayer = saved.layers.find((candidate) => candidate.number === layer.number);
-            return layer.inMergeQueue !== undefined || savedLayer?.inMergeQueue === undefined
-              ? layer
-              : { ...layer, inMergeQueue: savedLayer.inMergeQueue };
-          }),
-        };
   return {
-    data: dataWithQueueStatus,
+    data,
     isFresh: query.isSuccess,
     notice:
       data === null

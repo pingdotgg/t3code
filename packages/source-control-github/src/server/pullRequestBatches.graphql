@@ -127,11 +127,3 @@ query PullRequestWatchFingerprint($owner: String!, $name: String!, $number: Int!
     }
   }
 }
-
-query PullRequestQueueMembership($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      isInMergeQueue
-    }
-  }
-}

@@ -118,7 +118,7 @@ export declare namespace PullRequestsByHead {
 /** A repository contains the content for a project. */
 export const PullRequestByNumberRepositoryRepository = Schema.Struct({
   /** Returns a single pull request from the current repository by number. */
-  pullRequest: Schema.NullOr(PullRequest)
+  pullRequest: Schema.NullOr(PullRequestNode)
 })
 export interface PullRequestByNumberRepositoryRepository extends Schema.Struct.Type<typeof PullRequestByNumberRepositoryRepository.fields> {}
 
@@ -128,11 +128,10 @@ export const PullRequestByNumber = GraphQL.query("PullRequestByNumber", {
     variables: [
       { name: "owner", body: "String!" },
       { name: "name", body: "String!" },
-      { name: "number", body: "Int!" },
-      { name: "mergeQueue", body: "Boolean!" }
+      { name: "number", body: "Int!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){...PullRequestNode isInMergeQueue@include(if:$", "mergeQueue", ")}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){...PullRequestNode}}"] }
     ],
     fragments: [
       { name: "PullRequestNode", body: ["on PullRequest{number title url baseRefName headRefName headRefOid state isDraft mergedAt closedAt updatedAt isCrossRepository headRepository{name nameWithOwner}headRepositoryOwner{__typename login}}"] }
@@ -141,8 +140,7 @@ export const PullRequestByNumber = GraphQL.query("PullRequestByNumber", {
   variables: {
     owner: Schema.String,
     name: Schema.String,
-    number: Shared.Int,
-    mergeQueue: Schema.Boolean
+    number: Shared.Int
   },
   result: Schema.Struct({
     /** Lookup a given repository by the owner and repository name. */

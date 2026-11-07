@@ -5,7 +5,7 @@ import { useMemo } from "react";
 import { useEnvironmentServerConfig, useNavigationThreadShells } from "../../state/entities";
 import { pullRequestStackAtom } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
-import { pullRequestStackView, savedPullRequestStack } from "./pullRequestStack";
+import { savedPullRequestStack } from "./pullRequestStack";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 
 export function usePullRequestStack(params: PullRequestParams, pr: PullRequestDetail | null) {
@@ -37,8 +37,7 @@ export function usePullRequestStack(params: PullRequestParams, pr: PullRequestDe
   const query = useEnvironmentQuery(
     supported ? pullRequestStackAtom({ ...target, input: reference }) : null,
   );
-  const data = query.isSuccess ? query.data : (query.data ?? saved);
-  const stack = useMemo(() => pullRequestStackView(data, saved), [data, saved]);
+  const stack = query.isSuccess ? query.data : (query.data ?? saved);
   return {
     ...query,
     stack,

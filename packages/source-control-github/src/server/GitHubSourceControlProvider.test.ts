@@ -530,34 +530,30 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
 });
 
 describe("GitHubSourceControlProvider.getChangeRequest", () => {
-  it.effect.each([true, false])(
-    "reads a pull request by number and URL with queue membership %s",
-    (queued) => {
-      const { layer, graphqlCalls } = harness({
-        remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
-        graphql: () => ({ pullRequest: { ...node(42, "feature"), isInMergeQueue: queued } }),
+  it.effect("reads a pull request by number, and by URL on its own repository", () => {
+    const { layer, graphqlCalls } = harness({
+      remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
+      graphql: () => ({ pullRequest: node(42, "feature") }),
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      assert.strictEqual(
+        (yield* gh.getChangeRequest({ cwd: "/repo", reference: "#42" })).number,
+        42,
+      );
+      yield* gh.getChangeRequest({
+        cwd: "/repo",
+        reference: "https://github.com/other/thing/pull/42",
       });
-      return Effect.gen(function* () {
-        const gh = yield* GitHubSourceControlProvider.make;
-        assert.strictEqual(
-          (yield* gh.getChangeRequest({ cwd: "/repo", reference: "#42" })).number,
-          42,
-        );
-        const byUrl = yield* gh.getChangeRequest({
-          cwd: "/repo",
-          reference: "https://github.com/other/thing/pull/42",
-        });
-        assert.strictEqual(byUrl.inMergeQueue, queued);
-        assert.deepStrictEqual(
-          graphqlCalls.flatMap((call) => call.lookups),
-          [
-            { owner: "acme", name: "web", number: 42, mergeQueue: true },
-            { owner: "other", name: "thing", number: 42, mergeQueue: true },
-          ],
-        );
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      assert.deepStrictEqual(
+        graphqlCalls.flatMap((call) => call.lookups),
+        [
+          { owner: "acme", name: "web", number: 42 },
+          { owner: "other", name: "thing", number: 42 },
+        ],
+      );
+    }).pipe(Effect.provide(layer));
+  });
 });
 
 describe("GitHubSourceControlProvider writes", () => {

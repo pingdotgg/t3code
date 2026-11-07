@@ -173,7 +173,6 @@ function LinkRowImpl({
                     baseBranch: snapshot.baseBranch,
                     state: snapshot.state,
                     isDraft: snapshot.isDraft,
-                    inMergeQueue: snapshot.inMergeQueue,
                   }),
                 )
         }

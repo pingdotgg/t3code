@@ -1877,7 +1877,6 @@ export const make = Effect.gen(function* () {
     author: value.author,
     state: value.state,
     isDraft: value.isDraft,
-    ...(value.inMergeQueue === undefined ? {} : { inMergeQueue: value.inMergeQueue }),
     createdAt: value.createdAt,
   });
   const previewUncached: PullRequestService["Service"]["preview"] = (input) =>

@@ -142,7 +142,6 @@ function entryOf(
     headBranch: link.snapshot?.headBranch ?? null,
     baseBranch: link.snapshot?.baseBranch ?? null,
     isDraft: link.snapshot?.isDraft ?? null,
-    inMergeQueue: link.snapshot?.inMergeQueue ?? null,
     stack,
   };
 }

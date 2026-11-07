@@ -200,14 +200,13 @@ query PullRequestCheckContexts(
   }
 }
 
-query PullRequestPreview($owner: String!, $name: String!, $number: Int!, $mergeQueue: Boolean!) {
+query PullRequestPreview($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       number
       title
       url
       state
-      isInMergeQueue @include(if: $mergeQueue)
       isDraft
       createdAt
       author {
@@ -599,18 +598,11 @@ query PullRequestMergeMessage(
 }
 
 # What `gh pr merge` and `gh pr update-branch` read before they act.
-query PullRequestActionState(
-  $owner: String!
-  $name: String!
-  $number: Int!
-  $headRef: String!
-  $mergeQueue: Boolean!
-) {
+query PullRequestActionState($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       id
       headRefOid
-      isInMergeQueue @include(if: $mergeQueue)
       isMergeQueueEnabled
       mergeStateStatus
       baseRef {

@@ -785,60 +785,6 @@ it.effect("saves a pasted value with no card where request_secret takes one", ()
 );
 
 const decodeDeviceCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
-it.each([
-  { number: 7, text: "7: queued", pass: true },
-  { number: 7, text: "7: Queued", pass: true },
-  { number: 7, text: "7: inMergeQueue: true", pass: true },
-  { number: 7, text: "7: `inMergeQueue`: `TRUE`", pass: true },
-  { number: 7, text: "7: isDraft: true, inMergeQueue: false", pass: false },
-  { number: 7, text: "7: inMergeQueue: Not true", pass: false },
-  { number: 7, text: "7: inMergeQueue: false\n8: inMergeQueue: true", pass: false },
-  { number: 7, text: "pr #7: QUEUED", pass: true },
-  { number: 7, text: "7: Not queued", pass: false },
-  { number: 7, text: "7: NOT QUEUED", pass: false },
-  { number: 7, text: "- **PR #7**: open, queued", pass: true },
-  { number: 7, text: "| #7 | open | queued |", pass: true },
-  { number: 7, text: "7: not queued\n8: queued", pass: false },
-  { number: 7, text: "7: open\n8: queued", pass: false },
-  { number: 7, text: "17: queued\n7: not queued", pass: false },
-  { number: 8, text: "8: not queued", pass: true },
-  { number: 8, text: "8: Not queued", pass: true },
-  { number: 8, text: "8: NOT QUEUED", pass: true },
-  { number: 8, text: "pr #8: NOT IN THE MERGE QUEUE", pass: true },
-  { number: 8, text: "8: FALSE", pass: true },
-  { number: 8, text: "8: Not false", pass: false },
-  { number: 8, text: "- **PR #8**: open, not in the merge queue", pass: true },
-  { number: 8, text: "| #8 | open | false |", pass: true },
-  { number: 8, text: "7: queued\n8: queued\n9: not queued\n10: unknown", pass: false },
-  { number: 8, text: "18: not queued\n8: queued", pass: false },
-  { number: 9, text: "9: unknown", pass: true },
-  { number: 9, text: "9: Unknown", pass: true },
-  { number: 9, text: "9: inMergeQueue: null", pass: true },
-  { number: 9, text: "9: `inMergeQueue`: `NULL`", pass: true },
-  { number: 9, text: "9: inMergeQueue: true, stack: null", pass: false },
-  { number: 9, text: "9: inMergeQueue: Not null", pass: false },
-  { number: 9, text: "9: inMergeQueue: false\n10: inMergeQueue: null", pass: false },
-  { number: 9, text: "pr #9: NOT KNOWN", pass: true },
-  { number: 9, text: "9: Not unknown", pass: false },
-  { number: 9, text: "9: NOT UNKNOWN", pass: false },
-  { number: 9, text: "| #9 | open | not known |", pass: true },
-  { number: 9, text: "9: not queued\n10: unknown", pass: false },
-  { number: 9, text: "19: unknown\n9: queued", pass: false },
-  { number: 9, text: "9: not unknown", pass: false },
-])("grades queue membership on PR $number's own line: $text", ({ number, text, pass }) => {
-  const testCase = decodeDeviceCase(
-    NodeFS.readFileSync(new URL("./cases/merge-queue.ndjson", import.meta.url), "utf8").trim(),
-  );
-  const checks = gradeSample(
-    { textMust: testCase.expect.textMust?.slice(number - 7, number - 6) },
-    { calls: [], text, stopReason: "end_turn" },
-  );
-  assert.deepEqual(
-    checks.map((check) => check.pass),
-    [pass],
-  );
-});
-
 const deviceCases = () =>
   NodeFS.readFileSync(new URL("./cases/device-manager.ndjson", import.meta.url), "utf8")
     .trim()

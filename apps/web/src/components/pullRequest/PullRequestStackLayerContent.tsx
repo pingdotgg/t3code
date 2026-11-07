@@ -12,7 +12,6 @@ export function PullRequestStackLayerContent({
   const state = resolvePullRequestState({
     state: layer.state,
     isDraft: layer.isDraft ?? false,
-    inMergeQueue: layer.inMergeQueue,
   });
   return (
     <>

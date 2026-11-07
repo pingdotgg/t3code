@@ -1,7 +1,6 @@
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
-import { SourceControlProviderKind, GitResolvePullRequestResult } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
+import { SourceControlProviderKind } from "@t3tools/contracts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -122,8 +121,6 @@ type FakeProviderCall =
     }
   | { readonly operation: "getRepositoryCloneUrls"; readonly repository: string }
   | { readonly operation: "getDefaultBranch" };
-
-const decodeResolvedPullRequest = Schema.decodeEffect(GitResolvePullRequestResult);
 
 const listed = (calls: ReadonlyArray<FakeProviderCall>) =>
   calls.flatMap((call) => (call.operation === "listChangeRequests" ? [call] : []));
@@ -4965,30 +4962,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           (yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
         ).toBe("origin/feature/pr-local-no-head-repo");
       }),
-  );
-
-  it.effect("preserves queue membership when resolving a PR for checkout", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["remote", "add", "origin", "https://github.com/acme/app.git"]);
-      const { manager } = yield* makeManager({
-        providerScenario: {
-          pullRequest: {
-            number: 7,
-            title: "Queued change",
-            url: "https://github.com/acme/app/pull/7",
-            baseRefName: "main",
-            headRefName: "feature",
-            state: "open",
-            inMergeQueue: true,
-          },
-        },
-      });
-      const result = yield* manager.resolvePullRequest({ cwd: repoDir, reference: "7" });
-      const decoded = yield* decodeResolvedPullRequest(result);
-      expect(decoded.pullRequest).toMatchObject({ number: 7, state: "open", inMergeQueue: true });
-    }),
   );
 
   it.effect("prepares a worktree from the head branch when the host has no pull ref", () =>

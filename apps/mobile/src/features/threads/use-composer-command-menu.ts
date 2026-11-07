@@ -1,4 +1,3 @@
-import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
 import * as Dialog from "../../components/ui/Dialog";
 import type {
   EnvironmentId,
@@ -364,10 +363,9 @@ export function useComposerCommandMenu({
           baseBranch: entry.baseBranch,
           state: entry.state,
           isDraft: entry.isDraft,
-          inMergeQueue: entry.inMergeQueue,
         },
         label: `#${entry.number}`,
-        description: `${pullRequestStatus(entry).label} · ${
+        description: `${entry.isDraft ? "Draft" : entry.state} · ${
           entry.repository.toLowerCase() === pullRequestRepository?.toLowerCase()
             ? ""
             : `${entry.repository} · `

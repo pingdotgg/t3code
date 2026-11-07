@@ -1092,7 +1092,6 @@ function pullRequestContextComment(
     readonly baseBranch: string;
     readonly state: PullRequestState;
     readonly isDraft: boolean;
-    readonly inMergeQueue?: boolean | undefined;
   },
   instructions: ReadonlyArray<string>,
 ): ReviewCommentContext {
@@ -1121,7 +1120,6 @@ function pullRequestContextComment(
       baseBranch: boundedField(input.baseBranch),
       state: input.state,
       isDraft: input.isDraft,
-      inMergeQueue: input.inMergeQueue,
     },
   };
 }
@@ -1197,7 +1195,6 @@ export function buildAskAboutPullRequestHandoff(input: {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
-  readonly inMergeQueue?: boolean | undefined;
 }): FixFindingsHandoff {
   return {
     prompt: "",
@@ -1213,7 +1210,6 @@ export function buildExplainPullRequestHandoff(input: {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
-  readonly inMergeQueue?: boolean | undefined;
 }): FixFindingsHandoff {
   const term = terminologyForUrl(input.url).singular;
   return {
@@ -1235,7 +1231,6 @@ export function buildAddSelectionToAgentHandoff(input: {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
-  readonly inMergeQueue?: boolean | undefined;
   readonly comment: ReviewCommentContext;
   readonly request: string;
 }): FixFindingsHandoff {
@@ -1253,7 +1248,6 @@ export function buildAskAboutGuideStopHandoff(input: {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
-  readonly inMergeQueue?: boolean | undefined;
   readonly stop: {
     readonly index: number;
     readonly title: string;

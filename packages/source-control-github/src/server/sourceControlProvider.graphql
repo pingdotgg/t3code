@@ -50,11 +50,10 @@ query PullRequestsByHead(
   }
 }
 
-query PullRequestByNumber($owner: String!, $name: String!, $number: Int!, $mergeQueue: Boolean!) {
+query PullRequestByNumber($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       ...PullRequestNode
-      isInMergeQueue @include(if: $mergeQueue)
     }
   }
 }

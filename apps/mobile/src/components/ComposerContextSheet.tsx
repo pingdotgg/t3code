@@ -1,4 +1,3 @@
-import { pullRequestStatus } from "../features/pull-requests/pullRequestStatus";
 import { Button } from "./ui/Button";
 import * as Dialog from "./ui/Dialog";
 import { useOpenPullRequest } from "../native/useOpenPullRequest";
@@ -248,7 +247,7 @@ export function ComposerContextSheet(props: {
               <>
                 {record.pullRequest ? (
                   <ContextField
-                    label={`#${record.pullRequest.number} · ${pullRequestStatus(record.pullRequest).label}`}
+                    label={`#${record.pullRequest.number} · ${record.pullRequest.isDraft ? "draft" : record.pullRequest.state}`}
                     value={`${record.pullRequest.title}\n${record.pullRequest.headBranch} → ${record.pullRequest.baseBranch}`}
                   />
                 ) : null}

@@ -532,75 +532,45 @@ describe("PullRequestSyncReactor", () => {
     }),
   );
 
-  it.effect.each([
-    { change: "terminal state", state: "merged" as const, before: false, after: false },
-    { change: "queue entry", state: "open" as const, before: false, after: true },
-    { change: "queue exit", state: "open" as const, before: true, after: false },
-    { change: "known queue membership", state: "open" as const, before: undefined, after: false },
-  ])(
-    "preserves queue observations and retries failed stack reads for $change",
-    ({ state, before, after }) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          yield* TestClock.setTime(Date.parse(NOW));
-          let attempts = 0;
-          const nativeStack: PullRequestStack = {
-            id: "stack",
-            number: 7,
-            url: "https://github.com/owner/repository/stacks/7",
-            base: "main",
-            layers: [{ number: 7, headBranch: "feature", state }],
-          };
-          const savedStack = {
-            kind: "native" as const,
+  it.effect("retries a failed stack read after the summary becomes terminal", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        let attempts = 0;
+        const nativeStack: PullRequestStack = {
+          id: "stack",
+          number: 7,
+          url: "https://github.com/owner/repository/stacks/7",
+          base: "main",
+          layers: [{ number: 7, headBranch: "feature", state: "merged" }],
+        };
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(7)] })]),
+          summary: (input) =>
+            Effect.succeed(makeSummary(input, { state: "merged", mergedAt: NOW })),
+          stack: () =>
+            ++attempts === 1
+              ? Effect.fail(
+                  new PullRequestOperationError({
+                    operation: "stack",
+                    detail: "temporary failure",
+                  }),
+                )
+              : Effect.succeed(nativeStack),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          const commands = yield* Ref.get(fixture.syncCommands);
+          yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, commands));
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual(attempts, 2);
+          assert.deepStrictEqual((yield* Ref.get(fixture.syncCommands)).at(-1)?.stack, {
+            kind: "native",
             ...nativeStack,
-            layers: [{ number: 7, headBranch: "feature", state: "open" as const }],
-          };
-          const fixture = yield* makeHarness({
-            snapshot: makeSnapshot([
-              makeThread("one", {
-                pullRequests: [makeLink(7, { inMergeQueue: before }, { stack: savedStack })],
-              }),
-            ]),
-            summary: (input) =>
-              Effect.succeed(
-                makeSummary(input, {
-                  state,
-                  inMergeQueue: after,
-                  ...(state === "merged" ? { mergedAt: NOW } : {}),
-                }),
-              ),
-            stack: () =>
-              ++attempts === 1
-                ? Effect.fail(
-                    new PullRequestOperationError({
-                      operation: "stack",
-                      detail: "temporary failure",
-                    }),
-                  )
-                : Effect.succeed(nativeStack),
           });
-          yield* Effect.gen(function* () {
-            const reactor = yield* startAndSweep(fixture);
-            const commands = yield* Ref.get(fixture.syncCommands);
-            assert.deepStrictEqual(
-              commands.map((command) => ({
-                state: command.snapshot.state,
-                queued: command.snapshot.inMergeQueue,
-                stack: command.stack,
-              })),
-              state === "merged" ? [] : [{ state: "open", queued: after, stack: savedStack }],
-            );
-            yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, commands));
-            yield* sweepAgain(fixture, reactor);
-            assert.strictEqual(attempts, 2);
-            assert.deepStrictEqual((yield* Ref.get(fixture.syncCommands)).at(-1)?.stack, {
-              kind: "native",
-              ...nativeStack,
-            });
-          }).pipe(Effect.provide(fixture.layer));
-        }),
-      ),
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
   );
 
   it.effect("explicit refresh reads a changed stack even when its PR summary is unchanged", () =>
