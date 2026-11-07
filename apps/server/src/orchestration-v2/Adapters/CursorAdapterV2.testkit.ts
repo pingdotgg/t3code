@@ -446,6 +446,7 @@ export function makeCursorAgentSdkReplayRunner(
                 },
                 catch: (cause) => replayRunnerError(transcript, cause, "replay.session.send"),
               }),
+            rollback: () => Effect.die("Cursor replay rollback is not recorded"),
             listMessages: Effect.try({
               try: () => {
                 assertOutbound({
