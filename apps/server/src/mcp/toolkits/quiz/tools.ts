@@ -59,7 +59,7 @@ export const QuestionCardInput = Schema.Struct({
       unit: Schema.optional(Schema.String.pipe(Schema.check(Schema.isMaxLength(40)))),
     }).annotate({
       description:
-        "Set whenever the answer is a number (a calculation, count or measured value): the app gives a number input with the unit beside it and marks it within tolerance.",
+        "Set whenever the answer is a number (a calculation, count or measured value): the app gives a number input with the unit beside it and marks it right within tolerance, an absolute amount in the answer's unit.",
     }),
   ),
 });

@@ -77,6 +77,15 @@ describe("quiz cards", () => {
       question: "Q",
       number: { answer: 1, tolerance: 0, unit: "m" },
     });
+    expect(
+      readQuestionCard({ question: "Q", number: { answer: 1, tolerance: 0, unit: "" } }),
+    ).toEqual({ question: "Q", number: { answer: 1, tolerance: 0 } });
+    expect(
+      readQuestionCard({
+        question: "漢".repeat(1990) + " ___",
+        blanks: [{ answers: ["漢", "字", "語", "文"].map((char) => char.repeat(100)) }],
+      }),
+    ).toBeUndefined();
   });
   it("grades blank and number answers", () => {
     const blank = { answers: ["Ohm's law", " ohm's   law "] };
@@ -90,6 +99,11 @@ describe("quiz cards", () => {
     expect(parseNumberAnswer("6.67e-11")).toBe(6.67e-11);
     expect(parseNumberAnswer(" ")).toBeUndefined();
     expect(numberAnswerRight({ answer: 1, tolerance: 0 }, "garbage")).toBe(false);
+    expect(numberAnswerRight({ answer: 6.67e-11, tolerance: 0 }, "0")).toBe(false);
+    expect(numberAnswerRight({ answer: 1000, tolerance: 0 }, "1,000")).toBe(true);
+    expect(numberAnswerRight({ answer: -5, tolerance: 0 }, "\u22125")).toBe(true);
+    expect(blankAnswerRight({ answers: ["m"] }, "M")).toBe(false);
+    expect(blankAnswerRight({ answers: ["acceleration"] }, "Acceleration")).toBe(true);
   });
   it("validates options and bounds", () => {
     expect(quizCardProblem({ ...card, answer: "All of the above" })).toBeDefined();

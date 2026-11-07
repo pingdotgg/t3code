@@ -4,6 +4,7 @@ import {
   cardAnswerMessage,
   blanksAnswerMessage,
   numberAnswerMessage,
+  numberAnswerExpected,
   numberAnswerRight,
   parseNumberAnswer,
   quizAnswerMessage,
@@ -175,12 +176,13 @@ function OpenQuestionCard(props: {
     props.card.blanks !== undefined
       ? answers.every((answer) => answer.trim().length > 0)
       : props.card.number !== undefined && parseNumberAnswer(numberAnswer) !== undefined;
-  const send = async (text: string) => {
+  const send = async (text: string, skip = false) => {
     if (sending || revealed || props.onSendMessage === undefined || text.length === 0) return;
     setSending(true);
     setError(null);
     try {
       await props.onSendMessage(cardAnswerMessage(text, props.seed));
+      setSkipped(skip);
       setSubmitted(true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not send your answer.");
@@ -221,7 +223,8 @@ function OpenQuestionCard(props: {
                   )
                 }
                 disabled={revealed || sending}
-                className="mx-1 inline-block h-8 w-32 align-middle"
+                size="sm"
+                className="mx-1 inline-block w-32 align-middle"
               />
             ) : null}
           </span>
@@ -248,6 +251,11 @@ function OpenQuestionCard(props: {
             className="w-40"
           />
           {props.card.number.unit ? <span>{props.card.number.unit}</span> : null}
+          {numberAnswer.trim() && parseNumberAnswer(numberAnswer) === undefined ? (
+            <span className="text-sm text-muted-foreground">
+              Enter a number, like 9.8 or 6.7e-11
+            </span>
+          ) : null}
         </div>
       ) : null}
       {props.onSendMessage === undefined && !revealed ? (
@@ -285,10 +293,7 @@ function OpenQuestionCard(props: {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => {
-                    if (isStructured) setSkipped(true);
-                    void send("I don't know.");
-                  }}
+                  onClick={() => void send("I don't know.", true)}
                   disabled={sending}
                 >
                   I don't know
@@ -337,11 +342,7 @@ function OpenQuestionCard(props: {
             props.answered && !submitted ? (
               <>
                 <p>Answered.</p>
-                <p>
-                  Expected {props.card.number.answer}{" "}
-                  {props.card.number.tolerance === 0 ? "" : `± ${props.card.number.tolerance} `}
-                  {props.card.number.unit ?? ""}
-                </p>
+                <p>Expected {numberAnswerExpected(props.card.number)}</p>
               </>
             ) : (
               <p
@@ -352,9 +353,7 @@ function OpenQuestionCard(props: {
                 }
               >
                 {numberAnswerRight(props.card.number, numberAnswer) ? "Right." : "Wrong."} Expected{" "}
-                {props.card.number.answer}
-                {props.card.number.tolerance === 0 ? "" : ` ± ${props.card.number.tolerance}`}
-                {props.card.number.unit ? ` ${props.card.number.unit}` : ""}
+                {numberAnswerExpected(props.card.number)}
               </p>
             )
           ) : (
