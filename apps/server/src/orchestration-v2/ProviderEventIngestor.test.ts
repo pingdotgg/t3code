@@ -288,7 +288,36 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
         const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const threadEvent = yield* threadCreatedEvent(now);
-        yield* eventSink.write({ events: [threadEvent] });
+        // The run started on an earlier model than the thread's current selection.
+        const runId = RunId.make("run:usage-limit");
+        yield* eventSink.write({
+          events: [
+            threadEvent,
+            {
+              id: yield* idAllocator.allocate.event({ threadId: threadEvent.threadId }),
+              type: "run.created",
+              threadId: threadEvent.threadId,
+              occurredAt: now,
+              payload: {
+                id: runId,
+                threadId: threadEvent.threadId,
+                ordinal: 1,
+                providerInstanceId: modelSelection.instanceId,
+                modelSelection: { ...modelSelection, model: "gpt-run-model" },
+                providerThreadId: null,
+                userMessageId: MessageId.make("message:usage-limit"),
+                rootNodeId: null,
+                activeAttemptId: null,
+                status: "running",
+                requestedAt: now,
+                startedAt: now,
+                completedAt: null,
+                checkpointId: null,
+                contextHandoffId: null,
+              },
+            },
+          ],
+        });
         const input = {
           providerSessionId: yield* idAllocator.allocate.providerSession({
             providerInstanceId: instance.instanceId,
@@ -315,6 +344,7 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
               usageLimits: { ...unread, unavailable: { reason: "probeFailed" } },
             },
             resetAt: hubResetAt,
+            runId,
           },
           {
             failureClass: "usage_limit",
@@ -325,10 +355,11 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
             resetAt: hubResetAt,
           },
         ] as const;
-        for (const [index, { failureClass, provider, resetAt }] of cases.entries()) {
+        for (const [index, { failureClass, provider, resetAt, ...run }] of cases.entries()) {
           own = provider;
           const stored = yield* ingestor.ingestNormalized({
             ...input,
+            ...run,
             event: {
               type: "turn.terminal",
               driver: instance.driverKind,
@@ -363,7 +394,7 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
         }
         assert.deepEqual(lookups, Array(6).fill(instance.instanceId));
         assert.deepEqual(hubLookups, [
-          `${instance.driverKind}:${modelSelection.model}`,
+          `${instance.driverKind}:gpt-run-model`,
           `${instance.driverKind}:null`,
         ]);
         yield* Deferred.await(refreshed);

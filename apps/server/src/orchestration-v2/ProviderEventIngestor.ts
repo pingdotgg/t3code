@@ -643,12 +643,21 @@ export const layer: Layer.Layer<
                   : undefined;
               // A direct login whose own probe failed is not served by the hub.
               const proxied = provider !== undefined && isProxied(provider);
+              // The failing run's model, which may differ from a selection changed mid-turn.
               const model =
                 provider !== undefined && proxied
-                  ? yield* projections.getThread(input.threadId).pipe(
-                      Effect.map((thread) => hubRoutedModel(provider, thread.modelSelection.model)),
-                      Effect.orElseSucceed(() => null),
-                    )
+                  ? yield* Effect.gen(function* () {
+                      const { runs } =
+                        input.runId === undefined
+                          ? { runs: [] }
+                          : yield* projections.getThreadRecords(input.threadId, ["runs"], {
+                              runIds: [input.runId],
+                            });
+                      const selection =
+                        runs[0]?.modelSelection ??
+                        (yield* projections.getThread(input.threadId)).modelSelection;
+                      return hubRoutedModel(provider, selection.model);
+                    }).pipe(Effect.orElseSucceed(() => null))
                   : null;
               const hubResetAt = proxied
                 ? yield* usageLimitResets.resetAt(input.event.driver, model)
