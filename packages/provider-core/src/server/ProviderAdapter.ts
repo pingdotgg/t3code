@@ -618,7 +618,11 @@ export interface ProviderAdapterV2SessionRuntime {
     providerThread: OrchestrationV2ProviderThread,
     options?: { readonly includeSubagents?: boolean },
   ) => Effect.Effect<boolean>;
-  /** Set only if all session background tasks end with its process; otherwise threads must keep Waiting. */
+  /**
+   * Set only if all session background tasks and tool calls end with its process. Releasing the
+   * session then clears its task roster and interrupts its open tool calls; otherwise threads
+   * must keep Waiting.
+   */
   readonly backgroundTasksEndWithProcess?: true;
   readonly getModelContextWindow?: (
     modelSelection: ModelSelection,

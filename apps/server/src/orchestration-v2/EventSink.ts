@@ -3,6 +3,7 @@ import {
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2TurnItem,
   OrchestrationV2StoredEvent,
   ProviderThreadId,
   RunAttemptId,
@@ -155,6 +156,17 @@ export interface EventSinkV2Shape {
   /** Commits only if the full provider row equals expected; some writers do not advance updatedAt. */
   readonly writeIfProviderThreadUnchanged: (input: {
     readonly expected: OrchestrationV2ProviderThread;
+    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+  }) => Effect.Effect<
+    {
+      readonly committed: boolean;
+      readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
+    },
+    EventSinkV2Error
+  >;
+  /** Commits only if the stored turn item still equals expected. */
+  readonly writeIfTurnItemUnchanged: (input: {
+    readonly expected: OrchestrationV2TurnItem;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<
     {
@@ -610,23 +622,15 @@ const layerBase: Layer.Layer<
       );
     });
 
-    const writeIfProviderThreadUnchangedEffect = Effect.fn(
-      "orchestrationV2.EventSink.writeIfProviderThreadUnchanged",
-    )(function* (input: Parameters<EventSinkV2Shape["writeIfProviderThreadUnchanged"]>[0]) {
-      yield* Effect.annotateCurrentSpan({
-        "orchestration_v2.event_count": input.events.length,
-        "orchestration_v2.provider_thread_id": input.expected.id,
-      });
-      const expectedJson = yield* ProjectionStore.encodeProviderThreadPayload(input.expected);
-
-      return yield* commitThenPublish(
+    // Appends the events only if the stored payload still matches, in one transaction.
+    const writeIfStoredPayloadMatches = <E>(
+      readStoredPayload: Effect.Effect<ReadonlyArray<{ readonly payload_json: string }>, E>,
+      expectedJson: string,
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+    ) =>
+      commitThenPublish(
         Effect.gen(function* () {
-          const rows = yield* sql<{ readonly payload_json: string }>`
-            SELECT payload_json
-            FROM orchestration_v2_projection_provider_threads
-            WHERE provider_thread_id = ${input.expected.id}
-            LIMIT 1
-          `;
+          const rows = yield* readStoredPayload;
           if (rows[0]?.payload_json !== expectedJson) {
             return {
               committed: false as const,
@@ -634,7 +638,7 @@ const layerBase: Layer.Layer<
             };
           }
 
-          const normalized = yield* normalizeEvents(input.events);
+          const normalized = yield* normalizeEvents(events);
           const storedEvents = yield* eventStore.append({ events: normalized });
           const outcomes = yield* applyStoredEvents(storedEvents);
           return { committed: true as const, storedEvents, outcomes };
@@ -643,6 +647,45 @@ const layerBase: Layer.Layer<
           result.committed
             ? publishStoredEvents(result.storedEvents, result.outcomes)
             : Effect.void,
+      );
+
+    const writeIfProviderThreadUnchangedEffect = Effect.fn(
+      "orchestrationV2.EventSink.writeIfProviderThreadUnchanged",
+    )(function* (input: Parameters<EventSinkV2Shape["writeIfProviderThreadUnchanged"]>[0]) {
+      yield* Effect.annotateCurrentSpan({
+        "orchestration_v2.event_count": input.events.length,
+        "orchestration_v2.provider_thread_id": input.expected.id,
+      });
+      const expectedJson = yield* ProjectionStore.encodeProviderThreadPayload(input.expected);
+      return yield* writeIfStoredPayloadMatches(
+        sql<{ readonly payload_json: string }>`
+          SELECT payload_json
+          FROM orchestration_v2_projection_provider_threads
+          WHERE provider_thread_id = ${input.expected.id}
+          LIMIT 1
+        `,
+        expectedJson,
+        input.events,
+      );
+    });
+
+    const writeIfTurnItemUnchangedEffect = Effect.fn(
+      "orchestrationV2.EventSink.writeIfTurnItemUnchanged",
+    )(function* (input: Parameters<EventSinkV2Shape["writeIfTurnItemUnchanged"]>[0]) {
+      yield* Effect.annotateCurrentSpan({
+        "orchestration_v2.event_count": input.events.length,
+        "orchestration_v2.turn_item_id": input.expected.id,
+      });
+      const expectedJson = yield* ProjectionStore.encodeTurnItemPayload(input.expected);
+      return yield* writeIfStoredPayloadMatches(
+        sql<{ readonly payload_json: string }>`
+          SELECT payload_json
+          FROM orchestration_v2_projection_turn_items
+          WHERE turn_item_id = ${input.expected.id}
+          LIMIT 1
+        `,
+        expectedJson,
+        input.events,
       );
     });
 
@@ -1042,6 +1085,12 @@ const layerBase: Layer.Layer<
         ),
       writeIfProviderThreadUnchanged: (input) =>
         writeIfProviderThreadUnchangedEffect(input).pipe(
+          Effect.mapError(
+            (cause) => new EventSinkWriteError({ eventCount: input.events.length, cause }),
+          ),
+        ),
+      writeIfTurnItemUnchanged: (input) =>
+        writeIfTurnItemUnchangedEffect(input).pipe(
           Effect.mapError(
             (cause) => new EventSinkWriteError({ eventCount: input.events.length, cause }),
           ),
