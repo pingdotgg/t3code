@@ -1,6 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
+import type { MenuProps } from "../../components/ui/Menu.types";
 
 export interface HomeListFilterMenuEnvironment {
   readonly environmentId: EnvironmentId;
@@ -10,6 +11,45 @@ export interface HomeListFilterMenuEnvironment {
 export interface HomeListFilterMenuProject {
   readonly key: string;
   readonly label: string;
+}
+
+export function buildHomeEnvironmentFilterActions(props: {
+  readonly environments: ReadonlyArray<HomeListFilterMenuEnvironment>;
+  readonly selectedEnvironmentId: EnvironmentId | null;
+}): MenuProps["actions"] {
+  return [
+    {
+      id: "all",
+      title: "All environments",
+      state: props.selectedEnvironmentId === null ? "on" : "off",
+    },
+    ...props.environments.map((environment) => ({
+      id: String(environment.environmentId),
+      title: environment.label,
+      state:
+        environment.environmentId === props.selectedEnvironmentId
+          ? ("on" as const)
+          : ("off" as const),
+    })),
+  ];
+}
+
+export function buildHomeProjectFilterActions(props: {
+  readonly projects: ReadonlyArray<HomeListFilterMenuProject>;
+  readonly selectedProjectKey: string | null;
+}): MenuProps["actions"] {
+  return [
+    {
+      id: "all",
+      title: "All projects",
+      state: props.selectedProjectKey === null ? "on" : "off",
+    },
+    ...props.projects.map((project) => ({
+      id: project.key,
+      title: project.label,
+      state: project.key === props.selectedProjectKey ? ("on" as const) : ("off" as const),
+    })),
+  ];
 }
 
 export function buildHomeListFilterMenuItems(props: {

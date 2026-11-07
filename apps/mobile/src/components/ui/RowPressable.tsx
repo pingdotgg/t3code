@@ -20,12 +20,16 @@ export function RowPressable({
   return (
     <GestureDetector gesture={hoverGesture}>
       <Pressable {...props} className={cn("relative overflow-hidden", className)}>
-        {() => (
+        {({ pressed }) => (
           <>
             <View
               pointerEvents="none"
               className={cn("absolute inset-0", interactionClassName)}
-              style={{ opacity: props.disabled || !hovered ? 0 : interactionOpacity }}
+              style={{
+                // Phones have no hover; show the same wash on press so taps feel acknowledged
+                // before navigation starts.
+                opacity: props.disabled || !(hovered || pressed) ? 0 : interactionOpacity,
+              }}
             />
             {children}
           </>

@@ -136,9 +136,10 @@ export function PullRequestActionToolbar(props: {
   const threadMenuItems = agent.threadActions("ask");
   const openFiles =
     props.onOpenFiles ?? (() => navigation.navigate("PullRequestFiles", props.params));
-  if (!props.pr) return null;
+  // Keep the bar mounted from the list summary so PR→diff does not blank chrome.
+  if (!props.pr && !props.params.initialSummary) return null;
   const primaryDisabled = pendingReview ? false : agent.disabled;
-  const showPrimary = pendingReview || canOpenThread;
+  const showPrimary = pendingReview || canOpenThread || Boolean(props.params.initialSummary);
   if (Platform.OS === "android") {
     const primary = (
       <Button

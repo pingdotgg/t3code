@@ -1,13 +1,16 @@
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { WORKSPACE_TAB_LABELS, useEnabledNavigationTabs } from "./navigation-tabs";
+import { NAVIGATION_TAB_ORDER } from "./navigation-tab-order";
 import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
 import { WorkspaceSettingsList } from "../../settings/SettingsRouteScreen";
 import { WorkspaceSectionToolbar } from "./WorkspaceSectionToolbar";
 import { useNavigation } from "@react-navigation/native";
-import { use } from "react";
+import { use, useMemo, useState } from "react";
 import { View, useWindowDimensions } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { useStableEdgeInsetsOverride } from "../../../lib/stable-edge-insets";
 
 import { CompactBrandTitle } from "../../../components/CompactBrandTitle";
 import { HeaderItemsWidthContext } from "../../../native/header-items-width";
@@ -29,8 +32,13 @@ import {
   WorkspaceTabsProvider,
   useWorkspaceTabs,
 } from "./WorkspaceTabsContext";
+import { WorkspaceTabPanes } from "./WorkspaceTabPanes";
 import { WorkspaceToolbar } from "./WorkspaceToolbar";
-import { WORKSPACE_DOCK, workspaceDockBottomClearance } from "./workspace-tabs-state";
+import {
+  WORKSPACE_DOCK,
+  workspaceDockBottomClearance,
+  type WorkspaceTab,
+} from "./workspace-tabs-state";
 import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
 import {
   useCompactWorkspaceTabs,
@@ -38,6 +46,8 @@ import {
   useSystemWorkspaceTabBar,
 } from "./useSystemWorkspaceTabBar";
 import { openSettings } from "../../settings/settings-navigation";
+
+const TAB_PANES: readonly WorkspaceTab[] = NAVIGATION_TAB_ORDER;
 
 const TAB_TITLES = WORKSPACE_TAB_LABELS;
 
@@ -89,6 +99,9 @@ function WorkspaceRootContent() {
   const { state } = workspace;
   // Settings is a workspace tab too; its list takes the place of the selected tab's.
   const settingsOpen = workspace.settingsOpen;
+  // Keep the list mounted after the first open so returning to Settings is instant.
+  const [settingsMounted, setSettingsMounted] = useState(settingsOpen);
+  if (settingsOpen && !settingsMounted) setSettingsMounted(true);
   const renderHeaderTitle = () => (
     <WorkspaceRootTitle
       columnWidth={width}
@@ -110,7 +123,8 @@ function WorkspaceRootContent() {
                 ? 80
                 : 16
               : WORKSPACE_DOCK.height + WORKSPACE_DOCK.bottomGap + 16);
-  const context = { ...workspace, bottomClearance };
+  const context = useMemo(() => ({ ...workspace, bottomClearance }), [bottomClearance, workspace]);
+  const safeAreaInsets = useStableEdgeInsetsOverride(insets, compactTabs ? { bottom: 0 } : null);
 
   return (
     <WorkspaceTabsContext value={context}>
@@ -119,7 +133,6 @@ function WorkspaceRootContent() {
           optionsVersion={[
             settingsOpen,
             state.selectedTab,
-            state.selectionRevision,
             width,
             sidebarNavigation,
             enabled.length,
@@ -148,17 +161,34 @@ function WorkspaceRootContent() {
                 : undefined,
           }}
         />
-        <SafeAreaInsetsContext value={compactTabs ? { ...insets, bottom: 0 } : insets}>
-          {settingsOpen ? (
-            <WorkspaceSettingsList />
-          ) : enabled.length === 0 ? (
+        <SafeAreaInsetsContext value={safeAreaInsets}>
+          {settingsMounted ? (
+            <View
+              className="flex-1"
+              style={settingsOpen ? undefined : { display: "none" }}
+              pointerEvents={settingsOpen ? "auto" : "none"}
+              accessibilityElementsHidden={!settingsOpen}
+              importantForAccessibility={settingsOpen ? "auto" : "no-hide-descendants"}
+            >
+              <WorkspaceSettingsList />
+            </View>
+          ) : null}
+          {settingsOpen ? null : enabled.length === 0 ? (
             <WorkspaceNoTabs />
-          ) : state.selectedTab === "threads" ? (
-            <HomeRouteScreen />
-          ) : state.selectedTab === "pullRequests" ? (
-            <PullRequestsScreen />
           ) : (
-            <WorkspaceExtraTab tab={state.selectedTab} />
+            <WorkspaceTabPanes
+              tabs={TAB_PANES}
+              selected={state.selectedTab}
+              renderTab={(tab) =>
+                tab === "threads" ? (
+                  <HomeRouteScreen />
+                ) : tab === "pullRequests" ? (
+                  <PullRequestsScreen />
+                ) : (
+                  <WorkspaceExtraTab tab={tab} />
+                )
+              }
+            />
           )}
         </SafeAreaInsetsContext>
         {deviceType !== "pad" && deviceType !== "phone" && sidebarPicker ? (

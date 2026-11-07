@@ -17,7 +17,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { useEffect, useRef, useState } from "react";
+import { startTransition, useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cn } from "../../lib/cn";
@@ -144,6 +144,8 @@ function NewTaskHeader(props: {
           value: props.searchText,
           onChangeText: props.onSearchTextChange,
           placeholder: "Search projects",
+          mode: "inline",
+          compactToolbar: true,
         }}
       />
     </>
@@ -151,15 +153,16 @@ function NewTaskHeader(props: {
 }
 
 export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRouteParams | undefined>) {
-  const projects = useProjects();
   const [searchText, setSearchText] = useState("");
-  const { projectScopes, selectedEnvironmentId, setProject } = useNewTaskFlow();
+  const [bodyReady, setBodyReady] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers the project list until after the push frame
+  useEffect(() => {
+    startTransition(() => {
+      setBodyReady(true);
+    });
+  }, []);
   const { state: catalogState } = useWorkspaceState();
-  const navigation = useNavigation();
-  const selectDetail = useSelectWorkspaceDetail();
-  const isFocused = useIsFocused();
-  const insets = useSafeAreaInsets();
-  const { getShare, releaseShareReservation } = useIncomingShare();
+  const { getShare } = useIncomingShare();
   const routeShareId = Array.isArray(route.params?.incomingShareId)
     ? route.params.incomingShareId[0]
     : route.params?.incomingShareId;
@@ -172,6 +175,43 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         : `Choose a project for the ${incomingShare.attachments.length} ${incomingShare.attachments.every((attachment) => attachment.type === "image") ? "images" : "files"} you shared`
     : null;
   const screenTitle = incomingShare ? "Start a task" : "Choose project";
+  return (
+    <View collapsable={false} className="flex-1 bg-sheet">
+      <NewTaskHeader
+        title={screenTitle}
+        subtitle={incomingShareSubtitle}
+        canAddProject={catalogState.hasReadyEnvironment}
+        searchText={searchText}
+        onSearchTextChange={setSearchText}
+      />
+      {bodyReady ? (
+        <NewTaskProjectBody route={route} searchText={searchText} />
+      ) : (
+        <ScreenContent>
+          <View className="flex-1" />
+        </ScreenContent>
+      )}
+    </View>
+  );
+}
+
+function NewTaskProjectBody(props: {
+  readonly route: StaticScreenProps<NewTaskRouteParams | undefined>["route"];
+  readonly searchText: string;
+}) {
+  const { route, searchText } = props;
+  const projects = useProjects();
+  const { projectScopes, selectedEnvironmentId, setProject } = useNewTaskFlow();
+  const { state: catalogState } = useWorkspaceState();
+  const navigation = useNavigation();
+  const selectDetail = useSelectWorkspaceDetail();
+  const isFocused = useIsFocused();
+  const insets = useSafeAreaInsets();
+  const { getShare, releaseShareReservation } = useIncomingShare();
+  const routeShareId = Array.isArray(route.params?.incomingShareId)
+    ? route.params.incomingShareId[0]
+    : route.params?.incomingShareId;
+  const incomingShare = routeShareId ? getShare(routeShareId) : null;
   const projectEmptyState = deriveProjectEmptyState(catalogState);
   const serverConfigs = useServerConfigs();
   const listScopes = pickableProjectGroups(projectScopes).filter(
@@ -302,253 +342,243 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   }, [incomingShare, isFocused, reservedDestinationProject, selectDetail]);
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      <NewTaskHeader
-        title={screenTitle}
-        subtitle={incomingShareSubtitle}
-        canAddProject={catalogState.hasReadyEnvironment}
-        searchText={searchText}
-        onSearchTextChange={setSearchText}
-      />
-
-      <ScreenContent>
-        <ScrollView
-          contentInsetAdjustmentBehavior="automatic"
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          className="flex-1"
-          contentContainerStyle={{
-            gap: Platform.OS === "android" ? 8 : 12,
-            paddingBottom: Math.max(insets.bottom, 18) + 18,
-            paddingHorizontal: Platform.OS === "android" ? 16 : 20,
-            paddingTop: Platform.OS === "android" ? 16 : 8,
-            ...(Platform.OS === "android" && visibleScopes.length === 0
-              ? { flexGrow: 1, justifyContent: "center" as const }
-              : {}),
-          }}
-        >
-          {scratchOption !== null && listScopes.length > 0 ? (
-            Platform.OS === "android" ? (
-              <View collapsable={false} className="overflow-hidden rounded-[28px] bg-grouped-card">
-                <NavigationRow
-                  className="bg-grouped-card"
-                  title="No project"
-                  subtitle="Start a task without a project"
-                  disabled={!canStartScratch}
-                  onPress={() => void startScratch()}
-                  leading={
-                    <SymbolView
-                      name="text.bubble"
-                      size={22}
-                      tintColorClassName="accent-icon-muted"
-                      type="monochrome"
-                    />
+    <ScreenContent>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        className="flex-1"
+        contentContainerStyle={{
+          gap: Platform.OS === "android" ? 8 : 12,
+          paddingBottom: Math.max(insets.bottom, 18) + 18,
+          paddingHorizontal: Platform.OS === "android" ? 16 : 20,
+          paddingTop: Platform.OS === "android" ? 16 : 8,
+          ...(Platform.OS === "android" && visibleScopes.length === 0
+            ? { flexGrow: 1, justifyContent: "center" as const }
+            : {}),
+        }}
+      >
+        {scratchOption !== null && listScopes.length > 0 ? (
+          Platform.OS === "android" ? (
+            <View collapsable={false} className="overflow-hidden rounded-[28px] bg-grouped-card">
+              <NavigationRow
+                className="bg-grouped-card"
+                title="No project"
+                subtitle="Start a task without a project"
+                disabled={!canStartScratch}
+                onPress={() => void startScratch()}
+                leading={
+                  <SymbolView
+                    name="text.bubble"
+                    size={22}
+                    tintColorClassName="accent-icon-muted"
+                    type="monochrome"
+                  />
+                }
+              />
+            </View>
+          ) : (
+            <View collapsable={false} className="overflow-hidden rounded-[24px] bg-grouped-card">
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="No project"
+                disabled={!canStartScratch}
+                onPress={() => void startScratch()}
+                className={cn(
+                  "flex-row items-center gap-3 bg-grouped-card px-4 py-3.5",
+                  !canStartScratch && "opacity-45",
+                )}
+              >
+                <View className="h-7 w-7 items-center justify-center">
+                  <SymbolView
+                    name="text.bubble"
+                    size={18}
+                    tintColorClassName="accent-icon-muted"
+                    type="monochrome"
+                  />
+                </View>
+                <View className="min-w-0 flex-1">
+                  <Text className="text-base font-t3-bold leading-snug">No project</Text>
+                  <Text className="text-xs leading-snug text-foreground-muted" numberOfLines={1}>
+                    Start a task without a project
+                  </Text>
+                </View>
+                <SymbolView
+                  name="chevron.right"
+                  size={14}
+                  tintColorClassName="accent-chevron"
+                  type="monochrome"
+                />
+              </Pressable>
+            </View>
+          )
+        ) : null}
+        {listScopes.length === 0 ? (
+          <View
+            collapsable={false}
+            className={cn(
+              "items-center gap-3 px-6 py-8",
+              Platform.OS !== "android" && "rounded-[24px] bg-grouped-card",
+            )}
+          >
+            {projectEmptyState.loading ? (
+              <AppActivityIndicator colorClassName="accent-icon-muted" />
+            ) : null}
+            <Text className="text-center text-lg font-t3-bold text-foreground">
+              {projectEmptyState.title}
+            </Text>
+            <Text className="text-center text-sm leading-normal text-foreground-muted">
+              {projectEmptyState.detail}
+            </Text>
+            {Platform.OS === "android" ? (
+              <>
+                <Button
+                  label={catalogState.hasReadyEnvironment ? "Add new project" : "Add environment"}
+                  tone="primary"
+                  onPress={() =>
+                    catalogState.hasReadyEnvironment
+                      ? navigation.dispatch(StackActions.push("AddProject"))
+                      : navigation.navigate("ConnectionsNew")
                   }
+                />
+                {canStartScratch ? (
+                  <Button
+                    label="Start without a project"
+                    tone="secondary"
+                    onPress={() => void startScratch()}
+                  />
+                ) : null}
+              </>
+            ) : !catalogState.hasReadyEnvironment ? (
+              <View className="mt-1">
+                <Button
+                  label="Add environment"
+                  tone="primary"
+                  onPress={() => navigation.navigate("ConnectionsNew")}
                 />
               </View>
             ) : (
-              <View collapsable={false} className="overflow-hidden rounded-[24px] bg-grouped-card">
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="No project"
-                  disabled={!canStartScratch}
-                  onPress={() => void startScratch()}
-                  className={cn(
-                    "flex-row items-center gap-3 bg-grouped-card px-4 py-3.5",
-                    !canStartScratch && "opacity-45",
-                  )}
-                >
-                  <View className="h-7 w-7 items-center justify-center">
-                    <SymbolView
-                      name="text.bubble"
-                      size={18}
-                      tintColorClassName="accent-icon-muted"
-                      type="monochrome"
-                    />
-                  </View>
-                  <View className="min-w-0 flex-1">
-                    <Text className="text-base font-t3-bold leading-snug">No project</Text>
-                    <Text className="text-xs leading-snug text-foreground-muted" numberOfLines={1}>
-                      Start a task without a project
-                    </Text>
-                  </View>
-                  <SymbolView
-                    name="chevron.right"
-                    size={14}
-                    tintColorClassName="accent-chevron"
-                    type="monochrome"
-                  />
-                </Pressable>
-              </View>
-            )
-          ) : null}
-          {listScopes.length === 0 ? (
-            <View
-              collapsable={false}
-              className={cn(
-                "items-center gap-3 px-6 py-8",
-                Platform.OS !== "android" && "rounded-[24px] bg-grouped-card",
-              )}
-            >
-              {projectEmptyState.loading ? (
-                <AppActivityIndicator colorClassName="accent-icon-muted" />
-              ) : null}
-              <Text className="text-center text-lg font-t3-bold text-foreground">
-                {projectEmptyState.title}
-              </Text>
-              <Text className="text-center text-sm leading-normal text-foreground-muted">
-                {projectEmptyState.detail}
-              </Text>
-              {Platform.OS === "android" ? (
-                <>
-                  <Button
-                    label={catalogState.hasReadyEnvironment ? "Add new project" : "Add environment"}
-                    tone="primary"
-                    onPress={() =>
-                      catalogState.hasReadyEnvironment
-                        ? navigation.dispatch(StackActions.push("AddProject"))
-                        : navigation.navigate("ConnectionsNew")
-                    }
-                  />
-                  {canStartScratch ? (
-                    <Button
-                      label="Start without a project"
-                      tone="secondary"
-                      onPress={() => void startScratch()}
-                    />
-                  ) : null}
-                </>
-              ) : !catalogState.hasReadyEnvironment ? (
+              <>
                 <View className="mt-1">
                   <Button
-                    label="Add environment"
+                    label="Add new project"
                     tone="primary"
-                    onPress={() => navigation.navigate("ConnectionsNew")}
+                    onPress={() => navigation.dispatch(StackActions.push("AddProject"))}
                   />
                 </View>
-              ) : (
-                <>
-                  <View className="mt-1">
-                    <Button
-                      label="Add new project"
-                      tone="primary"
-                      onPress={() => navigation.dispatch(StackActions.push("AddProject"))}
-                    />
-                  </View>
-                  {canStartScratch ? (
-                    <Button
-                      label="Start without a project"
-                      tone="secondary"
-                      onPress={() => void startScratch()}
-                    />
-                  ) : null}
-                </>
-              )}
-            </View>
-          ) : visibleScopes.length === 0 ? (
-            <View className="items-center gap-2 px-6 py-8">
-              <Text className="text-center text-lg font-t3-bold text-foreground">
-                No matching projects
-              </Text>
-              <Text className="text-center text-sm leading-normal text-foreground-muted">
-                Try a different project name or workspace path.
-              </Text>
-            </View>
-          ) : (
-            <View
-              collapsable={false}
-              className={
-                Platform.OS === "android"
-                  ? "overflow-hidden rounded-[28px] bg-grouped-card"
-                  : "overflow-hidden rounded-[24px] bg-grouped-card"
-              }
-            >
-              {visibleScopes.map((scope, scopeIndex) => {
-                const hasMultipleProjects = scope.projects.length > 1;
-                const selectionTarget = getProjectScopeSelectionTarget(
-                  scope,
-                  selectedEnvironmentId,
-                  connectedEnvironmentIds,
-                );
-                if (Platform.OS === "android") {
-                  return (
-                    <NavigationRow
-                      className="bg-grouped-card"
-                      key={scope.key}
-                      title={scope.title}
-                      subtitle={
-                        hasMultipleProjects
-                          ? `${scope.projects.length} workspaces`
-                          : selectionTarget.workspaceRoot
-                      }
-                      subtitleNumberOfLines={1}
-                      subtitleEllipsizeMode="middle"
-                      disabled={reservedDestinationProject !== null}
-                      onPress={() => void selectProject(selectionTarget)}
-                      leading={
-                        <ProjectFavicon
-                          environmentId={scope.representative.environmentId}
-                          faviconPath={scope.representative.faviconPath}
-                          projectIcon={scope.representative.projectIcon}
-                          size={24}
-                          projectTitle={scope.title}
-                          workspaceRoot={scope.representative.workspaceRoot}
-                        />
-                      }
-                    />
-                  );
-                }
+                {canStartScratch ? (
+                  <Button
+                    label="Start without a project"
+                    tone="secondary"
+                    onPress={() => void startScratch()}
+                  />
+                ) : null}
+              </>
+            )}
+          </View>
+        ) : visibleScopes.length === 0 ? (
+          <View className="items-center gap-2 px-6 py-8">
+            <Text className="text-center text-lg font-t3-bold text-foreground">
+              No matching projects
+            </Text>
+            <Text className="text-center text-sm leading-normal text-foreground-muted">
+              Try a different project name or workspace path.
+            </Text>
+          </View>
+        ) : (
+          <View
+            collapsable={false}
+            className={
+              Platform.OS === "android"
+                ? "overflow-hidden rounded-[28px] bg-grouped-card"
+                : "overflow-hidden rounded-[24px] bg-grouped-card"
+            }
+          >
+            {visibleScopes.map((scope, scopeIndex) => {
+              const hasMultipleProjects = scope.projects.length > 1;
+              const selectionTarget = getProjectScopeSelectionTarget(
+                scope,
+                selectedEnvironmentId,
+                connectedEnvironmentIds,
+              );
+              if (Platform.OS === "android") {
                 return (
-                  <View
+                  <NavigationRow
+                    className="bg-grouped-card"
                     key={scope.key}
-                    className={cn(scopeIndex > 0 && "border-t border-border-subtle")}
-                  >
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={scope.title}
-                      disabled={reservedDestinationProject !== null}
-                      onPress={() => void selectProject(selectionTarget)}
-                      className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5"
-                    >
-                      <View className="h-7 w-7 items-center justify-center">
-                        <ProjectFavicon
-                          environmentId={scope.representative.environmentId}
-                          faviconPath={scope.representative.faviconPath}
-                          projectIcon={scope.representative.projectIcon}
-                          size={20}
-                          projectTitle={scope.title}
-                          workspaceRoot={scope.representative.workspaceRoot}
-                        />
-                      </View>
-                      <View className="min-w-0 flex-1">
-                        <Text className={cn("text-base leading-snug", "font-t3-bold")}>
-                          {scope.title}
-                        </Text>
-                        <Text
-                          className="text-xs leading-snug text-foreground-muted"
-                          ellipsizeMode="middle"
-                          numberOfLines={1}
-                        >
-                          {hasMultipleProjects
-                            ? `${scope.projects.length} workspaces`
-                            : selectionTarget.workspaceRoot}
-                        </Text>
-                      </View>
-                      <SymbolView
-                        name="chevron.right"
-                        size={14}
-                        tintColorClassName="accent-chevron"
-                        type="monochrome"
+                    title={scope.title}
+                    subtitle={
+                      hasMultipleProjects
+                        ? `${scope.projects.length} workspaces`
+                        : selectionTarget.workspaceRoot
+                    }
+                    subtitleNumberOfLines={1}
+                    subtitleEllipsizeMode="middle"
+                    disabled={reservedDestinationProject !== null}
+                    onPress={() => void selectProject(selectionTarget)}
+                    leading={
+                      <ProjectFavicon
+                        environmentId={scope.representative.environmentId}
+                        faviconPath={scope.representative.faviconPath}
+                        projectIcon={scope.representative.projectIcon}
+                        size={24}
+                        projectTitle={scope.title}
+                        workspaceRoot={scope.representative.workspaceRoot}
                       />
-                    </Pressable>
-                  </View>
+                    }
+                  />
                 );
-              })}
-            </View>
-          )}
-        </ScrollView>
-      </ScreenContent>
-    </View>
+              }
+              return (
+                <View
+                  key={scope.key}
+                  className={cn(scopeIndex > 0 && "border-t border-border-subtle")}
+                >
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={scope.title}
+                    disabled={reservedDestinationProject !== null}
+                    onPress={() => void selectProject(selectionTarget)}
+                    className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5"
+                  >
+                    <View className="h-7 w-7 items-center justify-center">
+                      <ProjectFavicon
+                        environmentId={scope.representative.environmentId}
+                        faviconPath={scope.representative.faviconPath}
+                        projectIcon={scope.representative.projectIcon}
+                        size={20}
+                        projectTitle={scope.title}
+                        workspaceRoot={scope.representative.workspaceRoot}
+                      />
+                    </View>
+                    <View className="min-w-0 flex-1">
+                      <Text className={cn("text-base leading-snug", "font-t3-bold")}>
+                        {scope.title}
+                      </Text>
+                      <Text
+                        className="text-xs leading-snug text-foreground-muted"
+                        ellipsizeMode="middle"
+                        numberOfLines={1}
+                      >
+                        {hasMultipleProjects
+                          ? `${scope.projects.length} workspaces`
+                          : selectionTarget.workspaceRoot}
+                      </Text>
+                    </View>
+                    <SymbolView
+                      name="chevron.right"
+                      size={14}
+                      tintColorClassName="accent-chevron"
+                      type="monochrome"
+                    />
+                  </Pressable>
+                </View>
+              );
+            })}
+          </View>
+        )}
+      </ScrollView>
+    </ScreenContent>
   );
 }

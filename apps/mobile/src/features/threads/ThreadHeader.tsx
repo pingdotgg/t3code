@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
 import type { AppBarAction, AppBarMenu } from "../../components/ui/AppBar.types";
@@ -5,12 +6,12 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-navigation";
 import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import {
-  threadTerminalMenu,
   useThreadGitMenuDefinition,
+  useThreadTerminalMenu,
   type ThreadGitControlsProps,
 } from "./ThreadGitControls";
 
-export function ThreadHeader(props: {
+export const ThreadHeader = memo(function ThreadHeader(props: {
   readonly title: string;
   readonly subtitle: string;
   readonly gitControls: ThreadGitControlsProps;
@@ -26,21 +27,20 @@ export function ThreadHeader(props: {
   const { panes, toggleAuxiliaryPane, composerKeyboardActive, startNewTask } =
     useAdaptiveWorkspaceLayout();
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);
-  const terminalMenu = threadTerminalMenu(props.gitControls);
+  const terminalMenu = useThreadTerminalMenu(props.gitControls);
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
   const inspectorVisible = props.inspectorMode !== null && panes.auxiliaryPaneVisible;
-  const actions: AppBarAction[] = props.hasThreadCwd
-    ? [
-        {
-          accessibilityLabel: filesVisible ? "Close files" : "Open files",
-          icon: "folder",
-          selected: filesVisible,
-          disabled: !props.gitControls.canOpenFiles,
-          separateBackground: false,
-          onPress: filesVisible ? toggleAuxiliaryPane : props.onOpenFilesInspector,
-        },
-      ]
-    : [];
+  // Keep the files button mounted so cwd / draft→live promotion does not shift the bar.
+  const actions: AppBarAction[] = [
+    {
+      accessibilityLabel: filesVisible ? "Close files" : "Open files",
+      icon: "folder",
+      selected: filesVisible,
+      disabled: !props.hasThreadCwd || !props.gitControls.canOpenFiles,
+      separateBackground: false,
+      onPress: filesVisible ? toggleAuxiliaryPane : props.onOpenFilesInspector,
+    },
+  ];
   const menus = [gitMenu, terminalMenu].filter((menu): menu is AppBarMenu => menu !== null);
 
   return (
@@ -61,12 +61,21 @@ export function ThreadHeader(props: {
       actions={actions}
       menus={menus}
       trailing={
-        props.fileInspectorSupported && props.hasThreadCwd ? (
+        props.draft ? (
+          props.fileInspectorSupported && props.hasThreadCwd ? (
+            <ScreenHeaderButton
+              accessibilityLabel={inspectorVisible ? "Hide inspector" : "Show inspector"}
+              icon="sidebar.right"
+              selected={inspectorVisible}
+              onPress={props.onToggleInspector}
+            />
+          ) : null
+        ) : props.fileInspectorSupported ? (
           <ScreenHeaderButton
             accessibilityLabel={inspectorVisible ? "Hide inspector" : "Show inspector"}
             icon="sidebar.right"
             selected={inspectorVisible}
-            onPress={props.onToggleInspector}
+            onPress={props.hasThreadCwd ? props.onToggleInspector : () => {}}
           />
         ) : null
       }
@@ -74,4 +83,4 @@ export function ThreadHeader(props: {
       compact={composerKeyboardActive}
     />
   );
-}
+});

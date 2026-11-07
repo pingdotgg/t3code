@@ -35,9 +35,11 @@ it("saves the scope from every update made in one event", async () => {
       </HomeListOptionsProvider>,
     ),
   );
-  act(() => {
+  await act(async () => {
     controls!.setSelectedEnvironmentId(ENVIRONMENT);
     controls!.setSelectedProjectKey("env-1:project-1");
+    // Filter scope persists on a microtask so preference writes miss the list rebuild frame.
+    await Promise.resolve();
   });
 
   expect(harness.saved.at(-1)).toEqual({

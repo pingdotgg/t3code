@@ -165,3 +165,36 @@ export function isCompactionCommandFeedEntry(entry: PendingThreadFeedEntry): boo
     isCompactionCommandMessage(entry.message)
   );
 }
+
+/**
+ * LegendList recycle uses this to keep settled rows mounted while streaming only
+ * invalidates the active assistant row (feed cache reuses unchanged entry refs).
+ */
+export function groupedThreadFeedRowsAreEqual(
+  previous: GroupedThreadFeedRow,
+  next: GroupedThreadFeedRow,
+): boolean {
+  if (previous === next) return true;
+  if (previous.id !== next.id || previous.type !== next.type) return false;
+  if (
+    previous.userMessageGrouping.groupedWithPrevious !==
+      next.userMessageGrouping.groupedWithPrevious ||
+    previous.userMessageGrouping.groupedWithNext !== next.userMessageGrouping.groupedWithNext ||
+    previous.userMessageGrouping.continuesSteer !== next.userMessageGrouping.continuesSteer
+  ) {
+    return false;
+  }
+  if (previous.type === "message" && next.type === "message") {
+    return (
+      previous.message === next.message &&
+      previous.pendingMessage === next.pendingMessage &&
+      previous.acknowledged === next.acknowledged &&
+      previous.continuesWorkLog === next.continuesWorkLog &&
+      previous.checkpointSummary === next.checkpointSummary
+    );
+  }
+  if (previous.type === "guest-pending" && next.type === "guest-pending") {
+    return previous.message === next.message && previous.guestName === next.guestName;
+  }
+  return false;
+}

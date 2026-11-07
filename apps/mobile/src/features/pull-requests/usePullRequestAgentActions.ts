@@ -5,7 +5,6 @@ import {
   type PullRequestAgentTask,
 } from "./pullRequestAgentTasks";
 import type { PullRequestParams } from "./usePullRequestDiff";
-import { usePullRequestConnected } from "./usePullRequestConnected";
 import { usePullRequestThreads } from "./usePullRequestThreads";
 
 export function usePullRequestAgentActions(
@@ -14,9 +13,10 @@ export function usePullRequestAgentActions(
   filePath?: string,
 ) {
   const links = usePullRequestThreads(params, pr, filePath);
-  const connected = usePullRequestConnected(params.environmentId);
   const actions = pr ? pullRequestAgentActions(pr, links.canWatch) : [];
-  const disabled = links.busy || !pr || (connected && links.isPending && !links.threads.length);
+  // Pending linked-threads / detail on a new screen must not grey the bar — start() already
+  // no-ops without a detail, and threads fill in without a disabled flash.
+  const disabled = links.busy || (!pr && !params.initialSummary);
   const start = (task: PullRequestAgentTask, threadId?: string) => {
     if (disabled) return;
     const thread = pullRequestAgentThread(links.threads, threadId);

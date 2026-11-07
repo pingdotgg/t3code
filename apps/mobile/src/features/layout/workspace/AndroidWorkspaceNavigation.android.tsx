@@ -1,6 +1,7 @@
 import { selectedNavigationTab, visibleNavigationTabs } from "./navigation-tab-order";
 import { requireNativeView } from "expo";
 import { CommonActions, useNavigation } from "@react-navigation/native";
+import { startTransition } from "react";
 import {
   Keyboard,
   processColor,
@@ -14,6 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAndroidControlSizing } from "../../../components/ui/useAndroidControlSizing";
 import { useToolbarLayout } from "../../../components/ui/useToolbarLayout";
 import { rootNavigationRef } from "../../../lib/rootNavigation";
+import { rootStackRoutesUnchanged } from "../../../lib/root-stack-reset";
 import { useWorkspaceConnectionState } from "../../../state/workspace";
 import { androidWorkspaceNavigationColors } from "./android-workspace-navigation-colors";
 import {
@@ -137,17 +139,22 @@ export function AndroidWorkspaceNavigation(props: {
         onTabSelected={(event) => {
           Keyboard.dismiss();
           const tab = event.nativeEvent.tab;
-          if (tab !== "settings") workspace.dispatch({ type: "select", tab });
           // Reset the root stack even when a nested settings navigator has focus.
           // The provider renders inside the root stack's layout, so the container's root state is
-          // that stack's current state.
+          // that stack's current state. List-only flips that stay on Home skip RESET.
           const rootState = rootNavigationRef.getRootState();
           if (root && rootState) {
-            navigation.dispatch({
-              ...CommonActions.reset(
-                androidWorkspaceTabNavigationState(rootState, tab, layout.usesSplitView),
-              ),
-              target: root.key,
+            const next = androidWorkspaceTabNavigationState(rootState, tab, layout.usesSplitView);
+            if (!rootStackRoutesUnchanged(rootState, next)) {
+              navigation.dispatch({
+                ...CommonActions.reset(next),
+                target: root.key,
+              });
+            }
+          }
+          if (tab !== "settings") {
+            startTransition(() => {
+              workspace.dispatch({ type: "select", tab });
             });
           }
           props.onSelect?.();

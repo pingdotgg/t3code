@@ -85,6 +85,19 @@ function workspaceDetailState<
   return { ...state, index: routes.length - 1, routes };
 }
 
+/**
+ * List-only stacks can open detail with a real PUSH so the native transition starts on the
+ * press frame. RESET is reserved for swapping/collapsing an already-open detail column.
+ */
+function canPushWorkspaceDetail<
+  State extends { readonly index: number; readonly routes: readonly RouteLike[] },
+>(state: State, sheet: WorkspaceDetailSheet | undefined, popping: string | null) {
+  // A native Back in flight must go through RESET so we don't push on top of the leaving card.
+  if (sheet || popping) return false;
+  const { workspace } = workspaceRoutesOf(state.routes.slice(0, state.index + 1));
+  return workspace.length === 1 && workspace[0]?.name === "Home";
+}
+
 /** Root stack router overrides that handle `selectWorkspaceDetail`. */
 export function workspaceDetailRouter<Action extends NavigationAction>(
   original: Router<StackNavigationState<ParamListBase>, Action>,
@@ -95,6 +108,17 @@ export function workspaceDetailRouter<Action extends NavigationAction>(
         return original.getStateForAction(state, action, options);
       }
       const { detail, sheet } = (action as unknown as SelectWorkspaceDetailAction).payload;
+      if (canPushWorkspaceDetail(state, sheet, nativelyPoppingRoute)) {
+        // Inline PUSH — importing StackActions pulls @react-navigation/native into unit tests.
+        return original.getStateForAction(
+          state,
+          {
+            type: "PUSH",
+            payload: { name: detail.name, params: detail.params },
+          } as unknown as Action,
+          options,
+        );
+      }
       const next = workspaceDetailState(state, detail, sheet, nativelyPoppingRoute);
       const reset = { type: "RESET", payload: { ...next, stale: false } };
       return original.getStateForAction(state, reset as unknown as Action, options);

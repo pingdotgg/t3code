@@ -72,6 +72,13 @@ const page = (state: State) => ({
 });
 
 describe("selectWorkspaceDetail", () => {
+  it("pushes from a list-only stack so the native transition can start immediately", () => {
+    const opened = select(home(), threadA);
+    expect(page(opened)).toEqual({ names: ["Home", "Thread"], index: 1 });
+    // A PUSH assigns a fresh key; RESET-from-empty would too, but swapping later must reuse it.
+    expect(opened.routes[1]?.key).toEqual(expect.any(String));
+  });
+
   it("swaps the open thread in place instead of pushing another", () => {
     const first = select(home(), threadA);
     const second = select(first, threadB);

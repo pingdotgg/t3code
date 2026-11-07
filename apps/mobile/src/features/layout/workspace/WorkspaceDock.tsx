@@ -1,3 +1,4 @@
+import { startTransition } from "react";
 import { Keyboard, Pressable, View } from "react-native";
 
 import { SymbolView } from "../../../components/ui/AppSymbol";
@@ -32,7 +33,9 @@ export function WorkspaceDock(props: { readonly onNewTask: () => void }) {
                 onPress={() => {
                   if (selected) return;
                   Keyboard.dismiss();
-                  workspace.dispatch({ type: "select", tab });
+                  startTransition(() => {
+                    workspace.dispatch({ type: "select", tab });
+                  });
                 }}
                 className={
                   selected

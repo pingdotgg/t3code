@@ -30,7 +30,10 @@ vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useMemo: (factory: () => unknown) => factory(),
 }));
-vi.mock("@effect/atom-react", () => ({ useAtomMount: () => {} }));
+vi.mock("@effect/atom-react", () => ({
+  useAtomMount: () => {},
+  useAtomRefresh: () => () => {},
+}));
 vi.mock("./session", () => ({
   useEnvironmentScope: (environmentId: unknown, scope: string) =>
     (environmentId === state.thread.environmentId ? state.scopes : state.primaryScopes).has(scope),
@@ -83,6 +86,7 @@ vi.mock("./threads", () => ({
 }));
 vi.mock("./vcs", () => ({
   vcsEnvironment: {
+    listRefs: () => ({}),
     readRefs: state.readRefs,
     refreshStatus: async () => {
       state.statusRefreshes += 1;

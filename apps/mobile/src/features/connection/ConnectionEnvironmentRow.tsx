@@ -90,8 +90,8 @@ export function ConnectionEnvironmentRow(props: {
     );
   };
 
-  return (
-    <Animated.View layout={LinearTransition.duration(250)} className="bg-grouped-card">
+  const body = (
+    <>
       <View className="flex-row items-center gap-3 px-4 py-3.5">
         <Pressable
           className="min-w-0 flex-1 gap-0.5 active:opacity-70"
@@ -315,6 +315,16 @@ export function ConnectionEnvironmentRow(props: {
           )}
         </Animated.View>
       ) : null}
+    </>
+  );
+
+  // Details push doesn't expand inline — skip layout animation work on that path.
+  if (props.opensDetails) {
+    return <View className="bg-grouped-card">{body}</View>;
+  }
+  return (
+    <Animated.View layout={LinearTransition.duration(250)} className="bg-grouped-card">
+      {body}
     </Animated.View>
   );
 }

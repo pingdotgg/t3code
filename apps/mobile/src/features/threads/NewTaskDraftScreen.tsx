@@ -1,6 +1,6 @@
 import { DraftEnvironmentControl } from "./DraftEnvironmentControl";
 import { NativeScrollEdgeEffectsContext } from "../../native/NativeScrollViewMarker";
-import { DraftThreadHeader } from "./DraftThreadHeader";
+import { DraftThreadHeader, NewTaskDraftShellHeader } from "./DraftThreadHeader";
 import { useComposerAttachmentActions } from "../../state/use-composer-attachment-actions";
 import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { submittedThreadParams } from "./thread-route-state";
@@ -9,7 +9,6 @@ import { draftThreadShell } from "./draft-thread-shell";
 import { useRememberThreadProject } from "./useRememberThreadProject";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { connectionTone } from "../connection/connectionTone";
-import { AppBar } from "../../components/ui/AppBar";
 import { ThreadId } from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
@@ -26,7 +25,7 @@ import {
   usePreventRemove,
   useRoute,
 } from "@react-navigation/native";
-import { useEffect, useRef, useState } from "react";
+import { startTransition, useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { KeyboardController } from "react-native-keyboard-controller";
@@ -60,6 +59,7 @@ import {
   getComposerDraftSnapshot,
   updateComposerDraftSettings,
   scheduleUnusedComposerAttachmentCleanup,
+  useComposerDraft,
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import { useProjectClone } from "../../state/projectClones";
@@ -140,7 +140,7 @@ function NewTaskWorkspaceIcon(props: {
   );
 }
 
-export function NewTaskDraftScreen(props: {
+type NewTaskDraftScreenProps = {
   readonly initialProjectRef?: {
     readonly environmentId?: string;
     readonly projectId?: string;
@@ -150,7 +150,45 @@ export function NewTaskDraftScreen(props: {
   };
   readonly draftId?: string;
   readonly incomingShareId?: string;
+};
+
+function NewTaskDraftPromptEditor(props: {
+  readonly draftKey: string | null;
+  readonly onChangeText: (value: string) => void;
 }) {
+  const prompt = useComposerDraft(props.draftKey).text;
+  return (
+    <ComposerEditor
+      draftKey={props.draftKey}
+      value={prompt}
+      onChangeText={props.onChangeText}
+      placeholder="Ask anything"
+      multiline
+      style={{ minHeight: 64 }}
+    />
+  );
+}
+
+/** Shell first so the native push is not blocked by composer/flow hooks. */
+export function NewTaskDraftScreen(props: NewTaskDraftScreenProps) {
+  const [bodyReady, setBodyReady] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers the draft composer until after the open-shell paints
+  useEffect(() => {
+    startTransition(() => {
+      setBodyReady(true);
+    });
+  }, []);
+  if (!bodyReady) {
+    return (
+      <ThreadScreenFallback header={<NewTaskDraftShellHeader />} headerKey={["new-task", "chrome"]}>
+        {null}
+      </ThreadScreenFallback>
+    );
+  }
+  return <NewTaskDraftBody {...props} />;
+}
+
+function NewTaskDraftBody(props: NewTaskDraftScreenProps) {
   const [creationMetadata] = useState(makeTurnCommandMetadata);
   const projects = useProjects();
   const flow = useNewTaskFlow();
@@ -501,8 +539,16 @@ export function NewTaskDraftScreen(props: {
   ]);
 
   const { loadBranches } = flow;
+  const [draftChromeReady, setDraftChromeReady] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers draft header + branch fetch until after the open-shell paints
+  useEffect(() => {
+    startTransition(() => {
+      setDraftChromeReady(true);
+    });
+  }, []);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests the selected project's branch list from the server once per project
   useEffect(() => {
+    if (!draftChromeReady) return;
     if (!selectedProject) {
       loadedBranchesProjectKeyRef.current = null;
       return;
@@ -513,7 +559,7 @@ export function NewTaskDraftScreen(props: {
     }
     loadedBranchesProjectKeyRef.current = projectKey;
     loadBranches();
-  }, [loadBranches, selectedProject]);
+  }, [draftChromeReady, loadBranches, selectedProject]);
 
   const selectedEnvironmentLabel =
     flow.environments.find(
@@ -700,17 +746,18 @@ export function NewTaskDraftScreen(props: {
     if (isComposerInteractionLocked) {
       return;
     }
-    promptInputRef.current?.blur();
-    void KeyboardController.dismiss({ animated: true });
+    // Push first; animated keyboard dismiss fights the native-stack transition.
     navigation.navigate("NewTaskProject", { incomingShareId: props.incomingShareId });
+    promptInputRef.current?.blur();
+    void KeyboardController.dismiss({ animated: false });
   };
   const openContextPicker = (routeName: "NewTaskBranch" | "NewTaskEnvironment") => {
     if (isComposerInteractionLocked) {
       return;
     }
-    promptInputRef.current?.blur();
-    void KeyboardController.dismiss({ animated: true });
     navigation.navigate(routeName);
+    promptInputRef.current?.blur();
+    void KeyboardController.dismiss({ animated: false });
   };
 
   const environmentControl = (
@@ -849,20 +896,13 @@ export function NewTaskDraftScreen(props: {
 
   if (!flow.selectedModel) {
     return (
-      <ThreadScreenFallback header={<AppBar title="New thread" onBack={goBack} />}>
+      <ThreadScreenFallback header={<NewTaskDraftShellHeader />} headerKey={["new-task", "chrome"]}>
         <View className="flex-1 justify-end gap-3 p-4">
           {environmentControl}
           <Text className="text-foreground-muted">
             Your draft is saved on this device. Connect to an environment to choose its first model.
           </Text>
-          <ComposerEditor
-            draftKey={flow.draftKey}
-            value={flow.prompt}
-            onChangeText={flow.setPrompt}
-            placeholder="Ask anything"
-            multiline
-            style={{ minHeight: 64 }}
-          />
+          <NewTaskDraftPromptEditor draftKey={flow.draftKey} onChangeText={flow.setPrompt} />
         </View>
       </ThreadScreenFallback>
     );
@@ -882,6 +922,8 @@ export function NewTaskDraftScreen(props: {
     <>
       <ThreadScreenBinding
         environmentId={selectedProject.environmentId}
+        // Same key as the open shell so git/files chrome is not torn down mid-push.
+        headerKey={["new-task", "chrome"]}
         header={
           <DraftThreadHeader thread={thread} project={selectedProject} cwd={composerWorkspaceCwd} />
         }

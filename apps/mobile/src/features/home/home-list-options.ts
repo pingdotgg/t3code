@@ -54,16 +54,20 @@ export function HomeListOptionsProvider({
   const updateOptions = (patch: Partial<HomeListOptions>) => {
     const current = registry.get(optionsAtom);
     const next = { ...current, ...patch };
-    registry.set(optionsAtom, next);
-    if (
+    const scopeChanged =
       next.selectedEnvironmentId !== current.selectedEnvironmentId ||
-      next.selectedProjectKey !== current.selectedProjectKey
-    ) {
-      savePreferences({
-        threadListFilters: {
-          environmentId: next.selectedEnvironmentId,
-          projectKey: next.selectedProjectKey,
-        },
+      next.selectedProjectKey !== current.selectedProjectKey;
+    // Chip labels read this immediately; HomeScreen defers the list rebuild with
+    // useDeferredValue. Preference writes wait a tick so they miss that rebuild frame.
+    registry.set(optionsAtom, next);
+    if (scopeChanged) {
+      queueMicrotask(() => {
+        savePreferences({
+          threadListFilters: {
+            environmentId: next.selectedEnvironmentId,
+            projectKey: next.selectedProjectKey,
+          },
+        });
       });
     }
   };

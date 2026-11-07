@@ -3,7 +3,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
 import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useRef, useState } from "react";
+import { startTransition, useEffect, useRef, useState } from "react";
 import { RefreshControl } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -88,10 +88,19 @@ export function SettingsEnvironmentsRouteScreen() {
           : updates.displayUrl,
     });
   };
+  // Local rows first; cloud + PR routing wait a frame so the push isn't blocked on them.
+  const [sectionsReady, setSectionsReady] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers secondary environment sections until after Environments opens
+  useEffect(() => {
+    startTransition(() => {
+      setSectionsReady(true);
+    });
+  }, []);
 
   return (
     <SettingsScreen
       title="Environments"
+      eagerBody
       refresh={
         relaySession
           ? {
@@ -139,20 +148,24 @@ export function SettingsEnvironmentsRouteScreen() {
           onUpdate={handleUpdateEnvironment}
         />
 
-        {/* Keep connected relays visible and removable without cloud config or sign-in; this component gates discovery. */}
-        <CloudEnvironmentRows
-          connectedCloudEnvironments={connectedCloudEnvironments}
-          onOpenEnvironment={openEnvironment}
-          onSetEnvironmentEnabled={onSetEnvironmentEnabled}
-          onRemoveEnvironment={onRemoveEnvironmentPress}
-          {...(SHOWCASE_ENABLED
-            ? {
-                showcaseAvailableEnvironments: SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS,
-                showcaseSignedIn: true,
-              }
-            : {})}
-        />
-        <PullRequestRoutingSettings />
+        {sectionsReady ? (
+          <>
+            {/* Keep connected relays visible and removable without cloud config or sign-in; this component gates discovery. */}
+            <CloudEnvironmentRows
+              connectedCloudEnvironments={connectedCloudEnvironments}
+              onOpenEnvironment={openEnvironment}
+              onSetEnvironmentEnabled={onSetEnvironmentEnabled}
+              onRemoveEnvironment={onRemoveEnvironmentPress}
+              {...(SHOWCASE_ENABLED
+                ? {
+                    showcaseAvailableEnvironments: SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS,
+                    showcaseSignedIn: true,
+                  }
+                : {})}
+            />
+            <PullRequestRoutingSettings />
+          </>
+        ) : null}
       </ScrollView>
     </SettingsScreen>
   );

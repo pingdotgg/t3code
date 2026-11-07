@@ -1,3 +1,4 @@
+import { startTransition } from "react";
 import { Keyboard } from "react-native";
 
 import { useAdaptiveWorkspaceLayout } from "../adaptive-workspace-context";
@@ -11,6 +12,10 @@ export function useSelectWorkspaceTab() {
   return (tab: WorkspaceTab | "settings") => {
     Keyboard.dismiss();
     openWorkspaceTab(tab);
-    if (tab !== "settings") dispatch?.({ type: "select", tab });
+    if (tab !== "settings") {
+      startTransition(() => {
+        dispatch?.({ type: "select", tab });
+      });
+    }
   };
 }

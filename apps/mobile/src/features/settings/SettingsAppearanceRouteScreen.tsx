@@ -1,4 +1,5 @@
 import { Platform } from "react-native";
+import { startTransition, useEffect, useState } from "react";
 import { AndroidNavigationAppearanceSection } from "./appearance/sections/AndroidNavigationAppearanceSection";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -11,9 +12,17 @@ import { ThemeAppearanceSection } from "./appearance/sections/ThemeAppearanceSec
 
 export function SettingsAppearanceRouteScreen() {
   const insets = useSafeAreaInsets();
+  // Theme + scheme first; secondary sections wait a frame so the push isn't blocked on previews.
+  const [sectionsReady, setSectionsReady] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers text/terminal/code sections until after Appearance opens
+  useEffect(() => {
+    startTransition(() => {
+      setSectionsReady(true);
+    });
+  }, []);
 
   return (
-    <SettingsScreen title="Appearance">
+    <SettingsScreen title="Appearance" eagerBody>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -24,10 +33,14 @@ export function SettingsAppearanceRouteScreen() {
         }}
       >
         <ThemeAppearanceSection />
-        {Platform.OS === "android" ? <AndroidNavigationAppearanceSection /> : null}
-        <TextAppearanceSection />
-        <TerminalAppearanceSection />
-        <CodeAppearanceSection />
+        {sectionsReady ? (
+          <>
+            {Platform.OS === "android" ? <AndroidNavigationAppearanceSection /> : null}
+            <TextAppearanceSection />
+            <TerminalAppearanceSection />
+            <CodeAppearanceSection />
+          </>
+        ) : null}
       </ScrollView>
     </SettingsScreen>
   );

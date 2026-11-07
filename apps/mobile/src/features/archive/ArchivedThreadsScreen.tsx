@@ -423,8 +423,10 @@ export function ArchivedThreadsScreen(props: {
             }}
             contentInsetAdjustmentBehavior="automatic"
             data={listItems}
+            drawDistance={500}
             estimatedItemSize={62}
             getItemType={(item) => item.kind}
+            itemsAreEqual={(previous, next) => previous === next}
             keyboardDismissMode="on-drag"
             keyboardShouldPersistTaps="handled"
             keyExtractor={(item) => item.key}
@@ -433,6 +435,7 @@ export function ArchivedThreadsScreen(props: {
               props.error ? <ArchiveError message={props.error} onRetry={props.onRefresh} /> : null
             }
             onScrollBeginDrag={() => openSwipeableRef.current?.close()}
+            recycleItems
             refreshControl={
               <RefreshControl
                 onRefresh={props.onRefresh}

@@ -16,7 +16,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { EmptyState } from "../../components/ui/EmptyState";
 import { useAuth, useUser } from "@clerk/expo";
 import { useNavigation, useNavigationState } from "@react-navigation/native";
-import { use, type ComponentProps } from "react";
+import { startTransition, use, useEffect, useState, type ComponentProps } from "react";
 import { Platform, View } from "react-native";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
@@ -42,10 +42,25 @@ export function SettingsRouteScreen() {
 /** The Settings list inside a workspace shell that draws its bar, title and search itself. */
 export function WorkspaceSettingsList() {
   const list = useSettingsListPlacement();
+  const [bodyReady, setBodyReady] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers the settings index until after the tab chrome commits
+  useEffect(() => {
+    startTransition(() => {
+      setBodyReady(true);
+    });
+  }, []);
   return (
     <SettingsSidebarContext value={list.sidebar ? { selected: list.selected } : null}>
       <View className="flex-1 bg-screen">
-        <SettingsListContent />
+        {bodyReady ? (
+          <SettingsListContent />
+        ) : (
+          <View className="gap-4 px-5 pt-4">
+            <View className="bg-border/40 h-12 rounded-2xl" />
+            <View className="bg-border/30 h-12 rounded-2xl" />
+            <View className="bg-border/20 h-12 rounded-2xl" />
+          </View>
+        )}
       </View>
     </SettingsSidebarContext>
   );

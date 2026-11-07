@@ -19,6 +19,11 @@ vi.mock("../../state/server", () => ({
     refreshProviders: Symbol("refreshProviders"),
   },
 }));
+vi.mock("../../state/threads", () => ({
+  environmentThreadShells: {
+    visibleThreadShellsAtom: Symbol("visibleThreadShells"),
+  },
+}));
 
 import {
   buildComposerSlashCommandItems,

@@ -1,9 +1,10 @@
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "../../state/session";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { useState } from "react";
+import { startTransition, useEffect, useState } from "react";
 import { View } from "react-native";
 
 import { useEnvironmentQuery } from "../../state/query";
@@ -20,6 +21,14 @@ export function ThreadFileNavigatorPane(props: {
   readonly selectedPath: string | null;
   readonly onSelectFile: (path: string) => void;
 }) {
+  // Sheet/column present with the Files bar first; LegendList mounts after the open frame.
+  const [treeReady, setTreeReady] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers the file tree until after the inspector open frame
+  useEffect(() => {
+    startTransition(() => {
+      setTreeReady(true);
+    });
+  }, []);
   const [searchQuery, setSearchQuery] = useState("");
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
   const fileAccessSession = useEnvironmentQuery(
@@ -46,7 +55,7 @@ export function ThreadFileNavigatorPane(props: {
       theme: highlightTheme,
     });
   };
-  const fileTree = (
+  const fileTree = treeReady ? (
     <FileTreeBrowser
       key={JSON.stringify([props.environmentId, props.cwd])}
       revealSelection={entriesQuery.revealSelection}
@@ -75,6 +84,10 @@ export function ThreadFileNavigatorPane(props: {
         props.onSelectFile(path);
       }}
     />
+  ) : (
+    <View className="px-4 py-5">
+      <AppActivityIndicator size="small" accessibilityLabel="Loading files" />
+    </View>
   );
 
   return (

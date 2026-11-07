@@ -330,9 +330,9 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
       refreshControl={refreshControl}
       data={lines}
       keyExtractor={(_line, index) => String(index)}
-      initialNumToRender={80}
-      maxToRenderPerBatch={80}
-      windowSize={12}
+      initialNumToRender={24}
+      maxToRenderPerBatch={24}
+      windowSize={7}
       {...(codeWordBreak
         ? {}
         : {

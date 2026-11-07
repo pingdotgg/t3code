@@ -1,5 +1,5 @@
 import type { NavigationState } from "@react-navigation/native";
-import { createContext, use, type ReactNode } from "react";
+import { createContext, use, useMemo, type ReactNode } from "react";
 import { Platform } from "react-native";
 import { androidWorkspaceSettingsOpen } from "./android-workspace-tabs";
 import { WorkspaceTabsProvider } from "./WorkspaceTabsContext";
@@ -33,7 +33,10 @@ export function AndroidWorkspaceTabsProvider(props: {
   const settingsRoute = settingsIndex < 0 ? undefined : props.state.routes[settingsIndex];
   const settingsPage =
     settingsIndex < 0 ? null : (props.state.routes[settingsIndex + 1]?.name ?? null);
-  const root = { key, settingsOpen, settingsRoute, settingsPage };
+  const root = useMemo(
+    () => ({ key, settingsOpen, settingsRoute, settingsPage }),
+    [key, settingsOpen, settingsPage, settingsRoute],
+  );
   return Platform.OS === "android" ? (
     <WorkspaceTabsProvider>
       <AndroidWorkspaceRootContext value={root}>{props.children}</AndroidWorkspaceRootContext>

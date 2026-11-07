@@ -11,6 +11,7 @@ import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import {
   appendPendingThreadMessages,
   createThreadFeedGrouping,
+  groupedThreadFeedRowsAreEqual,
   isCompactionCommandFeedEntry,
   selectPendingAcknowledgedMessages,
 } from "./pending-thread-feed";
@@ -49,6 +50,9 @@ describe("pending timeline messages", () => {
     expect(streamed[0]).toBe(initial[0]);
     expect(streamed[1]).toBe(initial[1]);
     expect(streamed[2]).not.toBe(initial[2]);
+    expect(groupedThreadFeedRowsAreEqual(initial[0]!, streamed[0]!)).toBe(true);
+    expect(groupedThreadFeedRowsAreEqual(initial[1]!, streamed[1]!)).toBe(true);
+    expect(groupedThreadFeedRowsAreEqual(initial[2]!, streamed[2]!)).toBe(false);
     const appended = group([first, second, third, reply], {});
     expect(appended[0]).toBe(initial[0]);
     expect(appended[1]).not.toBe(initial[1]);

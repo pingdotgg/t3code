@@ -4,7 +4,7 @@ import { LegendList } from "@legendapp/list/react-native";
 import type { ProjectEntry } from "@t3tools/contracts";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, RefreshControl, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -208,7 +208,11 @@ export function FileTreeBrowser(props: {
     />
   );
 
-  const extraData = { expandedPaths, loadingDirectories, selectedPath };
+  // Keep LegendList from refreshing every visible row on parent ticks that rebuild this object.
+  const extraData = useMemo(
+    () => ({ expandedPaths, loadingDirectories, selectedPath }),
+    [expandedPaths, loadingDirectories, selectedPath],
+  );
 
   // Keep the list as direct screen content so UIKit can apply header insets.
   return (
@@ -224,6 +228,7 @@ export function FileTreeBrowser(props: {
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
       estimatedItemSize={42}
+      drawDistance={500}
       recycleItems
       maintainVisibleContentPosition
       extraData={extraData}
