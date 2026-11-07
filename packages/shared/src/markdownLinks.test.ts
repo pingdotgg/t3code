@@ -24,6 +24,7 @@ describe("inlineCodeFilePathCandidate", () => {
   // regression: #13909 model ids in inline code do not become file chips
   it.each([
     ["src\\main.ts", "src/main.ts"],
+    ["allocator.cc:217", "allocator.cc:217"],
     ["origin/main", null],
     ["z-ai/glm-5.3", null],
     ["share/man/ls.1", "share/man/ls.1"],
