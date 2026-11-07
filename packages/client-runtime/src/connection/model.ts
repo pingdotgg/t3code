@@ -1,7 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayEnvironmentEndpointFailure } from "@t3tools/contracts/relay";
 import * as Effect from "effect/Effect";
-import type * as Option from "effect/Option";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { withGatewayTicket } from "../environment/endpoint.ts";
@@ -170,6 +170,24 @@ export const ticketedHttpBaseUrl = (
     ? Effect.succeed(prepared.httpBaseUrl)
     : prepared.gatewayTicket.pipe(
         Effect.map((ticket) => withGatewayTicket(prepared.httpBaseUrl, ticket)),
+      );
+
+/**
+ * `<img>` and uploads cannot set headers, so a server-issued URL carries a gateway route's ticket.
+ * Returns the same object on any other route.
+ */
+export const ticketedRelativeUrl = <A extends { readonly relativeUrl: string }>(
+  prepared: Option.Option<PreparedConnection>,
+  value: A,
+): Effect.Effect<A, ConnectionAttemptError> =>
+  Option.isNone(prepared) || prepared.value.gatewayTicket === undefined
+    ? Effect.succeed(value)
+    : prepared.value.gatewayTicket.pipe(
+        Effect.map((ticket) =>
+          Option.isNone(ticket)
+            ? value
+            : { ...value, relativeUrl: withGatewayTicket(value.relativeUrl, ticket) },
+        ),
       );
 
 export type SupervisorConnectionPhase =

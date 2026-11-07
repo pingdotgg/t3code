@@ -210,6 +210,12 @@ interface EnvironmentServiceScope {
   readonly scope: Scope.Closeable;
 }
 
+interface GatewayAdvertisement {
+  readonly gatewayEnvironmentId: EnvironmentId;
+  readonly gatewayHttpBaseUrl: string;
+  readonly advertised: ReadonlyArray<LanGatewayPeerAdvertisement>;
+}
+
 /** @public */
 export const make = Effect.gen(function* () {
   const registryScope = yield* Scope.Scope;
@@ -278,6 +284,9 @@ export const make = Effect.gen(function* () {
     ReadonlyMap<EnvironmentId, EnvironmentServiceScope>
   >(new Map());
   const platformEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(new Set());
+  const gatewayAdvertisements = yield* Ref.make<ReadonlyMap<EnvironmentId, GatewayAdvertisement>>(
+    new Map(),
+  );
   const persistedEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(
     new Set(persistedRoutesByEnvironment.keys()),
   );
@@ -579,7 +588,7 @@ export const make = Effect.gen(function* () {
     const registered = connectionRegistrationCatalogEntry(registration);
     const environmentId = registered.target.environmentId;
     const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
-    return yield* withLeaseLock(
+    const applied = yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
@@ -612,6 +621,8 @@ export const make = Effect.gen(function* () {
         return true;
       }),
     );
+    if (applied) yield* relearnGatewayRoutes(environmentId);
+    return applied;
   });
 
   const replaceRoutesLocked = Effect.fn("EnvironmentRegistry.replaceRoutesLocked")(function* (
@@ -992,6 +1003,13 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const retryWaitingSupervisor = Effect.fn("EnvironmentRegistry.retryWaitingSupervisor")(function* (
+    lease: EnvironmentServiceScope,
+  ) {
+    const { phase } = yield* SubscriptionRef.get(lease.supervisor.state);
+    if (phase === "backoff" || phase === "offline") yield* lease.supervisor.retryNow;
+  });
+
   const persistRouteUpdate = Effect.fn("EnvironmentRegistry.persistRouteUpdate")(function* (
     environmentId: EnvironmentId,
     entry: ConnectionCatalogEntry,
@@ -1021,18 +1039,59 @@ export const make = Effect.gen(function* () {
     }
     yield* SubscriptionRef.update(entries, (current) => new Map(current).set(environmentId, next));
     // A connected supervisor finds the routes on its next better-route check.
-    if (lease !== undefined) {
-      const state = yield* SubscriptionRef.get(lease.supervisor.state);
-      if (state.phase === "backoff") yield* lease.supervisor.retryNow;
-    }
+    if (lease !== undefined) yield* retryWaitingSupervisor(lease);
     return next;
   });
 
-  const learnGatewayPeers = Effect.fn("EnvironmentRegistry.learnGatewayPeers")(function* (input: {
-    readonly gatewayEnvironmentId: EnvironmentId;
-    readonly gatewayHttpBaseUrl: string;
-    readonly advertised: ReadonlyArray<LanGatewayPeerAdvertisement>;
-  }) {
+  const applyGatewayAdvertisement = Effect.fn("EnvironmentRegistry.applyGatewayAdvertisement")(
+    function* (peerEnvironmentId: EnvironmentId, input: GatewayAdvertisement) {
+      if (peerEnvironmentId === input.gatewayEnvironmentId) return;
+      yield* withLeaseLock(
+        peerEnvironmentId,
+        Effect.gen(function* () {
+          if ((yield* Ref.get(platformEnvironmentIds)).has(peerEnvironmentId)) return;
+          const entry = (yield* SubscriptionRef.get(entries)).get(peerEnvironmentId);
+          if (entry === undefined) return;
+          const routes = mergeGatewayRoutes({
+            entry,
+            gatewayEnvironmentId: input.gatewayEnvironmentId,
+            gatewayHttpBaseUrl: input.gatewayHttpBaseUrl,
+            advertised: input.advertised,
+          });
+          if (routes !== null) {
+            yield* persistRouteUpdate(peerEnvironmentId, entry, routes);
+            return;
+          }
+          // Unchanged routes still mean the gateway is back, so a waiting peer can try it now.
+          const lease = (yield* SubscriptionRef.get(serviceScopes)).get(peerEnvironmentId);
+          if (
+            lease !== undefined &&
+            connectionRoutes(entry).some(
+              (route) => routeGatewayEnvironmentId(route) === input.gatewayEnvironmentId,
+            )
+          ) {
+            yield* retryWaitingSupervisor(lease);
+          }
+        }),
+      ).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not save LAN gateway routes for a peer.", {
+            gatewayEnvironmentId: input.gatewayEnvironmentId,
+            peerEnvironmentId,
+            error,
+          }),
+        ),
+      );
+    },
+  );
+
+  const learnGatewayPeers = Effect.fn("EnvironmentRegistry.learnGatewayPeers")(function* (
+    input: GatewayAdvertisement,
+  ) {
+    // Saved before reading the catalog so a peer registering now is seen by one side or the other.
+    yield* Ref.update(gatewayAdvertisements, (current) =>
+      new Map(current).set(input.gatewayEnvironmentId, input),
+    );
     const catalog = yield* SubscriptionRef.get(entries);
     const peerIds = new Set(input.advertised.map((peer) => peer.environmentId));
     // A peer this host stopped advertising still carries a route to clean up.
@@ -1046,31 +1105,21 @@ export const make = Effect.gen(function* () {
       }
     }
     for (const peerEnvironmentId of peerIds) {
-      if (peerEnvironmentId === input.gatewayEnvironmentId) continue;
-      yield* withLeaseLock(
-        peerEnvironmentId,
-        Effect.gen(function* () {
-          if ((yield* Ref.get(platformEnvironmentIds)).has(peerEnvironmentId)) return;
-          const entry = (yield* SubscriptionRef.get(entries)).get(peerEnvironmentId);
-          if (entry === undefined) return;
-          const routes = mergeGatewayRoutes({
-            entry,
-            gatewayEnvironmentId: input.gatewayEnvironmentId,
-            gatewayHttpBaseUrl: input.gatewayHttpBaseUrl,
-            advertised: input.advertised,
-          });
-          if (routes === null) return;
-          yield* persistRouteUpdate(peerEnvironmentId, entry, routes);
-        }),
-      ).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("Could not save LAN gateway routes for a peer.", {
-            gatewayEnvironmentId: input.gatewayEnvironmentId,
-            peerEnvironmentId,
-            error,
-          }),
-        ),
-      );
+      yield* applyGatewayAdvertisement(peerEnvironmentId, input);
+    }
+  });
+
+  /** A host only re-sends advertisements when they change, so a newly paired peer looks them up. */
+  const relearnGatewayRoutes = Effect.fn("EnvironmentRegistry.relearnGatewayRoutes")(function* (
+    peerEnvironmentId: EnvironmentId,
+  ) {
+    const leases = yield* SubscriptionRef.get(serviceScopes);
+    for (const advertisement of (yield* Ref.get(gatewayAdvertisements)).values()) {
+      const gateway = leases.get(advertisement.gatewayEnvironmentId);
+      if (gateway === undefined) continue;
+      if (Option.isSome(yield* SubscriptionRef.get(gateway.supervisor.session))) {
+        yield* applyGatewayAdvertisement(peerEnvironmentId, advertisement);
+      }
     }
   });
 
