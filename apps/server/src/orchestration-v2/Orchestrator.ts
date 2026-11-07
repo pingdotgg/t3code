@@ -12990,7 +12990,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: resultTransfer,
         },
       ];
-      yield* writeSystemEvents(completionEvents, [], { updateDelegatedCompletionOnly: true });
+      // A finished delegate is rarely resumed, so its provider process need not idle for the full
+      // timeout. The session manager releases it only if nothing can resume it by then.
+      const releaseCommandId = CommandId.make(
+        `command:system:release-finished-delegate:${childRun.id}`,
+      );
+      yield* writeSystemEvents(
+        completionEvents,
+        terminalStatus === "completed"
+          ? [
+              {
+                id: `effect:${releaseCommandId}:provider-session.release-finished-delegate`,
+                commandId: releaseCommandId,
+                threadId: childThreadId,
+                request: { type: "provider-session.release-finished-delegate" },
+              } satisfies PendingOrchestrationEffectV2,
+            ]
+          : [],
+        { updateDelegatedCompletionOnly: true },
+      );
 
       if (completionPlan.offer && completionPlan.parentRun !== undefined) {
         yield* offerDelegatedCompletionDelivery(parentThreadId, completionPlan.parentRun.id);

@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
@@ -148,7 +149,7 @@ const layerTest = Layer.mergeAll(
   ),
   Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(McpProviderSessions.layer),
-  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStoreTest),
   Layer.provide(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
@@ -2761,6 +2762,59 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         task.result!,
       );
     }),
+  );
+
+  it.effect(
+    "queues the release of a completed child's provider session, not a cancelled one's",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sql = yield* SqlClient.SqlClient;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:release-delegate-parent");
+        const projectId = ProjectId.make("project:release-delegate");
+        const runId = RunId.make("run:release-delegate-parent");
+        const rootNodeId = NodeId.make("node:release-delegate-parent");
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId,
+          runId,
+          rootNodeId,
+          taskId: NodeId.make("node:release-delegate-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = (name: string, runStatus: "cancelled" | "completed") =>
+          seedRestartCancelledChild({
+            parentThreadId: threadId,
+            projectId,
+            parentRunId: runId,
+            rootNodeId,
+            name,
+            completionWake: "always",
+            continuationPending: false,
+            runStatus,
+            now,
+          });
+        const completed = yield* child("release-delegate-completed", "completed");
+        const cancelled = yield* child("release-delegate-cancelled", "cancelled");
+
+        yield* orchestrator.recoverDelegatedTasks;
+
+        const queued = yield* sql<{ readonly thread_id: string }>`
+        SELECT thread_id FROM orchestration_v2_effect_outbox
+        WHERE effect_type = 'provider-session.release-finished-delegate'
+          AND thread_id LIKE 'thread:release-delegate-%'
+      `;
+        assert.deepEqual(
+          queued.map((row) => row.thread_id),
+          [completed.childThreadId],
+        );
+        assert.notInclude(
+          queued.map((row) => row.thread_id),
+          cancelled.childThreadId,
+        );
+      }),
   );
 
   it.effect("holds a restart-cancelled child for its continuation's result", () =>
