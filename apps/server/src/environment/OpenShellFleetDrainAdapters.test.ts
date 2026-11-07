@@ -31,9 +31,11 @@ const withSink = <A>(use: (sink: DrainSink, stateDir: string) => SinkUse<A>) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const stateDir = yield* fs.makeTempDirectory();
-    const sink = OpenShellFleetDrainAdapters.fileDrainSink({ stateDir, fs, path });
+    const sink = yield* OpenShellFleetDrainAdapters.fileDrainSink({ stateDir, fs, path });
     return yield* use(sink, stateDir);
   }).pipe(Effect.provide(NodeServices.layer));
+
+const base64Of = (text: string) => Buffer.from(text, "utf8").toString("base64");
 
 const write = (
   sink: DrainSink,
@@ -160,6 +162,160 @@ describe("fileDrainSink", () => {
         expect(record).toBeNull();
       }),
     ),
+  );
+});
+
+describe("fileDrainSink attachments", () => {
+  it.effect("stores attachment files beside the bundle and manifests them", () =>
+    withSink((sink, stateDir) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* sink.write({
+          environmentId: EnvironmentId.make("environment:worker"),
+          drainId: "drain:environment:worker:1",
+          threadId: "thread:a",
+          body: '{"events":[1]}',
+          snapshotSequence: 2,
+          attachments: {
+            files: [{ name: "attach-1.png", bytes: base64Of("image-bytes") }],
+            oversizeSkipped: false,
+          },
+        });
+        const record = yield* sink.read({
+          environmentId: EnvironmentId.make("environment:worker"),
+          drainId: "drain:environment:worker:1",
+          threadId: "thread:a",
+        });
+        expect(record?.attachments).toHaveLength(1);
+        const entry = record?.attachments?.[0];
+        expect(entry?.name).toBe("attach-1.png");
+        expect(entry?.size).toBe("image-bytes".length);
+        expect(entry?.hash).toMatch(/^[0-9a-f]{64}$/);
+        // The sibling file holds the exact bytes, keyed by the same hash.
+        const dir = path.join(
+          stateDir,
+          "fleet-drain",
+          "environment%3Aworker",
+          "drain%3Aenvironment%3Aworker%3A1",
+        );
+        const stored = yield* fs.readFile(
+          path.join(dir, `thread-thread%3Aa-att-${entry?.hash.slice(0, 16)}.bin`),
+        );
+        expect(new TextDecoder().decode(stored)).toBe("image-bytes");
+        expect(record?.attachmentsSkipped).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.effect("records an oversize skip without manifest entries", () =>
+    withSink((sink) =>
+      Effect.gen(function* () {
+        yield* sink.write({
+          environmentId: EnvironmentId.make("environment:worker"),
+          drainId: "drain:environment:worker:1",
+          threadId: "thread:a",
+          body: '{"events":[1]}',
+          snapshotSequence: 2,
+          attachments: { files: [], oversizeSkipped: true },
+        });
+        const record = yield* sink.read({
+          environmentId: EnvironmentId.make("environment:worker"),
+          drainId: "drain:environment:worker:1",
+          threadId: "thread:a",
+        });
+        expect(record?.attachments).toBeUndefined();
+        expect(record?.attachmentsSkipped).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect("a plain bundle still reads back without manifest fields", () =>
+    withSink((sink) =>
+      Effect.gen(function* () {
+        yield* write(sink);
+        const record = yield* sink.read({
+          environmentId: EnvironmentId.make("environment:worker"),
+          drainId: "drain:environment:worker:1",
+          threadId: "thread:a",
+        });
+        expect(record?.attachments).toBeUndefined();
+        expect(record?.attachmentsSkipped).toBeUndefined();
+      }),
+    ),
+  );
+});
+
+describe("execDrainAttachments", () => {
+  const frame = (name: string, bytes: string) => `==T3ATT ${name}\n${bytes}\n`;
+
+  const source = (stdout: string, exitCode = 0) =>
+    OpenShellFleetDrainAdapters.execDrainAttachments({
+      exec: (sandboxName, command) => {
+        expect(sandboxName).toBe("sandbox-1");
+        expect(command[0]).toBe("sh");
+        return Effect.succeed({ exitCode, stdout, stderr: "" });
+      },
+    });
+
+  it.effect("parses framed base64 files from exec stdout", () =>
+    Effect.gen(function* () {
+      const attachments = yield* source(
+        `${frame("attach-1.png", base64Of("one"))}${frame("attach-2.bin", base64Of("two"))}`,
+      )({
+        environmentId: EnvironmentId.make("environment:worker"),
+        sandboxName: "sandbox-1",
+        threadId: "thread:a",
+      });
+      expect(attachments.oversizeSkipped).toBe(false);
+      expect(attachments.files.map((file) => file.name)).toEqual(["attach-1.png", "attach-2.bin"]);
+      expect(Buffer.from(attachments.files[0]?.bytes ?? "", "base64").toString()).toBe("one");
+    }),
+  );
+
+  it.effect("answers empty when the worker holds no attachment directory", () =>
+    Effect.gen(function* () {
+      const attachments = yield* source("")({
+        environmentId: EnvironmentId.make("environment:worker"),
+        sandboxName: "sandbox-1",
+        threadId: "thread:a",
+      });
+      expect(attachments.files).toEqual([]);
+      expect(attachments.oversizeSkipped).toBe(false);
+    }),
+  );
+
+  it.effect("skips the whole set above the size cap", () =>
+    Effect.gen(function* () {
+      const big = OpenShellFleetDrainAdapters.execDrainAttachments({
+        exec: () =>
+          Effect.succeed({ exitCode: 0, stdout: frame("a.bin", base64Of("x")), stderr: "" }),
+        maxBytes: 2,
+      });
+      const attachments = yield* big({
+        environmentId: EnvironmentId.make("environment:worker"),
+        sandboxName: "sandbox-1",
+        threadId: "thread:a",
+      });
+      expect(attachments.files).toEqual([]);
+      expect(attachments.oversizeSkipped).toBe(true);
+    }),
+  );
+
+  it.effect("fails typed when the worker cannot list attachments", () =>
+    Effect.gen(function* () {
+      const failure = yield* refused(
+        source(
+          "",
+          7,
+        )({
+          environmentId: EnvironmentId.make("environment:worker"),
+          sandboxName: "sandbox-1",
+          threadId: "thread:a",
+        }),
+      );
+      expect(failure.step).toBe("attachments");
+    }),
   );
 });
 
