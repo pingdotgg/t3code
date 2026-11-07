@@ -3,10 +3,7 @@ import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pu
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
@@ -50,10 +47,10 @@ import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import {
+  runPullRequestCheckoutHandoff,
   usePullRequestDefaultMergeMethodResolver,
   writeHandoffToComposer,
 } from "./usePullRequestActions";
-import { offHeadPullRequestCheckoutToast } from "./pullRequestCheckoutToast";
 import { usePreparePullRequestThreadAction } from "~/state/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -129,7 +126,6 @@ import {
   pullRequestFindingKey,
   pullRequestHandoffLabels,
   PULL_REQUEST_MERGE_METHOD_LABELS,
-  checkoutFailureDescription,
   readableFailure,
   resolvePullRequestReferenceHost,
   resolvePullRequestPrimaryControl,
@@ -853,90 +849,37 @@ export function PullRequestDetailPanel({
       return;
     }
     setHandoff(kind);
-    const toastId = toastManager.add({
-      type: "loading",
-      title: `Preparing the ${terminology.singular} checkout...`,
-    });
     const projectRef = scopeProjectRef(
       actingEnvironmentId,
       acting?.projectId ?? handoffSummary.projectId,
     );
-    // Checkout setup requires the thread to exist first.
-    const opened = await newThread(projectRef).then(
-      (session) => session,
-      () => null,
-    );
-    if (opened === null) {
-      setHandoff(null);
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Could not open a thread for the checkout",
-        description: "Try again from the project, or open a thread first.",
-      });
-      return;
-    }
-    const prepared = await prepareThread.run({
-      reference: handoffSummary.url,
+    await runPullRequestCheckoutHandoff({
+      terminology,
       mode,
-      threadId: opened.threadId,
-    });
-    if (prepared._tag === "Failure") {
-      setHandoff(null);
-      toastManager.update(toastId, {
-        type: "error",
-        title: `Could not prepare the ${terminology.singular} checkout`,
-        description: checkoutFailureDescription(
-          isAtomCommandInterrupted(prepared) ? undefined : squashAtomCommandFailure(prepared),
+      task,
+      clearHandoff: () => setHandoff(null),
+      // Checkout setup requires the thread to exist first.
+      openThread: () =>
+        newThread(projectRef).then(
+          (session) => session,
+          () => null,
         ),
-      });
-      return;
-    }
-    const pointed = await newThread(projectRef, {
-      branch: prepared.value.branch,
-      worktreePath: prepared.value.worktreePath,
-      envMode: prepared.value.worktreePath === null ? "local" : "worktree",
-    }).then(
-      (session) => session !== null,
-      () => false,
-    );
-    if (!pointed) {
-      setHandoff(null);
-      // Sending after failed rebinding would use the previous checkout.
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Checked out, but the thread stayed where it was",
-        description: `The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
-      });
-      return;
-    }
-    setHandoff(null);
-    if (task === null) {
-      toastManager.update(
-        toastId,
-        prepared.value.isOnPullRequestHead
-          ? {
-              type: "success",
-              title: mode === "local" ? "Checked out here" : "Checked out",
-              description:
-                mode === "local"
-                  ? `This repository is on the ${terminology.singular}'s branch, with a thread open on it.`
-                  : `The ${terminology.singular} is in its own worktree, with a thread open on it.`,
-            }
-          : offHeadPullRequestCheckoutToast(terminology),
-      );
-      return;
-    }
-    await openThreadWithTask(projectRef, task, opened);
-    toastManager.update(
-      toastId,
-      prepared.value.isOnPullRequestHead
-        ? {
-            type: "success",
-            title: "Checkout ready",
-            description: "The task is in the composer. Read it over, then send.",
-          }
-        : offHeadPullRequestCheckoutToast(terminology),
-    );
+      prepare: (threadId) =>
+        prepareThread.run({
+          reference: handoffSummary.url,
+          mode,
+          threadId,
+        }),
+      pointThread: (prepared) =>
+        newThread(projectRef, {
+          branch: prepared.branch,
+          worktreePath: prepared.worktreePath,
+          envMode: prepared.worktreePath === null ? "local" : "worktree",
+        }).then(
+          (session) => session !== null,
+          () => false,
+        ),
+    });
   };
 
   const askAboutPullRequest = () => {
