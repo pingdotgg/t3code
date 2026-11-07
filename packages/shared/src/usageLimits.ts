@@ -192,12 +192,15 @@ function accountKey(
   driver: ServerProvider["driver"],
   email: string | undefined,
   limits?: ServerProviderUsageLimits,
+  anchors?: ReadonlyMap<string, { readonly anchor: string }>,
 ): string | null {
   const normalizedEmail = email?.trim().toLowerCase();
   if (normalizedEmail) return `${driver}:${normalizedEmail}`;
-  return limits?.credentialFingerprint
-    ? `${driver}:credential:${limits.credentialFingerprint}`
-    : null;
+  if (!limits?.credentialFingerprint) return null;
+  const anchor = anchors?.get(limits.credentialFingerprint)?.anchor;
+  return anchor
+    ? `${driver}:monthly:${anchor}`
+    : `${driver}:credential:${limits.credentialFingerprint}`;
 }
 
 interface AccountReport {
@@ -215,16 +218,27 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
 });
 
 // Include every enabled login, even unreadable workspaces.
-function accountKeyResolver(reports: Iterable<AccountReport>) {
+function accountKeyResolver(reports: readonly AccountReport[]) {
+  // A subscription can have several keys; its monthly reset is anchored to the subscription start.
+  // Each key takes its freshest anchor so its own readings still merge across a monthly rollover.
+  const anchors = new Map<string, { readonly anchor: string; readonly checkedAt: number }>();
+  for (const { usageLimits: limits } of reports) {
+    const anchor = limits?.windows.find((window) => window.kind === "monthly")?.resetsAt;
+    if (!limits?.credentialFingerprint || !anchor) continue;
+    const checkedAt = Date.parse(limits.checkedAt);
+    if (checkedAt > (anchors.get(limits.credentialFingerprint)?.checkedAt ?? -Infinity)) {
+      anchors.set(limits.credentialFingerprint, { anchor, checkedAt });
+    }
+  }
   const workspaces = new Map<string, Set<string>>();
   for (const report of reports) {
-    const key = accountKey(report.driver, report.email, report.usageLimits);
+    const key = accountKey(report.driver, report.email, report.usageLimits, anchors);
     if (key && report.workspaceId) {
       workspaces.set(key, (workspaces.get(key) ?? new Set()).add(report.workspaceId));
     }
   }
   return (report: AccountReport): string | null => {
-    const key = accountKey(report.driver, report.email, report.usageLimits);
+    const key = accountKey(report.driver, report.email, report.usageLimits, anchors);
     if (!key) return null;
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
     const known = workspaces.get(key);

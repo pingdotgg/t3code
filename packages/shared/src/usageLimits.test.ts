@@ -344,6 +344,107 @@ describe("pools", () => {
     expect(collectLimitAccounts(input)).toHaveLength(1);
   });
 
+  it("merges OpenCode Go limits read through different API keys of one subscription", () => {
+    const go = (
+      credentialFingerprint: string,
+      checkedAt: string,
+      [rolling, weekly, monthly]: readonly [number, number, number],
+      monthlyResetsAt = "2026-11-15T15:39:18.000Z",
+    ) =>
+      provider({
+        driver: ProviderDriverKind.make("opencode"),
+        instanceId: ProviderInstanceId.make("opencode"),
+        auth: { status: "authenticated" },
+        usageLimits: {
+          checkedAt,
+          credentialFingerprint,
+          windows: [
+            {
+              id: "go_rolling",
+              kind: "session",
+              label: "Go · Session",
+              windowDurationMins: 5 * 60,
+              usedPercent: rolling,
+              resetsAt: "2026-11-04T22:00:00.000Z",
+            },
+            {
+              id: "go_weekly",
+              kind: "weekly",
+              label: "Go · Weekly",
+              windowDurationMins: 7 * 24 * 60,
+              usedPercent: weekly,
+              resetsAt: "2026-11-09T00:00:00.000Z",
+            },
+            {
+              id: "go_monthly",
+              kind: "monthly",
+              label: "Go · Monthly",
+              usedPercent: monthly,
+              resetsAt: monthlyResetsAt,
+            },
+          ],
+        },
+      });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: { providers: [go("key-B", "2026-11-01T12:00:00.000Z", [3, 3, 13])] },
+        },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: { providers: [go("key-A", "2026-11-04T17:55:00.000Z", [0, 18, 21])] },
+        },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.limits.windows.map((entry) => entry.usedPercent)).toEqual([0, 18, 21]);
+    expect(
+      collectLimitPools(accounts, Date.parse("2026-11-04T18:00:00.000Z"))[0]?.windows.map(
+        (entry) => entry.members.length,
+      ),
+    ).toEqual([1, 1, 1]);
+
+    input.set(EnvironmentId.make("env-b"), {
+      entry: { target: { label: "Desktop" } },
+      serverConfig: {
+        providers: [
+          go("key-A", "2026-11-04T17:55:00.000Z", [0, 18, 21], "2026-11-20T08:12:45.000Z"),
+        ],
+      },
+    });
+    expect(collectLimitAccounts(input)).toHaveLength(2);
+
+    for (const order of [
+      ["2026-11-15T15:30:00.000Z", "2026-11-15T15:55:00.000Z"],
+      ["2026-11-15T15:55:00.000Z", "2026-11-15T15:30:00.000Z"],
+    ]) {
+      const rollover = new Map(
+        order.map((readAt, index) => [
+          EnvironmentId.make(`env-${index}`),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [
+                readAt === "2026-11-15T15:30:00.000Z"
+                  ? go("key-A", readAt, [5, 40, 90])
+                  : go("key-A", readAt, [0, 40, 0], "2026-12-15T15:39:18.000Z"),
+              ],
+            },
+          },
+        ]),
+      );
+      const [only, ...rest] = collectLimitAccounts(rollover);
+      expect(rest).toHaveLength(0);
+      expect(only?.limits.windows.map((entry) => entry.usedPercent)).toEqual([0, 40, 0]);
+    }
+  });
+
   it("takes windows from a fresher hub read but credits and redeem from the native instance", () => {
     const native = provider({
       driver: claude,
