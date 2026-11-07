@@ -2113,6 +2113,39 @@ describe("mobile composer drafts", () => {
     },
   );
 
+  it("keeps a sent draft on disk until its outbox write lands when the app leaves", async () => {
+    vi.useFakeTimers();
+    onTestFinished(installComposerDraftsForegroundFlush());
+    const draftKey = "environment-1:thread-1";
+    const text = "Recover this unsent message";
+    setComposerDraftText(draftKey, text);
+    await flushComposerDrafts();
+
+    const busyOutbox = Promise.withResolvers<void>();
+    const earlierOutboxOperation = threadOutboxManager.serialize(() => busyOutbox.promise);
+    const enqueue = threadOutboxManager.enqueue({
+      environmentId: EnvironmentId.make("environment-1"),
+      threadId: ThreadId.make("thread-1"),
+      messageId: MessageId.make("message-1"),
+      commandId: CommandId.make("command-1"),
+      text,
+      attachments: [],
+      createdAt: "2026-11-07T00:00:00.000Z",
+    });
+    clearComposerDraftContent(draftKey, { deferAttachmentCleanup: true });
+    appStateMocks.listeners.forEach((listener) => listener("background"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(composerDraftFileMocks.getDocument()).toContain(text);
+
+    busyOutbox.resolve();
+    await earlierOutboxOperation;
+    await enqueue;
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(composerDraftFileMocks.getDocument()).not.toContain(text);
+  });
+
   it("clears sent content without clearing the selected model or workspace", () => {
     const draftKey = "environment-1:thread-1";
     const draft: ComposerDraft = {
