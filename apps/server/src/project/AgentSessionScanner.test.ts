@@ -2861,6 +2861,25 @@ describe("parseAgentSessionTranscript", () => {
     expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
   });
 
+  it("does not split an emoji when shortening a long first message into a title", () => {
+    const prompt = `${"a".repeat(99)}🚀 then deploy`;
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          payload: { type: "user_message", message: prompt },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe("a".repeat(99));
+  });
+
   it("skips sessions without a visible user message", () => {
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
       contents: JSON.stringify({

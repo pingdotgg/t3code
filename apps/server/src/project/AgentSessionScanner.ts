@@ -366,9 +366,16 @@ function codexHistoryBase(records: ReadonlyArray<DecodedTranscriptRecord>) {
     : undefined;
 }
 
+const MAX_DERIVED_TITLE_LENGTH = 100;
+
 function deriveTitle(source: AgentSessionSource, text: string): string | undefined {
   const request = source === "codex" ? text.replace(CODEX_TITLE_PREAMBLE, "") : text;
-  return request.trim().split("\n")[0]?.slice(0, 100).trim() || undefined;
+  const line = request.trim().split("\n")[0] ?? "";
+  // Cutting between an emoji's surrogates leaves a lone half that persists as U+FFFD.
+  const last = line.charCodeAt(MAX_DERIVED_TITLE_LENGTH - 1);
+  const end =
+    last >= 0xd800 && last <= 0xdbff ? MAX_DERIVED_TITLE_LENGTH - 1 : MAX_DERIVED_TITLE_LENGTH;
+  return line.slice(0, end).trim() || undefined;
 }
 
 // Pi keeps abandoned branches in the file; its active branch runs from the last entry to the root.
