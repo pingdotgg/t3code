@@ -76,7 +76,7 @@ import type { SidebarThreadSummary } from "../../types";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
-import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { EnvironmentBadgeIcon } from "../EnvironmentBadgeIcon";
 import {
   animateSidebarLayoutChanges,
   hasUnseenCompletion,
@@ -283,7 +283,8 @@ function SidebarThreadTooltip({
         ) : null}
         {environmentLabel ? (
           <div className="flex min-w-0 items-center gap-2">
-            <EnvironmentMachineIcon
+            <EnvironmentBadgeIcon
+              environmentId={thread.environmentId}
               kind={environmentMachine}
               className="size-3 shrink-0 stroke-muted-foreground"
             />
@@ -1131,7 +1132,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const remoteMachineIcon =
     isRemote && !showsScratchMachine ? (
       <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
-        <EnvironmentMachineIcon aria-hidden kind={props.environmentMachine} className="size-3.5" />
+        <EnvironmentBadgeIcon
+          environmentId={thread.environmentId}
+          kind={props.environmentMachine}
+          className="size-3.5"
+        />
       </span>
     ) : null;
   const diff = latestRunDiff(thread);
@@ -1153,8 +1158,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         </>
       ) : showsScratchMachine ? (
         <>
-          <EnvironmentMachineIcon
-            aria-hidden
+          <EnvironmentBadgeIcon
+            environmentId={thread.environmentId}
             kind={props.environmentMachine}
             className="size-3 shrink-0"
           />

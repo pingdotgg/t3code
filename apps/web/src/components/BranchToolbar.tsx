@@ -18,7 +18,7 @@ import {
 import { flushSync } from "react-dom";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
-import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { EnvironmentBadgeIcon } from "./EnvironmentBadgeIcon";
 import { useProject, useThreadShellsForProjectRefs } from "../state/entities";
 import {
   ADD_TO_MACHINE_LABEL_CLASS,
@@ -234,7 +234,8 @@ const RunContextSelector = memo(function RunContextSelector({
             aria-hidden="true"
           />
         ) : (
-          <EnvironmentMachineIcon
+          <EnvironmentBadgeIcon
+            environmentId={environmentId}
             kind={activeEnvironment?.machine ?? "server"}
             // Wide machine glyphs need a little more box to match the square row icons.
             className={
@@ -358,7 +359,11 @@ const RunContextSelector = memo(function RunContextSelector({
                     closeOnClick
                   >
                     <span className="flex min-w-0 items-center gap-1.5">
-                      <EnvironmentMachineIcon kind={env.machine} className="size-3" />
+                      <EnvironmentBadgeIcon
+                        environmentId={env.environmentId}
+                        kind={env.machine}
+                        className="size-3"
+                      />
                       <span className="min-w-0 truncate">{env.label}</span>
                     </span>
                   </MenuRadioItem>
@@ -379,7 +384,11 @@ const RunContextSelector = memo(function RunContextSelector({
                         onClick={() => onAddToMachine(target.environmentId)}
                       >
                         <span className="flex min-w-0 items-center gap-1.5">
-                          <EnvironmentMachineIcon kind={target.machine} className="size-3" />
+                          <EnvironmentBadgeIcon
+                            environmentId={target.environmentId}
+                            kind={target.machine}
+                            className="size-3"
+                          />
                           <span className="min-w-0 truncate">{target.label}</span>
                         </span>
                       </MenuItem>
