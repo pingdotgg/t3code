@@ -11,6 +11,7 @@ import {
 } from "@t3tools/shared/dpop";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -451,6 +452,52 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         expect(session.scopes).toEqual(["orchestration:read"]);
       }).pipe(
         Effect.provide(layerEnvironmentAuth({ desktopBootstrapToken: "desktop-bootstrap-token" })),
+      ),
+    );
+
+    it.effect("gives sessions redeemed from pairing links the configured lifetime", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const now = yield* DateTime.now;
+        const pairedLifetime = Duration.days(90);
+
+        const browserLink = yield* serverAuth.issuePairingCredential();
+        const browser = yield* serverAuth.createBrowserSession(
+          browserLink.credential,
+          requestMetadata,
+        );
+        const bearerLink = yield* serverAuth.issuePairingCredential();
+        const bearer = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          bearerLink.credential,
+          undefined,
+          requestMetadata,
+        );
+        const dpopLink = yield* serverAuth.issuePairingCredential();
+        const dpop = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          dpopLink.credential,
+          undefined,
+          requestMetadata,
+          { proofKeyThumbprint: "test-proof-key" },
+        );
+        const desktop = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          "desktop-bootstrap-token",
+          undefined,
+          requestMetadata,
+        );
+
+        expect(DateTime.toEpochMillis(browser.response.expiresAt)).toBe(
+          now.epochMilliseconds + Duration.toMillis(pairedLifetime),
+        );
+        expect(bearer.expires_in).toBe(Duration.toSeconds(pairedLifetime));
+        expect(dpop.expires_in).toBe(Duration.toSeconds(Duration.hours(1)));
+        expect(desktop.expires_in).toBe(Duration.toSeconds(Duration.days(30)));
+      }).pipe(
+        Effect.provide(
+          layerEnvironmentAuth({
+            desktopBootstrapToken: "desktop-bootstrap-token",
+            pairingSessionTtl: Duration.days(90),
+          }),
+        ),
       ),
     );
 

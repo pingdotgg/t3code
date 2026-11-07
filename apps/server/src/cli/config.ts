@@ -277,6 +277,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const env = yield* EnvServerConfig;
+  const pairingSessionTtl = yield* pairingSessionTtlConfig;
   const normalizedFlags = {
     mode: flags.mode ?? Option.none(),
     port: flags.port ?? Option.none(),
@@ -523,6 +524,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     logWebSocketEvents,
     tailscaleServeEnabled,
     tailscaleServePort,
+    ...(pairingSessionTtl === undefined ? {} : { pairingSessionTtl }),
   };
 
   return config;
@@ -620,3 +622,22 @@ export const DurationFromString = Schema.String.pipe(
     }),
   ),
 );
+
+// Ten years keeps every expiry a valid date in the session table, signed claims and cookies.
+const MAX_PAIRING_SESSION_TTL = Duration.days(3650);
+
+const PairingSessionTtlFromString = DurationFromString.pipe(
+  Schema.check(
+    Schema.makeFilter(
+      (duration) =>
+        Duration.isPositive(duration) &&
+        Duration.isLessThanOrEqualTo(duration, MAX_PAIRING_SESSION_TTL),
+      { expected: "a duration above zero and at most 3650d, such as 90d or 26w" },
+    ),
+  ),
+);
+
+const pairingSessionTtlConfig = Config.schema(
+  PairingSessionTtlFromString,
+  "T3CODE_PAIRING_SESSION_TTL",
+).pipe(Config.option, Config.map(Option.getOrUndefined));

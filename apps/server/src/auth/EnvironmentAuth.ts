@@ -719,6 +719,11 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
   const devAuth = resolveReusableDevAuth(config);
+  // Only sessions redeemed from pairing links; desktop and dev-token sessions keep the default.
+  const pairedSessionTtl = (method: ResolvedBootstrapGrant["method"]) =>
+    method === "one-time-token" && config.pairingSessionTtl !== undefined
+      ? { ttl: config.pairingSessionTtl }
+      : {};
 
   const authenticateToken = (
     token: string,
@@ -886,6 +891,7 @@ export const make = Effect.gen(function* () {
         method: "browser-session-cookie",
         subject: grant.subject,
         scopes: grant.scopes,
+        ...pairedSessionTtl(grant.method),
         ...(previousSession?.method === "browser-session-cookie"
           ? { replaceSessionId: previousSession.sessionId }
           : {}),
@@ -978,7 +984,7 @@ export const make = Effect.gen(function* () {
                       proofKeyThumbprint: input.proofKeyThumbprint,
                       ttl: Duration.hours(1),
                     }
-                  : {}),
+                  : pairedSessionTtl(grant.method)),
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
                 client: {
                   ...requestMetadata,

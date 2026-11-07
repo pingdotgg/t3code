@@ -6,6 +6,7 @@ import * as NodeOS from "node:os";
 
 import { assert, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -300,6 +301,32 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       expect(serialized).not.toContain(secret);
       expect(desktop.devAuthToken).toBeUndefined();
       expect(staticWeb.devAuthToken).toBeUndefined();
+    }),
+  );
+
+  it.effect("reads the pairing session lifetime from T3CODE_PAIRING_SESSION_TTL", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "t3-cli-pairing-ttl-" })),
+      );
+      const resolveWithEnv = (env: Record<string, string>) =>
+        resolveServerConfig(minimalDesktopFlags(baseDir), Option.none()).pipe(
+          Effect.provide(
+            Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromEnv({ env })), NetService.layer),
+          ),
+        );
+
+      const configured = yield* resolveWithEnv({ T3CODE_PAIRING_SESSION_TTL: "26w" });
+      const unset = yield* resolveWithEnv({});
+      const rejected = yield* Effect.forEach(["0d", "3651d", "forever"], (value) =>
+        resolveWithEnv({ T3CODE_PAIRING_SESSION_TTL: value }).pipe(Effect.flip),
+      );
+
+      expect(configured.pairingSessionTtl).toEqual(Duration.weeks(26));
+      expect(unset.pairingSessionTtl).toBeUndefined();
+      for (const error of rejected) {
+        expect(String(error)).toContain("T3CODE_PAIRING_SESSION_TTL");
+      }
     }),
   );
 
