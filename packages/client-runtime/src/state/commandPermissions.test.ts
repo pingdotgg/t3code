@@ -31,7 +31,7 @@ import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
-import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
+import { AVAILABLE_CONNECTION_STATE, BearerConnectionTarget } from "../connection/model.ts";
 import { createPeerLinkEnvironmentAtoms } from "./peerLinks.ts";
 
 vi.mock("./session.ts", () => ({
@@ -390,7 +390,11 @@ it.effect(
           ),
         };
         const supervisor = {
-          target: { environmentId: env },
+          target: new BearerConnectionTarget({
+            environmentId: env,
+            label: "Test",
+            connectionId: "test",
+          }),
           session: yield* SubscriptionRef.make(Option.some({ client } as unknown as RpcSession)),
           state: yield* SubscriptionRef.make({
             ...AVAILABLE_CONNECTION_STATE,
