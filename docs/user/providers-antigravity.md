@@ -63,8 +63,10 @@ directory, at the same version. Make both executable on macOS or Linux; Windows
 uses `.exe` files.
 
 Set **Binary path** to the ACP executable on the environment and update it yourself.
-Leave the field blank to use the managed runtime, or a compatible executable on
-`PATH` if no managed runtime is installed.
+On Windows it can also point at a `.cmd` or `.bat` script that only sets variables
+and then runs the ACP executable by its full path or a `%~dp0`-relative path; the
+helper must sit beside that executable. Leave the field blank to use the managed
+runtime, or a compatible executable on `PATH` if no managed runtime is installed.
 
 ## Models and threads
 
