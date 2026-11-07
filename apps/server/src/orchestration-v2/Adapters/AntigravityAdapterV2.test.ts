@@ -56,11 +56,12 @@ const flavor = makeAntigravityAcpAdapterFlavor({
 function permissionRequest(
   toolCallId: string,
   options: ReadonlyArray<EffectAcpSchema.PermissionOption>,
+  kind?: EffectAcpSchema.ToolKind,
 ): EffectAcpSchema.RequestPermissionRequest {
   return {
     sessionId: "session-1",
     options,
-    toolCall: { toolCallId, title: "Which branch?" },
+    toolCall: { toolCallId, title: "Which branch?", ...(kind === undefined ? {} : { kind }) },
   };
 }
 
@@ -132,6 +133,22 @@ describe("AntigravityAdapterV2 flavor", () => {
     assert.deepEqual(question?.respond({ interaction_2: "opt-dev" }), {
       outcome: { outcome: "selected", optionId: "opt-dev" },
     });
+  });
+
+  it("routes a mode switch to approval rather than the question card", () => {
+    const request = permissionRequest(
+      "interaction_3",
+      [
+        { optionId: "switch-to-build", name: "Yes", kind: "allow_once" },
+        { optionId: "stay-in-plan", name: "No", kind: "reject_once" },
+      ],
+      "switch_mode",
+    );
+    assert.isUndefined(flavor.extractPermissionQuestion?.(request));
+    assert.deepEqual(
+      flavor.approvalOptions?.(request)?.map((option) => option.decision),
+      ["accept", "decline", "cancel"],
+    );
   });
 });
 

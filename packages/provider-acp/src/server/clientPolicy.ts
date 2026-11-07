@@ -193,6 +193,8 @@ export function acpPermissionDisposition(
   runtimePolicy: AcpRuntimePolicy,
   request: EffectAcpSchema.RequestPermissionRequest,
 ): AcpPermissionDisposition {
+  // Switching modes is the user's decision; auto-approving tools must not answer it.
+  if (request.toolCall.kind === "switch_mode") return "ask";
   return acpOperationDisposition(runtimePolicy, {
     kind: request.toolCall.kind,
     locations: request.toolCall.locations,
