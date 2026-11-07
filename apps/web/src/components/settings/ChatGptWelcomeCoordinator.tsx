@@ -62,27 +62,25 @@ export function ChatGptWelcomeCoordinator() {
         if (!open) dismiss();
       }}
     >
-      <DialogPopup className="sm:max-w-100" showCloseButton={false} initialFocus={continueRef}>
+      <DialogPopup className="sm:max-w-md" initialFocus={continueRef}>
         <DialogHeader>
-          <div className="mb-2 flex size-9 items-center justify-center rounded-control surface-well">
-            <OpenAI aria-hidden className="size-4.5 text-foreground" />
+          <OpenAI aria-hidden className="mb-3 size-8 text-strong-foreground" />
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <DialogTitle>Your ChatGPT plan is connected</DialogTitle>
+            <DialogDescription>
+              Your ChatGPT plan covers eligible Codex usage. Manage shared usage and credit settings
+              in ChatGPT.
+            </DialogDescription>
+            <p className="min-w-0 wrap-anywhere text-meta text-dim-foreground">
+              {next?.providerName} on {next?.environmentLabel}
+            </p>
           </div>
-          <DialogTitle>Your ChatGPT plan is connected</DialogTitle>
-          <DialogDescription>
-            Eligible T3 Code usage now counts toward your ChatGPT plan. Manage usage and credits in
-            ChatGPT.
-          </DialogDescription>
         </DialogHeader>
-        <DialogFooter className="sm:items-center sm:justify-between">
-          <p className="min-w-0 truncate text-meta text-dim-foreground max-sm:order-last">
-            {next?.providerName} on {next?.environmentLabel}
-          </p>
-          <div className="flex shrink-0 flex-col-reverse gap-2 sm:flex-row">
-            <ChatGptUsageButton size="standard" variant="secondary" />
-            <Button ref={continueRef} size="standard" onClick={dismiss}>
-              Continue
-            </Button>
-          </div>
+        <DialogFooter className="sm:items-center">
+          <ChatGptUsageButton size="default" />
+          <Button ref={continueRef} onClick={dismiss}>
+            Continue
+          </Button>
         </DialogFooter>
       </DialogPopup>
     </Dialog>
