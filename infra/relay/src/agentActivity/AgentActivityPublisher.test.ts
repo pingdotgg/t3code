@@ -49,6 +49,7 @@ function target(deviceId: string): LiveActivities.TargetRow {
     remote_started_at: null,
     ended_at: null,
     last_aggregate_json: null,
+    last_hidden_environment_ids: null,
     last_live_activity_delivery_at: null,
   };
 }
@@ -143,8 +144,20 @@ describe("AgentActivityPublisher", () => {
   it.effect("routes Android publication and registration replay to FCM alongside iOS", () => {
     const android = { ...target("android"), platform: "android" as const, ios_major_version: null };
     const ios = target("ios");
+    const iosWithEnvironmentDisabled = {
+      ...target("ios-disabled"),
+      preferences_json: JSON.stringify({
+        liveActivitiesEnabled: true,
+        notificationsEnabled: true,
+        notifyOnApproval: true,
+        notifyOnInput: true,
+        notifyOnCompletion: true,
+        notifyOnFailure: true,
+        disabledEnvironmentIds: [state.environmentId],
+      }),
+    };
     const fcmCalls: Array<Parameters<FcmDeliveries.FcmDeliveries["Service"]["enqueue"]>[0]> = [];
-    const appleDevices: string[] = [];
+    const appleDevices: Array<[string, number | null, boolean]> = [];
     return Effect.gen(function* () {
       const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
       yield* publisher.publish({
@@ -161,7 +174,10 @@ describe("AgentActivityPublisher", () => {
         { target: android, state },
         { target: android, state: null, replay: true },
       ]);
-      expect(appleDevices).toEqual(["ios"]);
+      expect(appleDevices).toEqual([
+        ["ios", 1, false],
+        ["ios-disabled", null, true],
+      ]);
     }).pipe(
       Effect.provide(
         AgentActivityPublisher.layer.pipe(
@@ -171,14 +187,20 @@ describe("AgentActivityPublisher", () => {
               Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
               Layer.succeed(
                 LiveActivities.LiveActivities,
-                makeLiveActivities({ listTargets: () => Effect.succeed([android, ios]) }),
+                makeLiveActivities({
+                  listTargets: () => Effect.succeed([android, ios, iosWithEnvironmentDisabled]),
+                }),
               ),
               Layer.succeed(
                 ApnsDeliveries.ApnsDeliveries,
                 makeApnsDeliveries({
                   sendForTarget: (input) =>
                     Effect.sync(() => {
-                      appleDevices.push(input.target.device_id);
+                      appleDevices.push([
+                        input.target.device_id,
+                        input.aggregate?.activeCount ?? null,
+                        input.contentHidden ?? false,
+                      ]);
                       return null;
                     }),
                 }),

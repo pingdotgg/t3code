@@ -60,6 +60,8 @@ export const ApnsDeliveryJobPayload = Schema.Struct({
   aggregate: Schema.NullOr(RelayAgentActivityAggregateState),
   notification: Schema.NullOr(ApnsNotificationPayload),
   alert: Schema.optional(Schema.NullOr(ApnsLiveActivityAlert)),
+  // Environments the device hid when the aggregate was built.
+  hiddenEnvironmentIds: Schema.optional(Schema.Array(Schema.String)),
   createdAt: Schema.String,
   expiresAt: Schema.String,
 });
@@ -235,6 +237,7 @@ export function makeApnsDeliveryJobPayload(input: {
   readonly aggregate: ApnsDeliveryJobPayload["aggregate"];
   readonly notification?: ApnsNotificationPayload | null;
   readonly alert?: ApnsLiveActivityAlert | null | undefined;
+  readonly hiddenEnvironmentIds?: ReadonlyArray<string> | undefined;
   readonly createdAt: string;
   readonly expiresAt: string;
   readonly jobId: string;
@@ -254,6 +257,9 @@ export function makeApnsDeliveryJobPayload(input: {
     notification: input.notification ?? null,
     // Omit absent fields to preserve signatures from older relay builds.
     ...(input.alert ? { alert: input.alert } : {}),
+    ...(input.hiddenEnvironmentIds?.length
+      ? { hiddenEnvironmentIds: input.hiddenEnvironmentIds }
+      : {}),
     createdAt: input.createdAt,
     expiresAt: input.expiresAt,
   };

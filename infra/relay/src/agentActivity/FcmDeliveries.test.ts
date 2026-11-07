@@ -61,6 +61,7 @@ const target: LiveActivities.TargetRow = {
   remote_started_at: null,
   ended_at: null,
   last_aggregate_json: null,
+  last_hidden_environment_ids: null,
   last_live_activity_delivery_at: null,
 };
 const config = {
@@ -125,6 +126,7 @@ function harness() {
         Effect.sync(() => {
           marked.push(input);
           current.target.last_aggregate_json = input.aggregate ? encodeJson(input.aggregate) : null;
+          current.target.last_hidden_environment_ids = input.hiddenEnvironmentIds;
         }),
 
       invalidateDeliveryToken: () => Effect.void,
@@ -352,6 +354,65 @@ describe("Android delivery routing", () => {
       }).pipe(Effect.provide(h.layer));
     },
   );
+
+  it.effect("keeps a device-disabled environment off the phone until a silent re-enable", () => {
+    const h = harness();
+    const other = { ...secondState, environmentId: EnvironmentId.make("other-env") };
+    h.current.target.last_aggregate_json = encodeJson(aggregateFor([state, other]));
+    h.current.state = { ...state, phase: "waiting_for_approval" };
+    h.current.otherStates = [{ ...other, phase: "waiting_for_input" }];
+    const otherJob = { ...h.job, state: h.current.otherStates[0]! };
+    h.current.target.preferences_json = encodeJson({
+      ...preferences,
+      disabledEnvironmentIds: [other.environmentId],
+    });
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process({ ...h.job, state: h.current.state });
+      yield* delivery.process(otherJob);
+      expect(h.sent.filter((message) => message.alert).map((message) => message.data)).toEqual([
+        expect.objectContaining({ alert_title: "Fix notifications" }),
+      ]);
+      expect(h.marked.at(-1)?.aggregate?.activities).toMatchObject([
+        { environmentId: state.environmentId },
+      ]);
+
+      h.current.target.preferences_json = encodeJson(preferences);
+      yield* delivery.enqueue({ target: h.current.target, state: null, replay: true });
+      // Another event can reach the phone before the re-enable replay does.
+      yield* delivery.process({ ...h.job, state: h.current.state });
+      yield* delivery.process(h.queued[0]);
+      yield* delivery.process(otherJob);
+      expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+      expect(h.marked.at(-1)?.aggregate?.activities).toHaveLength(2);
+
+      h.current.target.preferences_json = encodeJson({
+        ...preferences,
+        disabledEnvironmentIds: [state.environmentId, other.environmentId],
+      });
+      yield* delivery.process({ ...h.job, state: null, replay: true });
+      expect(h.marked.at(-1)?.aggregate).toBeNull();
+      h.current.target.preferences_json = encodeJson(preferences);
+      yield* delivery.process(otherJob);
+      expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+
+      h.current.target.preferences_json = encodeJson({
+        ...preferences,
+        liveActivitiesEnabled: false,
+        disabledEnvironmentIds: [state.environmentId, other.environmentId],
+      });
+      yield* delivery.process({ ...h.job, state: null, replay: true });
+      h.current.target.preferences_json = encodeJson({
+        ...preferences,
+        liveActivitiesEnabled: false,
+      });
+      yield* delivery.process(otherJob);
+      expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+      h.current.otherStates = [{ ...other, phase: "completed" }];
+      yield* delivery.process({ ...otherJob, state: h.current.otherStates[0]! });
+      expect(h.sent.filter((message) => message.alert)).toHaveLength(2);
+    }).pipe(Effect.provide(h.layer));
+  });
 
   it("gives a group a stable retry identity independent of row order", () => {
     const other = {

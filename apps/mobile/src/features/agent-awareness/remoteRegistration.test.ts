@@ -91,11 +91,26 @@ vi.mock("./agentLiveActivity", () => ({
   startAgentLiveActivity: widgetMocks.start,
 }));
 
-// Avoid importing the native connection stack; this gate only needs configs.
+const catalogMock = vi.hoisted(() => ({
+  atom: Symbol("catalogValueAtom"),
+  value: { isReady: true, entries: new Map<string, { readonly enabled: boolean }>() },
+  listeners: new Set<(value: unknown) => void>(),
+}));
+
+// Avoid importing the native connection stack; registration only reads these atoms.
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
-    get: () => environmentConfigsMock.configs,
+    get: (atom: unknown) =>
+      atom === catalogMock.atom ? catalogMock.value : environmentConfigsMock.configs,
+    subscribe: (_atom: unknown, listener: (value: unknown) => void) => {
+      catalogMock.listeners.add(listener);
+      return () => catalogMock.listeners.delete(listener);
+    },
   },
+}));
+
+vi.mock("../../connection/catalog", () => ({
+  environmentCatalog: { catalogValueAtom: catalogMock.atom },
 }));
 
 vi.mock("../../state/server", () => ({
@@ -254,6 +269,8 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     widgetMocks.start.mockClear();
     widgetMocks.dismissEnded.mockReset();
     environmentConfigsMock.configs.clear();
+    catalogMock.value = { isReady: true, entries: new Map() };
+    catalogMock.listeners.clear();
   });
 
   it("disables push features in Personal Team relay registrations", () => {
@@ -613,6 +630,76 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       expect(tokenProvider).toHaveBeenCalledTimes(2);
     }).pipe(Effect.provide(layerRelayTest));
   });
+
+  it.effect(
+    "re-registers the latest disabled environments after toggles during registration",
+    () => {
+      const registrations: Array<{ readonly preferences: unknown }> = [];
+      let openFirstRegistration: (() => void) | undefined;
+      const firstRegistrationGate = new Promise<void>((resolve) => {
+        openFirstRegistration = resolve;
+      });
+      let markFirstRegistrationArrived: (() => void) | undefined;
+      const firstRegistrationArrived = new Promise<void>((resolve) => {
+        markFirstRegistrationArrived = resolve;
+      });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        if (request.url.endsWith("/v1/client/dpop-token")) {
+          return Response.json({
+            access_token: "relay-dpop-token",
+            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+            token_type: "DPoP",
+            expires_in: 300,
+            scope: "mobile:registration",
+          });
+        }
+        registrations.push(await request.json());
+        if (registrations.length === 1) {
+          markFirstRegistrationArrived?.();
+          await firstRegistrationGate;
+        }
+        return Response.json({ ok: true });
+      });
+      Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
+      const setCatalog = (entries: ReadonlyArray<readonly [string, boolean]>) => {
+        catalogMock.value = {
+          isReady: true,
+          entries: new Map(entries.map(([id, enabled]) => [id, { enabled }])),
+        };
+        for (const listener of catalogMock.listeners) listener(catalogMock.value);
+      };
+      setCatalog([
+        ["env-a", true],
+        ["env-b", true],
+      ]);
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
+
+      return Effect.gen(function* () {
+        const drain = yield* Effect.forkChild(runBackgroundOperations());
+        yield* Effect.promise(() => firstRegistrationArrived);
+        setCatalog([
+          ["env-a", false],
+          ["env-b", true],
+        ]);
+        setCatalog([
+          ["env-a", false],
+          ["env-b", false],
+        ]);
+        openFirstRegistration?.();
+        yield* Fiber.join(drain);
+        yield* runBackgroundOperations();
+
+        expect(registrations.map((body) => body.preferences)).toEqual([
+          expect.objectContaining({ disabledEnvironmentIds: [] }),
+          expect.objectContaining({ disabledEnvironmentIds: ["env-a", "env-b"] }),
+        ]);
+      }).pipe(
+        Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+        Effect.provide(layerRelayTest),
+      );
+    },
+  );
 
   it.effect.each(["ios", "android"] as const)(
     "does not enable %s notifications when a token rotates after permission is revoked",

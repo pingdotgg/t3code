@@ -52,6 +52,8 @@ export const relayLiveActivities = pgTable(
     remoteStartedAt: varchar("remote_started_at", { length: 64 }),
     endedAt: varchar("ended_at", { length: 64 }),
     lastAggregateJson: jsonb("last_aggregate_json").$type<RelayAgentActivityAggregateState>(),
+    // Environments the device hid when that baseline was computed; their rows are not new there.
+    lastHiddenEnvironmentIds: jsonb("last_hidden_environment_ids").$type<ReadonlyArray<string>>(),
     lastLiveActivityDeliveryAt: varchar("last_live_activity_delivery_at", { length: 64 }),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
     updatedAt: varchar("updated_at", { length: 64 }).notNull(),

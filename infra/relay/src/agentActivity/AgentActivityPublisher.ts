@@ -1,5 +1,6 @@
 import {
   makeAggregateState,
+  parseDevicePreferences,
   TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
 } from "./agentActivityAggregate.ts";
 import type {
@@ -66,12 +67,9 @@ const make = Effect.gen(function* () {
     const activeStates = input.deliveryUser.liveActivitiesEnabled
       ? yield* rows.listForUser({ userId: input.deliveryUser.userId })
       : [];
-    const liveActivityAggregate = input.deliveryUser.liveActivitiesEnabled
-      ? makeAggregateState({
-          activeStates,
-          terminalState: input.state && isTerminalPhase(input.state) ? input.state : null,
-          nowMs: input.nowMs,
-        })
+    const terminalState = input.state && isTerminalPhase(input.state) ? input.state : null;
+    const accountAggregate = input.deliveryUser.liveActivitiesEnabled
+      ? makeAggregateState({ activeStates, terminalState, nowMs: input.nowMs })
       : null;
     const notificationOnlyAggregate =
       input.deliveryUser.notificationsEnabled &&
@@ -90,11 +88,20 @@ const make = Effect.gen(function* () {
         if (target.platform === "android") {
           return [yield* fcmDeliveries.enqueue({ target, state: input.state })];
         }
+        const aggregate =
+          accountAggregate &&
+          makeAggregateState({
+            activeStates,
+            terminalState,
+            nowMs: input.nowMs,
+            preferences: parseDevicePreferences(target.preferences_json),
+          });
         return yield* Effect.all(
           [
             apnsDeliveries.sendForTarget({
               target,
-              aggregate: liveActivityAggregate,
+              aggregate,
+              contentHidden: aggregate === null && accountAggregate !== null,
               nowMs: input.nowMs,
             }),
             notificationOnlyAggregate === null
@@ -139,10 +146,18 @@ const make = Effect.gen(function* () {
         activeStates,
         terminalState: null,
         nowMs: now.epochMilliseconds,
+        preferences: parseDevicePreferences(target.preferences_json),
       });
       return yield* apnsDeliveries.sendForTarget({
         target,
         aggregate,
+        contentHidden:
+          aggregate === null &&
+          makeAggregateState({
+            activeStates,
+            terminalState: null,
+            nowMs: now.epochMilliseconds,
+          }) !== null,
         nowMs: now.epochMilliseconds,
         replay: true,
       });
