@@ -1440,6 +1440,92 @@ it.effect.each([false, true])("rejects thread.create for an existing id (deleted
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("keeps a broken native thread in error when a queued message starts", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const threadId = ThreadId.make("thread:broken-native-thread");
+    const send = (id: string, dispatchMode: "start_immediately" | "queue_after_active") =>
+      orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`send:broken-native-thread:${id}`),
+        threadId,
+        messageId: MessageId.make(`message:broken-native-thread:${id}`),
+        text: id,
+        attachments: [],
+        dispatchMode: { type: dispatchMode },
+        createdBy: "user",
+        creationSource: "web",
+      });
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create:broken-native-thread"),
+      threadId,
+      projectId: ProjectId.make("project:broken-native-thread"),
+      title: "Broken",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* send("first", "start_immediately");
+    yield* send("queued", "queue_after_active");
+    const { runs, providerThreads } = yield* orchestrator.getThreadRecords(threadId, [
+      "runs",
+      "providerThreads",
+    ]);
+    const [failed, queued] = runs;
+    const [providerThread] = providerThreads;
+    const occurredAt = yield* DateTime.now;
+    // The first turn ended with its native history unusable.
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("event:broken-native-thread:run"),
+          type: "run.updated",
+          threadId,
+          runId: failed!.id,
+          providerInstanceId: instanceId,
+          occurredAt,
+          payload: { ...failed!, status: "failed", completedAt: occurredAt },
+        },
+        {
+          id: EventId.make("event:broken-native-thread:provider-thread"),
+          type: "provider-thread.updated",
+          threadId,
+          providerInstanceId: instanceId,
+          occurredAt,
+          payload: {
+            ...providerThread!,
+            nativeThreadRef: {
+              driver: providerThread!.driver,
+              nativeId: "poisoned-native-history",
+              strength: "strong",
+            },
+            status: "error",
+          },
+        },
+      ],
+    });
+
+    yield* orchestrator.dispatch({
+      type: "queue.resume",
+      commandId: CommandId.make("resume:broken-native-thread"),
+      threadId,
+    });
+    const next = yield* orchestrator.getThreadRecords(threadId, ["runs", "providerThreads"]);
+    const started = next.runs.find((run) => run.id === queued!.id);
+    assert.equal(started?.status, "starting");
+    assert.equal(
+      next.providerThreads.find((thread) => thread.id === started?.providerThreadId)?.status,
+      "error",
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("replays a thread.create receipt without changing the thread", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

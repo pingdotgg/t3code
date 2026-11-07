@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as EffectAcpSchema from "effect-acp/compat";
+import type { OrchestrationV2ProviderFailure } from "@t3tools/contracts";
 
 import { watchAntigravityPromptOutcome } from "./AntigravityTurnOutcome.ts";
 
@@ -32,10 +33,16 @@ const RATE_LIMIT_ERROR = errorPayload(
 const INVALID_ARGUMENT_ERROR = errorPayload(
   "Error 400, Message: Request contains an invalid argument., Status: INVALID_ARGUMENT, Details: []",
 );
+// Context summarization replays a stored failed CHECKPOINT step on every later prompt.
+const FAILED_CHECKPOINT_ERROR = errorPayload(
+  'context summarization: checkpoint step 841 failed: error executing cascade step: CORTEX_STEP_TYPE_CHECKPOINT: doRequest: error sending request: Post "https://aiplatform.googleapis.com/v1beta1/projects/test-project/locations/global/publishers/google/models/gemini-4-argon:streamGenerateContent?alt=sse": auth: "invalid_grant" "reauth related error (invalid_rapt)"',
+);
 // The model's reply quoting the agent's quota notice is an ordinary planner response.
 const QUOTED_NOTICE = Buffer.from(
   "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 1 hour.",
 );
+const reusable = (failure: OrchestrationV2ProviderFailure) =>
+  ({ failure, threadDisposition: "reusable" }) as const;
 
 describe("watchAntigravityPromptOutcome", () => {
   it.effect("fails only turns whose own steps end in an upstream error", () =>
@@ -83,13 +90,13 @@ describe("watchAntigravityPromptOutcome", () => {
           [USER_INPUT, input],
           [ERROR_MESSAGE, QUOTA_ERROR],
         ]),
-        {
+        reusable({
           class: "usage_limit",
           message: "You have reached your Antigravity quota for this period.",
           code: "RESOURCE_EXHAUSTED",
           retryable: true,
           resetAt: "1970-01-01T01:00:00.000Z",
-        },
+        }),
       );
       // The earlier error step is outside this turn.
       assert.isUndefined(
@@ -109,25 +116,25 @@ describe("watchAntigravityPromptOutcome", () => {
           [USER_INPUT, input],
           [ERROR_MESSAGE, RATE_LIMIT_ERROR],
         ]),
-        {
+        reusable({
           class: "usage_limit",
           message: "Resource has been exhausted (e.g. check quota).",
           code: "RESOURCE_EXHAUSTED",
           retryable: true,
           resetAt: "1970-01-01T00:00:42.000Z",
-        },
+        }),
       );
       assert.deepEqual(
         yield* turn([
           [USER_INPUT, input],
           [ERROR_MESSAGE, INVALID_ARGUMENT_ERROR],
         ]),
-        {
+        reusable({
           class: "provider_error",
           message: "Request contains an invalid argument.",
           code: "INVALID_ARGUMENT",
           retryable: false,
-        },
+        }),
       );
       // A completed tool keeps its usage, and the turn still fails.
       assert.equal(
@@ -142,7 +149,7 @@ describe("watchAntigravityPromptOutcome", () => {
             stopReason: "end_turn",
             usage: { inputTokens: 40, outputTokens: 5, totalTokens: 45 },
           },
-        ))?.class,
+        ))?.failure.class,
         "usage_limit",
       );
       assert.isUndefined(
@@ -152,12 +159,15 @@ describe("watchAntigravityPromptOutcome", () => {
         ]),
       );
       // The agent maps the SDK's QUOTA_EXHAUSTED stop reason to `refusal`.
-      assert.deepEqual(yield* turn([], { stopReason: "refusal" }), {
-        class: "usage_limit",
-        message: "You have reached your Antigravity quota for this period.",
-        code: "QUOTA_EXHAUSTED",
-        retryable: true,
-      });
+      assert.deepEqual(
+        yield* turn([], { stopReason: "refusal" }),
+        reusable({
+          class: "usage_limit",
+          message: "You have reached your Antigravity quota for this period.",
+          code: "QUOTA_EXHAUSTED",
+          retryable: true,
+        }),
+      );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
@@ -193,19 +203,72 @@ describe("watchAntigravityPromptOutcome", () => {
       const linked = yield* watchAntigravityPromptOutcome(profileDirectory, own);
       append(peer, ERROR_MESSAGE, QUOTA_ERROR);
       assert.isUndefined(yield* linked({ stopReason: "end_turn" }));
-      assert.equal((yield* linked({ stopReason: "refusal" }))?.class, "usage_limit");
+      assert.equal((yield* linked({ stopReason: "refusal" }))?.failure.class, "usage_limit");
 
       // An unreadable log gives no evidence, but the agent's typed refusal still fails the turn.
       yield* fs.remove(path.join(conversations, `${own}.db`));
       yield* fs.writeFileString(path.join(conversations, `${own}.db`), "not a database");
       const corrupt = yield* watchAntigravityPromptOutcome(profileDirectory, own);
       assert.isUndefined(yield* corrupt({ stopReason: "end_turn" }));
-      assert.deepEqual(yield* corrupt({ stopReason: "refusal" }), {
-        class: "usage_limit",
-        message: "You have reached your Antigravity quota for this period.",
-        code: "QUOTA_EXHAUSTED",
-        retryable: true,
-      });
+      assert.deepEqual(
+        yield* corrupt({ stopReason: "refusal" }),
+        reusable({
+          class: "usage_limit",
+          message: "You have reached your Antigravity quota for this period.",
+          code: "QUOTA_EXHAUSTED",
+          retryable: true,
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("marks the native thread broken when a failed checkpoint step is replayed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profileDirectory = yield* fs.makeTempDirectoryScoped();
+      const sessionId = "e6aba774-5472-4277-b6ee-27b2e05570a7";
+      const conversations = path.join(profileDirectory, "antigravity-acp", "conversations");
+      yield* fs.makeDirectory(conversations, { recursive: true });
+      const check = yield* watchAntigravityPromptOutcome(profileDirectory, sessionId);
+      const database = new NodeSqlite.DatabaseSync(path.join(conversations, `${sessionId}.db`));
+      try {
+        database.exec(
+          "CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB)",
+        );
+        const insert = database.prepare("INSERT INTO steps VALUES (?, ?, ?)");
+        insert.run(843, USER_INPUT, Buffer.from("Continue."));
+        insert.run(844, ERROR_MESSAGE, FAILED_CHECKPOINT_ERROR);
+      } finally {
+        database.close();
+      }
+
+      const outcome = yield* check({ stopReason: "end_turn" });
+      assert.equal(outcome?.threadDisposition, "broken");
+      assert.equal(outcome?.failure.class, "provider_error");
+
+      // A checkpoint that failed on quota still reports the quota and its reset time.
+      const quotaCheck = yield* watchAntigravityPromptOutcome(profileDirectory, sessionId);
+      const quotaDatabase = new NodeSqlite.DatabaseSync(
+        path.join(conversations, `${sessionId}.db`),
+      );
+      try {
+        const insert = quotaDatabase.prepare("INSERT INTO steps VALUES (?, ?, ?)");
+        insert.run(845, USER_INPUT, Buffer.from("Continue."));
+        insert.run(
+          846,
+          ERROR_MESSAGE,
+          errorPayload(
+            "context summarization: checkpoint step 841 failed: Error 429, Message: Quota exhausted for test model., Status: RESOURCE_EXHAUSTED, Details: [map[@type:type.googleapis.com/google.rpc.ErrorInfo domain:googleapis.com metadata:map[quotaResetDelay:3600s] reason:QUOTA_EXHAUSTED]]",
+          ),
+        );
+      } finally {
+        quotaDatabase.close();
+      }
+      const quotaOutcome = yield* quotaCheck({ stopReason: "end_turn" });
+      assert.equal(quotaOutcome?.threadDisposition, "broken");
+      assert.equal(quotaOutcome?.failure.class, "usage_limit");
+      assert.notEqual(quotaOutcome?.failure.resetAt ?? null, null);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });

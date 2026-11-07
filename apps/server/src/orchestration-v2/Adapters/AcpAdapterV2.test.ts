@@ -907,7 +907,10 @@ describe("AcpAdapterV2", () => {
             Effect.sync(() => {
               watchedSessions.push(sessionId);
               const failed = watchedSessions.length === 1;
-              return () => Effect.succeed(failed ? quota : undefined);
+              return () =>
+                Effect.succeed(
+                  failed ? { failure: quota, threadDisposition: "reusable" as const } : undefined,
+                );
             }),
           makeRuntime: makeMockRuntime({
             childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
@@ -971,6 +974,97 @@ describe("AcpAdapterV2", () => {
       assert.deepEqual(promptRuntimes, [1, 2], "the next turn runs on a fresh runtime");
       assert.equal(watchedSessions.length, 2);
       assert.equal(watchedSessions[0], watchedSessions[1]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+  it.live("marks the thread broken when the outcome check reports unusable native history", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("acp-test-prompt-outcome-broken");
+      const threadId = ThreadId.make("thread-acp-prompt-outcome-broken");
+      const failure = {
+        class: "provider_error",
+        message: "Antigravity stopped this turn because of an error.",
+        code: null,
+        retryable: null,
+      } as const;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          watchPromptOutcome: () =>
+            Effect.succeed(() => Effect.succeed({ failure, threadDisposition: "broken" as const })),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: () => Effect.succeed({ stopReason: "end_turn" as const }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-outcome-broken"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          ordinal: 1,
+        }),
+      );
+      const events = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      );
+
+      const terminal = events.at(-1);
+      if (terminal?.type !== "turn.terminal" || terminal.status !== "failed") {
+        return assert.fail("expected a failed terminal");
+      }
+      assert.equal(terminal.threadDisposition, "broken");
+      assert.deepEqual(terminal.failure, failure);
+      const updated = events.findLast((event) => event.type === "provider_thread.updated");
+      assert.equal(
+        updated?.type === "provider_thread.updated" ? updated.providerThread.status : null,
+        "error",
+      );
+      // The turn-start service recovers in a fresh native session when resume refuses.
+      const resumed = yield* Effect.result(
+        runtime.resumeThread({
+          threadId,
+          providerThread: { ...providerThread, status: "error" },
+          modelSelection,
+          runtimePolicy,
+        }),
+      );
+      assert.equal(
+        resumed._tag === "Failure" ? resumed.failure._tag : null,
+        "ProviderAdapterResumeThreadError",
+      );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
   it.live("retains returned usage when Stop finalizes before the prompt callback", () =>
