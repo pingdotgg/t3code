@@ -25,11 +25,7 @@ import { useMemo } from "react";
 import { Pressable, View, type ColorValue } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import {
-  ProviderIcon,
-  ProviderInstanceIcon,
-  providerInstanceNameLabel,
-} from "../../components/ProviderIcon";
+import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { environmentThreadDetails } from "../../state/threads";
 import { serverEnvironment } from "../../state/server";
 import { ThreadContextDivider } from "./thread-context-divider";
@@ -179,21 +175,10 @@ function HandoffEndpoint(props: {
     props.model ??
     (provider ? resolveProviderInstanceDisplayName(provider) : props.instanceId);
   const showBadge = provider !== undefined && shouldShowInstanceBadge(provider, props.providers);
-  const providerNameLabel =
-    provider === undefined
-      ? null
-      : providerInstanceNameLabel({
-          provider: provider.driver,
-          iconUrl: provider.iconUrl,
-          displayName: resolveProviderInstanceDisplayName(provider),
-          showBadge,
-        });
-  const visibleLabel =
-    providerNameLabel && providerNameLabel !== label ? `${providerNameLabel} · ${label}` : label;
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={visibleLabel}
+      accessibilityLabel={label}
       accessibilityHint="Show provider account"
       className="min-h-6 max-w-full flex-row items-center justify-center gap-1.5"
       hitSlop={{ top: 8, bottom: 8 }}
@@ -222,7 +207,7 @@ function HandoffEndpoint(props: {
         />
       )}
       <Text numberOfLines={1} className="shrink text-xs text-foreground-muted">
-        {visibleLabel}
+        {label}
       </Text>
     </Pressable>
   );
