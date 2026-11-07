@@ -14,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -467,6 +468,32 @@ function withoutWorkspaceSnapshots(
   );
 }
 
+// Workspace snapshot stamps stay: old clients use them to expire their cached snapshots.
+function sameProviderStatusIgnoringChecks(
+  previous: ReadonlyArray<ServerProvider>,
+  next: ReadonlyArray<ServerProvider>,
+): boolean {
+  const withoutChecks = (providers: ReadonlyArray<ServerProvider>) =>
+    providers.map((provider) => ({
+      ...provider,
+      checkedAt: undefined,
+      usageLimits: provider.usageLimits && {
+        ...provider.usageLimits,
+        checkedAt: undefined,
+        // Claude reports the same reset with different milliseconds on each probe.
+        windows: provider.usageLimits.windows.map((window) => ({
+          ...window,
+          resetsAt: window.resetsAt && Math.floor(Date.parse(window.resetsAt) / 1000),
+        })),
+      },
+      versionAdvisory: provider.versionAdvisory && {
+        ...provider.versionAdvisory,
+        checkedAt: undefined,
+      },
+    }));
+  return JSON.stringify(withoutChecks(previous)) === JSON.stringify(withoutChecks(next));
+}
+
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
 }
@@ -659,6 +686,8 @@ function projectFileFailureContext(
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
+// Bounds how stale an idle client's "Checked" label gets.
+const PROVIDER_CHECK_STAMP_PUSH_INTERVAL = Duration.minutes(15);
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
@@ -1468,6 +1497,7 @@ export const layerWsRpc = (
             );
       const usage = yield* UsageService.UsageService;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
+      const completedProviderRefreshes = yield* PubSub.unbounded<void>();
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
       const repositoryIdentityResolver =
@@ -2529,6 +2559,7 @@ export const layerWsRpc = (
                 ? withUsageLimitsCommands(providers, yield* usageLimitSources.current)
                 : providers;
             const { instanceId, cwd } = input;
+            if (cwd === undefined) yield* PubSub.publish(completedProviderRefreshes, undefined);
             if (instanceId === undefined || cwd === undefined) {
               return { providers: withoutWorkspaceSnapshots(commandProviders) };
             }
@@ -3316,42 +3347,78 @@ export const layerWsRpc = (
                   },
                 })),
               );
+              const pendingCheckStampPush = yield* Ref.make(false);
               const providerStatuses = Stream.zipLatestWith(
                 // Seed the changes-only stream so early source refreshes pair with current providers.
                 Stream.concat(
                   Stream.fromEffect(providerRegistry.getProviders),
                   providerRegistry.streamChanges,
+                ).pipe(
+                  Stream.map((providers) => ({ providers, sendChecks: false })),
+                  // The widget's 5-minute refresh keeps usage fresh only if its stamps reach it.
+                  Stream.merge(
+                    Stream.merge(
+                      Stream.fromPubSub(completedProviderRefreshes),
+                      Stream.tick(PROVIDER_CHECK_STAMP_PUSH_INTERVAL).pipe(Stream.drop(1)),
+                    ).pipe(
+                      Stream.mapEffect(() => providerRegistry.getProviders),
+                      Stream.map((providers) => ({ providers, sendChecks: true })),
+                    ),
+                  ),
                 ),
                 usageLimitSources.streamChanges.pipe(
                   Stream.changesWith(
                     usageLimitsCommand ? sameUsageLimitCommandCoverage : () => true,
                   ),
                 ),
-                (providers, sources) =>
-                  usageLimitsCommand ? withUsageLimitsCommands(providers, sources) : providers,
+                ({ providers, sendChecks }, sources) => ({
+                  providers: usageLimitsCommand
+                    ? withUsageLimitsCommands(providers, sources)
+                    : providers,
+                  sendChecks,
+                }),
               ).pipe(
                 // Stripped before the de-dupe below, so snapshot-only changes send nothing.
-                Stream.mapEffect((commandProviders) =>
+                Stream.mapEffect((update) =>
                   workspaceSnapshotsOnDemand
                     ? currentCatalogsPerCwd.pipe(
-                        Effect.map((catalogsPerCwd) =>
-                          withoutWorkspaceSnapshots(commandProviders, catalogsPerCwd),
-                        ),
+                        Effect.map((catalogsPerCwd) => ({
+                          ...update,
+                          providers: withoutWorkspaceSnapshots(update.providers, catalogsPerCwd),
+                        })),
                       )
-                    : Effect.succeed(commandProviders),
+                    : Effect.succeed(update),
+                ),
+                Stream.tap(({ sendChecks }) =>
+                  sendChecks ? Ref.set(pendingCheckStampPush, true) : Effect.void,
+                ),
+                Stream.debounce(Duration.millis(PROVIDER_STATUS_DEBOUNCE_MS)),
+                Stream.mapEffect((update) =>
+                  Ref.getAndSet(pendingCheckStampPush, false).pipe(
+                    Effect.map((sendChecks) => ({
+                      ...update,
+                      sendChecks: update.sendChecks || sendChecks,
+                    })),
+                  ),
                 ),
                 // Compare initial paired values with the snapshot; blindly dropping them loses changes between snapshot and subscription.
-                (updates) => Stream.concat(rpcInitialItems([config.providers]), updates),
-                Stream.changesWith(
-                  (previous, next) => JSON.stringify(previous) === JSON.stringify(next),
+                (updates) =>
+                  Stream.concat(
+                    rpcInitialItems([{ providers: config.providers, sendChecks: false }]),
+                    updates,
+                  ),
+                // changesWith passes the arriving item first, then the last one emitted.
+                Stream.changesWith((next, lastSent) =>
+                  next.sendChecks
+                    ? JSON.stringify(lastSent.providers) === JSON.stringify(next.providers)
+                    : sameProviderStatusIgnoringChecks(lastSent.providers, next.providers),
                 ),
                 Stream.drop(1),
-                Stream.map((providers) => ({
+                Stream.map(({ providers }) => ({
                   version: 1 as const,
                   type: "providerStatuses" as const,
                   payload: { providers },
                 })),
-                Stream.debounce(Duration.millis(PROVIDER_STATUS_DEBOUNCE_MS)),
               );
               // Gate capability-specific events; older clients reject them and lose their config subscription.
               const environmentThemeUpdates =

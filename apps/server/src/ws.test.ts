@@ -34,6 +34,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Headers } from "effect/http";
@@ -1121,6 +1122,12 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       slashCommands: [{ name: `${cwd.slice(1)}-command` }],
       skills: [],
     });
+    const usageLimitsFor = (checkedAt: string, resetsAt: string) => ({
+      checkedAt,
+      windows: [
+        { id: "session", kind: "session" as const, label: "Session", usedPercent: 10, resetsAt },
+      ],
+    });
     const provider: ServerProvider = {
       instanceId,
       driver: ProviderDriverKind.make("claudeAgent"),
@@ -1140,6 +1147,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
           enabled: true,
         },
       ],
+      usageLimits: usageLimitsFor("2026-10-25T00:00:00.000Z", "2026-10-25T05:00:00.125Z"),
       workspaceSnapshots: [
         snapshotFor("/a", "2026-10-25T00:00:00.000Z"),
         snapshotFor("/b", "2026-10-25T00:00:00.000Z"),
@@ -1149,6 +1157,8 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     const providerChanges = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
     const pulled = yield* Queue.unbounded<void>();
     const responses = yield* Queue.unbounded<unknown>();
+    const currentProviders = yield* Ref.make<ReadonlyArray<ServerProvider>>([provider]);
+    const providersRead = yield* Queue.unbounded<void>();
     const configRpcServices = Layer.mergeAll(
       layerUnusedConfigRpcServices,
       Layer.mock(ExternalLauncher.ExternalLauncher)({
@@ -1156,10 +1166,13 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         resolveFileManagerRevealKind: () => Effect.undefined,
       }),
       Layer.mock(ProviderRegistry.ProviderRegistry)({
-        getProviders: Effect.succeed([provider]),
+        getProviders: Queue.offer(providersRead, undefined).pipe(
+          Effect.andThen(Ref.get(currentProviders)),
+        ),
         streamChanges: Stream.fromQueue(providerChanges).pipe(
           Stream.tap(() => Queue.offer(pulled, undefined)),
         ),
+        refreshInstance: () => Ref.get(currentProviders),
         refreshWorkspaceSnapshot: () => Effect.succeed([provider]),
       }),
       Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
@@ -1258,12 +1271,34 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     ]);
     yield* server.write(0, { _tag: "Ack", requestId: configRequest });
 
-    // A rescan that only touches a snapshot sends nothing; the next real change does.
+    // A rescan that only touches a snapshot or a check stamp sends nothing; the next real change does.
     yield* Queue.offer(providerChanges, [
-      { ...provider, workspaceSnapshots: [snapshotFor("/a", "2026-10-25T00:05:00.000Z")] },
+      {
+        ...provider,
+        checkedAt: "2026-10-25T00:05:00.000Z",
+        usageLimits: usageLimitsFor("2026-10-25T00:05:00.000Z", "2026-10-25T05:00:00.946Z"),
+        workspaceSnapshots: [snapshotFor("/a", "2026-10-25T00:05:00.000Z")],
+      },
     ]);
     yield* Queue.take(pulled);
     yield* TestClock.adjust("1 second");
+    // A reset that really moved is news, even within the same minute.
+    yield* Queue.offer(providerChanges, [
+      {
+        ...provider,
+        usageLimits: usageLimitsFor("2026-10-25T00:00:00.000Z", "2026-10-25T05:00:29.000Z"),
+      },
+    ]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    const movedReset = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (movedReset.type !== "providerStatuses") return yield* Effect.die("Expected reset update");
+    assert.equal(
+      movedReset.payload.providers[0]?.usageLimits?.windows[0]?.resetsAt,
+      "2026-10-25T05:00:29.000Z",
+    );
+    yield* server.write(0, { _tag: "Ack", requestId: configRequest });
+
     // Late /usage-limits discovery still reaches the client, so it refetches its cwd snapshot.
     yield* Queue.offer(providerChanges, [
       {
@@ -1292,6 +1327,55 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     if (replaced.type !== "providerStatuses") return yield* Effect.die("Expected provider update");
     assert.deepEqual(replaced.payload.providers[0]?.slashCommands, provider.slashCommands);
     assert.deepEqual(replaced.payload.providers[0]?.skills, provider.skills);
+
+    yield* server.write(0, { _tag: "Ack", requestId: configRequest });
+    yield* Queue.offer(providerChanges, [{ ...provider, status: "ready" }]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("100 millis");
+    yield* Queue.offer(providerChanges, [
+      { ...provider, status: "warning", checkedAt: "2026-10-25T00:05:00.000Z" },
+    ]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    assert.equal(yield* Queue.size(responses), 0);
+
+    const nextStampPush = Effect.gen(function* () {
+      const event = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+      if (event.type !== "providerStatuses") return yield* Effect.die("Expected stamp push");
+      yield* server.write(0, { _tag: "Ack", requestId: configRequest });
+      return event.payload.providers[0]?.checkedAt;
+    });
+    const restamped = { ...provider, status: "warning" as const };
+
+    // Stamps withheld since the last push go out on the interval, once.
+    yield* Ref.set(currentProviders, [{ ...restamped, checkedAt: "2026-10-25T00:10:00.000Z" }]);
+    yield* Queue.clear(providersRead);
+    yield* TestClock.adjust("15 minutes");
+    yield* Queue.take(providersRead);
+    yield* TestClock.adjust("1 second");
+    assert.equal(yield* nextStampPush, "2026-10-25T00:10:00.000Z");
+    yield* TestClock.adjust("15 minutes");
+    yield* Queue.take(providersRead);
+    yield* TestClock.adjust("1 second");
+    assert.equal(yield* Queue.size(responses), 0);
+
+    // An explicit refresh delivers its stamps without waiting for the interval.
+    yield* Ref.set(currentProviders, [{ ...restamped, checkedAt: "2026-10-25T00:40:00.000Z" }]);
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("refresh-instance"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: { instanceId, workspaceSnapshotsOnDemand: true },
+      headers: Headers.empty,
+    });
+    yield* Queue.take(responses);
+    yield* Queue.take(providersRead);
+    yield* TestClock.adjust("100 millis");
+    yield* Queue.offer(providerChanges, [{ ...restamped, checkedAt: "2026-10-25T00:40:00.000Z" }]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    assert.equal(yield* Queue.size(responses), 1);
+    assert.equal(yield* nextStampPush, "2026-10-25T00:40:00.000Z");
 
     yield* server.write(0, {
       _tag: "Request",
