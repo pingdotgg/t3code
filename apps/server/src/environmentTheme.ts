@@ -29,35 +29,41 @@ import * as ServerConfig from "./config.ts";
 
 // Publish expanded version-one colors so connected older clients need no new semantics.
 export function expandAuthoredThemeFile(raw: string): string {
+  let value: unknown;
   try {
-    const value: unknown = JSON.parse(raw);
-    if (typeof value !== "object" || value === null || !("version" in value) || value.version !== 2)
-      return raw;
-    if (!("sources" in value) || typeof value.sources !== "object" || value.sources === null)
-      return raw;
-    const variants: Record<string, unknown> = {};
-    for (const [mode, source] of Object.entries(value.sources)) {
-      if (mode !== "light" && mode !== "dark") return raw;
-      variants[mode] = resolveThemeSource(parseThemeSource(source), mode);
-    }
-    if (
-      !("appearance" in value) ||
-      typeof value.appearance !== "string" ||
-      !variants[value.appearance]
-    )
-      return raw;
-    const { sources: _sources, ...file } = value;
-    const colors = variants[value.appearance];
-    delete variants[value.appearance];
-    return JSON.stringify({
-      ...file,
-      version: 1,
-      colors,
-      ...(Object.keys(variants).length ? { variants } : {}),
-    });
+    value = JSON.parse(raw);
   } catch {
     return raw;
   }
+  if (typeof value !== "object" || value === null || !("version" in value) || value.version !== 2)
+    return raw;
+  if (
+    !("sources" in value) ||
+    typeof value.sources !== "object" ||
+    value.sources === null ||
+    Array.isArray(value.sources)
+  )
+    throw new Error("Authored themes need appearance sources.");
+  const variants: Record<string, unknown> = {};
+  for (const [mode, source] of Object.entries(value.sources)) {
+    if (mode !== "light" && mode !== "dark") throw new Error(`Invalid theme appearance "${mode}".`);
+    variants[mode] = resolveThemeSource(parseThemeSource(source), mode);
+  }
+  if (
+    !("appearance" in value) ||
+    typeof value.appearance !== "string" ||
+    !variants[value.appearance]
+  )
+    throw new Error("Authored themes need a source for their base appearance.");
+  const { sources: _sources, ...file } = value;
+  const colors = variants[value.appearance];
+  delete variants[value.appearance];
+  return JSON.stringify({
+    ...file,
+    version: 1,
+    colors,
+    ...(Object.keys(variants).length ? { variants } : {}),
+  });
 }
 
 const decodeEnvironmentThemeFileJsonExit = Schema.decodeUnknownExit(
@@ -159,7 +165,19 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
     }
     if (raw.trim().length === 0) continue;
 
-    const decoded = decodeEnvironmentThemeFileJsonExit(expandAuthoredThemeFile(raw));
+    const expanded = yield* Effect.try({
+      try: () => expandAuthoredThemeFile(raw),
+      catch: (cause) => ({ _tag: "AuthoredThemeInvalid" as const, detail: String(cause) }),
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("ignoring invalid authored environment theme", {
+          path: filePath,
+          detail: cause.detail,
+        }).pipe(Effect.as(null)),
+      ),
+    );
+    if (expanded === null) continue;
+    const decoded = decodeEnvironmentThemeFileJsonExit(expanded);
     if (decoded._tag === "Failure") {
       yield* Effect.logWarning("ignoring invalid environment theme", {
         path: filePath,

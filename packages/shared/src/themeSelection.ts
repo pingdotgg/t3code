@@ -17,7 +17,12 @@ export function themeSelectionStorage(storage: {
   const read = (): Record<string, string | null> | null => {
     const raw = storage.getItem(key);
     if (raw === null) return null;
-    const value: unknown = JSON.parse(raw);
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      return null;
+    }
     if (
       typeof value !== "object" ||
       value === null ||
@@ -25,7 +30,7 @@ export function themeSelectionStorage(storage: {
       value.version !== 1 ||
       !("selection" in value)
     )
-      throw new Error("Invalid theme selection.");
+      return null;
     const selection = value.selection;
     if (
       typeof selection !== "object" ||
@@ -33,7 +38,7 @@ export function themeSelectionStorage(storage: {
       Array.isArray(selection) ||
       Object.values(selection).some((value) => value !== null && typeof value !== "string")
     )
-      throw new Error("Invalid theme selection.");
+      return null;
     return selection as Record<string, string | null>;
   };
   const patch = (updates: Readonly<Record<string, string | null>>) => {

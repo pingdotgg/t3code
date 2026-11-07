@@ -21,6 +21,7 @@ import {
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
+import { renderThemeBootHtml } from "./scripts/generate-theme-boot.mts";
 import { warmBundledDevPlugin } from "./vite/warmBundledDev";
 
 const repoEnv = loadRepoEnv();
@@ -266,6 +267,7 @@ export default defineConfig(() => {
     },
     assetsInclude: ["**/*.wasm"],
     plugins: [
+      { name: "theme-boot", transformIndexHtml: { order: "pre", handler: renderThemeBootHtml } },
       devCompressionPlugin(),
       chunkCycleGuardPlugin(),
       builtDev

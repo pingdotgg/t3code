@@ -327,6 +327,8 @@ export const ThemeColorField = memo(function ThemeColorField({
   explicit = true,
   onReset,
   resetSource,
+  pinnedRoles = [],
+  onResetFamily,
 }: {
   role: ThemeColorRole;
   value: string;
@@ -340,6 +342,8 @@ export const ThemeColorField = memo(function ThemeColorField({
   explicit?: boolean;
   onReset?: () => void;
   resetSource?: string;
+  pinnedRoles?: ReadonlyArray<ThemeColorRole>;
+  onResetFamily?: () => void;
 }) {
   const [textDraft, setTextDraft] = useState<string | null>(null);
   const label = customLabel ?? getThemeRoleLabel(role);
@@ -376,6 +380,23 @@ export const ThemeColorField = memo(function ThemeColorField({
         <TooltipPopup side="top">{`${selected ? "Hide" : "Show"} where ${label} is used`}</TooltipPopup>
       </Tooltip>
       <div className="ml-auto flex shrink-0 items-center gap-2">
+        {pinnedRoles.length > 0 && onResetFamily ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={`Reset ${label} family overrides`}
+                  onClick={onResetFamily}
+                  className="cursor-pointer text-xs text-muted-foreground hover:text-foreground"
+                >
+                  {pinnedRoles.length} pinned
+                </button>
+              }
+            />
+            <TooltipPopup>{`${pinnedRoles.map(getThemeRoleLabel).join(", ")}. Reset family overrides.`}</TooltipPopup>
+          </Tooltip>
+        ) : null}
         {explicit && onReset ? (
           <Tooltip>
             <TooltipTrigger

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { converter } from "culori/fn";
+import { themeSourceForEditing } from "@t3tools/shared/themeResolution";
 import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
 
 import { CONTEXT_CHIP_ACCENTS, contextChipColorVariable } from "./lib/contextChipAccents";
@@ -114,8 +115,8 @@ describe("theme files", () => {
       version: 2,
       name: "Authored",
       appearance: "dark",
-      colors: {},
       sources: {
+        light: { version: 2, seed: { canvas: "#ffffff", accent: "#123456" } },
         dark: {
           version: 2,
           seed: { canvas: "#101010", accent: "#123456" },
@@ -128,15 +129,55 @@ describe("theme files", () => {
         },
       },
     });
+    expect(() =>
+      parseThemeFile({
+        version: 2,
+        name: "Invalid",
+        appearance: "dark",
+        sources: { dark: { version: 2, overrides: { focus: "broken" } } },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseThemeFile({
+        version: 2,
+        name: "Invalid",
+        appearance: "dark",
+        sources: { dark: { version: 2 } },
+        collection: {},
+      }),
+    ).toThrow();
+    for (const invalid of [
+      { colors: { focus: "broken" } },
+      { colors: { unsupportedRole: "#123456" } },
+      { variants: { dark: { canvas: "#123456" } } },
+      { variants: { other: { canvas: "#123456" } } },
+    ]) {
+      expect(() =>
+        parseThemeFile({
+          version: 2,
+          name: "Invalid",
+          appearance: "dark",
+          sources: { dark: { version: 2 } },
+          ...invalid,
+        }),
+      ).toThrow();
+    }
     installCustomTheme(theme);
     invalidateCustomThemes();
     const restored = getCustomThemes()[0]!;
     expect(restored.sources).toEqual(theme.sources);
     expect(restored.colors).toEqual(theme.colors);
+    const { colors: _colors, variants: _variants, ...sourceOnly } = theme;
+    data.set(CUSTOM_THEMES_STORAGE_KEY, JSON.stringify([sourceOnly]));
+    invalidateCustomThemes();
+    expect(getCustomThemes()[0]?.colors).toEqual(theme.colors);
+    expect(getCustomThemes()[0]?.variants).toEqual(theme.variants);
     expect(parseThemeFile(JSON.parse(serializeThemeFile(restored))).sources).toEqual(theme.sources);
     const legacy = JSON.parse(serializeThemeFile(restored, { legacy: true }));
     expect(legacy.version).toBe(1);
     expect(legacy).not.toHaveProperty("sources");
+    const managedImport = parseThemeFile({ ...legacy, managed: true });
+    expect(themeSourceForEditing(managedImport, "dark").overrides).toEqual(restored.colors);
     expect(parseThemeFile(legacy).colors).toEqual(restored.colors);
     vi.unstubAllGlobals();
     invalidateCustomThemes();

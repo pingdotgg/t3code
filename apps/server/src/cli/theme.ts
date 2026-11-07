@@ -89,7 +89,8 @@ export class ThemeFileInvalidError extends Schema.TaggedError<ThemeFileInvalidEr
   { filePath: Schema.String, cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return `${this.filePath} is not a valid theme file. Use a theme exported from T3 Code, or a seeded file with name, appearance, canvas, and accent.`;
+    const detail = this.cause instanceof Error ? ` ${this.cause.message}` : "";
+    return `${this.filePath} is not a valid theme file.${detail} Use a theme exported from T3 Code, or a seeded file with name, appearance, canvas, and accent.`;
   }
 }
 
@@ -273,7 +274,11 @@ const publishThemeFile = Effect.fn(function* (input: {
     return yield* new ThemeFileUnreadableError({ filePath: input.filePath });
   }
 
-  const decoded = decodeThemeFileJsonExit(expandAuthoredThemeFile(raw));
+  const expanded = yield* Effect.try({
+    try: () => expandAuthoredThemeFile(raw),
+    catch: (cause) => new ThemeFileInvalidError({ filePath: input.filePath, cause }),
+  });
+  const decoded = decodeThemeFileJsonExit(expanded);
   if (decoded._tag === "Failure") {
     return yield* new ThemeFileInvalidError({ filePath: input.filePath, cause: decoded.cause });
   }

@@ -36,6 +36,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 import {
+  getThemeColorsForAppearance,
   BUILT_IN_THEMES,
   EMBER_THEME,
   GROVE_THEME,
@@ -199,13 +200,26 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
   if (!isThemeId(value.id) || RESERVED_THEME_IDS.has(value.id)) return null;
   if (!isThemeLabel(value.label) || !isThemeAppearance(value.appearance)) return null;
   const colors = parseStoredThemeColors(value.colors, value.appearance);
-  if (!colors) return null;
+  if (!colors && value.sources === undefined) return null;
   const variants = parseStoredThemeVariants(value.variants, value.appearance);
   if (value.variants !== undefined && variants === null) return null;
   const collection = parseThemeCollection(value.collection);
+  if (value.sources !== undefined && value.collection !== undefined && !collection) return null;
   const sources: NonNullable<ThemeDefinition["sources"]> = {};
   if (value.sources !== undefined) {
     if (!isRecord(value.sources)) return null;
+    try {
+      if (value.colors !== undefined) parseThemeColorOverrides(value.colors);
+      if (value.variants !== undefined) {
+        if (!isRecord(value.variants)) return null;
+        for (const [mode, cache] of Object.entries(value.variants)) {
+          if (!isThemeAppearance(mode) || mode === value.appearance) return null;
+          parseThemeColorOverrides(cache);
+        }
+      }
+    } catch {
+      return null;
+    }
     try {
       Object.assign(
         sources,
@@ -221,6 +235,7 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
     }
   }
 
+  if (value.sources !== undefined && !sources[value.appearance]) return null;
   const resolvedVariants = { ...variants };
   for (const mode of ["light", "dark"] as const) {
     const source = sources[mode];
@@ -233,7 +248,7 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
     appearance: value.appearance,
     colors: sources[value.appearance]
       ? resolveThemeSource(sources[value.appearance]!, value.appearance)
-      : colors,
+      : colors!,
     ...(value.sources === undefined ? {} : { sources }),
     ...(Object.keys(resolvedVariants).length ? { variants: resolvedVariants } : {}),
     ...(collection ? { collection } : {}),
@@ -331,15 +346,20 @@ function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
     appearance: theme.appearance,
     colors: publishedThemeColors(theme, theme.appearance, theme.colors),
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
-    // Only the pure seeded form is guided-generator output. An exported file,
-    // or seeds carrying explicit role overrides, must open Duplicate in the
-    // advanced editor -- the guided one regenerates from canvas and accent and
-    // would discard whatever the machine hand-tuned.
+    // Only seed-only environment themes have guided provenance; supplied palettes remain explicit.
     ...(theme.canvas !== undefined &&
     theme.accent !== undefined &&
     theme.colors === undefined &&
     theme.variants === undefined
-      ? { managed: true }
+      ? {
+          managed: true,
+          sources: {
+            [theme.appearance]: {
+              version: 2,
+              seed: { canvas: theme.canvas, accent: theme.accent },
+            },
+          },
+        }
       : {}),
   };
 }
@@ -546,7 +566,8 @@ export function singleAppearanceOf(theme: ThemeDefinition): ThemeAppearance | nu
 
 export function getThemeModes(theme: ThemeDefinition): ReadonlyArray<ThemeAppearance> {
   return (["light", "dark"] as const).filter(
-    (mode) => resolveThemeDefinition(theme, mode) !== null,
+    (mode) =>
+      theme.sources?.[mode] !== undefined || getThemeColorsForAppearance(theme, mode) !== null,
   );
 }
 
@@ -817,7 +838,6 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
   if (!isThemeAppearance(appearance)) {
     throw new Error('Theme files need an appearance of "light" or "dark".');
   }
-  if (!isRecord(rawColors)) throw new Error("Theme files need a colors object.");
 
   const id = value.id === undefined ? themeIdFromName(name) : value.id;
   if (!isThemeId(id)) {
@@ -833,6 +853,7 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
     return stored;
   }
 
+  if (!isRecord(rawColors)) throw new Error("Theme files need a colors object.");
   const overrides = parseThemeColorOverrides(rawColors);
   const collection = parseThemeCollection(value.collection);
   if (value.collection !== undefined && !collection) {
@@ -858,6 +879,7 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
     }
   }
 
+  // An expanded import is explicit color data, even when its file carries a legacy managed flag.
   return {
     id,
     label: name.trim(),
@@ -865,7 +887,6 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
     colors: { ...fallback, ...overrides },
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
     ...(collection ? { collection } : {}),
-    ...(value.managed === true ? { managed: true } : {}),
   };
 }
 
@@ -963,6 +984,7 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
   if (!root?.style) return;
 
   root.dataset.themeId = THEME_PREVIEW_ID;
+  root.dataset.themeTreatment = "palette";
   delete root.dataset.themeInlineCode;
   delete root.dataset.themeSidebarDivider;
   delete root.dataset.themeGrainSize;
@@ -984,6 +1006,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   const palette = getThemeDefinition(theme);
   const presentation = palette?.presentation;
   for (const [key, value] of Object.entries({
+    themeTreatment: palette ? "palette" : "stock",
     themeInlineCode: presentation?.inlineCodeSurface,
     themeSidebarDivider: presentation?.sidebarDivider,
     themeGrainSize: presentation?.grainSize?.toString(),
@@ -1033,25 +1056,18 @@ export function resolveDesktopTheme(
     const definition = getThemeDefinition(theme);
     const hasLightMode =
       halves?.light !== undefined ||
-      (definition !== null && resolveThemeDefinition(definition, "light") !== null);
+      (definition !== null && getThemeModes(definition).includes("light"));
     const hasDarkMode =
       halves?.dark !== undefined ||
-      (definition !== null && resolveThemeDefinition(definition, "dark") !== null);
+      (definition !== null && getThemeModes(definition).includes("dark"));
     return definition && (!hasLightMode || !hasDarkMode) ? definition.appearance : "system";
   }
   if (mode === "light" || mode === "dark") {
     if (halves?.[mode]) return mode;
     const definition = getThemeDefinition(theme);
-    return definition && resolveThemeDefinition(definition, mode) === null
-      ? definition.appearance
-      : mode;
+    return definition && !getThemeModes(definition).includes(mode) ? definition.appearance : mode;
   }
   return getThemePreferenceMode(theme) ?? "system";
-}
-
-export function isKnownThemePreference(theme: string): boolean {
-  if (theme === "light" || theme === "dark" || theme === "system") return true;
-  return getThemeDefinition(theme) !== null;
 }
 
 export type ThemeHalves = Readonly<{ light?: string; dark?: string }>;
@@ -1066,7 +1082,7 @@ export function parseThemeHalves(raw: string | null): ThemeHalves | null {
       const themeId = value[appearance];
       if (typeof themeId !== "string") continue;
       const definition = getThemeDefinition(themeId);
-      if (!definition || resolveThemeDefinition(definition, appearance) !== null) {
+      if (!definition || getThemeModes(definition).includes(appearance)) {
         halves[appearance] = definition?.id ?? themeId;
       }
     }

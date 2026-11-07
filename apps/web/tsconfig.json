@@ -29,6 +29,7 @@
     "src",
     "vite",
     "vite.config.ts",
+    "scripts/generate-theme-boot.mts",
     "vercel.ts",
     "test",
     "scripts/verify-built-boot.ts",

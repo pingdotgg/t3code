@@ -21,8 +21,8 @@ function paintedChannels(variable: string, canvas: readonly number[] = [0, 0, 0]
   }
 }
 
-describe("standard painted theme colors", () => {
-  it("match the chip surfaces index.css paints", () => {
+describe("stock semantic palette mapping", () => {
+  it("maps resolved roles to CSS chip surfaces", () => {
     const root = document.documentElement;
     try {
       for (const appearance of ["light", "dark"] as const) {

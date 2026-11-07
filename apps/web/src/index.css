@@ -1313,14 +1313,14 @@ html[data-theme-token-probe] *::after {
 /* Workspace actions use a small, separate chrome hierarchy. Keeping these
    roles explicit prevents the thread toolbar from falling back to the default
    dark-mode whites while preserving the same theme file across clients. */
-html[data-theme-id] [data-chat-header] {
+html[data-theme-treatment="palette"] [data-chat-header] {
   background-color: var(--toolbar-background);
   color: var(--contrast-toolbar-foreground);
 }
 
-html[data-theme-id] [data-chat-header] [data-slot="button"],
-html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"],
-html[data-theme-id] [data-chat-header] [data-toolbar-control] {
+html[data-theme-treatment="palette"] [data-chat-header] [data-slot="button"],
+html[data-theme-treatment="palette"] [data-chat-header] [data-slot="menu-trigger"],
+html[data-theme-treatment="palette"] [data-chat-header] [data-toolbar-control] {
   --control-icon-color: var(--contrast-toolbar-control-foreground);
   background-color: var(--toolbar-control);
   border-color: var(--contrast-toolbar-border);
@@ -1332,18 +1332,26 @@ html[data-theme-id] [data-chat-header] [data-toolbar-control] {
    the panel opens. They only take the themed foreground; hover and pressed
    keep the base ghost accent. The tooltip trigger's data-slot wins over the
    toggle's when the trigger renders the toggle, so match both. */
-html[data-theme-id] [data-panel-layout-controls] [data-slot="toggle"],
-html[data-theme-id] [data-panel-layout-controls] [data-slot="tooltip-trigger"],
-html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="toggle"],
-html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="tooltip-trigger"] {
+html[data-theme-treatment="palette"] [data-panel-layout-controls] [data-slot="toggle"],
+html[data-theme-treatment="palette"] [data-panel-layout-controls] [data-slot="tooltip-trigger"],
+html[data-theme-treatment="palette"] [data-workspace-titlebar-controls] [data-slot="toggle"],
+html[data-theme-treatment="palette"]
+  [data-workspace-titlebar-controls]
+  [data-slot="tooltip-trigger"] {
   --control-icon-color: var(--contrast-toolbar-foreground);
   color: var(--contrast-toolbar-foreground);
 }
 
-html[data-theme-id] [data-panel-layout-controls] [data-slot="toggle"]:disabled,
-html[data-theme-id] [data-panel-layout-controls] [data-slot="tooltip-trigger"]:disabled,
-html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="toggle"]:disabled,
-html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="tooltip-trigger"]:disabled {
+html[data-theme-treatment="palette"] [data-panel-layout-controls] [data-slot="toggle"]:disabled,
+html[data-theme-treatment="palette"]
+  [data-panel-layout-controls]
+  [data-slot="tooltip-trigger"]:disabled,
+html[data-theme-treatment="palette"]
+  [data-workspace-titlebar-controls]
+  [data-slot="toggle"]:disabled,
+html[data-theme-treatment="palette"]
+  [data-workspace-titlebar-controls]
+  [data-slot="tooltip-trigger"]:disabled {
   --control-icon-color: color-mix(
     in oklab,
     var(--contrast-toolbar-foreground) 55%,
@@ -1352,38 +1360,45 @@ html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="tooltip-trigg
   color: color-mix(in oklab, var(--contrast-toolbar-foreground) 55%, var(--toolbar-background));
 }
 
-html[data-theme-id] [data-chat-header] [data-slot="button"]:hover,
-html[data-theme-id] [data-chat-header] [data-slot="button"][data-pressed],
-html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"]:hover,
-html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"][data-pressed],
-html[data-theme-id] [data-chat-header] [data-toolbar-control]:hover,
-html[data-theme-id] [data-chat-header] [data-toolbar-control][data-pressed] {
+html[data-theme-treatment="palette"] [data-chat-header] [data-slot="button"]:hover,
+html[data-theme-treatment="palette"] [data-chat-header] [data-slot="button"][data-pressed],
+html[data-theme-treatment="palette"] [data-chat-header] [data-slot="menu-trigger"]:hover,
+html[data-theme-treatment="palette"] [data-chat-header] [data-slot="menu-trigger"][data-pressed],
+html[data-theme-treatment="palette"] [data-chat-header] [data-toolbar-control]:hover,
+html[data-theme-treatment="palette"] [data-chat-header] [data-toolbar-control][data-pressed] {
   background-color: var(--toolbar-control-hover);
 }
 
-html[data-theme-id] [data-chat-header] [data-slot="separator"] {
+html[data-theme-treatment="palette"] [data-chat-header] [data-slot="separator"] {
   background-color: var(--contrast-toolbar-border);
 }
 
 /* Chat code blocks join the other code surfaces on the code tokens. The
    default look keeps its secondary/input tints; themed palettes tint those
    surfaces with the accent, which fights syntax highlighting. */
-html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock {
+html[data-theme-treatment="palette"]
+  :is(.chat-markdown, .composer-tiptap)
+  .chat-markdown-codeblock {
   background-color: var(--code-background);
   border-color: var(--contrast-border);
   color: var(--code-foreground);
 }
 
-html[data-theme-id] .chat-markdown pre {
+html[data-theme-treatment="palette"] .chat-markdown pre {
   background-color: var(--code-background);
   color: var(--code-foreground);
 }
 
-html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock pre {
+html[data-theme-treatment="palette"]
+  :is(.chat-markdown, .composer-tiptap)
+  .chat-markdown-codeblock
+  pre {
   background-color: transparent;
 }
 
-html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock-header {
+html[data-theme-treatment="palette"]
+  :is(.chat-markdown, .composer-tiptap)
+  .chat-markdown-codeblock-header {
   color: color-mix(in srgb, var(--code-foreground) 72%, transparent);
 }
 
@@ -1434,6 +1449,33 @@ html[data-theme-id] [data-app-sidebar] {
 
   @variant dark {
     border-color: color-mix(in srgb, var(--contrast-sidebar-foreground) 8%, transparent);
+  }
+}
+
+/* Stock navigation intentionally uses a flatter hierarchy than the root palette. */
+html[data-theme-id][data-theme-treatment="stock"] {
+  --tool-error-icon: var(--color-red-500);
+
+  @variant dark {
+    --tool-error-icon: #fca5a5;
+  }
+}
+
+html[data-theme-treatment="stock"] [data-app-sidebar] {
+  @variant dark {
+    --foreground: #f1f3f7;
+    --card: #000;
+    --card-foreground: var(--foreground);
+    --accent: #191a1d;
+    --accent-foreground: #f7f9ff;
+    --muted: #0a0a0a;
+    --input: rgb(255 255 255 / 18%);
+    --sidebar-foreground: var(--foreground);
+    --sidebar-control-surface: var(--muted);
+    --sidebar-row-hover: color-mix(in srgb, var(--contrast-foreground) 8%, transparent);
+    --sidebar-row-active: color-mix(in srgb, var(--contrast-foreground) 11%, transparent);
+    --sidebar-row-selected: color-mix(in srgb, var(--contrast-foreground) 7%, transparent);
+    --secondary-label: #8f8f8f;
   }
 }
 

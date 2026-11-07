@@ -123,6 +123,23 @@ describe("t3 theme", () => {
       assert.include(String(failure), "not a valid theme file");
       assert.equal(NodeFS.existsSync(NodePath.join(baseDir, "userdata", "themes")), false);
       assert.equal(NodeFS.existsSync(settingsPathFor(baseDir)), false);
+      NodeFS.writeFileSync(
+        themeFile,
+        JSON.stringify({
+          version: 2,
+          name: "Invalid authored",
+          appearance: "dark",
+          sources: { dark: { version: 2, overrides: { focus: "broken" } } },
+        }),
+      );
+      const authoredFailure = yield* runCli([
+        "theme",
+        "set",
+        themeFile,
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+      assert.include(String(authoredFailure), 'Invalid theme color for "focus"');
     }),
   );
 

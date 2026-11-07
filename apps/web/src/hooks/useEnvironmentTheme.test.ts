@@ -79,6 +79,10 @@ describe("environment themes", () => {
       },
     ]);
 
+    expect(definitions[0]?.sources?.dark).toEqual({
+      version: 2,
+      seed: { canvas: "#1a1b26", accent: "#7aa2f7" },
+    });
     expect(definitions.map((definition) => definition.id)).toEqual([
       "nightfall",
       "partial",

@@ -32,3 +32,24 @@ it("migrates a device selection without losing missing environment themes or leg
   expect(() => failing.setItem("t3code:theme", "ocean")).toThrow("disk full");
   expect(data.get(THEME_SELECTION_STORAGE_KEY)).toBe(saved);
 });
+
+it("repairs a malformed selection on an explicit write while retaining legacy preferences", () => {
+  for (const malformed of ["{", '{"version":1,"selection":false}']) {
+    const data = new Map([
+      [THEME_SELECTION_STORAGE_KEY, malformed],
+      ["t3code:theme", "offline-theme"],
+    ]);
+    const selection = themeSelectionStorage({
+      getItem: (key) => data.get(key) ?? null,
+      setItem: (key, value) => {
+        data.set(key, value);
+      },
+      removeItem: (key) => {
+        data.delete(key);
+      },
+    });
+    selection.setItem("t3code:theme-appearance-mode", "dark");
+    expect(selection.getItem("t3code:theme")).toBe("offline-theme");
+    expect(selection.getItem("t3code:theme-appearance-mode")).toBe("dark");
+  }
+});
