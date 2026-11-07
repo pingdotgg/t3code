@@ -22,6 +22,7 @@ const makeInstance = Effect.all({
   sourceControl: BitbucketSourceControlProvider.make,
   discovery: BitbucketSourceControlProvider.makeDiscovery,
   pullRequests: BitbucketPullRequestProvider.make,
+  fetchMedia: BitbucketApi.BitbucketApi.pipe(Effect.map((api) => api.fetchMedia)),
 });
 
 export const driver = defineSourceControlDriver({

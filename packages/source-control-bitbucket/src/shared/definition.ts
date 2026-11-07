@@ -17,6 +17,7 @@ import {
   projectChangeRequestHost,
 } from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
+import { bitbucketMediaUrl } from "./bitbucketMedia.ts";
 
 const safeShellArgument = /^[A-Za-z0-9._/@+=,-]+$/;
 const repositoryName = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
@@ -132,4 +133,5 @@ export const definition = defineSourceControl({
   canReadChangeRequestOnHost: (identity, link) =>
     isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
   settings,
+  mediaUrl: bitbucketMediaUrl,
 });
