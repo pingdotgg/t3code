@@ -18,6 +18,7 @@ export function LabsSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="beta" title="Beta">
+        <ScrollingWorkspacesRow />
         <BoringSidebarRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
@@ -27,6 +28,26 @@ export function LabsSettingsPanel() {
         <FastWorktreeCheckoutRow />
       </SettingsSection>
     </SettingsPageContainer>
+  );
+}
+
+function ScrollingWorkspacesRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("scrolling-workspaces")}
+      description="Panes scroll sideways instead of shrinking, and you can keep several workspaces with an overview, swipes and a layout tour. Splits, tabs and layout templates work either way."
+      control={
+        <Switch
+          checked={settings.scrollingWorkspacesEnabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ scrollingWorkspacesEnabled: Boolean(checked) })
+          }
+          aria-label="Scrolling workspaces"
+        />
+      }
+    />
   );
 }
 
