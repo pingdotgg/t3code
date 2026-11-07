@@ -1,11 +1,10 @@
+import { parseThemeColor } from "@t3tools/shared/themeColor";
 import { pipe } from "effect/Function";
 import type { EnvironmentTheme } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
-import "culori/css";
-import { converter, parse } from "culori/fn";
 import {
   BUILT_IN_THEMES,
   EMBER_THEME,
@@ -422,7 +421,6 @@ type ThemeRgbColor = {
 };
 
 type ThemeOklch = { L: number; C: number; h: number };
-type ParsedThemeColor = { color: ThemeOklch; alpha: number };
 
 let standardLightThemeColors: ThemeColors | undefined;
 let standardDarkThemeColors: ThemeColors | undefined;
@@ -431,30 +429,6 @@ const THEME_LIGHT_FOREGROUND: ThemeRgbColor = { r: 255, g: 250, b: 255 };
 const THEME_DARK_FOREGROUND: ThemeRgbColor = { r: 36, g: 21, b: 35 };
 const THEME_WHITE_FOREGROUND: ThemeRgbColor = { r: 255, g: 255, b: 255 };
 const THEME_BLACK_FOREGROUND: ThemeRgbColor = { r: 0, g: 0, b: 0 };
-
-const convertToOklch = converter("oklch");
-
-function parseThemeColor(value: unknown): ParsedThemeColor | null {
-  if (typeof value !== "string") return null;
-  const input = value.trim();
-  const parsed = parse(input);
-  if (!parsed) return null;
-  const color = convertToOklch(parsed);
-  const lightness = color.l ?? 0;
-  const chroma = color.c ?? 0;
-  const hue = color.h ?? 0;
-  // Missing CSS components are zero; Culori omits none alpha, so distinguish it from absent alpha.
-  const alpha = /\/\s*none\s*\)$/i.test(input) ? 0 : (color.alpha ?? 1);
-  if (![lightness, chroma, hue, alpha].every(Number.isFinite)) return null;
-  return {
-    color: {
-      L: Math.min(1, Math.max(0, lightness)),
-      C: Math.max(0, chroma),
-      h: hue,
-    },
-    alpha: Math.min(1, Math.max(0, alpha)),
-  };
-}
 
 function formatThemeColorNumber(value: number, precision: number): string {
   const rounded = Math.abs(value) < 10 ** -precision / 2 ? 0 : value;

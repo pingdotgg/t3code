@@ -542,6 +542,10 @@
     "./speech": {
       "types": "./src/speech.ts",
       "import": "./src/speech.ts"
+    },
+    "./themeColor": {
+      "types": "./src/themeColor.ts",
+      "import": "./src/themeColor.ts"
     }
   },
   "scripts": {
@@ -552,6 +556,7 @@
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",
     "@t3tools/contracts": "workspace:*",
+    "culori": "^4.0.2",
     "effect": "catalog:",
     "ffi-rs": "1.3.2",
     "mdast-util-directive": "catalog:",
@@ -572,6 +577,7 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@types/culori": "^4.0.1",
     "@types/mdast": "^4.0.4",
     "@types/node": "catalog:",
     "micromark-util-types": "catalog:",

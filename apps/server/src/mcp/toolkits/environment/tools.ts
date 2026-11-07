@@ -1,4 +1,7 @@
 import {
+  EnvironmentTheme,
+  EnvironmentThemeFile,
+  EnvironmentThemeId,
   BackgroundActivityProfile,
   BackgroundActivityProfileSelection,
   ExecutionEnvironmentDescriptor,
@@ -12,6 +15,7 @@ import { Tool, Toolkit } from "effect/ai";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as Themes from "../../../environmentTheme.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
@@ -35,6 +39,7 @@ const shared = {
     ThreadManagementService.ThreadManagementService,
     ServerEnvironment.ServerEnvironment,
     Settings.ServerSettingsService,
+    Themes.EnvironmentThemeService,
     ThreadCommandExecutor.ThreadCommandExecutor,
   ],
 };
@@ -67,4 +72,77 @@ const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update"
   }),
   success: Schema.Struct(PreferenceFields),
 }).annotate(Tool.Destructive, true);
-export const EnvironmentToolkit = Toolkit.make(EnvironmentReadTool, EnvironmentPreferencesTool);
+const themeTarget = { environmentId: OrchestratorMcpEnvironmentTarget };
+const themeId = { ...themeTarget, id: EnvironmentThemeId };
+const ThemeList = Tool.make("t3_theme_list", {
+  ...shared,
+  description:
+    "List built-in and environment-published themes. Personal client-local themes are inaccessible.",
+  parameters: Schema.Struct(themeTarget),
+  success: Schema.Array(EnvironmentTheme),
+}).annotate(Tool.Readonly, true);
+const ThemeRead = Tool.make("t3_theme_read", {
+  ...shared,
+  description:
+    "Read a built-in or environment-published theme, including partial colors and variants.",
+  parameters: Schema.Struct(themeId),
+  success: EnvironmentTheme,
+}).annotate(Tool.Readonly, true);
+const ThemeCreate = Tool.make("t3_theme_create", {
+  ...shared,
+  description:
+    "Publish a new custom theme in this environment. Does not apply it or set the default. IDs must be unique; built-ins are protected.",
+  parameters: Schema.Struct({ ...themeId, theme: EnvironmentThemeFile }),
+  success: EnvironmentTheme,
+});
+const ThemeUpdate = Tool.make("t3_theme_update", {
+  ...shared,
+  description:
+    "Replace an environment-published custom theme's definition. Does not apply it or set the default. Send the complete definition; omitted palette fields remain absent.",
+  parameters: Schema.Struct({ ...themeId, theme: EnvironmentThemeFile }),
+  success: EnvironmentTheme,
+}).annotate(Tool.Destructive, true);
+const ThemeDuplicate = Tool.make("t3_theme_duplicate", {
+  ...shared,
+  description:
+    "Copy a built-in or published theme to a new custom ID and name. Does not apply it or set the default.",
+  parameters: Schema.Struct({
+    ...themeId,
+    sourceId: EnvironmentThemeId,
+    name: EnvironmentThemeFile.fields.name,
+  }),
+  success: EnvironmentTheme,
+});
+const ThemeDelete = Tool.make("t3_theme_delete", {
+  ...shared,
+  description:
+    "Delete a published custom theme. Clear or change the environment default first if it names this theme. Clients resolve removed themes using their existing fallback behavior.",
+  parameters: Schema.Struct(themeId),
+  success: Schema.Void,
+}).annotate(Tool.Destructive, true);
+const ThemeApply = Tool.make("t3_theme_apply", {
+  ...shared,
+  description:
+    "Apply a built-in or published theme by setting the environment default with a fresh timestamp. Connected web and desktop clients follow existing default semantics. Cannot select a personal client-local theme.",
+  parameters: Schema.Struct(themeId),
+  success: Schema.Void,
+}).annotate(Tool.Destructive, true);
+const ThemeClear = Tool.make("t3_theme_clear_default", {
+  ...shared,
+  description:
+    "Clear the environment theme default. Clients keep their current choice; this does not reset a client's theme.",
+  parameters: Schema.Struct(themeTarget),
+  success: Schema.Void,
+}).annotate(Tool.Destructive, true);
+export const EnvironmentToolkit = Toolkit.make(
+  EnvironmentReadTool,
+  EnvironmentPreferencesTool,
+  ThemeList,
+  ThemeRead,
+  ThemeCreate,
+  ThemeUpdate,
+  ThemeDuplicate,
+  ThemeDelete,
+  ThemeApply,
+  ThemeClear,
+);

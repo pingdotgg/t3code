@@ -1,7 +1,13 @@
-import { OrchestratorMcpFailure, type ServerSettings } from "@t3tools/contracts";
+import {
+  OrchestratorMcpFailure,
+  type EnvironmentThemeFile,
+  type ServerSettings,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
+import * as Themes from "../../../environmentTheme.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -40,7 +46,56 @@ const access = Effect.gen(function* () {
     });
   return { ...context, descriptor, settings: yield* Settings.ServerSettingsService };
 });
+const themes = access.pipe(Effect.andThen(Themes.EnvironmentThemeService));
+const isThemeLibraryError = Schema.is(Themes.ThemeLibraryError);
+const themeFailure = (error: Themes.ThemeLibraryError) =>
+  new OrchestratorMcpFailure({
+    code: error.reason === "storage" ? "orchestration_error" : "invalid_request",
+    message: error.message,
+  });
+const themeWrite = <P, A>(
+  operation: (
+    service: Themes.EnvironmentThemeService["Service"],
+    input: P,
+  ) => Effect.Effect<A, Themes.ThemeLibraryError>,
+) =>
+  McpToolAccess.writesEnvironment((input: P, check) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const update = Effect.gen(function* () {
+        yield* check;
+        const service = yield* themes;
+        return yield* operation(service, input).pipe(Effect.mapError(themeFailure));
+      });
+      return yield* scope.thread === undefined
+        ? update
+        : executor.withLock(scope.thread.threadId, update);
+    }),
+  );
 export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
+  t3_theme_list: McpToolAccess.reads(() =>
+    Effect.flatMap(themes, (service) => service.list).pipe(
+      Effect.mapError((error) => (isThemeLibraryError(error) ? themeFailure(error) : error)),
+    ),
+  ),
+  t3_theme_read: McpToolAccess.reads((input: { id: string }) =>
+    Effect.flatMap(themes, (service) => service.read(input.id)).pipe(
+      Effect.mapError((error) => (isThemeLibraryError(error) ? themeFailure(error) : error)),
+    ),
+  ),
+  t3_theme_create: themeWrite((service, input: { id: string; theme: EnvironmentThemeFile }) =>
+    service.save({ ...input, overwrite: false }),
+  ),
+  t3_theme_update: themeWrite((service, input: { id: string; theme: EnvironmentThemeFile }) =>
+    service.save({ ...input, overwrite: true }),
+  ),
+  t3_theme_duplicate: themeWrite((service, input: { sourceId: string; id: string; name: string }) =>
+    service.duplicate(input),
+  ),
+  t3_theme_delete: themeWrite((service, input: { id: string }) => service.remove(input.id)),
+  t3_theme_apply: themeWrite((service, input: { id: string }) => service.setDefault(input.id)),
+  t3_theme_clear_default: themeWrite((service) => service.setDefault("")),
   t3_environment_read: McpToolAccess.reads(() =>
     Effect.gen(function* () {
       const { descriptor, settings } = yield* access;

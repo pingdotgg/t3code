@@ -107,3 +107,9 @@ view.
 
 Write updates to a temporary file and rename it into place so clients never read a partial theme.
 Invalid files are not published.
+
+Agents can manage this environment's published theme library through T3 MCP: list or read themes,
+create or replace custom definitions, duplicate a built-in or custom theme, and delete custom
+themes. These tools cannot access personal themes saved in a client. Creating or editing a theme
+does not apply it. Ask the agent to apply it to set the environment default, or clear the default
+to let clients keep their current choices. Clear or change the default before deleting its theme.
