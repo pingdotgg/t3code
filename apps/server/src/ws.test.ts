@@ -1414,8 +1414,8 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
       Layer.mock(ProviderRegistry.ProviderRegistry)({
         getProviders: Effect.succeed([provider]),
         refreshWorkspaceSnapshot: (input) =>
-          Effect.map(scan(input.cwd), (snapshot) => [
-            { ...provider, workspaceSnapshots: [snapshot] },
+          Effect.map(scan(input.scanCwd ?? input.cwd), (snapshot) => [
+            { ...provider, workspaceSnapshots: [{ ...snapshot, cwd: input.cwd }] },
           ]),
       }),
       Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
