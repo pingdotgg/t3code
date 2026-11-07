@@ -1456,7 +1456,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ? undefined
       : projection.messages.find((candidate) => candidate.id === delivery.messageId);
 
-  /** Parent run and wake message events that commit a planDelegatedCompletionDelivery result. */
   const isUnobservedAcknowledgement = (
     command: OrchestrationV2ServerCommand,
   ): command is Extract<
@@ -1466,6 +1465,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command.type === "delegated_task.completion-delivery.acknowledge" &&
     command.observedByRunId === null;
 
+  /** Parent run and wake message events that commit a planDelegatedCompletionDelivery result. */
   const delegatedCompletionPlanEvents = (
     threadId: ThreadId,
     plan: {
