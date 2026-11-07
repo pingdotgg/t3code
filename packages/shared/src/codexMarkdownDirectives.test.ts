@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
@@ -6,6 +7,7 @@ import {
   remarkCodexDirectives,
   renderCodexDirectivesForCopy,
   renderCodexInlineDirectivesAsMarkdown,
+  renderCodexMarkdownForNativeDisplay,
   splitCodexArtifactTemplateMarkdown,
 } from "./codexMarkdownDirectives.ts";
 import { parseMarkdownFileLink } from "./markdownLinks.ts";
@@ -30,10 +32,18 @@ const FOLLOW_UP =
   ':codex-followup[Prepare print version]{prompt="Prepare the document for printing."}';
 const ARTIFACT_TEMPLATE =
   '::artifact-template{skill_name="artifact-template-hello-world" skill_directory="/Users/test/.codex/skills/artifact-template-hello-world" display_name="Hello World" artifact_kind="document"}';
+// OpenAI web-search citation markers: U+E200 opens, U+E202 separates fields, U+E201 closes.
+const WEB_CITATION_MARKDOWN =
+  "Prices rose 3%. \uE200cite\uE202turn816200view0\uE201 Rates held. \uE200cite\uE202turn0search0\uE202turn0search3\uE201";
+const WEB_CITATION_MARKER = /[\uE200-\uE202]|turn\d+(?:view|search)\d+/u;
 
 function parse(markdown: string): TestNode {
   const processor = unified().use(remarkParse).use(remarkCodexDirectives);
   return processor.runSync(processor.parse(markdown), { value: markdown }) as TestNode;
+}
+
+function textContent(node: TestNode): string {
+  return node.value ?? (node.children ?? []).map(textContent).join("");
 }
 
 function parseOrdinaryMarkdown(markdown: string): TestNode {
@@ -72,6 +82,23 @@ describe("remarkCodexDirectives", () => {
     });
   });
 
+  it("does not display web citation markers", () => {
+    const text = textContent(parse(WEB_CITATION_MARKDOWN));
+
+    expect(text).toContain("Prices rose 3%.");
+    expect(text).toContain("Rates held.");
+    expect(text).not.toMatch(WEB_CITATION_MARKER);
+  });
+
+  it("keeps web citation markers out of a bare URL they follow", () => {
+    const markdown = "See https://nodejs.orgciteturn0search0 for details.";
+    const processor = unified().use(remarkParse).use(remarkGfm).use(remarkCodexDirectives);
+    const tree = processor.runSync(processor.parse(markdown), { value: markdown }) as TestNode;
+    const link = tree.children?.[0]?.children?.find((node) => node.type === "link");
+
+    expect(link?.url).toBe("https://nodejs.org");
+  });
+
   it.each([
     "Meeting at 10:30",
     ":::note\ncontent\n:::",
@@ -105,6 +132,20 @@ describe.each([
 
     expect(link?.type).toBe("link");
     expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path, line: 7 });
+  });
+});
+
+describe.each([
+  { name: "renderCodexDirectivesForCopy", render: renderCodexDirectivesForCopy },
+  { name: "renderCodexMarkdownForNativeDisplay", render: renderCodexMarkdownForNativeDisplay },
+])("$name web citation markers", ({ render }) => {
+  it.each([
+    [WEB_CITATION_MARKDOWN, "Prices rose 3%. Rates held."],
+    [':codex-followup[Read more citeturn0search0]{prompt="Read more"}', "Read more"],
+    ["`citeturn0search0`", "`citeturn0search0`"],
+    [':codex-followup[Show `citeturn0search0`]{prompt="Show it"}', "Show `citeturn0search0`"],
+  ])("leaves the markers out of the rendered Markdown, except in code", (input, expected) => {
+    expect(render(input)).toBe(expected);
   });
 });
 
