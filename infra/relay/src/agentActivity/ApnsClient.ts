@@ -8,6 +8,7 @@ import * as Headers from "effect/http/Headers";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { ApnsEnvironment, type ApnsCredentials } from "../Config.ts";
+import { MAX_SUMMARY_TEXT_LENGTH, truncateText } from "./agentActivityPayloads.ts";
 import type { ApnsLiveActivityAlert, ApnsNotificationPayload } from "./apnsDeliveryJobs.ts";
 import type { ApnsJwtEncodingError, ApnsJwtSigningError } from "./apnsJwt.ts";
 import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
@@ -22,6 +23,8 @@ const STALE_AFTER_SECONDS = 10 * 60;
 const DISMISS_AFTER_SECONDS = 5 * 60;
 // Without final content, the card freezes at stale state; dismiss it promptly.
 const CONTENTLESS_DISMISS_AFTER_SECONDS = 15;
+const MAX_LIVE_ACTIVITY_PAYLOAD_BYTES = 4096;
+const MIN_FITTED_TEXT_LENGTH = 8;
 
 const ApnsLiveActivityEventSchema = Schema.Literals(["update", "end"]);
 export type ApnsLiveActivityEvent = typeof ApnsLiveActivityEventSchema.Type;
@@ -111,7 +114,60 @@ function liveActivityAlertPayload(alert: ApnsLiveActivityAlert) {
   };
 }
 
+// Text caps count characters, so multibyte titles can overflow APNs' 4 KB
+// limit. Shorten titles and alert text until the encoded payload fits. Links
+// and ids can't shrink, so if the shortest text still overflows, drop the last
+// (lowest-priority) row and fit again.
 function makeLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveActivityRequest {
+  let request = buildLiveActivityRequest(input);
+  const state = input.state;
+  if (state === null) {
+    return request;
+  }
+  const fit = (maxTextLength: number, rowCount: number) =>
+    buildLiveActivityRequest({
+      ...input,
+      state: {
+        ...state,
+        activities: state.activities.slice(0, rowCount).map((row) => ({
+          ...row,
+          projectTitle: truncateText(row.projectTitle, maxTextLength),
+          threadTitle: truncateText(row.threadTitle, maxTextLength),
+          modelTitle: truncateText(row.modelTitle, maxTextLength),
+        })),
+      },
+      alert: input.alert
+        ? {
+            title: truncateText(input.alert.title, maxTextLength),
+            body: truncateText(input.alert.body, maxTextLength),
+          }
+        : null,
+    });
+  let rowCount = state.activities.length;
+  let maxTextLength = MAX_SUMMARY_TEXT_LENGTH;
+  while (
+    !fitsLiveActivityLimit(request) &&
+    (rowCount > 0 || maxTextLength > MIN_FITTED_TEXT_LENGTH)
+  ) {
+    if (maxTextLength > MIN_FITTED_TEXT_LENGTH) {
+      maxTextLength = Math.floor(maxTextLength * 0.8);
+    } else {
+      rowCount -= 1;
+      maxTextLength = MAX_SUMMARY_TEXT_LENGTH;
+    }
+    request = fit(maxTextLength, rowCount);
+  }
+  return request;
+}
+
+function fitsLiveActivityLimit(request: ApnsLiveActivityRequest): boolean {
+  return (
+    new TextEncoder().encode(JSON.stringify(request.payload)).byteLength <=
+    MAX_LIVE_ACTIVITY_PAYLOAD_BYTES
+  );
+}
+
+function buildLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveActivityRequest {
   const timestamp = input.nowEpochSeconds;
   if (input.event === "end") {
     return {
