@@ -36,6 +36,8 @@ export interface ThreadQueueWorkflowState {
   readonly queuedRuns: ReadonlyArray<QueuedThreadRun>;
   readonly isHeld: boolean;
   readonly canPromoteToSteer: boolean;
+  /** The active run has no running provider turn; the server steers a follow-up into the next one. */
+  readonly awaitsProviderTurn: boolean;
   /** The active run is a compaction, so promoting a queued message stops it instead of steering. */
   readonly promoteSkipsCompaction: boolean;
   readonly canSendNow: boolean;
@@ -137,12 +139,15 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
   );
   const promoteSkipsCompaction =
     activeMessage !== undefined && isCompactionCommandMessage(activeMessage);
-  const hasSteerableProviderTurn =
-    activeRun?.status === "running" &&
+  const activeProviderTurnRunning =
+    activeRun !== null &&
+    activeRun.status !== "preparing" &&
+    activeRun.status !== "starting" &&
     activeRun.activeAttemptId !== null &&
     projection.providerTurns.some(
       (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
     );
+  const hasSteerableProviderTurn = activeRun?.status === "running" && activeProviderTurnRunning;
   const queuedRuns = copySorted(
     getUserQueuedThreadRuns(projection),
     (left, right) =>
@@ -174,6 +179,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       (hasSteerableProviderTurn &&
         (capabilities?.supportsActiveSteering === true ||
           capabilities?.supportsSteeringByInterruptRestart === true)),
+    awaitsProviderTurn: activeRun !== null && !activeProviderTurnRunning,
     promoteSkipsCompaction,
   };
 }

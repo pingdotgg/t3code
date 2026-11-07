@@ -375,6 +375,7 @@ export interface ChatComposerProps {
   projectSelectionRequired: boolean;
 
   phase: SessionPhase;
+  sendQueuesBehindSetup: boolean;
   canInterrupt: boolean;
   isSendBusy: boolean;
   canResume: boolean;
@@ -532,6 +533,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     forceExpandedOnMobile,
     projectSelectionRequired,
     phase,
+    sendQueuesBehindSetup,
     canInterrupt,
     isSendBusy,
     canResume,
@@ -1261,6 +1263,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         isComplete: Boolean(activePendingResolvedAnswers),
       }
     : null;
+  const turnActive = phase === "running" || sendQueuesBehindSetup;
   const showResumeAction =
     canResume && !composerDraftHasUserContent(composerDraft) && !isEditingQueuedMessage;
   const collapsedComposerPrimaryActionDisabled =
@@ -2185,7 +2188,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           sendEvent,
           dispatchMode ??
             resolveComposerDispatchMode({
-              running: phase === "running",
+              running: turnActive,
               alternateModifier: false,
               activeTurnDefault: followUpBehavior,
               canSteer: !isCompacting,
@@ -2216,7 +2219,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         keybindings,
         isSoftwareKeyboardOpen,
         isDraftThread: routeKind === "draft",
-        isRunning: phase === "running",
+        isRunning: turnActive,
         sendShortcut: settings.sendShortcut,
         prompt: promptRef.current,
       });
@@ -2226,7 +2229,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       submitComposer(
         undefined,
         resolveComposerDispatchMode({
-          running: phase === "running",
+          running: turnActive,
           alternateModifier: intent === "alternate",
           canSteer: !isCompacting,
           activeTurnDefault: followUpBehavior,
@@ -2240,7 +2243,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     submitComposer(
       event,
       resolveComposerDispatchMode({
-        running: phase === "running",
+        running: turnActive,
         alternateModifier: event.metaKey || event.ctrlKey,
         activeTurnDefault: followUpBehavior,
         canSteer: !isCompacting,
@@ -2252,7 +2255,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     submitComposer(
       undefined,
       resolveComposerDispatchMode({
-        running: phase === "running",
+        running: turnActive,
         alternateModifier: false,
         activeTurnDefault: followUpBehavior,
         canSteer: !isCompacting,
@@ -2313,7 +2316,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       keybindings,
       sendShortcut: settings.sendShortcut,
       routeKind,
-      phase,
+      turnActive,
       isCompacting,
       followUpBehavior,
       isSoftwareKeyboardOpen,
@@ -3629,7 +3632,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     reserveContextWindowMeter={reserveContextWindowMeter}
                     activeThreadModelDisplayName={activeThreadModelDisplayName}
                     pendingAction={pendingPrimaryAction}
-                    isRunning={phase === "running"}
+                    isRunning={turnActive}
                     canInterrupt={canInterrupt}
                     followUpBehavior={followUpBehavior}
                     canSteer={!isCompacting}

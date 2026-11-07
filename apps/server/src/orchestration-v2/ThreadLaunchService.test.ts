@@ -536,6 +536,19 @@ it.effect("retains automation and sender attribution while a message waits in th
     });
     assert.equal(fresh.delivery, "queued");
     assert.isTrue(fresh.run.freshContext);
+    const auto = yield* threads.sendToThread({
+      projectId,
+      commandId: CommandId.make("command:automation:queued-auto"),
+      threadId: launched.threadId,
+      messageId: MessageId.make("message:automation:queued-auto"),
+      text: "Also check the docs",
+      attachments: [],
+      mode: "auto",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    assert.equal(auto.delivery, "queued");
+    assert.equal(auto.run.deliveryIntent, "auto");
   }).pipe(Effect.provide(harness.layer));
 });
 
