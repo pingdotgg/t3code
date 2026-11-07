@@ -15649,6 +15649,125 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("does not keep the thread busy for Claude's ambient artifact watch", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const WATCH_TASK_ID = "task-artifact-watch";
+        const description = "live updates for artifact https://claude.ai/artifact/abc";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-artifact-watch"),
+            text: "Publish the page.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [
+              { task_id: WATCH_TASK_ID, task_type: "monitor_ws", description, ambient: true },
+            ],
+            uuid: "00000000-0000-4000-8000-000000000401",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: WATCH_TASK_ID,
+            tool_use_id: "toolu-artifact-publish",
+            description,
+            task_type: "monitor_ws",
+            ambient: true,
+            uuid: "00000000-0000-4000-8000-000000000402",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000403", result: "Published." }),
+        );
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+
+        // The watcher outlives its turn: its later frames, which carry only the task id, can
+        // arrive during the next one and must not reach routing.
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-artifact-watch-2"),
+            text: "Thanks.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: WATCH_TASK_ID,
+            tool_use_id: "toolu-artifact-publish",
+            description: "comment received",
+            usage: { total_tokens: 0, tool_uses: 0, duration_ms: 0 },
+            uuid: "00000000-0000-4000-8000-000000000407",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_updated",
+            task_id: WATCH_TASK_ID,
+            patch: { status: "killed", end_time: 1793289036381 },
+            uuid: "00000000-0000-4000-8000-000000000404",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: WATCH_TASK_ID,
+            tool_use_id: "toolu-artifact-publish",
+            status: "stopped",
+            output_file: "/tmp/task-artifact-watch.output",
+            summary: description,
+            uuid: "00000000-0000-4000-8000-000000000405",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000406", result: "Done." }),
+        );
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+
+        assert.isFalse(harness.events.some((event) => event.type === "subagent.updated"));
+        assert.equal(harness.continuationRequests.length, 0);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("re-opens a resumed subagent whose task_started races past settle", () =>
     Effect.scoped(
       Effect.gen(function* () {
