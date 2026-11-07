@@ -86,14 +86,6 @@ interface StreamTrack {
   readonly dueAt: number;
 }
 
-/** A held snapshot due for delivery. Each outcome applies only while nothing newer replaced it. */
-interface IdleFlush {
-  readonly event: ProviderAdapter.ProviderAdapterV2Event;
-  readonly delivered: (now: number) => void;
-  readonly retryAt: (at: number) => void;
-  readonly discard: () => void;
-}
-
 function streamedMessage(event: ProviderAdapter.ProviderAdapterV2Event): StreamedMessage | null {
   if (event.type === "message.updated" && event.message.role === "assistant") return event.message;
   if (
@@ -127,6 +119,14 @@ export function makeAssistantStreamingFilter(
   idleFlushMs = ASSISTANT_IDLE_FLUSH_MS,
 ) {
   const tracks = new Map<string, StreamTrack>();
+  // Earliest deadline of any held snapshot, or earlier: a newer snapshot only pushes its own
+  // deadline later, so the cache stays O(1) per event and is recomputed when it comes due.
+  let nextDueAt: number | null = null;
+  const track = (key: string, value: StreamTrack) => {
+    tracks.set(key, value);
+    if (value.held !== null && (nextDueAt === null || value.dueAt < nextDueAt))
+      nextDueAt = value.dueAt;
+  };
   return {
     filter(
       event: ProviderAdapter.ProviderAdapterV2Event,
@@ -149,7 +149,7 @@ export function makeAssistantStreamingFilter(
       const previous = tracks.get(key);
       const delivered = previous?.text ?? "";
       const hold = () => {
-        tracks.set(key, {
+        track(key, {
           text: delivered,
           at: previous?.at ?? Number.NEGATIVE_INFINITY,
           held: message.text !== delivered ? event : null,
@@ -162,7 +162,7 @@ export function makeAssistantStreamingFilter(
       // An idle delivery may already show more than the next boundary; never shrink it. A
       // provider rewrite or truncation is not a prefix and replaces it.
       if (delivered.startsWith(ready)) return hold();
-      tracks.set(key, {
+      track(key, {
         text: ready,
         at: now,
         held: ready !== message.text ? event : null,
@@ -170,33 +170,24 @@ export function makeAssistantStreamingFilter(
       });
       return withText(event, ready);
     },
-    nextIdleFlushAt(): number | null {
-      let next: number | null = null;
-      for (const track of tracks.values()) {
-        if (track.held !== null && (next === null || track.dueAt < next)) next = track.dueAt;
-      }
-      return next;
-    },
-    dueIdleFlushes(now: number): ReadonlyArray<IdleFlush> {
-      const due: Array<IdleFlush> = [];
-      for (const [key, track] of tracks) {
-        const event = track.held;
-        if (event === null || track.dueAt > now) continue;
-        const settle = (next: (current: StreamTrack) => StreamTrack) => {
-          const current = tracks.get(key);
-          if (current?.held === event) tracks.set(key, next(current));
-        };
-        due.push({
-          event,
-          delivered: (at) =>
-            settle((current) => ({
-              text: streamedMessage(event)?.text ?? current.text,
-              at,
-              held: null,
-              dueAt: at,
-            })),
-          retryAt: (at) => settle((current) => ({ ...current, dueAt: at })),
-          discard: () => settle((current) => ({ ...current, held: null })),
+    nextIdleFlushAt: (): number | null => nextDueAt,
+    /** Returns the held snapshots due by `now` and counts them as delivered. */
+    takeIdleFlushes(now: number): ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> {
+      const due: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      nextDueAt = null;
+      for (const [key, current] of tracks) {
+        const event = current.held;
+        if (event === null) continue;
+        if (current.dueAt > now) {
+          if (nextDueAt === null || current.dueAt < nextDueAt) nextDueAt = current.dueAt;
+          continue;
+        }
+        due.push(event);
+        tracks.set(key, {
+          text: streamedMessage(event)?.text ?? current.text,
+          at: now,
+          held: null,
+          dueAt: now,
         });
       }
       return due;

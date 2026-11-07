@@ -4,7 +4,6 @@ import {
   ChatAttachmentId,
   ChatFileAttachment,
   CommandId,
-  EventId,
   MessageId,
   NodeId,
   type OrchestrationV2AppThread,
@@ -35,23 +34,19 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { CodexAppServerRequestError } from "effect-codex-app-server/errors";
-import { SqlError, classifySqliteError, isSqlError } from "effect/sql/SqlError";
+import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 
 import { toPersistenceSqlError } from "../persistence/Errors.ts";
-import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
-import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -1894,6 +1889,40 @@ it.effect("keeps ingesting until queued background work clears after the probe g
   }),
 );
 
+it.effect("keeps ingesting while the last stored root snapshot reports pending work", () =>
+  Effect.gen(function* () {
+    // The live probe is already idle, as when it reads adapter state ahead of the queued events.
+    const consumed = yield* Deferred.make<void>();
+    const result = yield* Effect.raceFirst(
+      runBackgroundItemScenario(
+        "root-snapshot-pending-work",
+        (ids) => {
+          const snapshot = (pendingBackgroundWork: boolean) =>
+            ({
+              type: "provider_thread.updated",
+              driver,
+              providerThread: { id: ids.providerThreadId, appThreadId: ids.threadId },
+              pendingBackgroundWork,
+            }) as ProviderAdapter.ProviderAdapterV2Event;
+          return [
+            snapshot(true),
+            rootTerminalEvent(ids, "completed"),
+            backgroundTurnItemEvent(ids, "dynamic_tool", "completed", 1),
+            snapshot(false),
+          ];
+        },
+        {
+          keepEventStreamOpen: true,
+          hasPendingBackgroundWorkForThread: () => Effect.succeed(false),
+          onEventsConsumed: Deferred.succeed(consumed, undefined).pipe(Effect.asVoid),
+        },
+      ).pipe(Effect.asSome),
+      Deferred.await(consumed).pipe(Effect.as(Option.none())),
+    );
+    assert.deepEqual(result, Option.some(["root-finalized", "turn_item:completed"]));
+  }),
+);
+
 it.effect("keeps ingesting a child thread's late background item completion", () =>
   Effect.gen(function* () {
     const observed = yield* runBackgroundItemScenario("bg-child-item", (ids) => [
@@ -3713,9 +3742,6 @@ function runBackgroundItemScenario(
     ) => Effect.Effect<void>;
     // Consumes through the real commit coordinator, as the event sink does.
     readonly batched?: boolean;
-    // Consumes through this sink instead; `onIngest` makes its own writes.
-    readonly eventSink?: EventSink.EventSinkV2["Service"];
-    readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterTurnStartError>;
     readonly keepEventStreamOpen?: boolean;
     readonly hasPendingBackgroundWorkForThread?: (
       providerThread: OrchestrationV2ProviderThread,
@@ -3731,9 +3757,6 @@ function runBackgroundItemScenario(
     readonly onFinalized?: (
       events: ReadonlyArray<OrchestrationV2DomainEvent>,
     ) => Effect.Effect<void>;
-    readonly onInterruptTurn?: (input: {
-      readonly requestRuntimeRestart?: boolean;
-    }) => Effect.Effect<void>;
   },
 ) {
   return Effect.gen(function* () {
@@ -3770,9 +3793,6 @@ function runBackgroundItemScenario(
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           layerTurnItemPositionsTest,
           mockEventSink({
-            ...(options?.eventSink === undefined
-              ? {}
-              : { consumeProviderEvents: options.eventSink.consumeProviderEvents }),
             ...(coordinator === undefined ? {} : { consumeProviderEvents: coordinator.consume }),
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
@@ -3807,7 +3827,10 @@ function runBackgroundItemScenario(
                     `subagent:${event.subagent.status}`,
                   ]);
                 }
-                return [];
+                // Only the count of stored events matters to the run.
+                return event.type === "provider_thread.updated"
+                  ? [{} as OrchestrationV2DomainEvent]
+                  : [];
               });
               // A write outside a batch waits for queued snapshots, as the event sink's does.
               return coordinator === undefined ? write : coordinator.barrier(write);
@@ -3850,9 +3873,7 @@ function runBackgroundItemScenario(
               close: Deferred.succeed(ingestionDone, undefined),
             };
           }),
-          startTurn: () => options?.startTurn ?? Effect.void,
-          interruptTurn: (interrupt: { readonly requestRuntimeRestart?: boolean }) =>
-            options?.onInterruptTurn?.(interrupt) ?? Effect.void,
+          startTurn: () => Effect.void,
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
         run: {
           id: ids.runId,
@@ -3956,106 +3977,96 @@ it.effect("keeps a failed root's still-running native children live while the ru
   }),
 );
 
-it.effect.each([
-  { name: "", batched: false },
-  { name: " through batched commits", batched: true },
-])(
-  "delivers a held paragraph after the provider goes idle with its prompt still open$name",
-  ({ batched }) =>
-    Effect.gen(function* () {
-      const key = `idle-paragraph${batched ? "-batched" : ""}`;
-      const ids = backgroundScenarioIds(key);
-      const now = yield* DateTime.now;
-      const providerEvents = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-      const delivered = yield* Ref.make<ReadonlyArray<string>>([]);
-      const paragraphDelivered = yield* Deferred.make<void>();
-      const idleDelivered = yield* Deferred.make<void>();
-      const assistantText = (text: string, streaming: boolean) =>
-        [
-          {
-            type: "message.updated",
-            driver,
-            message: {
-              createdBy: "agent",
-              creationSource: "provider",
-              id: MessageId.make(`message:${key}`),
-              threadId: ids.threadId,
-              runId: ids.runId,
-              nodeId: ids.rootNodeId,
-              role: "assistant",
-              text,
-              attachments: [],
-              streaming,
-              createdAt: now,
-              updatedAt: now,
-            },
-          },
-          {
-            type: "turn_item.updated",
-            driver,
-            turnItem: {
-              ...makeLinkedChildTurnItemFixture({ ids, driver, type: "assistant_message" }),
-              id: ids.itemId,
-              threadId: ids.threadId,
-              runId: ids.runId,
-              nodeId: ids.rootNodeId,
-              providerTurnId: ids.rootProviderTurnId,
-              text,
-              streaming,
-            },
-          },
-        ] as ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>;
-
-      const scenario = yield* runBackgroundItemScenario(
-        key,
-        () => Stream.fromQueue(providerEvents),
+it.effect("delivers a held paragraph after the provider goes idle with its prompt still open", () =>
+  Effect.gen(function* () {
+    const key = "idle-paragraph";
+    const ids = backgroundScenarioIds(key);
+    const now = yield* DateTime.now;
+    const providerEvents = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+    const delivered = yield* Ref.make<ReadonlyArray<string>>([]);
+    const paragraphDelivered = yield* Deferred.make<void>();
+    const idleDelivered = yield* Deferred.make<void>();
+    const assistantText = (text: string, streaming: boolean) =>
+      [
         {
-          batched,
-          onIngest: (event, write) =>
-            event.type === "message.updated" || event.type === "turn_item.updated"
-              ? Effect.gen(function* () {
-                  const message = event.type === "message.updated" ? event.message : event.turnItem;
-                  const text = "text" in message ? message.text : "";
-                  const streaming = "streaming" in message && message.streaming;
-                  yield* Ref.update(delivered, (current) => [
-                    ...current,
-                    `${event.type}:${streaming ? "streaming" : "final"}:${JSON.stringify(text)}${
-                      write.inSharedCommit ? " in commit" : ""
-                    }`,
-                  ]);
-                  if (event.type === "turn_item.updated") {
-                    yield* Deferred.succeed(paragraphDelivered, undefined);
-                    if (streaming && text === "First.\n\nWaiting on the build")
-                      yield* Deferred.succeed(idleDelivered, undefined);
-                  }
-                })
-              : Effect.void,
+          type: "message.updated",
+          driver,
+          message: {
+            createdBy: "agent",
+            creationSource: "provider",
+            id: MessageId.make(`message:${key}`),
+            threadId: ids.threadId,
+            runId: ids.runId,
+            nodeId: ids.rootNodeId,
+            role: "assistant",
+            text,
+            attachments: [],
+            streaming,
+            createdAt: now,
+            updatedAt: now,
+          },
         },
-      ).pipe(Effect.forkChild);
+        {
+          type: "turn_item.updated",
+          driver,
+          turnItem: {
+            ...makeLinkedChildTurnItemFixture({ ids, driver, type: "assistant_message" }),
+            id: ids.itemId,
+            threadId: ids.threadId,
+            runId: ids.runId,
+            nodeId: ids.rootNodeId,
+            providerTurnId: ids.rootProviderTurnId,
+            text,
+            streaming,
+          },
+        },
+      ] as ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>;
 
-      yield* Queue.offerAll(providerEvents, assistantText("First.\n\nWaiting on the build", true));
-      yield* Deferred.await(paragraphDelivered);
-      // The provider keeps its prompt open while a backgrounded command runs.
-      yield* TestClock.adjust("1 second");
-      yield* Deferred.await(idleDelivered);
-      yield* Queue.offerAll(providerEvents, [
-        ...assistantText("First.\n\nWaiting on the build to", true),
-        ...assistantText("First.\n\nWaiting on the build to finish.", false),
-        rootTerminalEvent(ids, "completed"),
-      ]);
-      yield* Fiber.join(scenario);
+    const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(providerEvents), {
+      batched: true,
+      onIngest: (event, write) =>
+        event.type === "message.updated" || event.type === "turn_item.updated"
+          ? Effect.gen(function* () {
+              const message = event.type === "message.updated" ? event.message : event.turnItem;
+              const text = "text" in message ? message.text : "";
+              const streaming = "streaming" in message && message.streaming;
+              yield* Ref.update(delivered, (current) => [
+                ...current,
+                `${event.type}:${streaming ? "streaming" : "final"}:${JSON.stringify(text)}${
+                  write.inSharedCommit ? " in commit" : ""
+                }`,
+              ]);
+              if (event.type === "turn_item.updated") {
+                yield* Deferred.succeed(paragraphDelivered, undefined);
+                if (streaming && text === "First.\n\nWaiting on the build")
+                  yield* Deferred.succeed(idleDelivered, undefined);
+              }
+            })
+          : Effect.void,
+    }).pipe(Effect.forkChild);
 
-      // Snapshots share the batch commit; the idle write commits alone, before it counts as shown.
-      const committed = batched ? " in commit" : "";
-      assert.deepEqual(yield* Ref.get(delivered), [
-        `message.updated:streaming:"First.\\n\\n"${committed}`,
-        `turn_item.updated:streaming:"First.\\n\\n"${committed}`,
-        'message.updated:streaming:"First.\\n\\nWaiting on the build"',
-        'turn_item.updated:streaming:"First.\\n\\nWaiting on the build"',
-        `message.updated:final:"First.\\n\\nWaiting on the build to finish."${committed}`,
-        `turn_item.updated:final:"First.\\n\\nWaiting on the build to finish."${committed}`,
-      ]);
-    }),
+    yield* Queue.offerAll(providerEvents, assistantText("First.\n\nWaiting on the build", true));
+    yield* Deferred.await(paragraphDelivered);
+    // The provider keeps its prompt open while a backgrounded command runs.
+    yield* TestClock.adjust("1 second");
+    yield* Deferred.await(idleDelivered);
+    yield* Queue.offerAll(providerEvents, [
+      ...assistantText("First.\n\nWaiting on the build to", true),
+      ...assistantText("First.\n\nWaiting on the build to finish.", false),
+      rootTerminalEvent(ids, "completed"),
+    ]);
+    yield* Fiber.join(scenario);
+
+    // Snapshots share the batch commit; the idle write commits alone, before it counts as shown.
+    assert.deepEqual(yield* Ref.get(delivered), [
+      `message.updated:streaming:"First.\\n\\n" in commit`,
+      `turn_item.updated:streaming:"First.\\n\\n" in commit`,
+      'message.updated:streaming:"First.\\n\\nWaiting on the build"',
+      'turn_item.updated:streaming:"First.\\n\\nWaiting on the build"',
+      `message.updated:final:"First.\\n\\nWaiting on the build to finish." in commit`,
+      `turn_item.updated:final:"First.\\n\\nWaiting on the build to finish." in commit`,
+    ]);
+  }),
 );
 
 const heldChildText = "partial response";
@@ -4193,348 +4204,6 @@ it.effect.each([
   }),
 );
 
-const layerPersistedEventSink = EventSink.layer.pipe(
-  Layer.provideMerge(Layer.merge(EventStore.layer, ProjectionStore.layer)),
-  Layer.provideMerge(SqlitePersistence.layerMemory),
-);
-
-/** Writes turn items through a real event sink and SQLite, failing each COMMIT until restored. */
-const persistTurnItemsWithFailingCommit = Effect.fn(function* (
-  sentinel: OrchestrationV2TurnItem,
-  onPublished: (turnItem: OrchestrationV2TurnItem) => Effect.Effect<void>,
-) {
-  const eventSink = yield* EventSink.EventSinkV2;
-  const sql = yield* SqlClient.SqlClient;
-  let written = 0;
-  const write = (turnItem: OrchestrationV2TurnItem) =>
-    eventSink
-      .write({
-        events: [
-          {
-            id: EventId.make(`event:commit-fault:${written++}`),
-            type: "turn-item.updated",
-            threadId: turnItem.threadId,
-            ...(turnItem.runId === null ? {} : { runId: turnItem.runId }),
-            occurredAt: DateTime.makeUnsafe("2026-07-21T12:00:00.000Z"),
-            payload: turnItem,
-          },
-        ],
-      })
-      .pipe(
-        // Only a failed COMMIT leaves its transaction open here. A full disk's ends it, so end
-        // this one the same way; the ROLLBACK fails if the write failed before COMMIT.
-        Effect.tapError(() => sql`ROLLBACK`.pipe(Effect.orDie)),
-      );
-  const subscribed = yield* Deferred.make<void>();
-  yield* eventSink.stream({ eventType: "turn-item.updated" }).pipe(
-    Stream.runForEach(({ event }) =>
-      event.type !== "turn-item.updated"
-        ? Effect.void
-        : event.payload.id === sentinel.id
-          ? Deferred.succeed(subscribed, undefined)
-          : onPublished(event.payload),
-    ),
-    Effect.forkChild,
-  );
-  yield* write(sentinel);
-  yield* Deferred.await(subscribed);
-  // Every write statement succeeds; the deferred dangling reference fails only the COMMIT.
-  yield* sql`CREATE TABLE commit_fault_parent (id TEXT PRIMARY KEY)`;
-  yield* sql`CREATE TABLE commit_fault_child (
-    parent_id TEXT REFERENCES commit_fault_parent (id) DEFERRABLE INITIALLY DEFERRED
-  )`;
-  yield* sql`CREATE TABLE commit_fault (enabled INTEGER NOT NULL)`;
-  yield* sql`INSERT INTO commit_fault VALUES (1)`;
-  yield* sql`CREATE TRIGGER commit_fault AFTER INSERT ON orchestration_events
-    WHEN (SELECT enabled FROM commit_fault) = 1
-    BEGIN INSERT INTO commit_fault_child VALUES ('missing'); END`;
-  return {
-    eventSink,
-    write,
-    restore: sql`UPDATE commit_fault SET enabled = 0`.pipe(Effect.orDie),
-    persistedTexts: (itemId: TurnItemId) =>
-      sql<{ readonly text: string }>`
-        SELECT json_extract(payload_json, '$.text') AS text FROM orchestration_events
-        WHERE event_type = 'turn-item.updated' AND json_extract(payload_json, '$.id') = ${itemId}
-        ORDER BY sequence
-      `.pipe(
-        Effect.map((rows) => rows.map((row) => row.text)),
-        Effect.orDie,
-      ),
-  };
-});
-
-it.effect.each([
-  { name: "before", afterRoot: false, batched: false, persisted: false },
-  { name: "after", afterRoot: true, batched: false, persisted: false },
-  { name: "before", afterRoot: false, batched: true, persisted: false },
-  { name: "after", afterRoot: true, batched: true, persisted: false },
-  // The idle write's body runs and only its COMMIT fails.
-  { name: "before", afterRoot: false, batched: true, persisted: true },
-])(
-  "retries a failed idle flush $name the root completes and keeps the run live (batched: $batched, persisted: $persisted)",
-  ({ afterRoot, batched, persisted }) =>
-    Effect.gen(function* () {
-      const key = `idle-flush-retry-${afterRoot ? "after" : "before"}-root${batched ? "-batched" : ""}${persisted ? "-persisted" : ""}`;
-      const ids = backgroundScenarioIds(key);
-      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
-      const subagentIngested = yield* Deferred.make<void>();
-      const rootFinalized = yield* Deferred.make<void>();
-      const firstWriteFailed = yield* Deferred.make<void>();
-      const failureHandled = yield* Deferred.make<void>();
-      const retried = yield* Deferred.make<void>();
-      const attempts = yield* Ref.make(0);
-      // What subscribers saw when persisted; otherwise what the write received.
-      const childWrites = yield* Ref.make<ReadonlyArray<string>>([]);
-      const interrupts = yield* Ref.make(0);
-      const recordChildWrite = Effect.fnUntraced(function* (turnItem: OrchestrationV2TurnItem) {
-        if (turnItem.type !== "assistant_message") return;
-        const { text, streaming } = turnItem;
-        yield* Ref.update(childWrites, (current) => [
-          ...current,
-          `${streaming ? "streaming" : "final"}:${text}`,
-        ]);
-        if (text === heldChildText) yield* Deferred.succeed(retried, undefined);
-      });
-      const snapshot = childAssistantSnapshot(ids);
-      assert(snapshot.type === "turn_item.updated");
-      const persistence = persisted
-        ? yield* persistTurnItemsWithFailingCommit(
-            { ...snapshot.turnItem, id: TurnItemId.make(`${ids.childItemId}:sentinel`) },
-            recordChildWrite,
-          ).pipe(Effect.provideContext(yield* Layer.build(layerPersistedEventSink)))
-        : undefined;
-      const commitFailure = yield* Ref.make<string | null>(null);
-      const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(events), {
-        batched: batched && persistence === undefined,
-        ...(persistence === undefined ? {} : { eventSink: persistence.eventSink }),
-        onIngest: (event) =>
-          Effect.gen(function* () {
-            if (event.type === "subagent.updated") {
-              yield* Deferred.succeed(subagentIngested, undefined);
-              if ((yield* Ref.get(attempts)) > 0)
-                yield* Deferred.succeed(failureHandled, undefined);
-              return;
-            }
-            if (event.type !== "turn_item.updated" || event.turnItem.type !== "assistant_message")
-              return;
-            if (
-              isHeldChildSnapshot(event) &&
-              (yield* Ref.getAndUpdate(attempts, (n) => n + 1)) === 0
-            ) {
-              yield* Deferred.succeed(firstWriteFailed, undefined);
-              yield* Effect.sleep("2 seconds");
-              if (persistence === undefined) return yield* Effect.die(new Error("disk I/O error"));
-              return yield* persistence.write(event.turnItem).pipe(
-                Effect.tapError((error) =>
-                  Ref.set(commitFailure, isSqlError(error.cause) ? error.cause.reason._tag : null),
-                ),
-                Effect.orDie,
-              );
-            }
-            if (persistence === undefined) return yield* recordChildWrite(event.turnItem);
-            yield* persistence.write(event.turnItem).pipe(Effect.orDie);
-          }),
-        onFinalized: () => Deferred.succeed(rootFinalized, undefined),
-        onInterruptTurn: () => Ref.update(interrupts, (n) => n + 1),
-      }).pipe(Effect.forkChild);
-
-      yield* holdChildSnapshot(ids, events, subagentIngested);
-      if (afterRoot) {
-        yield* Queue.offer(events, rootTerminalEvent(ids, "completed"));
-        yield* Deferred.await(rootFinalized);
-      }
-      yield* TestClock.adjust("1 second");
-      yield* Deferred.await(firstWriteFailed);
-      yield* TestClock.adjust("2 seconds");
-      yield* Queue.offer(events, linkedSubagentEvent(ids, "running"));
-      yield* Deferred.await(failureHandled);
-      assert.equal(yield* Ref.get(attempts), 1);
-      assert.deepEqual(yield* Ref.get(childWrites), []);
-      if (persistence !== undefined) {
-        assert.equal(yield* Ref.get(commitFailure), "ConstraintError");
-        assert.deepEqual(yield* persistence.persistedTexts(ids.childItemId), []);
-        yield* persistence.restore;
-      }
-      yield* TestClock.adjust("1 second");
-      yield* Deferred.await(retried);
-      const childText = (text: string, streaming: boolean) =>
-        ({
-          ...snapshot,
-          turnItem: { ...snapshot.turnItem, text, streaming },
-        }) as ProviderAdapter.ProviderAdapterV2Event;
-      yield* Queue.offerAll(events, [
-        childText(`${heldChildText} and more`, true),
-        childText(`${heldChildText} and more.`, false),
-        ...(afterRoot ? [] : [rootTerminalEvent(ids, "completed")]),
-        linkedSubagentEvent(ids, "completed"),
-      ]);
-      const observed = yield* Fiber.join(scenario);
-
-      assert.deepEqual(yield* Ref.get(childWrites), [
-        `streaming:${heldChildText}`,
-        `final:${heldChildText} and more.`,
-      ]);
-      if (persistence !== undefined) {
-        assert.deepEqual(yield* persistence.persistedTexts(ids.childItemId), [
-          heldChildText,
-          `${heldChildText} and more.`,
-        ]);
-      }
-      assert.equal(yield* Ref.get(interrupts), 0);
-      assert.include(observed, "root-finalized");
-      assert.equal(observed.at(-1), "subagent:completed");
-    }),
-);
-
-it.effect("reschedules idle text when a newer snapshot precedes a failed write's retry", () =>
-  Effect.gen(function* () {
-    const key = "idle-flush-earlier-deadline";
-    const ids = backgroundScenarioIds(key);
-    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
-    const subagentIngested = yield* Deferred.make<void>();
-    const markers = yield* Queue.unbounded<void>();
-    const newerWrite = yield* Deferred.make<void>();
-    const attempts = yield* Ref.make(0);
-    const childWrites = yield* Ref.make<ReadonlyArray<string>>([]);
-    const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(events), {
-      onIngest: (event) =>
-        Effect.gen(function* () {
-          if (event.type === "subagent.updated")
-            yield* Deferred.succeed(subagentIngested, undefined);
-          if (event.type === "message.updated" && event.message.role === "user")
-            yield* Queue.offer(markers, undefined);
-          if (event.type !== "turn_item.updated" || event.turnItem.type !== "assistant_message")
-            return;
-          if ((yield* Ref.getAndUpdate(attempts, (n) => n + 1)) < 2)
-            return yield* Effect.die(new Error("disk I/O error"));
-          const { text } = event.turnItem;
-          yield* Ref.update(childWrites, (current) => [...current, text]);
-          if (text === "New partial response") {
-            yield* Deferred.succeed(newerWrite, undefined);
-          }
-        }),
-    }).pipe(Effect.forkChild);
-    const marker = streamedMessageEvent({
-      id: `message:${key}:marker`,
-      threadId: ids.threadId,
-      runId: ids.runId,
-      role: "user",
-      text: "marker",
-      streaming: false,
-    });
-
-    yield* holdChildSnapshot(ids, events, subagentIngested);
-    yield* TestClock.adjust("1 second");
-    yield* Queue.offer(events, marker);
-    yield* Queue.take(markers);
-    assert.equal(yield* Ref.get(attempts), 1);
-    yield* TestClock.adjust("1 second");
-    yield* Queue.offer(events, marker);
-    yield* Queue.take(markers);
-    assert.equal(yield* Ref.get(attempts), 2);
-
-    const newer = childAssistantSnapshot(ids);
-    assert(newer.type === "turn_item.updated" && newer.turnItem.type === "assistant_message");
-    yield* Queue.offerAll(events, [
-      { ...newer, turnItem: { ...newer.turnItem, text: "New partial response" } },
-      marker,
-    ]);
-    yield* Queue.take(markers);
-    yield* TestClock.adjust("800 millis");
-    yield* Deferred.await(newerWrite);
-    assert.deepEqual(yield* Ref.get(childWrites), ["New partial response"]);
-
-    yield* Queue.offerAll(events, [
-      rootTerminalEvent(ids, "completed"),
-      linkedSubagentEvent(ids, "completed"),
-    ]);
-    yield* Fiber.join(scenario);
-  }),
-);
-
-it.effect("keeps a failing idle write's backoff and caps warnings across other messages", () =>
-  Effect.gen(function* () {
-    const key = "idle-flush-unrelated-success";
-    const ids = backgroundScenarioIds(key);
-    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
-    const markers = yield* Queue.unbounded<void>();
-    const failingAttempts = yield* Queue.unbounded<number>();
-    const otherWritten = yield* Deferred.make<void>();
-    const recovered = yield* Deferred.make<void>();
-    const anotherFailed = yield* Deferred.make<void>();
-    const attempts = yield* Ref.make(0);
-    let warnings = 0;
-    const message = (id: string, role: "assistant" | "user", text: string) =>
-      streamedMessageEvent({
-        id: `message:${key}:${id}`,
-        threadId: ids.threadId,
-        runId: ids.runId,
-        role,
-        text,
-        streaming: role === "assistant",
-      });
-    const marker = message("marker", "user", "marker");
-    const readPast = (...items: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
-      Queue.offerAll(events, [...items, marker]).pipe(Effect.andThen(Queue.take(markers)));
-    const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(events), {
-      onIngest: (event) =>
-        Effect.gen(function* () {
-          if (event.type !== "message.updated") return;
-          if (event.message.role === "user") return yield* Queue.offer(markers, undefined);
-          if (event.message.text === "Other partial")
-            return yield* Deferred.succeed(otherWritten, undefined);
-          if (event.message.text === "Another failing partial") {
-            yield* Deferred.succeed(anotherFailed, undefined);
-            return yield* Effect.die(new Error("disk I/O error"));
-          }
-          const attempt = yield* Ref.updateAndGet(attempts, (n) => n + 1);
-          yield* Queue.offer(failingAttempts, attempt);
-          if (attempt <= 2) return yield* Effect.die(new Error("disk I/O error"));
-          yield* Deferred.succeed(recovered, undefined);
-        }),
-    }).pipe(
-      Effect.provide(
-        Logger.layer(
-          [
-            Logger.make(({ logLevel }) => {
-              if (logLevel === "Warn") warnings += 1;
-            }),
-          ],
-          { mergeWithExisting: false },
-        ),
-      ),
-      Effect.forkChild,
-    );
-
-    yield* readPast(message("failing", "assistant", "Failing partial"));
-    yield* TestClock.adjust("800 millis");
-    assert.equal(yield* Queue.take(failingAttempts), 1);
-    // Due before the failing write's 1s retry.
-    yield* readPast(message("other", "assistant", "Other partial"));
-    yield* TestClock.adjust("800 millis");
-    yield* Deferred.await(otherWritten);
-    yield* TestClock.adjust("200 millis");
-    assert.equal(yield* Queue.take(failingAttempts), 2);
-    // A second failure backs off 2s; the other message's success must not restart at 1s.
-    yield* TestClock.adjust("1 second");
-    yield* readPast();
-    assert.equal(yield* Ref.get(attempts), 2);
-    assert.equal(warnings, 1);
-    yield* TestClock.adjust("1 second");
-    yield* Deferred.await(recovered);
-
-    yield* readPast(message("another", "assistant", "Another failing partial"));
-    yield* TestClock.adjust("800 millis");
-    yield* Deferred.await(anotherFailed);
-    yield* readPast();
-    assert.equal(warnings, 1);
-
-    yield* Queue.offer(events, rootTerminalEvent(ids, "completed"));
-    yield* Fiber.join(scenario);
-  }),
-);
-
 function streamedMessageEvent(input: {
   readonly id: string;
   readonly threadId: ThreadId;
@@ -4564,16 +4233,12 @@ function streamedMessageEvent(input: {
   } as ProviderAdapter.ProviderAdapterV2Event;
 }
 
-it.effect.each([
-  { name: "", failFirst: false },
-  { name: " after its first idle write failed", failFirst: true },
-])("drops a child's held text once the child is handed to another run$name", ({ failFirst }) =>
+it.effect("drops a child's held text once the child is handed to another run", () =>
   Effect.gen(function* () {
-    const key = `idle-child-handoff${failFirst ? "-after-failure" : ""}`;
+    const key = "idle-child-handoff";
     const ids = backgroundScenarioIds(key);
     const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
     const subagentIngested = yield* Deferred.make<void>();
-    const firstWriteFailed = yield* Deferred.make<void>();
     const handoffRead = yield* Deferred.make<void>();
     const rootFlushed = yield* Deferred.make<void>();
     const staleWrites = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -4583,15 +4248,8 @@ it.effect.each([
         if (event.type !== "message.updated" && event.type !== "turn_item.updated")
           return Effect.void;
         const message = event.type === "message.updated" ? event.message : event.turnItem;
-        if (message.threadId === ids.childThreadId) {
-          return Deferred.succeed(firstWriteFailed, undefined).pipe(
-            Effect.flatMap((first) =>
-              failFirst && first
-                ? Effect.die(new Error("disk I/O error"))
-                : Ref.update(staleWrites, (current) => [...current, event.type]),
-            ),
-          );
-        }
+        if (message.threadId === ids.childThreadId)
+          return Ref.update(staleWrites, (current) => [...current, event.type]);
         if (event.type === "message.updated" && event.message.role === "user")
           return Deferred.succeed(handoffRead, undefined);
         return Deferred.succeed(rootFlushed, undefined);
@@ -4599,11 +4257,6 @@ it.effect.each([
     }).pipe(Effect.forkChild);
 
     yield* holdChildSnapshot(ids, events, subagentIngested);
-    if (failFirst) {
-      // The held snapshot stays held for a retry that must not outlive the handoff.
-      yield* TestClock.adjust("1 second");
-      yield* Deferred.await(firstWriteFailed);
-    }
     const handoff = linkedSubagentEvent(ids, "running");
     yield* Queue.offerAll(events, [
       streamedMessageEvent({
@@ -4696,51 +4349,5 @@ it.effect("flushes idle text only after the snapshots queued ahead of its wake",
       "streaming:First.\n\n",
       "final:First.\n\nWaiting on the build to finish.",
     ]);
-  }),
-);
-
-it.effect("interrupts a blocked idle flush write when ingestion is cancelled", () =>
-  Effect.gen(function* () {
-    const ids = backgroundScenarioIds("idle-flush-cancelled");
-    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
-    const subagentIngested = yield* Deferred.make<void>();
-    const writeStarted = yield* Deferred.make<void>();
-    const writeInterrupted = yield* Deferred.make<void>();
-    const failStart = yield* Deferred.make<void>();
-    const scenario = yield* runBackgroundItemScenario(
-      "idle-flush-cancelled",
-      () => Stream.fromQueue(events),
-      {
-        batched: true,
-        // A failed turn start cancels ingestion.
-        startTurn: Deferred.await(failStart).pipe(
-          Effect.andThen(
-            new ProviderAdapter.ProviderAdapterTurnStartError({
-              driver,
-              threadId: ids.threadId,
-              providerThreadId: ids.providerThreadId,
-              runId: ids.runId,
-              cause: "start failed",
-            }),
-          ),
-        ),
-        onIngest: (event) =>
-          event.type === "subagent.updated"
-            ? Deferred.succeed(subagentIngested, undefined)
-            : isHeldChildSnapshot(event)
-              ? Deferred.succeed(writeStarted, undefined).pipe(
-                  Effect.andThen(Effect.never),
-                  Effect.onInterrupt(() => Deferred.succeed(writeInterrupted, undefined)),
-                )
-              : Effect.void,
-      },
-    ).pipe(Effect.forkChild);
-
-    yield* holdChildSnapshot(ids, events, subagentIngested);
-    yield* TestClock.adjust("1 second");
-    yield* Deferred.await(writeStarted);
-    yield* Deferred.succeed(failStart, undefined);
-    yield* Deferred.await(writeInterrupted);
-    yield* Fiber.join(scenario);
   }),
 );
