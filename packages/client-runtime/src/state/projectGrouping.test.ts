@@ -121,6 +121,28 @@ function settings(
 }
 
 describe("buildProjectGroups", () => {
+  it("uses a shared project title when it matches the repository name", () => {
+    const identity = {
+      ...repositoryIdentity,
+      displayName: "t3tools/t3code",
+    };
+    const projects = [
+      makeProject("local", "/local/t3code", { title: "t3code", repositoryIdentity: identity }),
+      makeProject("remote", "/remote/t3code", {
+        title: "t3code",
+        environmentId: EnvironmentId.make("remote"),
+        repositoryIdentity: identity,
+      }),
+    ];
+
+    const groups = buildProjectGroups({ projects, settings: settings("repository") });
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.members).toHaveLength(2);
+    expect(groups[0]?.key).toBe(identity.canonicalKey);
+    expect(groups[0]?.label).toBe("t3code");
+  });
+
   it.each(["repository", "repository_path", "separate"] as const)(
     "keeps scratch project ownership separate by default in %s mode",
     (mode) => {
