@@ -35,17 +35,18 @@ const QuizCardTool = Tool.make(QUIZ_CARD_TOOL_NAME, {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false);
 
-const QuestionCardInput = Schema.Struct({
+export const QuestionCardInput = Schema.Struct({
   question: Schema.String.pipe(Schema.check(Schema.isMaxLength(2000))),
   blanks: Schema.optional(
     Schema.Array(
       Schema.Struct({
-        answers: Schema.Array(Schema.String.pipe(Schema.check(Schema.isMaxLength(100)))).pipe(
-          Schema.check(Schema.isBetween({ minimum: 1, maximum: 4 })),
+        answers: Schema.Array(Schema.String.pipe(Schema.check(Schema.isMaxLength(100)))).check(
+          Schema.isMinLength(1),
+          Schema.isMaxLength(4),
         ),
       }),
     )
-      .pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 6 })))
+      .check(Schema.isMinLength(1), Schema.isMaxLength(6))
       .annotate({
         description:
           "Set when the answer is a specific word, term, symbol or formula piece: one entry per ___ in the question, with every accepted form. The app gives one input per blank and marks each.",
