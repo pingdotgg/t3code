@@ -1451,11 +1451,12 @@ export default function FilePreviewPanel({
             (isDocument || file.readError?.failure === "binary_file") ? (
             // A command or edit elsewhere in the thread must not reload, or scroll away from, an
             // unchanged document: the boundary remounts the preview only when the file changed.
+            // A refresh the reader asks for always remounts it, so a failed preview can retry.
             <FileRevisionBoundary
-              key={`${environmentId}:${absolutePath}`}
+              key={`${environmentId}:${absolutePath}:${fileRefreshRevision}`}
               environmentId={environmentId}
               resource={documentResource}
-              refreshToken={`${workspaceMutationId}:${fileRefreshRevision}`}
+              refreshToken={workspaceMutationId ?? ""}
             >
               <AttachmentFilePreview
                 name={relativePath.split(/[\\/]/).at(-1) || relativePath}
