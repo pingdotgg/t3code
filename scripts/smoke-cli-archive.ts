@@ -58,7 +58,7 @@ const runExecutable = Effect.fn("runExecutable")(function* (
   return { stdout, stderr, exitCode };
 });
 
-const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
+export const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   readonly archive: string;
   readonly expectVersion: string;
 }) {
@@ -128,7 +128,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   }
 
   const version = yield* runExecutable(executable, ["--version"], contentDir);
-  if (version.exitCode !== 0 || !version.stdout.includes(input.expectVersion)) {
+  if (version.exitCode !== 0 || /\bv(\S+)\s*$/.exec(version.stdout)?.[1] !== input.expectVersion) {
     return yield* new CliArchiveSmokeError({
       step: "running --version",
       detail: `exit ${String(version.exitCode)}\n${version.stdout}${version.stderr}`,
