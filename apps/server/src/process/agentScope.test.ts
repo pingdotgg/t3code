@@ -200,6 +200,15 @@ describe("AgentScope service", () => {
             const limits = properties.filter((args) => args.includes("app-t3code-agents.slice"));
             expect(properties).toHaveLength(memoryPolicy === "host-managed" ? 1 : 2);
             expect(limits).toHaveLength(memoryPolicy === "host-managed" ? 0 : 1);
+            expect(properties).toContainEqual([
+              "--user",
+              "set-property",
+              "--runtime",
+              "app-t3code.slice",
+              "CPUWeight=10",
+              "IOWeight=10",
+              "TasksMax=25%",
+            ]);
             if (memoryPolicy !== "host-managed") {
               expect(limits[0]).toContain("app-t3code-agents.slice");
               expect(limits[0]?.some((arg) => arg.startsWith("MemoryHigh="))).toBe(true);
