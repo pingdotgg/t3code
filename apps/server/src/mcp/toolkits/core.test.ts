@@ -1039,13 +1039,16 @@ describe("a thread's own delegated child above its modes", () => {
         });
         expect(child.runs.at(-1)?.modelSelection.instanceId).toBe(accountB);
       }).pipe(
-        Effect.provide(layerToolkits),
         Effect.provide(
-          Layer.mergeAll(
-            layerOrchestrator,
-            layerThreads,
-            ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-own-child-" }).pipe(
-              Layer.provideMerge(NodeServices.layer),
+          layerToolkits.pipe(
+            Layer.provideMerge(
+              Layer.mergeAll(
+                layerOrchestrator,
+                layerThreads,
+                ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-own-child-" }).pipe(
+                  Layer.provideMerge(NodeServices.layer),
+                ),
+              ),
             ),
           ),
         ),
