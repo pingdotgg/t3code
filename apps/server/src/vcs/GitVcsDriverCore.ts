@@ -1340,6 +1340,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
   });
 
+  const statusUpstreamFetches = new Map<string, number>();
   const fetchRemoteForStatus = Effect.fn("GitVcsDriver.fetchRemoteForStatus.wait")(function* (
     gitCommonDir: string,
     remoteName: string,
@@ -1388,6 +1389,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           Effect.onExit(() =>
             Effect.sync(() => {
               statusFetches.delete(key);
+              // Counted at exit, not when a waiter stops waiting: a waiter can time out before refs
+              // move. Failures count too, because a failed fetch can still move some refs.
+              statusUpstreamFetches.set(
+                gitCommonDir,
+                (statusUpstreamFetches.get(gitCommonDir) ?? 0) + 1,
+              );
             }),
           ),
           Effect.forkIn(serviceScope, { startImmediately: false, uninterruptible: false }),
@@ -1657,6 +1664,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             statusRemoteRefreshFailures.get(statusRemoteRefreshFailureKey(cacheKey))?.count ?? 1,
           ),
   });
+
+  const statusUpstreamFetchCount: GitVcsDriver.GitVcsDriver["Service"]["statusUpstreamFetchCount"] =
+    (cwd) =>
+      resolveGitCommonDir(cwd).pipe(
+        Effect.map((gitCommonDir) => statusUpstreamFetches.get(gitCommonDir) ?? 0),
+        Effect.orElseSucceed(() => 0),
+      );
 
   const refreshStatusUpstreamIfStale = Effect.fn("refreshStatusUpstreamIfStale")(function* (
     cwd: string,
@@ -5073,6 +5087,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     statusDetails,
     statusDetailsLocal,
     statusDetailsRemote,
+    statusUpstreamFetchCount,
     prepareCommitContext,
     commit: Effect.fnUntraced(function* (cwd, subject, body, options) {
       return yield* withListRefsInvalidation(cwd, commit(cwd, subject, body, options));
