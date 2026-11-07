@@ -1,6 +1,7 @@
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
+import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -72,6 +73,7 @@ export type ClaudeDriverEnv =
   | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | ResetCreditCoordinator.ResetCreditCoordinator
+  | Digest.Digest
   | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | HttpClient.HttpClient
@@ -101,6 +103,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const digest = yield* Digest.Digest;
     // The server cwd is $HOME in packaged desktop builds, and `claude`
     // wrappers that scope themselves to their cwd refuse to run there.
     const { stateDir } = yield* ServerConfig.ServerConfig;
@@ -265,6 +268,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(Digest.Digest, digest),
     );
 
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
