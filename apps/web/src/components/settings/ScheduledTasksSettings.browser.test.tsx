@@ -4,11 +4,15 @@ import {
   DEFAULT_UNIFIED_SETTINGS,
   EnvironmentId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ScheduledTaskId,
   ThreadId,
   type ScheduledTask,
+  type ScheduledTaskUpsertInput,
+  type ServerProvider,
 } from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -47,7 +51,72 @@ const threadFamilyRead = {
   threads: [{ id: task.threadId, title: "Fix login bug" }],
 };
 
-const state = vi.hoisted(() => ({ connected: true, tasksLoaded: true, secondary: false }));
+const codex: ServerProvider = {
+  instanceId: ProviderInstanceId.make("codex"),
+  driver: ProviderDriverKind.make("codex"),
+  enabled: true,
+  installed: true,
+  version: "1.0.0",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-09-17T00:00:00.000Z",
+  models: [
+    {
+      slug: "gpt-5.4",
+      name: "GPT-5.4",
+      isCustom: false,
+      capabilities: createModelCapabilities({
+        optionDescriptors: [
+          {
+            id: "reasoningEffort",
+            label: "Reasoning",
+            type: "select",
+            role: "reasoning",
+            options: [
+              { id: "low", label: "Low" },
+              { id: "medium", label: "Medium", isDefault: true },
+            ],
+          },
+          {
+            id: "serviceTier",
+            label: "Speed",
+            type: "select",
+            options: [
+              { id: "default", label: "Standard", isDefault: true },
+              { id: "priority", label: "Fast" },
+            ],
+          },
+        ],
+      }),
+    },
+  ],
+  slashCommands: [],
+  skills: [],
+};
+const claude: ServerProvider = {
+  ...codex,
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  driver: ProviderDriverKind.make("claudeAgent"),
+  models: [
+    {
+      slug: "claude-opus-5-5",
+      name: "Claude Opus 5.5",
+      isCustom: false,
+      capabilities: createModelCapabilities({
+        optionDescriptors: [{ id: "fastMode", label: "Fast", type: "boolean" }],
+      }),
+    },
+  ],
+};
+const providersAtom = Atom.make<ReadonlyArray<ServerProvider>>([codex, claude]);
+
+const state = vi.hoisted(() => ({
+  connected: true,
+  tasksLoaded: true,
+  secondary: false,
+  taskOverride: null as ScheduledTask | null,
+  upserts: [] as Array<ScheduledTaskUpsertInput>,
+}));
 const secondaryId = EnvironmentId.make("secondary");
 const permissions = new Map<string, Atom.Writable<boolean>>();
 
@@ -55,6 +124,8 @@ function setup() {
   state.connected = true;
   state.tasksLoaded = true;
   state.secondary = false;
+  state.taskOverride = null;
+  state.upserts = [];
   permissions.clear();
   permissions.set(environmentId, Atom.make(true));
   permissions.set(secondaryId, Atom.make(true));
@@ -108,9 +179,20 @@ vi.mock(import("../../state/server"), async (original) => {
         ...actual.serverEnvironment.upsertScheduledTask,
         permissionAtom: (id: string | null) => permissions.get(id ?? "")!,
       },
+      providersValueAtom: (() => providersAtom) as never,
     },
   };
 });
+vi.mock(import("~/state/session"), async (original) => ({
+  ...(await original()),
+  readEnvironmentScope: () => true,
+}));
+vi.mock(import("../../state/use-atom-command"), () => ({
+  useAtomCommand: (() => (request: { input?: ScheduledTaskUpsertInput }) => {
+    if (request.input?.modelSelection) state.upserts.push(request.input);
+    return Promise.resolve({ _tag: "Success", value: {} });
+  }) as never,
+}));
 vi.mock(import("../../state/threads"), async (original) => {
   const actual = await original();
   return {
@@ -125,7 +207,7 @@ vi.mock(import("../../state/query"), async (original) => ({
     data:
       request === null || request === threadFamilyRead
         ? request
-        : { tasks: state.tasksLoaded ? [task] : [] },
+        : { tasks: state.tasksLoaded ? [state.taskOverride ?? task] : [] },
     error: null,
     isPending: false,
     refresh: vi.fn(),
@@ -214,5 +296,61 @@ describe("ScheduledTasksSettings", () => {
 
     await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeInTheDocument();
     await expect.element(name).toHaveValue("My draft");
+  });
+
+  it("saves Fast and effort picked in the composer's picker to the task", async () => {
+    setup();
+    await using _screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    const dialog = page.getByRole("dialog");
+    await userEvent.click(dialog.getByRole("button", { name: /GPT-5\.4/ }));
+    await userEvent.click(page.getByRole("radio", { name: "Low" }));
+    await userEvent.click(page.getByRole("radio", { name: "Fast" }));
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(dialog.getByRole("button", { name: "Save task" }));
+
+    await vi.waitFor(() => expect(state.upserts).toHaveLength(1));
+    expect(state.upserts[0]?.modelSelection).toEqual({
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4",
+      options: [
+        { id: "reasoningEffort", value: "low" },
+        { id: "serviceTier", value: "priority" },
+      ],
+    });
+  });
+
+  it("reopens a task with its saved speed and effort", async () => {
+    setup();
+    state.taskOverride = {
+      ...task,
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+        options: [
+          { id: "reasoningEffort", value: "low" },
+          { id: "serviceTier", value: "priority" },
+        ],
+      },
+    };
+    await using _screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    await userEvent.click(page.getByRole("dialog").getByRole("button", { name: /GPT-5\.4/ }));
+    await expect.element(page.getByRole("radio", { name: "Fast" })).toBeChecked();
+    await expect.element(page.getByRole("radio", { name: "Low" })).toBeChecked();
+  });
+
+  it("saves the Standard speed the picker shows for an untouched Fast toggle", async () => {
+    setup();
+    state.taskOverride = {
+      ...task,
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus-5-5",
+      },
+    };
+    await using _screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    await userEvent.click(page.getByRole("dialog").getByRole("button", { name: "Save task" }));
+
+    await vi.waitFor(() => expect(state.upserts).toHaveLength(1));
+    expect(state.upserts[0]?.modelSelection.options).toEqual([{ id: "fastMode", value: false }]);
   });
 });

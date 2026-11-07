@@ -231,9 +231,11 @@ export function ComposerControlsBar(props: {
       footer={
         <ComposerPickerFooter
           traits={traitsInput}
-          runtimeMode={compatibleRuntimeMode}
-          runtimeModeOptions={compatibleRuntimeModeOptions}
-          onRuntimeModeChange={handleRuntimeModeChange}
+          permissions={{
+            runtimeMode: compatibleRuntimeMode,
+            runtimeModeOptions: compatibleRuntimeModeOptions,
+            onRuntimeModeChange: handleRuntimeModeChange,
+          }}
         />
       }
       terminalOpen={terminalOpen}
