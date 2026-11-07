@@ -569,6 +569,19 @@ export function useThreadComposerState(input: {
     if (text.length === 0 && attachments.length === 0) {
       return null;
     }
+    const modelSelection = draft.modelSelection ?? thread.modelSelection;
+    const serverConfig = selectedEnvironmentRuntime?.serverConfig;
+    const modelUnavailable =
+      selectedEnvironmentRuntime?.connectionState === "connected" &&
+      isModelSelectionUnavailable(serverConfig, modelSelection, thread.projectId);
+    const alertModelUnavailable = () => {
+      const { title, detail } = describeUnavailableModelSelection(
+        serverConfig,
+        modelSelection,
+        thread.projectId,
+      );
+      Dialog.alert(title, detail);
+    };
     // A redirect's text answers its approval, so `/side` there is that text, not the command.
     const sideChatCommand = beforeDispatch === undefined ? parseSideChatCommand(text) : null;
     if (sideChatCommand) {
@@ -581,6 +594,8 @@ export function useThreadComposerState(input: {
         );
       } else if (sideChatCommand.prompt.length === 0) {
         Dialog.alert("Ask a side question", "Type the question after /side, then send it.");
+      } else if (modelUnavailable) {
+        alertModelUnavailable();
       } else if (!startingSideChatRef.current) {
         startingSideChatRef.current = true;
         const started = await input
@@ -589,7 +604,7 @@ export function useThreadComposerState(input: {
             sideChatCommand.prompt,
             {
               runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-              modelSelection: draft.modelSelection ?? thread.modelSelection,
+              modelSelection,
             },
           )
           .finally(() => {
@@ -636,18 +651,8 @@ export function useThreadComposerState(input: {
       return null;
     }
 
-    const modelSelection = draft.modelSelection ?? thread.modelSelection;
-    const serverConfig = selectedEnvironmentRuntime?.serverConfig;
-    if (
-      selectedEnvironmentRuntime?.connectionState === "connected" &&
-      isModelSelectionUnavailable(serverConfig, modelSelection, thread.projectId)
-    ) {
-      const { title, detail } = describeUnavailableModelSelection(
-        serverConfig,
-        modelSelection,
-        thread.projectId,
-      );
-      Dialog.alert(title, detail);
+    if (modelUnavailable) {
+      alertModelUnavailable();
       return null;
     }
     const provider = serverConfig?.providers.find(

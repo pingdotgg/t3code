@@ -187,6 +187,7 @@ vi.mock("../lib/commandMetadata", () => ({
 vi.mock("../lib/copyTextWithHaptic", () => ({ copyTextWithHaptic: vi.fn() }));
 vi.mock("./use-remote-environment-registry", () => ({ setPendingConnectionError: vi.fn() }));
 
+import { Alert } from "react-native";
 import { useThreadComposerState } from "./use-thread-composer-state";
 import { useSelectedThreadRequests } from "./use-selected-thread-requests";
 
@@ -389,6 +390,16 @@ describe("mobile task permissions", () => {
     expect(await useThreadComposerState({ startSideChat }).onSendMessage()).toBeNull();
     expect(startSideChat).toHaveBeenCalledOnce();
     expect(state.clearDraft).not.toHaveBeenCalled();
+    // A model the send would refuse does not start a side chat either.
+    vi.clearAllMocks();
+    state.serverConfig = {
+      ...state.serverConfig,
+      providers: [{ instanceId: "codex", driver: "codex", enabled: false }],
+    } as unknown as ServerConfig;
+    state.draft = { ...state.draft, attachments: [] };
+    expect(await useThreadComposerState({ startSideChat }).onSendMessage()).toBeNull();
+    expect(startSideChat).not.toHaveBeenCalled();
+    expect(Alert.alert).toHaveBeenCalledOnce();
   });
 
   it("rechecks a retained send callback before clearing or queueing the draft", async () => {
