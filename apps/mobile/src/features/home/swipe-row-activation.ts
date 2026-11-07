@@ -3,16 +3,27 @@ import { createContext, use, useSyncExternalStore } from "react";
 /**
  * Only rows around the viewport enable swipe gestures and render actions.
  * Dormant rows keep the same child views so waking them preserves touches.
+ * Before the first activate(), no row is dormant so swipe works on first paint
+ * even if LegendList getState() is not ready yet.
  */
 export function createSwipeRowActivation() {
   let activeKeys = new Set<string>();
+  let primed = false;
   // Turning a row's swipe gesture off ends a swipe in progress, so changes
   // wait until every finger that started on the list has lifted.
   const listTouches = new Set<string>();
   let pendingKeys: ReadonlyArray<string> | null = null;
   const listeners = new Set<() => void>();
   const apply = (keys: ReadonlyArray<string>) => {
-    if (keys.length === activeKeys.size && keys.every((key) => activeKeys.has(key))) return;
+    const nextPrimed = true;
+    if (
+      primed === nextPrimed &&
+      keys.length === activeKeys.size &&
+      keys.every((key) => activeKeys.has(key))
+    ) {
+      return;
+    }
+    primed = nextPrimed;
     activeKeys = new Set(keys);
     for (const listener of listeners) listener();
   };
@@ -22,6 +33,7 @@ export function createSwipeRowActivation() {
       return () => void listeners.delete(listener);
     },
     isActive: (key: string) => activeKeys.has(key),
+    isPrimed: () => primed,
     activate(keys: ReadonlyArray<string>) {
       if (listTouches.size > 0) pendingKeys = keys;
       else apply(keys);
@@ -47,6 +59,10 @@ export function useSwipeRowDormant(key: string | undefined): boolean {
   const activation = use(SwipeRowActivationContext);
   return useSyncExternalStore(
     activation?.subscribe ?? subscribeNever,
-    () => activation !== null && key !== undefined && !activation.isActive(key),
+    () =>
+      activation !== null &&
+      key !== undefined &&
+      activation.isPrimed() &&
+      !activation.isActive(key),
   );
 }

@@ -339,7 +339,7 @@ export function HomeScreen(props: HomeScreenProps) {
       animated: false,
     });
   });
-  const swipeRowActivation = createSwipeRowActivation();
+  const [swipeRowActivation] = useState(createSwipeRowActivation);
   const activateVisibleRows = (rows: ReadonlyArray<ThreadListV2ListItem>) => {
     const state = listRef.current?.getState();
     if (state === undefined || !(state.end >= 0)) return;
@@ -364,17 +364,18 @@ export function HomeScreen(props: HomeScreenProps) {
       200,
     );
   };
+  const { swipeEnabled, releaseGate, scrollGateHandlers } = useSwipeableScrollGate({
+    onScroll: handleListScroll,
+    onScrollBeginDrag: handleScrollBeginDrag,
+  });
   const trackListTouches = (event: GestureResponderEvent, started: boolean) => {
     const { changedTouches, touches } = event.nativeEvent;
     swipeRowActivation.trackTouches(
       started ? changedTouches.map((touch) => String(touch.identifier)) : [],
       touches.map((touch) => String(touch.identifier)),
     );
+    if (!started && touches.length === 0) releaseGate();
   };
-  const { swipeEnabled, scrollGateHandlers } = useSwipeableScrollGate({
-    onScroll: handleListScroll,
-    onScrollBeginDrag: handleScrollBeginDrag,
-  });
 
   const { projects, selectedEnvironmentId, projectGroupingMode } = props;
   const projectScopes = useMemo(

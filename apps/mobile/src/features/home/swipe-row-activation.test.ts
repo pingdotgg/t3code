@@ -3,9 +3,16 @@ import { describe, expect, it } from "vite-plus/test";
 import { createSwipeRowActivation } from "./swipe-row-activation";
 
 describe("createSwipeRowActivation", () => {
+  it("leaves rows live before the first activate so swipe works on first paint", () => {
+    const activation = createSwipeRowActivation();
+    expect(activation.isPrimed()).toBe(false);
+    expect(activation.isActive("a")).toBe(false);
+  });
+
   it("defers changes while a finger is on the list so a press is never remounted", () => {
     const activation = createSwipeRowActivation();
     activation.activate(["a"]);
+    expect(activation.isPrimed()).toBe(true);
 
     activation.trackTouches(["1"], ["1"]);
     activation.activate(["b"]);

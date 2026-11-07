@@ -199,7 +199,7 @@ function ThreadListV2Section(props: {
   };
 }) {
   const sidebarPane = props.pane === "sidebar";
-  const showCount = props.count !== undefined && props.disclosure?.expanded !== true;
+  const showCount = props.count !== undefined;
   const labelClassName = cn(
     "text-[15px] font-t3-semibold",
     sidebarPane ? "text-drawer-foreground" : "text-foreground",
