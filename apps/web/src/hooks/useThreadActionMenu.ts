@@ -32,6 +32,7 @@ import {
   readEnvironmentSupportsAutoSettleOptOut,
   readThreadShell,
   useProjects,
+  waitForThreadShell,
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { readLocalApi } from "../localApi";
@@ -120,9 +121,12 @@ export function useThreadActionMenu(input: {
     void (async () => {
       const api = readLocalApi();
       if (!api) return;
-      const thread = readThreadShell(threadRef);
+      // An open thread the shell leaves out gets its row from a family read that may still be pending.
+      const thread =
+        readThreadShell(threadRef) ??
+        ((await waitForThreadShell(threadRef)) ? readThreadShell(threadRef) : null);
       if (!thread) {
-        failureToast("Thread actions unavailable", new Error("This thread has not loaded yet."));
+        failureToast("Thread actions unavailable", new Error("This thread could not be loaded."));
         return;
       }
       const now = new Date();
