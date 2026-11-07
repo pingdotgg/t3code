@@ -103,6 +103,8 @@ const browserTestProject = {
   optimizeDeps: {
     include: [
       "vite-plus/test/browser",
+      "@replit/codemirror-vim-core",
+      "@replit/codemirror-vim-core/test/vim_test.js",
       "@base-ui/react/autocomplete",
       "saxes",
       "@betteroffice/docx/editor",
