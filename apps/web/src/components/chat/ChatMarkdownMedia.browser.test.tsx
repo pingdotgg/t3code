@@ -3,7 +3,8 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../../test/render";
-import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
+import { serializeTableElementToDelimited } from "../../markdown-clipboard";
+import { ChatMarkdownAssetImage, ChatMarkdownImage } from "./ChatMarkdownMedia";
 
 // Every evaluation of the URL query is one mint: the first read, then one per refresh.
 const assetQuery = vi.hoisted(() => ({ mints: 0 }));
@@ -83,4 +84,35 @@ describe("ChatMarkdownAssetImage", () => {
     await expect.element(screen.getByRole("img", { name: "diagram" })).toBeInTheDocument();
     expect(assetQuery.mints).toBe(2);
   });
+});
+
+it.each([
+  { standalone: false, sourceFailed: false },
+  { standalone: false, sourceFailed: true },
+  { standalone: true, sourceFailed: false },
+  { standalone: true, sourceFailed: true },
+])("copies image alt text while unavailable: %j", async ({ standalone, sourceFailed }) => {
+  assetQuery.mints = 0;
+  await using screen = await render(
+    <table>
+      <tbody>
+        <tr>
+          <td>
+            <ChatMarkdownImage
+              src={null}
+              alt="Build badge"
+              copyMarkdown="![Build badge](badge.png)"
+              standalone={standalone}
+              sourceFailed={sourceFailed}
+              actionsSource={{ kind: "image", name: "Build badge", src: null }}
+            />
+          </td>
+          <td>next</td>
+        </tr>
+      </tbody>
+    </table>,
+  );
+  const table = screen.container.querySelector("table")!;
+  expect(serializeTableElementToDelimited(table, "tsv")).toBe("Build badge\tnext");
+  expect(serializeTableElementToDelimited(table, "csv")).toBe("Build badge,next");
 });

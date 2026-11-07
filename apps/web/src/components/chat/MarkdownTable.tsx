@@ -3,7 +3,7 @@ import { useRef, type ComponentProps } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import {
-  serializeTableElementToCsv,
+  serializeTableElementToDelimited,
   serializeTableElementToMarkdown,
 } from "../../markdown-clipboard";
 import { MorphIcon } from "../MorphIcon";
@@ -15,20 +15,20 @@ import { reportMarkdownActionFailure } from "./markdownActionFailure";
 
 export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const { copyToClipboard, isCopied: copied } = useCopyToClipboard<"markdown" | "csv">({
+  const { copyToClipboard, isCopied: copied } = useCopyToClipboard<"markdown" | "tsv" | "csv">({
     timeout: 1200,
     onError: (cause, format) =>
       reportMarkdownActionFailure({ operation: "copy-table", format }, cause),
   });
   const copyLabel = copied ? "Copied" : "Copy table";
 
-  const handleCopy = (format: "markdown" | "csv") => {
+  const handleCopy = (format: "markdown" | "tsv" | "csv") => {
     const table = containerRef.current?.querySelector("table");
     if (!table) return;
     copyToClipboard(
       format === "markdown"
         ? serializeTableElementToMarkdown(table)
-        : serializeTableElementToCsv(table),
+        : serializeTableElementToDelimited(table, format),
       format,
     );
   };
@@ -62,6 +62,7 @@ export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
           </Tooltip>
           <MenuPopup align="end">
             <MenuItem onClick={() => handleCopy("markdown")}>Copy as Markdown</MenuItem>
+            <MenuItem onClick={() => handleCopy("tsv")}>Copy as TSV</MenuItem>
             <MenuItem onClick={() => handleCopy("csv")}>Copy as CSV</MenuItem>
           </MenuPopup>
         </Menu>
