@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -118,6 +118,7 @@ export interface AcpSessionRuntimeOptions {
   readonly clientCapabilities?: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: {
     readonly name: string;
+    readonly title?: string;
     readonly version: string;
   };
   readonly authMethodId?: string;
@@ -484,18 +485,18 @@ export function terminateLinuxCgroupLease(
     let lastRemovalFailure: { readonly cause: unknown } | null = null;
     for (let attempt = 0; attempt < 200; attempt += 1) {
       if (!lease.exists()) return;
-      const killed = yield* Effect.try(() => lease.kill()).pipe(Effect.result);
+      const killed = Result.try(() => lease.kill());
       if (Result.isFailure(killed)) {
-        const cause = killed.failure.cause;
+        const cause = killed.failure;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code !== "ENOENT") return yield* failure("kill", cause);
         if (!lease.exists()) return;
         yield* Effect.sleep("10 millis");
         continue;
       }
-      const populated = yield* Effect.try(() => lease.populated()).pipe(Effect.result);
+      const populated = Result.try(() => lease.populated());
       if (Result.isFailure(populated)) {
-        const cause = populated.failure.cause;
+        const cause = populated.failure;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code === "ENOENT" && !lease.exists()) return;
         if (code === "ENOENT") {
@@ -509,9 +510,9 @@ export function terminateLinuxCgroupLease(
         yield* Effect.sleep("10 millis");
         continue;
       }
-      const removed = yield* Effect.try(() => lease.remove()).pipe(Effect.result);
+      const removed = Result.try(() => lease.remove());
       if (Result.isFailure(removed)) {
-        const cause = removed.failure.cause;
+        const cause = removed.failure;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code === "ENOENT" && !lease.exists()) return;
         if (code !== "EBUSY" && code !== "ENOTEMPTY" && code !== "ENOENT") {
@@ -1240,16 +1241,16 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
 ): Effect.fn.Return<
   AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
+  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | Scope.Scope
 > {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const runtimeScope = yield* Scope.fork(yield* Scope.Scope);
   const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
   const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
   const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallTrackedState>());
   const shownToolCallIds = new Set<string>();
-  const assistantItemRuntimeId = yield* crypto.randomUUIDv4().pipe(
+  const assistantItemRuntimeId = yield* random.uuidV4().pipe(
     Effect.mapError(
       (cause) =>
         new EffectAcpErrors.AcpTransportError({
@@ -2727,7 +2728,7 @@ export const layer = (
 ): Layer.Layer<
   AcpSessionRuntime,
   EffectAcpErrors.AcpError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom
 > => Layer.effect(AcpSessionRuntime, make(options));
 
 function sessionConfigOptionsFromSetup(

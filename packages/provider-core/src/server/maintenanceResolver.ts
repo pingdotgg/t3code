@@ -532,10 +532,11 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
           : {}),
       })
     : manual;
-  // A native-looking launcher can still delegate to a mise-owned install.
+  // A native-looking launcher can still delegate to an npm- or mise-owned install.
   if (
     nativeUpdate?.isCommandPath &&
     commandPaths.some(nativeUpdate.isCommandPath) &&
+    !npmGlobalPrefixFromCommandPath(context.realCommandPath, packageName) &&
     !commandPaths.some(isMiseCommandPath) &&
     !(yield* isMiseWrapperScript(context))
   ) {
@@ -980,6 +981,7 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
  */
 function installerLatestVersionKey(capabilities: ProviderMaintenanceCapabilities) {
   if (!capabilities.lookupLatestVersion) return null;
+  if (capabilities.latestVersionCacheKey) return capabilities.latestVersionCacheKey;
   const update = capabilities.update;
   if (update) return [update.lockKey, update.executable, ...update.args].join("\0");
   return capabilities.installPath

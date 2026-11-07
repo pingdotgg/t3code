@@ -11,7 +11,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 
 import * as EffectAcpAgent from "effect-acp/agent";
 import * as AcpError from "effect-acp/errors";
-import type * as AcpSchema from "effect-acp/schema";
+import * as AcpSchema from "effect-acp/schema";
 import type * as AcpCompat from "effect-acp/compat";
 
 import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
@@ -36,6 +36,12 @@ const emitBackgroundToolDuringAnswer =
   process.env.T3_ACP_EMIT_BACKGROUND_TOOL_DURING_ANSWER === "1";
 const emitMcpToolApprovalElicitation =
   process.env.T3_ACP_EMIT_MCP_TOOL_APPROVAL_ELICITATION === "1";
+const emitElicitation = process.env.T3_ACP_EMIT_ELICITATION === "1";
+const elicitationSchema = process.env.T3_ACP_ELICITATION_SCHEMA;
+const decodeElicitationSchema = Schema.decodeUnknownSync(
+  Schema.fromJsonString(AcpSchema.ElicitationSchema),
+);
+const elicitationResponseLogPath = process.env.T3_ACP_ELICITATION_RESPONSE_LOG_PATH;
 const grokKillTaskShape = process.env.T3_ACP_GROK_KILL_TASK_SHAPE;
 const emitGrokBackgroundTaskPoll = process.env.T3_ACP_GROK_BACKGROUND_TASK_COMPLETION === "poll";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
@@ -43,6 +49,9 @@ const omitInitializeModelState = process.env.T3_ACP_OMIT_INITIALIZE_MODEL_STATE 
 const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
 const floodStderr = process.env.T3_ACP_FLOOD_STDERR === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
+const agentVersion = process.env.T3_ACP_AGENT_VERSION ?? "0.0.0";
+const geminiApiKey = process.env.GEMINI_API_KEY;
+const idleError = process.env.T3_ACP_IDLE_ERROR;
 const emitTrackedToolCallKindThenHang = process.env.T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG;
 const clientFsProbePath = process.env.T3_ACP_CLIENT_FS_PROBE_PATH;
 const clientFsProbeLogPath = process.env.T3_ACP_CLIENT_FS_PROBE_LOG_PATH;
@@ -55,6 +64,14 @@ const failLoadSessionAfterConfigReplay =
   process.env.T3_ACP_FAIL_LOAD_SESSION_AFTER_CONFIG_REPLAY === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
+// JSON for the `data` of an "Internal error" response to `session/new`, as
+// Antigravity sends when its runtime cannot reach its local harness.
+const newSessionErrorData =
+  process.env.T3_ACP_NEW_SESSION_ERROR_DATA === undefined
+    ? undefined
+    : Schema.decodeSync(Schema.fromJsonString(Schema.Unknown))(
+        process.env.T3_ACP_NEW_SESSION_ERROR_DATA,
+      );
 const failPromptOrdinal = Number(process.env.T3_ACP_FAIL_PROMPT_ORDINAL);
 const compactionPromptOrdinals = new Set(
   (process.env.T3_ACP_COMPACTION_PROMPT_ORDINALS ?? "").split(",").map(Number),
@@ -512,7 +529,7 @@ const program = Effect.gen(function* () {
       parameterizedModelPicker = request.capabilities?._meta?.parameterizedModelPicker === true;
       return {
         protocolVersion: 2,
-        info: { name: "t3-acp-mock-agent", version: process.env.T3_ACP_AGENT_VERSION ?? "0.0.0" },
+        info: { name: "t3-acp-mock-agent", version: agentVersion },
         ...(omitInitializeModelState ? {} : { _meta: { modelState: modelState() } }),
         capabilities: {
           session: {
@@ -550,7 +567,7 @@ const program = Effect.gen(function* () {
       if (antigravityProfile) {
         if (
           request.methodId !== "oauth-personal" &&
-          !(request.methodId === "gemini-api-key" && process.env.GEMINI_API_KEY)
+          !(request.methodId === "gemini-api-key" && geminiApiKey)
         ) {
           return yield* AcpError.AcpRequestError.invalidParams(
             `Mock Antigravity rejected auth method ${request.methodId}.`,
@@ -585,6 +602,9 @@ const program = Effect.gen(function* () {
   yield* agent.handleCreateSession(() =>
     Effect.gen(function* () {
       yield* requireAuthentication();
+      if (newSessionErrorData !== undefined) {
+        return yield* AcpError.AcpRequestError.internalError("Internal error", newSessionErrorData);
+      }
       if (antigravityProfile) {
         yield* publishAntigravityCommands(sessionId);
       }
@@ -820,7 +840,6 @@ const program = Effect.gen(function* () {
       }
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
-      const idleError = process.env.T3_ACP_IDLE_ERROR;
       if (idleError === "grok-background" && promptCount === 1) {
         // The structured completion lands before the prompt settles, so it is buffered.
         const taskId = "call-idle-error-background";
@@ -1548,21 +1567,25 @@ const program = Effect.gen(function* () {
         return yield* finishPrompt(requestedSessionId, "end_turn");
       }
 
-      if (emitMcpToolApprovalElicitation) {
-        yield* agent.client.elicit({
+      if (emitElicitation || emitMcpToolApprovalElicitation) {
+        const response = yield* agent.client.elicit({
           sessionId: requestedSessionId,
           message: "Approve this request?",
           mode: "form",
-          requestedSchema: {
-            type: "object",
-            properties: {
-              approved: { type: "boolean", title: "Approved" },
-            },
-          },
+          requestedSchema: elicitationSchema
+            ? decodeElicitationSchema(elicitationSchema)
+            : {
+                type: "object",
+                properties: {
+                  approved: { type: "boolean", title: "Approved" },
+                },
+              },
           ...(emitMcpToolApprovalElicitation
             ? { _meta: { codex_approval_kind: "mcp_tool_call" } }
             : {}),
         });
+        if (elicitationResponseLogPath)
+          NodeFS.appendFileSync(elicitationResponseLogPath, `${encodeJson(response)}\n`, "utf8");
         return yield* finishPrompt(requestedSessionId, "end_turn");
       }
 
@@ -1856,6 +1879,11 @@ const program = Effect.gen(function* () {
     }
     if (method === "_test/finish-cancel") {
       return Deferred.succeed(nativeCancelRelease, undefined).pipe(Effect.as({}));
+    }
+    if (method === "_test/emit-update") {
+      return agent.client
+        .sessionUpdate(params as AcpSchema.SessionNotification)
+        .pipe(Effect.as({}));
     }
     if (method === "_test/startup-metadata") {
       return Effect.gen(function* () {
