@@ -13,8 +13,10 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServerResponse } from "effect/http";
+import { OtlpSerialization } from "effect/observability";
 import { ASSET_ROUTE_PREFIX } from "./assets/AssetAccess.ts";
 import { ATTACHMENT_UPLOAD_ROUTE_PREFIX } from "./assets/AttachmentUpload.ts";
 import { openMediaFile } from "./assets/MediaFile.ts";
@@ -25,9 +27,15 @@ import {
   injectMcpAppThemeBootstrap,
   MCP_APP_MAX_HTML_BYTES,
 } from "@t3tools/shared/mcpApp";
-import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSessionId,
+  ORCHESTRATION_PROTOCOL_HEADER,
+} from "@t3tools/contracts";
 
+import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ServerConfig from "./config.ts";
+import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 
 import { assetResponseHeaders, assetFileResponse, downloadContentDisposition } from "./http.ts";
 import * as ServerHttp from "./http.ts";
@@ -198,6 +206,83 @@ describe("untraced requests", () => {
         expect((yield* client.execute(HttpClientRequest.get(path))).status).toBe(404);
       }
       expect(serverSpans).toEqual(["GET", "GET", "GET"]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("browser OTLP traces proxy", () => {
+  it.effect("refuses bodies over the cap without recording them", () =>
+    Effect.gen(function* () {
+      const recorded: Array<number> = [];
+      const services = yield* Layer.build(
+        HttpRouter.serve(ServerHttp.layerOtlpTracesProxyRoute, {
+          disableListenLog: true,
+          disableLogger: true,
+        }).pipe(
+          Layer.provideMerge(NodeHttpServer.layerTest),
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.mock(EnvironmentAuth.EnvironmentAuth, {
+                authenticateHttpRequest: () =>
+                  Effect.succeed({
+                    sessionId: AuthSessionId.make("otlp-test"),
+                    subject: "otlp-test",
+                    method: "bearer-access-token",
+                    scopes: [AuthOrchestrationOperateScope],
+                  }),
+              }),
+              Layer.succeed(BrowserTraceCollector.BrowserTraceCollector, {
+                record: (records) => Effect.sync(() => void recorded.push(records.length)),
+              }),
+              OtlpSerialization.layerJson,
+              ServerConfig.layerTest(process.cwd(), { prefix: "t3-otlp-http-test-" }),
+            ),
+          ),
+        ),
+      );
+      const client = Context.get(services, HttpClient.HttpClient);
+      const traces = HttpClientRequest.post("/api/observability/v1/traces");
+      const batch = new TextEncoder().encode(
+        JSON.stringify({
+          resourceSpans: [
+            {
+              scopeSpans: [
+                {
+                  spans: [
+                    {
+                      traceId: "trace",
+                      spanId: "span",
+                      name: "browser.span",
+                      startTimeUnixNano: "1000000",
+                      endTimeUnixNano: "2000000",
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      );
+      // One byte over the 10 MiB cap; trailing spaces keep it valid JSON.
+      const oversized = new Uint8Array(10 * 1024 * 1024 + 1).fill(0x20);
+      oversized.set(batch);
+
+      const declared = yield* client.execute(
+        traces.pipe(HttpClientRequest.bodyUint8Array(oversized, "application/json")),
+      );
+      const chunked = yield* client.execute(
+        traces.pipe(
+          HttpClientRequest.bodyStream(Stream.make(oversized), { contentType: "application/json" }),
+        ),
+      );
+      expect([declared.status, chunked.status]).toEqual([413, 413]);
+      expect(recorded).toEqual([]);
+
+      const accepted = yield* client.execute(
+        traces.pipe(HttpClientRequest.bodyUint8Array(batch, "application/json")),
+      );
+      expect(accepted.status).toBe(204);
+      expect(recorded).toEqual([1]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

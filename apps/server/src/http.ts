@@ -56,6 +56,8 @@ import {
 import { requestUrl } from "./requestUrl.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
+// Matches the default cap of effect's own OtlpProxy.
+const OTLP_TRACES_MAX_BODY_BYTES = 10 * 1024 * 1024;
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 // Opaque origin blocks cookies, storage and API access while allowing scripts.
@@ -338,13 +340,23 @@ export const layerOtlpTracesProxyRoute = HttpRouter.add(
   Effect.gen(function* () {
     yield* authenticateRawRouteWithScope(AuthOrchestrationOperateScope);
     const request = yield* HttpServerRequest.HttpServerRequest;
+    if (Number(request.headers["content-length"] ?? "0") > OTLP_TRACES_MAX_BODY_BYTES) {
+      return HttpServerResponse.empty({ status: 413 });
+    }
     const config = yield* ServerConfig.ServerConfig;
     const otlpTracesUrl = config.otlpTracesUrl;
     const otlpHeaders = config.otlpTracesExport.headers;
     const browserTraceCollector = yield* BrowserTraceCollector.BrowserTraceCollector;
     const httpClient = yield* HttpClient.HttpClient;
     const serialization = yield* OtlpSerialization.OtlpSerialization;
-    const bodyJson = cast<unknown, OtlpTracer.TraceData>(yield* request.json);
+    const bodyJson = cast<unknown, OtlpTracer.TraceData>(
+      yield* request.json.pipe(
+        Effect.provideService(
+          HttpServerRequest.MaxBodySize,
+          ByteSize.bytes(OTLP_TRACES_MAX_BODY_BYTES),
+        ),
+      ),
+    );
 
     yield* Effect.try({
       try: () => decodeOtlpTraceRecords(bodyJson),
