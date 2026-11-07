@@ -32,6 +32,7 @@ import {
   type Session,
   clipboard,
   nativeImage,
+  screen,
   shell,
   webContents,
 } from "electron";
@@ -2550,35 +2551,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     const frameSession = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
     if (frameSession?.scope !== captureSession.scope) return;
-    // Fingerprint before encoding so unchanged frames skip JPEG, base64, and IPC; unreadable frames must still be sent.
-    const fingerprint = fingerprintCapturedFrame(image, size);
-    const pictureInPicture =
-      frameSession.consumers.has("picture-in-picture") &&
-      (fingerprint === null || frameSession.lastPictureInPictureFingerprint !== fingerprint);
-    if (!pictureInPicture) return;
-    const encoded = yield* attempt(
-      {
-        operation: "frameCapture.encodeFrame",
-        tabId,
-        webContentsId: wc.id,
-      },
-      () => image.toJPEG(PICTURE_IN_PICTURE_JPEG_QUALITY),
-    );
-    const receivedAt = yield* currentIso;
-    const frame: DesktopPreviewRecordingFrame = {
-      tabId,
-      data: encoded.toString("base64"),
-      width: size.width,
-      height: size.height,
-      receivedAt,
-    };
     const pictureInPictureWindow = (yield* SynchronizedRef.get(pictureInPictureSessionsRef)).get(
       tabId,
     )?.window;
     if (!pictureInPictureWindow || pictureInPictureWindow.isDestroyed()) return;
     yield* Effect.gen(function* () {
       const previousAspectRatio = (yield* Ref.get(pictureInPictureAspectRatiosRef)).get(tabId);
-      const aspectRatio = frame.width / frame.height;
+      const aspectRatio = size.width / size.height;
       if (
         previousAspectRatio === undefined ||
         Math.abs(previousAspectRatio - aspectRatio) > PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON
@@ -2605,6 +2584,55 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           }),
         );
       }
+      const previewSize = yield* attempt(
+        { operation: "frameCapture.measureDestination", tabId, webContentsId: wc.id },
+        () => {
+          const [width, height] = pictureInPictureWindow.getContentSize();
+          const { scaleFactor } = screen.getDisplayMatching(pictureInPictureWindow.getBounds());
+          const scale = Math.min(
+            1,
+            Math.ceil(width! * scaleFactor) / size.width,
+            Math.ceil(height! * scaleFactor) / size.height,
+          );
+          return {
+            width: Math.max(1, Math.round(size.width * scale)),
+            height: Math.max(1, Math.round(size.height * scale)),
+          };
+        },
+      );
+      // Fingerprint before encoding so unchanged frames skip JPEG, base64, and IPC; unreadable frames must still be sent.
+      const sourceFingerprint = fingerprintCapturedFrame(image, size);
+      const fingerprint =
+        sourceFingerprint === null
+          ? null
+          : `${sourceFingerprint}:${previewSize.width}x${previewSize.height}`;
+      const pictureInPicture =
+        frameSession.consumers.has("picture-in-picture") &&
+        (fingerprint === null || frameSession.lastPictureInPictureFingerprint !== fingerprint);
+      if (!pictureInPicture) return;
+      const encoded = yield* attempt(
+        {
+          operation: "frameCapture.encodeFrame",
+          tabId,
+          webContentsId: wc.id,
+        },
+        () => {
+          const previewImage =
+            previewSize.width !== size.width || previewSize.height !== size.height
+              ? image.resize(previewSize)
+              : image;
+          return previewImage.toJPEG(PICTURE_IN_PICTURE_JPEG_QUALITY);
+        },
+      );
+      const receivedAt = yield* currentIso;
+      // Keep source dimensions for layout; JPEG pixels only serve the PiP display.
+      const frame: DesktopPreviewRecordingFrame = {
+        tabId,
+        data: encoded.toString("base64"),
+        width: size.width,
+        height: size.height,
+        receivedAt,
+      };
       yield* attempt(
         {
           operation: "pictureInPicture.deliverFrame",
