@@ -1,6 +1,6 @@
 // Avoid RN/navigation imports so node checks do not load their untranspiled Flow.
 
-export type NativeTopScrollEdgeEffect = "automatic" | "soft";
+export type NativeTopScrollEdgeEffect = "automatic" | "soft" | "hidden";
 export type NativeHeaderScrollEdgeEffects = {
   readonly top: NativeTopScrollEdgeEffect;
   readonly bottom: "hidden";

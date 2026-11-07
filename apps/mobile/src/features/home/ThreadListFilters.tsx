@@ -23,6 +23,11 @@ export function ThreadListFilters(props: {
   const selectedProject = props.projects.find(
     (project) => project.key === props.selectedProjectKey,
   );
+  const showReset = props.selectedEnvironmentId !== null || props.selectedProjectKey !== null;
+
+  // Solid chips (not Liquid Glass): glass blooms clip at the pill bounds inside a
+  // list header and read as a hard color cut. Opaque pills sit on the same continuous
+  // list surface as the rows below — matching Mail-style secondary controls.
   return (
     <ScrollView
       horizontal
@@ -31,6 +36,7 @@ export function ThreadListFilters(props: {
       contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 2, paddingBottom: 10, gap: 8 }}
     >
       <ListFilterMenu
+        glass={false}
         label={selectedEnvironment?.label ?? "All environments"}
         accessibilityLabel="Filter threads by environment"
         active={selectedEnvironment !== undefined}
@@ -60,6 +66,7 @@ export function ThreadListFilters(props: {
         }}
       />
       <ListFilterMenu
+        glass={false}
         label={selectedProject?.label ?? "All projects"}
         accessibilityLabel="Filter threads by project"
         active={selectedProject !== undefined}
@@ -85,7 +92,7 @@ export function ThreadListFilters(props: {
           }
         }}
       />
-      {props.selectedEnvironmentId !== null || props.selectedProjectKey !== null ? (
+      {showReset ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Reset thread filters"

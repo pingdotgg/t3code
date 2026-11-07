@@ -224,12 +224,17 @@ function HomeScrollView(props: ComponentProps<typeof ScrollView>) {
   if (Platform.OS !== "ios") return <ScrollView {...props} />;
 
   // Register the scroll view explicitly; layout and header siblings hide it from UIKit.
+  // Soft paints a hard-edged white band that bisects the glass filter chips on the phone
+  // list. Keep soft only for the iOS 26 sidebar fade; otherwise let the glass header alone
+  // handle the top edge so filters and rows share one continuous surface.
+  const topEdge =
+    sidebarSurface && Number.parseInt(String(Platform.Version), 10) < 27 ? "soft" : "hidden";
   return (
     <ScrollViewMarker
       style={{ flex: 1 }}
       scrollEdgeEffects={{
         ...nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version),
-        top: Number.parseInt(String(Platform.Version), 10) >= 27 ? "automatic" : "soft",
+        top: topEdge,
       }}
     >
       <ScrollView

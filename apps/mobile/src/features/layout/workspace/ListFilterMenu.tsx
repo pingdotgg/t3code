@@ -9,6 +9,8 @@ export function ListFilterMenu(props: {
   readonly accessibilityLabel: string;
   readonly active?: boolean;
   readonly icon?: boolean;
+  /** Liquid Glass blooms clip inside list headers; keep solid there. */
+  readonly glass?: boolean;
   readonly actions: MenuProps["actions"];
   readonly onSelect: (id: string) => void;
 }) {
@@ -30,7 +32,7 @@ export function ListFilterMenu(props: {
           selected={props.active}
           icon={props.icon ? "line.3.horizontal.decrease" : undefined}
           trailingIcon={props.icon ? undefined : "chevron.down"}
-          glass
+          glass={props.glass !== false}
           colorScheme={themeAppearance}
         />
       </Pressable>

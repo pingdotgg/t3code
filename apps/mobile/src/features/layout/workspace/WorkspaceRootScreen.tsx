@@ -5,13 +5,16 @@ import { WorkspaceSettingsList } from "../../settings/SettingsRouteScreen";
 import { WorkspaceSectionToolbar } from "./WorkspaceSectionToolbar";
 import { useNavigation } from "@react-navigation/native";
 import { use } from "react";
-import { View, useWindowDimensions } from "react-native";
+import { Platform, View, useWindowDimensions } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { CompactBrandTitle } from "../../../components/CompactBrandTitle";
 import { HeaderItemsWidthContext } from "../../../native/header-items-width";
-import { NativeStackScreenOptions } from "../../../native/StackHeader";
+import {
+  NativeStackScreenOptions,
+  nativeHeaderScrollEdgeEffects,
+} from "../../../native/StackHeader";
 import { NativePrimaryColumnContext } from "../../../native/v5-workspace-context";
 import { isDuoDevice } from "../../../lib/device-type";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../../native/native-glass";
@@ -146,6 +149,17 @@ function WorkspaceRootContent() {
               sidebarNavigation || (!settingsOpen && state.selectedTab !== "usage")
                 ? renderHeaderTitle
                 : undefined,
+            // Soft/automatic scroll-edge paints a hard band through the glass filter chips.
+            scrollEdgeEffects: NATIVE_LIQUID_GLASS_SUPPORTED
+              ? {
+                  ...nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version),
+                  top:
+                    !settingsOpen &&
+                    (state.selectedTab === "threads" || state.selectedTab === "pullRequests")
+                      ? "hidden"
+                      : "automatic",
+                }
+              : undefined,
           }}
         />
         <SafeAreaInsetsContext value={compactTabs ? { ...insets, bottom: 0 } : insets}>
