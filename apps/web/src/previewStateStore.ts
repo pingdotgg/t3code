@@ -167,6 +167,19 @@ export function useThreadPreviewState(ref: ScopedThreadRef | null | undefined): 
   return useAtomValue(atom);
 }
 
+export function selectAudiblePreviewTabId(state: ThreadPreviewState): string | null {
+  return (
+    Object.keys(state.sessions).find((tabId) => {
+      const tab = state.desktopByTabId[tabId];
+      return tab?.hasWebContents && tab.audible && !tab.audioMuted;
+    }) ?? null
+  );
+}
+
+export function useAudiblePreviewTabId(ref: ScopedThreadRef): string | null {
+  return useAtomValue(previewStateAtom(scopedThreadKey(ref)), selectAudiblePreviewTabId);
+}
+
 export function useActivePreviewSessions(): Record<string, ThreadPreviewState> {
   return useAtomValue(activePreviewSessionsAtom);
 }

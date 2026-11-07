@@ -1,5 +1,5 @@
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
-import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
+import { ThreadPreviewAudioButton, ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { requestCustomSnooze } from "../CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
@@ -117,6 +117,7 @@ import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuSeparator, MenuTrigger }
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
+import { useAudiblePreviewTabId } from "../../previewStateStore";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -672,6 +673,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   });
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const terminalProcessCount = runningTerminalIds.length;
+  const audiblePreviewTabId = useAudiblePreviewTabId(threadRef);
   const hasUnsentDraft = useThreadHasUnsentDraft(threadRef) && !props.isRouteThread;
   const handleDiscardDraftClick = (event: ReactMouseEvent) => {
     event.preventDefault();
@@ -1069,12 +1071,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         onOpenPullRequest={handlePrClick}
       />
     ) : null;
-  const terminalStatusIcon = (
-    <ThreadTerminalStatusButton
-      threadRef={threadRef}
-      terminalIds={runningTerminalIds}
-      onThreadActivate={onThreadActivate}
-    />
+  const activityStatusIcons = (
+    <>
+      <ThreadTerminalStatusButton
+        threadRef={threadRef}
+        terminalIds={runningTerminalIds}
+        onThreadActivate={onThreadActivate}
+      />
+      <ThreadPreviewAudioButton
+        threadRef={threadRef}
+        tabId={audiblePreviewTabId}
+        onThreadActivate={onThreadActivate}
+      />
+    </>
   );
   const draftIndicator = hasUnsentDraft ? (
     <Tooltip>
@@ -1141,7 +1150,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     !showsScratchMachine &&
     prBadge === null &&
     diff === null &&
-    runningTerminalIds.length === 0;
+    runningTerminalIds.length === 0 &&
+    audiblePreviewTabId === null;
   const metaLine = metaLineEmpty ? null : (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
       {thread.branch ? (
@@ -1163,7 +1173,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       ) : (
         <span className="flex-1" />
       )}
-      {terminalStatusIcon}
+      {activityStatusIcons}
       {prBadge}
       {diff ? (
         <span className="shrink-0 font-mono">
@@ -1255,7 +1265,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {title}
               {multiline ? titleLineIcons : null}
               {pinIndicator}
-              {multiline ? null : terminalStatusIcon}
+              {multiline ? null : activityStatusIcons}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
                   Regenerating title
