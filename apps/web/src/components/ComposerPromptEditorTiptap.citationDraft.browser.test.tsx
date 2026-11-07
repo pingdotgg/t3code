@@ -155,10 +155,14 @@ it("Delete citation removes a fresh citation and its inserted space, and undo re
   await userEvent.keyboard(
     isMacPlatform(navigator.platform) ? "{Meta>}z{/Meta}" : "{Control>}z{/Control}",
   );
+  await screen.rerender(<Composer question editorRef={editorRef} />);
+  await screen.rerender(<Composer question={false} editorRef={editorRef} />);
   await expect
     .element(page.elementLocator(screen.container.querySelector("output")!))
     .toHaveAttribute("data-prompt", promptBefore);
   await expect.element(comment).not.toBeInTheDocument();
+  await page.getByRole("button", { name: "Add comment to citation" }).click();
+  await expect.element(comment).toHaveValue("");
 });
 
 it("deletes an existing citation without removing surrounding spaces", async () => {
