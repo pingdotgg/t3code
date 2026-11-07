@@ -24,6 +24,7 @@ export function LabsSettingsPanel() {
       <SettingsSection id="beta" title="Beta">
         <BoringSidebarRow />
         <BoringSidebarMultilineRow />
+        <BoringSidebarFlushRowsRow />
         <ToolCallVisibilityRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
@@ -50,6 +51,26 @@ function BoringSidebarRow() {
             updateSettings({ boringSidebarEnabled: Boolean(checked), legacySidebarEnabled: false })
           }
           aria-label="Boring sidebar (group by project)"
+        />
+      }
+    />
+  );
+}
+
+function BoringSidebarFlushRowsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("boring-sidebar-flush-rows")}
+      description="Remove indentation from folder threads. Align their titles and details with the project's icon."
+      control={
+        <Switch
+          checked={settings.boringSidebarFlushRows}
+          onCheckedChange={(checked) =>
+            updateSettings({ boringSidebarFlushRows: Boolean(checked) })
+          }
+          aria-label="Align threads with project icon"
         />
       }
     />
