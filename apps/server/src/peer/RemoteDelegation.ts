@@ -511,8 +511,8 @@ const make = Effect.gen(function* () {
   /**
    * Waits for the task's run there to end, completes the task here, and stops it there if it
    * ended here first. A revoked, expired or forgotten link, or a thread or run gone there,
-   * fails the task with nothing left to stop, as do repeated defects here; anything else (the
-   * other machine asleep, a dropped route) is retried with back-off, and so is completing.
+   * fails the task with nothing left to stop; repeated defects here fail it too. Anything else
+   * (the other machine asleep, a dropped route) is retried with back-off, and so is completing.
    */
   const follow = (parentThreadId: ThreadId, taskId: NodeId): Effect.Effect<void> =>
     Effect.suspend(() => {
@@ -547,9 +547,9 @@ const make = Effect.gen(function* () {
             const remote = task?.remoteChild;
             // A task with its result keeps it; completing it again would owe another stop there.
             if (remote === undefined || task?.result !== null) return;
-            const result = `Following the thread ${remote.threadId} in ${remote.label} failed: ${error.message}`;
+            const result = `Following the thread ${remote.threadId} in ${remote.label} failed, so it may still run there (task_cancel stops it): ${error.message}`;
             yield* complete(parentThreadId, taskId, "failed", result, undefined);
-          }),
+          }, Effect.retry(followRetry)),
         ),
         Effect.ignoreCause({ log: true }),
       );

@@ -543,6 +543,8 @@ const makeLaptop = (
   kept?: Context.Context<Layer.Success<ReturnType<typeof layerLinkingEnvironment>>>,
   /** Runs as each follow attempt here starts, on its follower's fiber. */
   beforeFollow: Effect.Effect<void> = Effect.void,
+  /** Runs before each read of a thread's records here, as the follower makes them. */
+  beforeRead: Effect.Effect<void, Orchestrator.OrchestratorV2Error> = Effect.void,
 ) =>
   Effect.gen(function* () {
     const linking = kept ?? (yield* layerLinkingEnvironment(laptop).pipe(Layer.build));
@@ -580,6 +582,10 @@ const makeLaptop = (
                   ...threads,
                   getThreadEventSequence: (threadId: ThreadId) =>
                     beforeFollow.pipe(Effect.andThen(threads.getThreadEventSequence(threadId))),
+                  getThreadRecords: (threadId, fields, filter) =>
+                    beforeRead.pipe(
+                      Effect.andThen(threads.getThreadRecords(threadId, fields, filter)),
+                    ),
                 };
               }),
             ),
@@ -1677,7 +1683,14 @@ const defectiveFollows = (times: number) =>
           ),
         ),
       );
-    return { beforeFollow, retriedOrEnded };
+    // Once it has hit one, the follower's only read here is the one that records giving up.
+    const failedRecords = yield* Ref.make(1);
+    const beforeRead = Effect.gen(function* () {
+      if ((yield* Ref.get(defects)) === 0) return;
+      if ((yield* Ref.getAndUpdate(failedRecords, (count) => count - 1)) <= 0) return;
+      return yield* new Orchestrator.OrchestratorProjectionError({ threadId: parentThreadId });
+    });
+    return { beforeFollow, beforeRead, retriedOrEnded };
   });
 
 it.effect("a follower that hits a defect retries instead of dropping the task", () =>
@@ -1723,9 +1736,14 @@ it.effect("a follower that keeps hitting defects fails the task and wakes the pa
       const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
       const retries = yield* steppedRetries;
       const defects = yield* defectiveFollows(Number.POSITIVE_INFINITY);
-      const a = yield* makeLaptop(database, offers, undefined, defects.beforeFollow).pipe(
-        Effect.provideService(RemoteDelegation.FollowRetrySchedule, retries.schedule),
-      );
+      // Recording that it gave up fails once too, and is retried.
+      const a = yield* makeLaptop(
+        database,
+        offers,
+        undefined,
+        defects.beforeFollow,
+        defects.beforeRead,
+      ).pipe(Effect.provideService(RemoteDelegation.FollowRetrySchedule, retries.schedule));
       yield* linkTo(a.links, b, "full-access");
       yield* seedParent(a);
 
