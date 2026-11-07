@@ -303,11 +303,12 @@ review is terminal. An open or unsynced link keeps it active.
 
 Ask the agent to watch, monitor, or babysit a pull request and it calls `watch_pull_request`. While
 the thread is active, the server checks the pull request every two minutes and wakes the agent when a
-check fails, the required checks pass, someone else comments or reviews, or the branch starts to
-conflict. Threads in a project that watch the same pull request share one check. On GitHub, a check
+check fails, the required checks pass, someone else comments or reviews, the branch starts to
+conflict, or GitHub's merge queue drops it without merging (on github.com and GitHub Enterprise Cloud, not Enterprise Server). Threads in a project that watch the same pull request share one check. On GitHub, a check
 first asks whether anything changed and reads the pull request only when it did, which keeps
-watching inside GitHub's rate limit. Comments from your own account do not wake it. Watching ends
-when the pull request merges or closes, after 10 wakes in a row that bring only comments, after 8
+watching inside GitHub's rate limit. Comments from your own account do not wake it. When the pull
+request merges or closes, the agent gets one last wake saying so and watching ends. Watching also
+ends after 10 wakes in a row that bring only comments, after 8
 failed reads in a row, or when you press Stop on the thread. A rate limit only pauses watching.
 Settling or archiving a thread also ends all its watches. Unsettle the thread before starting a new
 watch. Watching a pull request again does not repeat check or conflict news its last
@@ -316,7 +317,8 @@ it yourself, use the row menu in the **Linked pull requests** panel. In the thre
 watched pull request shows an eye; click it to stop watching.
 
 A watched thread counts as working between wakes, so it stays in the **Working** section and does
-not auto-settle. Agents stop watching when they hand the work back to you, and the thread then
+not auto-settle. Settling on merge waits for the agent's turn on that last wake, and only settles
+the thread if the agent then leaves nothing running or watched. Agents stop watching when they hand the work back to you, and the thread then
 returns to your inbox.
 
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked

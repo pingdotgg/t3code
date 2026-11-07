@@ -1386,6 +1386,11 @@ export const make = Effect.gen(function* () {
 
   /** Older Enterprise servers may lack `isRequired`. */
   const asksRequired = (host: string) => host.toLowerCase() === "github.com";
+  /** Enterprise Server may lack the merge queue's timeline event; GitHub's cloud hosts have it. */
+  const asksMergeQueue = (host: string) => {
+    const name = host.toLowerCase();
+    return name === "github.com" || name.endsWith(".ghe.com");
+  };
 
   /**
    * Every check context of the head commit, a page at a time, for a rollup the detail read cut at
@@ -1462,6 +1467,7 @@ export const make = Effect.gen(function* () {
         headRef: `refs/pull/${input.number}/head`,
         required: asksRequired(input.host),
         requestedReviewers,
+        mergeQueue: asksMergeQueue(input.host),
       });
     return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((allowReserve) =>
@@ -1744,7 +1750,10 @@ export const make = Effect.gen(function* () {
     (input) => {
       const lookup = pullRequestLookup(input);
       if (lookup === null) return Effect.succeed(null);
-      return GraphQLResolver.request(lookup, watchFingerprintResolver).pipe(
+      return GraphQLResolver.request(
+        { ...lookup, mergeQueue: asksMergeQueue(input.host) },
+        watchFingerprintResolver,
+      ).pipe(
         Effect.map((result) => {
           const pullRequest = result.repository?.pullRequest;
           return pullRequest == null ? null : toPullRequestWatchFingerprint(pullRequest);

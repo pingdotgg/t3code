@@ -1,6 +1,8 @@
 # One pull request per operation. `GraphQLResolver.aliased` repeats each under an alias per
 # pull request, so a batch is one request and a missing pull request fails only its own slice.
 # `stacks` is false off github.com: Enterprise Server has no pull request stacks.
+# `mergeQueue` is true on github.com and ghe.com only: an older Enterprise Server may lack the
+# merge queue's timeline event, and an unknown one fails the whole read.
 
 query PullRequestSummary($owner: String!, $name: String!, $number: Int!, $stacks: Boolean!) {
   repository(owner: $owner, name: $name) {
@@ -84,12 +86,26 @@ query PullRequestStackMembership($owner: String!, $name: String!, $number: Int!)
 # edit moves `updatedAt`, so an edit to an old comment on a long pull request is still in the page.
 # Reviews have no such order: an edit to a review older than the last hundred waits for the
 # watch's periodic full read, as do edits to comments inside review threads.
-query PullRequestWatchFingerprint($owner: String!, $name: String!, $number: Int!) {
+query PullRequestWatchFingerprint(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $mergeQueue: Boolean!
+) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       state
       mergeable
       headRefOid
+      # A failed queue run leaves the head's checks alone, so the removal itself has to show.
+      mergeQueueRemovals: timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT])
+        @include(if: $mergeQueue) {
+        nodes {
+          ... on RemovedFromMergeQueueEvent {
+            id
+          }
+        }
+      }
       comments(first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) {
         totalCount
         nodes {

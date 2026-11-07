@@ -4,6 +4,7 @@ import {
   type OrchestrationV2Notification,
   type PullRequestActivity,
   type PullRequestComment,
+  type PullRequestDetail,
   type PullRequestRef,
   type PullRequestThreadCommentsResult,
   type ThreadPullRequestLink,
@@ -38,6 +39,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import {
   evaluatePullRequestWatch,
   PULL_REQUEST_WATCH_NO_CHECKS_MS,
+  pullRequestEndedMessage,
   pullRequestWatchMessage,
 } from "./pullRequestWatch.ts";
 
@@ -146,6 +148,8 @@ function planRead(
   if (last === undefined || group.targets.some((target) => !last.watches.has(watchKey(target)))) {
     return { detail: true, activity: true };
   }
+  // The sync reactor saw it merge or close; the read that wakes the agent should not wait.
+  const ended = group.targets.some(({ link }) => (link.snapshot?.state ?? "open") !== "open");
   // Nothing on the host changes when the no-checks deadline passes, so it alone prompts a read.
   const checksDue = group.targets.some(
     ({ watch }) =>
@@ -158,14 +162,14 @@ function planRead(
       !last.remarksComplete ||
       last.fingerprint !== group.fingerprint ||
       now - last.at >= QUIET_REREAD_MS;
-    return { detail: read || checksDue, activity: read };
+    return { detail: read || checksDue || ended, activity: read };
   }
   const activity =
     last.remarks !== fingerprint.remarks ||
     !last.remarksComplete ||
     now - last.at >= FINGERPRINT_REREAD_MS;
   return {
-    detail: activity || checksDue || last.status !== fingerprint.status || last.inFlight,
+    detail: activity || checksDue || ended || last.status !== fingerprint.status || last.inFlight,
     activity,
   };
 }
@@ -182,7 +186,8 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
     left.conflicting === right.conflicting &&
     left.wakes === right.wakes &&
-    left.checksAwaitedSince === right.checksAwaitedSince
+    left.checksAwaitedSince === right.checksAwaitedSince &&
+    (left.mergeQueueRemovalId ?? null) === (right.mergeQueueRemovalId ?? null)
   );
 }
 
@@ -397,27 +402,34 @@ export const make = Effect.gen(function* () {
       ),
   );
 
-  const closed = (target: WatchTarget) =>
-    record(target, null, {
-      text: `Pull request #${target.link.number} (${target.link.url}) was closed, so T3 Code stopped watching it. Call watch_pull_request if it reopens.`,
-      notification: {
-        source: { kind: "monitor" },
-        outcome: "updated",
-        summary: `#${target.link.number}: closed, stopped watching`,
-      },
-    }).pipe(
+  // The wake and the watch's end commit together, so later reads find no watch to wake again.
+  const finished = (
+    target: WatchTarget,
+    detail: Pick<PullRequestDetail, "baseBranch" | "mergeCommitSha"> & {
+      readonly state: "merged" | "closed";
+    },
+  ) =>
+    record(
+      target,
+      null,
+      pullRequestEndedMessage({
+        number: target.link.number,
+        url: target.link.url,
+        baseBranch: detail.baseBranch,
+        state: detail.state,
+        mergeCommitSha: detail.mergeCommitSha ?? null,
+      }),
+    ).pipe(
       Effect.tap(() => woke(target)),
-      Effect.tap(() => ended(target, "closed")),
+      Effect.tap(() => ended(target, detail.state)),
     );
 
-  const endsWithoutRead = ({ thread, link }: WatchTarget): WatchEndReason | undefined =>
-    link.snapshot?.state === "merged"
-      ? "merged"
-      : thread.settledOverride === "settled" || thread.settledAt !== null
-        ? "settled"
-        : thread.lineage.relationshipToParent === "subagent"
-          ? "subagent"
-          : undefined;
+  const endsWithoutRead = ({ thread }: WatchTarget): WatchEndReason | undefined =>
+    thread.settledOverride === "settled" || thread.settledAt !== null
+      ? "settled"
+      : thread.lineage.relationshipToParent === "subagent"
+        ? "subagent"
+        : undefined;
 
   const eachTarget = <E>(
     group: WatchGroup,
@@ -486,15 +498,31 @@ export const make = Effect.gen(function* () {
       ],
       { concurrency: 2 },
     );
-    // Activity failures must not cancel or hide a permanent detail failure.
+    // Activity failures must not cancel or hide a permanent detail failure. An ended pull request
+    // needs no activity, so its failure must not hold back the last wake.
     const read = Exit.isFailure(detailRead)
       ? Exit.failCause(detailRead.cause)
-      : Exit.isFailure(activityRead)
-        ? Exit.failCause(activityRead.cause)
-        : Exit.succeed([detailRead.value, activityRead.value] as const);
+      : Exit.isSuccess(activityRead)
+        ? Exit.succeed([detailRead.value, activityRead.value] as const)
+        : detailRead.value.state === "open"
+          ? Exit.failCause(activityRead.cause)
+          : Exit.succeed([detailRead.value, Option.none<PullRequestActivity>()] as const);
     if (Exit.isFailure(read)) {
       if (Cause.hasInterruptsOnly(read.cause)) return yield* Effect.failCause(read.cause);
       lastReads.delete(group.key);
+      // A watch holds settlement, so one the sync already saw end must not wait out a failing host.
+      if (group.targets.every(({ link }) => (link.snapshot?.state ?? "open") !== "open")) {
+        return yield* eachTarget(group, (target) => {
+          const snapshot = target.link.snapshot;
+          return snapshot === null || snapshot.state === "open"
+            ? Effect.void
+            : finished(target, {
+                state: snapshot.state,
+                baseBranch: snapshot.baseBranch,
+                mergeCommitSha: null,
+              });
+        });
+      }
       const reason = providerFailureReason(read.cause);
       if (reason === "rate-limited") return;
       // Transport and host failures can outlast the failure limit; keep the watch for recovery.
@@ -526,11 +554,8 @@ export const make = Effect.gen(function* () {
     }
     if (detail.state !== "open") {
       lastReads.delete(group.key);
-      return yield* eachTarget(group, (target) =>
-        detail.state === "closed"
-          ? closed(target)
-          : record(target, null).pipe(Effect.tap(() => ended(target, "merged"))),
-      );
+      const state = detail.state;
+      return yield* eachTarget(group, (target) => finished(target, { ...detail, state }));
     }
 
     // Never advance the remark watermark past comments an incomplete read could have missed.

@@ -478,3 +478,106 @@ it.effect("sql: an unsettled-only shell read skips settled threads", () =>
     assert.equal(all.threads.length, 4);
   }).pipe(Effect.provide(layerSql)),
 );
+
+it.effect("sql: a watched merge settles only after its wake turn ends with nothing left", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const watch = {
+      startedAt: DateTime.formatIso(old),
+      headSha: "abc1234",
+      failedChecks: [],
+      passed: true,
+      passedChecks: ["test"],
+      remarksThrough: DateTime.formatIso(old),
+      remarkIds: [],
+      conflicting: false,
+      wakes: 0,
+    };
+    const link = (number: number, state: "open" | "merged") => ({
+      host: "github.com",
+      repository: "acme/app",
+      number,
+      url: `https://github.com/acme/app/pull/${number}`,
+      source: "agent" as const,
+      linkedAt: DateTime.formatIso(old),
+      snapshot: {
+        state,
+        title: "Pull request",
+        headBranch: "feature",
+        baseBranch: "main",
+        isDraft: false,
+        updatedAt: DateTime.formatIso(now),
+        syncedAt: DateTime.formatIso(now),
+        ...(state === "merged" ? { mergedAt: DateTime.formatIso(now) } : {}),
+      },
+      stack: null,
+    });
+    const merged = link(1, "merged");
+    const wake = Effect.fn(function* (threadId: ThreadId, at: DateTime.Utc) {
+      yield* store.apply({
+        id: EventId.make(`event:wake:${threadId}`),
+        type: "message.updated",
+        threadId,
+        occurredAt: at,
+        payload: {
+          createdBy: "agent",
+          creationSource: "server",
+          id: MessageId.make(`message:wake:${threadId}`),
+          threadId,
+          runId: null,
+          nodeId: null,
+          role: "user",
+          text: "Pull request #1 merged.",
+          attachments: [],
+          streaming: false,
+          createdAt: at,
+          updatedAt: at,
+        },
+      });
+    });
+
+    // The sync reactor saw the merge, and the watch has not woken the agent with it yet.
+    const unwoken = yield* createThread("watched-merge", {
+      pullRequests: [{ ...merged, watch }],
+    });
+    yield* createRun(unwoken);
+    // The watch ended with its wake, which has not started a turn.
+    const woken = yield* createThread("wake-queued", {
+      pullRequests: [{ ...merged, endedWatch: watch }],
+    });
+    yield* createRun(woken);
+    yield* wake(woken, now);
+    const working = yield* createThread("wake-running", {
+      pullRequests: [{ ...merged, endedWatch: watch }],
+    });
+    yield* wake(working, old);
+    yield* createRun(working, "running");
+    // The wake turn opened and watched the next pull request.
+    const next = yield* createThread("wake-watching-next", {
+      pullRequests: [
+        { ...merged, endedWatch: watch },
+        { ...link(2, "open"), watch },
+      ],
+    });
+    yield* wake(next, old);
+    yield* createRun(next);
+    const quiet = yield* createThread("wake-done", {
+      pullRequests: [{ ...merged, endedWatch: watch }],
+    });
+    yield* wake(quiet, old);
+    yield* createRun(quiet);
+
+    const settling = (yield* store.getSettlementCandidates()).flatMap((thread) =>
+      resolveAutoSettlementAt({
+        thread,
+        pullRequest: null,
+        nowMs: DateTime.toEpochMillis(now),
+        autoSettleAfterDays: null,
+        autoSettleOnMerge: true,
+      }) === null
+        ? []
+        : [thread.id],
+    );
+    assert.deepEqual(settling, [quiet]);
+  }).pipe(Effect.provide(layerSql)),
+);

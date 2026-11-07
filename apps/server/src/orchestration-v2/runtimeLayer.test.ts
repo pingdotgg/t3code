@@ -3504,6 +3504,175 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  // An ended pull request's reads can fail without holding back the last wake: the activity read
+  // on "activity fails", every detail read on "host unreadable".
+  it.effect.each(["activity fails", "host unreadable"] as const)(
+    "wakes once when the merge queue drops a watched PR and once when it merges: %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make(`runtime-pull-request-watch-merged-${mode}`);
+        const projectId = ProjectId.make(`pr-watch-merged-project-${mode}`);
+        yield* seedProject({
+          projectId,
+          title: "Watch merged",
+          workspaceRoot: "/workspace/watch-merged",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-merged-create-${mode}`),
+          threadId,
+          projectId,
+          title: "Watch merged",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const key = { host: "github.com", repository: "pingdotgg/t3code", number: 14 };
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-merged-start-${mode}`),
+          threadId,
+          ...key,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/14", source: "agent" },
+        });
+        const startedAt = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch
+          ?.startedAt;
+        if (startedAt === undefined) return yield* Effect.die(new Error("Watch missing."));
+
+        let host: Partial<PullRequestDetail> = {};
+        const hostFailure = (operation: string) =>
+          new PullRequestOperationError({
+            operation,
+            detail: "host read failed",
+            cause: new PullRequestProviderError({
+              provider: SourceControlProviderKind.make("github"),
+              operation,
+              reason: "failed",
+              detail: "host read failed",
+            }),
+          });
+        const failing = (operation: "detail" | "activity") =>
+          host.state === "merged" && (operation === "detail") === (mode === "host unreadable");
+        const reactor = yield* PullRequestWatchReactor.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              NodeCrypto.layer,
+              Layer.mock(PullRequestService.PullRequestService)({
+                watchFingerprint: () => Effect.succeed(null),
+                detail: () =>
+                  failing("detail")
+                    ? Effect.fail(hostFailure("detail"))
+                    : Effect.sync(() => ({
+                        ...watchedPullRequestDetail({ projectId, number: 14, at: startedAt }),
+                        checks: [
+                          {
+                            name: "test",
+                            status: "success" as const,
+                            description: null,
+                            url: null,
+                            required: true,
+                          },
+                        ],
+                        ...host,
+                      })),
+                activity: () =>
+                  failing("activity")
+                    ? Effect.fail(hostFailure("activity"))
+                    : Effect.succeed({
+                        comments: [],
+                        commentCount: 0,
+                        commentsTruncated: false,
+                        reviewThreads: [],
+                        commits: [],
+                      }),
+              }),
+            ),
+          ),
+        );
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sweep = TestClock.adjust("10 minutes").pipe(
+          Effect.andThen(reactor.sweep),
+          Effect.andThen(worker.drain()),
+        );
+        const wakes = Effect.map(
+          orchestrator.getThreadRecords(threadId, ["messages"]),
+          ({ messages }) =>
+            messages.flatMap((message) =>
+              message.notification === undefined || message.notification === null
+                ? []
+                : [{ summary: message.notification.summary, text: message.text }],
+            ),
+        );
+        const summaries = Effect.map(wakes, (all) => all.map((wake) => wake.summary));
+
+        yield* sweep;
+        assert.deepEqual(yield* summaries, ["#14: checks passed"]);
+
+        host = {
+          mergeQueueRemoval: {
+            id: "removal-1",
+            removedAt: DateTime.formatIso(yield* DateTime.now),
+            reason: "failed_checks",
+          },
+        };
+        yield* sweep;
+        yield* sweep;
+        assert.deepEqual(yield* summaries, ["#14: checks passed", "#14: left the merge queue"]);
+
+        // The sync reactor usually sees the merge first; the watch must still be the one to say so.
+        const mergedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: CommandId.make(`pr-watch-merged-sync-${mode}`),
+          threadId,
+          ...key,
+          snapshot: {
+            state: "merged",
+            title: "Watched pull request",
+            headBranch: "feature",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: mergedAt,
+            syncedAt: mergedAt,
+            mergedAt,
+          },
+          stack: null,
+        });
+        host = {
+          ...host,
+          state: "merged",
+          mergedAt,
+          mergeCommitSha: "0d7dc94c9085c736959eceae11673a2406286619",
+        };
+        yield* sweep;
+        yield* sweep;
+        yield* sweep;
+        const all = yield* wakes;
+        assert.deepEqual(
+          all.map((wake) => wake.summary),
+          ["#14: checks passed", "#14: left the merge queue", "#14: merged"],
+        );
+        assert.include(
+          all[2]?.text,
+          mode === "host unreadable"
+            ? "merged into main, so"
+            : "merged into main as 0d7dc94c9085c736959eceae11673a2406286619",
+        );
+        const link = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0];
+        assert.isUndefined(link?.watch);
+        assert.equal(link?.endedWatch?.mergeQueueRemovalId, "removal-1");
+      }),
+  );
+
   it.effect("finishes owed checks once after pending sweeps, a restart, and a re-watch", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

@@ -389,6 +389,40 @@ describe("evaluatePullRequestWatch", () => {
     );
   });
 
+  it("reports each merge queue removal once, and none from before the watch began", () => {
+    const removal = (id: string, removedAt: string) =>
+      detail({ mergeQueueRemoval: { id, removedAt, reason: "failed_checks" } });
+    const before = evaluatePullRequestWatch(
+      watch(),
+      removal("old", "2026-10-02T11:59:00Z"),
+      noRemarks,
+    );
+    assert.deepEqual(before.changes, []);
+    const first = evaluatePullRequestWatch(
+      before.next,
+      removal("first", "2026-10-02T12:10:00Z"),
+      noRemarks,
+    );
+    assert.deepEqual(first.changes, [{ kind: "dequeued", reason: "failed_checks" }]);
+    assert.deepEqual(
+      evaluatePullRequestWatch(first.next, removal("first", "2026-10-02T12:10:00Z"), noRemarks)
+        .changes,
+      [],
+    );
+    // A host that reports nothing this time keeps the removal it already told.
+    const unreported = evaluatePullRequestWatch(first.next, detail(), noRemarks);
+    assert.deepEqual(
+      evaluatePullRequestWatch(unreported.next, removal("first", "2026-10-02T12:10:00Z"), noRemarks)
+        .changes,
+      [],
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(first.next, removal("second", "2026-10-02T12:30:00Z"), noRemarks)
+        .changes,
+      [{ kind: "dequeued", reason: "failed_checks" }],
+    );
+  });
+
   it("does not spend the comment wake limit on check results", () => {
     const tired = watch({ headSha: "aaaaaaaaaa", wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 });
     const result = evaluatePullRequestWatch(

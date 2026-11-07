@@ -1834,6 +1834,12 @@ export const make = Effect.gen(function* () {
             observedAt,
             mergedAt: changeRequest.mergedAt,
             closedAt: changeRequest.closedAt,
+            ...(changeRequest.mergeCommitSha === undefined
+              ? {}
+              : { mergeCommitSha: changeRequest.mergeCommitSha }),
+            ...(changeRequest.mergeQueueRemoval === undefined
+              ? {}
+              : { mergeQueueRemoval: changeRequest.mergeQueueRemoval }),
             reviewers: changeRequest.reviewers,
             labels: changeRequest.labels,
             checks: changeRequest.checks,

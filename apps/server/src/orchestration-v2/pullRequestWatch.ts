@@ -19,7 +19,8 @@ export type PullRequestWatchChange =
   | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "no-checks"; readonly minutes: number }
-  | { readonly kind: "conflicting" };
+  | { readonly kind: "conflicting" }
+  | { readonly kind: "dequeued"; readonly reason: string | null };
 
 export interface PullRequestWatchReport {
   readonly changes: ReadonlyArray<PullRequestWatchChange>;
@@ -35,7 +36,13 @@ export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
   detail: Pick<
     PullRequestDetail,
-    "capabilities" | "headSha" | "checks" | "mergeability" | "viewer" | "author"
+    | "capabilities"
+    | "headSha"
+    | "checks"
+    | "mergeability"
+    | "viewer"
+    | "author"
+    | "mergeQueueRemoval"
   >,
   remarks: ReadonlyArray<PullRequestComment> | null,
   now: number,
@@ -136,6 +143,17 @@ export function evaluatePullRequestWatch(
   const conflicting =
     detail.mergeability === "unknown" ? toldConflict : detail.mergeability === "conflicting";
 
+  // A removal from before the watch began was the agent's to see when it started watching.
+  const removal = detail.mergeQueueRemoval ?? null;
+  if (
+    removal !== null &&
+    removal.id !== watch.mergeQueueRemovalId &&
+    Date.parse(removal.removedAt) >= Date.parse(watch.startedAt)
+  ) {
+    changes.push({ kind: "dequeued", reason: removal.reason });
+  }
+  const mergeQueueRemovalId = removal?.id ?? watch.mergeQueueRemovalId ?? null;
+
   const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
   const progress = headMoved || (changes.length > 0 && !commentsOnly);
   const wakes = (progress ? 0 : watch.wakes) + (commentsOnly ? 1 : 0);
@@ -153,6 +171,7 @@ export function evaluatePullRequestWatch(
       conflicting,
       wakes,
       checksAwaitedSince,
+      mergeQueueRemovalId,
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };
@@ -210,6 +229,10 @@ function changeLines(
       ];
     case "conflicting":
       return [`- The branch now conflicts with ${context.baseBranch}.`];
+    case "dequeued":
+      return [
+        `- It left the merge queue without merging${change.reason === null ? "" : ` (${change.reason.replaceAll("_", " ")})`}.`,
+      ];
   }
 }
 
@@ -219,6 +242,7 @@ const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   remarks: "new comments",
   "no-checks": "no checks reported",
   conflicting: "merge conflict",
+  dequeued: "left the merge queue",
 };
 
 export function pullRequestWatchMessage(input: {
@@ -242,7 +266,10 @@ export function pullRequestWatchMessage(input: {
       : "Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.",
   ].join("\n");
   const failed = changes.some(
-    (change) => change.kind === "checks-failed" || change.kind === "conflicting",
+    (change) =>
+      change.kind === "checks-failed" ||
+      change.kind === "conflicting" ||
+      change.kind === "dequeued",
   );
   const summary = changes.map((change) => SUMMARY[change.kind]);
   if (exhausted) summary.push("stopped watching");
@@ -256,6 +283,39 @@ export function pullRequestWatchMessage(input: {
           ? "completed"
           : "updated",
       summary: `#${input.number}: ${summary.join(", ")}`,
+    },
+  };
+}
+
+/** The one wake a watch ends with when its pull request merges or closes. */
+export function pullRequestEndedMessage(input: {
+  readonly number: number;
+  readonly url: string;
+  readonly baseBranch: string;
+  readonly state: "merged" | "closed";
+  readonly mergeCommitSha: string | null;
+}): { readonly text: string; readonly notification: OrchestrationV2Notification } {
+  const pullRequest = `Pull request #${input.number} (${input.url})`;
+  if (input.state === "closed") {
+    return {
+      text: `${pullRequest} was closed without merging, so T3 Code stopped watching it. Call watch_pull_request if it reopens.`,
+      notification: {
+        source: { kind: "monitor" },
+        outcome: "updated",
+        summary: `#${input.number}: closed without merging`,
+      },
+    };
+  }
+  const merged =
+    input.mergeCommitSha === null
+      ? `merged into ${input.baseBranch}`
+      : `merged into ${input.baseBranch} as ${input.mergeCommitSha}`;
+  return {
+    text: `${pullRequest} ${merged}, so T3 Code stopped watching it. Carry on with any work that was waiting for this merge. End your turn when you are done.`,
+    notification: {
+      source: { kind: "monitor" },
+      outcome: "completed",
+      summary: `#${input.number}: merged`,
     },
   };
 }
