@@ -33,6 +33,12 @@ export type ConnectionDriverProgress =
   | {
       readonly stage: Exclude<ConnectionAttemptStage, "preparing">;
       readonly prepared: PreparedConnection;
+    }
+  | {
+      // The socket opened; the stage stays synchronizing until the first snapshot.
+      readonly stage: "synchronizing";
+      readonly prepared: PreparedConnection;
+      readonly transportOpened: true;
     };
 
 export interface EnvironmentConnectionLease {
@@ -72,7 +78,9 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   connectRoute: (
     route: ConnectionRoute,
   ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, R | Scope.Scope>,
+  reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
 ) {
+  yield* reportProgress({ stage: "preparing" });
   const routes = usableRoutes(entry);
   const checks =
     routes.length === 1
@@ -93,6 +101,8 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     if (result._tag === "Failure") {
       if (result.failure._tag === "ConnectionTransientError") transient ??= result.failure;
       else blocked ??= result.failure;
+      // The failed route may have opened its socket; the next route starts over.
+      yield* reportProgress({ stage: "preparing" });
     }
     return result;
   });
@@ -188,7 +198,6 @@ export const make = Effect.gen(function* () {
       "connection.target.kind": target._tag,
       "connection.route.count": connectionRoutes(entry).length,
     });
-    yield* reportProgress({ stage: "preparing" });
     return yield* connectOverRoutes(
       entry,
       (route) => checkRoute(entry, route),
@@ -197,6 +206,8 @@ export const make = Effect.gen(function* () {
         yield* reportProgress({ stage: "opening", prepared });
         const session = yield* sessions.connect(prepared);
         yield* reportProgress({ stage: "synchronizing", prepared });
+        yield* session.opened;
+        yield* reportProgress({ stage: "synchronizing", prepared, transportOpened: true });
         yield* session.ready;
         // The server closes a socket when its session expires, unless the same key renewed it.
         if (prepared.httpAuthorization?._tag === "Dpop") {
@@ -214,6 +225,7 @@ export const make = Effect.gen(function* () {
         }
         return { prepared, session } satisfies EnvironmentConnectionLease;
       }),
+      reportProgress,
     );
   });
 
