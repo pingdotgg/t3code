@@ -137,6 +137,7 @@ import {
   allowsSinglePullRequestMerge,
   canDeletePullRequestBranch,
   isPullRequestConflicting,
+  pullRequestDetailPatchAfterAction,
   resolveBaseFreshness,
   resolvePullRequestMergeMethod,
   type PullRequestChatSubject,
@@ -347,6 +348,7 @@ export function PullRequestDetailPanel({
   const [threadPickerOpen, setThreadPickerOpen] = useState(false);
   const [openReviewRequest, setOpenReviewRequest] = useState(0);
   const {
+    recordActionOutcome,
     canWriteSourceControl,
     detailQuery,
     activityQuery,
@@ -687,6 +689,8 @@ export function PullRequestDetailPanel({
       onActed?.(action, "failed");
       return false;
     }
+    const outcome = pullRequestDetailPatchAfterAction(action);
+    if (outcome !== null) recordActionOutcome(outcome);
     if (action === "revert") {
       toastManager.add({ type: "success", title: `Revert ${terminology.singular} opened` });
     }

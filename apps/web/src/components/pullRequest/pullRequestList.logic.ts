@@ -886,7 +886,7 @@ export function reusePullRequestEntries<Entry extends PullRequestListEntry>(
     : out;
 }
 
-const PULL_REQUEST_OVERRIDE_TRUST_MS = 60_000;
+export const PULL_REQUEST_OVERRIDE_TRUST_MS = 60_000;
 
 /** Retire overrides only when returned rows agree; partial-feed absence proves nothing. */
 export function settlePullRequestOverrides<Entry extends PullRequestListEntry>(

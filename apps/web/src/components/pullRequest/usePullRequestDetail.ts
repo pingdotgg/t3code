@@ -19,9 +19,16 @@ import {
   useSharedPullRequestSummary,
 } from "~/state/pullRequests";
 import {
+  applyPullRequestDetailOverride,
+  expirePullRequestDetailOverride,
   readPullRequestDetailSnapshot,
+  recordPullRequestDetailOverride,
   resolveDisplayedPullRequestDetail,
+  settlePullRequestDetailOverride,
+  type PullRequestDetailOverride,
+  type PullRequestDetailPatch,
 } from "./pullRequestDetail.logic";
+import { PULL_REQUEST_OVERRIDE_TRUST_MS } from "./pullRequestList.logic";
 
 // Query atoms key on JSON order, so the panel and the row prefetch must build the ref here.
 export function pullRequestPanelReference(target: {
@@ -104,6 +111,7 @@ export function usePullRequestDetail(
   } else if (detailQuery.data !== null && detailQuery.data !== cachedDetail) {
     setCachedDetail(detailQuery.data);
   }
+  const [override, setOverride] = useState<PullRequestDetailOverride | null>(null);
   const observedSummary = useSharedPullRequestSummary(environmentId, reference);
   const activity = activityQuery.data;
   const resolvedCoreDetail = resolveDisplayedPullRequestDetail({
@@ -144,7 +152,7 @@ export function usePullRequestDetail(
               : sharedSummary.mergedAt,
           isDraft: sharedSummary.isDraft ?? resolvedCoreDetail.isDraft,
         };
-  const detail =
+  const fetchedDetail =
     coreDetail === null
       ? null
       : {
@@ -185,7 +193,21 @@ export function usePullRequestDetail(
           commits: activity?.commits ?? [],
           reactions: activity?.reactions ?? [],
         };
+  const settledOverride = settlePullRequestDetailOverride(override, fetchedDetail, scopeKey);
+  if (settledOverride !== override) setOverride(settledOverride);
+  const detail =
+    fetchedDetail === null ? null : applyPullRequestDetailOverride(fetchedDetail, settledOverride);
+  const recordActionOutcome = (patch: PullRequestDetailPatch) => {
+    const at = Date.now();
+    setOverride((previous) => recordPullRequestDetailOverride(previous, scopeKey, patch, at));
+    // A fetch that never agrees must not pin the confirmed outcome forever.
+    window.setTimeout(
+      () => setOverride((previous) => expirePullRequestDetailOverride(previous, at)),
+      PULL_REQUEST_OVERRIDE_TRUST_MS,
+    );
+  };
   return {
+    recordActionOutcome,
     canWriteSourceControl,
     detailQuery,
     activityQuery,

@@ -44,6 +44,11 @@ import {
   pullRequestPanelContext,
   threadPullRequestPanelTarget,
   latestPullRequestReviewOutcomes,
+  applyPullRequestDetailOverride,
+  expirePullRequestDetailOverride,
+  pullRequestDetailPatchAfterAction,
+  recordPullRequestDetailOverride,
+  settlePullRequestDetailOverride,
   newestPullRequestCommitAt,
   mergePullRequestThreadComments,
   orderPullRequestComments,
@@ -316,6 +321,95 @@ describe("review verdicts", () => {
         },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("confirmed action outcome on the detail", () => {
+  const scope = "env:project:host:repo#1";
+  const detail = { state: "open" as const, isDraft: true, autoMergeEnabled: false };
+  const at = 1_000_000;
+  const record = (patch: NonNullable<ReturnType<typeof pullRequestDetailPatchAfterAction>>) =>
+    recordPullRequestDetailOverride(null, scope, patch, at);
+
+  it("maps each action to the state it confirms, and leaves merge and the rest alone", () => {
+    expect(
+      (
+        ["ready", "draft", "close", "reopen", "enable-auto-merge", "disable-auto-merge"] as const
+      ).map(pullRequestDetailPatchAfterAction),
+    ).toEqual([
+      { isDraft: false },
+      { isDraft: true },
+      { state: "closed" },
+      { state: "open" },
+      { autoMergeEnabled: true },
+      { autoMergeEnabled: false },
+    ]);
+    expect(pullRequestDetailPatchAfterAction("merge")).toBeNull();
+  });
+
+  it("shows the outcome over the fetched detail", () => {
+    expect(applyPullRequestDetailOverride(detail, record({ isDraft: false }))).toMatchObject({
+      state: "open",
+      isDraft: false,
+    });
+    expect(applyPullRequestDetailOverride(detail, record({ state: "closed" })).state).toBe(
+      "closed",
+    );
+    expect(applyPullRequestDetailOverride(detail, null)).toBe(detail);
+  });
+
+  it("accumulates outcomes within a pull request and starts over for another", () => {
+    const first = record({ isDraft: false });
+    expect(recordPullRequestDetailOverride(first, scope, { state: "closed" }, at + 1)).toEqual({
+      scope,
+      at: { isDraft: at, state: at + 1 },
+      isDraft: false,
+      state: "closed",
+    });
+    expect(recordPullRequestDetailOverride(first, "other", { state: "closed" }, at + 1)).toEqual({
+      scope: "other",
+      at: { state: at + 1 },
+      state: "closed",
+    });
+  });
+
+  it("retires a field once the fetched detail agrees", () => {
+    const override = recordPullRequestDetailOverride(
+      record({ isDraft: false }),
+      scope,
+      { autoMergeEnabled: true },
+      at,
+    );
+    expect(settlePullRequestDetailOverride(override, detail, scope)).toBe(override);
+    expect(settlePullRequestDetailOverride(override, { ...detail, isDraft: false }, scope)).toEqual(
+      { scope, at: { autoMergeEnabled: at }, autoMergeEnabled: true },
+    );
+    expect(
+      settlePullRequestDetailOverride(
+        override,
+        { ...detail, isDraft: false, autoMergeEnabled: true },
+        scope,
+      ),
+    ).toBeNull();
+    expect(settlePullRequestDetailOverride(override, detail, "other")).toBeNull();
+    expect(settlePullRequestDetailOverride(override, null, scope)).toBe(override);
+  });
+
+  it("expires each field on its own deadline", () => {
+    const override = recordPullRequestDetailOverride(
+      record({ isDraft: false }),
+      scope,
+      { autoMergeEnabled: true },
+      at + 1,
+    );
+    expect(expirePullRequestDetailOverride(override, at)).toEqual({
+      scope,
+      at: { autoMergeEnabled: at + 1 },
+      autoMergeEnabled: true,
+    });
+    expect(
+      expirePullRequestDetailOverride(expirePullRequestDetailOverride(override, at), at + 1),
+    ).toBeNull();
   });
 });
 

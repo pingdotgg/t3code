@@ -1491,3 +1491,117 @@ export function resolveDisplayedPullRequestDetail(input: {
     ? input.cached
     : null;
 }
+
+export interface PullRequestDetailPatch {
+  readonly state?: PullRequestState;
+  readonly isDraft?: boolean;
+  readonly autoMergeEnabled?: boolean;
+}
+
+export interface PullRequestDetailOverride extends PullRequestDetailPatch {
+  readonly scope: string;
+  readonly at: Partial<Record<keyof PullRequestDetailPatch, number>>;
+}
+
+const PATCH_FIELDS = ["state", "isDraft", "autoMergeEnabled"] as const;
+
+export function pullRequestDetailPatchAfterAction(
+  action: PullRequestAction,
+): PullRequestDetailPatch | null {
+  switch (action) {
+    case "ready":
+      return { isDraft: false };
+    case "draft":
+      return { isDraft: true };
+    case "close":
+      return { state: "closed" };
+    case "reopen":
+      return { state: "open" };
+    case "enable-auto-merge":
+      return { autoMergeEnabled: true };
+    case "disable-auto-merge":
+      return { autoMergeEnabled: false };
+    default:
+      return null;
+  }
+}
+
+export function recordPullRequestDetailOverride(
+  previous: PullRequestDetailOverride | null,
+  scope: string,
+  patch: PullRequestDetailPatch,
+  now: number,
+): PullRequestDetailOverride {
+  const base = previous?.scope === scope ? previous : null;
+  return {
+    ...base,
+    ...patch,
+    scope,
+    at: {
+      ...base?.at,
+      ...Object.fromEntries(
+        PATCH_FIELDS.filter((f) => patch[f] !== undefined).map((f) => [f, now]),
+      ),
+    },
+  };
+}
+
+function retainPullRequestDetailOverride(
+  override: PullRequestDetailOverride,
+  keep: (field: (typeof PATCH_FIELDS)[number]) => boolean,
+): PullRequestDetailOverride | null {
+  const held = PATCH_FIELDS.filter((f) => override[f] !== undefined);
+  const kept = held.filter(keep);
+  if (kept.length === 0) return null;
+  if (kept.length === held.length) return override;
+  return {
+    scope: override.scope,
+    ...Object.fromEntries(kept.map((f) => [f, override[f]])),
+    at: Object.fromEntries(kept.map((f) => [f, override.at[f]])),
+  };
+}
+
+/** Drop the fields stamped at `at`, leaving fields recorded by later actions. */
+export function expirePullRequestDetailOverride(
+  override: PullRequestDetailOverride | null,
+  at: number,
+): PullRequestDetailOverride | null {
+  return override === null
+    ? null
+    : retainPullRequestDetailOverride(override, (f) => override.at[f] !== at);
+}
+
+type OverridableDetail = Pick<PullRequestDetail, "state" | "isDraft" | "autoMergeEnabled">;
+
+export function applyPullRequestDetailOverride<Detail extends OverridableDetail>(
+  detail: Detail,
+  override: PullRequestDetailOverride | null,
+): Detail {
+  if (override === null) return detail;
+  const { state, isDraft, autoMergeEnabled } = override;
+  return {
+    ...detail,
+    ...(state === undefined ? {} : { state }),
+    ...(isDraft === undefined ? {} : { isDraft }),
+    ...(autoMergeEnabled === undefined ? {} : { autoMergeEnabled }),
+  };
+}
+
+/** Drop what the fetched detail now agrees with; the rest holds until it expires. */
+export function settlePullRequestDetailOverride(
+  override: PullRequestDetailOverride | null,
+  detail: OverridableDetail | null,
+  scope: string,
+): PullRequestDetailOverride | null {
+  if (override === null) return null;
+  if (override.scope !== scope) return null;
+  if (detail === null) return override;
+  const { state, isDraft, autoMergeEnabled } = override;
+  const open = {
+    state: state !== undefined && detail.state !== state,
+    isDraft: isDraft !== undefined && detail.isDraft !== isDraft,
+    autoMergeEnabled:
+      autoMergeEnabled !== undefined && detail.autoMergeEnabled !== autoMergeEnabled,
+  };
+  return retainPullRequestDetailOverride(override, (f) => open[f]);
+}
