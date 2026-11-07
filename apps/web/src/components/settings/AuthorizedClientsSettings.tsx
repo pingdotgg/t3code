@@ -54,6 +54,7 @@ import {
   type ServerClientSessionRecord,
   type ServerPairingLinkRecord,
 } from "~/environments/primary";
+import { requestConfirmDialog } from "~/confirmDialog";
 import { authEnvironment } from "~/state/auth";
 import { readEnvironmentScope } from "~/state/session";
 import { useManagedPolicy, usePrimaryManagedPolicy } from "~/state/managedPolicy";
@@ -639,13 +640,21 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
     setPairingScopes((current) => togglePairingScopeSelection(current, scope, checked));
   };
 
+  const handleRevokeOtherClients = async () => {
+    const confirmed = await requestConfirmDialog(
+      "Revoke every other paired client?\nThey will need a new pairing link before reconnecting.",
+      { variant: "destructive" },
+    );
+    if (confirmed === true) onRevokeOtherClients();
+  };
+
   return (
     <div className="flex items-center gap-2">
       <Button
         size="xs"
         variant="destructive-outline"
         disabled={isRevokingOtherClients || !canRevokeOtherClients(clientSessions)}
-        onClick={() => void onRevokeOtherClients()}
+        onClick={() => void handleRevokeOtherClients()}
       >
         {isRevokingOtherClients ? "Revoking…" : "Revoke others"}
       </Button>
