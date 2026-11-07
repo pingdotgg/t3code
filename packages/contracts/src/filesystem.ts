@@ -27,6 +27,12 @@ export const FilesystemGetMetadataResult = Schema.Struct({
 export type FilesystemGetMetadataResult = typeof FilesystemGetMetadataResult.Type;
 
 export const FilesystemBrowseInput = Schema.Struct({
+  searchQuery: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
+  searchRoots: Schema.optionalKey(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH))).check(
+      Schema.isMaxLength(32),
+    ),
+  ),
   partialPath: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
   cwd: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH))),
 });
@@ -39,6 +45,7 @@ export const FilesystemBrowseEntry = Schema.Struct({
 export type FilesystemBrowseEntry = typeof FilesystemBrowseEntry.Type;
 
 export const FilesystemBrowseResult = Schema.Struct({
+  recursive: Schema.optionalKey(Schema.Boolean),
   parentPath: TrimmedNonEmptyString,
   entries: Schema.Array(FilesystemBrowseEntry),
 });

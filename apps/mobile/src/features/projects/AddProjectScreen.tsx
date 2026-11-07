@@ -45,6 +45,7 @@ import {
 } from "@t3tools/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
+  ensureBrowseDirectoryPath,
   inferProjectTitleFromPath,
   isWindowsPlatform,
 } from "@t3tools/client-runtime/state/projects";
@@ -113,6 +114,7 @@ interface EnvironmentOption {
   readonly platform: string;
   readonly machine: EnvironmentMachineKind;
   readonly baseDirectory: string | null;
+  readonly searchDirectories?: ReadonlyArray<string>;
   readonly newProjectsRoot: string | null;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
@@ -408,6 +410,7 @@ function useEnvironmentOptions(
         platform: platformFromOs(config?.environment.platform.os ?? null),
         machine: resolveEnvironmentMachineKind(config ?? null),
         baseDirectory: config?.settings.addProjectBaseDirectory ?? null,
+        searchDirectories: config?.settings.projectSearchDirectories ?? [],
         newProjectsRoot: config?.newProjectsRoot ?? null,
         connectionState: runtime?.connectionState ?? "available",
         connectionError: runtime?.connectionError ?? null,
@@ -926,9 +929,24 @@ function FolderBrowser(props: {
   readonly pinnedDirectoryName?: string;
   readonly cloning?: boolean;
 }) {
-  const browsePath = getFilesystemBrowsePath(props.pathInput, props.environment.platform);
+  const browsePath = getFilesystemBrowsePath(
+    props.pathInput,
+    props.environment.platform,
+    true,
+    props.cloning ? undefined : props.environment.baseDirectory || "~/",
+  );
   const browseInput =
-    browsePath.directoryPath.length > 0 ? { partialPath: browsePath.directoryPath } : null;
+    browsePath.directoryPath.length > 0
+      ? {
+          partialPath: browsePath.directoryPath,
+          ...(!props.cloning && browsePath.filterQuery && !browsePath.filterQuery.startsWith(".")
+            ? {
+                searchQuery: browsePath.filterQuery,
+                searchRoots: props.environment.searchDirectories ?? [],
+              }
+            : {}),
+        }
+      : null;
   const fileAccessSession = useEnvironmentQuery(
     environmentSession.sessionStateAtom(props.environment.environmentId),
   );
@@ -953,10 +971,10 @@ function FolderBrowser(props: {
     ? browsePath.filterQuery.toLowerCase() === pinnedDirectoryName.toLowerCase()
     : browsePath.filterQuery === pinnedDirectoryName;
   const browseFilterQuery = pinnedDirectoryMatches ? "" : browsePath.filterQuery;
-  const { visibleEntries: visibleBrowseEntries } = filterFilesystemBrowseEntries(
-    browseState.data?.entries ?? [],
-    browseFilterQuery,
-  );
+  const visibleBrowseEntries = browseState.data?.recursive
+    ? browseState.data.entries
+    : filterFilesystemBrowseEntries(browseState.data?.entries ?? [], browseFilterQuery)
+        .visibleEntries;
 
   return (
     <>
@@ -976,8 +994,13 @@ function FolderBrowser(props: {
       )}
       <ListSection>
         {fileAccess.isPending || (browseState.isPending && browseState.data === null) ? (
-          <View className="items-center py-5">
+          <View className="flex-row items-center justify-center gap-2 px-4 py-5">
             <AppActivityIndicator colorClassName="accent-icon-muted" />
+            <Text className="shrink text-sm text-foreground-muted" numberOfLines={1}>
+              {browseInput?.searchQuery
+                ? `Searching folders for “${browseInput.searchQuery}”…`
+                : "Loading folders…"}
+            </Text>
           </View>
         ) : null}
         {browsePath.canBrowseUp ? (
@@ -1018,8 +1041,10 @@ function FolderBrowser(props: {
             right={null}
             onPress={() => {
               void props.navigateToBrowsePath({
-                browseDirectoryPath: browsePath.directoryPath,
-                selectedDirectoryName: entry.name,
+                browseDirectoryPath: browseState.data?.recursive
+                  ? ensureBrowseDirectoryPath(entry.fullPath)
+                  : browsePath.directoryPath,
+                ...(browseState.data?.recursive ? {} : { selectedDirectoryName: entry.name }),
               });
             }}
           />
