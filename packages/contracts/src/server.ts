@@ -607,6 +607,18 @@ export const ServerEventLoopStall = Schema.Struct({
 });
 export type ServerEventLoopStall = typeof ServerEventLoopStall.Type;
 
+export const TailscaleServeFailure = Schema.Literals(["permission-denied", "unknown"]);
+export type TailscaleServeFailure = typeof TailscaleServeFailure.Type;
+
+export function tailscaleServeFailureMessage(
+  failure: TailscaleServeFailure | null | undefined,
+): string | null {
+  if (failure === undefined || failure === null) return null;
+  return failure === "permission-denied"
+    ? "Tailscale denied permission to set up HTTPS. On the host, grant the account running T3 Code permission to manage Tailscale (on Linux: sudo tailscale set --operator=<account>), then restart the T3 Code backend."
+    : "Tailscale HTTPS setup failed on the host. Check that Tailscale is running and signed in, and that MagicDNS and HTTPS certificates are enabled for the tailnet, then restart the T3 Code backend.";
+}
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -619,6 +631,7 @@ export const ServerConfig = Schema.Struct({
   remoteOpenTargets: Schema.optionalKey(ForwardCompatibleArray(RemoteOpenTarget)),
   /** Hints only; verify each address answers as this environment. */
   directEndpoints: Schema.optionalKey(ForwardCompatibleArray(ServerDirectEndpoint)),
+  tailscaleServeFailure: Schema.optionalKey(Schema.NullOr(TailscaleServeFailure)),
   observability: ServerObservability,
   settings: ServerSettings,
   /** Present when an administrator's policy file manages this environment. */

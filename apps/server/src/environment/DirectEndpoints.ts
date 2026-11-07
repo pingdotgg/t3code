@@ -1,6 +1,8 @@
-import type { ServerDirectEndpoint } from "@t3tools/contracts";
+import type { ServerDirectEndpoint, TailscaleServeFailure } from "@t3tools/contracts";
 import {
   buildTailscaleHttpsBaseUrl,
+  ensureTailscaleServe,
+  type TailscaleCommandError,
   probeTailscaleHttpsEndpoint,
   readTailscaleStatus,
 } from "@t3tools/tailscale";
@@ -10,6 +12,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeNet from "node:net";
@@ -35,6 +39,13 @@ const TAILSCALE_ENDPOINT_TIMEOUT = Duration.seconds(3);
 export class DirectEndpoints extends Context.Service<
   DirectEndpoints,
   {
+    readonly configureTailscaleServe: (input: {
+      readonly localPort: number;
+      readonly servePort?: number;
+      readonly localHost?: string;
+    }) => Effect.Effect<void, TailscaleCommandError>;
+    readonly tailscaleServeFailure: Effect.Effect<TailscaleServeFailure | null>;
+    readonly tailscaleServeFailureChanges: Stream.Stream<TailscaleServeFailure | null>;
     readonly resolveAvailable: () => Effect.Effect<ReadonlyArray<ServerDirectEndpoint>>;
     readonly resolve: () => Effect.Effect<ReadonlyArray<ServerDirectEndpoint>>;
   }
@@ -130,6 +141,24 @@ export const make = Effect.gen(function* () {
     : Effect.succeed(false);
   yield* Effect.forkDetach(onCloudVm);
 
+  const failure = yield* SubscriptionRef.make<TailscaleServeFailure | null>(null);
+  const configureTailscaleServe = Effect.fn("DirectEndpoints.configureTailscaleServe")(
+    (input: Parameters<typeof ensureTailscaleServe>[0]) =>
+      ensureTailscaleServe(input).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.tap(() => SubscriptionRef.set(failure, null)),
+        Effect.tapError((error) =>
+          SubscriptionRef.set(
+            failure,
+            error._tag === "TailscaleCommandExitError" &&
+              error.stderrDiagnostic === "permission-denied"
+              ? "permission-denied"
+              : "unknown",
+          ),
+        ),
+      ),
+  );
+
   const servedEndpoint = yield* Ref.make<Option.Option<string>>(Option.none());
   const resolveAvailable = Effect.fn("DirectEndpoints.resolveAvailable")(function* () {
     const endpoints = [
@@ -168,11 +197,15 @@ export const make = Effect.gen(function* () {
         Effect.provideService(HttpClient.HttpClient, httpClient),
       );
       yield* Ref.set(servedEndpoint, servedUrl);
+      if (Option.isSome(servedUrl)) yield* SubscriptionRef.set(failure, null);
     }
     return yield* resolveAvailable();
   });
 
   return DirectEndpoints.of({
+    configureTailscaleServe,
+    tailscaleServeFailure: SubscriptionRef.get(failure),
+    tailscaleServeFailureChanges: SubscriptionRef.changes(failure).pipe(Stream.changes),
     resolveAvailable,
     resolve: Effect.fn("DirectEndpoints.resolve")(function () {
       return resolve;
