@@ -693,6 +693,8 @@ export default function ChatView(props: ChatViewProps) {
   }, [isWorkspaceFileDragActive]);
   const prefersPlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const isMobileViewport = useMediaQuery("max-sm");
+  // Focusing the composer without a tap raises the on-screen keyboard on touch devices.
+  const isCoarsePointer = useMediaQuery({ pointer: "coarse" });
   const [workspaceLayoutElement, setWorkspaceLayoutElement] = useState<HTMLDivElement | null>(null);
   const threadPanelPopoverAnchorRef = useRef<HTMLElement | null>(null);
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
@@ -2129,20 +2131,34 @@ export default function ChatView(props: ChatViewProps) {
     setTimelineAnchor,
   });
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to focus the composer DOM element when a thread opens with the terminal closed
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to focus the composer DOM element when a thread opens with the terminal closed on a fine pointer
   useEffect(() => {
-    if (embedded || !activeThread?.id || terminalUiState.terminalOpen) return;
+    if (embedded || !activeThread?.id || terminalUiState.terminalOpen || isCoarsePointer) return;
     const frame = window.requestAnimationFrame(() => {
       focusComposerStable();
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, embedded, focusComposerStable, terminalUiState.terminalOpen]);
+  }, [
+    activeThread?.id,
+    embedded,
+    focusComposerStable,
+    isCoarsePointer,
+    terminalUiState.terminalOpen,
+  ]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener that refocuses the composer after the window regains focus
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener that refocuses the composer after the window regains focus on a fine pointer
   useEffect(() => {
-    if (embedded || !activeThread?.id || terminalUiState.terminalOpen || isMobileViewport) return;
+    if (
+      embedded ||
+      !activeThread?.id ||
+      terminalUiState.terminalOpen ||
+      isMobileViewport ||
+      isCoarsePointer
+    ) {
+      return;
+    }
     let frame: number | null = null;
     const onWindowFocus = () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
@@ -2169,6 +2185,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThread?.id,
     embedded,
     focusComposerStable,
+    isCoarsePointer,
     isMobileViewport,
     terminalUiState.terminalOpen,
   ]);

@@ -17,9 +17,10 @@ import {
   ENVIRONMENT_ID,
   PROJECT_ID,
   installFakeEnvironment,
+  threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
-import { render } from "../../test/render";
+import { fakeTimers, render } from "../../test/render";
 
 // The socket is the only fake layer; see test/appScenarios.renders.tsx.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
@@ -64,4 +65,70 @@ it("a new draft does not load its reserved thread before the server lists it", a
     .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
+});
+
+async function openAtTabletSize(router: ReturnType<typeof getRouter>) {
+  // iPad Pro 11 in landscape: the desktop layout, above max-sm.
+  await page.viewport(1194, 834);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  await router.load();
+  return render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+}
+
+// ChatView waits two frames after window focus before refocusing the composer.
+function returnToWindow() {
+  window.dispatchEvent(new FocusEvent("focus"));
+  vi.advanceTimersToNextFrame();
+  vi.advanceTimersToNextFrame();
+}
+
+it("opening a thread or returning to the window with a fine pointer focuses the composer", async () => {
+  const thread = threadWithHistory("thread-29469-fine", 1);
+  using _environment = installFakeEnvironment([thread]);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await using _app = await openAtTabletSize(router);
+  const composer = page.getByTestId("composer-editor");
+
+  await expect.element(composer).toHaveFocus();
+
+  composer.element().blur();
+  using _timers = fakeTimers();
+  returnToWindow();
+  await expect.element(composer).toHaveFocus();
+});
+
+it("opening a thread or returning to the window on a touch tablet does not focus the composer", async () => {
+  const realMatchMedia = window.matchMedia.bind(window);
+  using _touch = vi
+    .spyOn(window, "matchMedia")
+    .mockImplementation((query) => realMatchMedia(query === "(pointer: coarse)" ? "all" : query));
+  const first = threadWithHistory("thread-29469-a", 1);
+  const second = threadWithHistory("thread-29469-b", 1);
+  using _environment = installFakeEnvironment([first, second]);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${first.id}`] }),
+  );
+  await using _app = await openAtTabletSize(router);
+  const composer = page.getByTestId("composer-editor");
+  await expect.element(page.getByText(`Answer 0 for ${first.id}.`)).toBeVisible();
+
+  // Fake frames hold the next thread entry's focus frame until the test advances it.
+  using _timers = fakeTimers();
+  // The shell subscription outlives each render, so the sidebar lists only the first test's threads.
+  router.history.push(`/${ENVIRONMENT_ID}/${second.id}`);
+  await expect.element(page.getByText(`Answer 0 for ${second.id}.`)).toBeVisible();
+  vi.advanceTimersToNextFrame();
+  // Focusing the editor raises the on-screen keyboard, which shrinks the page on iPadOS.
+  expect(document.activeElement).not.toBe(composer.element());
+
+  returnToWindow();
+  expect(document.activeElement).not.toBe(composer.element());
 });
