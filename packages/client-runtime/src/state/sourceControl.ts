@@ -1,4 +1,5 @@
 import {
+  repositoryGroupingKeyOf,
   WS_METHODS,
   type EnvironmentId,
   type SourceControlDiscoveryResult,
@@ -14,6 +15,7 @@ import {
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as Persistence from "../platform/persistence.ts";
+import type { EnvironmentProject } from "./models.ts";
 import type {
   SourceControlAccount,
   SourceControlAccountsByEnvironment,
@@ -54,9 +56,20 @@ export function createSourceControlEnvironmentAtoms<R, E>(
   );
   return {
     discovery,
-    /** Verified logins for each listed environment, for labelling repositories the user owns. */
-    accounts: (environmentIds: Iterable<EnvironmentId>) =>
-      accountsFamily(JSON.stringify([...new Set(environmentIds)].sort())),
+    /** Verified logins where a repository has several checkouts, for labelling ones the user owns. */
+    accounts: (
+      projects: ReadonlyArray<Pick<EnvironmentProject, "environmentId" | "repositoryIdentity">>,
+    ) => {
+      // A lone checkout keeps its title, so only shared repositories need the discovery probe.
+      const checkouts = new Map<string, EnvironmentId[]>();
+      for (const { environmentId, repositoryIdentity } of projects) {
+        if (!repositoryIdentity) continue;
+        const key = repositoryGroupingKeyOf(repositoryIdentity);
+        checkouts.set(key, [...(checkouts.get(key) ?? []), environmentId]);
+      }
+      const environmentIds = [...checkouts.values()].filter((ids) => ids.length > 1).flat();
+      return accountsFamily(JSON.stringify([...new Set(environmentIds)].sort()));
+    },
     appAccess: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:source-control:app-access",
       tag: WS_METHODS.sourceControlAppAccess,

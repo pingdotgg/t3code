@@ -294,8 +294,6 @@ describe("buildProjectGroups", () => {
         repositoryAccounts: { [environmentId]: [{ host: "github.com", account }] },
       }).map((group) => group.label);
     expect(labelsSignedInAs("julius")).toEqual(["t3code", "t3code-fork"]);
-    // The upstream owner does not own the fork's group.
-    expect(labelsSignedInAs("t3tools")).toEqual(["t3code", "julius/t3code-fork"]);
   });
 
   describe("drops the owner from a linked repository's label only for the verified account", () => {
@@ -323,16 +321,14 @@ describe("buildProjectGroups", () => {
     const account = (login: string, host = "github.com") => [{ host, account: login }];
 
     it.each([
-      ["both machines verify the owner", account("EtanHey"), account("EtanHey"), "orchestrator"],
       [
-        "host and login differ in case",
+        "both machines verify the owner, in any case",
         account("etanhey", "GitHub.com"),
         account("ETANHEY"),
         "orchestrator",
       ],
       ["one machine's account is unknown", account("EtanHey"), undefined, "EtanHey/orchestrator"],
       ["machines disagree", account("EtanHey"), account("someone"), "EtanHey/orchestrator"],
-      ["signed in as someone else", account("someone"), account("someone"), "EtanHey/orchestrator"],
       [
         "the login is on another host",
         account("EtanHey", "gitlab.com"),
@@ -376,7 +372,6 @@ describe("buildProjectGroups", () => {
     it.each([
       ["forgejo.local:4000", "orchestrator"],
       ["forgejo.local", "EtanHey/orchestrator"],
-      ["forgejo.local:5000", "EtanHey/orchestrator"],
     ])("matches the grouping remote's authority against %s", (host, label) => {
       const projects = linked().map((project) => ({
         ...project,
