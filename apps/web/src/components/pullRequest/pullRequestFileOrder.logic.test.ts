@@ -85,6 +85,18 @@ describe("orderDiffFiles", () => {
     ]);
   });
 
+  it("resolves a specifier carrying a bundler query such as ?worker", () => {
+    expect(
+      order([file("src/a.js", ['import Worker from "./z.js?worker";']), file("src/z.js")]),
+    ).toEqual(["src/z.js", "src/a.js"]);
+    expect(
+      order([
+        file("src/a.ts", ['import url from "~/lib/b.logic?url#hash";']),
+        file("lib/b.logic.ts"),
+      ]),
+    ).toEqual(["lib/b.logic.ts", "src/a.ts"]);
+  });
+
   it("reads require and bare imports too", () => {
     expect(
       order([
