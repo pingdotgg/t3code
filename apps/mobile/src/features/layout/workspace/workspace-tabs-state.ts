@@ -116,6 +116,11 @@ export function shouldRestoreNativeSearch(tab: WorkspaceTabState, keepsEmptySear
   return tab.searchMode === "active" || tab.query !== "" || keepsEmptySearchOpen;
 }
 
+/** Settings list filter follows the open search session only. */
+export function settingsSearchQuery(tab: WorkspaceTabState) {
+  return tab.searchMode === "resting" ? "" : tab.query;
+}
+
 export const WORKSPACE_TOOLBAR = { height: 48, expandedGap: 10, edge: 16, gap: 8 };
 export const WORKSPACE_DOCK = { height: 48, tabsWidth: 176, gap: 12, bottomGap: 6 };
 

@@ -87,10 +87,28 @@ export function WorkspaceToolbar(props: {
     tab.searchMode === "resting"
       ? enterSearch()
       : workspace.dispatch({ type: "search", tab: selectedTab });
+  // Integrated Settings search collapses on blur; end the session so the list cannot stay filtered
+  // behind a closed button. The Duo keeps its field mounted, so it expands like the other tabs.
+  const blurSearch = () => {
+    if (selectedTab === "settings" && NATIVE_LIQUID_GLASS_SUPPORTED && !duoSearch) {
+      cancelSearch();
+      return;
+    }
+    workspace.dispatch({ type: "expand", tab: selectedTab });
+  };
+  // External cancels (page open, leaving Settings) skip UIKit's cancel control.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the native search field when settings search becomes resting
+  useEffect(() => {
+    if (selectedTab !== "settings" || tab.searchMode !== "resting") return;
+    searchRef.current?.setText("");
+    if (NATIVE_LIQUID_GLASS_SUPPORTED) searchRef.current?.setActive(false);
+  }, [selectedTab, tab.searchMode]);
   useHardwareKeyboardCommand("focusSearch", focusSearch);
   // The sidebar remains visible while its detail owns navigation focus.
   const searchHostVisible = focused || primaryColumn?.presented === true;
   const restoreSearch = () => {
+    // Settings search is session-scoped; do not re-open a dismissed query the way Threads/PRs do.
+    if (selectedTab === "settings" && tab.searchMode === "resting") return;
     if (
       searchHostVisible &&
       searchVisible &&
@@ -169,7 +187,7 @@ export function WorkspaceToolbar(props: {
                   placeholder: searchLabel,
                   cancelButtonHidden: foldedSearch,
                   onFocus: searchFocused,
-                  onBlur: () => workspace.dispatch({ type: "expand", tab: selectedTab }),
+                  onBlur: blurSearch,
                   onSearchButtonPress: () => searchRef.current?.blur(),
                   onChangeText: ({ nativeEvent }) =>
                     workspace.dispatch({
