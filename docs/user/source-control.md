@@ -41,6 +41,13 @@ If `gh` is signed in to several accounts or hosts, expand **GitHub** in the same
 the account each host uses or turn a host off. A saved token or `GH_TOKEN` takes precedence
 over that choice; a host turned off stays off either way.
 
+To use different github.com logins for different projects (for example personal and work), open
+that project's settings (or scope Source control settings to the project) and set **GitHub
+account**. The project choice overrides the environment host pin for pull requests on that
+project. Claude turns in the project also receive a matching `GH_TOKEN` so `gh` in the agent
+shell follows the same login. Other providers still use the environment's ambient `gh` login
+or `GH_TOKEN` until they gain the same overlay.
+
 For GitHub Enterprise, sign in with `gh auth login --hostname YOUR_HOST`. T3 Code treats a
 custom server name as GitHub once it has a credential for that host.
 

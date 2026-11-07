@@ -1068,6 +1068,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["auto pull default branch current checkout fast forward upstream"],
   },
   {
+    id: "project-github-account",
+    title: "GitHub account",
+    to: "/settings/source-control",
+    scope: "project",
+    searchTerms: ["github gh multiple accounts personal work host login project override"],
+  },
+  {
     id: "remove-agent-credits-on-merge",
     title: "Remove agent credits when merging",
     to: "/settings/source-control",

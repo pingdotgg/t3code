@@ -59,6 +59,9 @@ export type PullRequestViewers = PullRequestListResult["viewers"];
 type ScopedEntry = PullRequestListEntry & { readonly environmentId?: string };
 
 const pullRequestViewerKey = (entry: ScopedEntry): string =>
+  `${entry.environmentId ?? ""} ${entry.host} ${entry.projectId}`;
+
+const pullRequestHostViewerKey = (entry: ScopedEntry): string =>
   `${entry.environmentId ?? ""} ${entry.host}`;
 
 const GROUP_LABELS: Record<PullRequestGroupKey, string> = {
@@ -207,7 +210,11 @@ export function pullRequestEntryViewer(
   entry: ScopedEntry,
   viewers: PullRequestViewers,
 ): string | null {
-  return normalize(viewers[pullRequestViewerKey(entry)] ?? viewers[entry.host]);
+  return normalize(
+    viewers[pullRequestViewerKey(entry)] ??
+      viewers[pullRequestHostViewerKey(entry)] ??
+      viewers[entry.host],
+  );
 }
 
 function isAuthoredByViewer(entry: ScopedEntry, viewers: PullRequestViewers): boolean {

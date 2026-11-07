@@ -278,6 +278,17 @@ export function planScopedSettingsPatch(
                   next[key] = { instanceId: base.instanceId, model: base.model, ...value };
                   continue;
                 }
+                // Merge per host into each target's own map; an empty login clears that host's pin.
+                if (key === "githubHostAccounts" && isPlainObject(value)) {
+                  const merged = Object.fromEntries(
+                    Object.entries({ ...current.githubHostAccounts, ...value }).filter(
+                      ([, login]) => login !== "",
+                    ),
+                  );
+                  if (Object.keys(merged).length === 0) delete next[key];
+                  else next[key] = merged;
+                  continue;
+                }
                 next[key] =
                   isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
               }

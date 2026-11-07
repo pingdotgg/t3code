@@ -62,7 +62,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "sidebarAutoSettleOnMerge",
     "sidebarAutoSettleAfterDays",
   ],
-  "source-control": ["defaultAutoPull", "removeAgentCreditsOnMerge"],
+  "source-control": ["defaultAutoPull", "removeAgentCreditsOnMerge", "githubHostAccounts"],
   worktrees: [
     "newWorktreesStartFromOrigin",
     "worktreeSubmodules",

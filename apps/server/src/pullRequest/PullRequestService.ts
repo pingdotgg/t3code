@@ -85,6 +85,7 @@ import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.t
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import type { SourceControlProviderContext } from "@t3tools/source-control-core/server/SourceControlProvider";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   type ProviderChangeRequest,
@@ -333,6 +334,8 @@ export interface SupportedProject {
   /** Unlike Azure repository names, remotes are unique across an organization. */
   readonly remote: string;
   readonly repositoryKey: string | null;
+  /** Project `githubHostAccounts` overlay; empty inherits the environment host pin. */
+  readonly githubHostAccounts: Readonly<Record<string, string>>;
 }
 
 interface WorkspaceProjects {
@@ -462,9 +465,17 @@ function withRateLimitBackoff(
   api: PullRequestProviderApi,
   host: string,
   limits: SourceControlRateLimit.SourceControlRateLimit["Service"],
-  options?: { readonly viewerAllowsPause: boolean },
+  options?: {
+    readonly viewerAllowsPause?: boolean;
+    readonly githubHostAccounts?: Readonly<Record<string, string>>;
+  },
 ): PullRequestProviderApi {
   const key = { provider: api.kind, host };
+  const accounts = options?.githubHostAccounts ?? {};
+  const withAccounts = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Object.keys(accounts).length === 0
+      ? effect
+      : effect.pipe(Effect.provideService(SourceControlHost.PreferredHostAccounts, accounts));
   const protect = <A>(
     operation: string,
     effect: Effect.Effect<A, PullRequestProviderError>,
@@ -483,7 +494,7 @@ function withRateLimitBackoff(
           }),
       ),
       Effect.flatMap((lease) =>
-        effect.pipe(
+        withAccounts(effect).pipe(
           Effect.provideService(SourceControlRateLimit.Interactive, allowPaused),
           Effect.tap(() => limits.recordSuccess({ ...key, lease })),
           Effect.tapError((error) =>
@@ -529,10 +540,22 @@ function withRateLimitBackoff(
       options?.viewerAllowsPause === true
         ? interactive("getViewer", api.getViewer)
         : wrap("getViewer", api.getViewer),
-    ...(api.getRoutingIdentity === undefined ? {} : { getRoutingIdentity: api.getRoutingIdentity }),
+    ...(api.getRoutingIdentity === undefined
+      ? {}
+      : {
+          getRoutingIdentity: ((...args: Parameters<NonNullable<typeof api.getRoutingIdentity>>) =>
+            withAccounts(api.getRoutingIdentity!(...args))) as NonNullable<
+            typeof api.getRoutingIdentity
+          >,
+        }),
     ...(api.withVerifiedCredential === undefined
       ? {}
-      : { withVerifiedCredential: api.withVerifiedCredential }),
+      : {
+          withVerifiedCredential: ((input, use) =>
+            withAccounts(api.withVerifiedCredential!(input, use))) as NonNullable<
+            typeof api.withVerifiedCredential
+          >,
+        }),
     listChangeRequests: wrap("listChangeRequests", api.listChangeRequests),
     ...(api.listChangeRequestsAcross === undefined
       ? {}
@@ -917,68 +940,89 @@ export const make = Effect.gen(function* () {
           Effect.map((remoteHosts) => ({ remoteHosts, projects })),
         ),
       ),
-      Effect.map(({ remoteHosts, projects }) => {
-        const supported: SupportedProject[] = [];
-        const unimplemented = new Map<
-          string,
-          { kind: SourceControlProviderKind; projectCount: number }
-        >();
-        const viewerRoots = new Map<string, string[]>();
-        const seen = new Set<string>();
-        for (const project of projects) {
-          if (filter.projectId !== undefined && project.id !== filter.projectId) continue;
-          if (filter.projectIds !== undefined && !filter.projectIds.includes(project.id)) continue;
-          const identity = project.repositoryIdentity;
-          let kind = identity?.provider;
-          const repository = sourceControlDefinitions.repositorySelector(
-            project.repositoryIdentity,
-          );
-          if (!identity || kind === undefined || repository === null) continue;
-          const recognized = sourceControlDefinitions.recognizeRemote(identity.locator.remoteUrl);
-          const remote =
-            recognized === null
-              ? undefined
-              : remoteHosts.get(remoteHostKey(recognized, identity.locator.remoteUrl));
-          kind = remote?.kind ?? kind;
-          const host = remote?.host ?? sourceControlDefinitions.changeRequestHost(identity, kind);
-          if (filter.host !== undefined && host !== filter.host.toLowerCase()) {
-            continue;
-          }
-          const registered = registry.get(kind);
-          const api = registered?.servesHost?.(host) === false ? null : registered;
-          if (api !== null) {
-            const roots = viewerRoots.get(host);
-            if (roots === undefined) viewerRoots.set(host, [project.workspaceRoot]);
-            else if (!roots.includes(project.workspaceRoot)) roots.push(project.workspaceRoot);
-          }
-          const repositoryKey =
-            api?.repositoryKey?.({ canonicalKey: identity.canonicalKey }) ?? null;
-          const key = listCursorKey(host, repositoryKey ?? repository);
-          if (seen.has(key)) continue;
-          seen.add(key);
-          if (api === null) {
-            const counted = unimplemented.get(host);
-            if (counted === undefined) unimplemented.set(host, { kind, projectCount: 1 });
-            else counted.projectCount += 1;
-            continue;
-          }
-          supported.push({
-            cursorKey: key,
-            project,
-            api: withRateLimitBackoff(api, host, rateLimits),
-            repository,
-            host,
-            remote:
-              repositoryKey ??
-              sourceControlDefinitions.repositoryKeyFromRemote(`https://${host}/${repository}`),
-            repositoryKey:
-              repositoryKey === null
-                ? null
-                : sourceControlDefinitions.canonicalRepositoryKey(repositoryKey.toLowerCase()),
-          });
-        }
-        return { supported, unimplemented, viewerRoots };
-      }),
+      Effect.flatMap(({ remoteHosts, projects }) =>
+        serverSettings.getSettings.pipe(
+          Effect.mapError(
+            (cause) =>
+              new PullRequestOperationError({
+                operation: "listProjects",
+                detail: "The project list could not be read.",
+                cause,
+              }),
+          ),
+          Effect.map((settings) => {
+            const supported: SupportedProject[] = [];
+            const unimplemented = new Map<
+              string,
+              { kind: SourceControlProviderKind; projectCount: number }
+            >();
+            const viewerRoots = new Map<string, string[]>();
+            const seen = new Set<string>();
+            for (const project of projects) {
+              if (filter.projectId !== undefined && project.id !== filter.projectId) continue;
+              if (filter.projectIds !== undefined && !filter.projectIds.includes(project.id))
+                continue;
+              const identity = project.repositoryIdentity;
+              let kind = identity?.provider;
+              const repository = sourceControlDefinitions.repositorySelector(
+                project.repositoryIdentity,
+              );
+              if (!identity || kind === undefined || repository === null) continue;
+              const recognized = sourceControlDefinitions.recognizeRemote(
+                identity.locator.remoteUrl,
+              );
+              const remote =
+                recognized === null
+                  ? undefined
+                  : remoteHosts.get(remoteHostKey(recognized, identity.locator.remoteUrl));
+              kind = remote?.kind ?? kind;
+              const host =
+                remote?.host ?? sourceControlDefinitions.changeRequestHost(identity, kind);
+              if (filter.host !== undefined && host !== filter.host.toLowerCase()) {
+                continue;
+              }
+              const registered = registry.get(kind);
+              const api = registered?.servesHost?.(host) === false ? null : registered;
+              const githubHostAccounts = resolveProjectSettings(settings, project.id).settings
+                .githubHostAccounts;
+              const accountKey = githubHostAccounts[host] ?? "";
+              if (api !== null) {
+                const rootsKey = `${host}\n${accountKey}`;
+                const roots = viewerRoots.get(rootsKey);
+                if (roots === undefined) viewerRoots.set(rootsKey, [project.workspaceRoot]);
+                else if (!roots.includes(project.workspaceRoot)) roots.push(project.workspaceRoot);
+              }
+              const repositoryKey =
+                api?.repositoryKey?.({ canonicalKey: identity.canonicalKey }) ?? null;
+              const key = listCursorKey(host, repositoryKey ?? repository);
+              if (seen.has(key)) continue;
+              seen.add(key);
+              if (api === null) {
+                const counted = unimplemented.get(host);
+                if (counted === undefined) unimplemented.set(host, { kind, projectCount: 1 });
+                else counted.projectCount += 1;
+                continue;
+              }
+              supported.push({
+                cursorKey: key,
+                project,
+                api: withRateLimitBackoff(api, host, rateLimits, { githubHostAccounts }),
+                repository,
+                host,
+                githubHostAccounts,
+                remote:
+                  repositoryKey ??
+                  sourceControlDefinitions.repositoryKeyFromRemote(`https://${host}/${repository}`),
+                repositoryKey:
+                  repositoryKey === null
+                    ? null
+                    : sourceControlDefinitions.canonicalRepositoryKey(repositoryKey.toLowerCase()),
+              });
+            }
+            return { supported, unimplemented, viewerRoots };
+          }),
+        ),
+      ),
     );
 
   // Azure derives organization from the checkout; require the matching repository.
@@ -1039,12 +1083,28 @@ export const make = Effect.gen(function* () {
                     ),
                   );
                   if (Option.isSome(selected)) {
+                    const githubHostAccounts = yield* serverSettings.getSettings.pipe(
+                      Effect.map(
+                        (settings) =>
+                          resolveProjectSettings(settings, selected.value.id).settings
+                            .githubHostAccounts,
+                      ),
+                      Effect.mapError(
+                        (cause) =>
+                          new PullRequestOperationError({
+                            operation: "resolveRepository",
+                            detail: "The selected project could not be read.",
+                            cause,
+                          }),
+                      ),
+                    );
                     return {
                       cursorKey: listCursorKey(host, repository),
                       project: selected.value,
-                      api: withRateLimitBackoff(api, host, rateLimits),
+                      api: withRateLimitBackoff(api, host, rateLimits, { githubHostAccounts }),
                       repository,
                       host,
+                      githubHostAccounts,
                       remote: sourceControlDefinitions.repositoryKeyFromRemote(
                         `https://${host}/${repository}`,
                       ),
@@ -1123,14 +1183,18 @@ export const make = Effect.gen(function* () {
 
   type ResolvedViewer = {
     readonly host: string;
+    readonly accountKey: string;
     readonly kind: SourceControlProviderKind;
     readonly viewer: string | null;
     readonly error: PullRequestProviderError | null;
   };
+  const viewerAccountKey = (project: SupportedProject) =>
+    project.githubHostAccounts[project.host] ?? "";
   const viewersByHost = new Map<string, { readonly at: number; readonly result: ResolvedViewer }>();
   const viewerFlights = yield* Cache.makeWith(
     (key: string): Effect.Effect<ResolvedViewer> => {
-      const [host, kind, roots] = JSON.parse(key) as [
+      const [host, accountKey, kind, roots] = JSON.parse(key) as [
+        string,
         string,
         SourceControlProviderKind,
         ReadonlyArray<string>,
@@ -1139,20 +1203,26 @@ export const make = Effect.gen(function* () {
       if (registered === null) {
         return Effect.die(new Error(`Missing pull request provider: ${kind}`));
       }
-      const api = withRateLimitBackoff(registered, host, rateLimits, { viewerAllowsPause: true });
+      const api = withRateLimitBackoff(registered, host, rateLimits, {
+        viewerAllowsPause: true,
+        ...(accountKey.length === 0 ? {} : { githubHostAccounts: { [host]: accountKey } }),
+      });
+      const cacheKey = `${host}\n${accountKey}`;
       return Effect.firstSuccessOf(roots.map((cwd) => api.getViewer({ cwd, host }))).pipe(
         Effect.map((viewer) => ({
           host,
+          accountKey,
           kind,
           viewer: viewer as string | null,
           error: null as PullRequestProviderError | null,
         })),
         Effect.tap((result) =>
-          Effect.map(Clock.currentTimeMillis, (at) => viewersByHost.set(host, { at, result })),
+          Effect.map(Clock.currentTimeMillis, (at) => viewersByHost.set(cacheKey, { at, result })),
         ),
         Effect.catch((error) =>
           Effect.succeed({
             host,
+            accountKey,
             kind,
             viewer: null,
             error,
@@ -1172,21 +1242,31 @@ export const make = Effect.gen(function* () {
     projects: ReadonlyArray<SupportedProject>,
     viewerRoots: WorkspaceProjects["viewerRoots"],
     options?: { readonly allowPaused: boolean },
-  ) =>
-    Effect.forEach(
-      [...new Set(projects.map(({ host }) => host))],
-      (host) =>
+  ) => {
+    const groups = new Map<string, SupportedProject[]>();
+    for (const project of projects) {
+      const key = `${project.host}\n${viewerAccountKey(project)}`;
+      const group = groups.get(key);
+      if (group === undefined) groups.set(key, [project]);
+      else group.push(project);
+    }
+    return Effect.forEach(
+      [...groups.values()],
+      (group) =>
         Effect.flatMap(Clock.currentTimeMillis, (now): Effect.Effect<ResolvedViewer> => {
-          const held = viewersByHost.get(host);
+          const project = group[0]!;
+          const host = project.host;
+          const accountKey = viewerAccountKey(project);
+          const cacheKey = `${host}\n${accountKey}`;
+          const held = viewersByHost.get(cacheKey);
           if (held !== undefined && now - held.at <= Duration.toMillis(VIEWER_CACHE_TTL)) {
             return Effect.succeed(held.result);
           }
-          const forHost = projects.filter((project) => project.host === host);
-          const api = forHost[0]!.api;
+          const api = project.api;
           // Include deduplicated checkouts too; one unreadable worktree must not mark the whole host signed out.
           const roots =
-            viewerRoots.get(host) ?? forHost.map(({ project }) => project.workspaceRoot);
-          const key = JSON.stringify([host, api.kind, [...new Set(roots)].sort()]);
+            viewerRoots.get(cacheKey) ?? group.map(({ project: shell }) => shell.workspaceRoot);
+          const key = JSON.stringify([host, accountKey, api.kind, [...new Set(roots)].sort()]);
           if (options?.allowPaused === true) return Cache.get(viewerFlights, key);
           // Check pauses outside the shared lookup so background reads cannot spawn repeated failing CLIs and extend the pause.
           return rateLimits.check({ provider: api.kind, host }).pipe(
@@ -1194,6 +1274,7 @@ export const make = Effect.gen(function* () {
             Effect.catch((error) =>
               Effect.succeed<ResolvedViewer>({
                 host,
+                accountKey,
                 kind: api.kind,
                 viewer: null,
                 error: new PullRequestProviderError({
@@ -1210,6 +1291,7 @@ export const make = Effect.gen(function* () {
         }),
       { concurrency: REPOSITORY_CONCURRENCY },
     );
+  };
 
   const matchesRowFilters = (
     item: ProviderChangeRequest,
@@ -1293,14 +1375,33 @@ export const make = Effect.gen(function* () {
     const viewerResults = yield* resolveViewers(projects, viewerRoots);
     const viewers: Record<string, string> = {};
     for (const result of viewerResults) {
-      if (result.viewer !== null) viewers[result.host] = result.viewer;
+      if (result.viewer === null) continue;
+      // Project keys only when a project pins a login; inherited pins share the host entry.
+      if (result.accountKey.length === 0) {
+        viewers[result.host] = result.viewer;
+        continue;
+      }
+      for (const project of projects) {
+        if (project.host !== result.host || viewerAccountKey(project) !== result.accountKey) {
+          continue;
+        }
+        viewers[`${project.host} ${project.project.id}`] = result.viewer;
+      }
     }
+    const viewerFor = (project: SupportedProject) =>
+      viewers[
+        viewerAccountKey(project).length === 0
+          ? project.host
+          : `${project.host} ${project.project.id}`
+      ];
 
-    const providers: ReadonlyArray<PullRequestProviderSummary> = [
-      ...viewerResults.map((result) => {
-        const capabilities = projects.find((project) => project.host === result.host)?.api
-          .capabilities;
-        return {
+    const providerByHost = new Map<string, PullRequestProviderSummary>();
+    for (const result of viewerResults) {
+      const capabilities = projects.find((project) => project.host === result.host)?.api
+        .capabilities;
+      const existing = providerByHost.get(result.host);
+      if (existing === undefined) {
+        providerByHost.set(result.host, {
           host: result.host,
           kind: result.kind,
           searchesOnHost: capabilities?.search ?? false,
@@ -1308,8 +1409,21 @@ export const make = Effect.gen(function* () {
           projectCount: projectCounts.get(result.host) ?? 1,
           configured: result.viewer !== null,
           detail: result.error === null ? null : providerDetail(requirementOf, result.error),
-        };
-      }),
+        });
+        continue;
+      }
+      providerByHost.set(result.host, {
+        ...existing,
+        configured: existing.configured || result.viewer !== null,
+        detail:
+          existing.configured || result.viewer !== null
+            ? null
+            : (existing.detail ??
+              (result.error === null ? null : providerDetail(requirementOf, result.error))),
+      });
+    }
+    const providers: ReadonlyArray<PullRequestProviderSummary> = [
+      ...providerByHost.values(),
       ...[...unimplemented].map(([host, { kind, projectCount }]) => ({
         host,
         kind,
@@ -1325,9 +1439,9 @@ export const make = Effect.gen(function* () {
       continuation === null
         ? projects
         : projects.filter(({ cursorKey }) => continuation.has(cursorKey));
-    const readable = selected.filter(({ host }) => viewers[host] !== undefined);
+    const readable = selected.filter((project) => viewerFor(project) !== undefined);
     const unreadable = selected
-      .filter(({ host }) => viewers[host] === undefined)
+      .filter((project) => viewerFor(project) === undefined)
       .map(({ project, repository }) => ({
         projectId: project.id,
         projectTitle: project.title,
@@ -1335,7 +1449,11 @@ export const make = Effect.gen(function* () {
       }));
     if (readable.length === 0) {
       const errors = viewerResults.flatMap((result) =>
-        result.error === null || !selected.some(({ host }) => host === result.host)
+        result.error === null ||
+        !selected.some(
+          (project) =>
+            project.host === result.host && viewerAccountKey(project) === result.accountKey,
+        )
           ? []
           : [result.error],
       );
@@ -1363,7 +1481,7 @@ export const make = Effect.gen(function* () {
       cursor: ListCursor | undefined,
     ): Effect.Effect<RepositoryBatch> => {
       {
-        const viewer = viewers[project.host]!;
+        const viewer = viewerFor(project)!;
         const key = project.cursorKey;
         return project.api
           .listChangeRequests({
@@ -1476,7 +1594,7 @@ export const make = Effect.gen(function* () {
       const separately = () =>
         Effect.forEach(chunk, readRepository, { concurrency: REPOSITORY_CONCURRENCY });
       if (readAcross === undefined) return separately();
-      const viewer = viewers[first.host]!;
+      const viewer = viewerFor(first)!;
       const cursor = cursorOf(first);
       return readAcross({
         cwd: first.project.workspaceRoot,
@@ -1551,7 +1669,7 @@ export const make = Effect.gen(function* () {
         separate.push(project);
         continue;
       }
-      const key = `${project.host}\n${cursorOf(project)?.updatedBefore ?? ""}`;
+      const key = `${project.host}\n${viewerAccountKey(project)}\n${cursorOf(project)?.updatedBefore ?? ""}`;
       const group = together.get(key);
       if (group === undefined) together.set(key, [project]);
       else group.push(project);
@@ -1637,9 +1755,9 @@ export const make = Effect.gen(function* () {
         detail: "The signed-in account could not be verified before starting the operation.",
       });
     const project = yield* requireProject(input).pipe(Effect.mapError(rejected));
-    const api = registry.get(project.api.kind);
+    const api = project.api;
     if (
-      api?.withVerifiedCredential === undefined ||
+      api.withVerifiedCredential === undefined ||
       input.host?.toLowerCase() !== project.host.toLowerCase()
     ) {
       return yield* rejected();
@@ -1658,8 +1776,8 @@ export const make = Effect.gen(function* () {
 
   const routing = Effect.fn("PullRequestService.routing")(function* (input: PullRequestRef) {
     const project = yield* requireProject(input);
-    const api = registry.get(project.api.kind);
-    if (api?.getRoutingIdentity === undefined) {
+    const api = project.api;
+    if (api.getRoutingIdentity === undefined) {
       return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
     }
     const identity = yield* api
@@ -2712,8 +2830,9 @@ export const make = Effect.gen(function* () {
     }
     const byHost = new Map<string, Array<{ project: SupportedProject; number: number }>>();
     for (const entry of wanted.values()) {
-      const held = byHost.get(entry.project.host);
-      if (held === undefined) byHost.set(entry.project.host, [entry]);
+      const key = `${entry.project.host}\n${viewerAccountKey(entry.project)}`;
+      const held = byHost.get(key);
+      if (held === undefined) byHost.set(key, [entry]);
       else held.push(entry);
     }
     const stats = yield* Effect.forEach(
