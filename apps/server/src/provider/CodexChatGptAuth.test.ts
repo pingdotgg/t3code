@@ -1358,13 +1358,15 @@ it.effect(
     ),
 );
 
-it.effect("an expired initial code retains the issued ID for a fresh authorization", () =>
+it.effect("a rejected initial code retains the issued ID for a fresh authorization", () =>
   provision(
     Effect.gen(function* () {
       const h = yield* makeHarness;
       h.setCodeError("invalid_grant");
       yield* h.signIn;
       const failed = yield* h.phase("failed");
+      assert.notInclude(failed.message!, "expired");
+      assert.include(failed.message!, "Reconnect the saved ChatGPT profile");
       assert.isTrue(Option.isNone(yield* h.auth.read));
       assert.isTrue(failed.methods!.some((method) => method.id === "chatgpt-profile:oaiapp_test"));
       h.setCodeError(undefined);

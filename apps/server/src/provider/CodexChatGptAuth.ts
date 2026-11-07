@@ -492,7 +492,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
           "OpenAI rejected this app's client registration. Check the ChatGPT connection configuration.",
         );
       if (body.get("grant_type") === "authorization_code" && error === "invalid_grant")
-        return yield* failure("code-expired", "This sign-in code expired. Start again.");
+        return yield* failure("code-rejected", "OpenAI rejected this sign-in code. Start again.");
       return yield* failure(
         "exchange",
         error === "access_denied"
@@ -676,12 +676,12 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
       ).pipe(
         Effect.catch((error) =>
           Effect.gen(function* () {
-            if (error.operation === "code-expired") {
+            if (error.operation === "code-rejected") {
               if (!registeredClientId)
                 yield* withSessionLock(saveRegistration({ clientId, redirectUri }));
               return yield* failure(
                 "exchange",
-                "This sign-in code expired. Reconnect the saved ChatGPT profile to start a fresh sign-in.",
+                "OpenAI rejected this sign-in code. Reconnect the saved ChatGPT profile to start a fresh sign-in.",
               );
             }
             return yield* error;
