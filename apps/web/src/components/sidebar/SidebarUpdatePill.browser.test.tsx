@@ -211,6 +211,51 @@ describe("SidebarUpdatePill release notes", () => {
   });
 });
 
+describe("SidebarUpdatePill downloads", () => {
+  it("finishes the progress ring while making restart available", async () => {
+    const downloading: DesktopUpdateState = {
+      ...nightlyUpdate([]),
+      status: "downloading",
+      downloadPercent: 95,
+    };
+    setup(downloading);
+    await using screen = await render(<SidebarUpdatePill />);
+    const button = screen.getByRole("button", { name: "Downloading update (95%)" }).element();
+    const progress = button.querySelector<SVGCircleElement>("circle[stroke-dasharray]")!;
+    const ring = progress.parentElement!;
+    expect(getComputedStyle(ring).opacity).toBe("1");
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    // Hold the transition until assertions finish, independent of the browser's frame timing.
+    for (const element of button.querySelectorAll<HTMLElement | SVGElement>("span, svg, circle")) {
+      element.style.transitionDuration = "600s";
+      element.style.transitionDelay = "0s";
+    }
+
+    const downloaded: DesktopUpdateState = {
+      ...downloading,
+      status: "downloaded",
+      downloadPercent: null,
+      downloadedVersion: downloading.availableVersion,
+    };
+    await publish(downloaded);
+    expect(button.getAttribute("aria-label")).toContain("Click to restart and install");
+    expect(button.hasAttribute("aria-disabled")).toBe(false);
+    expect(button.contains(progress)).toBe(true);
+    const transitions = button.getAnimations({ subtree: true });
+    expect(transitions.length).toBeGreaterThan(0);
+    expect(transitions.every((transition) => transition.effect?.getTiming().iterations === 1)).toBe(
+      true,
+    );
+
+    for (const transition of transitions) transition.finish();
+    await Promise.all(transitions.map((transition) => transition.finished));
+    expect(getComputedStyle(ring).opacity).toBe("0");
+    expect(button.getAnimations({ subtree: true })).toHaveLength(0);
+    await publish({ ...downloaded });
+    expect(button.getAnimations({ subtree: true })).toHaveLength(0);
+  });
+});
+
 describe("SidebarUpdatePill update everything", () => {
   it("does not refocus the update button after a pointer cancel", async () => {
     setup(null, { hasUpdates: true });

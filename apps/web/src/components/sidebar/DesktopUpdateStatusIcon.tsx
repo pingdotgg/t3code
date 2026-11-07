@@ -1,8 +1,9 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { CheckIcon, CircleArrowUpIcon, DownloadIcon, RotateCwIcon } from "lucide-react";
+import { cn } from "~/lib/utils";
+import { CircleArrowUpIcon } from "lucide-react";
 import type { AnimationEventHandler } from "react";
 
-const DOWNLOAD_PROGRESS_RADIUS = 14;
+const DOWNLOAD_PROGRESS_RADIUS = 10;
 const DOWNLOAD_PROGRESS_CIRCUMFERENCE = 2 * Math.PI * DOWNLOAD_PROGRESS_RADIUS;
 
 export type DesktopUpdateStatusIconState =
@@ -18,61 +19,80 @@ function normalizeDesktopUpdateDownloadPercent(percent: number | null): number {
   return Math.min(100, Math.max(0, percent));
 }
 
-function DesktopUpdateAvailableIcon() {
-  return (
-    <span className="relative grid size-4 place-items-center">
-      <DownloadIcon className="size-4" />
-      <span
-        aria-hidden="true"
-        className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-current ring-2 ring-sidebar-control-surface"
-      />
-    </span>
-  );
-}
-
-function DesktopUpdateDownloadingIcon({ percent }: { readonly percent: number | null }) {
-  const normalizedPercent = normalizeDesktopUpdateDownloadPercent(percent);
+function DesktopUpdateDownloadIcon({
+  percent,
+  complete,
+}: {
+  readonly percent: number | null;
+  readonly complete: boolean;
+}) {
+  const normalizedPercent = complete ? 100 : normalizeDesktopUpdateDownloadPercent(percent);
   const progressOffset = DOWNLOAD_PROGRESS_CIRCUMFERENCE * (1 - normalizedPercent / 100);
 
   return (
-    <span className="relative grid size-8 place-items-center">
+    <span
+      aria-hidden="true"
+      className="pointer-events-none relative grid size-5 place-items-center"
+    >
       <svg
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 size-full -rotate-90"
-        viewBox="0 0 32 32"
+        className={cn(
+          "absolute inset-0 size-full -rotate-90 transition-[opacity,scale] duration-200 ease-out motion-reduce:transition-none",
+          complete ? "scale-75 opacity-0 delay-150" : "scale-100 opacity-100",
+        )}
+        viewBox="0 0 24 24"
       >
         <circle
-          cx="16"
-          cy="16"
+          cx="12"
+          cy="12"
           r={DOWNLOAD_PROGRESS_RADIUS}
           fill="none"
           className="stroke-current/22"
-          strokeWidth="1.5"
+          strokeWidth="2"
         />
         <circle
-          cx="16"
-          cy="16"
+          cx="12"
+          cy="12"
           r={DOWNLOAD_PROGRESS_RADIUS}
           fill="none"
           stroke="currentColor"
           strokeDasharray={DOWNLOAD_PROGRESS_CIRCUMFERENCE}
           strokeDashoffset={progressOffset}
           strokeLinecap="round"
-          strokeWidth="1.5"
+          strokeWidth="2"
           className="transition-[stroke-dashoffset] duration-300 ease-out motion-reduce:transition-none"
         />
       </svg>
-      <DownloadIcon className="size-4" />
-    </span>
-  );
-}
-
-function DesktopUpdateDownloadedIcon() {
-  return (
-    <span className="relative grid size-4 place-items-center">
-      <RotateCwIcon className="size-4" />
-      <span className="absolute -right-1 -bottom-1 grid size-2.5 place-items-center rounded-full bg-foreground text-background ring-2 ring-background">
-        <CheckIcon className="size-2" strokeWidth={3} />
+      <span className="relative size-5">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={cn(
+            "absolute inset-0 size-5 transition-[opacity,scale,rotate] duration-200 ease-in-out motion-reduce:transition-none",
+            complete ? "scale-50 rotate-90 opacity-0" : "scale-100 rotate-0 opacity-100",
+          )}
+        >
+          <path d="m8 12 4-4 4 4" />
+          <path d="M12 16V8" />
+        </svg>
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={cn(
+            "desktop-update-restart-ease absolute inset-0 size-5 transition-[opacity,scale,rotate] duration-300 motion-reduce:transition-none",
+            complete ? "scale-100 rotate-0 opacity-100 delay-100" : "scale-50 -rotate-90 opacity-0",
+          )}
+        >
+          <path d="M19.4 8.5A8.2 8.2 0 1 0 20.2 12" />
+          <path d="M15.2 8.5h5V3.5" />
+        </svg>
       </span>
     </span>
   );
@@ -94,20 +114,19 @@ export function DesktopUpdateStatusIcon({
   readonly status: DesktopUpdateStatusIconState;
 }) {
   const statusIcon =
-    status === "available" ? (
-      <DesktopUpdateAvailableIcon />
-    ) : status === "downloading" ? (
-      <DesktopUpdateDownloadingIcon percent={downloadPercent ?? null} />
-    ) : status === "downloaded" ? (
-      <DesktopUpdateDownloadedIcon />
+    status === "downloading" || status === "downloaded" ? (
+      <DesktopUpdateDownloadIcon
+        percent={downloadPercent ?? null}
+        complete={status === "downloaded"}
+      />
     ) : status === "checking" ? (
       <RefreshIcon
-        className="size-4"
+        size="lg"
         refreshing={isCheckAnimating === true}
         onAnimationIteration={onCheckAnimationIteration}
       />
     ) : (
-      <CircleArrowUpIcon className="size-4" />
+      <CircleArrowUpIcon className="size-5" />
     );
 
   if (!isCheckAnimating && !isCheckReturning) return statusIcon;
@@ -115,10 +134,10 @@ export function DesktopUpdateStatusIcon({
   return (
     <span
       key={isCheckReturning ? "returning" : "checking"}
-      className="relative grid size-4 place-items-center"
+      className="relative grid size-5 place-items-center"
     >
       <span className="absolute inset-0 grid place-items-center motion-safe:desktop-update-check-outgoing motion-reduce:hidden">
-        {isCheckReturning ? <RefreshIcon size="md" /> : <CircleArrowUpIcon className="size-4" />}
+        {isCheckReturning ? <RefreshIcon size="lg" /> : <CircleArrowUpIcon className="size-5" />}
       </span>
       <span
         className="motion-safe:desktop-update-check-incoming"
