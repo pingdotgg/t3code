@@ -194,6 +194,7 @@ const makeStrictNdJsonRpcParser = () => {
       const encoded = codec.encode(response);
       if (encoded === undefined) return undefined;
       const json = typeof encoded === "string" ? encoded : new TextDecoder().decode(encoded);
+      if (!json.includes('"_tag":"Cause"')) return `${json}\n`;
       return `${JSON.stringify(normalizeOutgoingFrame(JSON.parse(json)))}\n`;
     },
   };
@@ -204,14 +205,16 @@ const isCauseResponse = Schema.is(
   }),
 );
 const isProtocolFailure = Schema.is(Schema.TaggedStruct("Fail", { error: AcpSchema.Error }));
+const isInterruptReason = Schema.is(Schema.TaggedStruct("Interrupt", {}));
 
 // Normalize only Effect's error envelope after the codec has completed batch tracking.
 function normalizeOutgoingFrame(frame: unknown): unknown {
   if (Array.isArray(frame)) return frame.map(normalizeOutgoingFrame);
   if (!isCauseResponse(frame)) return frame;
-  const [failure] = frame.error.data;
+  const reasons = frame.error.data.filter((reason) => !isInterruptReason(reason));
+  const [failure] = reasons;
   const error =
-    frame.error.data.length === 1 && isProtocolFailure(failure)
+    reasons.length === 1 && isProtocolFailure(failure)
       ? failure.error
       : AcpError.AcpRequestError.internalError().toProtocolError();
   return {

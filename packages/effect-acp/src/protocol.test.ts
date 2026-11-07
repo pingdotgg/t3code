@@ -553,6 +553,14 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       error: { code: -32602, message: "bad input", data: null },
     },
     {
+      name: "typed failure with interruption",
+      cause: [
+        { _tag: "Fail", error: { code: -32602, message: "bad input", data: { field: "name" } } },
+        { _tag: "Interrupt", fiberId: null },
+      ],
+      error: { code: -32602, message: "bad input", data: { field: "name" } },
+    },
+    {
       name: "defect",
       cause: [{ _tag: "Die", defect: "private defect" }],
       error: { code: -32603, message: "Internal error" },
