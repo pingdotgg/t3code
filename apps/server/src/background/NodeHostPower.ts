@@ -43,9 +43,15 @@ export const layer: Layer.Layer<never, never, HostPowerMonitor.HostPowerMonitor>
         if (current.source === "electron-main" && !current.stale) return;
 
         const battery = readHostBattery(platform);
-        if (battery.percent === null && battery.onBattery === null) return;
-
         const updatedAt = yield* DateTime.now;
+        if (battery.percent === null && battery.onBattery === null) {
+          // Drop obsolete headless readings so BackgroundPolicy does not stay paused.
+          if (current.source === source && !current.stale) {
+            yield* monitor.report({ ...current, stale: true, updatedAt });
+          }
+          return;
+        }
+
         yield* monitor.report({
           source,
           idle: current.source === source ? current.idle : "unknown",

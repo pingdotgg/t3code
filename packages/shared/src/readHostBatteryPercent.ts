@@ -3,7 +3,12 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { parseLinuxBatteryCapacity, parsePmsetBatt, parsePmsetOnBattery } from "./hostBattery.ts";
+import {
+  parseLinuxBatteryCapacity,
+  parseLinuxMainsOnlineStates,
+  parsePmsetBatt,
+  parsePmsetOnBattery,
+} from "./hostBattery.ts";
 
 export type HostBatterySnapshot = {
   readonly percent: number | null;
@@ -38,17 +43,16 @@ const readLinuxCapacity = (): string | null => {
 const readLinuxOnline = (): boolean | null => {
   try {
     const root = "/sys/class/power_supply";
+    const onlineValues: string[] = [];
     for (const entry of NodeFS.readdirSync(root)) {
       const type = NodeFS.readFileSync(NodePath.join(root, entry, "type"), "utf8").trim();
       if (type !== "Mains") continue;
-      const online = NodeFS.readFileSync(NodePath.join(root, entry, "online"), "utf8").trim();
-      if (online === "1") return false;
-      if (online === "0") return true;
+      onlineValues.push(NodeFS.readFileSync(NodePath.join(root, entry, "online"), "utf8").trim());
     }
+    return parseLinuxMainsOnlineStates(onlineValues);
   } catch {
     return null;
   }
-  return null;
 };
 
 /** Best-effort host battery reading for the given OS. */

@@ -164,6 +164,9 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
     updatePrevious: false,
   });
   const initialHostPower = yield* hostPowerMonitor.snapshot;
+  if (Option.isNone(initialDesktop)) {
+    yield* nativeClient.setHostPowerState(initialHostPower).pipe(Effect.ignore);
+  }
   const initialSnapshot: ResourceTelemetrySnapshot = {
     readAt: initialReadAt,
     sampleIntervalMs: initialNativeHealth.sampleIntervalMs,

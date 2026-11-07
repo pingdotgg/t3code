@@ -23,3 +23,19 @@ export const parsePmsetOnBattery = (output: string): boolean | null => {
   if (/Now drawing from 'AC Power'/i.test(output)) return false;
   return null;
 };
+
+/**
+ * Whether Linux is on battery given each Mains supply's sysfs `online` value.
+ * Plugged in if any supply is online; on battery only when every known supply is offline.
+ */
+export const parseLinuxMainsOnlineStates = (
+  onlineValues: ReadonlyArray<string>,
+): boolean | null => {
+  let foundMains = false;
+  for (const online of onlineValues) {
+    foundMains = true;
+    if (online === "1") return false;
+    if (online !== "0") return null;
+  }
+  return foundMains ? true : null;
+};

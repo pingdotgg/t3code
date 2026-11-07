@@ -1,6 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { parseLinuxBatteryCapacity, parsePmsetBatt, parsePmsetOnBattery } from "./hostBattery.ts";
+import {
+  parseLinuxBatteryCapacity,
+  parseLinuxMainsOnlineStates,
+  parsePmsetBatt,
+  parsePmsetOnBattery,
+} from "./hostBattery.ts";
 
 describe("parsePmsetBatt", () => {
   it("reads a charged AC-connected battery", () => {
@@ -50,5 +55,22 @@ describe("parseLinuxBatteryCapacity", () => {
   ];
   it.each(cases)("$output → $expected", ({ output, expected }) => {
     expect(parseLinuxBatteryCapacity(output)).toBe(expected);
+  });
+});
+
+describe("parseLinuxMainsOnlineStates", () => {
+  const cases: ReadonlyArray<{
+    readonly onlineValues: ReadonlyArray<string>;
+    readonly expected: boolean | null;
+  }> = [
+    { onlineValues: [], expected: null },
+    { onlineValues: ["0"], expected: true },
+    { onlineValues: ["1"], expected: false },
+    { onlineValues: ["0", "1"], expected: false },
+    { onlineValues: ["0", "0"], expected: true },
+    { onlineValues: ["0", "2"], expected: null },
+  ];
+  it.each(cases)("$onlineValues → $expected", ({ onlineValues, expected }) => {
+    expect(parseLinuxMainsOnlineStates(onlineValues)).toBe(expected);
   });
 });
