@@ -10,6 +10,8 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
+import { useScrollingWorkspacesEnabled } from "../../hooks/useSettings";
+import { isScrollingWorkspaceCommand } from "../../layout/layoutBehavior";
 import { useLayoutPageLocation } from "../../layout/pageNavigation";
 import { type KeyboardEvent, type ReactNode, useEffect, useReducer, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -1450,10 +1452,14 @@ function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
 // Cache rows in a separate hook so the compiler does not rebuild them per search keystroke.
 function useKeybindingCatalog() {
   const serverKeybindings = useSettingsScope().environment?.serverConfig?.keybindings;
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const merged = mergeWithDefaultKeybindings(serverKeybindings ?? []);
+  // Shortcuts that only drive scrolling workspaces stay hidden until the Labs toggle is on.
+  const listed = (command: KeybindingCommand) =>
+    scrollingWorkspaces || !isScrollingWorkspaceCommand(command);
   return {
-    commandOptions: buildKeybindingCommandOptions(merged),
-    allRows: buildKeybindingRows(merged),
+    commandOptions: buildKeybindingCommandOptions(merged).filter(listed),
+    allRows: buildKeybindingRows(merged).filter((row) => listed(row.command)),
   };
 }
 
