@@ -9967,135 +9967,213 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("holds only the background tasks the agent marks awaited, until they end", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        const now = yield* DateTime.now;
-        const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
-        if (awaitBackgroundTasks === undefined) {
-          throw new Error("Claude adapter runtime must expose awaitBackgroundTasks.");
-        }
-        const roster = (tasks: ReadonlyArray<string>, uuid: string) =>
-          claudeSdkFrame({
-            type: "system",
-            subtype: "background_tasks_changed",
-            tasks: tasks.map((taskId) => ({
-              task_id: taskId,
-              task_type: "local_bash",
-              description: taskId,
-            })),
-            uuid,
-            session_id: WAKE_NATIVE_SESSION,
-          });
-        const nextRoster = Effect.fn("nextRoster")(function* (
-          matches: (tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>) => boolean,
-        ) {
-          while (true) {
-            const { providerThread } = yield* Queue.take(harness.providerThreadReceipts);
-            const tasks = providerThread.pendingBackgroundTasks ?? [];
-            if (matches(tasks)) return tasks;
+  it.effect.each([
+    "notification-first",
+    "roster-first",
+    "unawait",
+    "query-closed",
+    "wake-discarded",
+    "task-stopped",
+  ] as const)(
+    "holds only the background tasks the agent marks awaited through their wake: %s",
+    (order) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+          const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
+          if (awaitBackgroundTasks === undefined) {
+            throw new Error("Claude adapter runtime must expose awaitBackgroundTasks.");
           }
-        });
-        const marks = (tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>) =>
-          tasks.map((task) => [task.taskId, task.awaited === true]);
+          const roster = (tasks: ReadonlyArray<string>, uuid: string) =>
+            claudeSdkFrame({
+              type: "system",
+              subtype: "background_tasks_changed",
+              tasks: tasks.map((taskId) => ({
+                task_id: taskId,
+                task_type: "local_bash",
+                description: taskId,
+              })),
+              uuid,
+              session_id: WAKE_NATIVE_SESSION,
+            });
+          const nextRoster = Effect.fn("nextRoster")(function* (
+            matches: (tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>) => boolean,
+          ) {
+            while (true) {
+              const { providerThread } = yield* Queue.take(harness.providerThreadReceipts);
+              const tasks = providerThread.pendingBackgroundTasks ?? [];
+              if (matches(tasks)) return tasks;
+            }
+          });
+          const marks = (tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>) =>
+            tasks.map((task) => [task.taskId, task.awaited === true]);
 
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-awaited-roster"),
+              text: "Run the tests in the background and the dev server.",
+              attachments: [],
+            }),
+          );
+          yield* Queue.offer(
+            harness.sdkMessages,
+            roster([WAKE_TASK_ID, "dev-server"], "00000000-0000-4000-8000-000000000301"),
+          );
+          yield* nextRoster((tasks) => tasks.length === 2);
+
+          const marked = yield* awaitBackgroundTasks({
             providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-awaited-roster"),
-            text: "Run the tests in the background and the dev server.",
-            attachments: [],
-          }),
-        );
-        yield* Queue.offer(
-          harness.sdkMessages,
-          roster([WAKE_TASK_ID, "dev-server"], "00000000-0000-4000-8000-000000000301"),
-        );
-        yield* nextRoster((tasks) => tasks.length === 2);
+            taskIds: [WAKE_TASK_ID, "already-finished"],
+            awaited: true,
+          });
+          assert.deepStrictEqual(marked.matched, [WAKE_TASK_ID]);
+          assert.deepStrictEqual(
+            marks(yield* nextRoster((tasks) => tasks.some((task) => task.awaited === true))),
+            [
+              [WAKE_TASK_ID, true],
+              ["dev-server", false],
+            ],
+          );
+          yield* Queue.offer(harness.sdkMessages, turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
 
-        const marked = yield* awaitBackgroundTasks({
-          providerThread: harness.providerThread,
-          taskIds: [WAKE_TASK_ID, "already-finished"],
-          awaited: true,
-        });
-        assert.deepStrictEqual(marked.matched, [WAKE_TASK_ID]);
-        assert.deepStrictEqual(
-          marks(yield* nextRoster((tasks) => tasks.some((task) => task.awaited === true))),
-          [
-            [WAKE_TASK_ID, true],
+          // A replacing level rebuilds every entry; the mark must survive it.
+          yield* Queue.offer(
+            harness.sdkMessages,
+            roster(["dev-server", WAKE_TASK_ID], "00000000-0000-4000-8000-000000000302"),
+          );
+          assert.deepStrictEqual(
+            marks(yield* nextRoster((tasks) => tasks[0]?.taskId === "dev-server")),
+            [
+              ["dev-server", false],
+              [WAKE_TASK_ID, true],
+            ],
+          );
+
+          const completedRoster = roster(["dev-server"], "00000000-0000-4000-8000-000000000303");
+          if (order === "task-stopped") {
+            yield* harness.offerAndWait(completedRoster);
+            yield* Queue.take(harness.providerThreadReceipts);
+            yield* harness.offerAndWait(claudeSdkFrame({ ...wakeNotification, status: "stopped" }));
+            const stopped = yield* Queue.take(harness.providerThreadReceipts);
+            assert.deepStrictEqual(marks(stopped.providerThread.pendingBackgroundTasks ?? []), [
+              ["dev-server", false],
+            ]);
+            assert.lengthOf(harness.continuationRequests, 0);
+            return;
+          }
+          for (const message of order === "notification-first"
+            ? [wakeNotification, completedRoster]
+            : [completedRoster, wakeNotification]) {
+            yield* harness.offerAndWait(message);
+            const event = yield* Queue.take(harness.providerThreadReceipts);
+            assert.deepStrictEqual(marks(event.providerThread.pendingBackgroundTasks ?? []), [
+              ["dev-server", false],
+              [WAKE_TASK_ID, true],
+            ]);
+            assert.lengthOf(harness.continuationRequests, 0);
+          }
+
+          if (order === "unawait") {
+            const released = yield* awaitBackgroundTasks({
+              providerThread: harness.providerThread,
+              taskIds: [WAKE_TASK_ID],
+              awaited: false,
+            });
+            assert.deepStrictEqual(released.matched, [WAKE_TASK_ID]);
+            assert.deepStrictEqual(marks(yield* nextRoster((tasks) => tasks.length === 1)), [
+              ["dev-server", false],
+            ]);
+            return;
+          }
+          if (order === "query-closed") {
+            yield* Queue.shutdown(harness.sdkMessages);
+            yield* nextRoster((tasks) => tasks.length === 0);
+            assert.isFalse(yield* harness.hasPendingBackgroundWork);
+            return;
+          }
+
+          yield* harness.offerAndWait(wakeTurnInit);
+          const continuation = yield* Queue.take(harness.continuationReceipts);
+          if (order === "wake-discarded") {
+            if (continuation.clearIfCurrent === undefined) {
+              return yield* Effect.die("An awaited wake must release its hold when discarded.");
+            }
+            yield* continuation.clearIfCurrent();
+            assert.deepStrictEqual(marks(yield* nextRoster((tasks) => tasks.length === 1)), [
+              ["dev-server", false],
+            ]);
+            return;
+          }
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-awaited-wake"),
+              text: "Background task completed.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          assert.deepStrictEqual(marks(yield* nextRoster((tasks) => tasks.length === 1)), [
             ["dev-server", false],
-          ],
-        );
-        yield* Queue.offer(harness.sdkMessages, turnOneResult);
-        yield* Queue.take(harness.terminalReceipts);
+          ]);
+          yield* harness.offerAndWait(wakeResult);
+          yield* Queue.take(harness.terminalReceipts);
 
-        // A replacing level rebuilds every entry; the mark must survive it.
-        yield* Queue.offer(
-          harness.sdkMessages,
-          roster(["dev-server", WAKE_TASK_ID], "00000000-0000-4000-8000-000000000302"),
-        );
-        assert.deepStrictEqual(
-          marks(yield* nextRoster((tasks) => tasks[0]?.taskId === "dev-server")),
-          [
+          // Once the completion is delivered, a reused id starts unmarked.
+          yield* Queue.offer(
+            harness.sdkMessages,
+            roster(["dev-server", WAKE_TASK_ID], "00000000-0000-4000-8000-000000000304"),
+          );
+          assert.deepStrictEqual(marks(yield* nextRoster((tasks) => tasks.length === 2)), [
             ["dev-server", false],
-            [WAKE_TASK_ID, true],
-          ],
-        );
-
-        // Once the task leaves the roster, a reused id starts unmarked.
-        yield* Queue.offer(
-          harness.sdkMessages,
-          roster(["dev-server"], "00000000-0000-4000-8000-000000000303"),
-        );
-        yield* nextRoster((tasks) => tasks.length === 1);
-        yield* Queue.offer(
-          harness.sdkMessages,
-          roster(["dev-server", WAKE_TASK_ID], "00000000-0000-4000-8000-000000000304"),
-        );
-        assert.deepStrictEqual(marks(yield* nextRoster((tasks) => tasks.length === 2)), [
-          ["dev-server", false],
-          [WAKE_TASK_ID, false],
-        ]);
-
-        yield* awaitBackgroundTasks({
-          providerThread: harness.providerThread,
-          taskIds: ["dev-server"],
-          awaited: true,
-        });
-        assert.deepStrictEqual(
-          marks(yield* nextRoster((tasks) => tasks.some((task) => task.awaited === true))),
-          [
-            ["dev-server", true],
             [WAKE_TASK_ID, false],
-          ],
-        );
-        const released = yield* awaitBackgroundTasks({
-          providerThread: harness.providerThread,
-          taskIds: ["dev-server"],
-          awaited: false,
-        });
-        assert.deepStrictEqual(released.matched, ["dev-server"]);
-        assert.deepStrictEqual(
-          marks(yield* nextRoster((tasks) => !tasks.some((task) => task.awaited === true))),
-          [
-            ["dev-server", false],
-            [WAKE_TASK_ID, false],
-          ],
-        );
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
+          ]);
+
+          yield* awaitBackgroundTasks({
+            providerThread: harness.providerThread,
+            taskIds: ["dev-server"],
+            awaited: true,
+          });
+          assert.deepStrictEqual(
+            marks(yield* nextRoster((tasks) => tasks.some((task) => task.awaited === true))),
+            [
+              ["dev-server", true],
+              [WAKE_TASK_ID, false],
+            ],
+          );
+          const released = yield* awaitBackgroundTasks({
+            providerThread: harness.providerThread,
+            taskIds: ["dev-server"],
+            awaited: false,
+          });
+          assert.deepStrictEqual(released.matched, ["dev-server"]);
+          assert.deepStrictEqual(
+            marks(yield* nextRoster((tasks) => !tasks.some((task) => task.awaited === true))),
+            [
+              ["dev-server", false],
+              [WAKE_TASK_ID, false],
+            ],
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
         ),
       ),
-    ),
   );
 
   it.effect("keeps a running Claude monitor typed after many newer monitors end", () =>
@@ -10484,83 +10562,103 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("preserves settled background work until an explicit stop", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        let closes = 0;
-        const harness = yield* makeWakeHarnessWithOptions({
-          close: (sdkMessages) =>
-            Effect.sync(() => {
-              closes++;
-            }).pipe(Effect.andThen(Queue.shutdown(sdkMessages))),
-        });
-        const now = yield* DateTime.now;
-        const attemptId = RunAttemptId.make("attempt-claude-settled-stop");
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId,
-            text: "Run the build in the background.",
-            attachments: [],
-          }),
-        );
-        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
-        yield* Queue.offer(harness.sdkMessages, turnOneResult);
-        yield* harness.awaitTerminal(1);
-        const settledThread = providerThreadRosterEvents(harness.events).at(-1)?.providerThread;
-        assert.equal(settledThread?.pendingBackgroundTasks?.[0]?.taskId, WAKE_TASK_ID);
-        assert.isTrue(yield* harness.hasPendingBackgroundWork);
-
-        const replacementAttempt = yield* harness.runtime
-          .startTurn(
+  it.effect.each(["running", "completed-awaited"] as const)(
+    "preserves settled background work until an explicit stop: %s",
+    (taskState) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          let closes = 0;
+          const harness = yield* makeWakeHarnessWithOptions({
+            close: (sdkMessages) =>
+              Effect.sync(() => {
+                closes++;
+              }).pipe(Effect.andThen(Queue.shutdown(sdkMessages))),
+          });
+          const now = yield* DateTime.now;
+          const attemptId = RunAttemptId.make("attempt-claude-settled-stop");
+          yield* harness.runtime.startTurn(
             makeClaudeTestTurnInput({
               threadId: harness.threadId,
-              providerThread: {
-                ...harness.providerThread,
-                nativeThreadRef: {
-                  ...harness.providerThread.nativeThreadRef!,
-                  nativeId: "replacement-session",
-                },
-              },
+              providerThread: harness.providerThread,
               now,
-              attemptId: RunAttemptId.make("attempt-claude-background-replacement"),
-              text: "Continue in a fresh session.",
+              attemptId,
+              text: "Run the build in the background.",
               attachments: [],
-              providerTurnOrdinal: 2,
             }),
-          )
-          .pipe(Effect.result);
-        assert.equal(replacementAttempt._tag, "Failure");
-        assert.equal(closes, 0);
-        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          );
+          yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+          yield* Queue.offer(harness.sdkMessages, turnOneResult);
+          yield* harness.awaitTerminal(1);
+          const settledThread = providerThreadRosterEvents(harness.events).at(-1)?.providerThread;
+          assert.equal(settledThread?.pendingBackgroundTasks?.[0]?.taskId, WAKE_TASK_ID);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
 
-        yield* harness.runtime.interruptTurn({
-          providerThread: settledThread ?? harness.providerThread,
-          providerTurnId: harness.terminalEvents()[0]!.providerTurnId,
-          requestRuntimeRestart: true,
-        });
+          if (taskState === "completed-awaited") {
+            if (harness.runtime.awaitBackgroundTasks === undefined) {
+              return yield* Effect.die("Claude must expose background task awaiting.");
+            }
+            yield* harness.runtime.awaitBackgroundTasks({
+              providerThread: harness.providerThread,
+              taskIds: [WAKE_TASK_ID],
+              awaited: true,
+            });
+            yield* harness.offerAndWait(wakeNotification);
+            assert.deepStrictEqual(
+              providerThreadRosterEvents(harness.events)
+                .at(-1)
+                ?.providerThread.pendingBackgroundTasks?.map((task) => [task.taskId, task.awaited]),
+              [[WAKE_TASK_ID, true]],
+            );
+          }
 
-        assert.equal(closes, 1, "Stop must close the CLI process that owns the task");
-        yield* harness.until(
-          () =>
-            (providerThreadRosterEvents(harness.events).at(-1)?.providerThread
-              .pendingBackgroundTasks?.length ?? 0) === 0,
-        );
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
-        assert.lengthOf(harness.continuationRequests, 0);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
+          const replacementAttempt = yield* harness.runtime
+            .startTurn(
+              makeClaudeTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: {
+                  ...harness.providerThread,
+                  nativeThreadRef: {
+                    ...harness.providerThread.nativeThreadRef!,
+                    nativeId: "replacement-session",
+                  },
+                },
+                now,
+                attemptId: RunAttemptId.make("attempt-claude-background-replacement"),
+                text: "Continue in a fresh session.",
+                attachments: [],
+                providerTurnOrdinal: 2,
+              }),
+            )
+            .pipe(Effect.result);
+          assert.equal(replacementAttempt._tag, "Failure");
+          assert.equal(closes, 0);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+          yield* harness.runtime.interruptTurn({
+            providerThread: settledThread ?? harness.providerThread,
+            providerTurnId: harness.terminalEvents()[0]!.providerTurnId,
+            requestRuntimeRestart: true,
+          });
+
+          assert.equal(closes, 1, "Stop must close the CLI process that owns the task");
+          yield* harness.until(
+            () =>
+              (providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+                .pendingBackgroundTasks?.length ?? 0) === 0,
+          );
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+          assert.lengthOf(harness.continuationRequests, 0);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
         ),
       ),
-    ),
   );
 
   it.effect("a settled Stop leaves a turn that replaced the closing process alone", () =>
