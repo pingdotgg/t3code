@@ -4412,6 +4412,105 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("pages a watched PR's review threads side by side", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projectId = ProjectId.make("pr-watch-tails-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch tails",
+        workspaceRoot: "/workspace/watch-tails",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      for (const number of [22]) {
+        const threadId = ThreadId.make(`runtime-pull-request-watch-tails-${number}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-tails-create-${number}`),
+          threadId,
+          projectId,
+          title: "Watch tails",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-tails-start-${number}`),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number,
+          watching: true,
+          link: { url: `https://github.com/pingdotgg/t3code/pull/${number}`, source: "agent" },
+        });
+      }
+      const at = "2026-10-02T12:00:00.000Z";
+      const texts = (number: number) =>
+        orchestrator
+          .getThreadRecords(ThreadId.make(`runtime-pull-request-watch-tails-${number}`), [
+            "messages",
+          ])
+          .pipe(Effect.map(({ messages }) => messages.map((message) => message.text).join("\n")));
+      const reply = (thread: string): PullRequestComment => ({
+        id: `${thread}-11`,
+        kind: "review-comment",
+        author: { login: "reviewer", name: null, avatarUrl: null },
+        body: `Reply on ${thread}.`,
+        createdAt: "2999-01-01T00:00:00.000Z",
+        url: null,
+        path: "src/index.ts",
+        reviewState: null,
+      });
+      const reviewThread = (id: string) => ({
+        id,
+        path: "src/index.ts",
+        line: 1,
+        side: "right" as const,
+        isResolved: false,
+        isOutdated: false,
+        comments: [],
+        commentCount: 1,
+        nextCommentsCursor: `${id}-start`,
+      });
+      // Thread A's tail answers only once B's is asked for, so paging them in turn never finishes.
+      const tailB = yield* Deferred.make<void>();
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          watchFingerprint: () => Effect.succeed(null),
+          detail: (input) =>
+            Effect.succeed(watchedPullRequestDetail({ projectId, number: input.number, at })),
+          activity: () =>
+            Effect.succeed({
+              comments: [],
+              commentCount: 2,
+              commentsTruncated: true,
+              reviewThreadsTruncated: false,
+              reviewThreads: [reviewThread("A"), reviewThread("B")],
+              commits: [],
+            }),
+          threadComments: (input) =>
+            (input.threadId === "A"
+              ? Deferred.await(tailB)
+              : Deferred.succeed(tailB, undefined)
+            ).pipe(Effect.as({ comments: [reply(input.threadId)], nextCursor: null })),
+        }),
+      );
+      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* reactor.sweep;
+      const told = yield* texts(22);
+      assert.include(told, "Reply on A.");
+      assert.include(told, "Reply on B.");
+    }),
+  );
+
   it.effect("persists rejected command receipts across retries", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
