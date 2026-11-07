@@ -78,6 +78,55 @@ function ghosttyTextRunEnd(
   return end;
 }
 
+// Snapshots decode `wide` only for empty cells, so a wide glyph is known by its spacer tail.
+function isWideGlyph(cells: readonly GhosttyCell[], index: number): boolean {
+  return cells[index + 1]?.wide === GHOSTTY_CELL_WIDE.spacerTail;
+}
+
+// Wide glyphs rarely advance exactly two cells, so each is centred in its own box
+// and the narrow text after it restarts at its own column instead of drifting.
+function fillGhosttyRunText(
+  context: CanvasRenderingContext2D,
+  cells: readonly GhosttyCell[],
+  start: number,
+  end: number,
+  text: string,
+  left: number,
+  baseline: number,
+  cellWidth: number,
+): void {
+  let segment = start;
+  while (segment < end) {
+    let segmentEnd = segment;
+    while (segmentEnd < end && !isWideGlyph(cells, segmentEnd)) segmentEnd += 1;
+    if (segmentEnd > segment) {
+      const segmentText =
+        segment === start && segmentEnd === end
+          ? text
+          : cells
+              .slice(segment, segmentEnd)
+              .map((cell) => cell.text)
+              .join("");
+      context.fillText(
+        segmentText,
+        left + (segment - start) * cellWidth,
+        baseline,
+        (segmentEnd - segment) * cellWidth,
+      );
+    }
+    if (segmentEnd === end) break;
+    context.textAlign = "center";
+    context.fillText(
+      cells[segmentEnd]?.text ?? "",
+      left + (segmentEnd - start + 1) * cellWidth,
+      baseline,
+      cellWidth * 2,
+    );
+    context.textAlign = "start";
+    segment = segmentEnd + 2;
+  }
+}
+
 function fontForCell(cell: GhosttyCell, fontSize: number, fontFamily: string): string {
   const style = cell.italic ? "italic" : "normal";
   const weight = cell.bold ? "700" : "400";
@@ -247,11 +296,15 @@ export function renderGhosttySnapshot(options: {
         context.clip();
         context.font = fontForCell(first, fontSize, fontFamily);
         context.fillStyle = cssColor(first.foreground);
-        context.fillText(
+        fillGhosttyRunText(
+          context,
+          row.cells,
+          runStart,
+          runEnd,
           text,
           padding + runStart * metrics.width,
           top + metrics.baseline,
-          (runEnd - runStart) * metrics.width,
+          metrics.width,
         );
         context.restore();
       }
