@@ -620,3 +620,11 @@ export const DurationFromString = Schema.String.pipe(
     }),
   ),
 );
+
+export const HttpUrlFromString = Schema.URLFromString.pipe(
+  Schema.check(
+    Schema.makeFilter((url) => url.protocol === "http:" || url.protocol === "https:", {
+      expected: "an http:// or https:// URL",
+    }),
+  ),
+);

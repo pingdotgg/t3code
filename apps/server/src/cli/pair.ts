@@ -26,6 +26,7 @@ import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag } from "effect/cli";
+import * as CliError from "effect/cli/CliError";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
@@ -47,7 +48,7 @@ import {
   resolveHeadlessConnectionString,
 } from "../startupAccess.ts";
 import { authScopesFlag } from "./authScopes.ts";
-import { baseDirFlag, DurationFromString } from "./config.ts";
+import { baseDirFlag, DurationFromString, HttpUrlFromString } from "./config.ts";
 import { resolveHostCliCommand } from "./invocation.ts";
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
@@ -483,6 +484,14 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.withDefault(DEFAULT_TAILSCALE_SERVE_PORT),
 );
 
+const baseUrlFlag = Flag.String("base-url").pipe(
+  Flag.withSchema(HttpUrlFromString),
+  Flag.withDescription(
+    "Origin to put in the pairing link and QR code, such as a reverse proxy in front of this server. It must reach the origin clients open (the web origin for a dev server). It is not checked.",
+  ),
+  Flag.optional,
+);
+
 export const pairCommand = Command.make("pair", {
   baseDir: baseDirFlag,
   scopes: authScopesFlag(AuthStandardClientScopes),
@@ -490,6 +499,7 @@ export const pairCommand = Command.make("pair", {
   label: labelFlag,
   tailscale: tailscaleFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  baseUrl: baseUrlFlag,
 }).pipe(
   Command.withDescription(
     "Mint a pairing token for a running T3 Code server and print it as a QR code.",
@@ -498,6 +508,13 @@ export const pairCommand = Command.make("pair", {
     Effect.gen(function* () {
       const cliLogLevel = yield* GlobalFlag.LogLevel;
       const logLevel = Option.getOrElse(cliLogLevel, () => "Warn" as const);
+      if (flags.tailscale && Option.isSome(flags.baseUrl)) {
+        return yield* new CliError.UserError({
+          cause: "base-url",
+          userMessage:
+            "Use either --base-url or --tailscale. --tailscale publishes this server through Tailscale Serve; --base-url names an address that already reaches it.",
+        });
+      }
 
       const target = yield* discoverPairTarget(Option.getOrUndefined(flags.baseDir));
       // Each protocol keeps auth in its own database, so a token minted here
@@ -528,6 +545,11 @@ export const pairCommand = Command.make("pair", {
         });
         pairingBaseUrl = resolved.baseUrl;
         notes.push(...resolved.notes);
+      } else if (Option.isSome(flags.baseUrl)) {
+        pairingBaseUrl = flags.baseUrl.value.href;
+        if (isLoopbackHost(flags.baseUrl.value.hostname)) {
+          notes.push("This URL is only reachable from this machine.");
+        }
       } else {
         pairingBaseUrl = resolveDirectPairingBaseUrl(target.state);
         if (isLoopbackHost(new URL(pairingBaseUrl).hostname)) {

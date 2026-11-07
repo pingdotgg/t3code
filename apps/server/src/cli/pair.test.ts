@@ -34,6 +34,7 @@ import {
   persistServerRuntimeState,
   type PersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
+import { renderTerminalQrCode } from "../startupAccess.ts";
 import { resolveHostCliCommand } from "./invocation.ts";
 import { DevServerNotProxiableError, resolveTailscaleLocalTarget } from "./pair.ts";
 
@@ -267,6 +268,135 @@ describe("t3 pair", () => {
         assert.include(output, "Pairing URL: http://localhost:5733/pair#token=");
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("advertises --base-url in the QR code and pairing URL without probing it", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const fetch = yield* FetchHttpClient.Fetch;
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-base-url-"));
+        yield* persistServerRuntimeState({
+          path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+          state: yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: Number(new URL(origin).port),
+          }),
+        });
+
+        const output = yield* captureStdout(
+          runCli([
+            "pair",
+            "--base-dir",
+            baseDir,
+            "--base-url",
+            "https://devpod-host.tail.ts.net",
+          ]).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make(() => Effect.die("tailscale must not run")),
+            ),
+            Effect.provideService(FetchHttpClient.Fetch, (input, init) => {
+              assert.isTrue(
+                String(input).startsWith(origin),
+                `unexpected probe of ${String(input)}`,
+              );
+              return fetch(input, init);
+            }),
+          ),
+        );
+
+        const pairingUrl = /Pairing URL: (\S+)/.exec(output)?.[1];
+        if (pairingUrl === undefined) return assert.fail(`No pairing URL in:\n${output}`);
+        assert.match(pairingUrl, /^https:\/\/devpod-host\.tail\.ts\.net\/pair#token=[A-Z2-9]+$/);
+        assert.include(output, renderTerminalQrCode(pairingUrl));
+        assert.include(output, `App link: ${buildPairingAppLink(pairingUrl)}`);
+        // The header names the local server that minted the token.
+        assert.include(output, `Pairing with pair-test (${origin})`);
+        assert.notInclude(output, "only reachable from this machine");
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("keeps the this-machine-only note for a loopback --base-url", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-base-url-"));
+        yield* persistServerRuntimeState({
+          path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+          state: yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: Number(new URL(origin).port),
+          }),
+        });
+
+        const output = yield* captureStdout(
+          runCli(["pair", "--base-dir", baseDir, "--base-url", "http://localhost:8080"]),
+        );
+
+        assert.include(output, "Pairing URL: http://localhost:8080/pair#token=");
+        assert.include(output, "Note: This URL is only reachable from this machine.");
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("refuses --base-url with --tailscale before minting a token", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-base-url-"));
+        yield* persistServerRuntimeState({
+          path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+          state: yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: Number(new URL(origin).port),
+          }),
+        });
+
+        const error = yield* provideCliTestLayers(
+          runCli([
+            "pair",
+            "--base-dir",
+            baseDir,
+            "--tailscale",
+            "--base-url",
+            "https://devpod-host.tail.ts.net",
+          ]).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make(() => Effect.die("tailscale must not run")),
+            ),
+            Effect.flip,
+          ),
+        );
+
+        assert.include(String(error), "Use either --base-url or --tailscale.");
+        const listed = yield* captureStdout(
+          runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
+        );
+        assert.deepEqual(JSON.parse(listed), []);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect.each(["devpod-host.tail.ts.net", "ftp://devpod-host.tail.ts.net"])(
+    "rejects --base-url %s",
+    (baseUrl) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-base-url-"));
+        const error = yield* runCli(["pair", "--base-dir", baseDir, "--base-url", baseUrl]).pipe(
+          Effect.provide(layerCliRuntime),
+          Effect.flip,
+        );
+
+        if (!CliError.isCliError(error) || error._tag !== "ShowHelp") {
+          assert.fail(`Expected ShowHelp, got ${String(error)}`);
+        }
+        const flagError = error.errors[0];
+        if (flagError?._tag !== "InvalidValue") {
+          assert.fail(`Expected InvalidValue, got ${String(flagError?._tag)}`);
+        }
+        assert.equal(flagError.option, "base-url");
+        assert.equal(flagError.value, baseUrl);
+      }),
   );
 
   it.effect("refuses --tailscale before turning on Serve when the policy keeps clients local", () =>
