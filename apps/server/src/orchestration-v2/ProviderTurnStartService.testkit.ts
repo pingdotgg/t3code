@@ -20,7 +20,7 @@ import * as Layer from "effect/Layer";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 
-export const layer = Layer.mergeAll(
+export const layer = Layer.merge(
   Layer.mock(GitWorkflow.GitWorkflowService)({
     pruneWorktrees: () => Effect.void,
     createWorktree: () => Effect.succeed({} as never),
@@ -28,7 +28,6 @@ export const layer = Layer.mergeAll(
   Layer.mock(ProjectService.ProjectService)({
     getById: () => Effect.succeedNone,
   }),
-  Layer.mock(ProviderRegistry.ProviderRegistry)({ dropWorkspaceSnapshots: () => Effect.void }),
 );
 
 // Keep repository detection, branch selection and worktree creation on the real Git path.

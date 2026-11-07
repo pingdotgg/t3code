@@ -83,9 +83,6 @@ export class ProviderRegistry extends Context.Service<
       readonly fresh?: boolean;
     }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
-    /** Forget every provider's snapshot of `cwd`, including scans still running, so clients rescan it. */
-    readonly dropWorkspaceSnapshots: (cwd: string) => Effect.Effect<void>;
-
     /**
      * Drop T3-owned model caches before an explicit model refresh. Pass the
      * target of the refresh that follows. Background and ordinary refreshes
@@ -1047,26 +1044,6 @@ export const layer = Layer.effect(
       return yield* Fiber.join(claim.scan);
     });
 
-    const dropWorkspaceSnapshots = Effect.fn("ProviderRegistry.dropWorkspaceSnapshots")(function* (
-      cwd: string,
-    ) {
-      // A running scan publishes only while it holds the claim, so releasing it discards its result.
-      yield* Ref.update(
-        workspaceRefreshesRef,
-        (refreshes) =>
-          new Map(
-            Array.from(refreshes, ([instance, cwds]) => {
-              const next = new Map(cwds);
-              next.delete(cwd);
-              return [instance, next] as const;
-            }).filter(([, cwds]) => cwds.size > 0),
-          ),
-      );
-      yield* updateProviders((providers) =>
-        providers.map((provider) => dropProviderWorkspaceSnapshot(provider, cwd)),
-      );
-    });
-
     const invalidateModelCaches = Effect.fn("ProviderRegistry.invalidateModelCaches")(function* (
       input: Parameters<ProviderRegistry["Service"]["invalidateModelCaches"]>[0],
     ) {
@@ -1105,7 +1082,6 @@ export const layer = Layer.effect(
         reloadSecretsAndRefresh(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshWorkspaceSnapshot: (input) =>
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
-      dropWorkspaceSnapshots,
       refreshAfterUpdate,
       invalidateModelCaches,
       getProviderMaintenanceCapabilitiesForInstance,
