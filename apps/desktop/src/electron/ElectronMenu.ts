@@ -78,6 +78,7 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
       label: sourceItem.label,
       destructive: sourceItem.destructive === true,
       disabled: sourceItem.disabled === true,
+      ...(typeof sourceItem.icon === "string" ? { icon: sourceItem.icon } : {}),
       ...(sourceItem.separatorBefore === true ? { separatorBefore: true } : {}),
       ...(typeof sourceItem.checked === "boolean" ? { checked: sourceItem.checked } : {}),
     };
@@ -109,31 +110,43 @@ const normalizePosition = (
     Option.map(({ x, y }) => ({ x: Math.floor(x * zoomFactor), y: Math.floor(y * zoomFactor) })),
   );
 
+// macOS menus stay mostly text-only; only state toggles people scan for get a symbol.
+const NATIVE_MENU_SYMBOLS: Partial<Record<string, string>> = {
+  pin: "pin",
+  "pin-off": "pin.slash",
+  clock: "clock",
+  "circle-check": "checkmark.circle",
+  archive: "archivebox",
+};
+
 /** @public */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
-  let destructiveMenuIconCache: Option.Option<Electron.NativeImage> | undefined;
+  const menuSymbolCache = new Map<string, Option.Option<Electron.NativeImage>>();
 
-  const getDestructiveMenuIcon = (): Option.Option<Electron.NativeImage> => {
-    if (platform !== "darwin") {
+  const getMenuSymbol = (item: ContextMenuItem): Option.Option<Electron.NativeImage> => {
+    const symbol = item.destructive
+      ? "trash"
+      : item.icon === undefined
+        ? undefined
+        : NATIVE_MENU_SYMBOLS[item.icon];
+    if (platform !== "darwin" || symbol === undefined) {
       return Option.none();
     }
-    if (destructiveMenuIconCache !== undefined) {
-      return destructiveMenuIconCache;
+    const cached = menuSymbolCache.get(symbol);
+    if (cached !== undefined) {
+      return cached;
     }
 
+    let icon: Option.Option<Electron.NativeImage>;
     try {
-      const icon = Electron.nativeImage.createFromNamedImage("trash").resize({
-        width: 12,
-        height: 12,
-      });
-      icon.setTemplateImage(true);
-      destructiveMenuIconCache = icon.isEmpty() ? Option.none() : Option.some(icon);
+      const image = Electron.nativeImage.createMenuSymbol(symbol);
+      icon = image.isEmpty() ? Option.none() : Option.some(image);
     } catch {
-      destructiveMenuIconCache = Option.none();
+      icon = Option.none();
     }
-
-    return destructiveMenuIconCache;
+    menuSymbolCache.set(symbol, icon);
+    return icon;
   };
 
   const buildTemplate = (
@@ -173,11 +186,9 @@ export const make = Effect.gen(function* () {
       } else {
         itemOption.click = () => complete(Option.some(item.id));
       }
-      if (item.destructive && (!item.children || item.children.length === 0)) {
-        const destructiveIcon = getDestructiveMenuIcon();
-        if (Option.isSome(destructiveIcon)) {
-          itemOption.icon = destructiveIcon.value;
-        }
+      const icon = getMenuSymbol(item);
+      if (Option.isSome(icon)) {
+        itemOption.icon = icon.value;
       }
 
       template.push(itemOption);
