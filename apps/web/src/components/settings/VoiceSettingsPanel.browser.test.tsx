@@ -5,7 +5,6 @@ import {
   type EnvironmentSpeechModel,
   type EnvironmentSpeechStatus,
 } from "@t3tools/contracts";
-import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
@@ -72,7 +71,7 @@ vi.mock("../../connection/runtime", async () => {
   };
 });
 
-it("preserves the model test transcript when its model is filtered out", async () => {
+it("tests the selected model after download and preserves its transcript across filters", async () => {
   const target = new PrimaryConnectionTarget({
     environmentId: EnvironmentId.make("voice-filter"),
     label: "Test environment",
@@ -107,15 +106,23 @@ it("preserves the model test transcript when its model is filtered out", async (
     modelUnloadTimeout: "never",
     gpuDevices: [],
   } satisfies EnvironmentSpeechStatus;
+  let installed = false;
   const fetch = globalThis.fetch;
   using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = new URL(input instanceof Request ? input.url : input, window.location.href);
-    if (url.pathname === "/api/voice/status") return Promise.resolve(Response.json(status));
+    if (url.pathname === "/api/voice/status")
+      return Promise.resolve(
+        Response.json(installed ? status : { ...status, state: "missing-model" }),
+      );
+    if (url.pathname === "/api/voice/models/download") {
+      installed = true;
+      return Promise.resolve(Response.json({ models: [model] }));
+    }
     if (url.pathname === "/api/voice/models")
       return Promise.resolve(
         Response.json({
           models: [
-            model,
+            installed ? model : { ...model, state: "downloadable", active: false },
             {
               ...model,
               id: "both",
@@ -140,6 +147,7 @@ it("preserves the model test transcript when its model is filtered out", async (
     return fetch(input, init);
   });
   const transcript = "Keep this transcript.";
+  using _scope = vi.mocked(useEnvironmentScope).mockReturnValue(true);
   await vi.mocked(useVoiceTranscriptionDestination).withImplementation(
     () => ({ environmentId: target.environmentId, label: target.label, grantId: "test", prepared }),
     async () => {
@@ -184,7 +192,13 @@ it("preserves the model test transcript when its model is filtered out", async (
             </SettingsScopeProvider>,
           );
           const testModel = screen.getByRole("button", { name: "Test model", exact: true });
+          const download = screen.getByRole("button", { name: "Download", exact: true });
+          await expect.element(download).toBeVisible();
+          expect(testModel.query()).toBeNull();
+          expect(screen.getByRole("button", { name: "Set up voice input" }).query()).toBeNull();
+          await userEvent.click(download);
           await expect.element(testModel).toBeVisible();
+          expect(screen.getByRole("button", { name: "Set up voice input" }).query()).toBeNull();
           await userEvent.click(testModel);
           const result = screen.getByRole("status", { name: "Test transcript" });
           await expect.element(result).toHaveTextContent(transcript);
@@ -210,137 +224,6 @@ it("preserves the model test transcript when its model is filtered out", async (
       );
     },
   );
-});
-
-// A fresh destination has not downloaded its selected model, and a French browser filters an
-// English-only model out of the catalog. Setup must still be one click away.
-it("keeps first-run setup open when its language recommendation replaces the selected model", async () => {
-  using _languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["fr-FR"]);
-  const target = new PrimaryConnectionTarget({
-    environmentId: EnvironmentId.make("voice-first-run"),
-    label: "Test environment",
-    httpBaseUrl: window.location.origin,
-    wsBaseUrl: "ws://localhost",
-  });
-  const prepared = { ...target, target, socketUrl: target.wsBaseUrl, httpAuthorization: null };
-  let installed = false;
-  const model: EnvironmentSpeechModel = {
-    id: "tiny",
-    name: "Tiny",
-    description: "",
-    size: 100,
-    languages: ["en"],
-    accuracy: 1,
-    speed: 1,
-    recommended: true,
-    supportsStreaming: false,
-    supportsTranslation: false,
-    supportsLanguageDetection: false,
-    active: false,
-    state: "downloadable",
-  };
-  const recommended = { ...model, id: "both", name: "Bilingual", languages: ["en", "fr"] };
-  const status = {
-    supported: true,
-    state: "missing-model",
-    modelId: model.id,
-    model: model.name,
-    size: model.size,
-    supportsStreaming: false,
-    supportsTranslation: false,
-    acceleration: "cpu",
-    modelUnloadTimeout: "never",
-    gpuDevices: [],
-  } satisfies EnvironmentSpeechStatus;
-  const fetch = globalThis.fetch;
-  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
-    const url = new URL(input instanceof Request ? input.url : input, window.location.href);
-    if (url.pathname === "/api/voice/status")
-      return Promise.resolve(
-        Response.json(
-          installed
-            ? { ...status, state: "ready", modelId: recommended.id, model: recommended.name }
-            : status,
-        ),
-      );
-    if (url.pathname === "/api/voice/models")
-      return Promise.resolve(
-        Response.json({
-          models: [
-            model,
-            installed ? { ...recommended, state: "installed", active: true } : recommended,
-          ],
-        }),
-      );
-    return fetch(input, init);
-  });
-  using mocks = new DisposableStack();
-  mocks.defer(() => vi.mocked(useEnvironmentScope).mockReset());
-  vi.mocked(useEnvironmentScope).mockReturnValue(true);
-  mocks.defer(() => vi.mocked(useVoiceTranscriptionDestination).mockReset());
-  mocks.defer(() => vi.mocked(useEnvironmentSpeechInput).mockReset());
-  vi.mocked(useVoiceTranscriptionDestination).mockImplementation(() => ({
-    environmentId: target.environmentId,
-    label: target.label,
-    grantId: "test",
-    prepared,
-  }));
-  // Mirrors the hook: starting with a missing model opens the wizard instead of recording.
-  vi.mocked(useEnvironmentSpeechInput).mockImplementation((input) => {
-    const [open, setOpen] = useState(false);
-    const [ready, setReady] = useState(false);
-    return {
-      available: true,
-      status,
-      transcriptionEnvironmentId: target.environmentId,
-      transcriptionEnvironmentLabel: target.label,
-      setup: {
-        open,
-        step: ready ? 1 : 0,
-        model: recommended,
-        language: "fr",
-        catalogFailed: false,
-        retryCatalog: null,
-        downloading: false,
-        error: null,
-        setOpen,
-        download: async () => {
-          installed = true;
-          setReady(true);
-        },
-        cancelDownload: async () => {},
-        startRecording: async () => {
-          input.commitDraft("microphone test", { start: 15, end: 15 });
-          setOpen(false);
-        },
-      },
-      state: { phase: "idle", error: null, errorAction: null },
-      preview: null,
-      level: 0,
-      preparing: false,
-      blocksSubmission: false,
-      freezesEditor: false,
-      start: async () => setOpen(true),
-      submitAfterDictation: () => {},
-      stop: async () => {},
-      cancel: () => {},
-      skipPostProcessing: () => {},
-    };
-  });
-  await using screen = await render(
-    <SettingsScopeProvider search={{}} onChange={() => {}}>
-      <VoiceSettingsPanel />
-    </SettingsScopeProvider>,
-  );
-  await expect.element(screen.getByText("Bilingual", { exact: true })).toBeVisible();
-  await userEvent.click(screen.getByRole("button", { name: /set up voice input/i }));
-  await expect.element(screen.getByRole("dialog", { name: "Set up voice input" })).toBeVisible();
-  await userEvent.click(screen.getByRole("button", { name: "Download model" }));
-  await expect.element(screen.getByText("Selected", { exact: true })).toBeVisible();
-  await userEvent.click(screen.getByRole("button", { name: "Start dictating" }));
-  await expect
-    .element(screen.getByRole("status", { name: "Test transcript" }))
-    .toHaveTextContent("microphone test");
 });
 
 it("loads the models of a relay-connected destination", async () => {

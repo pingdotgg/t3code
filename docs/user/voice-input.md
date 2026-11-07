@@ -49,10 +49,10 @@ until you choose another.
 
 ## Set up a model
 
-For environment transcription, open **Settings → Voice → Transcription → Set up
-voice input** to configure the model and microphone without recording. If a
-model is missing, setup recommends one for your Voice language. With
-**Auto-detect**, it uses your system’s preferred languages.
+In **Settings → Voice → Transcription**, download a model and choose **Use model** if it
+isn’t already selected. **Test model** lets you try it without sending a message.
+If you use the composer microphone before a model is installed, it offers to download one.
+The recommendation uses your Voice language, or your system’s preferred languages with **Auto-detect**.
 
 Select the languages you dictate in to compare models that support all of them.
 Accuracy shows how often the model got words or characters wrong in each

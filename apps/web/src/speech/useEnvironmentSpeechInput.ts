@@ -475,7 +475,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     },
   );
 
-  const start = useStableCallback(async (options?: { readonly setupOnly?: boolean }) => {
+  const start = useStableCallback(async () => {
     if (latestRef.current.input.disabled) return;
     if (!grantId) {
       if (destination.offerFirstRunSetup && latestRef.current.input.offerSetup !== false)
@@ -488,7 +488,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     if (!controller || !prepared) return;
     if (cloudProvider) {
       setLevel(0);
-      if (!options?.setupOnly) await controller.start();
+      await controller.start();
       return;
     }
     const stillCurrent = () =>
@@ -522,10 +522,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         title: "Voice input is not available",
         description: latestStatus.reason,
       });
-      return;
-    }
-    if (options?.setupOnly) {
-      setSetup({ ...INITIAL_SETUP, open: true, step: 1 });
       return;
     }
     setLevel(0);
