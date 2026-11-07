@@ -301,6 +301,9 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     } else {
       Gravity.TOP or Gravity.START
     }
+    // Wrapping inside the narrow compact slot would report a two-line height for a draft
+    // that fits one line once expanded; JS expands on the reported width instead.
+    editor.setHorizontallyScrolling(centered)
   }
 
   fun setContentInsetVertical(contentInsetVertical: Int) {
