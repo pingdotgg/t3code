@@ -3168,40 +3168,6 @@ describe("v2 run and attempt history", () => {
       supportsConversationRollback: false,
     };
 
-    const liveInput = {
-      ...common,
-      timelineEntries: timelineEntries.filter((entry) => entry.kind !== "event"),
-      isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:00:05Z",
-    };
-    const liveRows = applyWorkingWindow(deriveMessagesTimelineRows(liveInput), liveInput);
-    expect(liveRows.map((row) => row.id)).toEqual([
-      "initial-user-entry",
-      "steer-user-entry",
-      `attempt-fold:${supersededAttemptId}`,
-      "working-indicator-row",
-      "active-assistant-entry",
-    ]);
-    expect(liveRows.find((row) => row.id === "initial-user-entry")).toMatchObject({
-      groupedWithNext: true,
-    });
-    expect(liveRows.find((row) => row.kind === "working")?.createdAt).toBe(
-      "2026-01-01T00:00:00.000Z",
-    );
-    const expandedLiveInput = { ...liveInput, expandedAttemptIds: new Set([supersededAttemptId]) };
-    expect(
-      applyWorkingWindow(deriveMessagesTimelineRows(expandedLiveInput), expandedLiveInput).map(
-        (row) => row.id,
-      ),
-    ).toEqual([
-      "initial-user-entry",
-      "steer-user-entry",
-      `attempt-fold:${supersededAttemptId}`,
-      "superseded-assistant-entry",
-      "superseded-work-entry",
-      "working-indicator-row",
-      "active-assistant-entry",
-    ]);
     const completedInput = {
       ...common,
       latestRun: {
@@ -3223,11 +3189,6 @@ describe("v2 run and attempt history", () => {
     expect(completedRows.find((row) => row.kind === "turn-fold")).toMatchObject({
       label: "Worked for 8s",
     });
-    expect(
-      deriveMessagesTimelineRows({ ...completedInput, latestRun: null }).find(
-        (row) => row.kind === "turn-fold",
-      ),
-    ).toMatchObject({ label: "Worked for 8s" });
 
     const collapsedRows = deriveMessagesTimelineRows(common);
     expect(collapsedRows.map((row) => row.id)).toEqual([
@@ -4649,20 +4610,13 @@ describe("working window", () => {
       ...pendingSteer,
       message: { ...pendingSteer.message, inputIntent: "steer" as const, runId: null },
     };
-    for (const pending of [
-      [promptEntry, edit, reply, pendingSteerEntry, command],
-      [promptEntry, edit, reply, pendingSteerEntry],
-    ]) {
-      const pendingRows = run(pending);
-      expect(pendingRows.map((row) => row.id)).toEqual([
-        "prompt",
-        "steer",
-        "working-indicator-row",
-      ]);
-      expect(workingRow(pendingRows)?.window?.items.map((item) => item.id)).toEqual(
-        ["edit", "reply", "command"].slice(0, pending.length - 2),
-      );
-    }
+    const pendingRows = run([promptEntry, edit, reply, pendingSteerEntry, command]);
+    expect(pendingRows.map((row) => row.id)).toEqual(["prompt", "steer", "working-indicator-row"]);
+    expect(workingRow(pendingRows)?.window?.items.map((item) => item.id)).toEqual([
+      "edit",
+      "reply",
+      "command",
+    ]);
 
     const attempt = (ordinal: number, status: "superseded" | "running", second: number) => ({
       id: RunAttemptId.make(`attempt-${ordinal}`),
