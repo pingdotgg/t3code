@@ -137,6 +137,7 @@ export function HostedBrowserWebview(props: {
   const [webviewGeneration, setWebviewGeneration] = useState(0);
   const [recoverySrc, setRecoverySrc] = useState(initialSrc);
   // Before its first real document a guest paints nothing, so a white host would flash while loading.
+  // Afterwards white stays: opening guest DevTools drops the CDP white base background-less pages rely on.
   const [documentShownGeneration, setDocumentShownGeneration] = useState<number | null>(null);
   const active = presentation.visible && presentation.rect !== null;
   const shown = active || pictureInPicture;
