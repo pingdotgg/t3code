@@ -302,12 +302,15 @@ export function deriveThreadStructureRuntime(
   }
   const activeRunId =
     latestMatchingRun(projection, (run) => INTERRUPTIBLE_RUN_STATUSES.has(run.status))?.id ?? null;
+  const awaitingBackgroundWork =
+    !usageLimitedRun && backgroundWorkHoldsRun && latestRunProjection?.status !== "failed";
   return {
     status: usageLimitedRun
       ? "failed"
-      : backgroundWorkHoldsRun && latestRunProjection?.status !== "failed"
+      : awaitingBackgroundWork
         ? "idle"
         : (activityRun?.status ?? "idle"),
+    ...(awaitingBackgroundWork ? { awaitingBackgroundWork } : {}),
     activeRunId,
     activityStartedAt:
       liveActivityRun === null

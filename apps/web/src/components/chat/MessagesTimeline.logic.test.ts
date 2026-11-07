@@ -1346,6 +1346,70 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("says Progress after while the latest turn awaits background work", () => {
+    const at = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
+    const message = (
+      id: string,
+      role: "user" | "assistant",
+      runId: string | null,
+      second: number,
+      fields: { readonly end?: number; readonly streaming?: boolean } = {},
+    ) => ({
+      id: `${id}-entry`,
+      kind: "message" as const,
+      createdAt: at(second),
+      message: {
+        id: MessageId.make(id),
+        role,
+        text: id,
+        runId: runId === null ? null : RunId.make(runId),
+        createdAt: at(second),
+        updatedAt: at(fields.end ?? second),
+        streaming: fields.streaming ?? false,
+      },
+    });
+    const timelineEntries = [
+      message("hello", "user", null, 0),
+      message("hi", "assistant", "turn-1", 2, { end: 3 }),
+      message("build", "user", null, 10),
+      {
+        id: "build-work-entry",
+        kind: "work" as const,
+        createdAt: at(12),
+        entry: {
+          id: "build-work",
+          createdAt: at(12),
+          runId: RunId.make("turn-2"),
+          label: "Ran command",
+          tone: "tool" as const,
+        },
+      },
+      message("built", "assistant", "turn-2", 50, { end: 63 }),
+    ];
+    const input = {
+      timelineEntries,
+      latestRun: {
+        runId: RunId.make("turn-2"),
+        status: "completed" as const,
+        startedAt: at(10),
+        completedAt: at(63),
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    };
+    const foldLabel = (rows: ReturnType<typeof deriveMessagesTimelineRows>) =>
+      rows.flatMap((row) =>
+        row.kind === "turn-fold" && row.runId === "turn-2" ? [row.label] : [],
+      );
+
+    expect(foldLabel(deriveMessagesTimelineRows(input))).toEqual(["Worked for 53s"]);
+    expect(
+      foldLabel(deriveMessagesTimelineRows({ ...input, awaitingBackgroundWork: true })),
+    ).toEqual(["Progress after 53s"]);
+  });
+
   it.each(["steer", "promoted_queued_to_steer"] as const)(
     "puts the fold after a %s that arrives before output",
     (inputIntent) => {

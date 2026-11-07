@@ -3574,6 +3574,7 @@ export default function ChatView(props: ChatViewProps) {
                     : {})}
                   isWorking={isWorking}
                   runlessWorkActive={runlessWorkStartedAt !== null}
+                  awaitingBackgroundWork={activeRuntime?.awaitingBackgroundWork === true}
                   isCompacting={isCompacting}
                   pendingRequest={timelinePendingRequest}
                   usageLimit={timelineUsageLimit}
