@@ -6,6 +6,7 @@ const path = require("path");
 const fs = require("fs");
 const { withDangerousMod, withXcodeProject } = require("expo/config-plugins");
 const { addWidgetAssetCatalog } = require("./lib/addWidgetAssetCatalog.cjs");
+const { createControlSymbol } = require("./lib/createControlSymbol.cjs");
 
 const TARGET_NAME = "ExpoWidgetsTarget";
 const CATALOG_NAME = "Assets.xcassets";
@@ -38,6 +39,19 @@ function withAssetFiles(config) {
       fs.writeFileSync(path.join(catalogDir, "Contents.json"), CATALOG_CONTENTS);
       fs.writeFileSync(path.join(imageSetDir, "Contents.json"), IMAGE_SET_CONTENTS);
       fs.copyFileSync(source, path.join(imageSetDir, SVG_NAME));
+      const symbolSetDir = path.join(catalogDir, "T3ControlMark.symbolset");
+      fs.mkdirSync(symbolSetDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(symbolSetDir, "Contents.json"),
+        JSON.stringify({
+          info: { author: "expo", version: 1 },
+          symbols: [{ filename: "T3ControlMark.svg", idiom: "universal" }],
+        }),
+      );
+      fs.writeFileSync(
+        path.join(symbolSetDir, "T3ControlMark.svg"),
+        createControlSymbol(fs.readFileSync(source, "utf8")),
+      );
       return cfg;
     },
   ]);
