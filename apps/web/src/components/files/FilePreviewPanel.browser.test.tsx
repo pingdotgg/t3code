@@ -204,6 +204,21 @@ describe("workspace document previews", () => {
     expect(screen.container.contains(loaded), "an unchanged document was remounted").toBe(true);
   });
 
+  it("keeps an unchanged document loaded across a reconnect", async () => {
+    using _settings = setup();
+    await using screen = await render(documentPreview("mutation-1", "revision-1"));
+    const preview = screen.getByTestId("office-preview");
+    await expect.element(preview).toHaveTextContent("/assets/report.docx?mint=1");
+    const loaded = preview.element();
+
+    state.assetUrl = { _tag: "Loading" };
+    await screen.rerender(filePreview("report.docx", "mutation-1"));
+    await screen.rerender(documentPreview("mutation-1", "revision-1"));
+
+    expect(state.mintUrl, "a reconnect re-minted the document URL").toHaveBeenCalledOnce();
+    expect(screen.container.contains(loaded), "a reconnect remounted the document").toBe(true);
+  });
+
   it("loads the new bytes when the document itself changes", async () => {
     using _settings = setup();
     await using screen = await render(documentPreview("mutation-1", "revision-1"));
