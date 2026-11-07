@@ -15,6 +15,7 @@ to a named environment on that phone, open **Settings → Voice → Transcribe o
 On web and desktop, you choose where transcription runs.
 Nothing is sent until you choose one: open **Settings → Voice** and set
 **Transcribe with** to the environment that should transcribe for you.
+On a new device, the microphone or dictation shortcut opens that setting from the composer.
 Microphone audio recorded on this device is sent to that environment over your
 authenticated connection, transcribed there, and discarded. The choice is saved
 on this device only, so every computer and browser you use asks for it once.
@@ -48,9 +49,11 @@ until you choose another.
 
 ## Set up a model
 
-If you choose environment transcription, T3 Code offers to download the recommended
-English model to that environment. In **Settings → Voice → Transcription**, select
-the languages you dictate in to compare models that support all of them.
+In **Settings → Voice → Transcription**, download a model and choose **Use model** if it
+isn’t already selected. **Test model** lets you try it without sending a message.
+If you use the composer microphone before a model is installed, it offers to download one.
+
+Select the languages you dictate in to compare models that support all of them.
 Accuracy shows how often the model got words or characters wrong in each
 language; speed is the time to transcribe 30 seconds on a reference GPU. Choose
 **All languages** to browse the full catalog. Filtering does not switch your model.

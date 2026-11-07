@@ -23,6 +23,7 @@ import type {
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveSpeechVocabulary } from "@t3tools/shared/speech";
+import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { useEffect, useRef, useState } from "react";
 
@@ -37,7 +38,7 @@ import { useEnvironment } from "../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../state/session";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
-import { bindAudioGrant, readCleanupGrant, useAudioGrant } from "./voiceConsent";
+import { bindAudioGrant, readCleanupGrant, useAudioChoice } from "./voiceConsent";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 const WAITING_STATE: VoiceInputState = { phase: "preparing", error: null, errorAction: null };
@@ -88,6 +89,11 @@ type HookInput = {
   readonly ownerKey: string;
   readonly draftText: string;
   readonly disabled?: boolean | undefined;
+  /**
+   * Until a destination is chosen, voice input is offered and its first gesture opens Voice
+   * settings. False hides it instead, for editors whose draft would not survive the navigation.
+   */
+  readonly offerSetup?: boolean | undefined;
   /** False keeps the transcript off the cleanup provider even when cleanup is on; the model test uses it. */
   readonly cleanup?: boolean | undefined;
   readonly readDraft: () => DraftInput;
@@ -104,7 +110,8 @@ type HookInput = {
  */
 export function useVoiceTranscriptionDestination() {
   const hydrated = useClientSettingsHydrated();
-  const grant = useAudioGrant();
+  const choice = useAudioChoice();
+  const grant = choice === "off" ? null : choice;
   const environmentId = hydrated && grant ? grant.destination.environmentId : null;
   const environment = useEnvironment(environmentId);
   const connection = Option.getOrNull(usePreparedConnection(environmentId));
@@ -117,6 +124,7 @@ export function useVoiceTranscriptionDestination() {
       provider ? "cloudVoiceTranscription" : "voiceTranscription"
     ] === true;
   return {
+    ...(hydrated && choice === null ? { offerFirstRunSetup: true } : {}),
     environmentId,
     ...(provider ? { cloudProvider: provider } : {}),
     ...(model ? { cloudModel: model } : {}),
@@ -130,6 +138,7 @@ export function useVoiceTranscriptionDestination() {
 }
 
 export function useEnvironmentSpeechInput(input: HookInput) {
+  const navigate = useNavigate();
   const destination = useVoiceTranscriptionDestination();
   const prepared = destination.prepared;
   const grantId = destination.grantId;
@@ -437,10 +446,16 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   });
 
   const start = useStableCallback(async () => {
+    if (latestRef.current.input.disabled) return;
+    if (!grantId) {
+      if (destination.offerFirstRunSetup && latestRef.current.input.offerSetup !== false)
+        await navigate({ to: "/settings/voice", hash: "voice-transcription-destination" });
+      return;
+    }
     const request = ++startRequestRef.current;
     const controller = controllerRef.current;
     const owner = latestRef.current.input.ownerKey;
-    if (latestRef.current.input.disabled || !controller || !prepared) return;
+    if (!controller || !prepared) return;
     if (cloudProvider) {
       setLevel(0);
       await controller.start();
@@ -529,11 +544,15 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     }
   });
 
+  const destinationReady =
+    grantId === null
+      ? Boolean(destination.offerFirstRunSetup) && input.offerSetup !== false
+      : prepared !== null &&
+        (cloudProvider !== undefined ||
+          (status?.prepared === prepared && status.value?.supported !== false));
   return {
     available:
-      prepared !== null &&
-      (cloudProvider !== undefined ||
-        (status?.prepared === prepared && status.value?.supported !== false)) &&
+      destinationReady &&
       typeof navigator !== "undefined" &&
       Boolean(navigator.mediaDevices?.getUserMedia) &&
       typeof AudioWorkletNode !== "undefined",

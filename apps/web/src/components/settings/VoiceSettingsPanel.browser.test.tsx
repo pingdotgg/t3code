@@ -14,12 +14,15 @@ import {
   useVoiceTranscriptionDestination,
 } from "../../speech/useEnvironmentSpeechInput";
 import { chooseAudioDestination, chooseTranscriptCleanup } from "../../speech/voiceConsent";
+import { useEnvironmentScope } from "../../state/session";
 import { toastManager } from "../ui/toast";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
 import { SpeechLanguageSelect } from "./SpeechLanguageSelect";
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 
 vi.mock(import("../../speech/useEnvironmentSpeechInput"), { spy: true });
+vi.mock(import("../../state/session"), { spy: true });
+
 // The real connection runtime authorizes relay requests with a signed-in cloud session.
 vi.mock("../../connection/runtime", async () => {
   const [{ ManagedRelay }, rpc, { Atom }, Context, Effect, Layer] = await Promise.all([
@@ -68,7 +71,7 @@ vi.mock("../../connection/runtime", async () => {
   };
 });
 
-it("preserves the model test transcript when its model is filtered out", async () => {
+it("tests the selected model after download and preserves its transcript across filters", async () => {
   const target = new PrimaryConnectionTarget({
     environmentId: EnvironmentId.make("voice-filter"),
     label: "Test environment",
@@ -103,15 +106,23 @@ it("preserves the model test transcript when its model is filtered out", async (
     modelUnloadTimeout: "never",
     gpuDevices: [],
   } satisfies EnvironmentSpeechStatus;
+  let installed = false;
   const fetch = globalThis.fetch;
   using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = new URL(input instanceof Request ? input.url : input, window.location.href);
-    if (url.pathname === "/api/voice/status") return Promise.resolve(Response.json(status));
+    if (url.pathname === "/api/voice/status")
+      return Promise.resolve(
+        Response.json(installed ? status : { ...status, state: "missing-model" }),
+      );
+    if (url.pathname === "/api/voice/models/download") {
+      installed = true;
+      return Promise.resolve(Response.json({ models: [model] }));
+    }
     if (url.pathname === "/api/voice/models")
       return Promise.resolve(
         Response.json({
           models: [
-            model,
+            installed ? model : { ...model, state: "downloadable", active: false },
             {
               ...model,
               id: "both",
@@ -136,6 +147,7 @@ it("preserves the model test transcript when its model is filtered out", async (
     return fetch(input, init);
   });
   const transcript = "Keep this transcript.";
+  using _scope = vi.mocked(useEnvironmentScope).mockReturnValue(true);
   await vi.mocked(useVoiceTranscriptionDestination).withImplementation(
     () => ({ environmentId: target.environmentId, label: target.label, grantId: "test", prepared }),
     async () => {
@@ -177,7 +189,13 @@ it("preserves the model test transcript when its model is filtered out", async (
             </SettingsScopeProvider>,
           );
           const testModel = screen.getByRole("button", { name: "Test model", exact: true });
+          const download = screen.getByRole("button", { name: "Download", exact: true });
+          await expect.element(download).toBeVisible();
+          expect(testModel.query()).toBeNull();
+          expect(screen.getByRole("button", { name: "Set up voice input" }).query()).toBeNull();
+          await userEvent.click(download);
           await expect.element(testModel).toBeVisible();
+          expect(screen.getByRole("button", { name: "Set up voice input" }).query()).toBeNull();
           await userEvent.click(testModel);
           const result = screen.getByRole("status", { name: "Test transcript" });
           await expect.element(result).toHaveTextContent(transcript);
