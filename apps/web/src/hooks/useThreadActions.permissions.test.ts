@@ -31,6 +31,12 @@ const state = vi.hoisted(() => ({
     projectId: ProjectId;
     title: string;
     worktreePath: string | null;
+    lineage: {
+      parentThreadId: ThreadId | null;
+      relationshipToParent: "fork" | null;
+      rootThreadId: ThreadId;
+      sideChat?: boolean;
+    };
     session: { status: "ready" | "stopped" } | null;
     latestTurn: null;
   }[],
@@ -238,6 +244,7 @@ beforeEach(() => {
       projectId: ProjectId.make("project"),
       title: "Thread",
       worktreePath: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: target.threadId },
       session: null,
       latestTurn: null,
     },
@@ -346,6 +353,32 @@ describe("thread action permissions", () => {
     expect(state.requests.map((request) => request.action)).toEqual(["stopSession", "delete"]);
     expect(state.localEffects).toContain("clear-terminal-ui");
     expect(threadPanelStatePresence(target)).toEqual(panelStateCleared);
+  });
+
+  it("offers to delete the worktree that only its side chats share", async () => {
+    state.scopes
+      .get(secondary)!
+      .add(AuthOrchestrationOperateScope)
+      .add(AuthSourceControlWriteScope);
+    state.threads[0]!.worktreePath = "/worktrees/thread";
+    state.threads.push({
+      ...state.threads[0]!,
+      id: ThreadId.make("side-chat"),
+      lineage: {
+        parentThreadId: target.threadId,
+        relationshipToParent: "fork",
+        rootThreadId: target.threadId,
+        sideChat: true,
+      },
+    });
+    expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
+    expect(state.confirm).toHaveBeenCalledOnce();
+    expect(state.requests.map((request) => request.action)).toEqual([
+      "stopSession",
+      "delete",
+      "removeWorktree",
+      "refreshStatus",
+    ]);
   });
 
   it("does not request worktree removal after its grant is revoked during delete", async () => {
