@@ -1,6 +1,8 @@
 import { UsagePolling, UsageAfterReset } from "@t3tools/provider-core/server/usageLimits";
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
+import * as Hex from "effect/encoding/Hex";
+import * as Option from "effect/Option";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import type * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
@@ -59,8 +61,22 @@ import * as CodexManagedTokenBroker from "../CodexManagedTokenBroker.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { openAiUserId } from "../../telemetry/Identify.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
+const decodeNativeAccount = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      tokens: Schema.Struct({
+        account_id: Schema.String,
+        id_token: Schema.optionalKey(Schema.String),
+      }),
+    }),
+  ),
+);
 
+const encodeUsageOwner = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.String])),
+);
 const DRIVER_KIND = ProviderDriverKind.make("codex");
 const CODEX_STANDALONE_HOME_PATTERN = /^(.*)\/packages\/standalone\//is;
 
@@ -147,6 +163,7 @@ export const CodexDriver: ProviderDriver<
         config,
       });
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const digest = yield* Digest.Digest;
     const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
@@ -229,6 +246,26 @@ export const CodexDriver: ProviderDriver<
       ),
     );
 
+    const usageAccount = Effect.gen(function* () {
+      const account = yield* fileSystem
+        .readFileString(
+          pathService.join(homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath, "auth.json"),
+        )
+        .pipe(Effect.flatMap(decodeNativeAccount), Effect.option);
+      if (Option.isNone(account)) return undefined;
+      const workspaceId = account.value.tokens.account_id.trim();
+      if (!workspaceId) return undefined;
+      const personId = Option.getOrUndefined(openAiUserId(account.value.tokens.id_token ?? ""));
+      const usageRefreshKey = yield* digest
+        .digest(
+          Digest.sha256,
+          new TextEncoder().encode(encodeUsageOwner(["chatgpt", workspaceId, personId ?? ""])),
+        )
+        .pipe(Effect.map(Hex.encode), Effect.orDie);
+      return { workspaceId, usageRefreshKey };
+    });
+    const getUsageRefreshKey = usageAccount.pipe(Effect.map((account) => account?.usageRefreshKey));
+
     // Kick the TTL-gated manifest refresh in the background and classify with the in-memory
     // manifest, so a slow or hung fetch never delays the provider check.
     const checkProvider = modelCatalog.refreshInBackground.pipe(
@@ -244,8 +281,25 @@ export const CodexDriver: ProviderDriver<
             ),
           ),
           currentCatalog,
-          (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
+          (draft, catalog) => applyCodexModelCatalog(draft, catalog),
           { concurrent: true },
+        ),
+      ),
+      Effect.flatMap((draft) =>
+        usageAccount.pipe(
+          Effect.map((account) =>
+            stampIdentity({
+              ...draft,
+              auth:
+                draft.auth.type === "chatgpt" && account
+                  ? {
+                      ...draft.auth,
+                      ...account,
+                      workspaceId: draft.auth.workspaceId ?? account.workspaceId,
+                    }
+                  : draft.auth,
+            }),
+          ),
         ),
       ),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -265,6 +319,7 @@ export const CodexDriver: ProviderDriver<
           (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
         ),
       checkProvider,
+      getUsageRefreshKey,
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>

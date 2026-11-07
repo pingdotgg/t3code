@@ -471,6 +471,100 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live("tracks native Codex quota ownership before its cached deadline", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "codex-quota-owner-" });
+      const sharedHome = yield* fs.makeTempDirectoryScoped({ prefix: "codex-shared-owner-" });
+      yield* fs.writeFileString(
+        path.join(sharedHome, "auth.json"),
+        JSON.stringify({ tokens: { account_id: "unrelated-shared-workspace" } }),
+      );
+      const authPath = path.join(home, "auth.json");
+      const readsPath = path.join(home, "quota-reads");
+      const writeAccount = (workspace: string, issuedAt = 1) =>
+        fs.writeFileString(
+          authPath,
+          JSON.stringify({
+            auth_mode: "chatgpt",
+            tokens: {
+              account_id: workspace,
+              id_token: `header.${btoa(JSON.stringify({ "https://api.openai.com/auth": { user_id: "same-person" }, iat: issuedAt }))}.signature`,
+            },
+          }),
+        );
+      yield* writeAccount("workspace-a");
+      const binaryPath = writeFakeCli({
+        directory: path.join(home, "bin"),
+        name: "codex",
+        source: String.raw`
+          import * as fs from "node:fs";
+          import * as readline from "node:readline";
+          if (process.argv.includes("--version")) {
+            console.log("codex-cli 0.0.0"); process.exit(0);
+          }
+          readline.createInterface({ input: process.stdin }).on("line", (line) => {
+            const { id, method } = JSON.parse(line);
+            if (id === undefined) return;
+            const workspace = JSON.parse(fs.readFileSync(${JSON.stringify(authPath)}, "utf8")).tokens.account_id;
+            let result = {};
+            if (method === "initialize") result = { userAgent: "fixture/0.0.0", codexHome: ${JSON.stringify(home)}, platformFamily: "unix", platformOs: "linux" };
+            if (method === "account/read") result = { account: { type: "chatgpt", email: "same@example.com", planType: "plus" }, requiresOpenaiAuth: false };
+            if (method === "model/list" || method === "skills/list") result = { data: [] };
+            if (method === "account/rateLimits/read") {
+              fs.appendFileSync(${JSON.stringify(readsPath)}, "read\n");
+              result = { accountId: workspace, rateLimits: { primary: { usedPercent: workspace === "workspace-a" ? 100 : 25, windowDurationMins: 300 } } };
+            }
+            process.stdout.write(JSON.stringify({ id, result }) + "\n");
+          });
+        `,
+      });
+      const quotaReads = () =>
+        fs.readFileString(readsPath).pipe(Effect.map((text) => text.trim().split("\n").length));
+      const instanceId = ProviderInstanceId.make("codex-quota-owner");
+      const { registry } = yield* makeProviderInstanceRegistry<CodexDriverEnv>({
+        drivers: [CodexDriver],
+        configMap: {
+          [instanceId]: {
+            driver: CodexDriver.driverKind,
+            enabled: true,
+            config: makeCodexConfig({
+              enabled: true,
+              binaryPath,
+              homePath: sharedHome,
+              shadowHomePath: home,
+            }),
+          },
+        },
+      });
+      const instance = (yield* registry.getInstance(instanceId))!;
+      yield* instance.snapshot.refresh;
+      yield* instance.snapshot.refreshUsage!;
+      const first = yield* instance.snapshot.getSnapshot;
+      expect(first.usageLimits?.windows[0]?.usedPercent).toBe(100);
+      expect(yield* quotaReads()).toBe(1);
+      yield* writeAccount("workspace-a", 2);
+      yield* instance.snapshot.refreshUsage!;
+      expect(yield* quotaReads()).toBe(1);
+      yield* writeAccount("workspace-b");
+      yield* instance.snapshot.refreshUsage!;
+      const switched = yield* instance.snapshot.getSnapshot;
+      expect(switched.auth.workspaceId).toBe("workspace-b");
+      expect(switched.auth.usageRefreshKey).not.toBe(first.auth.usageRefreshKey);
+      expect(switched.usageLimits?.windows[0]?.usedPercent).toBe(25);
+      expect(yield* quotaReads()).toBe(2);
+      yield* writeAccount("workspace-c");
+      const health = yield* instance.snapshot.refresh;
+      expect(health.usageLimits?.windows ?? []).toEqual([]);
+      expect(health.auth.usageRefreshKey).not.toBe(switched.auth.usageRefreshKey);
+      expect(yield* quotaReads()).toBe(2);
+      yield* instance.snapshot.refreshUsage!;
+      expect((yield* instance.snapshot.getSnapshot).auth.workspaceId).toBe("workspace-c");
+      expect(yield* quotaReads()).toBe(3);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live("refreshes Claude quotas immediately after a local account switch", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
