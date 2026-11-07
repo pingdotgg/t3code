@@ -15,8 +15,16 @@ import {
 /** Menu body that shows and hides thread details items. The card's context menu and Settings share it. */
 export function ThreadDetailsItemsMenuItems() {
   const visibility = useClientSettings(resolveThreadDetailsVisibility);
+  const openByDefault = useClientSettings((settings) => settings.threadDetailsOpenByDefault);
   return (
     <>
+      <MenuCheckboxItem
+        checked={openByDefault}
+        onCheckedChange={(checked) => updateClientSettings({ threadDetailsOpenByDefault: checked })}
+      >
+        Open in new threads
+      </MenuCheckboxItem>
+      <MenuSeparator />
       <MenuGroup>
         <MenuGroupLabel>Show in thread details</MenuGroupLabel>
         {THREAD_DETAILS_ITEMS.map((item) => (
@@ -35,7 +43,7 @@ export function ThreadDetailsItemsMenuItems() {
       </MenuGroup>
       <MenuSeparator />
       <MenuItem
-        disabled={isDefaultThreadDetailsVisibility(visibility)}
+        disabled={openByDefault && isDefaultThreadDetailsVisibility(visibility)}
         onClick={() => updateClientSettings(RESET_THREAD_DETAILS_ITEMS)}
       >
         Reset to default
