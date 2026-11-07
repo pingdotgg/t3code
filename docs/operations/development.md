@@ -91,6 +91,13 @@ To add a scenario, point a `SCENARIOS` entry at a generic ACP replay fixture
 The agent replays session updates, permission requests, and questions. It drops session setup
 and vendor frames, so Grok and fx recordings lose their vendor-only behavior.
 
+`vp run learner-e2e` is a scripted learner on Replay's `slow` scenario. It builds the web app
+(`--skip-build` reuses `apps/web/dist`), boots a throwaway server in a temp home, and drives
+Chromium through New lesson, a plain Send during a reply (the reply restarts with it), and a
+queued send during a reply. Failures write a screenshot, console errors, and the server log to
+`--out`. It checks the basic flow only: Replay can't steer a turn in place, so Claude's active
+steering and provider refusals stay covered by `SteeringCompletion.integration.test.ts`.
+
 ### Profiling dev startup
 
 Run `vp run profile:startup` to capture the first 20 seconds of inherited Node processes under
