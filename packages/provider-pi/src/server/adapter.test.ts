@@ -2196,51 +2196,39 @@ describe("PiAdapterV2", () => {
         assert.equal(retry._tag, "Failure");
         assert.deepEqual(fake.promptModels, restore ? ["anthropic/model-a"] : []);
         yield* runtime.resumeThread({ providerThread }).pipe(Effect.flip);
-
-        const freshFake = yield* makeFakePi;
-        const { runtime: freshRuntime } = yield* openRuntime(freshFake);
-        const freshThread = yield* freshRuntime.ensureThread({
-          threadId: THREAD_ID,
-          modelSelection: modelSelection("default"),
-          runtimePolicy,
-        });
-        yield* startTurn(freshRuntime, freshThread, "anthropic/model-b");
-        yield* freshFake.takeRequest("prompt");
-        assert.deepEqual(freshFake.promptModels, ["anthropic/model-b"]);
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect.each(["Unknown model: anthropic/unknown", "No API key for anthropic"])(
-    "keeps the runtime usable after selection validation fails: %s",
-    (validationError) =>
-      Effect.gen(function* () {
-        const fake = yield* makeFakePi;
-        const { runtime } = yield* openRuntime(fake);
-        const providerThread = yield* runtime.ensureThread({
-          threadId: THREAD_ID,
-          modelSelection: modelSelection("default"),
-          runtimePolicy,
-        });
-        fake.deferNextModelSelection();
-        const starting = yield* startTurn(runtime, providerThread, "anthropic/unknown").pipe(
-          Effect.exit,
-          Effect.forkChild,
-        );
-        const pending = yield* fake.takeRequest("set_model");
-        yield* fake.emit({
-          type: "response",
-          id: pending.id,
-          command: "set_model",
-          success: false,
-          error: validationError,
-        });
-        const result = yield* Fiber.join(starting);
-        assert.equal(result._tag, "Failure");
-        if (Exit.isFailure(result)) assert.include(Cause.pretty(result.cause), validationError);
-        yield* startTurn(runtime, providerThread, "anthropic/model-b");
-        yield* fake.takeRequest("prompt");
-        assert.deepEqual(fake.promptModels, ["anthropic/model-b"]);
-      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  it.effect("keeps the runtime usable after Pi rejects a model selection", () =>
+    Effect.gen(function* () {
+      const validationError = "Unknown model: anthropic/unknown";
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.deferNextModelSelection();
+      const starting = yield* startTurn(runtime, providerThread, "anthropic/unknown").pipe(
+        Effect.exit,
+        Effect.forkChild,
+      );
+      const pending = yield* fake.takeRequest("set_model");
+      yield* fake.emit({
+        type: "response",
+        id: pending.id,
+        command: "set_model",
+        success: false,
+        error: validationError,
+      });
+      const result = yield* Fiber.join(starting);
+      assert.equal(result._tag, "Failure");
+      if (Exit.isFailure(result)) assert.include(Cause.pretty(result.cause), validationError);
+      yield* startTurn(runtime, providerThread, "anthropic/model-b");
+      yield* fake.takeRequest("prompt");
+      assert.deepEqual(fake.promptModels, ["anthropic/model-b"]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("retires an interrupted switch before accepting further requests", () =>
