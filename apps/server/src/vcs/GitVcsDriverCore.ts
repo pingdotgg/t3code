@@ -4255,7 +4255,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* createBranchAt(
         "GitVcsDriver.createWorktree.createBranch",
         { cwd: input.cwd, branch: newRefName, startPoint: input.refName },
-        "git worktree add failed",
+        "git branch failed",
       );
     }
     const args = ["worktree", "add", "--", worktreePath, newRefName ?? input.refName];

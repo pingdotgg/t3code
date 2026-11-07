@@ -607,7 +607,7 @@ it.effect.each(["bare", "unborn"] as const)(
         assert.equal(Result.isSuccess(result), state === "bare");
         if (Result.isFailure(result)) {
           assert.equal(result.failure.operation, "GitVcsDriver.createWorktree.createBranch");
-          assert.equal(result.failure.detail, "git worktree add failed");
+          assert.equal(result.failure.detail, "git branch failed");
         }
         assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 1);
         assert.isFalse(spawnedArgs.some((args) => args[0] === "symbolic-ref"));
@@ -1932,7 +1932,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
     it.effect.each([
       { action: "worktree add", detail: "git worktree add failed" },
-      { action: "worktree add -b", detail: "git worktree add failed" },
+      { action: "worktree add -b", detail: "git branch failed" },
       { action: "switch", detail: "git checkout failed" },
     ])(
       "reports a missing ref during $action with stable, redacted diagnostics",

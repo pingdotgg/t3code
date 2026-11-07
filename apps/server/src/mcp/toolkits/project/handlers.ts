@@ -152,7 +152,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             });
           yield* assertProjectWorktree(project.workspaceRoot, input.workspaceStrategy.worktreePath);
         }
-        // Reject unresolved base refs before accepting a launch; worktree provisioning happens later.
+        // Reject unresolved base refs and taken branches before accepting a launch; worktree provisioning happens later.
         const strategy = input.workspaceStrategy;
         if (!replaying && strategy?.type === "worktree")
           yield* ThreadLaunch.ThreadLaunchService.pipe(
@@ -163,10 +163,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               (error) =>
                 new OrchestratorMcpFailure({
                   code: "invalid_request",
-                  message: `${error.message} No thread was created. Pass a branch, tag, or commit that exists there${
-                    strategy.startFromOrigin === true
-                      ? "; the project has no usable remote to fetch it from."
-                      : ", or set startFromOrigin:true if it exists only on a remote."
+                  message: `${error.message} No thread was created. ${
+                    error._tag === "ThreadLaunchBranchExistsError"
+                      ? "Pass a branch name that does not exist yet, or omit branch to get a generated name."
+                      : `Pass a branch, tag, or commit that exists there${
+                          strategy.startFromOrigin === true
+                            ? "; the project has no usable remote to fetch it from."
+                            : ", or set startFromOrigin:true if it exists only on a remote."
+                        }`
                   }`,
                 }),
             ),
