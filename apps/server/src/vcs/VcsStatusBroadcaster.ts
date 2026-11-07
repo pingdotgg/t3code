@@ -135,8 +135,12 @@ interface CachedRemoteStatus extends CachedValue<VcsStatusRemoteResult | null> {
   readonly branch: string | null;
 }
 
+interface CachedLocalStatus extends CachedValue<VcsStatusLocalResult> {
+  readonly includesBranchChanges: boolean;
+}
+
 interface CachedVcsStatus {
-  readonly local: CachedValue<VcsStatusLocalResult> | null;
+  readonly local: CachedLocalStatus | null;
   readonly remote: CachedRemoteStatus | null;
 }
 
@@ -298,9 +302,50 @@ export const make = Effect.gen(function* () {
     return yield* Ref.get(cacheRef).pipe(Effect.map((cache) => cache.get(cwd) ?? null));
   });
 
+  // Only full subscribers and direct reads show Changes totals. Command palette rows subscribe
+  // without remote status and skip them, which halves the git processes a burst of rows spawns.
+  const branchChangesDemand = new Map<string, number>();
+  const wantsBranchChanges = (cwd: string) => branchChangesDemand.has(cwd);
+  const acquireBranchChangesDemand = (cwd: string) =>
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        branchChangesDemand.set(cwd, (branchChangesDemand.get(cwd) ?? 0) + 1);
+      }),
+      () =>
+        Effect.sync(() => {
+          const count = (branchChangesDemand.get(cwd) ?? 1) - 1;
+          if (count > 0) branchChangesDemand.set(cwd, count);
+          else branchChangesDemand.delete(cwd);
+        }),
+    );
+
+  const readLocalStatus = Effect.fn("VcsStatusBroadcaster.readLocalStatus")(function* (
+    cwd: string,
+  ) {
+    const includeBranchChanges = wantsBranchChanges(cwd);
+    const local = yield* workflow.localStatus({ cwd }, { includeBranchChanges });
+    // A subscriber that shows totals arrived during the read and must not receive it without them.
+    if (!includeBranchChanges && wantsBranchChanges(cwd)) {
+      return {
+        local: yield* workflow.localStatus({ cwd }, { includeBranchChanges: true }),
+        includesBranchChanges: true,
+      };
+    }
+    return { local, includesBranchChanges: includeBranchChanges };
+  });
+
   const updateCachedLocalStatus = Effect.fn("VcsStatusBroadcaster.updateCachedLocalStatus")(
-    function* (cwd: string, local: VcsStatusLocalResult, options?: { publish?: boolean }) {
-      const nextLocal = { fingerprint: fingerprintStatusPart(local), value: local };
+    function* (
+      cwd: string,
+      read: { readonly local: VcsStatusLocalResult; readonly includesBranchChanges: boolean },
+      options?: { publish?: boolean },
+    ) {
+      const { local, includesBranchChanges } = read;
+      const nextLocal = {
+        fingerprint: fingerprintStatusPart(local),
+        value: local,
+        includesBranchChanges,
+      };
       const [localChanged, remoteCleared] = yield* Ref.modify(cacheRef, (cache) => {
         const previous = cache.get(cwd) ?? { local: null, remote: null };
         const remote = previous.remote?.branch === local.refName ? previous.remote : null;
@@ -349,18 +394,19 @@ export const make = Effect.gen(function* () {
   const loadLocalStatus = Effect.fn("VcsStatusBroadcaster.loadLocalStatus")(function* (
     cwd: string,
   ) {
-    const local = yield* workflow.localStatus({ cwd });
-    return yield* updateCachedLocalStatus(cwd, local);
+    return yield* updateCachedLocalStatus(cwd, yield* readLocalStatus(cwd));
   });
 
   const getOrLoadLocalStatusUnlocked = Effect.fn("VcsStatusBroadcaster.getOrLoadLocalStatus")(
     function* (cwd: string) {
       const cached = yield* getCachedStatus(cwd);
       if (cached?.local) {
-        const branch = yield* workflow.currentBranch(cwd);
-        if (branch === cached.local.value.refName) return cached.local.value;
+        if (cached.local.includesBranchChanges || !wantsBranchChanges(cwd)) {
+          const branch = yield* workflow.currentBranch(cwd);
+          if (branch === cached.local.value.refName) return cached.local.value;
+        }
         yield* workflow.invalidateLocalStatus(cwd);
-        return yield* updateCachedLocalStatus(cwd, yield* workflow.localStatus({ cwd }), {
+        return yield* updateCachedLocalStatus(cwd, yield* readLocalStatus(cwd), {
           publish: true,
         });
       }
@@ -385,6 +431,7 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.getStatus",
   )(function* (input) {
     const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
+    yield* acquireBranchChangesDemand(cwd);
     yield* getOrLoadLocalStatus(cwd);
     const cached = yield* getCachedStatus(cwd);
     if (cached?.local && cached.remote) {
@@ -401,14 +448,18 @@ export const make = Effect.gen(function* () {
         return mergeGitStatusParts(parts.local, parts.remote);
       }),
     );
-  });
+  }, Effect.scoped);
 
   // A refresh that started after a request saw every change that request could mean, so queued
   // callers share it instead of each running git status again.
   const localRefreshRequests = new Map<string, number>();
   const localRefreshResults = new Map<
     string,
-    { readonly startedAt: number; readonly local: VcsStatusLocalResult }
+    {
+      readonly startedAt: number;
+      readonly local: VcsStatusLocalResult;
+      readonly includesBranchChanges: boolean;
+    }
   >();
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
     function* (cwd: string) {
@@ -418,12 +469,18 @@ export const make = Effect.gen(function* () {
         cwd,
         Effect.gen(function* () {
           const shared = localRefreshResults.get(cwd);
-          if (shared !== undefined && shared.startedAt >= requestedAt) return shared.local;
+          if (
+            shared !== undefined &&
+            shared.startedAt >= requestedAt &&
+            (shared.includesBranchChanges || !wantsBranchChanges(cwd))
+          ) {
+            return shared.local;
+          }
           const startedAt = localRefreshRequests.get(cwd) ?? requestedAt;
           yield* workflow.invalidateLocalStatus(cwd);
-          const local = yield* workflow.localStatus({ cwd });
-          localRefreshResults.set(cwd, { startedAt, local });
-          return yield* updateCachedLocalStatus(cwd, local, { publish: true });
+          const read = yield* readLocalStatus(cwd);
+          localRefreshResults.set(cwd, { startedAt, ...read });
+          return yield* updateCachedLocalStatus(cwd, read, { publish: true });
         }),
       );
     },
@@ -537,6 +594,7 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (rawCwd, options) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+    yield* acquireBranchChangesDemand(cwd);
     const previous = options?.localOnly ? yield* getCachedStatus(cwd) : null;
     const local = yield* refreshLocalStatusCore(cwd);
     if (options?.localOnly) {
@@ -573,7 +631,7 @@ export const make = Effect.gen(function* () {
         return mergeGitStatusParts(parts.local, parts.remote);
       }),
     );
-  });
+  }, Effect.scoped);
 
   const refreshPullRequestStatus: VcsStatusBroadcaster["Service"]["refreshPullRequestStatus"] =
     Effect.fn("VcsStatusBroadcaster.refreshPullRequestStatus")(function* (rawCwd) {
@@ -776,6 +834,7 @@ export const make = Effect.gen(function* () {
               else detailedSubscribers.set(cwd, remaining);
             }),
         );
+        if (input.includeRemote !== false) yield* acquireBranchChangesDemand(cwd);
         const subscription = yield* PubSub.subscribe(changesPubSub);
         const initialLocal = yield* getOrLoadLocalStatus(cwd);
         const cachedStatus = yield* getCachedStatus(cwd);
@@ -825,8 +884,9 @@ export const make = Effect.gen(function* () {
             return previous ? new Map(cache).set(cwd, { ...previous, local: null }) : cache;
           });
           if (detailedSubscribers.has(cwd)) {
-            const local = yield* workflow.localStatus({ cwd });
-            yield* updateCachedLocalStatus(cwd, local, { publish: true });
+            const local = yield* updateCachedLocalStatus(cwd, yield* readLocalStatus(cwd), {
+              publish: true,
+            });
             return { refName: local.refName, revision: branches.get(cwd)?.revision ?? 0 };
           }
           yield* publishBranch(cwd, refName);
