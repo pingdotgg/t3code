@@ -205,6 +205,10 @@ export function AssistantCitationChip({
         <Popover
           open={commentEditor.open && !voiceSetupOpen}
           onOpenChange={(open, eventDetails) => {
+            if (!open && eventDetails.reason === "trigger-press") {
+              eventDetails.cancel();
+              return;
+            }
             if (!open && !settleDraftOnClose(eventDetails.reason)) {
               eventDetails.cancel();
               return;

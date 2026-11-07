@@ -121,6 +121,19 @@ it.each(["click", "Enter", " "])(
     expect(onCommandKeyDown).toHaveBeenCalledWith("Enter", expect.any(KeyboardEvent), false);
     onCommandKeyDown.mockClear();
     const chip = screen.getByRole("link", { name: "View cited assistant text: hello" });
+    for (const init of [
+      { ctrlKey: true },
+      { metaKey: true },
+      { shiftKey: true },
+      { altKey: true },
+      { button: 1 },
+    ]) {
+      const event = new MouseEvent("click", { bubbles: true, cancelable: true, ...init });
+      // Keep the browser on the test page while exercising the link's modifier handling.
+      chip.element().addEventListener("click", (event) => event.preventDefault(), { once: true });
+      chip.element().dispatchEvent(event);
+      await expect.element(page.getByLabelText("Comment on selected text")).not.toBeInTheDocument();
+    }
     if (activation === "click") {
       await chip.click();
     } else {
@@ -131,26 +144,9 @@ it.each(["click", "Enter", " "])(
     expect(chip.element().getAttribute("aria-controls")).toBe(
       page.getByRole("dialog").element().id,
     );
-    await act(() => {
-      chip.element().dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-      chip.element().click();
-    });
-    await expect.element(page.getByLabelText("Comment on selected text")).not.toBeVisible();
-    for (const init of [
-      { ctrlKey: true },
-      { metaKey: true },
-      { shiftKey: true },
-      { altKey: true },
-      { button: 1 },
-    ]) {
-      await act(() => {
-        const event = new MouseEvent("click", { bubbles: true, cancelable: true, ...init });
-        // Keep the browser on the test page while exercising the link's modifier handling.
-        chip.element().addEventListener("click", (event) => event.preventDefault(), { once: true });
-        chip.element().dispatchEvent(event);
-      });
-      await expect.element(page.getByLabelText("Comment on selected text")).not.toBeVisible();
-    }
+    chip.element().dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    chip.element().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
     expect(onCommandKeyDown).not.toHaveBeenCalled();
     expect(screen.container.querySelector("output")?.dataset.prompt).toBe(promptBefore);
   },
