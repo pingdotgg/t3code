@@ -5597,6 +5597,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       expectedClass: "usage_limit",
     },
     { name: "retry", code: "usageLimitExceeded", notification: true, expectedClass: "usage_limit" },
+    // A proxy such as CLIProxyAPI strips the snapshot, so only the error text carries the reset.
+    {
+      name: "message-reset",
+      code: "usageLimitExceeded",
+      message:
+        "You’ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Nov 11th, 2033 3:37 PM.",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
     {
       name: "exhausted-429",
       code: "responseTooManyFailedAttempts",
@@ -5859,6 +5868,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(terminal.failure.class, scenario.expectedClass);
         assert.equal(terminal.threadDisposition, "reusable");
         if (scenario.name === "deferred-reset") assert.equal(terminal.failure.resetAt, resetAt);
+        if (scenario.name === "message-reset")
+          assert.equal(
+            terminal.failure.resetAt,
+            DateTime.formatIso(
+              DateTime.makeZonedUnsafe(
+                { year: 2033, month: 11, day: 11, hour: 15, minute: 38 },
+                { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+              ),
+            ),
+          );
         if (scenario.name === "matching-details")
           assert.equal(terminal.failure.message, "Detailed provider allowance explanation.");
         if ("resetAfter" in scenario) {
