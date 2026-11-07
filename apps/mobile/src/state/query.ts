@@ -1,4 +1,5 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { formatEnvironmentQueryError } from "@t3tools/client-runtime/errors";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -16,13 +17,6 @@ export interface EnvironmentQueryView<A> {
   readonly refresh: () => void;
 }
 
-function formatError(cause: Cause.Cause<unknown>): string {
-  const error = Cause.squash(cause);
-  return error instanceof Error && error.message.trim().length > 0
-    ? error.message
-    : "The environment request failed.";
-}
-
 export function useEnvironmentQuery<A, E>(
   atom: Atom.Atom<AsyncResult.AsyncResult<A, E>> | null,
 ): EnvironmentQueryView<A> {
@@ -34,7 +28,7 @@ export function useEnvironmentQuery<A, E>(
     // Data may be structurally shared; only a settled success proves a new response.
     successResult: result._tag === "Success" && !result.waiting ? result : null,
     failure: result._tag === "Failure" ? Cause.squash(result.cause) : null,
-    error: result._tag === "Failure" ? formatError(result.cause) : null,
+    error: result._tag === "Failure" ? formatEnvironmentQueryError(result.cause) : null,
     isPending: atom !== null && result.waiting,
     isSuccess: result._tag === "Success",
     refresh,
