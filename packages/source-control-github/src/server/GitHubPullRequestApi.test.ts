@@ -2046,6 +2046,81 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  // regression: authored refresh kept closed rows and missed new ones when search lagged
+  it.effect("authored open lists skip search so a lagging index cannot keep closed rows", () =>
+    Effect.gen(function* () {
+      const author = (login: string) => ({
+        __typename: "User",
+        login,
+        name: null,
+        avatarUrl: "https://avatars.example/u",
+      });
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          call.kind === "graphql" && call.operationName === "PullRequestList"
+            ? output(
+                listedPullRequests(2, 1, (number) => ({
+                  author: author(number === 1 ? "bilal" : "other"),
+                })),
+              )
+            : // Stale search hit: a closed PR still indexed as open.
+              output(pullRequests(1, 99, () => ({ author: author("bilal") }))),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "authored",
+        viewer: "bilal",
+        limit: 10,
+      });
+
+      expect(searchOfCall(0)).toBeUndefined();
+      expect(callAt(0)).toMatchObject({ kind: "graphql", operationName: "PullRequestList" });
+      expect(batch.items.map((item) => item.number)).toEqual([1]);
+      assert.isFalse(batch.continues);
+    }),
+  );
+
+  it.effect("authored text search still uses the search index", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            pullRequests(1, 1, () => ({
+              author: {
+                __typename: "User",
+                login: "bilal",
+                name: null,
+                avatarUrl: "https://avatars.example/u",
+              },
+            })),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "authored",
+        viewer: "bilal",
+        limit: 10,
+        query: "login banner",
+      });
+
+      expect(searchOfCall(0)).toBe(
+        'is:pr is:open author:bilal "login banner" sort:updated-desc repo:acme/web',
+      );
+    }),
+  );
+
   it.effect("grows the search-free fallback until it fills the filtered page", () =>
     Effect.gen(function* () {
       const unrelated = () => ({ reviewRequests: [{ login: "somebody-else" }] });
