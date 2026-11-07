@@ -136,6 +136,7 @@ it.effect.each([
     });
     const listed = yield* operations.list;
     expect(listed.devices).toEqual([device]);
+    expect(listed.incompletePlatforms).toEqual(["ios"]);
     expect(listed.detail).toBe(
       "Could not list all iOS simulators (xcrun simctl list devices --json). Discovered devices remain available.",
     );
@@ -298,7 +299,9 @@ const fixture = Effect.fn("fixture")(function* (
   const run = (command: string) =>
     command === "emulator"
       ? Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" })
-      : Ref.get(encoderResult);
+      : command === "xcrun"
+        ? Effect.succeed({ code: 0, stdout: JSON.stringify({ devices: {} }), stderr: "" })
+        : Ref.get(encoderResult);
   const ready: DeviceHost.DeviceHostReady = {
     nodePath: process.execPath,
     hub: { origin: "http://device.test" },
@@ -1329,7 +1332,7 @@ it.effect("leaves a session its host leases to every thread open when one thread
           origin: "http://device.test",
           http,
           run,
-          platformAvailable: () => Effect.succeed(true),
+          availablePlatforms: Effect.succeed({ android: true, ios: false }),
         }),
         agentEndpoint: () =>
           Effect.succeed({

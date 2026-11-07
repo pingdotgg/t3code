@@ -147,18 +147,18 @@ export const makeDeviceHubOperations = (options: {
       ),
       Effect.timeoutOption(Duration.seconds(LIST_TIMEOUT_SECONDS)),
     );
+    const available = yield* options.availablePlatforms;
     if (Option.isNone(listed)) {
       return {
         devices: [],
         detail: `The device hub did not answer within ${LIST_TIMEOUT_SECONDS} seconds.`,
-        incompletePlatforms: yield* Effect.filter(["ios", "android"] as const, (platform) =>
-          options.platformAvailable(platform),
+        incompletePlatforms: (["ios", "android"] as const).filter(
+          (platform) => available.probeFailed || available[platform],
         ),
       };
     }
     const hubList = listed.value;
     const devices: Array<HostDevice> = [...hubList.simulators, ...hubList.emulators];
-    const available = yield* options.availablePlatforms;
     const warnings = hubList.errors?.filter(
       (error) =>
         // The host summary already explains a missing Android SDK; the hub's failed probes are noise.
@@ -180,10 +180,12 @@ export const makeDeviceHubOperations = (options: {
         "Could not determine host platform availability. Device discovery may be incomplete.",
       );
     }
+    let iosDiscoveryIncomplete = available.probeFailed ?? false;
     if (available.ios) {
       const inventory = yield* run("xcrun", ["simctl", "list", "devices", "--json"]);
       const decoded = yield* decodeSimctlDeviceList(inventory.stdout).pipe(Effect.result);
       if (inventory.code !== 0 || Result.isFailure(decoded)) {
+        iosDiscoveryIncomplete = true;
         details.push(
           "Could not list all iOS simulators (xcrun simctl list devices --json). Discovered devices remain available.",
         );
@@ -236,8 +238,9 @@ export const makeDeviceHubOperations = (options: {
       }
     }
     const simulatorsUnlisted =
-      hubList.simulators.length === 0 &&
-      (hubList.errors ?? []).some((error) => SIMULATOR_LIST_FAILED.test(error.message));
+      iosDiscoveryIncomplete ||
+      (hubList.simulators.length === 0 &&
+        (hubList.errors ?? []).some((error) => SIMULATOR_LIST_FAILED.test(error.message)));
     return {
       devices,
       detail: details.join("\n") || undefined,

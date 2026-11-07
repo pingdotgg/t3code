@@ -379,16 +379,21 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
         origin: hubOrigin,
         http,
         run,
-        availablePlatforms: provide(probe(config, owner)).pipe(
-          Effect.map((value) => {
-            summary = { ...summary, platforms: value.platforms };
-            return {
-              ios: value.platforms.some((p) => p.platform === "ios" && p.available),
-              android: value.platforms.some((p) => p.platform === "android" && p.available),
-            };
-          }),
-          Effect.orElseSucceed(() => ({ ios: false, android: false, probeFailed: true })),
-        ),
+        availablePlatforms: Effect.suspend(() => {
+          const ios = summary.platforms.some((p) => p.platform === "ios" && p.available);
+          const android = summary.platforms.some((p) => p.platform === "android" && p.available);
+          if (ios && android) return Effect.succeed({ ios, android });
+          return provide(probe(config, owner)).pipe(
+            Effect.map((value) => {
+              summary = { ...summary, platforms: value.platforms };
+              return {
+                ios: value.platforms.some((p) => p.platform === "ios" && p.available),
+                android: value.platforms.some((p) => p.platform === "android" && p.available),
+              };
+            }),
+            Effect.orElseSucceed(() => ({ ios: false, android: false, probeFailed: true })),
+          );
+        }),
       }),
       ...(remote.daemonPort !== undefined &&
       remote.token !== undefined &&

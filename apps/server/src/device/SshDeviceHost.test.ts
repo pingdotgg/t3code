@@ -249,10 +249,14 @@ it.effect("lists Android devices without probing the host again once it reports 
                 )
               : "";
           const mode = /const mode = "([^"]+)"/.exec(script)?.[1] ?? "";
-          modes.push(mode);
+          const listingIos =
+            mode === "" && command.args.some((arg) => String(arg).includes("xcrun"));
+          modes.push(listingIos ? "simctl" : mode);
           output =
             mode === ""
-              ? "Pixel_8\n"
+              ? listingIos
+                ? JSON.stringify({ devices: {} })
+                : "Pixel_8\n"
               : JSON.stringify({
                   nodePath: "/node",
                   platforms: [
@@ -312,30 +316,30 @@ it.effect("lists Android devices without probing the host again once it reports 
     modes.splice(0);
 
     expect(yield* androidNames).toEqual([]);
-    expect(modes.splice(0)).toEqual(["probe"]);
+    expect(modes.splice(0)).toEqual(["probe", "simctl"]);
     expect(yield* androidNames).toEqual([]);
-    expect(modes.splice(0)).toEqual(["probe"]);
+    expect(modes.splice(0)).toEqual(["probe", "simctl"]);
 
     // The SDK appears after connecting, so the next listing still probes the host.
     androidInstalled = true;
     expect(yield* androidNames).toEqual(["Pixel_8"]);
-    expect(modes.splice(0)).toEqual(["probe", ""]);
+    expect(modes.splice(0)).toEqual(["probe", "simctl", ""]);
 
-    // Android is now known to be available, so listing only runs `emulator -list-avds`.
+    // Both platforms are known, so refresh only enumerates devices without another host probe.
     expect(yield* androidNames).toEqual(["Pixel_8"]);
-    expect(modes.splice(0)).toEqual([""]);
+    expect(modes.splice(0)).toEqual(["simctl", ""]);
 
     androidInstalled = false;
     expect((yield* host.platformAvailability("android")).available).toBe(false);
     expect(modes.splice(0)).toEqual(["probe"]);
     expect(yield* androidNames).toEqual([]);
-    expect(modes.splice(0)).toEqual(["probe"]);
+    expect(modes.splice(0)).toEqual(["probe", "simctl"]);
 
     androidInstalled = true;
     yield* host.inspect;
     expect(modes.splice(0)).toEqual(["probe"]);
     expect(yield* androidNames).toEqual(["Pixel_8"]);
-    expect(modes.splice(0)).toEqual([""]);
+    expect(modes.splice(0)).toEqual(["simctl", ""]);
     yield* host.stop;
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
