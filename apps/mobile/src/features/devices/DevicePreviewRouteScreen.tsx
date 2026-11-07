@@ -314,7 +314,8 @@ export function DevicePreviewScreen({
           {preview && mirrorBlocked ? (
             <>
               <AppText className="text-center text-sm text-foreground-muted">
-                This is the phone you're using. Mirroring it here makes the app stop responding.
+                This looks like the phone you're using. Mirroring it here makes the app stop
+                responding.
               </AppText>
               <View className="items-center">
                 <Button
