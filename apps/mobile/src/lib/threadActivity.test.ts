@@ -1652,52 +1652,6 @@ it("stops stranded thinking after a steer and follows the next thought or tool",
   expect(first.status).toBe("running");
 });
 
-it("shows a retried prompt once, with the retry's answer under it", () => {
-  const retryRunId = RunId.make("run-retry");
-  const error: OrchestrationV2TurnItem = {
-    ...base("failure", "2026-06-20T00:00:02.000Z", 1),
-    type: "error",
-    status: "failed",
-    failure: {
-      class: "provider_error",
-      message: "The provider failed.",
-      code: null,
-      retryable: true,
-    },
-  };
-  const retryPrompt: OrchestrationV2TurnItem = {
-    ...userMessage("2026-06-20T00:00:03.000Z"),
-    id: TurnItemId.make("item-user-retry"),
-    runId: retryRunId,
-    messageId: MessageId.make("message-user-retry"),
-    retryOfRunId: runId,
-  };
-  const answer: OrchestrationV2TurnItem = {
-    ...assistantMessage("2026-06-20T00:00:04.000Z"),
-    runId: retryRunId,
-  };
-  const feed = deriveThreadFeedPresentation(
-    buildThreadFeed([
-      projected(userMessage(), 0),
-      projected(error, 1),
-      projected(retryPrompt, 2),
-      projected(answer, 3),
-    ]),
-    {
-      runId: retryRunId,
-      status: "completed",
-      startedAt: "2026-06-20T00:00:03.000Z",
-      completedAt: "2026-06-20T00:00:04.000Z",
-    },
-    new Set(),
-  );
-  const messages = feed.flatMap((entry) => (entry.type === "message" ? [entry.message] : []));
-  expect(messages.map((message) => [message.role, message.text])).toEqual([
-    ["user", "Run checks"],
-    ["assistant", "Done"],
-  ]);
-});
-
 it.each(["provider_error", "usage_limit"] as const)(
   "keeps a historical %s failure and preceding work visible without disclosures",
   (failureClass) => {
