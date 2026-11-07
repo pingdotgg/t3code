@@ -71,7 +71,11 @@ import {
 } from "@t3tools/provider-core/server/driver";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
-import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
+import {
+  discoverAntigravitySkills,
+  prepareAntigravityPluginSkills,
+  resolveAntigravityUserHome,
+} from "./AntigravitySkills.ts";
 
 const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
@@ -266,8 +270,21 @@ export const AntigravityDriver: ProviderDriver<
               ),
             ),
       );
+      const pluginDirectories = yield* prepareAntigravityPluginSkills({
+        userHome,
+        runtimeTempDirectory,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.catch((cause) =>
+          Effect.logWarning("Antigravity plugin skills are unavailable.", {
+            errorTag: cause._tag,
+          }).pipe(Effect.as([])),
+        ),
+      );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...input,
+        additionalDirectories: [...(input.additionalDirectories ?? []), ...pluginDirectories],
         runtimeVersion: executable.version,
         authMethod: auth.authMethod,
         childProcessSpawner: spawner,

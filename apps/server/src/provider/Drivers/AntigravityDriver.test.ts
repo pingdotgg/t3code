@@ -66,6 +66,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const nodePath = yield* HostProcess.ExecutablePath;
   const baseEnv = yield* HostProcess.Environment;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-driver-" });
+  const userHome = path.join(root, "home");
   const instanceId = ProviderInstanceId.make(path.basename(root));
   const mockAgentPath = yield* path.fromFileUrl(
     new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -203,6 +204,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     enabled: options.enabled ?? true,
     config: { ...AntigravityDriver.defaultConfig(), ...options.config },
     environment: [
+      { name: "HOME", value: userHome },
+      { name: "USERPROFILE", value: userHome },
       { name: "PATH", value: instancePath },
       { name: "T3_ACP_ANTIGRAVITY", value: "1" },
       { name: "T3_ACP_REQUEST_LOG_PATH", value: requestLog },
@@ -237,6 +240,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   });
   return {
     instance,
+    userHome,
     refresh,
     makeExecutable,
     fs,
@@ -289,10 +293,13 @@ const layerTest = ProviderHostLive.layer.pipe(
 
 it.layer(layerTest)("AntigravityDriver", (it) => {
   it.effect.skipIf(windowsHost)(
-    "refreshes the selected executable and limits form capabilities to chat",
+    "refreshes the selected executable despite plugin preparation failure and limits form capabilities to chat",
     () =>
       Effect.gen(function* () {
         const h = yield* makeHarness();
+        const plugin = h.path.join(h.userHome, ".gemini", "config", "plugins", "broken");
+        yield* h.fs.makeDirectory(plugin, { recursive: true });
+        yield* h.fs.writeFileString(h.path.join(plugin, "plugin.json"), "x".repeat(1_000_001));
         yield* h.refresh();
         const snapshot = yield* h.instance.snapshot.getSnapshot;
         expect(snapshot.status).toBe("ready");
