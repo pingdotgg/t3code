@@ -114,7 +114,7 @@ export function createWorkspaceFocusController(doc: Document) {
       !element.matches(":disabled");
     const preferred = Array.from(
       area.querySelectorAll<HTMLElement>(
-        '[data-workspace-focus-default], [role="treeitem"][tabindex="0"], [data-settings-section][tabindex="0"], .xterm-helper-textarea, [contenteditable="true"]',
+        '[data-workspace-focus-default], [data-sidebar-row][aria-current="page"], [data-settings-section][tabindex="0"], .xterm-helper-textarea, [contenteditable="true"]',
       ),
     ).find(belongs);
     const fallback = Array.from(area.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).find(

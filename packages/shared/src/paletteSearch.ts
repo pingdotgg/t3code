@@ -535,6 +535,7 @@ function findMessageToken(
   text: string,
   folded: string,
   token: string,
+  firstOnly: boolean,
 ): { readonly at: ReadonlyArray<number>; readonly quality: number } | null {
   let quality = 0;
   let at: number[] = [];
@@ -559,7 +560,8 @@ function findMessageToken(
     if (found > quality) {
       quality = found;
       at = [index];
-    } else if (found === quality) {
+      if (firstOnly && quality === 1) return { at, quality };
+    } else if (!firstOnly && found === quality) {
       at.push(index);
     }
   }
@@ -611,10 +613,15 @@ export function messageMatcher(query: string): (text: string) => MessageMatch | 
     let quality = 1;
     const positions: Array<ReadonlyArray<number>> = [];
     for (const { token, folded: foldedToken, nonAscii, mustStartWord, grades } of tokens) {
-      let found = findMessageToken(text, plain, token);
+      let found = findMessageToken(text, plain, token, tokens.length === 1);
       // Accents typed or left out: "cafe" finds "Café", also after "cafeteria".
       if (found?.quality !== 1 && foldedToken.length > 0 && (nonAscii || NON_ASCII.test(text))) {
-        found = findMessageToken(text, (folded ??= foldInPlace(text)), foldedToken);
+        found = findMessageToken(
+          text,
+          (folded ??= foldInPlace(text)),
+          foldedToken,
+          tokens.length === 1,
+        );
       }
       if (found === null) return null;
       if (found.quality === MID_WORD && mustStartWord) return null;

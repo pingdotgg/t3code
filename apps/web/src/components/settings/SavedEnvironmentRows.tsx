@@ -5,13 +5,12 @@ import {
   EllipsisIcon,
   RouteIcon,
 } from "lucide-react";
-import { useAtom, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useEffectEvent, useState } from "react";
 import {
   AuthRelayWriteScope,
   type EnvironmentId,
   connectReachabilityHelpUrl,
-  connectReachableMcpUrl,
   formatConnectReachable,
   managedCapabilityDenial,
   resolveEnvironmentMachineKind,
@@ -50,20 +49,15 @@ import {
 } from "~/versionSkew";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
-import { primaryCloudLinkMutationAtom } from "~/cloud/primaryCloudLinkState";
-import { useCloudLinkController, type CloudLinkDesiredState } from "~/cloud/useCloudLinkController";
+import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
 import { TunnelLimitAlert, TunnelUsageMeter } from "../cloud/TunnelUsage";
 import { environmentCatalog } from "~/connection/catalog";
 import { readEnvironmentScope } from "~/state/session";
-import {
-  type EnvironmentPresentation,
-  useRelayEnvironmentDiscovery,
-  usePrimaryEnvironmentId,
-} from "~/state/environments";
+import { type EnvironmentPresentation, useRelayEnvironmentDiscovery } from "~/state/environments";
 import { APP_VERSION } from "~/branding";
-import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
+import { useManagedPolicy } from "~/state/managedPolicy";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "~/state/server";
 import {
@@ -135,20 +129,14 @@ function useCopyMcpUrl() {
   }).copyToClipboard;
 }
 
-export function PrimaryMcpUrlMenuItem() {
-  const {
-    linkState: { data, isPending },
-    managedTunnelActive,
-  } = useCloudLinkController();
+/** Copies the MCP URL this environment's own T3 Connect tunnel answered on. */
+export function ConnectMcpUrlMenuItem({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const { linkState, managedTunnelActive } = useCloudLinkController(environmentId);
   const copyMcpUrl = useCopyMcpUrl();
-  const reachability =
-    data && !isPending && managedTunnelActive && data.linkRevoked !== true
-      ? data.reachability
-      : undefined;
-  const mcpUrl = reachability?.status === "reachable" ? connectReachableMcpUrl(reachability) : null;
-  return mcpUrl ? (
-    <MenuItem onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>Copy MCP URL</MenuItem>
-  ) : null;
+  const reachability = managedTunnelActive ? linkState.data?.reachability : undefined;
+  if (reachability?.status !== "reachable" || !reachability.hostname) return null;
+  const mcpUrl = `https://${reachability.hostname}/mcp`;
+  return <MenuItem onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>Copy MCP URL</MenuItem>;
 }
 
 export function SavedBackendListRow({
@@ -540,11 +528,16 @@ function T3ConnectTunnelUsage({ tunnelLimit }: { readonly tunnelLimit: number | 
   );
 }
 
-function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: boolean }) {
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
+function ConfiguredCloudLinkRow({
+  environmentId,
+  canManageRelay,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly canManageRelay: boolean;
+}) {
   const {
     isSignedIn,
-    linkState: primaryCloudLinkState,
+    linkState: cloudLinkState,
     linkRevoked,
     managedTunnelActive,
     managedTunnelOutOfSync,
@@ -552,25 +545,23 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     holdWebhooksWhileOffline,
     operationError,
     tunnelLimit,
-    reconcileCloudState: reconcileLink,
-  } = useCloudLinkController();
+    reconcileCloudState,
+  } = useCloudLinkController(environmentId);
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   // The server unlinks and refuses relay changes under such a policy; unlinking stays possible.
-  const connectDenial = managedCapabilityDenial(usePrimaryManagedPolicy(), "connect");
-  const [isBusy, setIsBusy] = useAtom(primaryCloudLinkMutationAtom(primaryEnvironmentId));
-  const reconcileCloudState = (desired: CloudLinkDesiredState) => {
-    setIsBusy(true);
-    return reconcileLink(desired).finally(() => setIsBusy(false));
-  };
+  const connectDenial = managedCapabilityDenial(useManagedPolicy(environmentId), "connect");
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
   const disabledReason = canManageRelay
     ? null
     : "Your session does not have permission to manage T3 Connect access.";
+  const isBusy = isUpdating || isUpdatingPreference;
   const switchDisabled =
     !canManageRelay ||
     !isSignedIn ||
-    primaryCloudLinkState.data === null ||
-    primaryCloudLinkState.isPending ||
+    cloudLinkState.data === null ||
+    cloudLinkState.isPending ||
     isBusy;
   // `isSignedIn` is undefined until Clerk loads. Signed out, one row shows a
   // sign-in button instead of its switch; the onboarding dialog that opens after
@@ -581,7 +572,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       Sign in
     </Button>
   );
-  const refreshLinkState = useEffectEvent(primaryCloudLinkState.refresh);
+  const refreshLinkState = useEffectEvent(cloudLinkState.refresh);
   // The server rechecks reachability when the tunnel's 30 s readiness poll changes.
   // Poll while mounted, so a failed read does not stop later ones.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- 30 s interval that refreshes the cloud link reachability while mounted
@@ -589,7 +580,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     const interval = window.setInterval(() => refreshLinkState(), 30_000);
     return () => window.clearInterval(interval);
   }, []);
-  const reachability = managedTunnelActive ? primaryCloudLinkState.data?.reachability : undefined;
+  const reachability = managedTunnelActive ? cloudLinkState.data?.reachability : undefined;
   const reachabilityStatus =
     reachability?.status === "reachable" ? (
       formatConnectReachable(reachability)
@@ -610,11 +601,8 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     ) : null;
 
   const updateManagedTunnel = async (enabled: boolean) => {
-    if (
-      primaryEnvironmentId === null ||
-      !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
-    )
-      return;
+    if (!readEnvironmentScope(environmentId, AuthRelayWriteScope)) return;
+    setIsUpdating(true);
     const ok = await reconcileCloudState({ managedTunnel: enabled, publish: publishAgentActivity });
     if (ok) {
       toastManager.add({
@@ -631,14 +619,12 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
             : "This environment is no longer available through T3 Connect.",
       });
     }
+    setIsUpdating(false);
   };
 
   const updatePublishAgentActivity = async (enabled: boolean) => {
-    if (
-      primaryEnvironmentId === null ||
-      !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
-    )
-      return;
+    if (!readEnvironmentScope(environmentId, AuthRelayWriteScope)) return;
+    setIsUpdatingPreference(true);
     const ok = await reconcileCloudState({ managedTunnel: managedTunnelActive, publish: enabled });
     if (ok) {
       toastManager.add({
@@ -649,9 +635,11 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
           : "This environment will stop publishing agent activity.",
       });
     }
+    setIsUpdatingPreference(false);
   };
 
   const updateHoldWebhooks = async (enabled: boolean) => {
+    setIsUpdatingPreference(true);
     const ok = await reconcileCloudState({
       managedTunnel: managedTunnelActive,
       publish: publishAgentActivity,
@@ -666,6 +654,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
           : "Requests to an offline environment now fail. Anything already held is still delivered.",
       });
     }
+    setIsUpdatingPreference(false);
   };
 
   return (
@@ -690,7 +679,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
                       ? "T3 Connect is out of sync. This environment is linked only to publish agent activity, so other devices cannot connect. Turn T3 Connect on to repair it."
                       : "Make this environment available to your other devices through T3 Connect."
           }
-          status={operationError ?? primaryCloudLinkState.error ?? reachabilityStatus}
+          status={operationError ?? cloudLinkState.error ?? reachabilityStatus}
           managed={managedTunnelActive ? undefined : connectDenial}
           control={
             signedOut ? (
@@ -760,9 +749,11 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
 }
 
 export function CloudLinkRow({
+  environmentId,
   canReadRelay,
   canManageRelay,
 }: {
+  readonly environmentId: EnvironmentId;
   readonly canReadRelay: boolean;
   readonly canManageRelay: boolean;
 }) {
@@ -775,7 +766,7 @@ export function CloudLinkRow({
       />
     );
   }
-  return <ConfiguredCloudLinkRow canManageRelay={canManageRelay} />;
+  return <ConfiguredCloudLinkRow environmentId={environmentId} canManageRelay={canManageRelay} />;
 }
 
 function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnabled?: boolean }) {

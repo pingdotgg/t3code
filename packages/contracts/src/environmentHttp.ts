@@ -49,6 +49,23 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import {
+  CloudSpeechApiKey,
+  CloudSpeechError,
+  CloudSpeechKeys,
+  CloudSpeechModelId,
+  CloudSpeechModels,
+  CloudSpeechProvider,
+  EnvironmentSpeechAccelerationRequest,
+  EnvironmentSpeechModelRequest,
+  EnvironmentSpeechModels,
+  EnvironmentSpeechModelUnloadTimeoutRequest,
+  EnvironmentSpeechPostProcessingRequest,
+  EnvironmentSpeechPostProcessingResult,
+  EnvironmentSpeechStatus,
+  EnvironmentSpeechTranscriptionResult,
+} from "./speech.ts";
+import { SecretReference } from "./secretReference.ts";
+import {
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2ThreadDetailSnapshot,
@@ -93,6 +110,9 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "invalid_command",
   "invalid_history_cursor",
   "thread_transcript_too_large",
+  "invalid_audio",
+  "speech_unavailable",
+  "speech_busy",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 
@@ -430,7 +450,7 @@ export const EnvironmentConnectReachability = Schema.Union([
     /** Null when cloudflared did not report a count. */
     readyConnections: Schema.NullOr(Schema.Int),
     protocol: Schema.NullOr(Schema.String),
-    /** The tunnel hostname that answered. Older servers leave it out. */
+    /** The host the tunnel answered on. Older servers leave it out. */
     hostname: Schema.optional(Schema.String),
   }),
   Schema.Struct({
@@ -454,12 +474,6 @@ export function formatConnectReachable(
     ...(count === null ? [] : [`${count} connection${count === 1 ? "" : "s"}`]),
     ...(result.protocol ? [result.protocol.toUpperCase()] : []),
   ].join(" · ");
-}
-
-export function connectReachableMcpUrl(
-  result: Extract<EnvironmentConnectReachability, { status: "reachable" }>,
-): string | null {
-  return result.hostname ? `https://${result.hostname}/mcp` : null;
 }
 
 /**
@@ -764,6 +778,145 @@ class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullRequests").a
   }).middleware(EnvironmentAuthenticatedAuth),
 ) {}
 
+export class EnvironmentVoiceBodyLimit extends HttpApiMiddleware.Service<EnvironmentVoiceBodyLimit>()(
+  "EnvironmentVoiceBodyLimit",
+  { error: EnvironmentRequestInvalidError },
+) {}
+
+export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
+  .add(
+    HttpApiEndpoint.get("cloudKeys", "/api/voice/cloud/keys", {
+      headers: OptionalBearerHeaders,
+      success: CloudSpeechKeys,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("setCloudKey", "/api/voice/cloud/:provider/key", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ provider: CloudSpeechProvider }),
+      payload: Schema.Struct({
+        key: Schema.NullOr(
+          Schema.Union([Schema.RedactedFromValue(CloudSpeechApiKey), SecretReference]),
+        ),
+      }),
+      success: HttpApiSchema.NoContent,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    // Public catalog; carries no credential and no audio.
+    HttpApiEndpoint.get("cloudModels", "/api/voice/cloud/openrouter/models", {
+      headers: OptionalBearerHeaders,
+      success: CloudSpeechModels,
+      error: [...EnvironmentScopedOperationErrors, CloudSpeechError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("transcribeCloud", "/api/voice/cloud/:provider/transcribe", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ provider: CloudSpeechProvider }),
+      query: Schema.Struct({ model: Schema.optionalKey(CloudSpeechModelId) }),
+      payload: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
+      success: EnvironmentSpeechTranscriptionResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentRequestInvalidError,
+        CloudSpeechError,
+      ],
+    })
+      .middleware(EnvironmentVoiceBodyLimit)
+      .middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("status", "/api/voice/status", {
+      headers: OptionalBearerHeaders,
+      success: EnvironmentSpeechStatus,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("prepareModel", "/api/voice/models/prepare", {
+      headers: OptionalBearerHeaders,
+      success: Schema.Void,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("models", "/api/voice/models", {
+      headers: OptionalBearerHeaders,
+      query: { benchmarks: Schema.optionalKey(Schema.Literal("1")) },
+      success: EnvironmentSpeechModels,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("downloadModel", "/api/voice/models/download", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechModelRequest,
+      success: EnvironmentSpeechModels,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("selectModel", "/api/voice/models/select", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechModelRequest,
+      success: EnvironmentSpeechModels,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("cancelModelDownload", "/api/voice/models/cancel", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechModelRequest,
+      success: EnvironmentSpeechModels,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("removeModel", "/api/voice/models/remove", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechModelRequest,
+      success: EnvironmentSpeechModels,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("updateAcceleration", "/api/voice/acceleration", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechAccelerationRequest,
+      success: EnvironmentSpeechStatus,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("updateModelUnloadTimeout", "/api/voice/model-unload-timeout", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechModelUnloadTimeoutRequest,
+      success: EnvironmentSpeechStatus,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("transcribe", "/api/voice/transcribe", {
+      headers: OptionalBearerHeaders,
+      payload: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
+      success: EnvironmentSpeechTranscriptionResult,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    })
+      .middleware(EnvironmentVoiceBodyLimit)
+      .middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("postProcess", "/api/voice/post-process", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechPostProcessingRequest,
+      success: EnvironmentSpeechPostProcessingResult,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
@@ -852,5 +1005,6 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentProjectsHttpApi)
+  .add(EnvironmentVoiceHttpApi)
   .add(EnvironmentConnectHttpApi)
   .add(EnvironmentWebhooksHttpApi) {}

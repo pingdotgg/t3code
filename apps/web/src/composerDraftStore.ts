@@ -42,6 +42,7 @@ import { DeepMutable } from "effect/Types";
 import {
   createModelSelection,
   draftModelPickMatchesThread,
+  normalizeCustomModelSlug,
   normalizeModelSlug,
 } from "@t3tools/shared/model";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
@@ -990,7 +991,11 @@ function normalizeModelSelection(
   const driverKindHint =
     normalizeProviderDriverKind(candidate?.provider ?? legacy?.provider) ??
     ProviderDriverKind.make("codex");
-  const model = normalizeModelSlug(rawModel, driverKindHint);
+  // Instance-scoped picks are already resolved slugs; a custom slug can match a static alias.
+  const model =
+    candidate?.instanceId === undefined
+      ? normalizeModelSlug(rawModel, driverKindHint)
+      : normalizeCustomModelSlug(rawModel);
   if (!model) {
     return null;
   }
@@ -1786,6 +1791,22 @@ function normalizePersistedDraftThreads(
   return { draftThreadsByThreadKey, logicalProjectDraftThreadKeyByLogicalProjectKey };
 }
 
+const decodePersistedModelSelection = Schema.decodeUnknownOption(ModelSelection);
+
+/** Storage v3-v5 wrote `provider` and object-shaped options; the schema upgrades both. */
+function normalizePersistedModelSelectionByProvider(
+  value: object,
+): Partial<Record<ProviderInstanceId, ModelSelection>> {
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([instanceId, selection]) =>
+      Option.match(decodePersistedModelSelection(selection), {
+        onNone: () => [],
+        onSome: (decoded) => [[instanceId, decoded] as const],
+      }),
+    ),
+  );
+}
+
 function normalizePersistedDraftsByThreadId(
   rawDraftMap: unknown,
   draftThreadsByThreadKey: PersistedComposerDraftStoreState["draftThreadsByThreadKey"],
@@ -1913,9 +1934,9 @@ function normalizePersistedDraftsByThreadId(
       draftCandidate.modelSelectionByProvider &&
       typeof draftCandidate.modelSelectionByProvider === "object"
     ) {
-      modelSelectionByProvider = draftCandidate.modelSelectionByProvider as Partial<
-        Record<ProviderInstanceId, ModelSelection>
-      >;
+      modelSelectionByProvider = normalizePersistedModelSelectionByProvider(
+        draftCandidate.modelSelectionByProvider,
+      );
       activeProvider = normalizeProviderInstanceId(draftCandidate.activeProvider);
       modelSelectionExplicit = draftCandidate.modelSelectionExplicit === true ? true : undefined;
     } else {
@@ -2210,10 +2231,9 @@ function normalizeCurrentPersistedComposerDraftStoreState(
     normalizedPersistedState.stickyModelSelectionByProvider &&
     typeof normalizedPersistedState.stickyModelSelectionByProvider === "object"
   ) {
-    stickyModelSelectionByProvider =
-      normalizedPersistedState.stickyModelSelectionByProvider as Partial<
-        Record<ProviderInstanceId, ModelSelection>
-      >;
+    stickyModelSelectionByProvider = normalizePersistedModelSelectionByProvider(
+      normalizedPersistedState.stickyModelSelectionByProvider,
+    );
     stickyActiveProvider = normalizeProviderInstanceId(
       normalizedPersistedState.stickyActiveProvider,
     );
@@ -3051,7 +3071,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           }
           const instanceKey = options?.instanceId ?? defaultInstanceIdForDriver(normalizedProvider);
           const fallbackModel =
-            normalizeModelSlug(options?.model, normalizedProvider) ??
+            normalizeCustomModelSlug(options?.model) ??
             DEFAULT_MODEL_BY_PROVIDER[normalizedProvider] ??
             DEFAULT_MODEL;
           const providerOpts =
@@ -3083,8 +3103,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 nextStickyMap[instanceKey] ??
                 base.modelSelectionByProvider[instanceKey] ??
                 createModelSelection(instanceKey, fallbackModel);
-              const rememberedModel =
-                normalizeModelSlug(options?.model, normalizedProvider) ?? stickyBase.model;
+              const rememberedModel = normalizeCustomModelSlug(options?.model) ?? stickyBase.model;
               if (providerOpts) {
                 nextStickyMap[instanceKey] = createModelSelection(
                   instanceKey,

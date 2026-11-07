@@ -57,6 +57,11 @@ See the [mobile README](../../apps/mobile/README.md) for native builds and Metro
 Flags go directly after the task name, for example `vp run dev --home-dir /tmp/t3code-dev`.
 Add `--browser` to open a browser automatically.
 
+To stop a worktree's dev stack when its thread settles, import the **Dev** action from
+`t3.json` in Settings > Projects > Actions and start it through the action menu or its
+keybinding. Its `stopOnSettle` option lets T3 stop the terminal and its child processes.
+Running `vp run dev` through an agent's own shell tool does not attach it to this lifecycle.
+
 ### State and ports
 
 Linked worktrees default to their own `.t3/userdata`, even when `T3CODE_HOME` is set.
@@ -220,9 +225,11 @@ In `apps/web`, a test that renders React or touches the DOM is named `*.browser.
 and runs in headless Chromium with the React Compiler on, like the app. There is no jsdom; other
 `*.test.ts` files run in Node.
 
-TypeScript workspaces typecheck with `tsc`. The `typescript` catalog entry is
-`@tsc-rs/typescript`, the tsc-rs drop-in, with Effect diagnostics, quick fixes, and
-refactors built in. VS Code uses it through `js/ts.tsdk.path` in `.vscode/settings.json`.
+TypeScript workspaces typecheck with `effect-tsgo tsrs --noEmit` from `@effect/tsgo`: the
+[tsrs](https://github.com/oxc-project/tsrs) checker with Effect diagnostics, quick fixes, and
+refactors built in. Only `apps/marketing` installs `typescript`, for Astro. VS Code's TypeScript 7
+extension starts the same checker through `.vscode/tsdk/tsgo` (`js/ts.tsdk.path`), a POSIX
+script, so on Windows open the workspace through WSL.
 
 Use `vp run lint:mobile` for native mobile changes. CI owns the full suite; see
 [ci.yml](../../.github/workflows/ci.yml) for its current jobs.
@@ -231,7 +238,7 @@ Windows investigation while that suite is not a required gate.
 
 ### Unused code
 
-`vp run knip:check` checks unused files and dependencies across the repo, then
+`vp run knip:check` checks unused files and dependencies across the repo and, at the same time,
 unused runtime exports in `apps/server`, `apps/desktop`, `apps/web`, and every internal package under
 `packages/`. CI enforces both checks.
 Exported types and Effect schemas are allowed without consumers. The schema preprocessor
@@ -265,8 +272,9 @@ options.
 
 Native macOS and Windows desktop artifact builds generate server bytecode with the packaged
 Electron executable, after ASAR creation and before signing. Linux builds skip generation until
-native packaging and relocated AppImage reuse have been validated. Cross-platform and
-cross-architecture builds also skip generation explicitly. CLI, SEA and WSL runtimes keep their
+native packaging and relocated AppImage reuse have been validated. macOS x64 builds on ARM64
+hosts run the packaged x64 Electron under Rosetta to generate the cache. Other cross-platform and
+cross-architecture builds skip generation explicitly. CLI, SEA and WSL runtimes keep their
 existing behavior; only desktop backend imports covered by generation receive prepared bytecode.
 Worker-only modules compile normally.
 

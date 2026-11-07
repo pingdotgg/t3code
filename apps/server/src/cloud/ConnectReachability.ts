@@ -6,6 +6,7 @@ import {
   formatConnectReachable,
 } from "@t3tools/contracts";
 import { readTailscaleExitNode, type TailscaleExitNode } from "@t3tools/tailscale";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -13,12 +14,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { CLOUD_ENDPOINT_RUNTIME_CONFIG, decodeRuntimeConfig } from "./config.ts";
+import { CLOUD_ENDPOINT_RUNTIME_CONFIG } from "./config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 
 // cloudflared finds the edge through the SRV record `_v2-origintunneld._tcp.argotunnel.com`,
@@ -27,13 +30,19 @@ const TUNNEL_EDGE_HOSTS = ["region1.v2.argotunnel.com", "region2.v2.argotunnel.c
 const TUNNEL_EDGE_PORT = 7844;
 const EDGE_CONNECT_TIMEOUT = Duration.seconds(5);
 const ENDPOINT_REQUEST_TIMEOUT = Duration.seconds(10);
+const ERROR_BODY_READ_TIMEOUT = Duration.seconds(2);
 // cloudflared registers several connections within a few seconds; they are one change.
 const READINESS_CHANGE_DEBOUNCE = Duration.seconds(3);
 // Readiness changes miss failures and recoveries past cloudflared (DNS, origin, edge errors).
 const RECHECK_INTERVAL = Duration.minutes(5);
+// cloudflared can keep reporting ready connections the edge already dropped, so its
+// own readiness watch never restarts it. A 530 can also be brief, so restart only once it
+// lasts, and wait longer after each restart that did not help.
+const DEAD_CONNECTOR_RESTART_AFTER = Duration.minutes(2);
+const DEAD_CONNECTOR_RESTART_AFTER_MAX = Duration.hours(1);
 
 export type EndpointProbe =
-  | { readonly kind: "status"; readonly status: number }
+  | { readonly kind: "status"; readonly status: number; readonly cloudflareError?: string }
   | { readonly kind: "dns_failed" | "timeout" | "network_error" };
 
 /** Everything one check learned. `null` means that step did not run. */
@@ -68,10 +77,11 @@ export function classifyReachability(
   const restart = "Restart T3 Code. If it stays, run `t3 connect` again.";
 
   if (!facts.managedTunnelConfigured) {
+    // A running server reads the link `t3 connect` stores only at startup.
     return fail(
       "not_linked",
       "The server has not set up a T3 Connect tunnel.",
-      "Run `t3 connect`, then restart the server (`t3 service restart`) so it applies the link.",
+      "Run `t3 connect`, then restart T3 Code so it applies the link.",
     );
   }
   if (connector === null) {
@@ -122,8 +132,10 @@ export function classifyReachability(
       "Wait a minute. If it stays, check the network and the server log.",
     );
   }
-  // Cloudflare answers 530 (error 1033) when the tunnel has no live connector.
-  if (status === 530) {
+  const cloudflareError = endpoint.kind === "status" ? endpoint.cloudflareError : undefined;
+  // Cloudflare answers 530 with error 1033 when the tunnel has no live connector. Other
+  // codes, such as 1016 for a broken DNS record, are not fixed by restarting cloudflared.
+  if (status === 530 && (cloudflareError === undefined || cloudflareError === "1033")) {
     return fail(
       "no_connector",
       "Cloudflare has no live connection from this machine for the tunnel.",
@@ -131,9 +143,10 @@ export function classifyReachability(
     );
   }
   if (status !== null) {
+    const code = cloudflareError === undefined ? "" : ` (Cloudflare error ${cloudflareError})`;
     return fail(
       "unexpected_response",
-      `The T3 Connect address answered with HTTP ${status}.`,
+      `The T3 Connect address answered with HTTP ${status}${code}.`,
       restart,
     );
   }
@@ -175,7 +188,6 @@ function hasErrorCode(error: unknown, codes: ReadonlySet<string>): boolean {
 }
 
 const DNS_ERROR_CODES = new Set(["ENOTFOUND", "EAI_AGAIN", "EAI_NONAME"]);
-const textDecoder = new TextDecoder();
 
 const canOpenTcp = (host: string, port: number) =>
   Effect.callback<boolean>((resume) => {
@@ -204,45 +216,67 @@ const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const httpClient = yield* HttpClient.HttpClient;
   // `order` ranks checks by start, so a slow older one cannot replace a newer result.
-  // `tunnelConfig` is the config a result was checked against: after a relink the old
-  // result names the old tunnel's host until the new connector triggers a check.
   const latestRef = yield* Ref.make(
-    Option.none<{
-      readonly order: number;
-      readonly result: EnvironmentConnectReachability;
-      readonly tunnelConfig: string | null;
-    }>(),
+    Option.none<{ readonly order: number; readonly result: EnvironmentConnectReachability }>(),
   );
   const checkCounter = yield* Ref.make(0);
+  // Checks update this as they finish, even when a newer check already did. A dead streak
+  // or a restart backoff that began before a healthy check no longer counts.
+  const lastHealthyOrder = yield* Ref.make(0);
+  const deadConnectorRef = yield* SynchronizedRef.make<{
+    readonly streak: {
+      readonly pid: number;
+      readonly since: number;
+      readonly order: number;
+    } | null;
+    readonly restartAfterMillis: number;
+    readonly restartOrder: number;
+  }>({
+    streak: null,
+    restartAfterMillis: Duration.toMillis(DEAD_CONNECTOR_RESTART_AFTER),
+    restartOrder: 0,
+  });
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const scope = yield* Scope.Scope;
   const readExitNode = readTailscaleExitNode.pipe(
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Effect.orElseSucceed(() => null),
   );
 
-  const probeEndpoint = (hostname: string) =>
-    httpClient.get(`https://${hostname}/.well-known/t3/environment`).pipe(
-      Effect.map((response): EndpointProbe => ({ kind: "status", status: response.status })),
-      Effect.scoped,
-      Effect.timeoutOption(ENDPOINT_REQUEST_TIMEOUT),
-      Effect.map(Option.getOrElse((): EndpointProbe => ({ kind: "timeout" }))),
-      Effect.catch((error) =>
-        Effect.succeed<EndpointProbe>({
-          kind: hasErrorCode(error, DNS_ERROR_CODES) ? "dns_failed" : "network_error",
-        }),
-      ),
-    );
-
-  const readTunnelConfig = secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG).pipe(
-    Effect.map(Option.match({ onNone: () => null, onSome: (bytes) => textDecoder.decode(bytes) })),
-    Effect.orElseSucceed(() => null),
+  const probeEndpoint = Effect.fn("ConnectReachability.probeEndpoint")(
+    function* (hostname: string) {
+      const response = yield* httpClient
+        .get(`https://${hostname}/.well-known/t3/environment`, { acceptJson: true })
+        .pipe(Effect.timeoutOption(ENDPOINT_REQUEST_TIMEOUT));
+      if (Option.isNone(response)) return { kind: "timeout" } satisfies EndpointProbe;
+      const { status } = response.value;
+      if (status !== 530) return { kind: "status", status } satisfies EndpointProbe;
+      // Cloudflare's error page is HTML unless the client accepts JSON, which carries
+      // `"error_code":1033`. Clients that send no User-Agent get `error code: 1033`.
+      const body = yield* response.value.text.pipe(
+        Effect.timeoutOption(ERROR_BODY_READ_TIMEOUT),
+        Effect.orElseSucceed(() => Option.none<string>()),
+      );
+      const code = /error[_ ]code"?:\s*(\d{4})/i.exec(Option.getOrElse(body, () => ""))?.[1];
+      return (
+        code === undefined
+          ? { kind: "status", status }
+          : { kind: "status", status, cloudflareError: code }
+      ) satisfies EndpointProbe;
+    },
+    Effect.scoped,
+    Effect.catch((error) =>
+      Effect.succeed<EndpointProbe>({
+        kind: hasErrorCode(error, DNS_ERROR_CODES) ? "dns_failed" : "network_error",
+      }),
+    ),
   );
 
-  // Runs only inside the `ConnectReachability.check` span.
-  const gatherFacts = Effect.fnUntraced(function* (tunnelConfig: string | null) {
-    const managedTunnelConfigured = tunnelConfig !== null;
-    const config = tunnelConfig ? Option.getOrNull(decodeRuntimeConfig(tunnelConfig)) : null;
-    const connector = config ? yield* runtime.inspectConnector(config) : null;
+  const gatherFacts = Effect.gen(function* () {
+    const managedTunnelConfigured = Option.isSome(
+      yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG).pipe(Effect.orElseSucceed(Option.none)),
+    );
+    const connector = managedTunnelConfigured ? yield* runtime.inspectConnector : null;
     const endpoint =
       connector?.hostname && connector.readyConnections !== 0
         ? yield* probeEndpoint(connector.hostname)
@@ -269,18 +303,90 @@ const make = Effect.gen(function* () {
     return { ...facts, edgeReachable: edgeResults.some(Boolean), exitNode };
   });
 
+  const isLatest = (order: number) =>
+    Ref.get(latestRef).pipe(
+      Effect.map((latest) => Option.isNone(latest) || latest.value.order <= order),
+    );
+
+  // Runs inside the check span; the runtime restart has its own. Returns the streak a dead
+  // connector just started and when to confirm it.
+  const restartDeadConnector = Effect.fnUntraced(function* (
+    facts: ReachabilityFacts,
+    result: EnvironmentConnectReachability,
+    order: number,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    const { connector } = facts;
+    const dead =
+      result.status === "unreachable" &&
+      result.cause === "no_connector" &&
+      connector !== null &&
+      (connector.readyConnections ?? 0) > 0
+        ? connector
+        : null;
+    return yield* SynchronizedRef.modifyEffect(deadConnectorRef, (current) =>
+      Effect.gen(function* () {
+        const healthy = yield* Ref.get(lastHealthyOrder);
+        const state = {
+          streak: current.streak && current.streak.order > healthy ? current.streak : null,
+          restartAfterMillis:
+            current.restartOrder > healthy
+              ? current.restartAfterMillis
+              : Duration.toMillis(DEAD_CONNECTOR_RESTART_AFTER),
+          restartOrder: current.restartOrder,
+        };
+        if (!(yield* isLatest(order))) return [null, state] as const;
+        if (dead === null) return [null, { ...state, streak: null }] as const;
+        if (state.streak?.pid !== dead.pid) {
+          const started = { ...state, streak: { pid: dead.pid, since: now, order } };
+          return [{ order, after: Duration.millis(state.restartAfterMillis) }, started] as const;
+        }
+        if (now - state.streak.since < state.restartAfterMillis) return [null, state] as const;
+        // Checks can invalidate the streak while this request waits for the runtime's lock.
+        const streakOrder = state.streak.order;
+        const stillDead = Effect.gen(function* () {
+          if (!(yield* isLatest(order))) return false;
+          return (yield* Ref.get(lastHealthyOrder)) < streakOrder;
+        });
+        if (!(yield* runtime.restartConnector(dead.pid, stillDead))) {
+          return [null, state] as const;
+        }
+        const restarted = {
+          streak: null,
+          restartAfterMillis: Math.min(
+            state.restartAfterMillis * 2,
+            Duration.toMillis(DEAD_CONNECTOR_RESTART_AFTER_MAX),
+          ),
+          restartOrder: order,
+        };
+        return [null, restarted] as const;
+      }),
+    );
+  });
+
   const check: Effect.Effect<EnvironmentConnectReachability> = Effect.gen(function* () {
     const order = yield* Ref.updateAndGet(checkCounter, (count) => count + 1);
-    const tunnelConfig = yield* readTunnelConfig;
-    const facts = yield* gatherFacts(tunnelConfig);
-    if ((yield* readTunnelConfig) !== tunnelConfig) return yield* check;
+    const facts = yield* gatherFacts;
     const result = classifyReachability(facts, DateTime.formatIso(yield* DateTime.now));
+    if (result.status === "reachable") {
+      yield* Ref.update(lastHealthyOrder, (healthy) => Math.max(healthy, order));
+    }
     const previous = yield* Ref.modify(latestRef, (current) =>
       Option.isSome(current) && current.value.order > order
         ? [null, current]
-        : [current, Option.some({ order, result, tunnelConfig })],
+        : [current, Option.some({ order, result })],
     );
     if (previous === null) return result;
+    const started = yield* restartDeadConnector(facts, result, order);
+    // Nothing else would look again until the next periodic check.
+    if (started !== null) {
+      const confirm = SynchronizedRef.get(deadConnectorRef).pipe(
+        Effect.flatMap(({ streak }) =>
+          streak?.order === started.order ? Effect.suspend(() => check) : Effect.void,
+        ),
+      );
+      yield* Effect.sleep(started.after).pipe(Effect.andThen(confirm), Effect.forkIn(scope));
+    }
     const changed = Option.match(previous, {
       onNone: () => true,
       onSome: ({ result: last }) =>
@@ -320,13 +426,7 @@ const make = Effect.gen(function* () {
 
   return ConnectReachability.of({
     check,
-    latest: Effect.gen(function* () {
-      const latest = yield* Ref.get(latestRef);
-      const tunnelConfig = yield* readTunnelConfig;
-      return Option.flatMap(latest, (entry) =>
-        entry.tunnelConfig === tunnelConfig ? Option.some(entry.result) : Option.none(),
-      );
-    }),
+    latest: Ref.get(latestRef).pipe(Effect.map(Option.map(({ result }) => result))),
   });
 });
 

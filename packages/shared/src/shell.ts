@@ -5,6 +5,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -17,6 +18,9 @@ const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
+const WINDOWS_SHELL_PROBE_TIMEOUT_MS = 5000;
+// A shell stuck in the kernel survives the kill and holds stdout, so execFile's callback never fires.
+const WINDOWS_SHELL_PROBE_DEADLINE = Duration.millis(WINDOWS_SHELL_PROBE_TIMEOUT_MS + 1000);
 
 type ExecFileSyncLike = (
   file: string,
@@ -360,6 +364,9 @@ const execWindowsEnvironmentProbe = (
     }
     return Effect.sync(() => {
       child.kill();
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      child.unref();
     });
   });
 
@@ -380,7 +387,10 @@ export const readEnvironmentFromWindowsShell = Effect.fn("shell.readEnvironmentF
       command,
     ];
     for (const shell of WINDOWS_SHELL_CANDIDATES) {
-      const output = yield* execFile(shell, args, { encoding: "utf8", timeout: 5000 });
+      const output = yield* execFile(shell, args, {
+        encoding: "utf8",
+        timeout: WINDOWS_SHELL_PROBE_TIMEOUT_MS,
+      }).pipe(Effect.timeoutOption(WINDOWS_SHELL_PROBE_DEADLINE), Effect.map(Option.flatten));
       if (Option.isNone(output)) continue;
 
       const environment: Partial<Record<string, string>> = {};
@@ -815,6 +825,46 @@ const resolveMacosGit = Effect.fnUntraced(function* (
 export interface SpawnCommandOptions extends CommandAvailabilityOptions {
   /** Bypass npm cmd-shims; see npmShimExecutable for process-lifetime semantics. */
   readonly bypassNpmShim?: boolean;
+}
+
+// `*` is one argument that is not an option. These forms read refs or config
+// only, so git starts no hook, helper, pager, editor or lazy fetch for them.
+const CONSOLE_FREE_GIT_READS = [
+  "rev-parse --git-path index",
+  "rev-parse --git-common-dir",
+  "rev-parse --show-toplevel",
+  "rev-parse --symbolic-full-name HEAD",
+  "rev-parse --abbrev-ref --symbolic-full-name @{upstream}",
+  "symbolic-ref --quiet HEAD",
+  "symbolic-ref *",
+  "remote",
+  "remote get-url *",
+  "remote get-url -- *",
+  "config --get *",
+].map((form) => form.split(" "));
+
+export function runsGitWithoutConsole(
+  platform: NodeJS.Platform,
+  executable: string,
+  args: ReadonlyArray<string>,
+): boolean {
+  if (platform !== "win32") return false;
+  const { basename, dirname } = NodePath.win32;
+  const bin = dirname(executable);
+  const build = basename(dirname(bin)).toLowerCase();
+  if (basename(executable).toLowerCase() !== "git.exe" || basename(bin).toLowerCase() !== "bin") {
+    return false;
+  }
+  if (!GIT_FOR_WINDOWS_BUILDS.some((candidate) => candidate === build)) return false;
+  const rest =
+    args[0] === "--git-dir" && args[1] !== undefined && !args[1].startsWith("-")
+      ? args.slice(2)
+      : args;
+  return CONSOLE_FREE_GIT_READS.some(
+    (form) =>
+      form.length === rest.length &&
+      form.every((part, i) => part === rest[i] || (part === "*" && !rest[i]!.startsWith("-"))),
+  );
 }
 
 export const resolveSpawnCommand = Effect.fnUntraced(function* (

@@ -29,9 +29,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, layer } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as SendEmail from "../../bindings/send-email/index.ts";
 import * as Docker from "../../Docker.ts";
 import * as Globals from "../../globals/Globals.ts";
@@ -41,11 +41,7 @@ import * as Paths from "../../internal/Paths.ts";
 import * as Runtime from "../../Runtime.ts";
 import * as RuntimeServices from "../../RuntimeServices.ts";
 import * as Workerd from "../../workerd/Workerd.ts";
-import {
-  localRuntimeLayer,
-  makeTempDirectory,
-  startTestWorker,
-} from "../helpers/runtime.ts";
+import { localRuntimeLayer, makeTempDirectory, startTestWorker } from "../helpers/runtime.ts";
 
 // -----------------------------------------------------------------------------
 // Test worker: drives the send_email binding over HTTP
@@ -106,8 +102,7 @@ const EMAIL_WITH_RECEIVED_HEADER = [
   "This is a random email body.",
 ].join("\n");
 
-const sendParams = (from: string, to: string) =>
-  new URLSearchParams({ from, to }).toString();
+const sendParams = (from: string, to: string) => new URLSearchParams({ from, to }).toString();
 
 // Both branches return an id in the shape production returns:
 // `<{36 alphanumeric chars}@{sender domain}>`, angle brackets included.
@@ -115,36 +110,32 @@ const messageIdPattern = (domain: string) =>
   new RegExp(`^<[A-Za-z0-9]{36}@${domain.replace(/\./g, "\\.")}>$`);
 
 const compatibilityDate = "2026-03-10";
-const modules = [
-  { name: "main.js", type: "ESModule", content: TEST_SCRIPT },
-] as const;
+const modules = [{ name: "main.js", type: "ESModule", content: TEST_SCRIPT }] as const;
 
 // -----------------------------------------------------------------------------
 // Validation + result shape (shared runtime, no disk assertions)
 // -----------------------------------------------------------------------------
 
 layer(localRuntimeLayer)("SendEmail binding", (it) => {
-  it.effect(
-    "unbound send_email accepts a valid message and synthesizes a messageId",
-    () =>
-      Effect.gen(function* () {
-        const worker = yield* startTestWorker({
-          name: "send-email-unbound",
-          compatibilityDate,
-          compatibilityFlags: [],
-          bindings: [SendEmail.local({ binding: "SEND_EMAIL" })],
-          modules: [...modules],
-        });
-        const res = yield* worker.fetch(
-          `/?${sendParams("someone@example.com", "someone-else@example.com")}`,
-          { method: "POST", body: VALID_EMAIL },
-        );
-        expect(res.status).toBe(200);
-        const body = (yield* Effect.promise(() => res.json())) as {
-          messageId: string;
-        };
-        expect(body.messageId).toMatch(messageIdPattern("example.com"));
-      }),
+  it.effect("unbound send_email accepts a valid message and synthesizes a messageId", () =>
+    Effect.gen(function* () {
+      const worker = yield* startTestWorker({
+        name: "send-email-unbound",
+        compatibilityDate,
+        compatibilityFlags: [],
+        bindings: [SendEmail.local({ binding: "SEND_EMAIL" })],
+        modules: [...modules],
+      });
+      const res = yield* worker.fetch(
+        `/?${sendParams("someone@example.com", "someone-else@example.com")}`,
+        { method: "POST", body: VALID_EMAIL },
+      );
+      expect(res.status).toBe(200);
+      const body = (yield* Effect.promise(() => res.json())) as {
+        messageId: string;
+      };
+      expect(body.messageId).toMatch(messageIdPattern("example.com"));
+    }),
   );
 
   it.effect("rejects an unparseable message with invalid message-id", () =>
@@ -188,141 +179,127 @@ layer(localRuntimeLayer)("SendEmail binding", (it) => {
     }),
   );
 
-  it.effect(
-    "single allowed destination: mismatched destination is rejected",
-    () =>
-      Effect.gen(function* () {
-        const worker = yield* startTestWorker({
-          name: "send-email-single-dest-reject",
-          compatibilityDate,
-          compatibilityFlags: [],
-          bindings: [
-            SendEmail.local({
-              binding: "SEND_EMAIL",
-              destinationAddress: "helly.r@example.com",
-            }),
-          ],
-          modules: [...modules],
-        });
-        const res = yield* worker.fetch(
-          `/?${sendParams("someone@example.com", "someone-else@example.com")}`,
-          { method: "POST", body: VALID_EMAIL },
-        );
-        expect(res.status).toBe(500);
-        const text = yield* Effect.promise(() => res.text());
-        expect(text).toContain("email to someone-else@example.com not allowed");
-      }),
+  it.effect("single allowed destination: mismatched destination is rejected", () =>
+    Effect.gen(function* () {
+      const worker = yield* startTestWorker({
+        name: "send-email-single-dest-reject",
+        compatibilityDate,
+        compatibilityFlags: [],
+        bindings: [
+          SendEmail.local({
+            binding: "SEND_EMAIL",
+            destinationAddress: "helly.r@example.com",
+          }),
+        ],
+        modules: [...modules],
+      });
+      const res = yield* worker.fetch(
+        `/?${sendParams("someone@example.com", "someone-else@example.com")}`,
+        { method: "POST", body: VALID_EMAIL },
+      );
+      expect(res.status).toBe(500);
+      const text = yield* Effect.promise(() => res.text());
+      expect(text).toContain("email to someone-else@example.com not allowed");
+    }),
   );
 
-  it.effect(
-    "allowed destination list: listed destination works, unlisted is rejected",
-    () =>
-      Effect.gen(function* () {
-        const worker = yield* startTestWorker({
-          name: "send-email-multi-dest",
-          compatibilityDate,
-          compatibilityFlags: [],
-          bindings: [
-            SendEmail.local({
-              binding: "SEND_EMAIL",
-              allowedDestinationAddresses: [
-                "milchick@example.com",
-                "miss-huang@example.com",
-              ],
-            }),
-          ],
-          modules: [...modules],
-        });
+  it.effect("allowed destination list: listed destination works, unlisted is rejected", () =>
+    Effect.gen(function* () {
+      const worker = yield* startTestWorker({
+        name: "send-email-multi-dest",
+        compatibilityDate,
+        compatibilityFlags: [],
+        bindings: [
+          SendEmail.local({
+            binding: "SEND_EMAIL",
+            allowedDestinationAddresses: ["milchick@example.com", "miss-huang@example.com"],
+          }),
+        ],
+        modules: [...modules],
+      });
 
-        const allowedEmail = [
-          "From: someone <someone@example.com>",
-          "To: someone else <milchick@example.com>",
-          "Message-ID: <im-a-random-message-id@example.com>",
-          "MIME-Version: 1.0",
-          "Content-Type: text/plain",
-          "",
-          "This is a random email body.",
-        ].join("\n");
-        const allowed = yield* worker.fetch(
-          `/?${sendParams("someone@example.com", "milchick@example.com")}`,
-          { method: "POST", body: allowedEmail },
-        );
-        expect(allowed.status).toBe(200);
+      const allowedEmail = [
+        "From: someone <someone@example.com>",
+        "To: someone else <milchick@example.com>",
+        "Message-ID: <im-a-random-message-id@example.com>",
+        "MIME-Version: 1.0",
+        "Content-Type: text/plain",
+        "",
+        "This is a random email body.",
+      ].join("\n");
+      const allowed = yield* worker.fetch(
+        `/?${sendParams("someone@example.com", "milchick@example.com")}`,
+        { method: "POST", body: allowedEmail },
+      );
+      expect(allowed.status).toBe(200);
 
-        const rejected = yield* worker.fetch(
-          `/?${sendParams("someone@example.com", "helly.r@example.com")}`,
-          { method: "POST", body: VALID_EMAIL },
-        );
-        expect(rejected.status).toBe(500);
-        const text = yield* Effect.promise(() => rejected.text());
-        expect(text).toContain("email to helly.r@example.com not allowed");
-      }),
+      const rejected = yield* worker.fetch(
+        `/?${sendParams("someone@example.com", "helly.r@example.com")}`,
+        { method: "POST", body: VALID_EMAIL },
+      );
+      expect(rejected.status).toBe(500);
+      const text = yield* Effect.promise(() => rejected.text());
+      expect(text).toContain("email to helly.r@example.com not allowed");
+    }),
   );
 
-  it.effect(
-    "allowed sender list: listed sender works, unlisted is rejected",
-    () =>
-      Effect.gen(function* () {
-        const worker = yield* startTestWorker({
-          name: "send-email-senders",
-          compatibilityDate,
-          compatibilityFlags: [],
-          bindings: [
-            SendEmail.local({
-              binding: "SEND_EMAIL",
-              allowedSenderAddresses: [
-                "milchick@example.com",
-                "miss-huang@example.com",
-              ],
-            }),
-          ],
-          modules: [...modules],
-        });
+  it.effect("allowed sender list: listed sender works, unlisted is rejected", () =>
+    Effect.gen(function* () {
+      const worker = yield* startTestWorker({
+        name: "send-email-senders",
+        compatibilityDate,
+        compatibilityFlags: [],
+        bindings: [
+          SendEmail.local({
+            binding: "SEND_EMAIL",
+            allowedSenderAddresses: ["milchick@example.com", "miss-huang@example.com"],
+          }),
+        ],
+        modules: [...modules],
+      });
 
-        const allowedEmail = [
-          "To: someone <someone@example.com>",
-          "From: someone else <milchick@example.com>",
-          "Message-ID: <im-a-random-message-id@example.com>",
-          "MIME-Version: 1.0",
-          "Content-Type: text/plain",
-          "",
-          "This is a random email body.",
-        ].join("\n");
-        const allowed = yield* worker.fetch(
-          `/?${sendParams("milchick@example.com", "someone@example.com")}`,
-          { method: "POST", body: allowedEmail },
-        );
-        expect(allowed.status).toBe(200);
+      const allowedEmail = [
+        "To: someone <someone@example.com>",
+        "From: someone else <milchick@example.com>",
+        "Message-ID: <im-a-random-message-id@example.com>",
+        "MIME-Version: 1.0",
+        "Content-Type: text/plain",
+        "",
+        "This is a random email body.",
+      ].join("\n");
+      const allowed = yield* worker.fetch(
+        `/?${sendParams("milchick@example.com", "someone@example.com")}`,
+        { method: "POST", body: allowedEmail },
+      );
+      expect(allowed.status).toBe(200);
 
-        const rejected = yield* worker.fetch(
-          `/?${sendParams("notallowed@example.com", "someone@example.com")}`,
-          { method: "POST", body: allowedEmail },
-        );
-        expect(rejected.status).toBe(500);
-        const text = yield* Effect.promise(() => rejected.text());
-        expect(text).toContain("email from notallowed@example.com not allowed");
-      }),
+      const rejected = yield* worker.fetch(
+        `/?${sendParams("notallowed@example.com", "someone@example.com")}`,
+        { method: "POST", body: allowedEmail },
+      );
+      expect(rejected.status).toBe(500);
+      const text = yield* Effect.promise(() => rejected.text());
+      expect(text).toContain("email from notallowed@example.com not allowed");
+    }),
   );
 
-  it.effect(
-    "rejects a message whose From: header does not match the envelope sender",
-    () =>
-      Effect.gen(function* () {
-        const worker = yield* startTestWorker({
-          name: "send-email-from-mismatch",
-          compatibilityDate,
-          compatibilityFlags: [],
-          bindings: [SendEmail.local({ binding: "SEND_EMAIL" })],
-          modules: [...modules],
-        });
-        const res = yield* worker.fetch(
-          `/?${sendParams("other-sender@example.com", "someone-else@example.com")}`,
-          { method: "POST", body: VALID_EMAIL },
-        );
-        expect(res.status).toBe(500);
-        const text = yield* Effect.promise(() => res.text());
-        expect(text).toContain("From: header does not match mail from");
-      }),
+  it.effect("rejects a message whose From: header does not match the envelope sender", () =>
+    Effect.gen(function* () {
+      const worker = yield* startTestWorker({
+        name: "send-email-from-mismatch",
+        compatibilityDate,
+        compatibilityFlags: [],
+        bindings: [SendEmail.local({ binding: "SEND_EMAIL" })],
+        modules: [...modules],
+      });
+      const res = yield* worker.fetch(
+        `/?${sendParams("other-sender@example.com", "someone-else@example.com")}`,
+        { method: "POST", body: VALID_EMAIL },
+      );
+      expect(res.status).toBe(500);
+      const text = yield* Effect.promise(() => res.text());
+      expect(text).toContain("From: header does not match mail from");
+    }),
   );
 
   it.effect("rejects a message that sets the Received: header", () =>
@@ -370,118 +347,103 @@ layer(localRuntimeLayer)("SendEmail binding", (it) => {
     }),
   );
 
-  it.effect(
-    "MessageBuilder respects allowed destination addresses (plain, named, RFC5322)",
-    () =>
-      Effect.gen(function* () {
-        const worker = yield* startTestWorker({
-          name: "send-email-builder-dest",
-          compatibilityDate,
-          compatibilityFlags: [],
-          bindings: [
-            SendEmail.local({
-              binding: "SEND_EMAIL",
-              allowedDestinationAddresses: ["allowed@example.com"],
-            }),
-          ],
-          modules: [...modules],
+  it.effect("MessageBuilder respects allowed destination addresses (plain, named, RFC5322)", () =>
+    Effect.gen(function* () {
+      const worker = yield* startTestWorker({
+        name: "send-email-builder-dest",
+        compatibilityDate,
+        compatibilityFlags: [],
+        bindings: [
+          SendEmail.local({
+            binding: "SEND_EMAIL",
+            allowedDestinationAddresses: ["allowed@example.com"],
+          }),
+        ],
+        modules: [...modules],
+      });
+
+      const send = (to: unknown) =>
+        worker.fetch("/builder", {
+          method: "POST",
+          body: JSON.stringify({
+            from: "sender@example.com",
+            to,
+            subject: "Test",
+            text: "Test",
+          }),
         });
 
-        const send = (to: unknown) =>
-          worker.fetch("/builder", {
-            method: "POST",
-            body: JSON.stringify({
-              from: "sender@example.com",
-              to,
-              subject: "Test",
-              text: "Test",
-            }),
-          });
+      // plain string
+      expect((yield* send("allowed@example.com")).status).toBe(200);
+      const plainRejected = yield* send("notallowed@example.com");
+      expect(plainRejected.status).toBe(500);
+      expect(yield* Effect.promise(() => plainRejected.text())).toContain("not allowed");
 
-        // plain string
-        expect((yield* send("allowed@example.com")).status).toBe(200);
-        const plainRejected = yield* send("notallowed@example.com");
-        expect(plainRejected.status).toBe(500);
-        expect(yield* Effect.promise(() => plainRejected.text())).toContain(
-          "not allowed",
-        );
+      // named EmailAddress object
+      expect((yield* send({ name: "Allowed User", email: "allowed@example.com" })).status).toBe(
+        200,
+      );
+      const namedRejected = yield* send({
+        name: "Blocked User",
+        email: "blocked@example.com",
+      });
+      expect(namedRejected.status).toBe(500);
+      expect(yield* Effect.promise(() => namedRejected.text())).toContain("not allowed");
 
-        // named EmailAddress object
-        expect(
-          (yield* send({ name: "Allowed User", email: "allowed@example.com" }))
-            .status,
-        ).toBe(200);
-        const namedRejected = yield* send({
-          name: "Blocked User",
-          email: "blocked@example.com",
-        });
-        expect(namedRejected.status).toBe(500);
-        expect(yield* Effect.promise(() => namedRejected.text())).toContain(
-          "not allowed",
-        );
-
-        // RFC5322 string
-        expect(
-          (yield* send('"Allowed User" <allowed@example.com>')).status,
-        ).toBe(200);
-        const rfcRejected = yield* send('"Blocked User" <blocked@example.com>');
-        expect(rfcRejected.status).toBe(500);
-        expect(yield* Effect.promise(() => rfcRejected.text())).toContain(
-          "not allowed",
-        );
-      }),
+      // RFC5322 string
+      expect((yield* send('"Allowed User" <allowed@example.com>')).status).toBe(200);
+      const rfcRejected = yield* send('"Blocked User" <blocked@example.com>');
+      expect(rfcRejected.status).toBe(500);
+      expect(yield* Effect.promise(() => rfcRejected.text())).toContain("not allowed");
+    }),
   );
 
-  it.effect(
-    "MessageBuilder respects allowed sender addresses (plain and named)",
-    () =>
-      Effect.gen(function* () {
-        const worker = yield* startTestWorker({
-          name: "send-email-builder-sender",
-          compatibilityDate,
-          compatibilityFlags: [],
-          bindings: [
-            SendEmail.local({
-              binding: "SEND_EMAIL",
-              allowedSenderAddresses: ["allowed@example.com"],
-            }),
-          ],
-          modules: [...modules],
+  it.effect("MessageBuilder respects allowed sender addresses (plain and named)", () =>
+    Effect.gen(function* () {
+      const worker = yield* startTestWorker({
+        name: "send-email-builder-sender",
+        compatibilityDate,
+        compatibilityFlags: [],
+        bindings: [
+          SendEmail.local({
+            binding: "SEND_EMAIL",
+            allowedSenderAddresses: ["allowed@example.com"],
+          }),
+        ],
+        modules: [...modules],
+      });
+
+      const send = (from: unknown) =>
+        worker.fetch("/builder", {
+          method: "POST",
+          body: JSON.stringify({
+            from,
+            to: "recipient@example.com",
+            subject: "Test",
+            text: "T",
+          }),
         });
 
-        const send = (from: unknown) =>
-          worker.fetch("/builder", {
-            method: "POST",
-            body: JSON.stringify({
-              from,
-              to: "recipient@example.com",
-              subject: "Test",
-              text: "T",
-            }),
-          });
+      expect((yield* send("allowed@example.com")).status).toBe(200);
+      expect(
+        (yield* send({
+          name: "Allowed Sender",
+          email: "allowed@example.com",
+        })).status,
+      ).toBe(200);
 
-        expect((yield* send("allowed@example.com")).status).toBe(200);
-        expect(
-          (yield* send({
-            name: "Allowed Sender",
-            email: "allowed@example.com",
-          })).status,
-        ).toBe(200);
-
-        const rejected = yield* send("notallowed@example.com");
-        expect(rejected.status).toBe(500);
-        expect(yield* Effect.promise(() => rejected.text())).toContain(
-          "email from notallowed@example.com not allowed",
-        );
-        const namedRejected = yield* send({
-          name: "Blocked",
-          email: "blocked@example.com",
-        });
-        expect(namedRejected.status).toBe(500);
-        expect(yield* Effect.promise(() => namedRejected.text())).toContain(
-          "not allowed",
-        );
-      }),
+      const rejected = yield* send("notallowed@example.com");
+      expect(rejected.status).toBe(500);
+      expect(yield* Effect.promise(() => rejected.text())).toContain(
+        "email from notallowed@example.com not allowed",
+      );
+      const namedRejected = yield* send({
+        name: "Blocked",
+        email: "blocked@example.com",
+      });
+      expect(namedRejected.status).toBe(500);
+      expect(yield* Effect.promise(() => namedRejected.text())).toContain("not allowed");
+    }),
   );
 
   it.effect("EmailMessage shim is constructable with synchronous from/to", () =>
@@ -493,9 +455,7 @@ layer(localRuntimeLayer)("SendEmail binding", (it) => {
         bindings: [SendEmail.local({ binding: "SEND_EMAIL" })],
         modules: [...modules],
       });
-      const body = yield* worker.fetchJson<{ from: string; to: string }>(
-        "/message-props",
-      );
+      const body = yield* worker.fetchJson<{ from: string; to: string }>("/message-props");
       expect(body).toEqual({ from: "a@example.com", to: "b@example.com" });
     }),
   );
@@ -517,9 +477,7 @@ describe("SendEmail binding persistence", () => {
       Layer.provide(Paths.PathsLive),
       Layer.provide(Docker.DockerLive),
       Layer.provide(Workerd.WorkerdLive),
-      Layer.provideMerge(
-        Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer),
-      ),
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
     );
 
   it.effect(
@@ -549,9 +507,7 @@ describe("SendEmail binding persistence", () => {
         const names = yield* fs.readDirectory(emailDir);
         const emlFiles = names.filter((name) => name.endsWith(".eml"));
         expect(emlFiles).toHaveLength(1);
-        const content = yield* fs.readFileString(
-          path.join(emailDir, emlFiles[0]),
-        );
+        const content = yield* fs.readFileString(path.join(emailDir, emlFiles[0]));
         expect(content).toBe(VALID_EMAIL);
       }).pipe(Effect.provide(NodeServices.layer)),
     { timeout: 30_000 },
@@ -598,26 +554,22 @@ describe("SendEmail binding persistence", () => {
 
         const textFiles = yield* fs.readDirectory(path.join(emailDir, "text"));
         expect(textFiles).toHaveLength(1);
-        expect(
-          yield* fs.readFileString(path.join(emailDir, "text", textFiles[0])),
-        ).toBe("Hello, this is a test email!");
+        expect(yield* fs.readFileString(path.join(emailDir, "text", textFiles[0]))).toBe(
+          "Hello, this is a test email!",
+        );
         expect(textFiles[0].endsWith(".txt")).toBe(true);
 
         const htmlFiles = yield* fs.readDirectory(path.join(emailDir, "html"));
         expect(htmlFiles).toHaveLength(1);
-        expect(
-          yield* fs.readFileString(path.join(emailDir, "html", htmlFiles[0])),
-        ).toBe("<h1>Hello World</h1>");
+        expect(yield* fs.readFileString(path.join(emailDir, "html", htmlFiles[0]))).toBe(
+          "<h1>Hello World</h1>",
+        );
         expect(htmlFiles[0].endsWith(".html")).toBe(true);
 
-        const attachmentFiles = yield* fs.readDirectory(
-          path.join(emailDir, "attachment"),
-        );
+        const attachmentFiles = yield* fs.readDirectory(path.join(emailDir, "attachment"));
         expect(attachmentFiles).toHaveLength(1);
         expect(
-          yield* fs.readFileString(
-            path.join(emailDir, "attachment", attachmentFiles[0]),
-          ),
+          yield* fs.readFileString(path.join(emailDir, "attachment", attachmentFiles[0])),
         ).toBe("base64content");
         expect(attachmentFiles[0].endsWith(".txt")).toBe(true);
       }).pipe(Effect.provide(NodeServices.layer)),
