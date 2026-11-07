@@ -776,7 +776,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
   const isRegeneratingTitle = thread.titleRegeneration != null;
-  const rowAccessibilityLabel = `${thread.title}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
+  const rowAccessibilityLabel = `${thread.title}${providerNameLabel ? `, ${providerNameLabel}` : ""}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
   const timeLabel = props.timeLabel;
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
@@ -1501,6 +1501,20 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             >
               {thread.title}
             </Text>
+            {providerNameLabel ? (
+              <Text
+                className={cn(
+                  "text-xs",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : rowAppearance.tertiaryForegroundClassName,
+                )}
+                ellipsizeMode="middle"
+                numberOfLines={1}
+              >
+                {providerNameLabel}
+              </Text>
+            ) : null}
             {props.searchMatch ? (
               <ThreadSearchMatchExcerpt
                 sidebar={sidebarPane}
