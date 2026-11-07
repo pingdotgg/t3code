@@ -25,6 +25,7 @@ import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
+import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as IpcChannels from "../channels.ts";
@@ -35,6 +36,7 @@ import {
   pickProjectFavicon,
   probeRemoteEditors,
   readMedia,
+  toLocalBackendPath,
 } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -182,6 +184,47 @@ describe("getLocalEnvironmentBootstraps", () => {
       assert.deepEqual(result, []);
     }).pipe(Effect.provide(bootstrapsLayer([stoppedInstance])));
   });
+});
+
+describe("toLocalBackendPath", () => {
+  const { runningDistro: _, ...windowsConfig } = readyWslConfig;
+  it.effect("converts paths through wslpath only for backends running in WSL", () =>
+    Effect.gen(function* () {
+      const convert = (backendId: string, path = "C:\\Users\\me\\project") =>
+        toLocalBackendPath.handler({ backendId, path });
+      assert.strictEqual(yield* convert("primary"), "C:\\Users\\me\\project");
+      assert.strictEqual(yield* convert("wsl:default"), "/drives/c/Users/me/project");
+      assert.strictEqual(yield* convert("wsl:missing"), null);
+      assert.strictEqual(
+        yield* convert("wsl:default", "\\\\wsl.localhost\\ubuntu\\home\\me\\repo"),
+        "/home/me/repo",
+      );
+      assert.strictEqual(yield* convert("wsl:default", "\\\\wsl$\\Debian\\home\\me\\repo"), null);
+      assert.strictEqual(
+        yield* convert("primary", "\\\\wsl$\\Debian\\home\\me\\repo"),
+        "\\\\wsl$\\Debian\\home\\me\\repo",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          DesktopBackendPool.layerTest([
+            {
+              ...defaultWslInstance,
+              id: DesktopBackendManager.BackendInstanceId("primary"),
+              currentConfig: Effect.succeedSome(windowsConfig),
+            },
+            defaultWslInstance,
+          ]),
+          DesktopWslEnvironment.layerTest({
+            windowsToWslPath: (distro, windowsPath) =>
+              distro === "Ubuntu" && windowsPath === "C:\\Users\\me\\project"
+                ? Option.some("/drives/c/Users/me/project")
+                : Option.none(),
+          }),
+        ),
+      ),
+    ),
+  );
 });
 
 describe("installRelayTelemetryEnabled", () => {

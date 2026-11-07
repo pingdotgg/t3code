@@ -925,7 +925,7 @@ const preWarmImpl = (
     }),
   ).pipe(Effect.timeoutOption(PRE_WARM_TIMEOUT), Effect.ignore);
 
-const windowsToWslPathImpl = (
+export const windowsToWslPathImpl = (
   distro: string | null,
   windowsPath: string,
 ): Effect.Effect<Option.Option<string>, never, ChildProcessSpawner.ChildProcessSpawner> => {
@@ -936,7 +936,8 @@ const windowsToWslPathImpl = (
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const command = ChildProcess.make(
         "wsl.exe",
-        [...buildDistroArgs(distro), "--", "wslpath", "-u", normalized],
+        // --exec skips the distro shell, which would expand `$`, `&` or `;` in folder names.
+        [...buildDistroArgs(distro), "--exec", "wslpath", "-u", normalized],
         {
           stdin: "ignore",
           stdout: "pipe",
