@@ -452,7 +452,7 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
 /**
  * A fresh app-server fills its remote plugin inventory in the background, and
  * skills/list omits those plugins' skills until it lands. plugin/installed
- * awaits that fetch, so ask for it first and treat it as best-effort.
+ * fetches and caches it when empty, so ask for it first, best-effort.
  */
 const requestCodexSkills = Effect.fn("requestCodexSkills")(function* (input: {
   readonly client: CodexClient.CodexAppServerClient["Service"];
