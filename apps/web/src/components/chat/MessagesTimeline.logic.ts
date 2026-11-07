@@ -2201,6 +2201,16 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    // A card ends the turn by design; Codex still closes it with an empty assistant message.
+    if (
+      timelineEntry.message.role === "assistant" &&
+      !timelineEntry.message.streaming &&
+      timelineEntry.message.text.trim() === "" &&
+      nextRows.at(-1)?.kind === "quiz-card"
+    ) {
+      continue;
+    }
+
     const assistantResponseStillInProgress =
       timelineEntry.message.role === "assistant" &&
       runIdIsActiveResponse(timelineEntry.message.runId);

@@ -6,6 +6,8 @@ import {
   type QuizCard as QuizCardData,
 } from "@t3tools/shared/quizCard";
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
+import { chooseAudioDestination, useAudioGrant } from "~/speech/voiceConsent";
+import { useEnvironment } from "~/state/environments";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Button } from "../ui/button";
 import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
@@ -87,6 +89,10 @@ function DictatedTextarea(props: SpeechTextareaProps & { readonly environmentId:
     disabled: props.disabled,
   });
   useCardFocus(props.seed, props.focusTarget, textareaRef);
+  const grant = useAudioGrant();
+  const voiceSupported =
+    useEnvironment(props.environmentId)?.serverConfig?.environment.capabilities
+      .voiceTranscription === true;
   return (
     <>
       <label className="mt-3 block text-sm font-medium" htmlFor={`${props.seed}-thinking`}>
@@ -102,6 +108,21 @@ function DictatedTextarea(props: SpeechTextareaProps & { readonly environmentId:
         disabled={props.disabled}
         readOnly={speech.freezesEditor}
       />
+      {/* Voice is off per device until chosen; choosing here sends audio to this lesson's environment, as Settings → Voice would. */}
+      {grant === null && voiceSupported ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="mt-2"
+          disabled={props.disabled}
+          onClick={() =>
+            chooseAudioDestination({ kind: "environment", environmentId: props.environmentId })
+          }
+        >
+          Answer by voice
+        </Button>
+      ) : null}
       <TextFieldSpeechControls speech={speech} disabled={props.disabled} />
     </>
   );

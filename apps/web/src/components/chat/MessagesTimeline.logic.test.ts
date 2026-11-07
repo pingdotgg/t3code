@@ -4725,11 +4725,29 @@ it("turns a question card into an unanswered quiz-card row", () => {
     runId: null,
     quizCard: { question: "Explain it." },
   };
-  const row = deriveMessagesTimelineRows({
-    timelineEntries: [question],
+  const emptyReply: TimelineEntry = {
+    kind: "message",
+    id: "empty",
+    createdAt: at,
+    message: {
+      id: MessageId.make("empty"),
+      role: "assistant",
+      text: "",
+      runId: null,
+      streaming: false,
+      createdAt: at,
+      updatedAt: at,
+    },
+  };
+  const rows = deriveMessagesTimelineRows({
+    timelineEntries: [question, emptyReply],
     isWorking: false,
     turnDiffSummaries: [],
     supportsConversationRollback: false,
-  }).find((entry) => entry.kind === "quiz-card");
-  expect(row).toMatchObject({ quizCard: { question: "Explain it." }, answered: false });
+  });
+  expect(rows.find((entry) => entry.kind === "quiz-card")).toMatchObject({
+    quizCard: { question: "Explain it." },
+    answered: false,
+  });
+  expect(rows.some((entry) => entry.kind === "message")).toBe(false);
 });
