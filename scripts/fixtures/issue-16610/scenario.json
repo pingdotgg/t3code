@@ -1,0 +1,6 @@
+{
+  "provider": "claudeAgent",
+  "model": "claude-opus-5-5",
+  "effort": "medium",
+  "prompt": "Call the Agent tool once: subagent_type \"general-purpose\", run_in_background true, description \"Repro self-resume\", prompt: \"Run Bash with run_in_background true: python3 -c 'import time; time.sleep(30)'. Then end your turn with exactly: WAITING. When the background command's completion notification arrives, make 4 Bash calls one after another, each running python3 -c 'import time; time.sleep(15)', then reply with exactly: DONE_SELF\". After the Agent call returns, reply with exactly LAUNCHED and stop."
+}
