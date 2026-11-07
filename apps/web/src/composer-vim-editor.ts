@@ -26,16 +26,15 @@ const hosts = new WeakMap<EditorView, ComposerVimHost>();
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const composerVimKeyName = new PluginKey<ComposerVimPluginState>("composer-vim");
 
-// The engine's registers hold text, so each chip gets a private-use character that can round-trip.
-const FIRST_ATOM_CODE = 0xe000;
-const LAST_ATOM_CODE = 0xf8ff;
+// The engine's registers hold text, so each chip gets one code unit that can round-trip. Lone low
+// surrogates can't occur in well-formed text, so typed, pasted, or textarea text never decodes as one.
+const FIRST_ATOM_CODE = 0xdc00;
+const LAST_ATOM_CODE = 0xdfff;
 const atomCharacters = new Map<string, string>();
 const atomJson = new Map<string, ComposerVimAtomJson>();
 
 interface ComposerVimAtomJson {
   readonly type: string;
-  /** Set on a private-use character from the text itself, which only stands for that text. */
-  readonly text?: string;
 }
 
 function atomCharacter(json: ComposerVimAtomJson): string {
@@ -43,7 +42,7 @@ function atomCharacter(json: ComposerVimAtomJson): string {
   const existing = atomCharacters.get(key);
   if (existing) return existing;
   const code = FIRST_ATOM_CODE + atomCharacters.size;
-  if (code > LAST_ATOM_CODE) return "￼";
+  if (code > LAST_ATOM_CODE) return "\ufffc";
   const character = String.fromCharCode(code);
   atomCharacters.set(key, character);
   atomJson.set(character, json);
@@ -54,14 +53,7 @@ export function composerVimAtomJson(character: string) {
   return atomJson.get(character);
 }
 
-export const COMPOSER_VIM_ATOM_PATTERN = /[-]/;
-
-/** Real private-use text gets a placeholder too, or a chip's could read back as that text. */
-export function escapeComposerVimText(text: string) {
-  return text.replace(new RegExp(COMPOSER_VIM_ATOM_PATTERN, "gu"), (character) =>
-    atomCharacter({ type: "text", text: character }),
-  );
-}
+export const COMPOSER_VIM_ATOM_PATTERN = /[\udc00-\udfff]/u;
 
 export interface ComposerVimFlatDocument {
   readonly text: string;
@@ -88,7 +80,7 @@ export function flattenComposerVimDocument(doc: ProseMirrorNode): ComposerVimFla
     node.forEach((child, offset) => {
       const start = position + 1 + offset;
       if (child.isText) {
-        text += escapeComposerVimText(child.text!);
+        text += child.text!;
         for (let index = 0; index < child.text!.length; index += 1) positions.push(start + index);
       } else {
         text +=

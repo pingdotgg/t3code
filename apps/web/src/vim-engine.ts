@@ -663,7 +663,6 @@ export const vimTextHooks = {
     _operator: string,
     _text: string,
   ): void => {},
-  clipboardInput: (text: string) => text,
   clipboardText: (text: string): string => text,
 };
 
@@ -707,11 +706,7 @@ const CodeMirrorStatics = Object.assign(VimEditor, {
   writeClipboard(text: string) {
     void navigator.clipboard?.writeText(vimTextHooks.clipboardText(text)).catch(() => {});
   },
-  readClipboard: () =>
-    navigator.clipboard
-      ?.readText()
-      .then((text) => vimTextHooks.clipboardInput(text))
-      .catch(() => "") ?? Promise.resolve(""),
+  readClipboard: () => navigator.clipboard?.readText().catch(() => "") ?? Promise.resolve(""),
   lookupKey(key: string, _map: string, handle: (binding: (cm: VimEditor) => void) => void) {
     const binding = replayKeys[key.replace(/^Arrow/, "")];
     if (binding) handle(binding);

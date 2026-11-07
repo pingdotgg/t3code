@@ -15,7 +15,6 @@ import type { EditorView } from "@tiptap/pm/view";
 import {
   COMPOSER_VIM_ATOM_PATTERN,
   composerVimAtomJson,
-  escapeComposerVimText,
   composerVimFlatOffset,
   flattenComposerVimDocument,
   setComposerVimState,
@@ -97,12 +96,8 @@ function lineBlock($line: ResolvedPos, inline: Fragment) {
   return block.toJSON() as unknown;
 }
 
-/** Chips go; a real private-use character is someone's icon font glyph. */
 function stripAtoms(text: string) {
-  return text.replace(new RegExp(COMPOSER_VIM_ATOM_PATTERN, "gu"), (character) => {
-    const json = composerVimAtomJson(character);
-    return json ? (json.text ?? "") : character;
-  });
+  return text.replace(new RegExp(COMPOSER_VIM_ATOM_PATTERN, "gu"), "");
 }
 
 function lineFragment(
@@ -123,11 +118,11 @@ function lineFragment(
     };
     for (const character of line) {
       const json = composerVimAtomJson(character);
-      if (json && json.text === undefined) {
+      if (json) {
         flush();
         nodes.push(schema.nodeFromJSON(json));
       } else {
-        text += json?.text ?? character;
+        text += character;
       }
     }
     flush();
@@ -721,7 +716,6 @@ function clipboardText(text: string) {
   const schema = activeSchema;
   return text.replace(new RegExp(COMPOSER_VIM_ATOM_PATTERN, "gu"), (character) => {
     const json = composerVimAtomJson(character);
-    if (json?.text !== undefined) return json.text;
     if (!json || !schema) return character;
     const line = schema.node("paragraph", null, [schema.nodeFromJSON(json)]);
     return serializeEditorDoc(schema.node("doc", null, [line])).value;
@@ -730,7 +724,6 @@ function clipboardText(text: string) {
 
 vimTextHooks.rememberRegisterText = rememberRegisterText;
 vimTextHooks.clipboardText = clipboardText;
-vimTextHooks.clipboardInput = escapeComposerVimText;
 
 export { Vim };
 

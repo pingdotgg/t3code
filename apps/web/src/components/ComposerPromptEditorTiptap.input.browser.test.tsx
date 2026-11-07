@@ -18,7 +18,8 @@ import { userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../test/render";
 
 import { flatToMarkdown, pmToFlat, serializeEditorDoc } from "~/composer-rich-text-doc";
-import { flattenComposerVimDocument, isComposerVimActive } from "~/composer-vim-editor";
+import { isComposerVimActive } from "~/composer-vim-editor";
+import { createTextareaVimHost } from "~/textarea-vim";
 import { isMacPlatform } from "~/lib/utils";
 import {
   ComposerPromptEditorTiptap as ComposerPromptEditor,
@@ -1450,18 +1451,26 @@ describe("vim mode", () => {
     expect(screen.text()).toBe("$babysit x$babysit");
   });
 
-  it("keeps real private-use text apart from a chip's placeholder", async () => {
-    const chip = await (async () => {
-      await using screen = await mountVim("$babysit x");
-      return flattenComposerVimDocument(screen.editor.state.doc).text.charAt(0);
-    })();
-    expect(chip).not.toBe("$");
-    await using screen = await mountVim(`${chip} x`);
-    await userEvent.keyboard("{Escape}0yl$p");
-    expect(screen.text()).toBe(`${chip} x${chip}`);
-    using _readText = vi.spyOn(navigator.clipboard, "readText").mockResolvedValue(chip);
+  it("keeps real private-use text apart from chips", async () => {
+    const glyphs = String.fromCharCode(...Array.from({ length: 64 }, (_, index) => 0xe000 + index));
+    await using screen = await mountVim(`$babysit ${glyphs}`);
+    await userEvent.keyboard("{Escape}$v0wyA ");
+    await userEvent.keyboard("{Escape}p");
+    expect(screen.text()).toBe(`$babysit ${glyphs} ${glyphs}`);
+    using _readText = vi.spyOn(navigator.clipboard, "readText").mockResolvedValue(glyphs);
     await userEvent.keyboard('"+p');
-    await vi.waitFor(() => expect(screen.text()).toBe(`${chip} x${chip}${chip}`));
+    await vi.waitFor(() => expect(screen.text()).toBe(`$babysit ${glyphs} ${glyphs}${glyphs}`));
+    await userEvent.keyboard(`A${glyphs}{Escape}.`);
+    expect(screen.text()).toBe(`$babysit ${glyphs} ${glyphs}${glyphs}${glyphs}${glyphs}`);
+
+    const textarea = document.body.appendChild(document.createElement("textarea"));
+    using _textarea = { [Symbol.dispose]: () => textarea.remove() };
+    textarea.value = glyphs;
+    textarea.focus();
+    const host = createTextareaVimHost(textarea);
+    using _host = { [Symbol.dispose]: () => host.destroy() };
+    for (const key of ["<Esc>", "y", "y", "p"]) host.sendKey(key);
+    expect(textarea.value).toBe(`${glyphs}\n${glyphs}`);
   });
 
   it("does not submit the composer from the search prompt", async () => {
