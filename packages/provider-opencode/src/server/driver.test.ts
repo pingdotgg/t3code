@@ -21,11 +21,13 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as UrlParams from "effect/http/UrlParams";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -317,6 +319,97 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         assert.strictEqual(modelReads, readsAfterRecovery);
         assert.strictEqual(discoveryLogs.length, 1);
       }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("lists models from an external server that lacks the host's directory", () =>
+    Effect.gen(function* () {
+      const replay = replayOpenCodeServer(OPENCODE_2_RESPONSES, "secret");
+      const catalog = (directory: string | undefined) => ({
+        location: { directory: directory ?? "/srv/remote" },
+        data: [
+          {
+            id: "big-pickle",
+            modelID: "big-pickle",
+            providerID: "opencode",
+            name: "Big Pickle",
+            package: "@opencode/ai/providers/openai-compatible",
+            settings: {},
+            compatibility: {},
+            capabilities: { tools: true, input: ["text"], output: ["text"] },
+            variants: [],
+            time: { released: 1789516800000 },
+            cost: [{ input: 0, output: 0, cache: { read: 0, write: 0 } }],
+            status: "active",
+            enabled: true,
+            limit: { context: 1000000, output: 65536 },
+          },
+        ],
+      });
+      // Like a real remote OpenCode 2 server: a directory it does not have is a 404.
+      const server = HttpClient.make((request) => {
+        const url = new URL(request.url);
+        if (url.pathname !== "/api/model" && url.pathname !== "/api/provider") {
+          return replay.execute(request);
+        }
+        const directory = Option.getOrUndefined(
+          UrlParams.getFirst(request.urlParams, "location[directory]"),
+        );
+        const known = directory === undefined || directory === "/srv/remote";
+        const body = known
+          ? url.pathname === "/api/model"
+            ? catalog(directory)
+            : {
+                location: { directory: directory ?? "/srv/remote" },
+                data: [
+                  {
+                    id: "opencode",
+                    integrationID: "opencode",
+                    name: "OpenCode Zen",
+                    activation: "enabled",
+                    package: "@opencode/ai/providers/openai-compatible",
+                    settings: {},
+                  },
+                ],
+              }
+          : {
+              _tag: "LocationNotFoundError",
+              message: `Location not found: ${directory}`,
+            };
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify(body), {
+              status: known ? 200 : 404,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        );
+      });
+      const instance = yield* create(
+        { serverUrl: "http://127.0.0.1:4096", serverPassword: "secret" },
+        server,
+      );
+      const settled = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter(
+          (snapshot) =>
+            snapshot.installed && (snapshot.status === "ready" || snapshot.status === "error"),
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("5 seconds");
+      const [snapshot] = Array.from(yield* Fiber.join(settled));
+      assert.deepStrictEqual(
+        { status: snapshot?.status, message: snapshot?.message },
+        { status: "ready", message: "OpenCode 2.0.18 lists 1 model." },
+      );
+      assert.deepStrictEqual(
+        snapshot?.models.map((model) => [model.slug, model.subProvider]),
+        [["opencode/big-pickle", "OpenCode Zen"]],
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.effect("does not retry a rejected server password in the background", () =>
