@@ -128,13 +128,20 @@ export function summarizeThreadTurnTokenUsage(
   const cachedInputTokens = sumField(measured, "cachedInputTokens");
   const cacheCreationTokens = sumField(measured, "cacheCreationTokens");
   const outputTokens = sumField(measured, "outputTokens");
+  // Per-turn uncached: cache-only turns must not reduce uncached from turns that reported input.
+  let uncachedInputTokens: number | null = null;
+  for (const usage of measured) {
+    if (usage.inputTokens === undefined) continue;
+    const contribution = Math.max(
+      0,
+      usage.inputTokens - (usage.cachedInputTokens ?? 0) - (usage.cacheCreationTokens ?? 0),
+    );
+    uncachedInputTokens = (uncachedInputTokens ?? 0) + contribution;
+  }
   return {
     usageStatus,
     inputTokens,
-    uncachedInputTokens:
-      inputTokens === null
-        ? null
-        : Math.max(0, inputTokens - (cachedInputTokens ?? 0) - (cacheCreationTokens ?? 0)),
+    uncachedInputTokens,
     cachedInputTokens,
     cacheCreationTokens,
     outputTokens,

@@ -250,25 +250,27 @@ export function InsightsPanel({
           </p>
         </div>
       ) : trace === null ? (
-        <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
-          <TokenUsageSummary
-            usage={tokenUsage}
-            cost={threadCost}
-            pricingPending={pricingPending}
-            pricingError={pricingError}
-          />
-          <TurnTokenBreakdown
-            rows={turnRows}
-            costs={costs}
-            selectedRunId={null}
-            onSelect={() => undefined}
-          />
-          <ContextOccupancyChart series={occupancy} selectedRunId={null} />
-          <p className="text-2xs text-muted-foreground">
-            Timing appears after the first turn starts. Token totals update as the provider reports
-            them.
-          </p>
-        </div>
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex flex-col gap-3 p-3">
+            <TokenUsageSummary
+              usage={tokenUsage}
+              cost={threadCost}
+              pricingPending={pricingPending}
+              pricingError={pricingError}
+            />
+            <TurnTokenBreakdown
+              rows={turnRows}
+              costs={costs}
+              selectedRunId={null}
+              onSelect={() => undefined}
+            />
+            <ContextOccupancyChart series={occupancy} selectedRunId={null} />
+            <p className="text-2xs text-muted-foreground">
+              Timing appears after the first turn starts. Token totals update as the provider
+              reports them.
+            </p>
+          </div>
+        </ScrollArea>
       ) : (
         <FlameChartPanel
           trace={trace}
@@ -420,53 +422,55 @@ function FlameChartPanel({
         </Button>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
-        <Summary
-          trace={trace}
-          collapsedIdleMs={axis.collapsedIdleMs}
-          tokenUsage={tokenUsage}
-          threadCost={threadCost}
-          pricingPending={pricingPending}
-          pricingError={pricingError}
-        />
-        <FlameViewport
-          trace={trace}
-          axis={axis}
-          nodes={layout.nodes}
-          maxDepth={layout.maxDepth}
-          view={view}
-          selection={selection}
-          onViewChange={setClampedView}
-          onSelect={setSelection}
-          onFocusRange={focusRange}
-        />
-        <TurnTokenBreakdown
-          rows={turnRows}
-          costs={costs}
-          selectedRunId={selection?.runId ?? null}
-          onSelect={(runId) => setSelection({ type: "turn", runId })}
-        />
-        <ContextOccupancyChart series={occupancy} selectedRunId={selection?.runId ?? null} />
-        {selection !== null && selectedTurn !== null ? (
-          <DetailCard
-            turn={selectedTurn}
-            span={selectedSpan}
-            item={selectedItem}
-            usage={selectedUsage}
-            cost={costs.get(selectedTurn.runId) ?? null}
-            onClear={() => setSelection(null)}
-            onFocus={() => {
-              if (selectedSpan !== null) focusRange(selectedSpan.startMs, selectedSpan.endMs);
-              else focusRange(selectedTurn.requestedAtMs, selectedTurn.endMs);
-            }}
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="flex flex-col gap-3 p-3">
+          <Summary
+            trace={trace}
+            collapsedIdleMs={axis.collapsedIdleMs}
+            tokenUsage={tokenUsage}
+            threadCost={threadCost}
+            pricingPending={pricingPending}
+            pricingError={pricingError}
           />
-        ) : (
-          <p className="text-2xs text-muted-foreground">
-            Click a turn or span to inspect it. Torn edges mark long idle gaps collapsed between
-            turns.
-          </p>
-        )}
-      </div>
+          <FlameViewport
+            trace={trace}
+            axis={axis}
+            nodes={layout.nodes}
+            maxDepth={layout.maxDepth}
+            view={view}
+            selection={selection}
+            onViewChange={setClampedView}
+            onSelect={setSelection}
+            onFocusRange={focusRange}
+          />
+          <TurnTokenBreakdown
+            rows={turnRows}
+            costs={costs}
+            selectedRunId={selection?.runId ?? null}
+            onSelect={(runId) => setSelection({ type: "turn", runId })}
+          />
+          <ContextOccupancyChart series={occupancy} selectedRunId={selection?.runId ?? null} />
+          {selection !== null && selectedTurn !== null ? (
+            <DetailCard
+              turn={selectedTurn}
+              span={selectedSpan}
+              item={selectedItem}
+              usage={selectedUsage}
+              cost={costs.get(selectedTurn.runId) ?? null}
+              onClear={() => setSelection(null)}
+              onFocus={() => {
+                if (selectedSpan !== null) focusRange(selectedSpan.startMs, selectedSpan.endMs);
+                else focusRange(selectedTurn.requestedAtMs, selectedTurn.endMs);
+              }}
+            />
+          ) : (
+            <p className="text-2xs text-muted-foreground">
+              Click a turn or span to inspect it. Torn edges mark long idle gaps collapsed between
+              turns.
+            </p>
+          )}
+        </div>
+      </ScrollArea>
     </div>
   );
 }
@@ -492,30 +496,34 @@ function ContextOccupancyChart({
   const { width, height, padLeft, padRight, padTop, padBottom } = OCCUPANCY_CHART;
   const plotWidth = width - padLeft - padRight;
   const plotHeight = height - padTop - padBottom;
-  const firstAt = series.points[0]?.atMs ?? 0;
-  const lastAt = series.points.at(-1)?.atMs ?? firstAt;
-  const spanMs = Math.max(1, lastAt - firstAt);
-  const ceiling = Math.max(
+  const dataPeak = Math.max(
     1,
-    series.maxTokens ?? 0,
     series.peakUsedTokens,
     ...series.points.map((point) => point.usedTokens),
   );
-  const xFor = (atMs: number) => padLeft + ((atMs - firstAt) / spanMs) * plotWidth;
+  // Scale to observed fill. Using the model window as the ceiling flattens
+  // the line whenever peak << window (e.g. 262k on a 1M model).
+  const windowMax = series.maxTokens;
+  const ceiling =
+    windowMax !== null && windowMax > 0 && dataPeak >= windowMax * 0.5 ? windowMax : dataPeak;
+  const lastIndex = Math.max(0, series.points.length - 1);
+  // Equal point spacing: wall-clock idle would crush rises/drops into a spike.
+  const xForIndex = (index: number) =>
+    padLeft + (lastIndex === 0 ? 0 : (index / lastIndex) * plotWidth);
   const yFor = (tokens: number) => padTop + (1 - tokens / ceiling) * plotHeight;
   const linePoints = series.points
-    .map((point) => `${xFor(point.atMs).toFixed(2)},${yFor(point.usedTokens).toFixed(2)}`)
+    .map((point, index) => `${xForIndex(index).toFixed(2)},${yFor(point.usedTokens).toFixed(2)}`)
     .join(" ");
   const areaPath = [
-    `M ${xFor(firstAt).toFixed(2)} ${yFor(0).toFixed(2)}`,
+    `M ${xForIndex(0).toFixed(2)} ${yFor(0).toFixed(2)}`,
     ...series.points.map(
-      (point) => `L ${xFor(point.atMs).toFixed(2)} ${yFor(point.usedTokens).toFixed(2)}`,
+      (point, index) => `L ${xForIndex(index).toFixed(2)} ${yFor(point.usedTokens).toFixed(2)}`,
     ),
-    `L ${xFor(lastAt).toFixed(2)} ${yFor(0).toFixed(2)}`,
+    `L ${xForIndex(lastIndex).toFixed(2)} ${yFor(0).toFixed(2)}`,
     "Z",
   ].join(" ");
-  const maxY = series.maxTokens === null ? null : yFor(series.maxTokens);
-  const geometry = { linePoints, areaPath, maxY, xFor, yFor, ceiling };
+  const maxY = windowMax !== null && windowMax <= ceiling ? yFor(windowMax) : null;
+  const geometry = { linePoints, areaPath, maxY, xForIndex, yFor, ceiling };
   const peakLabel = formatContextWindowTokens(series.peakUsedTokens);
   const maxLabel = series.maxTokens === null ? null : formatContextWindowTokens(series.maxTokens);
   const durationLabel = formatDuration(
@@ -561,14 +569,14 @@ function ContextOccupancyChart({
           strokeLinecap="round"
           vectorEffect="non-scaling-stroke"
         />
-        {series.points.map((point) => {
+        {series.points.map((point, index) => {
           const selected = selectedRunId !== null && point.runId === selectedRunId;
           const isCompaction = point.kind !== "turn";
           const radius = selected ? 3.2 : isCompaction ? 2.6 : 2;
           return (
             <circle
               key={`${point.kind}:${point.atMs}:${point.usedTokens}:${point.runId ?? ""}`}
-              cx={geometry.xFor(point.atMs)}
+              cx={geometry.xForIndex(index)}
               cy={geometry.yFor(point.usedTokens)}
               r={radius}
               className={
@@ -586,7 +594,7 @@ function ContextOccupancyChart({
           );
         })}
         <text x={4} y={padTop + 3} className="fill-muted-foreground text-4xs">
-          {formatTokens(geometry.ceiling)}
+          {formatContextWindowTokens(geometry.ceiling)}
         </text>
         <text x={4} y={height - padBottom + 3} className="fill-muted-foreground text-4xs">
           0

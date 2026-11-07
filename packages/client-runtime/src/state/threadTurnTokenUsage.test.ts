@@ -127,6 +127,27 @@ describe("summarizeThreadTurnTokenUsage", () => {
     expect(summary.measuredTurnCount).toBe(1);
   });
 
+  it("does not let cache-only turns reduce uncached input from other turns", () => {
+    const summary = summarizeThreadTurnTokenUsage([
+      turn(
+        complete({
+          inputTokens: 100,
+          cachedInputTokens: 20,
+          outputTokens: 1,
+        }),
+      ),
+      turn({
+        usageScope: "main_agent",
+        usageStatus: "partial",
+        cachedInputTokens: 50,
+        hasSubagents: false,
+      }),
+    ]);
+    expect(summary.inputTokens).toBe(100);
+    expect(summary.cachedInputTokens).toBe(70);
+    expect(summary.uncachedInputTokens).toBe(80);
+  });
+
   it("sums native otherUsage when present", () => {
     const summary = summarizeThreadTurnTokenUsage([
       turn(
