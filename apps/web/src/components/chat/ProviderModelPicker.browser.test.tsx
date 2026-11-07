@@ -110,9 +110,9 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
     [
       instanceId,
       [
-        { slug: "original", name: "Original model" },
-        { slug: "second", name: "Second model" },
-        { slug: "plain", name: "Plain model" },
+        { slug: "original", name: "Original model", subProvider: "First" },
+        { slug: "second", name: "Second model", subProvider: "Other" },
+        { slug: "plain", name: "Plain model", subProvider: "Other" },
       ],
     ],
   ]);
@@ -160,8 +160,12 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
   await userEvent.keyboard("{ArrowLeft}");
   await expect.element(search).toHaveFocus();
 
+  await search.fill("Second");
   await page.getByRole("option", { name: /Second model/ }).click();
   await expect.element(page.getByRole("radio", { name: "Medium" })).toHaveFocus();
+  await search.fill("");
+  await expect.element(page.getByRole("option", { name: /Second model/ })).toBeVisible();
+  await expect.element(page.getByRole("option", { name: /Original model/ })).toBeVisible();
 
   await page.getByRole("option", { name: /Plain model/ }).click();
   await page.getByRole("option", { name: /Second model/ }).click();
