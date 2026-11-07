@@ -20,6 +20,7 @@ import {
   invokeStep,
   LAUNCH,
   makeProfile,
+  plannerResponse,
   plannerStep,
   ROOT,
   transcriptLines,
@@ -47,7 +48,7 @@ const read = (
   });
 
 it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
-  it.effect("follows an auto-approved call id through its planner step to the record", () =>
+  it.effect("follows an auto-approved call id to the record that ran it", () =>
     Effect.gen(function* () {
       const { profile } = yield* makeProfile({ steps: autoApproved });
       const [child, ...rest] = yield* read(profile, `${ROOT}:1`);
@@ -68,28 +69,152 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
     }),
   );
 
-  it.effect("needs proof that the call id belongs to the parent's record", () =>
+  it.effect("follows each auto-approved launch id to the step that ran it", () =>
     Effect.gen(function* () {
+      const tester = { role: "Test Runner", prompt: "Run the tests" };
+      const empty = new Uint8Array();
+      // A 1.4.5 session: USER_INPUT 14, VIEW_FILE 8, SYSTEM_MESSAGE 101, PLANNER_RESPONSE 15.
+      // Ids number the executing steps, skipping planners with neither text nor thinking:
+      // the invoke records at idx 8 and 12 arrive as `:6` and `:9`.
       const { profile } = yield* makeProfile({
         steps: (logUri) => [
-          ...autoApproved(logUri),
-          [5, 15, plannerStep(["call-b", "call-c"])],
+          [0, 14, empty],
+          [
+            1,
+            15,
+            plannerResponse({
+              calls: [
+                ["v1", "view_file"],
+                ["v2", "view_file"],
+              ],
+            }),
+          ],
+          [2, 8, empty],
+          [3, 8, empty],
+          [4, 15, plannerResponse({ text: "Reading more", calls: [["v3", "view_file"]] })],
+          [5, 8, empty],
           [
             6,
-            127,
-            invokeStep({ callId: "call-b", launches: [LAUNCH], children: [{ id: CHILD, logUri }] }),
+            15,
+            plannerResponse({
+              calls: [
+                ["v4", "view_file"],
+                ["call-a", "invoke_subagent"],
+              ],
+            }),
           ],
+          [7, 8, empty],
           [
-            7,
+            8,
             127,
-            invokeStep({ callId: "call-c", launches: [LAUNCH], children: [{ id: CHILD, logUri }] }),
+            invokeStep({ callId: "call-a", launches: [LAUNCH], children: [{ id: CHILD, logUri }] }),
+          ],
+          [9, 15, plannerResponse({ text: "The reader is done", calls: [] })],
+          [10, 101, empty],
+          [11, 15, plannerResponse({ calls: [["call-b", "invoke_subagent"]] })],
+          [
+            12,
+            127,
+            invokeStep({ callId: "call-b", launches: [tester], children: [{ id: CHILD, logUri }] }),
           ],
         ],
       });
-      // Another session's id, a step that is not the planner call, and parallel calls that share one id.
-      expect(yield* read(profile, `00000000-0000-4000-8000-000000000000:1`)).toEqual([]);
-      expect(yield* read(profile, `${ROOT}:2`)).toEqual([]);
+      const first = yield* read(profile, `${ROOT}:6`);
+      expect(first.map((child) => child.role)).toEqual([LAUNCH.role]);
+      const second = yield* read(profile, `${ROOT}:9`);
+      expect(second.map((child) => child.role)).toEqual([tester.role]);
+    }),
+  );
+
+  it.effect("follows a launch id past many earlier launches", () =>
+    Effect.gen(function* () {
+      const launches = Array.from({ length: 201 }, (_, index) => ({
+        role: `Reader ${index + 1}`,
+        prompt: LAUNCH.prompt,
+      }));
+      const { profile } = yield* makeProfile({
+        steps: (logUri) => [
+          [0, 14, new Uint8Array()],
+          ...launches.flatMap((launch, index) => [
+            [1 + index * 2, 15, plannerStep([`call-${index}`])] as const,
+            [
+              2 + index * 2,
+              127,
+              invokeStep({
+                callId: `call-${index}`,
+                launches: [launch],
+                children: [{ id: CHILD, logUri }],
+              }),
+            ] as const,
+          ]),
+        ],
+      });
+      const children = yield* read(profile, `${ROOT}:201`);
+      expect(children.map((child) => child.role)).toEqual(["Reader 201"]);
+    }),
+  );
+
+  it.effect("needs proof that the call id belongs to the parent's record", () =>
+    Effect.gen(function* () {
+      const empty = new Uint8Array();
+      // Planners with thinking take an index too: steps 0-2, 4-7 number 0-6.
+      const { profile } = yield* makeProfile({
+        steps: (logUri) => [
+          [0, 14, empty],
+          [1, 15, plannerResponse({ thinking: "Look first", calls: [["v1", "view_file"]] })],
+          [2, 8, empty],
+          [3, 15, plannerResponse({ calls: [["v2", "view_file"]] })],
+          [4, 8, empty],
+          [
+            5,
+            15,
+            plannerResponse({
+              thinking: "Delegate",
+              calls: [
+                ["v3", "view_file"],
+                ["call-a", "invoke_subagent"],
+              ],
+            }),
+          ],
+          [6, 8, empty],
+          [
+            7,
+            127,
+            invokeStep({ callId: "call-a", launches: [LAUNCH], children: [{ id: CHILD, logUri }] }),
+          ],
+        ],
+      });
+      expect(yield* read(profile, `${ROOT}:6`)).toHaveLength(1);
+      // Another session's id, a step that ran another tool, and a step past the end.
+      expect(yield* read(profile, `00000000-0000-4000-8000-000000000000:6`)).toEqual([]);
       expect(yield* read(profile, `${ROOT}:5`)).toEqual([]);
+      expect(yield* read(profile, `${ROOT}:7`)).toEqual([]);
+    }),
+  );
+
+  it.effect("declines an auto-approved id when a planner below it is unreadable", () =>
+    Effect.gen(function* () {
+      // That planner may or may not take an index, so the record is at `:1` or `:2`.
+      for (const planner of [Uint8Array.from([0xff, 0xff]), new Uint8Array(1024 * 1024 + 1)]) {
+        const { profile } = yield* makeProfile({
+          steps: (logUri) => [
+            [0, 14, new Uint8Array()],
+            [1, 15, planner],
+            [2, 15, plannerStep(["call-a"])],
+            [
+              3,
+              127,
+              invokeStep({
+                callId: "call-a",
+                launches: [LAUNCH],
+                children: [{ id: CHILD, logUri }],
+              }),
+            ],
+          ],
+        });
+        expect(yield* read(profile, `${ROOT}:1`)).toEqual([]);
+        expect(yield* read(profile, `${ROOT}:2`)).toEqual([]);
+      }
     }),
   );
 
@@ -159,14 +284,14 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       const launch = describeAntigravitySubagentLaunches([LAUNCH]);
       const opaque = "35bea692fa95447fbdae6333fec5515f";
       expect(yield* read(profile, opaque, launch)).toHaveLength(1);
-      // An earlier auto-approved batch stored no launch text, but its planner step claims the record.
+      // An earlier auto-approved batch stored no launch text, but its call id claims the record.
       const auto = {
         nativeTaskId: `${ROOT}:1`,
         title: ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
         prompt: "",
       };
       expect(yield* read(profile, opaque, launch, [auto])).toEqual([]);
-      // A sibling that cannot be ruled out refuses the match: its planner step is unreadable,
+      // A sibling that cannot be ruled out refuses the match: its call id resolves to no record,
       // or it is a permission batch whose launch text is missing or cut.
       for (const sibling of [
         { ...auto, nativeTaskId: `${ROOT}:99` },
