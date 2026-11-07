@@ -2389,6 +2389,42 @@ describe("AcpRegistryAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("writes a child's coalesced text before a restart resets it", () =>
+    Effect.gen(function* () {
+      const { update, childState, idle, prompt } = claudeFrames;
+      const reply = (text: string) =>
+        update("child-1", {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "reply",
+          content: { type: "text", text },
+        });
+      const session = yield* openClaudeReplaySession([
+        ...claudeFrames.open,
+        ...prompt(1),
+        ...claudeChild.slice(0, -1),
+        reply("Review "),
+        reply("done."),
+        // A working grandchild keeps the idle child from publishing (and flushing) its status.
+        childState("child-1", "grandchild", "running"),
+        childState(CLAUDE_ROOT_SESSION, "child-1", "idle"),
+        childState(CLAUDE_ROOT_SESSION, "child-1", "running"),
+        idle("end_turn"),
+        claudeFrames.closeRequest,
+        claudeFrames.closed,
+      ]);
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const events = yield* session.until((event) => event.type === "turn.terminal");
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "message.updated" &&
+            event.message.role === "assistant" &&
+            event.message.text === "Review done.",
+        ),
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("fails active Claude work and releases its children when the process exits", () =>
     Effect.gen(function* () {
       const session = yield* openClaudeReplaySession([
