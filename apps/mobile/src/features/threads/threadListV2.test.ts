@@ -126,18 +126,21 @@ describe("resolveThreadListV2SnoozePresets", () => {
         syncedAt: "2026-05-08T10:00:00.000Z",
       },
     });
-    const firstId = (pullRequests: ReadonlyArray<ThreadPullRequestLink> | null) =>
+    const firstIds = (pullRequests: ReadonlyArray<ThreadPullRequestLink> | null) =>
       resolveThreadListV2SnoozePresets({
         secondary: "snooze",
         now: "2026-05-08T10:00:00.000Z",
         presets: undefined,
         pullRequestThread: pullRequests === null ? null : { pullRequests },
-      })[0]?.id;
+      })
+        .slice(0, 2)
+        .map((preset) => preset.id);
+    const pullRequestIds = ["pull-request-checks", "pull-request-review"];
 
-    expect(firstId([link("open")])).toBe("pull-request");
-    expect(firstId([link("merged")])).not.toBe("pull-request");
-    expect(firstId([link("open", "stack-dismissed")])).not.toBe("pull-request");
-    expect(firstId(null)).not.toBe("pull-request");
+    expect(firstIds([link("open")])).toEqual(pullRequestIds);
+    expect(firstIds([link("merged")])).not.toEqual(pullRequestIds);
+    expect(firstIds([link("open", "stack-dismissed")])).not.toEqual(pullRequestIds);
+    expect(firstIds(null)).not.toEqual(pullRequestIds);
   });
 });
 

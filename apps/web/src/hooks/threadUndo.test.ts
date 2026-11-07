@@ -6,8 +6,11 @@ describe("planThreadUndo", () => {
   it("restores a pull request snooze with its watch", () => {
     const snoozedUntil = "9999-01-01T00:00:00.000Z";
     expect(
-      ThreadUndo.planThreadUndo("unpin", { snoozedUntil, pullRequests: [{ snoozeWatch: {} }] }),
-    ).toContainEqual({ action: "snooze", snoozedUntil, wakeOnPullRequest: true });
+      ThreadUndo.planThreadUndo("unpin", {
+        snoozedUntil,
+        pullRequests: [{ snoozeWatch: { wakeOn: "review" } }],
+      }),
+    ).toContainEqual({ action: "snooze", snoozedUntil, wakeOnPullRequest: "review" });
     expect(ThreadUndo.planThreadUndo("unpin", { snoozedUntil, pullRequests: [{}] })).toContainEqual(
       { action: "snooze", snoozedUntil },
     );

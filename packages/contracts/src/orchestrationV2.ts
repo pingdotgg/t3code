@@ -64,6 +64,7 @@ import {
   ThreadPullRequestSnapshot,
   ThreadPullRequestStack,
   ThreadPullRequestWatch,
+  ThreadPullRequestSnoozeWake,
 } from "./threadPullRequest.ts";
 import {
   ProviderApprovalDecision,
@@ -3017,8 +3018,8 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     snoozedUntil: IsoDateTime,
-    /** Also wake when an open linked pull request needs attention. */
-    wakeOnPullRequest: Schema.optional(Schema.Boolean),
+    /** Also wake on this news from an open linked pull request. */
+    wakeOnPullRequest: Schema.optional(ThreadPullRequestSnoozeWake),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsnooze"),

@@ -3806,7 +3806,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} has a queued run and cannot be snoozed.`,
         });
       }
-      if (command.wakeOnPullRequest === true && !threadPullRequestsOf(thread).some(canWakeSnooze)) {
+      if (
+        command.wakeOnPullRequest !== undefined &&
+        !threadPullRequestsOf(thread).some(canWakeSnooze)
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -3888,7 +3891,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             snoozedAt: now,
             updatedAt: now,
             pullRequests:
-              command.wakeOnPullRequest === true
+              command.wakeOnPullRequest !== undefined
                 ? threadPullRequestsOf(thread).map((link) =>
                     canWakeSnooze(link)
                       ? {
@@ -3904,6 +3907,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                             conflicting: false,
                             wakes: 0,
                             unread: true,
+                            wakeOn: command.wakeOnPullRequest,
                           },
                         }
                       : withoutSnoozeWatch(link),

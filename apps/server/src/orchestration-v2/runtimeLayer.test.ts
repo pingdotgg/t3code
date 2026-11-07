@@ -3787,7 +3787,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
       const key = { host: "github.com", repository: "pingdotgg/t3code", number: 15 };
       const snoozedUntil = "2030-01-01T00:00:00.000Z";
-      const snooze = (id: string, wakeOnPullRequest: boolean) =>
+      const snooze = (id: string, wakeOnPullRequest?: "checks" | "review") =>
         orchestrator.dispatch({
           type: "thread.snooze",
           commandId: CommandId.make(`pr-snooze-${id}`),
@@ -3796,7 +3796,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           ...(wakeOnPullRequest ? { wakeOnPullRequest } : {}),
         });
 
-      const unlinked = yield* snooze("no-pr", true).pipe(Effect.flip);
+      const unlinked = yield* snooze("no-pr", "checks").pipe(Effect.flip);
       assert.include(String(unlinked.cause), "no open linked pull request");
 
       yield* orchestrator.dispatch({
@@ -3852,7 +3852,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const snoozeWatch = Effect.map(shell, (thread) => thread?.pullRequests?.[0]?.snoozeWatch);
 
       // Passed checks and a conflict from before the snooze are what the user already saw.
-      yield* snooze("start", true);
+      yield* snooze("start", "checks");
       yield* reactor.sweep;
       assert.equal((yield* snoozeWatch)?.passed, true);
       assert.isUndefined((yield* snoozeWatch)?.unread);
@@ -3878,7 +3878,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isEmpty(messages);
 
       // Each way out ends the watch: waking, a timed re-snooze, and settling via the sweep.
-      yield* snooze("wake", true);
+      yield* snooze("wake", "checks");
       assert.isDefined(yield* snoozeWatch);
       yield* orchestrator.dispatch({
         type: "thread.unsnooze",
@@ -3890,7 +3890,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isNull((yield* shell)?.snoozedUntil);
 
       // A read in flight when the user pins must not bring back a snooze the pin cleared.
-      yield* snooze("raced", true);
+      yield* snooze("raced", "checks");
       const raced = yield* snoozeWatch;
       assert.isDefined(raced);
       if (raced === undefined) return;
@@ -3918,11 +3918,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
       });
 
-      yield* snooze("retime", true);
-      yield* snooze("retimed", false);
+      yield* snooze("retime", "checks");
+      yield* snooze("retimed");
       assert.isUndefined(yield* snoozeWatch);
 
-      yield* snooze("settle", true);
+      yield* snooze("settle", "checks");
       yield* orchestrator.dispatch({
         type: "thread.settle",
         commandId: CommandId.make("pr-snooze-settled"),
@@ -3942,7 +3942,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         commandId: CommandId.make("pr-snooze-untimed"),
         threadId,
         snoozedUntil: UNTIMED_SNOOZE_WAKE_AT,
-        wakeOnPullRequest: true,
+        wakeOnPullRequest: "checks",
       });
       assert.equal(DateTime.formatIso((yield* shell)!.snoozedUntil!), UNTIMED_SNOOZE_WAKE_AT);
       yield* orchestrator.dispatch({
@@ -8546,7 +8546,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           commandId: CommandId.make("recovery:pr-snooze"),
           threadId,
           snoozedUntil: "2030-01-01T00:00:00.000Z",
-          wakeOnPullRequest: true,
+          wakeOnPullRequest: "checks",
         });
       }
       const arm = limitRecoveryCommand(shell, autoResume, DateTime.toEpochMillis(now), snooze);

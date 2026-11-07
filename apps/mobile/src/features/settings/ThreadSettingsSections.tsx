@@ -48,7 +48,7 @@ export function SettingsLabsRouteScreen() {
           icon="clock"
           capability="threadPullRequestSnooze"
           setting="pullRequestSnoozeEnabled"
-          description="Add Until PR update to the snooze menu of threads with an open pull request. While it is off, threads already snoozed this way still wake."
+          description="Add Until checked and Until reviewed to the snooze menu of threads with an open pull request. A conflict also brings the thread back. While it is off, threads already snoozed this way still wake."
         />
         <MachineBetaSection
           title="Linked environments"

@@ -129,7 +129,7 @@ it.effect.each([
           commandId: CommandId.make(`command:thread-management:snooze-${enabled}`),
           threadId: ThreadId.make("thread:thread-management:chokepoint"),
           snoozedUntil: "2030-01-01T00:00:00.000Z",
-          ...(wakeOnPullRequest ? { wakeOnPullRequest } : {}),
+          ...(wakeOnPullRequest ? { wakeOnPullRequest: "checks" as const } : {}),
         })
         .pipe(Effect.exit);
 

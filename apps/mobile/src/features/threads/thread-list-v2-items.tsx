@@ -25,7 +25,11 @@ import {
   formatWorkingDurationLabel,
   resolveThreadWorkingStartedAt,
 } from "@t3tools/client-runtime/state/models";
-import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentMachineKind,
+  type ThreadPullRequestSnoozeWake,
+} from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
@@ -671,7 +675,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onSnoozeThread: (
     thread: EnvironmentThreadShell,
     snoozedUntil: string,
-    wakeOnPullRequest?: boolean,
+    wakeOnPullRequest?: ThreadPullRequestSnoozeWake,
   ) => void;
   readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
@@ -806,7 +810,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     setCustomSnoozeOpen(false);
   }
   const handleSnooze = useCallback(
-    (snoozedUntil: string, wakeOnPullRequest?: boolean) =>
+    (snoozedUntil: string, wakeOnPullRequest?: ThreadPullRequestSnoozeWake) =>
       onSnoozeThread(thread, snoozedUntil, wakeOnPullRequest),
     [onSnoozeThread, thread],
   );

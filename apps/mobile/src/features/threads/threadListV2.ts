@@ -5,7 +5,7 @@ import {
   pickSnoozePreset,
   QUEUED_TURN_START_GRACE_MS,
   resolveSnoozePresets,
-  resolvePullRequestSnoozePreset,
+  resolvePullRequestSnoozePresets,
   snoozeWaitsOnPullRequest,
   snoozeWakeLabel,
   threadWokeAt,
@@ -91,11 +91,9 @@ export function resolveThreadListV2SnoozePresets(input: {
   if (input.secondary !== "snooze") return [];
   const now = new Date(input.now);
   const presets = resolveSnoozePresets(now, presetOptions(input.presets));
-  const pullRequest =
-    input.pullRequestThread === null
-      ? null
-      : resolvePullRequestSnoozePreset(input.pullRequestThread);
-  return pullRequest === null ? presets : [pullRequest, ...presets];
+  return input.pullRequestThread === null
+    ? presets
+    : [...resolvePullRequestSnoozePresets(input.pullRequestThread), ...presets];
 }
 
 function presetOptions(presets: ReadonlyArray<SnoozePresetSetting> | undefined) {

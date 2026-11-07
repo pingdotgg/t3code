@@ -1,6 +1,6 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
 import * as DateTime from "effect/DateTime";
-import { UNTIMED_SNOOZE_WAKE_AT } from "@t3tools/contracts";
+import { type ThreadPullRequestSnoozeWake, UNTIMED_SNOOZE_WAKE_AT } from "@t3tools/contracts";
 import { DEFAULT_SNOOZE_PRESETS, type SnoozePresetSetting } from "@t3tools/contracts/settings";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
@@ -214,7 +214,7 @@ export interface SnoozePreset {
   readonly label: string;
   readonly whenLabel: string;
   readonly snoozedUntil: string;
-  readonly wakeOnPullRequest?: boolean;
+  readonly wakeOnPullRequest?: ThreadPullRequestSnoozeWake;
 }
 
 export interface SnoozePresetOptions {
@@ -332,23 +332,44 @@ export function resolveSnoozePresets(
 
 type ThreadPullRequestShell = Pick<EnvironmentThreadShell, "pullRequests">;
 
-/** The menu choice that only pull request news wakes. */
-export function resolvePullRequestSnoozePreset(shell: ThreadPullRequestShell): SnoozePreset | null {
+const PULL_REQUEST_SNOOZES: ReadonlyArray<{
+  readonly wakeOn: ThreadPullRequestSnoozeWake;
+  readonly label: string;
+}> = [
+  { wakeOn: "checks", label: "Until checked" },
+  { wakeOn: "review", label: "Until reviewed" },
+];
+
+/** The menu choices that only pull request news wakes. */
+export function resolvePullRequestSnoozePresets(
+  shell: ThreadPullRequestShell,
+): ReadonlyArray<SnoozePreset> {
   const open = shell.pullRequests.some(
     (link) => link.source !== "stack-dismissed" && link.snapshot?.state === "open",
   );
-  if (!open) return null;
-  return {
-    id: "pull-request",
-    label: "Until PR update",
+  if (!open) return [];
+  return PULL_REQUEST_SNOOZES.map(({ wakeOn, label }) => ({
+    id: `pull-request-${wakeOn}`,
+    label,
     whenLabel: "",
     snoozedUntil: UNTIMED_SNOOZE_WAKE_AT,
-    wakeOnPullRequest: true,
-  };
+    wakeOnPullRequest: wakeOn,
+  }));
 }
 
 export function snoozeWaitsOnPullRequest(shell: ThreadPullRequestShell): boolean {
   return shell.pullRequests.some((link) => link.snoozeWatch !== undefined);
+}
+
+/** The status line of a thread snoozed on its pull request, otherwise null. */
+export function pullRequestSnoozeStatus(shell: ThreadPullRequestShell): string | null {
+  const wakeOn = shell.pullRequests.find((link) => link.snoozeWatch !== undefined)?.snoozeWatch
+    ?.wakeOn;
+  return wakeOn === undefined
+    ? null
+    : wakeOn === "checks"
+      ? "Snoozed until checked"
+      : "Snoozed until reviewed";
 }
 
 /**

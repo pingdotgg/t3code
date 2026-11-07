@@ -153,6 +153,7 @@ export function evaluatePullRequestWatch(
       conflicting,
       wakes,
       checksAwaitedSince,
+      ...(watch.wakeOn === undefined ? {} : { wakeOn: watch.wakeOn }),
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };
@@ -163,9 +164,16 @@ export function pullRequestNeedsAttention(
   watch: ThreadPullRequestWatch,
   report: PullRequestWatchReport,
 ): boolean {
-  return report.changes.some(
-    (change) => change.kind === "remarks" || (change.kind !== "no-checks" && watch.unread !== true),
-  );
+  return report.changes.some((change) => {
+    switch (change.kind) {
+      case "remarks":
+        return watch.wakeOn === "review";
+      case "conflicting":
+        return watch.unread !== true;
+      default:
+        return watch.wakeOn === "checks" && watch.unread !== true;
+    }
+  });
 }
 
 function snippet(body: string): string {

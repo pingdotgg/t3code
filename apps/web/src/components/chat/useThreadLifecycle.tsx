@@ -25,7 +25,7 @@ import {
 } from "@t3tools/contracts";
 import {
   effectiveSnoozed,
-  snoozeWaitsOnPullRequest,
+  pullRequestSnoozeStatus,
   snoozeWakeLabel,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
@@ -618,11 +618,8 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       <ThreadStatusLine
         icon={<AlarmClockIcon />}
         label={
-          activeThreadShell !== null && snoozeWaitsOnPullRequest(activeThreadShell)
-            ? "Snoozed until PR update"
-            : snoozeWake && snoozeWake !== "now"
-              ? `Snoozed, ${snoozeWake} left`
-              : "Snoozed"
+          (activeThreadShell !== null && pullRequestSnoozeStatus(activeThreadShell)) ||
+          (snoozeWake && snoozeWake !== "now" ? `Snoozed, ${snoozeWake} left` : "Snoozed")
         }
         clockMinute={nowMinute}
         actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}

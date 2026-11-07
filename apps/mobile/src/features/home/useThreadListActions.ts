@@ -3,7 +3,10 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { showThreadUndoNotice } from "./thread-undo-notice";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type ThreadPullRequestSnoozeWake,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { useRef } from "react";
@@ -196,7 +199,7 @@ export function useThreadListActions(): {
   readonly snoozeThread: (
     thread: EnvironmentThreadShell,
     snoozedUntil: string,
-    wakeOnPullRequest?: boolean,
+    wakeOnPullRequest?: ThreadPullRequestSnoozeWake,
   ) => Promise<boolean>;
   readonly unsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly unsettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
@@ -258,7 +261,9 @@ export function useThreadListActions(): {
                     input: {
                       threadId: thread.id,
                       snoozedUntil: step.snoozedUntil,
-                      ...(step.wakeOnPullRequest ? { wakeOnPullRequest: true } : {}),
+                      ...(step.wakeOnPullRequest
+                        ? { wakeOnPullRequest: step.wakeOnPullRequest }
+                        : {}),
                     },
                   });
                   if (result._tag === "Failure") {
@@ -301,7 +306,7 @@ export function useThreadListActions(): {
   const snoozeThread = async (
     thread: EnvironmentThreadShell,
     snoozedUntil: string,
-    wakeOnPullRequest?: boolean,
+    wakeOnPullRequest?: ThreadPullRequestSnoozeWake,
   ) => {
     if (!checkThreadOperationPermission(thread, "Could not snooze thread")) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
@@ -337,7 +342,7 @@ export function useThreadListActions(): {
             input: {
               threadId: thread.id,
               snoozedUntil,
-              ...(wakeOnPullRequest === true ? { wakeOnPullRequest } : {}),
+              ...(wakeOnPullRequest === undefined ? {} : { wakeOnPullRequest }),
             },
           }),
         (result) => result._tag === "Success",

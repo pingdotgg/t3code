@@ -27,6 +27,7 @@ import {
   type ThreadEnvMode,
   type UploadChatAttachment,
   type GuestMessageId,
+  type ThreadPullRequestSnoozeWake,
 } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -111,7 +112,7 @@ export interface ReorderActiveThreadInput extends ThreadCommandInput {
 
 export interface SnoozeThreadInput extends ThreadCommandInput {
   readonly snoozedUntil: string;
-  readonly wakeOnPullRequest?: boolean;
+  readonly wakeOnPullRequest?: ThreadPullRequestSnoozeWake;
 }
 
 export interface UnsnoozeThreadInput extends ThreadCommandInput {
@@ -572,7 +573,9 @@ export const snoozeThread = Effect.fn("EnvironmentCommands.snoozeThread")(functi
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     snoozedUntil: input.snoozedUntil,
-    ...(input.wakeOnPullRequest === true ? { wakeOnPullRequest: true } : {}),
+    ...(input.wakeOnPullRequest === undefined
+      ? {}
+      : { wakeOnPullRequest: input.wakeOnPullRequest }),
   });
 });
 

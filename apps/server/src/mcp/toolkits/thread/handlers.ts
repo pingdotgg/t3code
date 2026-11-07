@@ -345,7 +345,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       let command: OrchestrationV2Command;
       switch (input.action) {
         case "snooze":
-          if (input.snoozedUntil === undefined && input.wakeOnPullRequest !== true) {
+          if (input.snoozedUntil === undefined && input.wakeOnPullRequest === undefined) {
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
               message: "snooze requires snoozedUntil or wakeOnPullRequest.",
@@ -355,7 +355,9 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             ...common,
             type: "thread.snooze",
             snoozedUntil: input.snoozedUntil ?? UNTIMED_SNOOZE_WAKE_AT,
-            ...(input.wakeOnPullRequest === true ? { wakeOnPullRequest: true } : {}),
+            ...(input.wakeOnPullRequest === undefined
+              ? {}
+              : { wakeOnPullRequest: input.wakeOnPullRequest }),
           };
           break;
         case "unsnooze":

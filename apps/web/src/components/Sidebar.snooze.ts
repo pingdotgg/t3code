@@ -3,7 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   pickSnoozePreset as pickSharedSnoozePreset,
-  resolvePullRequestSnoozePreset,
+  resolvePullRequestSnoozePresets,
   resolveSnoozePresets as resolveSharedSnoozePresets,
   snoozeWakeLabel,
   type SnoozePreset,
@@ -33,10 +33,9 @@ export function resolveThreadSnoozePresets(
   thread: Pick<EnvironmentThreadShell, "environmentId" | "pullRequests">,
 ): ReadonlyArray<SnoozePreset> {
   const presets = resolveSnoozePresets(now, timestampFormat, thread.environmentId);
-  const pullRequest = readEnvironmentSupportsPullRequestSnooze(thread.environmentId)
-    ? resolvePullRequestSnoozePreset(thread)
-    : null;
-  return pullRequest === null ? presets : [pullRequest, ...presets];
+  return readEnvironmentSupportsPullRequestSnooze(thread.environmentId)
+    ? [...resolvePullRequestSnoozePresets(thread), ...presets]
+    : presets;
 }
 
 /** A shown menu choice as picked; see the shared `pickSnoozePreset`. */

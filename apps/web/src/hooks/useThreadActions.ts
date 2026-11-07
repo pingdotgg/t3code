@@ -15,6 +15,7 @@ import {
   type ScopedThreadRef,
   ThreadId,
   sessionGrantsScope,
+  type ThreadPullRequestSnoozeWake,
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
@@ -899,7 +900,7 @@ export function useThreadActions() {
   const snoozeThread = async (
     target: ScopedThreadRef,
     snoozedUntil: string,
-    wakeOnPullRequest?: boolean,
+    wakeOnPullRequest?: ThreadPullRequestSnoozeWake,
   ) => {
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
       return AsyncResult.failure(
@@ -929,7 +930,7 @@ export function useThreadActions() {
       input: {
         threadId: target.threadId,
         snoozedUntil,
-        ...(wakeOnPullRequest === true ? { wakeOnPullRequest } : {}),
+        ...(wakeOnPullRequest === undefined ? {} : { wakeOnPullRequest }),
       },
     });
     if (result._tag !== "Success") {
@@ -965,7 +966,7 @@ export function useThreadActions() {
               input: {
                 threadId: target.threadId,
                 snoozedUntil: step.snoozedUntil,
-                ...(step.wakeOnPullRequest ? { wakeOnPullRequest: true } : {}),
+                ...(step.wakeOnPullRequest ? { wakeOnPullRequest: step.wakeOnPullRequest } : {}),
               },
             });
         }

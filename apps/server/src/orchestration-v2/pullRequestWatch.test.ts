@@ -456,18 +456,35 @@ describe("pullRequestNeedsAttention", () => {
     exhausted: false,
   });
 
-  it("counts checks and conflicts only once the watch has read the pull request", () => {
-    const conflict = report({ kind: "conflicting" });
-    const passed = report({ kind: "checks-passed", count: 1, required: true });
-    assert.isFalse(pullRequestNeedsAttention(watch({ unread: true }), conflict));
-    assert.isFalse(pullRequestNeedsAttention(watch({ unread: true }), passed));
-    assert.isTrue(pullRequestNeedsAttention(watch(), conflict));
-    assert.isTrue(pullRequestNeedsAttention(watch(), passed));
+  const checks = watch({ wakeOn: "checks" });
+  const review = watch({ wakeOn: "review" });
+  const passed = report({ kind: "checks-passed", count: 1, required: true });
+  const failed = report({ kind: "checks-failed", failed: [] });
+  const noChecks = report({ kind: "no-checks", minutes: 15 });
+  const comment = report({ kind: "remarks", remarks: [remark] });
+  const conflict = report({ kind: "conflicting" });
+
+  it("wakes a checks snooze on check news, and a review snooze on remarks, not the reverse", () => {
+    for (const change of [passed, failed, noChecks]) {
+      assert.isTrue(pullRequestNeedsAttention(checks, change));
+      assert.isFalse(pullRequestNeedsAttention(review, change));
+    }
+    assert.isTrue(pullRequestNeedsAttention(review, comment));
+    assert.isFalse(pullRequestNeedsAttention(checks, comment));
   });
 
-  it("counts a comment from the first read, and never a repository with no checks", () => {
-    const comment = report({ kind: "remarks", remarks: [remark] });
-    assert.isTrue(pullRequestNeedsAttention(watch({ unread: true }), comment));
-    assert.isFalse(pullRequestNeedsAttention(watch(), report({ kind: "no-checks", minutes: 15 })));
+  it("wakes either snooze on a conflict", () => {
+    assert.isTrue(pullRequestNeedsAttention(checks, conflict));
+    assert.isTrue(pullRequestNeedsAttention(review, conflict));
+  });
+
+  it("counts checks and conflicts only once the watch has read the pull request", () => {
+    const unread = watch({ wakeOn: "checks", unread: true });
+    assert.isFalse(pullRequestNeedsAttention(unread, conflict));
+    assert.isFalse(pullRequestNeedsAttention(unread, passed));
+  });
+
+  it("counts a remark from the first read", () => {
+    assert.isTrue(pullRequestNeedsAttention(watch({ wakeOn: "review", unread: true }), comment));
   });
 });

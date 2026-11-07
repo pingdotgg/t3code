@@ -340,10 +340,11 @@ question and answer when the thread wakes; the question stays unanswered.
 
 To park a thread while its pull request is busy, such as while checks run, turn on
 **Settings → Labs → Snooze until PR update** for the machine that runs the thread, then choose
-**Snooze → Until PR update**. The option appears when the thread has an open linked
-pull request. The thread returns when checks finish, the branch starts to conflict, someone
-else comments or reviews, or the pull request merges or closes. Checks that had already
-finished when you snoozed do not wake it. There is no time limit, so a quiet pull request keeps
-the thread snoozed. It also returns if you unlink the pull request or T3 Code cannot read it.
+**Snooze → Until checked** or **Snooze → Until reviewed**. The options appear when the thread
+has an open linked pull request. **Until checked** returns the thread when checks finish, and
+**Until reviewed** returns it when someone else comments or reviews. Either way it also returns
+if the branch starts to conflict, the pull request merges or closes, you unlink the pull
+request, or T3 Code cannot read it. Checks that had already finished when you snoozed do not
+wake it. There is no time limit, so a quiet pull request keeps the thread snoozed.
 This does not start an agent turn; to have the agent respond too, ask it to watch the pull
 request as well.

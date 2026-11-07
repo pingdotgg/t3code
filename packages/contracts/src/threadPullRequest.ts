@@ -82,6 +82,10 @@ export type ThreadPullRequestKey = typeof ThreadPullRequestKey.Type;
 /** A `snoozedUntil` that never arrives: only a pull request watch can wake the thread. */
 export const UNTIMED_SNOOZE_WAKE_AT = "9999-01-01T00:00:00.000Z";
 
+/** What a snooze waits for. Conflicts, merges, and closes wake either one. */
+export const ThreadPullRequestSnoozeWake = Schema.Literals(["checks", "review"]);
+export type ThreadPullRequestSnoozeWake = typeof ThreadPullRequestSnoozeWake.Type;
+
 export const ThreadPullRequestWatch = Schema.Struct({
   startedAt: IsoDateTime,
   headSha: Schema.NullOr(TrimmedNonEmptyString),
@@ -105,6 +109,8 @@ export const ThreadPullRequestWatch = Schema.Struct({
   checksAwaitedSince: Schema.optional(Schema.NullOr(IsoDateTime)),
   /** A snooze watch before its first read, whose checks and conflicts are not news. */
   unread: Schema.optional(Schema.Literal(true)),
+  /** Set on a snooze watch. */
+  wakeOn: Schema.optional(ThreadPullRequestSnoozeWake),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 

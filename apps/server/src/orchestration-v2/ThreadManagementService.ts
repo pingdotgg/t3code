@@ -748,7 +748,7 @@ const make = Effect.gen(function* () {
             }),
           );
       case "thread.snooze":
-        if (command.wakeOnPullRequest !== true) return Effect.void;
+        if (command.wakeOnPullRequest === undefined) return Effect.void;
         return Effect.all([hasReceipt(command.commandId), serverSettings.getSettings]).pipe(
           Effect.orDie,
           Effect.flatMap(([replayed, current]) =>
