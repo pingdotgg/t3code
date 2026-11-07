@@ -538,3 +538,24 @@ describe("server model preferences", () => {
     expect(decodeServerSettingsPatch(input)).toEqual(input);
   });
 });
+
+describe("ignored command prefix settings", () => {
+  it("keeps existing installations unchanged and round-trips a custom list or reset", () => {
+    expect(decodeClientSettings({}).ignoredCommandPrefixes).toEqual([]);
+    for (const prefixes of [["rtk", "rtk proxy"], []]) {
+      const input = { ignoredCommandPrefixes: prefixes };
+      expect(encodeClientSettings(decodeClientSettings(input))).toMatchObject(input);
+      expect(decodeClientSettingsPatch(input)).toEqual(input);
+    }
+  });
+
+  it.each([
+    { prefixes: [42] },
+    { prefixes: [""] },
+    { prefixes: ["   "] },
+    { prefixes: "rtk" },
+    { prefixes: null },
+  ])("rejects invalid lists: $prefixes", ({ prefixes }) => {
+    expect(() => decodeClientSettings({ ignoredCommandPrefixes: prefixes })).toThrow();
+  });
+});

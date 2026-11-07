@@ -668,6 +668,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       ? new Set(paintedExpandedAttemptIds).add(activeFindAttemptId)
       : paintedExpandedAttemptIds;
 
+  const ignoredCommandPrefixes = useClientSettings((settings) => settings.ignoredCommandPrefixes);
   const isVisiblePendingApproval = (approval: PendingApproval) =>
     !heldApprovalRequestIds?.has(approval.requestId);
   const pendingApprovalRequestIds = new Set(
@@ -675,6 +676,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   );
   const rawRows = useIncrementalTimelineRows(`${listIdentityKey}\0${workspaceRoot ?? ""}`, {
     timelineEntries,
+    ignoredCommandPrefixes,
     pendingApprovalRequestIds,
     latestRun,
     runningRunId,

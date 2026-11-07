@@ -1,3 +1,4 @@
+import { useClientSettings } from "../../hooks/useSettings";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { WorkLogButton, WorkLogList, WorkLogRow } from "./WorkLog";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
@@ -497,7 +498,13 @@ export function LiveWorkEntryTimelineRow({
 }) {
   const ctx = use(TimelineRowCtx);
   const threadTarget = useThreadReadTarget(row.entry, ctx.activeThreadEnvironmentId);
-  const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
+  const ignoredCommandPrefixes = useClientSettings((settings) => settings.ignoredCommandPrefixes);
+  const label = liveWorkEntryLabel(
+    row.entry,
+    ctx.workspaceRoot,
+    row.active,
+    ignoredCommandPrefixes,
+  );
   const threadLabel = threadReadLabel(label, threadTarget);
 
   const item = row.entry.projectedItem?.item;

@@ -220,6 +220,12 @@ const SOURCE_CONTROL_HOST_TERMS = sourceControlClients.definitions
 
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "ignored-command-prefixes",
+    title: "Top-level commands to ignore",
+    to: "/settings/general",
+    searchTerms: ["command wrappers prefixes ignored running activity labels previews"],
+  },
+  {
     id: "storage-worktree-keep-when",
     targetId: "storage-worktrees",
     title: "Keep worktrees with local changes",

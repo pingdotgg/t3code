@@ -370,6 +370,83 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("buildThreadFeed", () => {
+  it("refreshes cached command summaries when ignored prefixes change", () => {
+    const { exitCode: _exitCode, ...completedCommand } = command();
+    const runningCommand: OrchestrationV2TurnItem = {
+      ...completedCommand,
+      input: "rtk proxy git status",
+      runId: null,
+      status: "running",
+      completedAt: null,
+      output: "",
+    };
+    const feed = buildThreadFeed([projected(runningCommand, 0)]);
+    const cache = createThreadFeedCache();
+    const present = (prefixes: ReadonlyArray<string>) =>
+      deriveThreadFeedPresentation(
+        feed,
+        null,
+        new Set(),
+        new Set(),
+        "2026-06-20T00:00:01.000Z",
+        true,
+        cache,
+        {
+          toolCallVisibility: "showAll",
+          revealedMessageId: null,
+          ignoredCommandPrefixes: prefixes,
+        },
+      );
+    const prefixes = ["rtk", "rtk proxy"];
+    expect(present([]).find((row) => row.type === "activity-group")).toMatchObject({
+      activities: [{ groupStandIn: { label: "Running rtk" } }],
+    });
+    expect(present(prefixes).find((row) => row.type === "activity-group")).toMatchObject({
+      activities: [{ groupStandIn: { label: "Running git" } }],
+    });
+    expect(present(prefixes).find((row) => row.type === "activity-group")).toBe(
+      present(prefixes).find((row) => row.type === "activity-group"),
+    );
+    expect(present([]).find((row) => row.type === "activity-group")).toMatchObject({
+      activities: [{ groupStandIn: { label: "Running rtk" } }],
+    });
+    expect(runningCommand.input).toBe("rtk proxy git status");
+
+    for (const group of feed) {
+      if (group.type !== "activity-group") continue;
+      const entry = group.activities[0]!.workEntry;
+      expect(workEntryRowLabel(entry, false, prefixes)).toBe("git status");
+      expect(workEntryRowLabel(entry, true, prefixes)).toBe("rtk proxy git status");
+    }
+  });
+
+  it("refreshes cached previews before the latest user message", () => {
+    const feed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected({ ...command(), input: "rtk proxy git status" }, 1),
+      projected(
+        {
+          ...userMessage(),
+          id: TurnItemId.make("next-user"),
+          messageId: MessageId.make("next-message"),
+          runId: RunId.make("next-run"),
+        },
+        2,
+      ),
+    ]);
+    const cache = createThreadFeedCache();
+    const preview = (ignoredCommandPrefixes: ReadonlyArray<string>) =>
+      deriveThreadFeedPresentation(feed, null, new Set([runId]), new Set(), null, false, cache, {
+        toolCallVisibility: "showAll",
+        revealedMessageId: null,
+        ignoredCommandPrefixes,
+      }).flatMap((row) => (row.type === "activity-group" ? row.activities : []))[0]?.groupStandIn
+        ?.label;
+    expect(preview([])).toBe("rtk proxy git status");
+    expect(preview(["rtk", "rtk proxy"])).toBe("git status");
+    expect(preview([])).toBe("rtk proxy git status");
+  });
+
   it("keeps async answers in question history instead of user bubbles", () => {
     const requestId = RuntimeRequestId.make("question");
     const question: OrchestrationV2TurnItem = {

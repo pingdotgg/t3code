@@ -33,6 +33,7 @@ import {
   resolveAssistantMessageCopyState,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
+  liveWorkEntryLabel,
 } from "./MessagesTimeline.logic";
 
 describe("resolveAssistantMessageCopyState", () => {
@@ -4555,5 +4556,64 @@ describe("shouldCollapseUserMessage", () => {
 
     expect(shouldCollapseUserMessage(`${citation} Can you expand on this?`)).toBe(false);
     expect(shouldCollapseUserMessage(`${citation} ${"More text. ".repeat(60)}`)).toBe(true);
+  });
+});
+
+describe("ignored command prefixes", () => {
+  it.each([
+    ["inProgress", "Running git"],
+    ["completed", "Ran git"],
+    ["failed", "Failed git"],
+    ["declined", "Declined git"],
+    ["stopped", "Stopped git"],
+  ] as const)("applies prefixes to %s command labels", (toolLifecycleStatus, label) => {
+    const entry = {
+      id: "wrapped-command",
+      runId: null,
+      createdAt: "2026-11-06T00:00:00Z",
+      itemType: "command_execution" as const,
+      tone: "tool" as const,
+      label: "rtk proxy git status",
+      command: "rtk proxy git status",
+      toolLifecycleStatus,
+    };
+    expect(liveWorkEntryLabel(entry, undefined, false, ["rtk", "rtk proxy"])).toBe(label);
+    expect(workEntryDisplayLabel(entry, undefined, ["rtk", "rtk proxy"])).toBe("git status");
+    expect(entry.command).toBe("rtk proxy git status");
+    expect(liveWorkEntryLabel(entry, undefined, false)).toBe(label.replace("git", "rtk"));
+  });
+
+  it("refreshes settled previews when prefixes change or reset", () => {
+    const entry = {
+      id: "wrapped-command",
+      runId: null,
+      createdAt: "2026-11-06T00:00:00Z",
+      itemType: "command_execution" as const,
+      tone: "tool" as const,
+      label: "rtk proxy git status",
+      command: "rtk proxy git status",
+      toolLifecycleStatus: "completed" as const,
+    };
+    const input = {
+      timelineEntries: [{ kind: "work" as const, id: entry.id, createdAt: entry.createdAt, entry }],
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    };
+    const original = deriveMessagesTimelineRowsWithState(input);
+    const updated = deriveMessagesTimelineRowsWithState(
+      { ...input, ignoredCommandPrefixes: ["rtk", "rtk proxy"] },
+      original,
+    );
+    const reset = deriveMessagesTimelineRowsWithState(input, updated);
+    expect(original.rows.find((row) => row.kind === "work")).toMatchObject({
+      displayLabel: entry.command,
+    });
+    expect(updated.rows.find((row) => row.kind === "work")).toMatchObject({
+      displayLabel: "git status",
+    });
+    expect(reset.rows.find((row) => row.kind === "work")).toMatchObject({
+      displayLabel: entry.command,
+    });
   });
 });

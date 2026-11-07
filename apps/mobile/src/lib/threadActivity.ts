@@ -54,7 +54,13 @@ import type {
   ScheduledTaskId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { idleCompactionOf, isCompactionCommandMessage, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  idleCompactionOf,
+  isCompactionCommandMessage,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   classifyToolActivity,
   collectToolFilePaths,
@@ -255,13 +261,20 @@ function compactWorkEntryText(value: string): string {
   return truncate(value.replace(/\s+/gu, " "), WORK_LOG_LABEL_MAX_LENGTH);
 }
 
-export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
+export function workEntryRowLabel(
+  entry: WorkLogPresentationEntry,
+  expanded = false,
+  ignoredCommandPrefixes: ReadonlyArray<string> = [],
+): string {
   if (entry.itemType === "fork") return entry.label;
   if (expanded && entry.itemType === "reasoning")
     return entry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought";
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation) return presentation.displayName;
-  if (entry.command?.trim()) return compactWorkEntryText(commandDisplayText(entry.command));
+  if (entry.command?.trim())
+    return compactWorkEntryText(
+      commandDisplayText(entry.command, expanded ? [] : ignoredCommandPrefixes),
+    );
   const action = toolGroupAction(entry);
   const isToolRead = action === "read" && entry.itemType === "dynamic_tool";
   if (action === "code-search" || action === "search") {
@@ -321,6 +334,7 @@ const presentedActivityGroupsCache = new WeakMap<
     readonly activeRunId: RunId | null;
     readonly isWorking: boolean;
     readonly activeTail: boolean;
+    readonly ignoredCommandPrefixes: ReadonlyArray<string>;
     readonly rows: ReadonlyArray<ThreadFeedEntry>;
   }
 >();
@@ -854,7 +868,11 @@ function toFeedActivity(
   };
 }
 
-function singleToolCallLabel(activity: ThreadFeedActivity, expanded: boolean): string {
+function singleToolCallLabel(
+  activity: ThreadFeedActivity,
+  expanded: boolean,
+  ignoredCommandPrefixes: ReadonlyArray<string>,
+): string {
   if (activity.workEntry.itemType === "reasoning")
     return expanded
       ? "Thought"
@@ -862,7 +880,14 @@ function singleToolCallLabel(activity: ThreadFeedActivity, expanded: boolean): s
   const presentation = resolveWorkEntryToolPresentation(activity.workEntry, "completed");
   if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();
-  return command ? truncate(command, WORK_LOG_LABEL_MAX_LENGTH) : activity.summary;
+  return command
+    ? truncate(
+        ignoredCommandPrefixes.length > 0
+          ? commandDisplayText(command, ignoredCommandPrefixes)
+          : command,
+        WORK_LOG_LABEL_MAX_LENGTH,
+      )
+    : activity.summary;
 }
 
 function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
@@ -1334,6 +1359,7 @@ function presentationRestart(
     !latestRunsEqual(previous.latestRun, latestRun) ||
     previous.activeWorkStartedAt !== activeWorkStartedAt ||
     previous.runlessWorkActive !== runlessWorkActive ||
+    previous.display.ignoredCommandPrefixes !== display.ignoredCommandPrefixes ||
     previous.display.toolCallVisibility !== display.toolCallVisibility ||
     previous.display.revealedMessageId !== display.revealedMessageId ||
     !setsEqual(previous.expandedRunIds, expandedRunIds) ||
@@ -1482,6 +1508,7 @@ function liveAnswerPreview(feed: ReadonlyArray<ThreadFeedEntry>): string | null 
 }
 
 export interface ThreadFeedDisplay {
+  readonly ignoredCommandPrefixes?: ReadonlyArray<string>;
   readonly toolCallVisibility: ToolCallVisibility;
   readonly revealedMessageId: MessageId | null;
 }
@@ -1529,7 +1556,11 @@ export function deriveThreadFeedPresentation(
     Exclude<ThreadFeedEntry, { readonly type: "run-fold" | "work-toggle" | "thinking" }>
   > = [];
   const retainedFeedIndices: number[] = [];
-  const { toolCallVisibility, revealedMessageId } = display;
+  const {
+    toolCallVisibility,
+    revealedMessageId,
+    ignoredCommandPrefixes = DEFAULT_CLIENT_SETTINGS.ignoredCommandPrefixes,
+  } = display;
   const isWorking = activeWorkStartedAt !== null && latestRun?.status !== "preparing";
   const activeRunId = unsettledRunId(latestRun);
   const zen = toolCallVisibility === "zen";
@@ -1676,6 +1707,7 @@ export function deriveThreadFeedPresentation(
         activeRunId,
         isWorking,
         isActiveTailGroup,
+        ignoredCommandPrefixes,
       );
     }
   }
@@ -1823,6 +1855,7 @@ function appendPresentedFeedEntry(
   activeRunId: RunId | null,
   isWorking: boolean,
   activeTail: boolean,
+  ignoredCommandPrefixes: ReadonlyArray<string>,
 ): void {
   if (entry.type !== "activity-group") {
     result.push(entry);
@@ -1844,13 +1877,22 @@ function appendPresentedFeedEntry(
     cached.activeRunId !== activeRunId ||
     cached.isWorking !== isWorking ||
     cached.activeTail !== activeTail ||
+    cached.ignoredCommandPrefixes !== ignoredCommandPrefixes ||
     cached.rows.some(
       (row) => row.type === "work-toggle" && expandedWorkGroupIds.has(row.groupId) !== row.expanded,
     )
   ) {
     const rows: ThreadFeedEntry[] = [];
-    appendActivityGroupRows(rows, entry, expandedWorkGroupIds, activeRunId, isWorking, activeTail);
-    cached = { activeRunId, isWorking, activeTail, rows };
+    appendActivityGroupRows(
+      rows,
+      entry,
+      expandedWorkGroupIds,
+      activeRunId,
+      isWorking,
+      activeTail,
+      ignoredCommandPrefixes,
+    );
+    cached = { activeRunId, isWorking, activeTail, ignoredCommandPrefixes, rows };
     presentedActivityGroupsCache.set(entry, cached);
   }
   for (const row of cached.rows) {
@@ -1865,6 +1907,7 @@ function appendActivityGroupRows(
   activeRunId: RunId | null,
   isWorking: boolean,
   activeTail: boolean,
+  ignoredCommandPrefixes: ReadonlyArray<string>,
 ): void {
   const groupAnchorIdByActivityId = new Map<string, string>();
   let groupAnchorId: string | null = null;
@@ -1898,6 +1941,7 @@ function appendActivityGroupRows(
       activeRunId,
       isWorking,
       activeTail && isTrailingRun,
+      ignoredCommandPrefixes,
     );
     groupableRun = [];
   };
@@ -1929,6 +1973,7 @@ function appendToolGroupRows(
   activeRunId: RunId | null,
   isWorking: boolean,
   activeTail: boolean,
+  ignoredCommandPrefixes: ReadonlyArray<string>,
 ): void {
   const expanded = expandedWorkGroupIds.has(groupId);
   const latestActiveActivity = activities.findLast(
@@ -1955,11 +2000,11 @@ function appendToolGroupRows(
       ? latestActivity.lifecycleStatus === "inProgress"
         ? "Thinking"
         : "Thought"
-      : liveToolActivitySummary(latestActivity, live)
+      : liveToolActivitySummary(latestActivity, live, ignoredCommandPrefixes)
     : singleActivity !== null &&
         singleActivity.toolLike &&
         toolGroupAction(singleActivity.workEntry) !== "edit"
-      ? singleToolCallLabel(singleActivity, expanded)
+      ? singleToolCallLabel(singleActivity, expanded, ignoredCommandPrefixes)
       : singleActivity !== null && !singleActivity.toolLike
         ? singleActivity.workEntry.label
         : groupSummary.summary;
@@ -2044,7 +2089,11 @@ function appendToolGroupRows(
   });
 }
 
-function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boolean): string {
+function liveToolActivitySummary(
+  activity: ThreadFeedActivity,
+  presentTense: boolean,
+  ignoredCommandPrefixes: ReadonlyArray<string>,
+): string {
   const status = liveActivityToolStatus(activity.lifecycleStatus, presentTense);
   if (activity.workEntry.itemType === "reasoning") {
     return compactWorkEntryText(
@@ -2058,7 +2107,7 @@ function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boo
   if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();
   if (command) {
-    const program = commandProgramName(command);
+    const program = commandProgramName(command, ignoredCommandPrefixes);
     const verb =
       status === "inProgress"
         ? "Running"

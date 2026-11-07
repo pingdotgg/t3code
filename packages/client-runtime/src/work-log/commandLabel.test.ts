@@ -1,6 +1,101 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { commandDisplayText, commandProgramName } from "./commandLabel.ts";
+import {
+  commandDisplayText,
+  commandProgramName,
+  parseIgnoredCommandPrefixes,
+} from "./commandLabel.ts";
+
+describe("ignored command prefixes", () => {
+  const prefixes = ["rtk", "rtk proxy", "wrapper"];
+
+  it.each([
+    ["rtk git status", "git", "git status"],
+    ["rtk proxy git status", "git", "git status"],
+    ['wrapper rtk git diff -- "file name.ts"', "git", 'git diff -- "file name.ts"'],
+    ["/usr/local/bin/rtk git status", "git", "git status"],
+    ['"/Applications/My Tools/rtk" git status', "git", "git status"],
+    [".\\rtk git status", "git", "git status"],
+    ["CI=1 env -u DEBUG sudo -u root rtk git status", "git", "git status"],
+    ["/bin/zsh -lc 'rtk git status'", "git", "git status"],
+    ["rtk git status && git diff", "git", "git status && git diff"],
+    ['& "C:\\Tools\\rtk" git status', "git", "git status"],
+    ["rtk \\\n git status", "git", "git status"],
+  ])("unwraps configured prefixes in %s", (command, program, preview) => {
+    expect(commandProgramName(command, prefixes)).toBe(program);
+    expect(commandDisplayText(command, prefixes)).toBe(preview);
+  });
+
+  it.each([
+    "command rtk git status",
+    "cd repo && rtk git status",
+    "sh -c 'rtk git status' && npm test",
+    "bash -c 'rtk git status' && npm test",
+    "bash -c 'rtk git status'; npm test",
+    "bash -c 'rtk git status' && git status",
+    "sh -c 'rtk git status' git status",
+    "timeout 10 rtk git status; npm test",
+  ])("preserves shell boundaries and other commands in %s", (command) => {
+    expect(commandProgramName(command, prefixes)).toBe("git");
+    expect(commandDisplayText(command, prefixes)).toBe(command);
+  });
+
+  it.each([
+    ["rtk git status; npm test", "git status; npm test"],
+    ["rtk git status  ;  npm test", "git status  ;  npm test"],
+    ["rtk git status&&npm test", "git status&&npm test"],
+    ["rtk git status\nnpm test", "git status\nnpm test"],
+    ["wrapper rtk git status; npm test", "git status; npm test"],
+    ["rtk sh -c 'rtk git status' && npm test", "sh -c 'rtk git status' && npm test"],
+    ["rtk cat <<EOF\nhello\nEOF\nnpm test", "cat <<EOF\nhello\nEOF\nnpm test"],
+  ])("retains the original command suffix when removing prefixes in %s", (command, preview) => {
+    expect(commandDisplayText(command, prefixes)).toBe(preview);
+  });
+
+  it.each([
+    "rtk",
+    "rtk --version",
+    "rtk proxy",
+    "rtk rtk --help",
+    "rtk git 'unterminated",
+    "rtk $(choose-command)",
+    `${"rtk ".repeat(12)}git status`,
+  ])("keeps the original command when unwrapping is uncertain: %s", (command) => {
+    expect(commandProgramName(command, prefixes)).toBe(commandProgramName(command));
+    expect(commandDisplayText(command, prefixes)).toBe(commandDisplayText(command));
+  });
+
+  it.each(["rtk-extra git status", "git log --grep=rtk", "echo 'rtk git status'"])(
+    "only matches complete leading command tokens in %s",
+    (command) => {
+      expect(commandProgramName(command, prefixes)).toBe(commandProgramName(command));
+      expect(commandDisplayText(command, prefixes)).toBe(commandDisplayText(command));
+    },
+  );
+
+  it("keeps wrappers visible by default and supports prefixes that include flags", () => {
+    expect(commandProgramName("rtk git status")).toBe("rtk");
+    expect(commandDisplayText("rtk git status")).toBe("rtk git status");
+    expect(commandProgramName("wrapper --quiet git status", ["wrapper --quiet"])).toBe("git");
+    expect(commandDisplayText("wrapper --quiet git status", ["wrapper --quiet"])).toBe(
+      "git status",
+    );
+  });
+
+  it("normalizes one prefix per line without duplicates", () => {
+    expect(parseIgnoredCommandPrefixes(" rtk \r\n\nrtk proxy\nrtk\n ")).toEqual([
+      "rtk",
+      "rtk proxy",
+    ]);
+  });
+
+  it("only treats a nested multiword prefix as ignored when every token matches", () => {
+    const prefixes = ["rtk", "git status"];
+    expect(commandProgramName("rtk git diff", prefixes)).toBe("git");
+    expect(commandDisplayText("rtk git diff", prefixes)).toBe("git diff");
+    expect(commandDisplayText("rtk git status", prefixes)).toBe("rtk git status");
+  });
+});
 
 describe("commandProgramName", () => {
   it.each([

@@ -97,7 +97,10 @@ function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
   );
 }
 
-function singleToolCallLabel(entry: WorkLogEntry): string {
+function singleToolCallLabel(
+  entry: WorkLogEntry,
+  ignoredCommandPrefixes: ReadonlyArray<string> = [],
+): string {
   if (entry.itemType === "reasoning") return entry.detail?.trim().replace(/\s+/g, " ") || "Thought";
   const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed");
   if (toolPresentation) return toolPresentation.displayName;
@@ -106,7 +109,7 @@ function singleToolCallLabel(entry: WorkLogEntry): string {
     item?.type === "dynamic_tool" ? dynamicToolTitle(item.toolName, item.input, item.title) : null;
   if (title) return title;
   if (entry.itemType === "web_search") return entry.toolTitle ?? "Web search";
-  return workEntryDisplayLabel(entry, undefined);
+  return workEntryDisplayLabel(entry, undefined, ignoredCommandPrefixes);
 }
 
 function workEntryToolDataRecord(entry: WorkLogEntry): Record<string, unknown> | undefined {
@@ -134,7 +137,11 @@ function workEntryReadPaths(entry: WorkLogEntry, workspaceRoot: string | undefin
   );
 }
 
-export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string | undefined) {
+export function workEntryDisplayLabel(
+  entry: WorkLogEntry,
+  workspaceRoot: string | undefined,
+  ignoredCommandPrefixes: ReadonlyArray<string> = [],
+) {
   if (entry.itemType === "system_notice") return entry.label;
   if (entry.itemType === "reasoning" || entry.tone === "thinking") {
     const thought = entry.detail?.trim().replace(/\s+/g, " ");
@@ -142,7 +149,7 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
   }
   const toolPresentation = resolveWorkEntryToolPresentation(entry);
   if (toolPresentation) return toolPresentation.displayName;
-  if (entry.command?.trim()) return commandDisplayText(entry.command);
+  if (entry.command?.trim()) return commandDisplayText(entry.command, ignoredCommandPrefixes);
   const action = toolGroupAction(entry);
   if (action === "code-search" || action === "search") {
     const searchLabel =
@@ -238,6 +245,7 @@ export function liveWorkEntryLabel(
   entry: WorkLogEntry,
   workspaceRoot: string | undefined,
   active: boolean,
+  ignoredCommandPrefixes: ReadonlyArray<string> = [],
 ) {
   const status = liveActivityToolStatus(entry.toolLifecycleStatus, active);
   if (entry.itemType === "reasoning") {
@@ -263,9 +271,9 @@ export function liveWorkEntryLabel(
             : status === "stopped"
               ? "Stopped"
               : "Ran";
-    return `${verb} ${commandProgramName(command) ?? "command"}`;
+    return `${verb} ${commandProgramName(command, ignoredCommandPrefixes) ?? "command"}`;
   }
-  return workEntryDisplayLabel(entry, workspaceRoot);
+  return workEntryDisplayLabel(entry, workspaceRoot, ignoredCommandPrefixes);
 }
 
 export function workEntryIsVisibleInGroup(
@@ -1500,6 +1508,7 @@ function deriveTimelineTurnFolds(
 }
 
 export function deriveMessagesTimelineRows(input: {
+  ignoredCommandPrefixes?: ReadonlyArray<string>;
   timelineEntries: ReadonlyArray<TimelineEntry>;
   pendingApprovalRequestIds?: ReadonlySet<RuntimeRequestId>;
   latestRun?: TimelineLatestRun | null;
@@ -2007,7 +2016,7 @@ export function deriveMessagesTimelineRows(input: {
             displayLabel:
               toolGroupAction(singleEntry) === "edit"
                 ? summarizeToolGroup(visibleGroupedEntries).summary
-                : singleToolCallLabel(singleEntry),
+                : singleToolCallLabel(singleEntry, input.ignoredCommandPrefixes),
           });
         } else {
           const groupId = workGroupId(timelineEntry.id);
