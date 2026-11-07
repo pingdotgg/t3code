@@ -1,4 +1,16 @@
 import {
+  addPreparingComposerImages,
+  removePreparingComposerImages,
+} from "./chat/preparingComposerImages";
+import { pendingDraftWork } from "./chat/pendingDraftWork";
+import {
+  composerTargetKey,
+  useComposerDraftStore,
+  type ComposerThreadDraftState,
+} from "../composerDraftStore";
+import {
+  composerDraftUserContentSignature,
+  composerDraftChangedDuringPreparation,
   boundAttachmentIds,
   buildExpiredTerminalContextToastCopy,
   mergeDirectPreviewAnnotation,
@@ -14,6 +26,7 @@ import { deriveProviderInstanceEntries } from "../providerInstances";
 import { ensureInlineContextReferences } from "../lib/composerContextReferences";
 import { terminalContextReference } from "../lib/composerContextRecords";
 import {
+  ComposerContextId,
   CommandId,
   EnvironmentId,
   MessageId,
@@ -1270,5 +1283,182 @@ describe("deriveAvailableRevertTurnCounts", () => {
   it("offers nothing without a provider session to rewind", () => {
     expect(deriveAvailableRevertTurnCounts(projection({ providerSessionId: null })).size).toBe(0);
     expect(deriveAvailableRevertTurnCounts(null).size).toBe(0);
+  });
+});
+describe("composerDraftUserContentSignature", () => {
+  const target = {
+    environmentId: EnvironmentId.make("send-preparation"),
+    threadId: ThreadId.make("draft"),
+  };
+  const empty: ComposerThreadDraftState = {
+    prompt: "Send this",
+    images: [],
+    files: [],
+    nonPersistedImageIds: [],
+    persistedAttachments: [],
+    terminalContexts: [],
+    previewAnnotations: [],
+    reviewComments: [],
+    threadContexts: [],
+    environmentContexts: [],
+    modelSelectionByProvider: {},
+    activeProvider: null,
+    runtimeMode: null,
+    interactionMode: null,
+  };
+
+  it("detects prompt edits but accepts upload metadata writes", () => {
+    const store = useComposerDraftStore.getState();
+    try {
+      store.setPrompt(target, "Send this");
+      store.addFiles(target, [
+        {
+          type: "file",
+          id: "report",
+          name: "report.txt",
+          mimeType: "text/plain",
+          sizeBytes: 3,
+          file: new File(["abc"], "report.txt"),
+        },
+      ]);
+      const before = composerDraftUserContentSignature(store.getComposerDraft(target));
+      store.setFileUpload(target, "report", target.environmentId, "server-upload");
+      expect(composerDraftUserContentSignature(store.getComposerDraft(target))).toBe(before);
+      const key = composerTargetKey(target);
+      addPreparingComposerImages(key, [
+        { id: "compressing", name: "image.png", file: new File(["image"], "image.png") },
+      ]);
+      try {
+        expect(composerDraftChangedDuringPreparation(target, before)).toBe(true);
+        expect(
+          composerDraftChangedDuringPreparation(
+            { ...target, threadId: ThreadId.make("other") },
+            composerDraftUserContentSignature(null),
+          ),
+        ).toBe(false);
+      } finally {
+        removePreparingComposerImages(key, new Set(["compressing"]));
+      }
+      pendingDraftWork.begin(key);
+      try {
+        expect(composerDraftChangedDuringPreparation(target, before)).toBe(true);
+      } finally {
+        pendingDraftWork.end(key);
+      }
+      expect(composerDraftChangedDuringPreparation(target, before)).toBe(false);
+      store.setPrompt(target, "Send this plus my new edit");
+      expect(composerDraftUserContentSignature(store.getComposerDraft(target))).not.toBe(before);
+      expect(store.getComposerDraft(target)?.prompt).toBe("Send this plus my new edit");
+    } finally {
+      store.clearComposerContent(target);
+    }
+  });
+
+  it("detects attachments and same-ID context edits", () => {
+    const draft: ComposerThreadDraftState = {
+      ...empty,
+      terminalContexts: [
+        {
+          id: "terminal",
+          threadId: target.threadId,
+          terminalId: "default",
+          terminalLabel: "Terminal",
+          lineStart: 1,
+          lineEnd: 1,
+          text: "before",
+          createdAt: "2026-10-20T00:00:00Z",
+        },
+      ],
+      reviewComments: [
+        {
+          id: "review",
+          sectionId: "diff",
+          sectionTitle: "Changes",
+          filePath: "file.ts",
+          startIndex: 0,
+          endIndex: 0,
+          rangeLabel: "L1",
+          text: "before",
+          diff: "+line",
+        },
+      ],
+      previewAnnotations: [
+        {
+          id: "preview",
+          pageUrl: "http://localhost/",
+          pageTitle: null,
+          comment: "before",
+          elements: [],
+          regions: [],
+          strokes: [],
+          styleChanges: [],
+          screenshot: null,
+          createdAt: "2026-10-20T00:00:00Z",
+        },
+      ],
+      threadContexts: [
+        {
+          version: 1,
+          kind: "thread",
+          contextId: ComposerContextId.make("thread-context"),
+          label: "Thread",
+          environmentId: target.environmentId,
+          threadId: target.threadId,
+          title: "before",
+        },
+      ],
+      environmentContexts: [
+        {
+          version: 1,
+          kind: "environment",
+          contextId: ComposerContextId.make("environment-context"),
+          label: "Before",
+          environmentId: target.environmentId,
+        },
+      ],
+    };
+    const before = composerDraftUserContentSignature(draft);
+    const edits: ComposerThreadDraftState[] = [
+      {
+        ...draft,
+        files: [
+          {
+            type: "file",
+            id: "new",
+            name: "new.txt",
+            mimeType: "text/plain",
+            sizeBytes: 1,
+            file: null,
+          },
+        ],
+      },
+      {
+        ...draft,
+        terminalContexts: draft.terminalContexts.map((entry) => ({ ...entry, text: "after" })),
+      },
+      {
+        ...draft,
+        reviewComments: draft.reviewComments.map((entry) => ({ ...entry, text: "after" })),
+      },
+      {
+        ...draft,
+        previewAnnotations: draft.previewAnnotations.map((entry) => ({
+          ...entry,
+          comment: "after",
+        })),
+      },
+      {
+        ...draft,
+        threadContexts: draft.threadContexts.map((entry) => ({ ...entry, title: "after" })),
+      },
+      {
+        ...draft,
+        environmentContexts: draft.environmentContexts.map((entry) => ({
+          ...entry,
+          label: "After",
+        })),
+      },
+    ];
+    for (const edited of edits) expect(composerDraftUserContentSignature(edited)).not.toBe(before);
   });
 });
