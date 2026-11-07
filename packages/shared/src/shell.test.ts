@@ -116,6 +116,37 @@ describe("readEnvironmentFromLoginShell", () => {
     },
   );
 
+  it.runIf(NodeFS.existsSync("/bin/bash"))(
+    "ignores probe markers a bash DEBUG trap echoes into the terminal title",
+    () => {
+      const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-bash-env-"));
+      try {
+        const shellPath = `${NodePath.join(home, "bin")}:/usr/bin:/bin`;
+        NodeFS.writeFileSync(
+          NodePath.join(home, ".bash_profile"),
+          [
+            `export PATH=${JSON.stringify(shellPath)}`,
+            `trap 'echo -ne "\\033]0;\${BASH_COMMAND}\\007"' DEBUG`,
+          ].join("\n"),
+        );
+
+        expect(
+          readEnvironmentFromLoginShell(
+            "/bin/bash",
+            ["XDG_DATA_HOME", "PATH"],
+            (file, args, options) =>
+              NodeChildProcess.execFileSync(file, args, {
+                ...options,
+                env: { HOME: home, PATH: "/usr/bin:/bin", TERM: "dumb" },
+              }),
+          ),
+        ).toEqual({ PATH: shellPath });
+      } finally {
+        NodeFS.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("extracts multiple environment variables from a login shell command", () => {
     const execFile = vi.fn<
       (
