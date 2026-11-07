@@ -644,6 +644,7 @@ export interface AcpAdapterV2Options {
     /** `cancelAfterPromptStarts`: Stop is holding `session/cancel` until the prompt starts. */
     readonly onCancelHeld?: () => Effect.Effect<void>;
     readonly afterPromptWireSettled?: () => Effect.Effect<void>;
+    readonly afterPromptFailureHandled?: () => Effect.Effect<void>;
     readonly afterPromptSettledWithBackgroundWork?: () => Effect.Effect<void>;
     readonly onNativeResponseLifecycle?: (event: {
       readonly generation?: number;
@@ -1406,6 +1407,7 @@ interface ActiveAcpTurn {
   promptSettled: boolean;
   promptSettledStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
   workAccepted: boolean;
+  readonly promptAcceptanceText: string | null;
   readonly promptWireSettled: Deferred.Deferred<void, never>;
   /** Completed once `session/prompt` is the runtime's active prompt. */
   readonly promptDispatched: Deferred.Deferred<void, never>;
@@ -5071,9 +5073,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             )
               return;
             yield* Ref.update(wakeBuffer, (buffer) => [...buffer, notification]);
-            if (update.sessionUpdate === "state_update" && update.state === "idle") {
-              yield* offerContinuationRun(notification.sessionId);
-            }
             return;
           }
           if (
@@ -6838,7 +6837,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     if (canFollowForegroundEvents) followsAgentWorkState = true;
                     const context = yield* Ref.get(activeTurn);
                     if (notice.state === "accepted") {
-                      const text = context?.input.message.text;
+                      const text = context?.promptAcceptanceText;
                       if (
                         context !== null &&
                         text &&
@@ -6858,6 +6857,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                             ? []
                             : buffer,
                         );
+                        if ((yield* Ref.get(wakeBuffer)).length > 0) {
+                          yield* offerContinuationRun(notice.sessionId);
+                        }
                       }
                       return;
                     }
@@ -8299,6 +8301,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptSettled: false,
               promptSettledStatus: null,
               workAccepted: false,
+              promptAcceptanceText:
+                promptParts?.prompt.find((block) => block.type === "text")?.text ?? null,
               promptWireSettled,
               promptDispatched,
               promptSentAt: null,
@@ -8626,7 +8630,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       ),
                     );
                   }),
-                ).pipe(Effect.asVoid),
+                ).pipe(
+                  Effect.asVoid,
+                  Effect.ensuring(options.testHooks?.afterPromptFailureHandled?.() ?? Effect.void),
+                ),
               ),
               Effect.ensuring(
                 Effect.sync(() => {
