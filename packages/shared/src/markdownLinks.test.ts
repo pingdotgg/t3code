@@ -1,5 +1,6 @@
 import { workspaceRelativeFilePath } from "./path.ts";
 import { describe, expect, it } from "vite-plus/test";
+import { serializeComposerFileLink } from "./composerTrigger.ts";
 import { extractMarkdownLinkHrefs, resolveMarkdownFileLinkTarget } from "./markdownLinks.ts";
 
 import {
@@ -28,6 +29,12 @@ describe("inlineCodeFilePathCandidate", () => {
     ["share/man/ls.1", "share/man/ls.1"],
     ["src/main.ts/", null],
     ["./patches/", "./patches/"],
+    // regression: #30757 an agent's shortened path is not a file
+    ["/tmp/claude-1000/...", null],
+    ["/tmp/claude-1000/...:12", null],
+    ["/tmp/.../scratchpad/notes.md", null],
+    ["~/projects/…/notes.md", null],
+    ["src/.../main.ts", null],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
@@ -38,20 +45,51 @@ describe("parseMarkdownFileLink", () => {
     ["C:%5Crepo%5Cimage.png", "C:\\repo\\image.png"],
     ["</D:/Programme/t3code/ChatMarkdown.tsx:1>", "D:/Programme/t3code/ChatMarkdown.tsx"],
     ["file://localhost/home/me/notes.md", "/home/me/notes.md"],
+    ["app/routes/posts.$postId.tsx", "app/routes/posts.$postId.tsx"],
+    ["src/routes/+page.svelte", "src/routes/+page.svelte"],
+    ["app/(marketing)/page.tsx:12", "app/(marketing)/page.tsx"],
+    ["pages/posts/%5Bid%5D.tsx", "pages/posts/[id].tsx"],
+    ["+page.svelte", "+page.svelte"],
+    ["[id].tsx", "[id].tsx"],
   ])("recognizes %s as a file", (href, path) => {
     expect(parseMarkdownFileLink(href)?.path).toBe(path);
   });
 
-  it.each(["https://example.com/docs", "/chat/settings#L3", "TODO:12", "patches"])(
-    "does not treat %s as a file",
-    (href) => {
-      expect(parseMarkdownFileLink(href)).toBeNull();
-    },
-  );
+  it.each([
+    "app/routes/posts.$postId.tsx",
+    "pages/posts/[id].tsx",
+    "docs/My File (draft).md",
+    "@scope/package.json",
+    "$postId.tsx",
+  ])("reads back the composer's link to %s", (path) => {
+    const destination = /\]\((.*)\)$/.exec(serializeComposerFileLink(path))?.[1];
+    expect(parseMarkdownFileLink(destination ?? "")?.path).toBe(path);
+  });
+
+  it.each([
+    "https://example.com/docs",
+    "/chat/settings#L3",
+    "TODO:12",
+    "patches",
+    "me@example.com",
+    "foo(bar)",
+    "$HOME",
+  ])("does not treat %s as a file", (href) => {
+    expect(parseMarkdownFileLink(href)).toBeNull();
+  });
 
   it("recognizes a relative folder that ends in a slash", () => {
     expect(parseMarkdownFileLink("patches/")).toEqual({ path: "patches/" });
     expect(parseMarkdownFileLink("docs/My%20Folder/")?.path).toBe("docs/My Folder/");
+  });
+
+  // regression: #16096 relative links with non-ASCII names open as files
+  it("recognizes relative paths with non-ASCII names", () => {
+    expect(parseMarkdownFileLink("pastexam/線性代數/exam_易志偉.pdf")?.path).toBe(
+      "pastexam/線性代數/exam_易志偉.pdf",
+    );
+    expect(parseMarkdownFileLink("Résumé%20final.pdf")?.path).toBe("Résumé final.pdf");
+    expect(parseMarkdownFileLink("資料.備份")?.path).toBe("資料.備份");
   });
 
   it("accepts conventional extensionless names with or without a position", () => {

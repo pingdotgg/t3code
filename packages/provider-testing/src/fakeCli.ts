@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off - synchronous fixture writer used from plain and Effect tests alike.
+// @effect-diagnostics nodeBuiltinImport:off globalJsonInEffect:off - synchronous fixture writer used from plain and Effect tests alike.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -54,21 +54,10 @@ export function writeFakeCli(options: FakeCliOptions): string {
 export function execScriptSource(options: {
   readonly scriptPath: string;
   readonly expectedArgs?: ReadonlyArray<string>;
-  readonly argvLogPath?: string;
-  readonly delayMs?: number;
 }): string {
   return [
-    'import { appendFileSync } from "node:fs";',
     'import { pathToFileURL } from "node:url";',
     "const args = process.argv.slice(2);",
-    ...(options.argvLogPath === undefined
-      ? []
-      : [
-          `appendFileSync(${JSON.stringify(options.argvLogPath)}, args.join(${JSON.stringify("\t")}) + ${JSON.stringify("\n")});`,
-        ]),
-    ...(options.delayMs === undefined
-      ? []
-      : [`Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${options.delayMs});`]),
     `const expected = ${JSON.stringify(options.expectedArgs ?? [])};`,
     "if (expected.some((value, index) => args[index] !== value)) {",
     '  process.stderr.write(`unexpected args: ${args.join(" ")}\\n`);',

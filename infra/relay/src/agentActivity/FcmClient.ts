@@ -61,7 +61,7 @@ export class FcmClient extends Context.Service<
   }
 >()("t3code-relay/agentActivity/FcmClient") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const config = yield* RelayConfiguration.RelayConfiguration;
   const signer = yield* FcmAssertionSigner.FcmAssertionSigner;
   const client = yield* HttpClient.HttpClient;

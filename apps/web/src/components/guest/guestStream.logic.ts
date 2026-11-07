@@ -1,5 +1,6 @@
 import {
   GUEST_ATTACHMENT_ROUTE,
+  GUEST_MEDIA_ROUTE,
   GUEST_MESSAGE_MAX_ATTACHMENT_BYTES,
   GUEST_MESSAGE_MAX_ATTACHMENTS,
   GUEST_SHARE_PARAM,
@@ -8,11 +9,13 @@ import {
   type GuestMessageId,
   type GuestShareView,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   type ThreadGuestMessage,
 } from "@t3tools/contracts";
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
+import { mergeOlderHistoryIntoProjection } from "@t3tools/client-runtime/state/thread-history-merge";
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -24,6 +27,8 @@ export interface GuestStreamState {
   readonly sequence: number;
   /** Set while the snapshot is a window of a longer history, as the owner's client tracks it. */
   readonly partial: { readonly latestLocalTurnOrdinal: number | null } | null;
+  /** Where "Load earlier turns" continues, or null once the whole thread is loaded. */
+  readonly historyCursor: string | null;
   readonly ended: boolean;
   /**
    * Messages this page saw waiting that have no transcript row yet. Survives reconnects, and a
@@ -37,6 +42,7 @@ export const initialGuestStreamState: GuestStreamState = {
   projection: null,
   sequence: 0,
   partial: null,
+  historyCursor: null,
   ended: false,
   awaitingRowIds: new Set(),
 };
@@ -75,16 +81,32 @@ const decodeGuestStreamEvent = Schema.decodeUnknownOption(
 export const parseGuestStreamEvent = (data: string): GuestStreamEvent | null =>
   Option.getOrNull(decodeGuestStreamEvent(data));
 
+/** A page of older turns, fetched from `cursor`. */
+export type GuestHistoryPageLoaded = {
+  readonly type: "history-page";
+  readonly cursor: string;
+  readonly page: OrchestrationV2ThreadHistoryPage;
+};
+
 /**
  * Applies the owner's thread stream the way the owner's client does (see
  * EnvironmentThreadState in client-runtime): a snapshot replaces the thread, and later events
- * pass through the same projection reducer, once each.
+ * pass through the same projection reducer, once each. Older pages merge in front, as they do in
+ * the owner's view.
  */
 export function applyGuestStreamEvent(
   state: GuestStreamState,
-  event: GuestStreamEvent,
+  event: GuestStreamEvent | GuestHistoryPageLoaded,
 ): GuestStreamState {
   switch (event.type) {
+    case "history-page":
+      // A snapshot since the request replaced the thread and its cursor.
+      if (state.projection === null || state.historyCursor !== event.cursor) return state;
+      return {
+        ...state,
+        projection: mergeOlderHistoryIntoProjection(state.projection, event.page.items),
+        historyCursor: event.page.hasMoreHistory ? event.page.nextCursor : null,
+      };
     case "view":
       // The page follows the share it names; a view of another one means the link changed.
       if (state.view !== null && state.view.shareId !== event.view.shareId) {
@@ -107,6 +129,7 @@ export function applyGuestStreamEvent(
             item.hasMoreHistory === true || (item.historyCursor ?? null) !== null
               ? { latestLocalTurnOrdinal: item.latestLocalTurnOrdinal ?? null }
               : null,
+          historyCursor: item.hasMoreHistory === true ? (item.historyCursor ?? null) : null,
           awaitingRowIds: withoutPlaced(
             state.awaitingRowIds,
             projection.visibleTurnItems.map((row) => row.item),
@@ -183,6 +206,10 @@ export function inviteShareId(credential: string): string | null {
 /** Where the guest page loads a file of the shared thread or of a waiting message. */
 export const guestAttachmentUrl = (shareId: string, attachmentId: string) =>
   `${GUEST_ATTACHMENT_ROUTE}?${GUEST_SHARE_PARAM}=${encodeURIComponent(shareId)}&id=${encodeURIComponent(attachmentId)}`;
+
+/** Where the guest page loads an image file on the host that an agent message embeds. */
+export const guestMediaUrl = (shareId: string, path: string) =>
+  `${GUEST_MEDIA_ROUTE}?${GUEST_SHARE_PARAM}=${encodeURIComponent(shareId)}&path=${encodeURIComponent(path)}`;
 
 /**
  * Why these files cannot go with one message, or null. The server checks the same limits; this

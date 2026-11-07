@@ -1,5 +1,4 @@
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -19,8 +18,8 @@ export function createRelayEnvironmentDiscoveryAtoms<R, E>(
     { initialValue: RelayEnvironmentDiscovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE },
   );
   const stateValueAtom = Atom.make((get) =>
-    Option.getOrElse(
-      AsyncResult.value(get(stateAtom)),
+    AsyncResult.getOrElse(
+      get(stateAtom),
       () => RelayEnvironmentDiscovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
     ),
   ).pipe(Atom.withLabel("relay-environment-discovery-value"));
@@ -33,9 +32,19 @@ export function createRelayEnvironmentDiscoveryAtoms<R, E>(
       ),
   });
 
+  const refreshAfterMutation = createRuntimeCommand(runtime, {
+    label: "relay-environment-discovery:refresh-after-mutation",
+    concurrency: { mode: "serial", key: () => "refresh-after-mutation" },
+    execute: (_input: void) =>
+      RelayEnvironmentDiscovery.RelayEnvironmentDiscovery.pipe(
+        Effect.flatMap((discovery) => discovery.refresh),
+      ),
+  });
+
   return {
     stateAtom,
     stateValueAtom,
     refresh,
+    refreshAfterMutation,
   };
 }
