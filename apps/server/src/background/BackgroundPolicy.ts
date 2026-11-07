@@ -12,8 +12,10 @@ import {
   resolveServerBackgroundActivitySettings,
   type ResolvedBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -34,6 +36,8 @@ export class BackgroundPolicy extends Context.Service<
       rpcClientId: RpcClientId,
     ) => Effect.Effect<void>;
     readonly snapshot: Effect.Effect<BackgroundPolicySnapshot>;
+    /** Time since recent client interaction, measured on the monotonic clock. */
+    readonly sinceLastClientInteraction: Effect.Effect<Duration.Duration>;
     readonly shouldRunScopeWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
     readonly shouldRunOpportunisticWork: Effect.Effect<boolean>;
   }
@@ -196,6 +200,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
   const hostPowerMonitor = yield* HostPowerMonitor.HostPowerMonitor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const leasesRef = yield* Ref.make(new Map<string, ClientActivityLease>());
+  const lastClientInteractionNanosRef = yield* Ref.make(yield* Clock.monotonicTimeNanos);
 
   const backgroundActivitySettings = serverSettings.getSettings.pipe(
     Effect.map(resolveServerBackgroundActivitySettings),
@@ -233,6 +238,9 @@ export const make = Effect.fn("background.policy.make")(function* () {
       expiresAt,
     };
     yield* Ref.update(leasesRef, (leases) => upsertClientActivityLease(leases, lease, now));
+    if (input.recentlyInteracted) {
+      yield* Ref.set(lastClientInteractionNanosRef, yield* Clock.monotonicTimeNanos);
+    }
   });
 
   const removeRpcClient: BackgroundPolicy["Service"]["removeRpcClient"] = (
@@ -289,6 +297,11 @@ export const make = Effect.fn("background.policy.make")(function* () {
     reportClientActivity,
     removeRpcClient,
     snapshot,
+    sinceLastClientInteraction: Effect.zipWith(
+      Clock.monotonicTimeNanos,
+      Ref.get(lastClientInteractionNanosRef),
+      (now, last) => Duration.nanos(now - last),
+    ),
     shouldRunScopeWork,
     shouldRunOpportunisticWork,
   });

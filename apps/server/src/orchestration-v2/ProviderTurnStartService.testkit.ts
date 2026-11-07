@@ -19,14 +19,19 @@ import * as Layer from "effect/Layer";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProviderInstallLock from "../provider/ProviderInstallLock.ts";
 
-export const layer = Layer.merge(
+export const layer = Layer.mergeAll(
   Layer.mock(GitWorkflow.GitWorkflowService)({
     pruneWorktrees: () => Effect.void,
     createWorktree: () => Effect.succeed({} as never),
   }),
   Layer.mock(ProjectService.ProjectService)({
     getById: () => Effect.succeedNone,
+  }),
+  Layer.mock(ProviderInstallLock.ProviderInstallLock)({
+    untilIdle: Effect.void,
+    observe: Effect.succeed(() => Effect.succeed(false)),
   }),
 );
 

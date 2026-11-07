@@ -1,14 +1,26 @@
 import { EnvironmentId, WS_METHODS } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   onRetainedMobileBackgroundScopesChange,
+  mobileInteraction,
   observeMobileBackgroundActivitySubscription,
   retainedMobileBackgroundScopes,
 } from "./background-activity-scopes";
 
 describe("mobile background activity", () => {
+  it.effect("expires interaction recency while the app remains foregrounded", () =>
+    Effect.gen(function* () {
+      yield* mobileInteraction.record;
+      expect(yield* mobileInteraction.isRecent).toBe(true);
+      yield* TestClock.adjust("2 minutes");
+      expect(yield* mobileInteraction.isRecent).toBe(false);
+      yield* mobileInteraction.record;
+      expect(yield* mobileInteraction.isRecent).toBe(true);
+    }),
+  );
   it.effect("retains VCS demand only while the mobile subscription is active", () =>
     Effect.gen(function* () {
       const environmentId = EnvironmentId.make("mobile-environment");

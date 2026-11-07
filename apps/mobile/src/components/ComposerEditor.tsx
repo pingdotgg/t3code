@@ -4,6 +4,8 @@ import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useEffect, useState } from "react";
+import * as Effect from "effect/Effect";
+import { mobileInteraction } from "../connection/background-activity-scopes";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
@@ -67,6 +69,7 @@ export function ComposerEditor({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the attachment file leases held for native text undo when the history is replaced or unmounts
   useEffect(() => () => contextHistory.dispose(), [contextHistory]);
   const changeText = (text: string) => {
+    Effect.runSync(mobileInteraction.record);
     const restored = contextHistory.restore(
       text,
       draftKey ? getComposerDraftSnapshot(draftKey) : draft,

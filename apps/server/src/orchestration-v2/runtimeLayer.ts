@@ -45,6 +45,7 @@ import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryService.ts";
 import * as ProviderSwitchService from "./ProviderSwitchService.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
+import * as ProviderInstallLock from "../provider/ProviderInstallLock.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
@@ -169,6 +170,7 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
       layerEventSink,
       IdAllocator.layer,
       ProjectionStore.layer,
+      ProviderInstallLock.layer,
       layerProviderSessionManagerProvided,
       layerProviderAuthServiceProvided,
       layerRunExecutionServiceProvided,
