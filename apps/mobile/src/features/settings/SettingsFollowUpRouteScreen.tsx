@@ -9,6 +9,7 @@ import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { ShareTemplatesSection } from "./ShareTemplatesSection";
 
 const FOLLOW_UP_OPTIONS: ReadonlyArray<{
   readonly behavior: FollowUpBehavior;
@@ -61,6 +62,7 @@ export function SettingsFollowUpRouteScreen() {
         Long-press the send button to use the other option for a single message. With a hardware
         keyboard, hold Command while sending.
       </Text>
+      <ShareTemplatesSection />
     </ScrollView>
   );
 
