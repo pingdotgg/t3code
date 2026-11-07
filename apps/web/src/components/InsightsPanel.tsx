@@ -118,7 +118,10 @@ function costByRunId(
   items: readonly UsagePriceItemResult[] | null,
   rows: readonly ThreadTurnTokenUsageRow[],
 ): ReadonlyMap<string, TurnCostEstimate> {
-  const usageByRun = new Map(rows.map((row) => [row.runId, row.usage] as const));
+  const usageByRun = new Map<string, ThreadTurnTokenUsageRow["usage"]>();
+  for (const row of rows) {
+    usageByRun.set(row.runId, row.usage);
+  }
   const map = new Map<string, TurnCostEstimate>();
   for (const item of items ?? []) {
     map.set(item.id, {
