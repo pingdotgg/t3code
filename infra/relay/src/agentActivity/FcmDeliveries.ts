@@ -280,6 +280,7 @@ const make = Effect.gen(function* () {
           deliveryUser?.notificationsEnabled &&
           state?.phase === job.state.phase &&
           state.updatedAt === job.state.updatedAt &&
+          !target.last_hidden_environment_ids?.includes(state.environmentId) &&
           !isExpiredAgentActivityState(state, now.epochMilliseconds)
         ) {
           alert = androidAlertForState(state, preferences.value, now.epochMilliseconds);
