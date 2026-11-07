@@ -11,9 +11,13 @@ import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { fileChipShareSource, type FileChipTarget } from "./fileChipMenu";
 
 export function useFileChipShare(
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
+  environmentId: EnvironmentId | null,
+  threadId: ThreadId | null,
   sourceIdentifier: string,
+  options?: {
+    readonly draftCwd?: string | null;
+    readonly failureTitle?: string;
+  },
 ) {
   const connection = usePreparedConnection(environmentId);
   const httpBaseUrl = Option.isSome(connection) ? connection.value.httpBaseUrl : null;
@@ -25,12 +29,12 @@ export function useFileChipShare(
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the in-flight file share download when the component unmounts
   useEffect(() => () => requestRef.current?.abort(), []);
 
-  return (target: FileChipTarget) => {
-    const source = fileChipShareSource(target, threadId);
-    if (!source || requestRef.current) return;
+  return (target: FileChipTarget): Promise<void> => {
+    const source = fileChipShareSource(target, threadId, options?.draftCwd ?? null);
+    if (!source || requestRef.current || environmentId === null) return Promise.resolve();
     const request = new AbortController();
     requestRef.current = request;
-    void (async () => {
+    return (async () => {
       if (httpBaseUrl === null) throw new Error("Reconnect to the environment and try again.");
       const result = await createUrl({ environmentId, input: { resource: source.resource } });
       if (request.signal.aborted) return;
@@ -47,7 +51,7 @@ export function useFileChipShare(
       .catch((error: unknown) => {
         if (!request.signal.aborted) {
           Dialog.alert(
-            "Could not share file",
+            options?.failureTitle ?? "Could not share file",
             error instanceof Error ? error.message : "Try again.",
           );
         }

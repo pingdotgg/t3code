@@ -372,7 +372,8 @@ playback controls. Large text files show a limited preview; save the file to rea
 On web and desktop, files open beside the conversation with the same controls as a workspace
 file: a header row with the view toggle, **Copy contents** and **Save file**. On mobile, documents
 open in the same file screen as workspace files; its menu holds **Copy contents**, **Save or
-share** and **Open in file viewer**. Pictures, videos and PDFs keep their native viewers, and
+share** and **Open in file viewer**. **Save or share** works for any file, including source files
+and formats the device cannot preview. Pictures, videos and PDFs keep their native viewers, and
 other document formats such as Word or Pages open in the device's own viewer when it has one.
 If nothing on the device can show a format, save or share it to open it elsewhere. A ZIP up to
 50 MB opens as a folder list on every surface; on mobile, select a file inside it to preview,
