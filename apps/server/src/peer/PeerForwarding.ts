@@ -28,9 +28,9 @@ import * as PeerMcpClient from "./PeerMcpClient.ts";
 /**
  * A peer's `/mcp` holds a wait open for its whole timeout without sending
  * anything, and T3 Connect's edge drops a request idle for about 100 s, so a
- * forwarded wait goes out in pieces no longer than this.
+ * forwarded wait goes out in pieces no longer than this, which also fits a peer's 45 s wait cap.
  */
-export const FORWARDED_WAIT_CHUNK_MS = 50_000;
+export const FORWARDED_WAIT_CHUNK_MS = 45_000;
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
 
