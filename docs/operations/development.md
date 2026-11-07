@@ -270,9 +270,8 @@ options.
 
 ### Prepared server bytecode
 
-Native macOS and Windows desktop artifact builds generate server bytecode with the packaged
-Electron executable, after ASAR creation and before signing. Linux builds skip generation until
-native packaging and relocated AppImage reuse have been validated. macOS x64 builds on ARM64
+Native macOS, Windows and Linux desktop artifact builds generate server bytecode with the packaged
+Electron executable, after ASAR creation and before signing. macOS x64 builds on ARM64
 hosts run the packaged x64 Electron under Rosetta to generate the cache. Other cross-platform and
 cross-architecture builds skip generation explicitly. CLI, SEA and WSL runtimes keep their
 existing behavior; only desktop backend imports covered by generation receive prepared bytecode.
@@ -296,6 +295,10 @@ keeps the explicit flush needed when Windows force-kills the backend.
 
 Build on Linux because the browser-secret helper links against the host's libsecret. Install
 Rust, C/C++ build tools, libsecret development headers, pkg-config, and ImageMagick.
+Matching-architecture builds also execute packaged Electron in Node mode to prepare the server
+bytecode cache. Headless builders still need Electron's shared libraries, including GTK, NSS, GBM,
+and ALSA; install the distribution equivalents of the Linux DEB runtime dependencies in
+[`build-desktop-artifact.ts`](../../scripts/build-desktop-artifact.ts).
 
 Ubuntu and Debian:
 

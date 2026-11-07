@@ -6,7 +6,7 @@ import * as NodeURL from "node:url";
 import { expect, it } from "vite-plus/test";
 import { cacheKey, seedPreparedCache } from "./server-compile-cache.ts";
 
-it.each(["x64", "arm64"])("skips prepared bytecode generation on Linux %s", async (arch) => {
+it.each(["x64", "arm64"])("skips cross-architecture Linux %s bytecode", async (arch) => {
   const { spawnSync } = await import("node:child_process");
   const hook = NodeURL.fileURLToPath(
     new URL("../prepare-server-compile-cache.cjs", import.meta.url),
@@ -16,22 +16,33 @@ it.each(["x64", "arm64"])("skips prepared bytecode generation on Linux %s", asyn
     [
       "-e",
       `Object.defineProperty(process, "platform", { value: "linux" });
-       Object.defineProperty(process, "arch", { value: ${JSON.stringify(arch)} });
+       Object.defineProperty(process, "arch", { value: ${JSON.stringify(arch === "x64" ? "arm64" : "x64")} });
        require(${JSON.stringify(hook)})({ electronPlatformName: "linux", arch: ${arch === "x64" ? 1 : 3} }).catch(error => { console.error(error); process.exitCode = 1; });`,
     ],
     { encoding: "utf8" },
   );
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toContain("Skipping unsupported target linux");
+  expect(result.stdout).toContain(`Skipping unexecutable target linux/${arch}`);
 });
 
-it("prepares macOS x64 cache on an ARM64 build host", async () => {
+it.each([
+  { name: "macOS x64 on an ARM64 build host", platform: "darwin", hostArch: "arm64", arch: 1 },
+  { name: "native Linux x64", platform: "linux", hostArch: "x64", arch: 1 },
+  { name: "native Linux arm64", platform: "linux", hostArch: "arm64", arch: 3 },
+])("prepares $name cache", async ({ platform, hostArch, arch }) => {
   const { spawnSync } = await import("node:child_process");
   const root = NodeFS.realpathSync(
-    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-rosetta-cache-")),
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-hook-cache-")),
   );
   try {
-    const resources = NodePath.join(root, "Fixture.app", "Contents", "Resources");
+    const resources =
+      platform === "darwin"
+        ? NodePath.join(root, "Fixture.app", "Contents", "Resources")
+        : NodePath.join(root, "resources");
+    const executable =
+      platform === "darwin"
+        ? NodePath.join(root, "Fixture.app", "Contents", "MacOS", "Fixture")
+        : NodePath.join(root, "fixture");
     const archive = NodePath.join(resources, "app.asar");
     const dist = NodePath.join(archive, "apps/server/dist");
     const helper = NodePath.join(archive, "apps/desktop/dist-electron/serverCompileCache.cjs");
@@ -45,7 +56,7 @@ it("prepares macOS x64 cache on an ARM64 build host", async () => {
     const hook = NodeURL.fileURLToPath(
       new URL("../prepare-server-compile-cache.cjs", import.meta.url),
     );
-    // The fixture uses Node for generation; the hook still sees an ARM64 macOS build host.
+    // The fixture uses Node for generation; only the hook sees the simulated build host.
     const result = spawnSync(
       process.execPath,
       [
@@ -54,14 +65,14 @@ it("prepares macOS x64 cache on an ARM64 build host", async () => {
       const childProcess = require("node:child_process");
       const spawn = childProcess.spawnSync;
       childProcess.spawnSync = (executable, args, options) => {
-        require("node:assert/strict").equal(executable, ${JSON.stringify(NodePath.join(root, "Fixture.app", "Contents", "MacOS", "Fixture"))});
+        require("node:assert/strict").equal(executable, ${JSON.stringify(executable)});
         return spawn(process.execPath, args, options);
       };
-      Object.defineProperty(process, "platform", { value: "darwin" });
-      Object.defineProperty(process, "arch", { value: "arm64" });
+      Object.defineProperty(process, "platform", { value: ${JSON.stringify(platform)} });
+      Object.defineProperty(process, "arch", { value: ${JSON.stringify(hostArch)} });
       require(${JSON.stringify(hook)})({
-        appOutDir: ${JSON.stringify(root)}, electronPlatformName: "darwin", arch: 1,
-        packager: { appInfo: { productFilename: "Fixture" } }
+        appOutDir: ${JSON.stringify(root)}, electronPlatformName: ${JSON.stringify(platform)}, arch: ${arch},
+        packager: { appInfo: { productFilename: "Fixture" }, executableName: "fixture" }
       }).catch(error => { console.error(error); process.exitCode = 1; });
     `,
       ],
