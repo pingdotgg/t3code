@@ -391,18 +391,18 @@ describe("attachment max edge", () => {
     return { decode, canvases, encodes, fillRect };
   }
 
-  it("scales a large PNG screenshot under the byte cap to 2000px and keeps it a PNG", async () => {
+  it("scales a large PNG screenshot under the byte cap to 3000px and keeps it a PNG", async () => {
     const { decode, canvases, encodes, fillRect } = stubDecoder({ width: 3024, height: 1964 });
     const original = image(pngHeader(3024, 1964), "shot.png", "image/png");
 
     const result = await prepareImageForAttachment(original, 10 * 1024 * 1024);
 
     expect(decode).toHaveBeenCalledExactlyOnceWith(original, { imageOrientation: "from-image" });
-    expect(canvases).toEqual([{ width: 2000, height: 1299 }]);
+    expect(canvases).toEqual([{ width: 3000, height: 1948 }]);
     expect(encodes.map(({ type }) => type)).toEqual(["image/png"]);
     expect(fillRect).not.toHaveBeenCalled();
     expect(result.ok && result.recompressed).toBe(true);
-    expect(result.ok && result.imageSize).toEqual({ width: 2000, height: 1299 });
+    expect(result.ok && result.imageSize).toEqual({ width: 3000, height: 1948 });
     expect(result.ok && result.file.name).toBe("shot.png");
     expect(result.ok && result.file.type).toBe("image/png");
   });
@@ -413,14 +413,17 @@ describe("attachment max edge", () => {
 
     const result = await prepareImageForAttachment(original, 10 * 1024 * 1024);
 
-    expect(canvases).toEqual([{ width: 1500, height: 2000 }]);
+    expect(canvases).toEqual([{ width: 2250, height: 3000 }]);
     expect(encodes).toEqual([{ type: "image/jpeg", quality: 0.92 }]);
     expect(result.ok && result.file.type).toBe("image/jpeg");
-    expect(result.ok && result.imageSize).toEqual({ width: 1500, height: 2000 });
+    expect(result.ok && result.imageSize).toEqual({ width: 2250, height: 3000 });
   });
 
   it.each([
     { label: "a 2000px PNG", header: pngHeader(2000, 1200), type: "image/png" },
+    { label: "a 2560px PNG", header: pngHeader(2560, 1440), type: "image/png" },
+    { label: "a 3000px PNG", header: pngHeader(1800, 3000), type: "image/png" },
+    { label: "a 3000px JPEG", header: jpegHeader(3000, 2250), type: "image/jpeg" },
     {
       label: "a 3000px GIF",
       header: [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0xb8, 0x0b, 0x10, 0x04],
@@ -447,16 +450,16 @@ describe("snapshot coordinates after compression", () => {
     accessibility: {
       format: "element-tree",
       coordinateSpace: "captured-image",
-      imageSize: { width: 2560, height: 1600 },
+      imageSize: { width: 3840, height: 2400 },
       truncated: false,
       root: {
         role: "window",
-        bounds: { x: 0, y: 0, width: 2560, height: 1600 },
+        bounds: { x: 0, y: 0, width: 3840, height: 2400 },
         children: [
           {
             role: "button",
             name: "Save",
-            bounds: { x: 2400, y: 1400, width: 100, height: 100 },
+            bounds: { x: 3600, y: 2100, width: 150, height: 150 },
             children: [],
           },
           { role: "static_text", name: "Untitled", bounds: null, children: [] },
@@ -471,7 +474,7 @@ describe("snapshot coordinates after compression", () => {
       stubCanvasPipeline(() => 100);
       vi.stubGlobal(
         "createImageBitmap",
-        vi.fn(async () => ({ width: 2560, height: 1600, close: vi.fn() })),
+        vi.fn(async () => ({ width: 3840, height: 2400, close: vi.fn() })),
       );
       const original = makeFile(2000);
       const compressed =
@@ -489,7 +492,7 @@ describe("snapshot coordinates after compression", () => {
               sizeBytes: compressed.file.size,
               dataUrl: `data:${compressed.file.type};base64,${Buffer.from(await compressed.file.arrayBuffer()).toString("base64")}`,
             };
-      expect(image.imageSize).toEqual({ width: 2000, height: 1250 });
+      expect(image.imageSize).toEqual({ width: 3000, height: 1875 });
       const resized = resizeSnapShotSource(source, image.imageSize);
       const [restored] = hydrateImagesFromPersisted([
         {
@@ -502,13 +505,13 @@ describe("snapshot coordinates after compression", () => {
         },
       ]);
       expect(restored?.source?.accessibility).toMatchObject({
-        imageSize: { width: 2000, height: 1250 },
+        imageSize: { width: 3000, height: 1875 },
         root: {
-          bounds: { x: 0, y: 0, width: 2000, height: 1250 },
-          children: [{ bounds: { x: 1875, y: 1094, width: 78, height: 78 } }, { bounds: null }],
+          bounds: { x: 0, y: 0, width: 3000, height: 1875 },
+          children: [{ bounds: { x: 2813, y: 1641, width: 117, height: 117 } }, { bounds: null }],
         },
       });
-      expect(source.accessibility).toMatchObject({ imageSize: { width: 2560, height: 1600 } });
+      expect(source.accessibility).toMatchObject({ imageSize: { width: 3840, height: 2400 } });
     },
   );
 });
