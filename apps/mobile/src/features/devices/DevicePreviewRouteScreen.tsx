@@ -10,9 +10,10 @@ import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navi
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { useEffect, useRef, useState, type RefObject } from "react";
+import * as Device from "expo-device";
 import * as Haptics from "expo-haptics";
 import { Accelerometer } from "expo-sensors";
-import { Pressable, StatusBar, View } from "react-native";
+import { Platform, Pressable, StatusBar, View } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -41,6 +42,7 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { DeviceStreamWebView, type DeviceStreamRef } from "./DeviceStreamWebView";
 import {
   selectedThreadDevicePreview,
+  thisAndroidPhone,
   threadDevicePreviews,
   type ThreadDevicePreview,
 } from "./threadDevicePreviews";
@@ -48,6 +50,13 @@ import { createShakeDetector } from "./shakeDetector";
 
 const OVERLAY_ENTERING = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
 const OVERLAY_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
+const THIS_PHONE = thisAndroidPhone({
+  platform: Platform.OS,
+  isDevice: Device.isDevice,
+  manufacturer: Device.manufacturer,
+  modelName: Device.modelName,
+  osVersion: Device.osVersion,
+});
 
 type DevicePreviewRouteScreenProps = StaticScreenProps<{
   readonly environmentId: string;
@@ -102,12 +111,15 @@ export function DevicePreviewScreen({
   const [streamAttempt, setStreamAttempt] = useState(0);
   const [shuttingDown, setShuttingDown] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [mirrorConfirmedKey, setMirrorConfirmedKey] = useState<string | null>(null);
   const retryHost = useAtomCommand(deviceEnvironment.list);
   const shutdown = useAtomCommand(deviceEnvironment.shutdown, { reportFailure: false });
   const streamRef = useRef<DeviceStreamRef>(null);
   const state = useEnvironmentQuery(deviceEnvironment.state({ environmentId, input: {} }));
-  const previews = threadDevicePreviews(state.data, threadId);
+  const previews = threadDevicePreviews(state.data, threadId, THIS_PHONE);
   const preview = selectedThreadDevicePreview(previews, selectedKey);
+  // Streaming the phone into itself feeds video and input back into the app and freezes it.
+  const mirrorBlocked = preview?.isThisPhone === true && mirrorConfirmedKey !== preview.key;
   const onInputConnected = async (connected: boolean) => {
     setInputConnected(connected);
     if (!connected) setControlsVisible(true);
@@ -283,7 +295,7 @@ export function DevicePreviewScreen({
           <View style={{ height: barOverlap }} />
         </>
       ) : null}
-      {preview && focused && foreground ? (
+      {preview && focused && foreground && !mirrorBlocked ? (
         <OpenDevicePreview
           key={`${preview.key}:${streamAttempt}`}
           environmentId={environmentId}
@@ -293,7 +305,20 @@ export function DevicePreviewScreen({
         />
       ) : (
         <View className="flex-1 items-center justify-center gap-4 px-6">
-          {state.error ? (
+          {preview && mirrorBlocked ? (
+            <>
+              <AppText className="text-center text-sm text-foreground-muted">
+                This is the phone you're using. Mirroring it here makes the app stop responding.
+              </AppText>
+              <View className="items-center">
+                <Button
+                  label="Mirror anyway"
+                  tone="secondary"
+                  onPress={() => setMirrorConfirmedKey(preview.key)}
+                />
+              </View>
+            </>
+          ) : state.error ? (
             <>
               <AppText selectable className="text-center text-sm text-foreground-muted">
                 {state.error}

@@ -407,7 +407,7 @@ function ThreadDetailBody(
   const deviceState = useEnvironmentQuery(
     deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
   );
-  const devicePreviews = threadDevicePreviews(deviceState.data, props.selectedThread.id);
+  const devicePreviews = threadDevicePreviews(deviceState.data, props.selectedThread.id, null);
   const openDevicePreview = () => {
     Keyboard.dismiss();
     if (
