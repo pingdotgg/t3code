@@ -12520,7 +12520,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   )(function* (input: {
     readonly parentProjection: Pick<
       OrchestrationV2ThreadProjection,
-      "thread" | "messages" | "runs" | "subagents" | "providerTurns"
+      "thread" | "messages" | "runs" | "subagents"
     >;
     readonly parentRun: OrchestrationV2Run | undefined;
     readonly task: OrchestrationV2Subagent;
@@ -12745,7 +12745,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const parent = yield* projectionStore.getThreadRecords(
           childControls.thread.lineage.parentThreadId,
           ["nodes", "turnItems"],
-          { turnItemTypes: ["subagent"] },
+          { turnItemTypes: ["subagent"], nodeIds: [task.id], turnItemNodeIds: [task.id] },
         );
         const now = yield* DateTime.now;
         const scope = {
@@ -12812,19 +12812,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         turnItems: childResult.turnItems,
       };
       const parentThreadId = childControls.thread.lineage.parentThreadId;
+      // Only this child's tasks, node, card and result transfers; a delivery is read by id below.
       const parentProjection = yield* projectionStore.getThreadRecords(
         parentThreadId,
-        [
-          "runs",
-          "messages",
-          "subagents",
-          "providerThreads",
-          "providerTurns",
-          "nodes",
-          "turnItems",
-          "contextTransfers",
-        ],
-        { turnItemTypes: ["subagent"], messageRoles: ["user"] },
+        ["runs", "subagents", "nodes", "turnItems", "contextTransfers"],
+        {
+          turnItemTypes: ["subagent"],
+          subagentChildThreadIds: [childThreadId],
+          contextTransferSourceThreadIds: [childThreadId],
+          nodeIds: [options.task.id],
+          turnItemNodeIds: [options.task.id],
+        },
       );
       const task = parentProjection.subagents.find(
         (candidate) =>
@@ -12865,8 +12863,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
       };
+      // The delivery this result may join: its message, and the other tasks its text names.
+      const delivery = parentRun?.delegatedCompletion?.delivery ?? null;
+      const deliveryRecords =
+        delivery === null
+          ? { messages: [], subagents: [] }
+          : yield* projectionStore.getThreadRecords(parentThreadId, ["messages", "subagents"], {
+              messageRoles: ["user"],
+              messageIds: [delivery.messageId],
+              subagentIds: delivery.taskIds.filter(
+                (taskId) =>
+                  !parentProjection.subagents.some((candidate) => candidate.id === taskId),
+              ),
+            });
       const completionPlan = yield* planDelegatedCompletionDelivery({
-        parentProjection,
+        parentProjection: {
+          ...parentProjection,
+          messages: deliveryRecords.messages,
+          subagents: [...parentProjection.subagents, ...deliveryRecords.subagents],
+        },
         parentRun,
         task,
         updatedTask,
@@ -13015,10 +13030,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     )
       return;
     const progress = delegatedTaskProgress(childControls);
-    const parent = yield* projectionStore.getThreadRecords(parentThreadId, [
-      "subagents",
-      "contextTransfers",
-    ]);
+    // Only this child's tasks and result transfers matter; a parent can hold thousands.
+    const parent = yield* projectionStore.getThreadRecords(
+      parentThreadId,
+      ["subagents", "contextTransfers"],
+      { subagentChildThreadIds: [childThreadId], contextTransferSourceThreadIds: [childThreadId] },
+    );
     for (const task of parent.subagents) {
       if (
         task.origin !== "app_owned" ||

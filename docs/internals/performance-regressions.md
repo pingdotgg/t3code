@@ -105,6 +105,9 @@ queries use a covering thread/run index for item counts and a partial index for 
 background items, including idle items. Latest user-message reads use an index ordered by update
 time.
 
+Finalizing a delegated task reads only that child's tasks, and the transfers it sent to the
+parent, from the parent, through the subagent child-thread and transfer source-thread indexes.
+
 Command palette results keep live VCS and linked pull-request queries leased to the visible
 viewport, including a small overscan region. Cached badges remain available while leases are
 released. Local Git status reads skip divergence calculations; callers that need ahead/behind
