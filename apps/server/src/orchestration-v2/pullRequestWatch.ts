@@ -51,6 +51,7 @@ export function evaluatePullRequestWatch(
   let passedChecks = headMoved ? [] : watch.passedChecks;
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
   if (detail.checks.length > 0) {
+    const owedBefore = owedChecks;
     const failed = detail.checks.filter(isFailedCheck);
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
     if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
@@ -85,6 +86,15 @@ export function evaluatePullRequestWatch(
     } else if (settled && owed.length > 0) {
       changes.push({ kind: "checks-passed", count: detail.checks.length, required: false });
       owedChecks = [];
+    }
+    // A failed gate never reports passed, so it owes one wake when the checks still running finish.
+    if (!passedNow && failed.length > 0) {
+      const pending = detail.checks.filter((check) => check.status === "pending");
+      if (pending.length === 0 && owedBefore.length > 0 && newlyFailed.length === 0) {
+        changes.push({ kind: "checks-failed", failed });
+      }
+      const owing = newlyFailed.length > 0 || owedBefore.length > 0;
+      owedChecks = owing ? pending.map((check) => check.name) : [];
     }
     passed = passedNow;
     passedChecks = passedNow ? gateNames : [];
