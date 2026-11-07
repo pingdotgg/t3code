@@ -237,4 +237,12 @@ describe("showContextMenuFallback", () => {
 
     await expect(selectionPromise).resolves.toBe("rename");
   });
+
+  it("shows an item's detail beside its label and reads both to screen readers", () => {
+    void showContextMenuFallback([{ id: "snooze:hour", label: "In 1 hour", detail: "3:00 PM" }]);
+    const button = findButton("In 1 hour");
+
+    expect(button?.textContent).toBe("In 1 hour3:00 PM");
+    expect(button?.attributes.get("aria-label")).toBe("In 1 hour, 3:00 PM");
+  });
 });
