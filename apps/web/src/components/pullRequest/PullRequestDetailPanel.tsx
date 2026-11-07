@@ -39,8 +39,6 @@ import {
 } from "@t3tools/contracts";
 import { ArrowLeftIcon, FileDiffIcon, PanelRightIcon } from "lucide-react";
 import {
-  type AnimationEvent,
-  type CSSProperties,
   lazy,
   Suspense,
   useEffect,
@@ -51,7 +49,7 @@ import {
 } from "react";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { type PullRequestDetailTab, useRightPanelStore } from "~/rightPanelStore";
-import { useEnvironmentSettings } from "~/hooks/useSettings";
+import { useEnvironmentSettings, useScrollingWorkspacesEnabled } from "~/hooks/useSettings";
 import { usePanelAnimationSettings } from "~/panelAnimations";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -338,6 +336,7 @@ export function PullRequestDetailPanel({
     detail,
   } = usePullRequestDetail(environmentId, reference, matchingListEntry);
   const [selectedTab, setTab] = useState<PullRequestDetailTab>(initialTab);
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const reviewGuidesEnabled = useEnvironmentSettings(
     environmentId,
     (settings) => settings.reviewGuidesEnabled,
@@ -358,51 +357,10 @@ export function PullRequestDetailPanel({
     onTabChange?.(next);
   };
   const { active: tabMotionActive, durationMs: tabMotionMs } = usePanelAnimationSettings();
-  const [tabMotion, setTabMotion] = useState<{
-    readonly tab: PullRequestDetailTab;
-    readonly from: PullRequestDetailTab | null;
-    readonly direction: 1 | -1;
-  }>({ tab, from: null, direction: 1 });
-  if (tabMotion.tab !== tab) {
-    const order = (value: PullRequestDetailTab) => TABS.findIndex((item) => item.value === value);
-    setTabMotion({
-      tab,
-      from: tabMotion.tab,
-      direction: order(tab) >= order(tabMotion.tab) ? 1 : -1,
-    });
-  }
-  const endTabMotion = (event: AnimationEvent<HTMLElement>) => {
-    if (event.target !== event.currentTarget) return;
-    setTabMotion((current) => (current.from === null ? current : { ...current, from: null }));
-  };
-  // The tab being left stays on screen until its exit finishes; a new tab enters from the side it is on.
-  const tabPaneProps = (value: PullRequestDetailTab) => {
-    const motion =
-      !tabMotionActive || tabMotion.from === null
-        ? null
-        : value === tab
-          ? "in"
-          : value === tabMotion.from
-            ? "out"
-            : null;
-    return {
-      className: cn(
-        "absolute inset-0",
-        value !== tab && motion === null && "invisible",
-        motion === "out" && "pointer-events-none",
-      ),
-      "data-pr-tab-motion": motion ?? undefined,
-      inert: motion === "out" ? true : undefined,
-      style:
-        motion === null
-          ? undefined
-          : ({
-              "--pr-tab-direction": tabMotion.direction,
-              animationDuration: `${tabMotionMs}ms`,
-            } as CSSProperties),
-      onAnimationEnd: motion === null ? undefined : endTabMotion,
-    };
-  };
+  // Opened panes stay mounted and the others are hidden, so scroll positions survive a switch.
+  const tabPaneProps = (value: PullRequestDetailTab) => ({
+    className: cn("absolute inset-0", value !== tab && "invisible"),
+  });
   const [codeToolbarContainer, setCodeToolbarContainer] = useState<HTMLDivElement | null>(null);
   const [codeCommitScope, setCodeCommitScope] = useState<{
     readonly pullRequestKey: string;
@@ -1554,7 +1512,7 @@ export function PullRequestDetailPanel({
                   (typeof composerDraftTarget === "object" ? composerDraftTarget : null)
                 }
                 onOpenAsWorkspace={
-                  threadRef !== null && context !== "page"
+                  threadRef !== null && context !== "page" && scrollingWorkspaces
                     ? () => openPullRequestWorkspace(threadRef, reference.number)
                     : undefined
                 }
@@ -1760,9 +1718,7 @@ export function PullRequestDetailPanel({
         className={cn(
           "grid shrink-0",
           tab === "code" && detail ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
-          tabMotionActive && "transition-[grid-template-rows] ease-out",
         )}
-        style={tabMotionActive ? { transitionDuration: `${tabMotionMs}ms` } : undefined}
       >
         <div className="min-h-0 overflow-hidden" inert={tab !== "code" || !detail}>
           <div ref={setCodeToolbarContainer} className="flex px-4 pt-3 pb-2.5" />
