@@ -13,7 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { act, useLayoutEffect } from "react";
+import { act, useEffect, useLayoutEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 import type { ComposerDraft } from "../../state/use-composer-drafts";
@@ -211,8 +211,14 @@ function setup() {
   mocks.writeSettings.mockImplementation(write);
   mocks.writeText.mockImplementation((key, text) => write(key, { text }));
   let current: ReturnType<typeof useNewTaskFlow>;
-  function Probe() {
+  function Probe({ initialProject }: { initialProject?: EnvironmentProject }) {
     const value = useNewTaskFlow();
+    const appliedInitialProject = useRef(false);
+    useEffect(() => {
+      if (!initialProject || appliedInitialProject.current) return;
+      appliedInitialProject.current = true;
+      value.setProject(initialProject);
+    }, [initialProject, value]);
     useLayoutEffect(() => {
       current = value;
     });
@@ -243,12 +249,20 @@ function setup() {
     get current() {
       return current;
     },
-    async render(active: boolean) {
+    async render(
+      active: boolean,
+      options: { initialProject?: EnvironmentProject; routeDraftId?: string } = {},
+    ) {
       await act(async () =>
         root.render(
           <RegistryContext.Provider value={registry}>
-            <NewTaskFlowProvider active={active} flowKey="test-flow">
-              <Probe />
+            <NewTaskFlowProvider
+              key={options.routeDraftId ?? "test-flow"}
+              active={active}
+              flowKey={options.routeDraftId ?? "test-flow"}
+              routeDraftId={options.routeDraftId}
+            >
+              <Probe initialProject={options.initialProject} />
             </NewTaskFlowProvider>
           </RegistryContext.Provider>,
         ),
@@ -267,6 +281,24 @@ function setup() {
     },
   };
 }
+
+it("retains the project selected on mount when saving and reopening the draft", async () => {
+  using screen = setup();
+  const chosenProject = screen.projects[2]!;
+  await screen.render(true, { initialProject: chosenProject });
+  const draftKey = screen.current.draftKey!;
+  expect(screen.current.selectedProject).toEqual(chosenProject);
+  expect(screen.snapshot(draftKey).project).toEqual({
+    environmentId: chosenProject.environmentId,
+    projectId: chosenProject.id,
+  });
+  act(() => screen.current.setPrompt("Hello!"));
+  await screen.render(false);
+  await screen.render(true, { routeDraftId: draftKey });
+  expect(screen.current.draftKey).toBe(draftKey);
+  expect(screen.current.selectedProject).toEqual(chosenProject);
+  expect(screen.current.prompt).toBe("Hello!");
+});
 
 it("owns a status stream only while the draft is active, retaining draft choices on reopen", async () => {
   using screen = setup();

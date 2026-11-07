@@ -338,23 +338,22 @@ export function NewTaskFlowProvider(
   const selectedProjectDraftKey = selectedProject ? activeDraftKey : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- creates the persistent draft in the new-task flow store once a project is selected, before the composer mounts
   useEffect(() => {
-    // A route that names a draft binds that draft, or returns to the picker.
+    // Child effects may already have bound a draft since this render.
     if (
       props.active === false ||
       props.routeDraftId !== undefined ||
-      activeDraftKey !== null ||
+      readNewTaskFlowState(flowKey).draftKey !== null ||
       selectedProject === null
     ) {
       return;
     }
-    // Creates the persistent draft once the project selection is ready; the key must exist before the composer mounts.
     updateNewTaskFlowState(flowKey, {
       draftKey: createNewTaskDraft({
         environmentId: selectedProject.environmentId,
         projectId: selectedProject.id,
       }),
     });
-  }, [activeDraftKey, flowKey, selectedProject, props.active, props.routeDraftId]);
+  }, [flowKey, selectedProject, props.active, props.routeDraftId]);
   const activePendingKey =
     props.active === false
       ? null
