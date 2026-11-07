@@ -293,8 +293,25 @@ describe("change request media urls", () => {
     ["https://example.com/a.png", "https://example.com/a.png"],
     ["docs/a.png", "docs/a.png"],
   ])("resolves %s against the forge", (url, expected) => {
-    expect(resolveChangeRequestMediaUrl(url, "https://git.cafe/pingdotgg/t3code/pulls/31251")).toBe(
-      expected,
-    );
+    const changeRequest = {
+      provider: "gitcafe",
+      url: "https://git.cafe/pingdotgg/t3code/pulls/31251",
+    };
+    expect(resolveChangeRequestMediaUrl(url, changeRequest)).toBe(expected);
+  });
+
+  // regression: GitLab's project-relative `/uploads/<secret>/<name>` resolved against the origin
+  it.each([
+    [
+      `/uploads/${"0".repeat(32)}/shot.png`,
+      `https://gitlab.example.com/group/Sub/app/uploads/${"0".repeat(32)}/shot.png`,
+    ],
+    ["/-/project/42/uploads/x/a.png", "https://gitlab.example.com/-/project/42/uploads/x/a.png"],
+  ])("resolves GitLab's %s against the project", (url, expected) => {
+    const changeRequest = {
+      provider: "gitlab",
+      url: "https://gitlab.example.com/group/Sub/app/-/merge_requests/7",
+    };
+    expect(resolveChangeRequestMediaUrl(url, changeRequest)).toBe(expected);
   });
 });

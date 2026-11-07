@@ -43,7 +43,10 @@ const AutolinksContext = createContext<((text: string) => ReadonlyArray<Referenc
   null,
 );
 const LineBreaksContext = createContext(false);
-const ChangeRequestUrlContext = createContext<string | null>(null);
+const ChangeRequestContext = createContext<{
+  readonly provider: string;
+  readonly url: string;
+} | null>(null);
 
 export function PullRequestMarkdownRepository(props: {
   /** The change request the markdown belongs to, whose host decides what its text links. */
@@ -70,9 +73,11 @@ export function PullRequestMarkdownRepository(props: {
   return (
     <AutolinksContext value={autolinks}>
       <LineBreaksContext value={lineBreaks}>
-        <ChangeRequestUrlContext value={url ?? null}>
+        <ChangeRequestContext
+          value={provider === undefined || url === undefined ? null : { provider, url }}
+        >
           <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
-        </ChangeRequestUrlContext>
+        </ChangeRequestContext>
       </LineBreaksContext>
     </AutolinksContext>
   );
@@ -220,13 +225,13 @@ function PullRequestMarkdownContent(props: {
   const hostLineBreaks = useContext(LineBreaksContext);
   const autolinks = useContext(AutolinksContext);
   const mediaContext = useContext(PullRequestMediaContext);
-  const changeRequestUrl = useContext(ChangeRequestUrlContext);
+  const changeRequest = useContext(ChangeRequestContext);
   const resolveMediaUrl = (href: string) =>
-    changeRequestUrl ? resolveChangeRequestMediaUrl(href, changeRequestUrl) : href;
+    changeRequest ? resolveChangeRequestMediaUrl(href, changeRequest) : href;
   const markdown = linkReferenceAutolinks(props.markdown, autolinks);
   const openPullRequest = useOpenPullRequest();
   const openLink = (href: string) => {
-    void openPullRequest(href);
+    void openPullRequest(resolveMediaUrl(href));
   };
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
   const renderImage: MarkdownImageRenderer = (image) => (
