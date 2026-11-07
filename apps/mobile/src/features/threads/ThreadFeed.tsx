@@ -40,10 +40,8 @@ import {
   resolveUserMessageFileCards,
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
-import {
-  canForkProjectedAssistantItem,
-  latestQueuedUserMessageCreatedAt,
-} from "@t3tools/client-runtime/state/thread-workflows";
+import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
+import { answeredCardIds as readAnsweredCardIds } from "@t3tools/shared/quizCard";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -1668,8 +1666,7 @@ function renderFeedEntry(
     | "threadId"
     | "workspaceRoot"
   > & {
-    readonly latestUserMessageAt: string | null;
-    readonly latestQueuedUserMessageAt: string | null;
+    readonly answeredCardIds: ReadonlySet<string>;
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
@@ -1800,11 +1797,7 @@ function renderFeedEntry(
       <QuizCard
         quizCard={entry.quizCard}
         seed={entry.id}
-        answered={
-          (props.latestUserMessageAt !== null && props.latestUserMessageAt > entry.createdAt) ||
-          (props.latestQueuedUserMessageAt !== null &&
-            props.latestQueuedUserMessageAt > entry.createdAt)
-        }
+        answered={props.answeredCardIds.has(entry.id)}
         environmentId={props.environmentId}
         threadId={props.threadId}
       />
@@ -2697,8 +2690,6 @@ export const ThreadFeed = memo(function ThreadFeed({
   const threadProjection = Option.getOrNull(
     useEnvironmentThread(props.environmentId, props.threadId).data,
   );
-  const latestQueuedUserMessageAt =
-    threadProjection === null ? null : latestQueuedUserMessageCreatedAt(threadProjection);
   const guestShare = useThreadGuestShare(props.detailRef);
   const deviceType = useDeviceType();
   const duoColumns = useNativeWorkspaceColumnsSupported() && isDuoDevice(deviceType);
@@ -3360,14 +3351,10 @@ export const ThreadFeed = memo(function ThreadFeed({
     useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups, revealedMessageId),
     guestShare,
   );
-  const latestUserMessageAt = presentedFeed.reduce<string | null>(
-    (latest, entry) =>
-      entry.type === "message" &&
-      entry.message.role === "user" &&
-      (latest === null || entry.createdAt > latest)
-        ? entry.createdAt
-        : latest,
-    null,
+  // Queued answers are in the projection but not yet in the feed.
+  const answeredCardIds = readAnsweredCardIds(
+    threadProjection?.messages ??
+      presentedFeed.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])),
   );
   const jumpRunId =
     jumpReady &&
@@ -3806,8 +3793,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,
-            latestUserMessageAt,
-            latestQueuedUserMessageAt,
+            answeredCardIds,
             onUseArtifactTemplate: props.onUseArtifactTemplate,
             threadId: props.threadId,
             copiedRowId,

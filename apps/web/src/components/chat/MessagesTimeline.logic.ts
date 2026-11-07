@@ -1522,7 +1522,7 @@ export function deriveMessagesTimelineRows(input: {
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
-  latestQueuedUserMessageAt?: string | null;
+  answeredCardIds?: ReadonlySet<string>;
   /** Native subagent work has no app run; runless entries form the live response. */
   runlessWorkActive?: boolean;
   activeTurnStartedAt?: string | null;
@@ -1841,9 +1841,6 @@ export function deriveMessagesTimelineRows(input: {
     );
   };
 
-  const lastUserMessageIndex = timelineEntries.findLastIndex(
-    (entry) => entry.kind === "message" && entry.message.role === "user",
-  );
   for (let index = 0; index < timelineEntries.length; index += 1) {
     const timelineEntry = timelineEntries[index];
     if (!timelineEntry) {
@@ -2127,9 +2124,7 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     if (timelineEntry.kind === "quiz-card") {
-      const answered =
-        index < lastUserMessageIndex ||
-        (input.latestQueuedUserMessageAt ?? "") > timelineEntry.createdAt;
+      const answered = input.answeredCardIds?.has(timelineEntry.id) === true;
       nextRows.push({
         kind: "quiz-card",
         id: timelineEntry.id,
@@ -2479,6 +2474,7 @@ function replaceStreamingMessageRows(
     expandedAttemptIds: previousExpandedAttempts,
     expandedWorkGroupIds: previousExpandedGroups,
     pendingApprovalRequestIds: previousPendingApprovalRequestIds,
+    answeredCardIds: previousAnsweredCardIds,
     availableRevertTurnCounts: previousAvailableRevertTurnCounts,
     ...previousContext
   } = previous.input;
@@ -2490,6 +2486,7 @@ function replaceStreamingMessageRows(
     expandedAttemptIds,
     expandedWorkGroupIds,
     pendingApprovalRequestIds,
+    answeredCardIds,
     availableRevertTurnCounts,
     ...context
   } = input;
@@ -2502,6 +2499,7 @@ function replaceStreamingMessageRows(
     !shallow(previousExpandedAttempts, expandedAttemptIds) ||
     !shallow(previousExpandedGroups, expandedWorkGroupIds) ||
     !shallow(previousPendingApprovalRequestIds, pendingApprovalRequestIds) ||
+    !shallow(previousAnsweredCardIds, answeredCardIds) ||
     !shallow(previousAvailableRevertTurnCounts, availableRevertTurnCounts) ||
     !sameCheckpointSummaries(previousCheckpoints, turnDiffSummaries)
   ) {

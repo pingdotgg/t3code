@@ -42,7 +42,7 @@ describe("QuizCardTimelineCard", () => {
       .element(screen.getByRole("textbox", { name: "Explain your thinking" }))
       .toHaveValue("Because it follows.");
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
-    expect(onSendMessage).toHaveBeenCalledWith("Because it follows.");
+    expect(onSendMessage).toHaveBeenCalledWith("Because it follows.\n\n(card open-1)");
 
     const skip = vi.fn().mockResolvedValue(undefined);
     await using skipScreen = await render(
@@ -54,7 +54,7 @@ describe("QuizCardTimelineCard", () => {
       />,
     );
     await userEvent.click(skipScreen.getByRole("button", { name: "I don't know" }));
-    expect(skip).toHaveBeenCalledWith("I don't know.");
+    expect(skip).toHaveBeenCalledWith("I don't know.\n\n(card open-2)");
   });
 
   it("requires thinking after a multiple-choice pick", async () => {

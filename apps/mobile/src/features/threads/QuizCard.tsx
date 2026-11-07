@@ -1,4 +1,5 @@
 import {
+  cardAnswerMessage,
   quizAnswerMessage,
   shuffledQuizOptions,
   type QuizCard as QuizCardData,
@@ -36,12 +37,10 @@ export function QuizCard(props: {
     setSending(true);
     setError(null);
     const answer = selected === "__unknown__" ? null : selected;
-    const message = quizAnswerMessage({
-      answer,
-      correct: picked?.correct === true,
-      confidence,
-      thinking,
-    });
+    const message = cardAnswerMessage(
+      quizAnswerMessage({ answer, correct: picked?.correct === true, confidence, thinking }),
+      props.seed,
+    );
     try {
       await enqueueThreadOutboxMessage({
         environmentId: props.environmentId,
