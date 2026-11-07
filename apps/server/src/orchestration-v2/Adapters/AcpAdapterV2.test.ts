@@ -4028,8 +4028,8 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live.each(["termination", "active termination", "external termination", "rollback"] as const)(
-    "retires Copilot runtime tasks on %s",
+  it.live.each(["termination", "active termination", "unowned termination", "rollback"] as const)(
+    "handles Copilot runtime tasks on %s",
     (replacement) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -4040,7 +4040,7 @@ describe("AcpAdapterV2", () => {
         );
         const runtimeInputs: AcpAdapterV2RuntimeInput[] = [];
         let runtimeOrdinalSeen = 0;
-        const owned = replacement !== "external termination";
+        const owned = replacement !== "unowned termination";
         const activeTermination = replacement === "active termination" || !owned;
         let prompts = 0;
         const activePrompt = yield* Deferred.make<void>();
