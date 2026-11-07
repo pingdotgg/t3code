@@ -18,6 +18,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useAppActive } from "../../lib/appState";
 import { useDeadlinePassed } from "../../lib/clock";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { acquireSecretDeliveryPrivacy } from "../../lib/secretDeliveryPrivacy";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -26,8 +27,8 @@ const PRIVATE_SYMBOL: AppSymbolName = { ios: "checkmark.shield", android: "lock"
 
 /**
  * A secret an agent delivered. The value lives only in this card's reveal state and is
- * dropped on Hide, Delete, leaving the screen, unmount and the app leaving the foreground,
- * so the app switcher's snapshot never shows it.
+ * dropped on Hide, Delete, leaving the screen, unmount and backgrounding.
+ * Native snapshot protection is acquired before rendering a revealed value.
  */
 export function SecretDeliveryCard(props: {
   readonly environmentId: EnvironmentId;
@@ -126,7 +127,7 @@ function AvailableSecretDelivery(props: {
   return (
     <View className="mb-3 gap-3 rounded-[20px] border border-border bg-card-alt p-4">
       <Text className="font-t3-bold text-base text-foreground">{item.label}</Text>
-      {state.value === null ? (
+      {state.value === null || !appActive || !focused ? (
         <Text
           className="font-mono text-sm text-foreground-muted"
           accessibilityLabel="Hidden"
@@ -135,9 +136,7 @@ function AvailableSecretDelivery(props: {
           ••••••••••••
         </Text>
       ) : (
-        <Text className="font-mono text-sm leading-5 text-foreground" selectable>
-          {state.value}
-        </Text>
+        <ProtectedSecretDeliveryValue value={state.value} />
       )}
       {state.error !== null ? (
         <Text
@@ -183,5 +182,53 @@ function AvailableSecretDelivery(props: {
         <Button label="Delete" tone="text" disabled={!canDelete || busy} onPress={confirmDelete} />
       </View>
     </View>
+  );
+}
+
+function ProtectedSecretDeliveryValue(props: { readonly value: string }) {
+  const [protection, setProtection] = useState<"pending" | "ready" | "failed">("pending");
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns native snapshot protection for the mounted revealed value
+  useEffect(() => {
+    let cancelled = false;
+    let release: (() => Promise<void>) | undefined;
+    const relinquish = (lease: () => Promise<void>) => {
+      void lease().catch(() => {
+        console.error("Could not release secret delivery snapshot protection.");
+      });
+    };
+    void acquireSecretDeliveryPrivacy().then(
+      (lease) => {
+        if (cancelled) {
+          relinquish(lease);
+          return;
+        }
+        release = lease;
+        setProtection("ready");
+      },
+      () => {
+        if (!cancelled) setProtection("failed");
+      },
+    );
+    return () => {
+      cancelled = true;
+      setProtection("pending");
+      if (release) relinquish(release);
+    };
+  }, []);
+
+  if (protection !== "ready") {
+    return (
+      <Text className="font-mono text-sm text-foreground-muted">
+        {protection === "failed"
+          ? "Could not protect the screen. Hide and try again."
+          : "••••••••••••"}
+      </Text>
+    );
+  }
+  return (
+    <Text className="font-mono text-sm leading-5 text-foreground" selectable>
+      {props.value}
+    </Text>
   );
 }
