@@ -29,7 +29,9 @@ the parent conversation with the subagent's name, so you can respond without swi
 Providers enforce permissions differently. Some read-only actions can proceed in **Supervised**.
 **Auto** uses automatic review on Codex, Claude, Cursor, Grok, and fx; providers without an equivalent,
 including OpenCode and Antigravity, fall back to asking. On Grok, commands its review blocks come
-to you for approval. On fx, prompts it still sends also come to you.
+to you for approval. On Claude, actions its review blocks are not sent to you; Claude gets the reason
+and continues without them, so switch the thread to **Supervised** to approve such an action yourself.
+On fx, prompts it still sends also come to you.
 
 Muse Code offers only **Supervised** and **Full access**. A Muse thread already set to another mode
 runs in **Supervised**.

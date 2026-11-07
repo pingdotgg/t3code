@@ -2883,12 +2883,11 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
     readOnlyTools !== undefined && readOnlyPolicyAllowsGlobalReads(runtimePolicy)
       ? readOnlyTools
       : undefined;
-  // acceptEdits approves edits before the callback; the callback must ask for everything else.
+  // acceptEdits and auto approve what they can before the callback; it must ask for the rest.
   const installPermissionCallback =
     downgraded ||
     (runtimePolicy.approvalPolicy === undefined
-      ? runtimePolicy.runtimeMode === "approval-required" ||
-        runtimePolicy.runtimeMode === "auto-accept-edits"
+      ? runtimePolicy.runtimeMode !== "full-access"
       : runtimePolicy.approvalPolicy !== "never");
 
   if (permissionMode === "plan") {
