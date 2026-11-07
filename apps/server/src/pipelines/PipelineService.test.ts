@@ -293,7 +293,7 @@ it.effect("an unedited copy of an older starter version is upgraded; an edited o
 it("the shipped starter's previous step lists are recorded before its steps change", () => {
   // Changing the starter's steps changes this fingerprint. Add the old value to the starter's
   // previousFingerprints, so unedited copies upgrade, then update it here.
-  assert.strictEqual(pipelineStarterFingerprint(FEATURE_DELIVERY_PIPELINE.steps), "1tjm54v9ael");
+  assert.strictEqual(pipelineStarterFingerprint(FEATURE_DELIVERY_PIPELINE.steps), "1ja7h1u1f3b");
   assert.notInclude(
     FEATURE_DELIVERY_PIPELINE.previousFingerprints ?? [],
     pipelineStarterFingerprint(FEATURE_DELIVERY_PIPELINE.steps),

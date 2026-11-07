@@ -98,8 +98,8 @@ export const FEATURE_DELIVERY_PIPELINE: PipelineStarter = {
   key: "feature-delivery",
   name: "Feature delivery",
   description: "Refine → Implement → QA → Review → Guide → Merge",
-  // Before steps checked what they build on and handed off explicitly.
-  previousFingerprints: ["dahrmvu2g", "113oj2n9s8j"],
+  // Earlier step lists, so unedited copies of them upgrade to these steps.
+  previousFingerprints: ["dahrmvu2g", "113oj2n9s8j", "1tjm54v9ael"],
   steps: [
     step({
       id: "requirements",
