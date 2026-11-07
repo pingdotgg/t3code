@@ -155,25 +155,34 @@ const RemotePairingResult = Schema.Struct({
 const decodeRemoteLaunchResult = Schema.decodeEffect(fromLenientJson(RemoteLaunchResult));
 const decodeRemotePairingResult = Schema.decodeEffect(fromLenientJson(RemotePairingResult));
 
+const REMOTE_JSON_OUTPUT_MARKER = "__T3_SSH_RESPONSE__";
+
 const decodeRemoteJsonOutput = <A, E>(
   stdout: string,
   decode: (input: string) => Effect.Effect<A, E>,
-): Effect.Effect<A, E> =>
-  decode(stdout).pipe(
+): Effect.Effect<A, E> => {
+  // Bracketed output excludes login-profile text and shell EXIT traps.
+  const response = stdout.split(`\n${REMOTE_JSON_OUTPUT_MARKER}\n`, 2)[1] ?? stdout;
+  return decode(response).pipe(
     Effect.catch((error) =>
       Effect.gen(function* () {
-        const jsonObject = extractJsonObject(stdout);
-        if (jsonObject === stdout.trim()) {
-          return yield* Effect.fail(error);
-        }
-        const exit = yield* Effect.exit(decode(jsonObject));
-        if (Exit.isSuccess(exit)) {
-          return exit.value;
+        const starts = [
+          0,
+          ...Array.from(response.matchAll(/\n(?=\{)/g), (match) => match.index + 1),
+        ];
+        for (const start of starts.toReversed()) {
+          const jsonObject = extractJsonObject(response.slice(start));
+          if (jsonObject === response.trim()) continue;
+          const exit = yield* Effect.exit(decode(jsonObject));
+          if (Exit.isSuccess(exit)) {
+            return exit.value;
+          }
         }
         return yield* Effect.fail(error);
       }),
     ),
   );
+};
 
 const decodeRemoteLaunchOutput = (stdout: string) =>
   decodeRemoteJsonOutput(stdout, decodeRemoteLaunchResult);
@@ -719,7 +728,7 @@ if [ -z "$REMOTE_PORT" ]; then
     exit 1
   fi
 fi
-printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}"
+printf '\\n${REMOTE_JSON_OUTPUT_MARKER}\\n{"remotePort":%s,"serverKind":"%s"}\\n${REMOTE_JSON_OUTPUT_MARKER}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}"
 `;
 
 const REMOTE_PAIRING_SCRIPT = `set -eu
@@ -732,7 +741,9 @@ cat >"$RUNNER_FILE" <<'SH'
 SH
 chmod 700 "$RUNNER_FILE"
 PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
+printf '\\n${REMOTE_JSON_OUTPUT_MARKER}\\n'
 "$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json
+printf '\\n${REMOTE_JSON_OUTPUT_MARKER}\\n'
 `;
 
 const REMOTE_STOP_SCRIPT = `set -eu
