@@ -46,12 +46,27 @@ function choiceOptions(
   return options.every((option) => option !== undefined) ? options : undefined;
 }
 
-/** `enum` values label themselves. */
-function enumOption(value: unknown): Option | undefined {
-  const label = text(value);
-  return typeof value === "string" && label !== undefined
-    ? { label, description: label, value }
-    : undefined;
+function enumOptions(entries: unknown): Option[] | undefined {
+  if (
+    !Array.isArray(entries) ||
+    entries.length === 0 ||
+    !entries.every((value): value is string => typeof value === "string")
+  )
+    return undefined;
+  const counts = new Map<string, number>();
+  for (const value of entries) counts.set(value.trim(), (counts.get(value.trim()) ?? 0) + 1);
+  const options = entries.map((value) => {
+    const plain = value.trim();
+    const label = plain !== "" && counts.get(plain) === 1 ? plain : JSON.stringify(value);
+    return { label, description: label, value };
+  });
+  // A quoted fallback can collide with a literal label; quote every value in that case.
+  return new Set(options.map((option) => option.label)).size === options.length
+    ? options
+    : options.map((option) => {
+        const label = JSON.stringify(option.value);
+        return { ...option, label, description: label };
+      });
 }
 
 /** Titled entries (`oneOf` on strings, `anyOf` on array items) carry a title for their `const`. */
@@ -74,7 +89,7 @@ function parseField(
       }
       const options = Array.isArray(property.oneOf)
         ? choiceOptions(property.oneOf, titledOption)
-        : choiceOptions(property.enum, enumOption);
+        : enumOptions(property.enum);
       return options === undefined
         ? undefined
         : {
@@ -87,7 +102,7 @@ function parseField(
       const items = unknownRecord(property.items);
       const options =
         items?.type === "string"
-          ? choiceOptions(items.enum, enumOption)
+          ? enumOptions(items.enum)
           : items !== undefined && items.type === undefined
             ? choiceOptions(items.anyOf, titledOption)
             : undefined;
