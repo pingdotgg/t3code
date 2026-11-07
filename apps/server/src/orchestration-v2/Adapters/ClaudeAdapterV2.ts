@@ -9003,16 +9003,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           const forkToolUseId = parentToolUseIdFromSdkMessage(message);
           const forkAgentId = text(field(message, "agent_id"));
-          if (
-            forkToolUseId?.startsWith("forked-command-") === true &&
-            forkAgentId !== undefined &&
-            (yield* Ref.get(sessionSubagentsByTaskId)).has(forkAgentId)
-          ) {
-            yield* Ref.update(sessionSubagentTaskIdsByToolUseId, (current) =>
-              current.get(forkToolUseId) === forkAgentId
-                ? current
-                : new Map(current).set(forkToolUseId, forkAgentId),
-            );
+          if (forkToolUseId?.startsWith("forked-command-") === true && forkAgentId !== undefined) {
+            const registered = (yield* Ref.get(sessionSubagentsByTaskId)).has(forkAgentId);
+            if (!registered) context.subagentsByToolUseId.delete(forkToolUseId);
+            yield* Ref.update(sessionSubagentTaskIdsByToolUseId, (current) => {
+              if (registered) {
+                return current.get(forkToolUseId) === forkAgentId
+                  ? current
+                  : new Map(current).set(forkToolUseId, forkAgentId);
+              }
+              // Slash-command IDs are reused; an early frame must not reach the previous run.
+              if (!current.has(forkToolUseId)) return current;
+              const next = new Map(current);
+              next.delete(forkToolUseId);
+              return next;
+            });
           }
 
           if (message.type === "stream_event" && !message.parent_tool_use_id) {
@@ -9399,6 +9404,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* emitContextUsage(context, stream.usage);
               }
             }
+          }
+          if (message.type === "assistant") {
             const parentToolUseId = message.parent_tool_use_id;
             const snapshotModel =
               typeof message.message.model === "string" ? message.message.model.trim() : "";
@@ -10112,23 +10119,51 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             (message.subtype !== "task_started" &&
               message.subtype !== "task_progress" &&
               message.subtype !== "task_notification") ||
-            message.tool_use_id === undefined ||
             !(yield* Ref.get(sessionSubagentsByTaskId)).has(message.task_id)
           ) {
             return [];
           }
-          const toolUseId = message.tool_use_id;
           const taskId = message.task_id;
-          yield* Ref.update(sessionSubagentTaskIdsByToolUseId, (current) =>
-            current.get(toolUseId) === taskId ? current : new Map(current).set(toolUseId, taskId),
-          );
-          return yield* Ref.modify(pendingSubagentFramesByToolUseId, (current) => {
-            const frames = current.get(toolUseId);
-            if (frames === undefined) {
-              return [[] as ReadonlyArray<SDKMessage>, current] as const;
+          const toolUseIds = new Set<string>();
+          if (message.tool_use_id !== undefined) toolUseIds.add(message.tool_use_id);
+          if (message.subtype === "task_started") {
+            for (const [toolUseId, frames] of yield* Ref.get(pendingSubagentFramesByToolUseId)) {
+              if (
+                toolUseId.startsWith("forked-command-") &&
+                frames.some((frame) => text(field(frame, "agent_id")) === taskId)
+              ) {
+                toolUseIds.add(toolUseId);
+              }
             }
+          }
+          if (toolUseIds.size === 0) return [];
+          yield* Ref.update(sessionSubagentTaskIdsByToolUseId, (current) => {
+            if ([...toolUseIds].every((toolUseId) => current.get(toolUseId) === taskId))
+              return current;
             const next = new Map(current);
-            next.delete(toolUseId);
+            for (const toolUseId of toolUseIds) next.set(toolUseId, taskId);
+            return next;
+          });
+          return yield* Ref.modify(pendingSubagentFramesByToolUseId, (current) => {
+            if (current.size === 0) return [[] as ReadonlyArray<SDKMessage>, current] as const;
+            const frames: Array<SDKMessage> = [];
+            const next = new Map(current);
+            for (const toolUseId of toolUseIds) {
+              const pending = current.get(toolUseId);
+              if (pending === undefined) continue;
+              const remaining = pending.filter((frame) => {
+                if (
+                  toolUseId === message.tool_use_id ||
+                  text(field(frame, "agent_id")) === taskId
+                ) {
+                  frames.push(frame);
+                  return false;
+                }
+                return true;
+              });
+              if (remaining.length === 0) next.delete(toolUseId);
+              else next.set(toolUseId, remaining);
+            }
             return [frames, next] as const;
           });
         });

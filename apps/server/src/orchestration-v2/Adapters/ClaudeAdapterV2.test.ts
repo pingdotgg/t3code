@@ -15159,103 +15159,117 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("reports forked skill models without guessing their effort", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        const parentModel = "claude-opus-4-6";
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("attempt-forked-skill-model"),
-            text: "Run two forked skills.",
-            attachments: [],
-            modelSelection: {
-              ...CLAUDE_TEST_MODEL_SELECTION,
-              model: parentModel,
-              options: [{ id: "effort", value: "high" }],
-            },
-          }),
-        );
-        for (const frame of [
-          ...["one", "two"].map((name, index) =>
-            claudeSdkFrame({
-              type: "system",
-              subtype: "task_started",
-              task_id: `fork-${name}`,
-              description: `/${name}`,
-              task_type: "local_agent",
-              skip_transcript: true,
-              ambient: true,
-              uuid: `00000000-0000-4000-8000-00000000024${index}`,
-              session_id: WAKE_NATIVE_SESSION,
-            }),
-          ),
-          ...["one", "two"].map((name, index) =>
-            claudeSdkFrame({
-              type: "system",
-              subtype: "task_notification",
-              task_id: `fork-${name}`,
-              status: "completed",
-              summary: `/${name}`,
-              uuid: `00000000-0000-4000-8000-00000000026${index}`,
-              session_id: WAKE_NATIVE_SESSION,
-            }),
-          ),
-          ...["one", "two"].map((name, index) =>
-            claudeSdkFrame({
-              type: "assistant",
-              parent_tool_use_id: `forked-command-${name}`,
-              agent_id: `fork-${name}`,
-              message: {
-                model: index === 0 ? "claude-haiku-4-5-20251001" : parentModel,
-                id: `msg_fork_${name}`,
-                type: "message",
-                role: "assistant",
-                content: [{ type: "text", text: "Done." }],
+  it.effect.each([false, true])(
+    "reports forked skill models without guessing their effort (frames before start: %s)",
+    (framesBeforeStart) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const parentModel = "claude-opus-4-6";
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-forked-skill-model"),
+              text: "Run two forked skills.",
+              attachments: [],
+              modelSelection: {
+                ...CLAUDE_TEST_MODEL_SELECTION,
+                model: parentModel,
+                options: [{ id: "effort", value: "high" }],
               },
-              uuid: `00000000-0000-4000-8000-00000000025${index}`,
-              session_id: WAKE_NATIVE_SESSION,
             }),
-          ),
-          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000252", result: "Done." }),
-        ]) {
-          yield* Queue.offer(harness.sdkMessages, frame);
-        }
-        yield* Queue.take(harness.terminalReceipts);
-        const subagents = harness.events.filter((event) => event.type === "subagent.updated");
-        const children = harness.events.filter((event) => event.type === "app_thread.created");
-        assert.lengthOf(children, 2);
-        for (const child of children) {
-          assert.isUndefined(
-            getModelSelectionStringOptionValue(child.appThread.modelSelection, "effort"),
           );
-        }
-        for (const [name, expectedModel] of [
-          ["one", "claude-haiku-4-5"],
-          ["two", parentModel],
-        ] as const) {
-          const task = subagents.findLast(
-            (event) => event.subagent.nativeTaskRef?.nativeId === `fork-${name}`,
-          )?.subagent;
-          assert.equal(task?.model, expectedModel);
-          assert.equal(task?.modelSelection?.model, expectedModel);
-          assert.equal(task?.status, "completed");
-          assert.isUndefined(getModelSelectionStringOptionValue(task?.modelSelection, "effort"));
-        }
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
+          const tasks = [
+            { id: "first-one", command: "one", model: "claude-haiku-4-5" },
+            { id: "first-two", command: "two", model: parentModel },
+            { id: "second-one", command: "one", model: parentModel },
+            { id: "second-two", command: "two", model: "claude-haiku-4-5" },
+          ];
+          let uuidOrdinal = 240;
+          const uuid = () => `00000000-0000-4000-8000-${String(++uuidOrdinal).padStart(12, "0")}`;
+          for (const round of [tasks.slice(0, 2), tasks.slice(2)]) {
+            const starts = round.map(({ id, command }) =>
+              claudeSdkFrame({
+                type: "system",
+                subtype: "task_started",
+                task_id: id,
+                description: `/${command}`,
+                task_type: "local_agent",
+                skip_transcript: true,
+                ambient: true,
+                uuid: uuid(),
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            );
+            const completions = round.map(({ id, command }) =>
+              claudeSdkFrame({
+                type: "system",
+                subtype: "task_notification",
+                task_id: id,
+                status: "completed",
+                summary: `/${command}`,
+                uuid: uuid(),
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            );
+            const assistants = round.map(({ id, command, model }) =>
+              claudeSdkFrame({
+                type: "assistant",
+                parent_tool_use_id: `forked-command-${command}`,
+                agent_id: id,
+                message: {
+                  model: model === parentModel ? model : "claude-haiku-4-5-20251001",
+                  id: `msg_fork_${id}`,
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "text", text: `Done ${id}.` }],
+                },
+                uuid: uuid(),
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            );
+            for (const frame of framesBeforeStart
+              ? [...assistants, ...starts, ...completions]
+              : [...starts, ...completions, ...assistants]) {
+              yield* Queue.offer(harness.sdkMessages, frame);
+            }
+          }
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeResultFrame({ uuid: uuid(), result: "Done." }),
+          );
+          yield* Queue.take(harness.terminalReceipts);
+          const subagents = harness.events.filter((event) => event.type === "subagent.updated");
+          const children = harness.events.filter((event) => event.type === "app_thread.created");
+          assert.lengthOf(children, tasks.length);
+          for (const child of children) {
+            assert.isUndefined(
+              getModelSelectionStringOptionValue(child.appThread.modelSelection, "effort"),
+            );
+          }
+          for (const { id, model: expectedModel } of tasks) {
+            const task = subagents.findLast(
+              (event) => event.subagent.nativeTaskRef?.nativeId === id,
+            )?.subagent;
+            assert.isDefined(task?.childThreadId);
+            assert.equal(task?.model, expectedModel);
+            assert.equal(task?.modelSelection?.model, expectedModel);
+            assert.equal(task?.status, "completed");
+            assert.isUndefined(getModelSelectionStringOptionValue(task?.modelSelection, "effort"));
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
         ),
       ),
-    ),
   );
 
   it.effect("resolves a subagent's model and effort against the instance's custom models", () =>
