@@ -44,6 +44,7 @@ function providerModelPickerIconOnlyWidth(picker: HTMLElement, scale: number): n
   return (
     horizontalBoxWidth(getComputedStyle(picker)) +
     elementOuterWidth(icon, scale) +
+    elementInlineMarginWidth(label.parentElement!) +
     elementInlineMarginWidth(picker)
   );
 }
@@ -63,9 +64,12 @@ function providerModelPickerNaturalWidth(picker: HTMLElement, scale: number): nu
     : 0;
   let naturalWidth = renderedWidth;
   if (label && getComputedStyle(label).position === "absolute") {
-    // Recover the capped label width while the provider icon is the visible trigger.
+    // Recover the capped label width and the icon-only inset while the provider icon is the visible trigger.
     const content = label.parentElement!;
-    naturalWidth += (Number.parseFloat(getComputedStyle(content).columnGap) || 0) + labelWidth;
+    naturalWidth +=
+      (Number.parseFloat(getComputedStyle(content).columnGap) || 0) +
+      labelWidth -
+      elementInlineMarginWidth(content);
   } else if (label) {
     // A flexible label squeezed below its text still needs its width recovered.
     naturalWidth += Math.max(0, labelWidth - label.clientWidth);
@@ -75,11 +79,6 @@ function providerModelPickerNaturalWidth(picker: HTMLElement, scale: number): nu
     Math.min(naturalWidth, Number.isFinite(maxWidth) ? maxWidth : Number.POSITIVE_INFINITY) +
     elementInlineMarginWidth(picker)
   );
-}
-
-function providerModelPickerMinimumWidth(picker: HTMLElement): number {
-  const minWidth = Number.parseFloat(getComputedStyle(picker).minWidth) || 0;
-  return minWidth + elementInlineMarginWidth(picker);
 }
 
 function controlBlockWidths(
@@ -140,23 +139,21 @@ export function measureRestingComposerControls(
   const fixedWidths = fixedControls.map((control) => controlBlockWidths(control, scale));
   const fixedNatural = fixedWidths.reduce((sum, width) => sum + width.natural + gap, 0);
   const fixedIconOnly = fixedWidths.reduce((sum, width) => sum + width.iconOnly + gap, 0);
+  const naturalFixedWidth =
+    (picker
+      ? providerModelPickerNaturalWidth(picker, scale)
+      : elementOuterWidth(leadingControl, scale)) +
+    separatorAndGapWidth +
+    fixedNatural;
   return {
     gap,
-    naturalFixedWidth:
-      (picker
-        ? providerModelPickerNaturalWidth(picker, scale)
-        : elementOuterWidth(leadingControl, scale)) +
-      separatorAndGapWidth +
-      fixedNatural,
-    minimumFixedWidth:
-      (picker
-        ? providerModelPickerMinimumWidth(picker)
-        : elementOuterWidth(leadingControl, scale)) +
-      separatorAndGapWidth +
-      fixedNatural,
+    naturalFixedWidth,
     blockWidths: widths.map((width) => width.natural),
     iconOnlyBlockWidths: widths.map((width) => width.iconOnly),
     overflowWidth: overflow ? elementOuterWidth(overflow, scale) : 0,
+    ...(fixedIconOnly < fixedNatural
+      ? { traitsIconOnlyFixedWidth: naturalFixedWidth - fixedNatural + fixedIconOnly }
+      : {}),
     ...(pickerIconOnlyWidth === undefined
       ? {}
       : { iconOnlyFixedWidth: pickerIconOnlyWidth + separatorAndGapWidth + fixedIconOnly }),
