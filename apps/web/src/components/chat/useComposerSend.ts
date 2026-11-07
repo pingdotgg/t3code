@@ -568,10 +568,13 @@ export function useComposerSend(input: ComposerSendInput) {
         );
         return;
       }
-      const attachments = [...sendCtx.images, ...sendCtx.files];
+      // A pending question's attachments belong to its answer, so the side chat gets none.
+      const attachments = answeringQuestion ? [] : [...sendCtx.images, ...sendCtx.files];
       const startWithAttachments = async () => {
         const turnAttachments = await uploadSideChatAttachments(activeThread.id, attachments);
-        if (turnAttachments === null) return false;
+        if (turnAttachments === null || currentRouteThreadKeyRef.current !== routeThreadKey) {
+          return false;
+        }
         return onSideChat(
           sideChatFirstMessage({ prompt: sideChatCommand.prompt, attachments, turnAttachments }),
         );
@@ -588,11 +591,13 @@ export function useComposerSend(input: ComposerSendInput) {
         started &&
         currentRouteThreadKeyRef.current === routeThreadKey &&
         promptRef.current === promptAtSend &&
-        composerRef.current?.hasPendingAttachments() !== true &&
-        sameAttachmentIds(current ? [...current.images, ...current.files] : [], attachments)
+        (answeringQuestion ||
+          (composerRef.current?.hasPendingAttachments() !== true &&
+            sameAttachmentIds(current ? [...current.images, ...current.files] : [], attachments)))
       ) {
         promptRef.current = "";
-        clearComposerPromptAndImages(composerDraftTarget);
+        if (answeringQuestion) setComposerDraftPrompt(composerDraftTarget, "");
+        else clearComposerPromptAndImages(composerDraftTarget);
         composerRef.current?.resetCursorState();
         releaseDraftAttachments(attachments);
       }
