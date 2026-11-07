@@ -92,12 +92,13 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
   }
 
   if (
-    catalogState.hasConnectingEnvironment &&
     !catalogState.hasLoadedShellSnapshot &&
-    catalogState.connectionError === null
+    (catalogState.hasSyncingConnectedEnvironment ||
+      catalogState.hasPendingShellSnapshot ||
+      (catalogState.hasConnectingEnvironment && catalogState.connectionError === null))
   ) {
     return {
-      title: "Connecting to environment",
+      title: catalogState.hasReadyEnvironment ? "Loading environment" : "Connecting to environment",
       detail: "Loading projects from the saved environment.",
       loading: true,
     };

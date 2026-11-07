@@ -78,4 +78,157 @@ describe("workspace connection status", () => {
       showsProgress: true,
     });
   });
+
+  it("keeps a quiet Updating label while reconnecting over a cached shell", () => {
+    const state = workspaceState({
+      hasReadyEnvironment: false,
+      hasConnectingEnvironment: true,
+      hasLoadedShellSnapshot: true,
+      connectionState: "connecting",
+      connectingEnvironments: [
+        {
+          environmentId: "environment-1" as never,
+          environmentLabel: "MacBook",
+          displayUrl: "",
+          isRelayManaged: false,
+          isEnabled: true,
+          connectionState: "connecting",
+          connectionError: null,
+          connectionErrorTraceId: null,
+        },
+      ],
+    });
+
+    expect(workspaceConnectionStatusPresentation(state)).toEqual({
+      label: "Updating...",
+      showsProgress: true,
+    });
+  });
+
+  it("names the environment when reconnecting without a cached shell", () => {
+    const state = workspaceState({
+      hasReadyEnvironment: false,
+      hasConnectingEnvironment: true,
+      hasLoadedShellSnapshot: false,
+      connectionState: "connecting",
+      connectingEnvironments: [
+        {
+          environmentId: "environment-1" as never,
+          environmentLabel: "MacBook",
+          displayUrl: "",
+          isRelayManaged: false,
+          isEnabled: true,
+          connectionState: "connecting",
+          connectionError: null,
+          connectionErrorTraceId: null,
+        },
+      ],
+    });
+
+    expect(workspaceConnectionStatusPresentation(state)).toEqual({
+      label: "Reconnecting to MacBook",
+      showsProgress: true,
+    });
+  });
+
+  it("names the environment when a cached reconnect has an error", () => {
+    const state = workspaceState({
+      hasReadyEnvironment: false,
+      hasConnectingEnvironment: true,
+      hasLoadedShellSnapshot: true,
+      connectionState: "reconnecting",
+      connectionError: "Could not reach MacBook",
+      connectingEnvironments: [
+        {
+          environmentId: "environment-1" as never,
+          environmentLabel: "MacBook",
+          displayUrl: "",
+          isRelayManaged: false,
+          isEnabled: true,
+          connectionState: "reconnecting",
+          connectionError: "Could not reach MacBook",
+          connectionErrorTraceId: null,
+        },
+      ],
+    });
+
+    expect(workspaceConnectionStatusPresentation(state)).toEqual({
+      label: "Reconnecting to MacBook",
+      showsProgress: false,
+    });
+  });
+
+  it("ignores a failing second environment while a hopeful one is connecting over cache", () => {
+    const state = workspaceState({
+      hasReadyEnvironment: false,
+      hasConnectingEnvironment: true,
+      hasLoadedShellSnapshot: true,
+      connectionState: "reconnecting",
+      connectionError: "Could not reach sleeping laptop",
+      connectingEnvironments: [
+        {
+          environmentId: "environment-1" as never,
+          environmentLabel: "MacBook",
+          displayUrl: "",
+          isRelayManaged: false,
+          isEnabled: true,
+          connectionState: "connecting",
+          connectionError: null,
+          connectionErrorTraceId: null,
+        },
+        {
+          environmentId: "environment-2" as never,
+          environmentLabel: "Sleeping laptop",
+          displayUrl: "",
+          isRelayManaged: false,
+          isEnabled: true,
+          connectionState: "reconnecting",
+          connectionError: "Could not reach sleeping laptop",
+          connectionErrorTraceId: null,
+        },
+      ],
+    });
+
+    expect(workspaceConnectionStatusPresentation(state)).toEqual({
+      label: "Updating...",
+      showsProgress: true,
+    });
+  });
+
+  it("names only the hopeful environment when reconnecting without a cache", () => {
+    const state = workspaceState({
+      hasReadyEnvironment: false,
+      hasConnectingEnvironment: true,
+      hasLoadedShellSnapshot: false,
+      connectionState: "reconnecting",
+      connectionError: "Could not reach sleeping laptop",
+      connectingEnvironments: [
+        {
+          environmentId: "environment-1" as never,
+          environmentLabel: "MacBook",
+          displayUrl: "",
+          isRelayManaged: false,
+          isEnabled: true,
+          connectionState: "connecting",
+          connectionError: null,
+          connectionErrorTraceId: null,
+        },
+        {
+          environmentId: "environment-2" as never,
+          environmentLabel: "Sleeping laptop",
+          displayUrl: "",
+          isRelayManaged: false,
+          isEnabled: true,
+          connectionState: "reconnecting",
+          connectionError: "Could not reach sleeping laptop",
+          connectionErrorTraceId: null,
+        },
+      ],
+    });
+
+    expect(workspaceConnectionStatusPresentation(state)).toEqual({
+      label: "Reconnecting to MacBook",
+      showsProgress: true,
+    });
+  });
 });
