@@ -128,9 +128,19 @@ describe("SidebarUpdatePill manual checks", () => {
       await act(() =>
         spinner!.dispatchEvent(new AnimationEvent("animationiteration", { bubbles: true })),
       );
-      expect(button.hasAttribute("aria-disabled")).toBe(false);
+      expect(button.getAttribute("aria-disabled")).toBe("true");
       expect(button.querySelector('[class*="visible-animate-spin"]')).toBeNull();
-      expect(button.querySelector(".lucide-circle-arrow-up")).not.toBeNull();
+      const returnIcon = button.querySelector(".lucide-circle-arrow-up");
+      expect(returnIcon).not.toBeNull();
+      await act(() =>
+        returnIcon!.dispatchEvent(
+          new AnimationEvent("animationend", {
+            animationName: "desktop-update-check-incoming",
+            bubbles: true,
+          }),
+        ),
+      );
+      expect(button.hasAttribute("aria-disabled")).toBe(false);
 
       await publish({ ...idle, status: "checking" });
       expect(button.querySelector('[class*="visible-animate-spin"]')).toBeNull();

@@ -2422,6 +2422,32 @@ code {
   }
 }
 
+@utility desktop-update-check-outgoing {
+  animation: desktop-update-check-outgoing 120ms ease-in both;
+}
+
+@utility desktop-update-check-incoming {
+  animation: desktop-update-check-incoming 160ms 120ms ease-out both;
+}
+
+@keyframes desktop-update-check-outgoing {
+  from {
+    transform: rotate(0deg) scale(1);
+  }
+  to {
+    transform: rotate(90deg) scale(0);
+  }
+}
+
+@keyframes desktop-update-check-incoming {
+  from {
+    transform: rotate(-90deg) scale(0);
+  }
+  to {
+    transform: rotate(0deg) scale(1);
+  }
+}
+
 /* Rich text composer (Tiptap). The stored prompt stays markdown; only the
    surface renders styled text. Markers (** * ` ~~) appear as non-editable
    widgets while the caret is on styled text. */

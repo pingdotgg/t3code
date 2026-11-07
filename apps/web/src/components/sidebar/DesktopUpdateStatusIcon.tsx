@@ -81,28 +81,51 @@ function DesktopUpdateDownloadedIcon() {
 export function DesktopUpdateStatusIcon({
   downloadPercent,
   isCheckAnimating,
+  isCheckReturning,
   onCheckAnimationIteration,
+  onCheckReturnComplete,
   status,
 }: {
   readonly downloadPercent?: number | null;
   readonly isCheckAnimating?: boolean;
+  readonly isCheckReturning?: boolean;
   readonly onCheckAnimationIteration?: AnimationEventHandler<SVGSVGElement>;
+  readonly onCheckReturnComplete?: () => void;
   readonly status: DesktopUpdateStatusIconState;
 }) {
-  if (status === "available") return <DesktopUpdateAvailableIcon />;
-  if (status === "downloading") {
-    return <DesktopUpdateDownloadingIcon percent={downloadPercent ?? null} />;
-  }
-  if (status === "downloaded") return <DesktopUpdateDownloadedIcon />;
-  if (status === "idle" || status === "everything") {
-    return <CircleArrowUpIcon className="size-4" />;
-  }
+  const statusIcon =
+    status === "available" ? (
+      <DesktopUpdateAvailableIcon />
+    ) : status === "downloading" ? (
+      <DesktopUpdateDownloadingIcon percent={downloadPercent ?? null} />
+    ) : status === "downloaded" ? (
+      <DesktopUpdateDownloadedIcon />
+    ) : status === "checking" ? (
+      <RefreshIcon
+        className="size-4"
+        refreshing={isCheckAnimating === true}
+        onAnimationIteration={onCheckAnimationIteration}
+      />
+    ) : (
+      <CircleArrowUpIcon className="size-4" />
+    );
+
+  if (!isCheckAnimating && !isCheckReturning) return statusIcon;
 
   return (
-    <RefreshIcon
-      className="size-4"
-      refreshing={status === "checking" && isCheckAnimating === true}
-      onAnimationIteration={onCheckAnimationIteration}
-    />
+    <span
+      key={isCheckReturning ? "returning" : "checking"}
+      className="relative grid size-4 place-items-center"
+    >
+      <span className="absolute inset-0 grid place-items-center motion-safe:desktop-update-check-outgoing motion-reduce:hidden">
+        {isCheckReturning ? <RefreshIcon size="md" /> : <CircleArrowUpIcon className="size-4" />}
+      </span>
+      <span
+        className="motion-safe:desktop-update-check-incoming"
+        onAnimationEnd={isCheckReturning ? onCheckReturnComplete : undefined}
+      >
+        {statusIcon}
+      </span>
+    </span>
   );
 }

@@ -198,16 +198,19 @@ function SidebarUpdateControl() {
   // The desktop updates this machine, whose policy the primary environment reports.
   const updatesDenial = managedUpdatesDenial(usePrimaryManagedPolicy());
   const [isActionPending, setIsActionPending] = useState(false);
-  const [manualCheckStatus, setManualCheckStatus] = useState<"idle" | "pending" | "finishing">(
-    "idle",
-  );
+  const [manualCheckStatus, setManualCheckStatus] = useState<
+    "idle" | "pending" | "finishing" | "returning"
+  >("idle");
   const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
   const suppressReleaseNotesFocusOpen = useRef(false);
   const releaseNotesPopupRef = useRef<HTMLDivElement>(null);
   const releaseNotesTriggerId = useId();
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  if (prefersReducedMotion && manualCheckStatus === "finishing") {
+  if (
+    prefersReducedMotion &&
+    (manualCheckStatus === "finishing" || manualCheckStatus === "returning")
+  ) {
     setManualCheckStatus("idle");
   }
   const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
@@ -218,8 +221,8 @@ function SidebarUpdateControl() {
   const runsEverything = everything.hasUpdates && !isDownloading;
   const run = useUpdateEverythingRun();
   const isRunningEverything = run !== null;
-  const showCheckIcon = manualCheckStatus !== "idle";
-  const isCheckingForUpdates = state?.status === "checking" || showCheckIcon;
+  const showCheckIcon = manualCheckStatus === "pending" || manualCheckStatus === "finishing";
+  const isCheckingForUpdates = state?.status === "checking" || manualCheckStatus !== "idle";
   const { iconStatus, showUpdateDetails, showUpdateIconState } = resolveSidebarUpdatePresentation({
     action,
     showsEverything: runsEverything,
@@ -372,9 +375,11 @@ function SidebarUpdateControl() {
     <DesktopUpdateStatusIcon
       downloadPercent={state?.downloadPercent ?? null}
       isCheckAnimating={showCheckIcon && !prefersReducedMotion}
+      isCheckReturning={manualCheckStatus === "returning"}
       onCheckAnimationIteration={() => {
-        if (manualCheckStatus === "finishing") setManualCheckStatus("idle");
+        if (manualCheckStatus === "finishing") setManualCheckStatus("returning");
       }}
+      onCheckReturnComplete={() => setManualCheckStatus("idle")}
       status={iconStatus}
     />
   );
