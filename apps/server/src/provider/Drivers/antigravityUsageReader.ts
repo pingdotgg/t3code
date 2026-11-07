@@ -414,7 +414,10 @@ export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* 
     if (visited.has(canonical)) return null;
     visited.add(canonical);
     const fingerprintOf = (file: string) =>
-      Effect.tryPromise(() => NodeFSP.stat(file)).pipe(
+      Effect.tryPromise({
+        try: () => NodeFSP.stat(file),
+        catch: (cause) => new AntigravityDatabaseDecodeError({ path: file, cause }),
+      }).pipe(
         Effect.map((stat) => ({ stat, part: `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}` })),
       );
     const { stat, part } = yield* fingerprintOf(path);

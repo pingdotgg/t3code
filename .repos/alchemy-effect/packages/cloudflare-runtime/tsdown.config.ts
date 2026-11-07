@@ -79,8 +79,7 @@ export default defineConfig([
   // the path `worker:` imports resolve to.
   workerConfig(
     {
-      "bindings/r2-bucket/R2Bucket.worker":
-        "src/core/bindings/r2-bucket/R2Bucket.worker.ts",
+      "bindings/r2-bucket/R2Bucket.worker": "src/core/bindings/r2-bucket/R2Bucket.worker.ts",
     },
     { clean: false },
   ),
@@ -160,10 +159,7 @@ export default defineConfig([
       neverBundle: [/^@alchemy\.run\/cloudflare-runtime(?:\/|$)/],
     },
     inputOptions: {
-      external: [
-        /^#cloudflare-runtime-/,
-        /^@alchemy\.run\/cloudflare-runtime(?:\/|$)/,
-      ],
+      external: [/^#cloudflare-runtime-/, /^@alchemy\.run\/cloudflare-runtime(?:\/|$)/],
       makeAbsoluteExternalsRelative: true,
     },
     outputOptions: {

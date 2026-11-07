@@ -125,7 +125,7 @@ index 56e721e..aebc2bc 100644
  
    @ReactProp(name = "streamingAnimation", defaultBoolean = false)
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt b/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
-index 31ef1eb..d07bceb 100644
+index fa757dc..a234457 100644
 --- a/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
 @@ -50,6 +50,7 @@ import com.swmansion.enriched.markdown.utils.common.parseLinkPillContent
@@ -144,7 +144,7 @@ index 31ef1eb..d07bceb 100644
      result = 31 * result + props.getIntOrDefault("numberOfLines", 0)
      result = 31 * result + props.getStringOrDefault("ellipsizeMode", EllipsizeUtils.DEFAULT_MODE).hashCode()
      return result
-@@ -439,6 +441,7 @@ object MeasurementStore {
+@@ -440,6 +442,7 @@ object MeasurementStore {
          parseLinkPillContent(props.getArrayOrNull("linkPillContent")),
          linkRecognition.text,
          linkRecognition.inlineCode,
@@ -152,7 +152,7 @@ index 31ef1eb..d07bceb 100644
        )
      spannable?.replaceMathSpansWithPlaceholders(context)
      val textToMeasure = spannable ?: markdown
-@@ -576,7 +579,7 @@ object MeasurementStore {
+@@ -578,7 +581,7 @@ object MeasurementStore {
        style.imageRequestHeaders = parseImageRequestHeaders(props.getArrayOrNull("imageRequestHeaders"))
        style.imageSourceOverrides = imageSources
        style.linkPillContent = parseLinkPillContent(props.getArrayOrNull("linkPillContent"))
@@ -161,7 +161,7 @@ index 31ef1eb..d07bceb 100644
        val renderedSegments = MarkdownSegmentRenderer.render(segments, style, context, null, null)
  
        val mathHeightByIndex = HashMap<Int, Float>()
-@@ -672,6 +675,7 @@ object MeasurementStore {
+@@ -674,6 +677,7 @@ object MeasurementStore {
      linkPillContent: Map<String, LinkPillContent> = emptyMap(),
      linkRegex: LinkRegexConfig? = null,
      inlineCodeLinkRegex: LinkRegexConfig? = null,
@@ -169,7 +169,7 @@ index 31ef1eb..d07bceb 100644
    ): Spannable? {
      if (styleMap == null) return null
  
-@@ -681,7 +685,7 @@ object MeasurementStore {
+@@ -683,7 +687,7 @@ object MeasurementStore {
        style.imageRequestHeaders = imageRequestHeaders
        style.linkPillContent = linkPillContent
        measureRenderer.configure(style, context)
@@ -305,7 +305,7 @@ index 4b0e852..ccd300f 100644
  
      if (type != null) {
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt b/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
-index 9a98add..20c31ac 100644
+index 9a98add..2f14e62 100644
 --- a/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
 @@ -53,6 +53,7 @@ class TableContainerView(
@@ -324,6 +324,15 @@ index 9a98add..20c31ac 100644
      rows =
        tableNode.children.flatMap { section ->
          val isSectionHead = section.type == NodeType.TableHead
+@@ -131,7 +133,7 @@ class TableContainerView(
+             TableCellData(
+               attributedText = renderCellNode(cell, isHeader, align),
+               plainText = extractPlainText(cell),
+-              markdownText = MarkdownASTSerializer.serializeChildren(cell),
++              markdownText = MarkdownASTSerializer.serializeTableCell(cell),
+               isHeader = isHeader,
+               alignment = align,
+             )
 @@ -156,7 +158,10 @@ class TableContainerView(
      isHeader: Boolean,
      alignment: Layout.Alignment,
@@ -386,6 +395,32 @@ index 0000000..f29bab9
 +
 +/** Invisible layout controls omitted when copying the rendered selection. */
 +class DirectionControlSpan
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/common/serialization/MarkdownASTSerializer.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/common/serialization/MarkdownASTSerializer.kt
+index 66ea56c..e7ad2da 100644
+--- a/android/src/main/java/com/swmansion/enriched/markdown/utils/common/serialization/MarkdownASTSerializer.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/utils/common/serialization/MarkdownASTSerializer.kt
+@@ -20,6 +20,12 @@ object MarkdownASTSerializer {
+     return buffer.toString()
+   }
+ 
++  private val tableCellLineBreak = Regex("""(?<!\\)(\\*)\n""")
++
++  /** Serializes a table cell's content; a newline inside it becomes `<br>` so the row stays on one line. */
++  fun serializeTableCell(cell: MarkdownASTNode): String =
++    serializeChildren(cell).replace(tableCellLineBreak, "$1$1<br>")
++
+   /**
+    * Serializes a Blockquote or Admonition node back to markdown, including
+    * the `> ` prefix on every line and `> [!TYPE]` header for admonitions.
+@@ -179,7 +185,7 @@ object MarkdownASTSerializer {
+     for (section in node.children) {
+       for (row in section.children) {
+         if (row.type != NodeType.TableRow) continue
+-        val cells = row.children.map { serializeChildren(it) }
++        val cells = row.children.map { serializeTableCell(it) }
+         buffer.append("| ")
+         buffer.append(cells.joinToString(" | "))
+         buffer.append(" |\n")
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/WordMajority.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/WordMajority.kt
 new file mode 100644
 index 0000000..ec192ce
@@ -874,7 +909,7 @@ index 0000000..8293b7d
 +  }
 +}
 diff --git a/ios/EnrichedMarkdown.mm b/ios/EnrichedMarkdown.mm
-index 3f35e62..6b9f1d0 100644
+index f69549c..c1e3add 100644
 --- a/ios/EnrichedMarkdown.mm
 +++ b/ios/EnrichedMarkdown.mm
 @@ -49,6 +49,7 @@
@@ -885,7 +920,7 @@ index 3f35e62..6b9f1d0 100644
  #import "RenderContext.h"
  #import "RenderedMarkdownSegment.h"
  #import "RuntimeKeys.h"
-@@ -900,7 +901,6 @@ static char kENRMSegmentFadeAnimatorKey;
+@@ -901,7 +902,6 @@ static char kENRMSegmentFadeAnimatorKey;
    } else if (layoutMetrics.layoutDirection == LayoutDirection::LeftToRight) {
      resolved = NSWritingDirectionLeftToRight;
    }
@@ -893,7 +928,7 @@ index 3f35e62..6b9f1d0 100644
    if (resolved != _resolvedLayoutDirection) {
      _resolvedLayoutDirection = resolved;
      [self pushWritingDirectionToTableSegments];
-@@ -1029,6 +1029,9 @@ static char kENRMSegmentFadeAnimatorKey;
+@@ -1030,6 +1030,9 @@ static char kENRMSegmentFadeAnimatorKey;
      if (!ast)
        return NO;
  
@@ -903,7 +938,7 @@ index 3f35e62..6b9f1d0 100644
      renderedSegments = ENRMRenderSegmentsFromAST(ast, config, allowTrailingMargin, allowFontScaling,
                                                   maxFontSizeMultiplier, lineBreakStrategy,
                                                   /*blockquoteContent*/ NO);
-@@ -1069,6 +1072,9 @@ static char kENRMSegmentFadeAnimatorKey;
+@@ -1070,6 +1073,9 @@ static char kENRMSegmentFadeAnimatorKey;
      return nil;
    }
  
@@ -914,7 +949,7 @@ index 3f35e62..6b9f1d0 100644
        ENRMRenderSegmentsFromAST(ast, _config, _allowTrailingMargin, _fontScaleObserver.allowFontScaling,
                                  _maxFontSizeMultiplier, _lineBreakStrategy, /*blockquoteContent*/ NO);
 diff --git a/ios/EnrichedMarkdownText.mm b/ios/EnrichedMarkdownText.mm
-index f41930f..4455621 100644
+index f916b19..e75e36a 100644
 --- a/ios/EnrichedMarkdownText.mm
 +++ b/ios/EnrichedMarkdownText.mm
 @@ -31,6 +31,7 @@
@@ -925,7 +960,7 @@ index f41930f..4455621 100644
  #import "PasteboardUtils.h"
  #import "RenderContext.h"
  #import "RuntimeKeys.h"
-@@ -467,6 +468,8 @@ typedef NS_OPTIONS(NSUInteger, ENRMDirtyFlags) {
+@@ -468,6 +469,8 @@ typedef NS_OPTIONS(NSUInteger, ENRMDirtyFlags) {
                                   inlineCodeLinkRegex:inlineCodeLinkRegex];
          if (!ast)
            return NO;
@@ -934,7 +969,7 @@ index f41930f..4455621 100644
  
          result = ENRMRenderASTNodes(ast.children, config, allowTrailingMargin, allowFontScaling, maxFontSizeMultiplier,
                                      lineBreakStrategy);
-@@ -492,6 +495,8 @@ typedef NS_OPTIONS(NSUInteger, ENRMDirtyFlags) {
+@@ -493,6 +496,8 @@ typedef NS_OPTIONS(NSUInteger, ENRMDirtyFlags) {
    if (!ast) {
      return nil;
    }
@@ -973,7 +1008,7 @@ index 57100a2..ab8ddf8 100644
        return _resolvedLayoutDirection == NSWritingDirectionRightToLeft;
      case ENRMWritingDirectionModeAuto:
 diff --git a/ios/internals/ENRMViewFreeMeasurement.h b/ios/internals/ENRMViewFreeMeasurement.h
-index 65281b1..69f0c1f 100644
+index 2626b09..bd5b4d0 100644
 --- a/ios/internals/ENRMViewFreeMeasurement.h
 +++ b/ios/internals/ENRMViewFreeMeasurement.h
 @@ -16,6 +16,7 @@
@@ -984,7 +1019,7 @@ index 65281b1..69f0c1f 100644
  #import "RenderedMarkdownSegment.h"
  #import "SegmentRenderer.h"
  #import "StreamingMarkdownFilter.h"
-@@ -198,6 +199,8 @@ static inline CGSize ENRMMeasureMarkdownViewFree(const PropsT &typedProps, CGFlo
+@@ -199,6 +200,8 @@ static inline CGSize ENRMMeasureMarkdownViewFree(const PropsT &typedProps, CGFlo
      if (!ast) {
        return fallback;
      }
@@ -993,7 +1028,7 @@ index 65281b1..69f0c1f 100644
  
      NSLineBreakStrategy lineBreakStrategy =
          ENRMResolveLineBreakStrategy([[NSString alloc] initWithUTF8String:typedProps.lineBreakStrategyIOS.c_str()]);
-@@ -294,6 +297,8 @@ static inline CGSize ENRMMeasureSegmentedMarkdownViewFree(const PropsT &typedPro
+@@ -295,6 +298,8 @@ static inline CGSize ENRMMeasureSegmentedMarkdownViewFree(const PropsT &typedPro
      if (!ast) {
        return fallback;
      }
@@ -1125,7 +1160,7 @@ index 3296ff9..5d1354b 100644
  #if !TARGET_OS_OSX
        CGContextRef ctx = UIGraphicsGetCurrentContext();
 diff --git a/ios/segments/TableContainerView.m b/ios/segments/TableContainerView.m
-index 987eb21..0073f71 100644
+index 987eb21..57fbdb3 100644
 --- a/ios/segments/TableContainerView.m
 +++ b/ios/segments/TableContainerView.m
 @@ -85,15 +85,26 @@ static NSMutableAttributedString *ENRMTableRenderCellNode(MarkdownASTNode *cellN
@@ -1158,6 +1193,15 @@ index 987eb21..0073f71 100644
      NSRange fullRange = NSMakeRange(0, attributedText.length);
      [attributedText
          enumerateAttribute:NSParagraphStyleAttributeName
+@@ -163,7 +174,7 @@ static NSArray<NSArray<TableCellData *> *> *ENRMTableBuildRows(MarkdownASTNode *
+         cell.isHeader = isSectionHead || (cellNode.type == MarkdownNodeTypeTableHeaderCell);
+         cell.alignment = ENRMTableTextAlignmentFromString(cellNode.attributes[@"align"]);
+         cell.plainText = ENRMTablePlainTextFromNode(cellNode);
+-        cell.markdownText = markdownFromASTNodeChildren(cellNode);
++        cell.markdownText = markdownFromTableCellNode(cellNode);
+ 
+         StyleConfig *cellConfig = cell.isHeader ? headerCellConfig : bodyCellConfig;
+         cell.attributedText =
 diff --git a/ios/utils/ENRMWordMajority.h b/ios/utils/ENRMWordMajority.h
 new file mode 100644
 index 0000000..b8f9c00
@@ -1329,6 +1373,51 @@ index f0018df..fe5ac4e 100644
  
        NSString *htmlTag = isHeaderCell ? @"th" : @"td";
        NSString *cellStyle = styleForCell(isHeaderCell, bodyRowIndex, styleConfig, alignment);
+diff --git a/ios/utils/MarkdownASTSerializer.h b/ios/utils/MarkdownASTSerializer.h
+index b9519a3..4c8e998 100644
+--- a/ios/utils/MarkdownASTSerializer.h
++++ b/ios/utils/MarkdownASTSerializer.h
+@@ -17,6 +17,9 @@ NSString *markdownFromASTNode(MarkdownASTNode *node);
+ /// Useful for extracting the markdown content of a container node (e.g. a table cell).
+ NSString *markdownFromASTNodeChildren(MarkdownASTNode *node);
+ 
++/// Serializes a table cell's content; a newline inside it becomes `<br>` so the row stays on one line.
++NSString *markdownFromTableCellNode(MarkdownASTNode *node);
++
+ /// Serializes a Blockquote or Admonition node to full markdown, including `> ` line
+ /// prefixes and `> [!TYPE]` header for admonitions.
+ NSString *markdownFromBlockquoteNode(MarkdownASTNode *node);
+diff --git a/ios/utils/MarkdownASTSerializer.m b/ios/utils/MarkdownASTSerializer.m
+index ffdee1a..eae0f76 100644
+--- a/ios/utils/MarkdownASTSerializer.m
++++ b/ios/utils/MarkdownASTSerializer.m
+@@ -148,7 +148,7 @@ static void appendTableMarkdown(MarkdownASTNode *node, NSMutableString *buffer)
+         continue;
+       NSMutableArray<NSString *> *cells = [NSMutableArray arrayWithCapacity:row.children.count];
+       for (MarkdownASTNode *cell in row.children) {
+-        [cells addObject:markdownFromASTNodeChildren(cell)];
++        [cells addObject:markdownFromTableCellNode(cell)];
+       }
+       [buffer appendFormat:@"| %@ |\n", [cells componentsJoinedByString:@" | "]];
+       if (!headerDone) {
+@@ -333,6 +333,17 @@ NSString *markdownFromASTNodeChildren(MarkdownASTNode *node)
+   return [buffer copy];
+ }
+ 
++NSString *markdownFromTableCellNode(MarkdownASTNode *node)
++{
++  NSString *markdown = markdownFromASTNodeChildren(node);
++  if (![markdown containsString:@"\n"])
++    return markdown;
++  return [markdown stringByReplacingOccurrencesOfString:@"(?<!\\\\)(\\\\*)\n"
++                                            withString:@"$1$1<br>"
++                                               options:NSRegularExpressionSearch
++                                                 range:NSMakeRange(0, markdown.length)];
++}
++
+ NSString *markdownFromBlockquoteNode(MarkdownASTNode *node)
+ {
+   if (!node)
 diff --git a/ios/utils/MarkdownExtractor.m b/ios/utils/MarkdownExtractor.m
 index 90c8450..168a8c9 100644
 --- a/ios/utils/MarkdownExtractor.m
@@ -1421,10 +1510,10 @@ index c5f8b77..7618685 100644
      return attributedString;
  
 diff --git a/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts b/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts
-index 360ae49..d8dcac9 100644
+index 1b4170f..c1763cd 100644
 --- a/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts
 +++ b/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts
-@@ -628,8 +628,8 @@ export interface NativeProps extends ViewProps {
+@@ -629,8 +629,8 @@ export interface NativeProps extends ViewProps {
       * - 'auto': React Native parity; iOS TextKit follows the app's userInterfaceLayoutDirection.
       * - 'ltr' / 'rtl': force base direction on every paragraph. Code blocks always stay LTR.
       * @default 'first-strong'
@@ -1435,10 +1524,10 @@ index 360ae49..d8dcac9 100644
      /**
       * No-op for the GFM backend. Declared for parity with the CommonMark
 diff --git a/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts b/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts
-index d79d050..398f187 100644
+index 0556ca6..a05d35f 100644
 --- a/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts
 +++ b/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts
-@@ -611,8 +611,8 @@ export interface NativeProps extends ViewProps {
+@@ -612,8 +612,8 @@ export interface NativeProps extends ViewProps {
       * - 'auto': React Native parity; iOS TextKit follows the app's userInterfaceLayoutDirection.
       * - 'ltr' / 'rtl': force base direction on every paragraph. Code blocks always stay LTR.
       * @default 'first-strong'
@@ -1475,10 +1564,10 @@ index b44bedb..0338b3d 100644
       * Maximum number of lines to display before the text is truncated. `0` (the
       * default) means unlimited. Matches React Native `Text`'s `numberOfLines`.
 diff --git a/src/EnrichedMarkdownNativeComponent.ts b/src/EnrichedMarkdownNativeComponent.ts
-index af6574c..c5b22dd 100644
+index 309c3f2..6e53e5e 100644
 --- a/src/EnrichedMarkdownNativeComponent.ts
 +++ b/src/EnrichedMarkdownNativeComponent.ts
-@@ -692,8 +692,8 @@ export interface NativeProps extends ViewProps {
+@@ -693,8 +693,8 @@ export interface NativeProps extends ViewProps {
     * - 'auto': React Native parity; iOS TextKit follows the app's userInterfaceLayoutDirection.
     * - 'ltr' / 'rtl': force base direction on every paragraph. Code blocks always stay LTR.
     * @default 'first-strong'
@@ -1489,10 +1578,10 @@ index af6574c..c5b22dd 100644
    /**
     * No-op for the GFM backend. Declared for parity with the CommonMark
 diff --git a/src/EnrichedMarkdownTextNativeComponent.ts b/src/EnrichedMarkdownTextNativeComponent.ts
-index ba0dc96..1a4ed66 100644
+index c0697b1..abd5c1e 100644
 --- a/src/EnrichedMarkdownTextNativeComponent.ts
 +++ b/src/EnrichedMarkdownTextNativeComponent.ts
-@@ -673,8 +673,8 @@ export interface NativeProps extends ViewProps {
+@@ -674,8 +674,8 @@ export interface NativeProps extends ViewProps {
     * - 'auto': React Native parity; iOS TextKit follows the app's userInterfaceLayoutDirection.
     * - 'ltr' / 'rtl': force base direction on every paragraph. Code blocks always stay LTR.
     * @default 'first-strong'

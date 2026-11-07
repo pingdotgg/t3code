@@ -615,6 +615,33 @@ describe("PreviewManager", () => {
       ),
   );
 
+  effectIt.effect.each([
+    ["darwin", true, false, true],
+    ["darwin", false, true, false],
+    ["linux", false, true, true],
+    ["win32", true, false, false],
+  ] as const)(
+    "reloads the preview only on the platform refresh chord: %s meta=%s ctrl=%s",
+    ([platform, meta, control, expected]) =>
+      withManager(
+        (manager) =>
+          Effect.gen(function* () {
+            const preview = makeFaviconWebContents();
+            fromId.mockReturnValue(preview.webContents);
+            yield* manager.createTab("tab_refresh");
+            yield* manager.registerWebview("tab_refresh", 42);
+            const preventDefault = vi.fn();
+            preview.listeners.get("before-input-event")!(
+              { preventDefault } as never,
+              { type: "keyDown", key: "r", meta, control, shift: false, alt: false } as never,
+            );
+            expect(preventDefault).toHaveBeenCalledTimes(expected ? 1 : 0);
+            expect(preview.reload).toHaveBeenCalledTimes(expected ? 1 : 0);
+          }),
+        platform,
+      ),
+  );
+
   effectIt.effect("keeps editing and forwarded shortcuts in whichever tab holds focus", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -2412,6 +2439,70 @@ describe("PreviewManager", () => {
         yield* Effect.yieldNow;
         expect(pick.pollUnsafe()).toBeDefined();
         expect(yield* Fiber.join(pick)).toBeNull();
+      }),
+    ),
+  );
+
+  effectIt.effect("delivers annotation voice state only to the pick session that owns it", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const firstReady = yield* Deferred.make<void>();
+        const secondReady = yield* Deferred.make<void>();
+        let registrations = 0;
+        const guest = {
+          ...makeTestPreviewWebContents(async () => ({
+            toPNG: () => Buffer.from("unused"),
+            toJPEG: () => Buffer.from("unused"),
+            getSize: () => ({ width: 1, height: 1 }),
+          })),
+          isFocused: () => true,
+          focus: vi.fn(),
+          send: (channel: string, ...args: unknown[]) => {
+            webviewSend(channel, ...args);
+            if (channel === "preview:start-pick")
+              Deferred.doneUnsafe(registrations++ === 0 ? firstReady : secondReady, Effect.void);
+          },
+          once: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn(), removeListener: vi.fn() },
+        };
+        fromId.mockReturnValue(guest as never);
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        const first = yield* manager
+          .pickElement("tab_1", { sessionId: "first", shortcuts: [] })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(firstReady);
+        const state = {
+          tabId: "tab_1",
+          sessionId: "first",
+          available: true,
+          phase: "recording" as const,
+          status: "Recording",
+          errorAction: null,
+          preview: null,
+          freezesEditor: true,
+          blocksSubmission: true,
+          level: 0,
+          shortcutLabel: "Ctrl+D",
+          draft: { text: "Tighten spacing", cursor: 15 },
+        };
+        yield* manager.updateAnnotationVoice(state);
+        expect(webviewSend).toHaveBeenCalledWith("preview:annotation-voice-state", state);
+        const second = yield* manager
+          .pickElement("tab_1", { sessionId: "second", shortcuts: [] })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(secondReady);
+        expect(yield* Fiber.join(first)).toBeNull();
+        webviewSend.mockClear();
+        yield* manager.updateAnnotationVoice(state);
+        expect(webviewSend).not.toHaveBeenCalled();
+        yield* manager.updateAnnotationVoice({ ...state, sessionId: "second" });
+        expect(webviewSend).toHaveBeenCalledOnce();
+        yield* manager.cancelPickElement("tab_1");
+        expect(yield* Fiber.join(second)).toBeNull();
+        webviewSend.mockClear();
+        yield* manager.updateAnnotationVoice({ ...state, sessionId: "second" });
+        expect(webviewSend).not.toHaveBeenCalled();
       }),
     ),
   );
