@@ -2319,6 +2319,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             runtimeGeneration,
             Effect.gen(function* () {
               yield* Ref.set(runtimeRestartRequired, true);
+              yield* retireRuntimeSubagents();
               if (!followsAgentWorkState) return;
               agentWork = { sessionUpdate: "state_update", state: "idle", stopReason: "error" };
               for (const child of nativeChildren.values()) {
@@ -6273,6 +6274,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
         });
 
+        const retireRuntimeSubagents = Effect.fn("AcpAdapterV2.retireRuntimeSubagents")(
+          function* () {
+            if (flavor.subagentsOwnedByRuntime !== true) return;
+            const carryover = yield* Ref.getAndSet(carryoverSubagents, null);
+            yield* terminalizeCarryoverSubagents(carryover);
+          },
+        );
+
         // Only the flavor's own start marker counts: agents also send late
         // updates for the previous prompt (Kiro's context usage) and echoes
         // that arrive before they would honor a cancel.
@@ -6888,6 +6897,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           resumeSessionId?: string,
         ) {
           if (runtimeScope !== undefined) {
+            yield* runtimeCallbackPermit.withPermit(retireRuntimeSubagents());
             yield* Scope.close(runtimeScope, Exit.void);
           }
           runtimeScope = yield* Scope.make();
@@ -7035,6 +7045,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     return yield* lifecycle.error;
                   }
                   yield* quarantineNativeTransportAtGeneration(previousGeneration);
+                  yield* retireRuntimeSubagents();
                   runtime = replacementExit.value.replacementRuntime;
                   runtimeScope = replacementScope;
                   runtimeMcpBridge = replacementMcpBridge;
@@ -8057,10 +8068,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const restartRequired = yield* Ref.get(runtimeRestartRequired);
           if (!restartRequired) return false;
           yield* runtimeCallbackPermit.withPermit(advanceRuntimeCallbackGeneration);
-          if (flavor.subagentsOwnedByRuntime === true) {
-            const carryover = yield* Ref.getAndSet(carryoverSubagents, null);
-            yield* terminalizeCarryoverSubagents(carryover);
-          }
           yield* restartAcpRuntime(threadId);
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
