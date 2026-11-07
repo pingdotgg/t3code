@@ -32,6 +32,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -167,7 +168,7 @@ interface FakePi {
   readonly failNextState: () => void;
   readonly failNextThinking: () => void;
   readonly deferNextLifecycle: (type: "switch_session" | "new_session" | "fork" | "abort") => void;
-  readonly deferNextModelSelection: () => void;
+  readonly deferNextModelSelection: (type?: "set_model" | "set_thinking_level") => void;
   readonly queueModels: (models: ReadonlyArray<unknown>) => void;
   readonly vetoNextNewSession: () => void;
   readonly allRequests: () => ReadonlyArray<PiRpcRecord>;
@@ -421,8 +422,8 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     deferNextLifecycle: (type) => {
       deferredLifecycle = type;
     },
-    deferNextModelSelection: () => {
-      deferredLifecycle = "set_model";
+    deferNextModelSelection: (type = "set_model") => {
+      deferredLifecycle = type;
     },
     queueModels: (value) => {
       models = value;
@@ -2125,6 +2126,120 @@ describe("PiAdapterV2", () => {
         );
         yield* startTurn(runtime, providerThread, "default").pipe(Effect.flip);
         assert.isFalse(fake.allRequests().some((request) => request.type === "prompt"));
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    { operation: "set_model", restore: false, failure: "timeout" },
+    { operation: "set_model", restore: false, failure: "interruption" },
+    { operation: "set_thinking_level", restore: false, failure: "timeout" },
+    { operation: "set_thinking_level", restore: false, failure: "interruption" },
+    { operation: "set_model", restore: true, failure: "timeout" },
+    { operation: "set_model", restore: true, failure: "interruption" },
+    { operation: "set_thinking_level", restore: true, failure: "timeout" },
+    { operation: "set_thinking_level", restore: true, failure: "interruption" },
+  ] as const)(
+    "retires selection after $failure of $operation (baseline restore: $restore)",
+    ({ operation, restore, failure }) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        fake.queueState({ model: { provider: "anthropic", id: "baseline" } });
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        if (restore) {
+          yield* startTurn(runtime, providerThread, "default", [], "First", {
+            ...modelSelection("anthropic/model-a"),
+            options: [{ id: "thinking", value: "low" }],
+          });
+          yield* fake.takeRequest("set_model");
+          yield* fake.takeRequest("set_thinking_level");
+          yield* fake.takeRequest("prompt");
+          yield* fake.emit({ type: "agent_start" });
+          yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+          yield* fake.emit({ type: "agent_settled" });
+          yield* takeEvent((event) => event.type === "turn.terminal");
+        }
+        fake.deferNextModelSelection(operation);
+        const selection: ModelSelection = restore
+          ? modelSelection("default")
+          : {
+              ...modelSelection("anthropic/model-a"),
+              options: [{ id: "thinking", value: "low" }],
+            };
+        const starting = yield* startTurn(
+          runtime,
+          providerThread,
+          "default",
+          [],
+          "Selection",
+          selection,
+          2,
+        ).pipe(Effect.exit, Effect.forkChild);
+        const pending = yield* fake.takeRequest(operation);
+        if (failure === "timeout") {
+          yield* TestClock.adjust("15 seconds");
+          const result = yield* Fiber.join(starting);
+          assert.equal(result._tag, "Failure");
+          if (Exit.isFailure(result)) assert.match(Cause.pretty(result.cause), /PiRpcTimeoutError/);
+        } else {
+          yield* Fiber.interrupt(starting);
+        }
+        // A late acknowledgement cannot make the retired connection usable again.
+        yield* fake.emit({ type: "response", id: pending.id, command: operation, success: true });
+        const retry = yield* startTurn(runtime, providerThread, "anthropic/model-a").pipe(
+          Effect.exit,
+        );
+        assert.equal(retry._tag, "Failure");
+        assert.deepEqual(fake.promptModels, restore ? ["anthropic/model-a"] : []);
+        yield* runtime.resumeThread({ providerThread }).pipe(Effect.flip);
+
+        const freshFake = yield* makeFakePi;
+        const { runtime: freshRuntime } = yield* openRuntime(freshFake);
+        const freshThread = yield* freshRuntime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(freshRuntime, freshThread, "anthropic/model-b");
+        yield* freshFake.takeRequest("prompt");
+        assert.deepEqual(freshFake.promptModels, ["anthropic/model-b"]);
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["Unknown model: anthropic/unknown", "No API key for anthropic"])(
+    "keeps the runtime usable after selection validation fails: %s",
+    (validationError) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        fake.deferNextModelSelection();
+        const starting = yield* startTurn(runtime, providerThread, "anthropic/unknown").pipe(
+          Effect.exit,
+          Effect.forkChild,
+        );
+        const pending = yield* fake.takeRequest("set_model");
+        yield* fake.emit({
+          type: "response",
+          id: pending.id,
+          command: "set_model",
+          success: false,
+          error: validationError,
+        });
+        const result = yield* Fiber.join(starting);
+        assert.equal(result._tag, "Failure");
+        if (Exit.isFailure(result)) assert.include(Cause.pretty(result.cause), validationError);
+        yield* startTurn(runtime, providerThread, "anthropic/model-b");
+        yield* fake.takeRequest("prompt");
+        assert.deepEqual(fake.promptModels, ["anthropic/model-b"]);
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
