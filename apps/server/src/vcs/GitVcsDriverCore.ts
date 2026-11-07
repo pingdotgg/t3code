@@ -1933,6 +1933,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     base: ResolvedReviewBase,
   ) {
     if (base.comparisonRef === `refs/heads/${refName}`) return;
+    if ((yield* readConfigValue(cwd, reviewBaseConfigKey(refName))) === base.comparisonRef) return;
     yield* writeConfigValue({
       cwd,
       key: reviewBaseConfigKey(refName),
@@ -1972,11 +1973,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
     }
     if (createdFrom === null || createdOid === null) return null;
+    // A branch checked out from its own remote (e.g. DWIM checkout) did not fork from it.
+    const isOwnRemote = (base: ResolvedReviewBase) =>
+      base.comparisonRef.startsWith("refs/remotes/") && base.comparisonRef.endsWith(`/${refName}`);
     if (createdFrom !== "HEAD" && createdFrom !== refName) {
       const named = yield* resolveNamed(createdFrom);
-      if (named !== null) return named;
+      if (named !== null && !isOwnRemote(named)) return named;
       const asRef = yield* resolveComparisonBaseRef(cwd, createdFrom);
-      if (asRef !== null) return asRef;
+      if (asRef !== null && !isOwnRemote(asRef)) return asRef;
       if (yield* branchExists(cwd, createdFrom)) {
         return { baseRef: createdFrom, comparisonRef: `refs/heads/${createdFrom}` };
       }
