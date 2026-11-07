@@ -1516,22 +1516,23 @@ function secretRequestAsPendingInput(
 /**
  * A secret card is answered while its agent waits in the run. A link card's
  * agent asked without waiting, so the card waits on the user after its run,
- * until the user writes in the thread again and so has moved past it.
+ * until anyone writes in the thread again and so has moved past it. Agent-driven
+ * threads may never get a message from the user.
  */
 const waitsOnUser = (
   item: OrchestrationV2TurnItem,
   liveRunIds: ReadonlySet<RunId>,
-  latestUserAuthoredMessageAt: DateTime.Utc | null,
+  latestUserMessageAt: DateTime.Utc | null,
 ) =>
-  (item.type === "link_request" && linkCardStillAsks(item, latestUserAuthoredMessageAt)) ||
+  (item.type === "link_request" && linkCardStillAsks(item, latestUserMessageAt)) ||
   (item.type === "secret_request" && item.runId !== null && liveRunIds.has(item.runId));
 
 const linkCardStillAsks = (
   item: OrchestrationV2TurnItem,
-  latestUserAuthoredMessageAt: DateTime.Utc | null,
+  latestUserMessageAt: DateTime.Utc | null,
 ) =>
-  latestUserAuthoredMessageAt === null ||
-  !DateTime.isGreaterThan(latestUserAuthoredMessageAt, item.startedAt ?? item.updatedAt);
+  latestUserMessageAt === null ||
+  !DateTime.isGreaterThan(latestUserMessageAt, item.startedAt ?? item.updatedAt);
 
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
@@ -1583,7 +1584,8 @@ export function threadShellFromProjection(
       projection.turnItems
         .filter(
           (item) =>
-            item.status === "waiting" && waitsOnUser(item, liveRunIds, latestUserAuthoredMessageAt),
+            item.status === "waiting" &&
+            waitsOnUser(item, liveRunIds, userMessages[0]?.updatedAt ?? null),
         )
         .toSorted(
           (left, right) =>
@@ -6624,11 +6626,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   INDEXED BY orchestration_v2_projection_turn_items_waiting_link_idx
                 WHERE link.thread_id = t.thread_id
                   AND link.type = 'link_request' AND link.status = 'waiting'
-                  -- linkCardStillAsks: once the user writes after the card, it stops asking.
+                  -- linkCardStillAsks: once anyone writes after the card, it stops asking.
                   AND NOT EXISTS (
                     SELECT 1 FROM orchestration_v2_projection_messages message
                     WHERE message.thread_id = t.thread_id AND message.role = 'user'
-                      AND json_extract(message.payload_json, '$.createdBy') = 'user'
                       AND NOT ${isIdleCompactionMessage("message")}
                       AND message.updated_at > COALESCE(
                         json_extract(link.payload_json, '$.startedAt'), link.updated_at
@@ -6803,6 +6804,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           row.latest_user_authored_message_at === null
             ? null
             : DateTime.makeUnsafe(row.latest_user_authored_message_at);
+        const latestUserMessageAt =
+          row.latest_user_message_at === null
+            ? null
+            : DateTime.makeUnsafe(row.latest_user_message_at);
         const waitingCards = [
           row.pending_secret_request_payload_json === null
             ? null
@@ -6813,8 +6818,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ]
           .filter((item) => item !== null)
           .filter(
-            (item) =>
-              item.type !== "link_request" || linkCardStillAsks(item, latestUserAuthoredMessageAt),
+            (item) => item.type !== "link_request" || linkCardStillAsks(item, latestUserMessageAt),
           );
         let pendingRuntimeRequest =
           row.pending_request_payload_json !== null
@@ -6937,10 +6941,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             row.last_error,
           ),
           pendingRuntimeRequest,
-          latestUserMessageAt:
-            row.latest_user_message_at === null
-              ? null
-              : DateTime.makeUnsafe(row.latest_user_message_at),
+          latestUserMessageAt,
           latestUserAuthoredMessageAt,
           hasActionableProposedPlan: row.has_actionable_proposed_plan === 1,
           pendingBackgroundTasks,
