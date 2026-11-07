@@ -294,16 +294,22 @@ const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
 } as const;
 
-const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
-  hour: "numeric",
-  minute: "2-digit",
-});
+// A formatter pins the zone when built, so key it on the live zone. Probing costs one
+// resolvedOptions() per rendered message; accepted for correctness across zone switches.
+const MESSAGE_TIME_OPTIONS: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "2-digit" };
+const messageTimeFormatters = new Map<string, Intl.DateTimeFormat>();
 function formatMessageTime(input: string): string {
   const timestamp = Date.parse(input);
   if (Number.isNaN(timestamp)) {
     return "";
   }
-  return MESSAGE_TIME_FORMATTER.format(timestamp);
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  let formatter = messageTimeFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(undefined, { ...MESSAGE_TIME_OPTIONS, timeZone });
+    messageTimeFormatters.set(timeZone, formatter);
+  }
+  return formatter.format(timestamp);
 }
 
 const TURN_FOLD_HEIGHT = 42;

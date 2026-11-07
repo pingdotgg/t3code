@@ -68,29 +68,49 @@ function resolveWeekStartsOn(locale: string | undefined): WeekdayIndex | undefin
 
 export const weekStartsOn = resolveWeekStartsOn(timestampLocale);
 
-const timestampFormatterCache = new Map<string, Intl.DateTimeFormat>();
+const formatterCache = new Map<string, Intl.DateTimeFormat>();
 
-function getTimestampFormatter(
-  timestampFormat: TimestampFormat,
-  includeSeconds: boolean,
-  timeZone?: string,
+// A formatter pins the default zone when built, so key on the current one to follow OS zone changes.
+// The probe builds a formatter, so public entry points take it once and pass it down. Reusing it
+// while getTimezoneOffset() is unchanged would miss switches between same-offset zones.
+function currentTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+function getCachedFormatter(
+  name: string,
+  options: Intl.DateTimeFormatOptions,
+  timeZone: string,
+  locale: string | undefined = timestampLocale,
 ): Intl.DateTimeFormat {
-  const cacheKey = `${timestampFormat}:${includeSeconds ? "seconds" : "minutes"}:${timeZone ?? ""}`;
-  const cachedFormatter = timestampFormatterCache.get(cacheKey);
+  const cacheKey = `${name}:${timeZone}`;
+  const cachedFormatter = formatterCache.get(cacheKey);
   if (cachedFormatter) {
     return cachedFormatter;
   }
 
-  const formatter = new Intl.DateTimeFormat(timestampLocale, {
-    ...getTimestampFormatOptions(timestampFormat, includeSeconds),
-    ...(timeZone ? { timeZone } : {}),
-  });
-  timestampFormatterCache.set(cacheKey, formatter);
+  const formatter = new Intl.DateTimeFormat(locale, { ...options, timeZone });
+  formatterCache.set(cacheKey, formatter);
   return formatter;
 }
 
+function getTimestampFormatter(
+  timestampFormat: TimestampFormat,
+  includeSeconds: boolean,
+  timeZone: string,
+): Intl.DateTimeFormat {
+  return getCachedFormatter(
+    `${timestampFormat}:${includeSeconds ? "seconds" : "minutes"}`,
+    getTimestampFormatOptions(timestampFormat, includeSeconds),
+    timeZone,
+  );
+}
+
 export function resolveHour12(timestampFormat: TimestampFormat): boolean {
-  return getTimestampFormatter(timestampFormat, false).resolvedOptions().hour12 ?? false;
+  return (
+    getTimestampFormatter(timestampFormat, false, currentTimeZone()).resolvedOptions().hour12 ??
+    false
+  );
 }
 
 export function parseTimestampDate(isoDate: string): Date | null {
@@ -101,7 +121,7 @@ export function parseTimestampDate(isoDate: string): Date | null {
 // Deliberately not the host locale: the tooltip's ordinal suffix and
 // day-before-month order below are English, so a localized month alone would
 // read "4th Juni 2026".
-const monthNameFormatter = new Intl.DateTimeFormat("en-US", { month: "long" });
+const monthNameOptions: Intl.DateTimeFormatOptions = { month: "long" };
 
 function ordinalSuffix(day: number): string {
   const lastTwo = day % 100;
@@ -124,9 +144,10 @@ export function formatChatTimestampTooltip(
 ): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
-  const time = formatShortTimestamp(isoDate, timestampFormat);
+  const timeZone = currentTimeZone();
+  const time = getTimestampFormatter(timestampFormat, false, timeZone).format(date);
   const day = date.getDate();
-  const month = monthNameFormatter.format(date);
+  const month = getCachedFormatter("monthName", monthNameOptions, timeZone, "en-US").format(date);
   const year = date.getFullYear();
   return `${time}, ${day}${ordinalSuffix(day)} ${month} ${year}`;
 }
@@ -134,7 +155,7 @@ export function formatChatTimestampTooltip(
 export function formatShortTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
-  return getTimestampFormatter(timestampFormat, false).format(date);
+  return getTimestampFormatter(timestampFormat, false, currentTimeZone()).format(date);
 }
 
 const numericDateOptions: Intl.DateTimeFormatOptions = { month: "numeric", day: "numeric" };
@@ -142,11 +163,6 @@ const numericDateWithYearOptions: Intl.DateTimeFormatOptions = {
   ...numericDateOptions,
   year: "numeric",
 };
-const numericDateFormatter = new Intl.DateTimeFormat(timestampLocale, numericDateOptions);
-const numericDateWithYearFormatter = new Intl.DateTimeFormat(
-  timestampLocale,
-  numericDateWithYearOptions,
-);
 
 interface CalendarDay {
   year: number;
@@ -171,14 +187,31 @@ function calendarDay(date: Date, timeZone: string | undefined): CalendarDay {
   return { year, index: Date.UTC(year, part("month") - 1, part("day")) / 86_400_000 };
 }
 
-function formatNumericDate(date: Date, sameYear: boolean, timeZone: string | undefined): string {
-  if (!timeZone) {
-    return (sameYear ? numericDateFormatter : numericDateWithYearFormatter).format(date);
-  }
-  return new Intl.DateTimeFormat(timestampLocale, {
-    ...(sameYear ? numericDateOptions : numericDateWithYearOptions),
-    timeZone,
-  }).format(date);
+function formatNumericDate(date: Date, sameYear: boolean, timeZone: string): string {
+  return (
+    sameYear
+      ? getCachedFormatter("numericDate", numericDateOptions, timeZone)
+      : getCachedFormatter("numericDateWithYear", numericDateWithYearOptions, timeZone)
+  ).format(date);
+}
+
+/** `timeZone` set: calendar days come from that zone; unset: from the system zone `formatZone` names. */
+function formatPastTimestamp(
+  date: Date,
+  timestampFormat: TimestampFormat,
+  nowMs: number,
+  timeZone: string | undefined,
+  formatZone: string,
+): string {
+  const time = getTimestampFormatter(timestampFormat, false, formatZone).format(date);
+
+  const today = calendarDay(new Date(nowMs), timeZone);
+  const messageDay = calendarDay(date, timeZone);
+  const dayDiff = today.index - messageDay.index;
+
+  if (dayDiff <= 0) return time;
+  if (dayDiff === 1) return `yesterday at ${time}`;
+  return `${formatNumericDate(date, messageDay.year === today.year, formatZone)} ${time}`;
 }
 
 export function formatDayAwareTimestamp(
@@ -189,18 +222,10 @@ export function formatDayAwareTimestamp(
 ): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
-  const time = getTimestampFormatter(timestampFormat, false, timeZone).format(date);
-
-  const today = calendarDay(new Date(nowMs), timeZone);
-  const messageDay = calendarDay(date, timeZone);
-  const dayDiff = today.index - messageDay.index;
-
-  if (dayDiff <= 0) return time;
-  if (dayDiff === 1) return `yesterday at ${time}`;
-  return `${formatNumericDate(date, messageDay.year === today.year, timeZone)} ${time}`;
+  return formatPastTimestamp(date, timestampFormat, nowMs, timeZone, timeZone ?? currentTimeZone());
 }
 
-/** `timeZone` overrides the zone the formatters cached when they were built. */
+/** `timeZone` overrides the system time zone. */
 export function formatUpcomingTimestamp(
   isoDate: string,
   timestampFormat: TimestampFormat,
@@ -209,16 +234,17 @@ export function formatUpcomingTimestamp(
 ): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
-  const time = getTimestampFormatter(timestampFormat, false, timeZone).format(date);
+  const formatZone = timeZone ?? currentTimeZone();
 
   const today = calendarDay(new Date(nowMs), timeZone);
   const targetDay = calendarDay(date, timeZone);
   const dayDiff = targetDay.index - today.index;
 
-  if (dayDiff < 0) return formatDayAwareTimestamp(isoDate, timestampFormat, nowMs, timeZone);
+  if (dayDiff < 0) return formatPastTimestamp(date, timestampFormat, nowMs, timeZone, formatZone);
+  const time = getTimestampFormatter(timestampFormat, false, formatZone).format(date);
   if (dayDiff === 0) return time;
   if (dayDiff === 1) return `tomorrow at ${time}`;
-  return `${formatNumericDate(date, targetDay.year === today.year, timeZone)} ${time}`;
+  return `${formatNumericDate(date, targetDay.year === today.year, formatZone)} ${time}`;
 }
 
 type RelativeTimeParts = { value: string; suffix: string | null };

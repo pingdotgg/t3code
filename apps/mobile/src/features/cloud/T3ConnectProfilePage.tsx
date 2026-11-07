@@ -21,13 +21,11 @@ import {
   useManagedRelayEnvironments,
 } from "./managedRelayState";
 
-const linkedAtFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
-
 function linkedAtLabel(value: string): string {
   const linkedAt = new Date(value);
   return Number.isNaN(linkedAt.getTime())
     ? "Link date unavailable"
-    : `Linked ${linkedAtFormatter.format(linkedAt)}`;
+    : `Linked ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(linkedAt)}`;
 }
 
 function endpointLabel(environment: RelayClientEnvironmentRecord): string {
