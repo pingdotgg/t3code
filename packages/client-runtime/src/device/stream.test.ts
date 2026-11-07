@@ -140,6 +140,35 @@ describe("native device stream transport", () => {
     },
   );
 
+  it.each([
+    ["ios", { button: "home" }, { button: "app_switcher" }],
+    ["android", { type: "home" }, { type: "recents" }],
+  ] as const)(
+    "opens the %s app switcher on a double-tapped home button",
+    async (platform, home, switcher) => {
+      const { client, opened } = setup(platform);
+      client.start();
+      const socket = await opened;
+      socket.onopen?.();
+      if (platform === "ios") socket.onmessage?.({ data: Uint8Array.of(0x83).buffer });
+      socket.send.mockClear();
+
+      client.pressButton("home");
+      client.pressButton("home");
+      client.pressButton("home");
+      vi.advanceTimersByTime(1000);
+      client.pressButton("home");
+
+      const sent = socket.send.mock.calls.map(([payload]) =>
+        JSON.parse(
+          typeof payload === "string" ? payload : new TextDecoder().decode(payload.subarray(1)),
+        ),
+      );
+      expect(sent).toEqual([home, switcher, home, home]);
+      client.stop();
+    },
+  );
+
   it.each(["ios", "android"] as const)(
     "does not renew credentials or reconnect a stopped %s stream",
     async (platform) => {

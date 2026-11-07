@@ -1,4 +1,4 @@
-// @effect-diagnostics globalFetch:off globalTimers:off - This browser and WebView transport runs without an Effect runtime.
+// @effect-diagnostics globalFetch:off globalTimers:off globalDate:off - This browser and WebView transport runs without an Effect runtime.
 
 import {
   createDuoControl,
@@ -150,6 +150,7 @@ const SOFT_DECODE_QUEUE = 8;
 const ANDROID_MAX_TEXT_BYTES = 300;
 // The pinned hub queue depth is 128; the client does not read queue rejections.
 const ANDROID_MAX_TEXT_CHUNKS = 64;
+const HOME_DOUBLE_TAP_MS = 400;
 
 const IOS_MSG_TOUCH = 0x03;
 const IOS_MSG_BUTTON = 0x04;
@@ -418,6 +419,7 @@ export function createDeviceStreamClient(
     isWebCodecsSupported() && !(platform === "ios" && target.preferMjpeg && !serveSimOnly);
 
   let stopped = true;
+  let lastHomePress = -Infinity;
   let socket: WebSocket | null = null;
   let controller: AbortController | null = null;
   const retryTimers = new Map<"video" | "input", ReturnType<typeof setTimeout>>();
@@ -1411,7 +1413,11 @@ export function createDeviceStreamClient(
       }
       if (chunk.length > 0) send(JSON.stringify({ type: "text", text: chunk }));
     },
-    pressButton: (button) => {
+    pressButton: (pressed) => {
+      const now = Date.now();
+      const doubleHome = pressed === "home" && now - lastHomePress < HOME_DOUBLE_TAP_MS;
+      lastHomePress = pressed === "home" && !doubleHome ? now : -Infinity;
+      const button = doubleHome ? "appSwitcher" : pressed;
       if (avcc) {
         const name =
           button === "home"
