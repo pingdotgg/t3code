@@ -94,6 +94,7 @@ import {
   type WorkingWindowItem,
 } from "./MessagesTimeline.logic";
 import { WorktreeSetupRows } from "./WorktreeSetupCard";
+import { RunningFor } from "./RunningFor";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -954,9 +955,22 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
     if (entry.itemType === "approval_request" || entry.itemType === "user_input_request") {
       return <WorkingRequestRow entry={entry} />;
     }
+    const label = liveWorkEntryLabel(entry, ctx.workspaceRoot, true);
     return (
       <LiveActivityRow
-        label={liveWorkEntryLabel(entry, ctx.workspaceRoot, true)}
+        label={
+          entry.itemType === "command_execution" && entry.command?.trim() ? (
+            <>
+              {label}
+              <RunningFor
+                startedAt={entry.createdAt}
+                environmentId={ctx.activeThreadEnvironmentId}
+              />
+            </>
+          ) : (
+            label
+          )
+        }
         iconName={workEntryIconName(entry)}
         toolIcon={entry.toolIcon ?? entry.toolSource?.icon}
         active={current}
