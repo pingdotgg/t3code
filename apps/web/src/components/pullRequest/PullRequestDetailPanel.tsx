@@ -649,8 +649,11 @@ export function PullRequestDetailPanel({
         revealRefreshedFor.current = revealUrl;
         return void refreshFromHost();
       }
+      revealRefreshedFor.current = null;
       return onRevealSettled?.();
     }
+    // A later click on the same link gets its own host read.
+    revealRefreshedFor.current = null;
     // selectTab's store writes; the local tab already switched during render.
     if (tabOnPage) useGuideRunStore.getState().showPageDetailTab(guideKey, "summary");
     onTabChange?.("summary");
