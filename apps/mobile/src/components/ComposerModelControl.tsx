@@ -79,10 +79,24 @@ export function ComposerModelControl(props: {
           />
         )
       }
-      label={providerNameLabel ? `${providerNameLabel} · ${shortLabel}` : shortLabel}
+      label={providerNameLabel ?? shortLabel}
+      labelEllipsizeMode={providerNameLabel ? "middle" : undefined}
       iconOnly={props.iconOnly}
+      suffixWidth={providerNameLabel ? 96 : undefined}
       suffix={
-        summary ? (
+        providerNameLabel ? (
+          <Text
+            className={
+              props.size === "large"
+                ? "text-sm text-foreground-muted"
+                : "text-xs text-foreground-muted"
+            }
+            numberOfLines={1}
+          >
+            {shortLabel}
+            {summary ? ` · ${summary}` : ""}
+          </Text>
+        ) : summary ? (
           <Text
             className={
               props.size === "large"
