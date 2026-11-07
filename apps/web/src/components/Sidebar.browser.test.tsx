@@ -43,6 +43,7 @@ describe("sidebar header new thread", () => {
     { mode: "boring", count: 2, shift: true, picker: false },
     { mode: "boring", count: 1, shift: false, picker: false },
     { mode: "legacy", count: 2, shift: false, picker: false },
+    { mode: "current-project", count: 2, shift: false, picker: false },
   ] as const)("$mode sidebar, $count projects, shift=$shift: picker=$picker", async (scenario) => {
     using stack = new DisposableStack();
     const previousSettings = getClientSettings();
@@ -51,6 +52,7 @@ describe("sidebar header new thread", () => {
       ...DEFAULT_CLIENT_SETTINGS,
       boringSidebarEnabled: scenario.mode === "boring",
       legacySidebarEnabled: scenario.mode === "legacy",
+      newThreadInCurrentProject: scenario.mode === "current-project",
     });
     const projects = [project("active"), project("idle")].slice(0, scenario.count);
     const currentProjectRef = {

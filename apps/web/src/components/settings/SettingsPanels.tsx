@@ -483,6 +483,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...(settings.newThreadInCurrentProject !== DEFAULT_UNIFIED_SETTINGS.newThreadInCurrentProject
+      ? ["New threads use the current project"]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? ["Auto-settle inactive threads"]
       : []),
@@ -652,6 +655,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      newThreadInCurrentProject: DEFAULT_UNIFIED_SETTINGS.newThreadInCurrentProject,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -905,6 +909,32 @@ export function GeneralSettingsPanel() {
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
               aria-label="Working section"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("new-thread-in-current-project")}
+          description="New thread starts in the current project instead of asking which project to use. Pick another project from the new thread's project selector."
+          resetAction={
+            settings.newThreadInCurrentProject !==
+            DEFAULT_UNIFIED_SETTINGS.newThreadInCurrentProject ? (
+              <SettingResetButton
+                label="new thread project"
+                onClick={() =>
+                  updateSettings({
+                    newThreadInCurrentProject: DEFAULT_UNIFIED_SETTINGS.newThreadInCurrentProject,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.newThreadInCurrentProject}
+              onCheckedChange={(checked) =>
+                updateSettings({ newThreadInCurrentProject: Boolean(checked) })
+              }
+              aria-label="New threads use the current project"
             />
           }
         />
