@@ -448,16 +448,9 @@ export const layer = Api.make(
         deadLetterQueue: apnsDeliveryDeadLetterQueue.queueName as unknown as string,
       },
       (stream) =>
-        stream.pipe(
-          Stream.withSpan("relay.apn_delivery_queue.process_batch"),
-          Stream.runForEach((message) =>
-            ApnsDeliveries.ApnsDeliveries.pipe(
-              Effect.flatMap((deliveries) => deliveries.processSignedJob(message.body)),
-              Effect.withSpan("relay.apn_delivery_queue.process_message"),
-            ),
-          ),
-          Effect.provide(layerRuntime),
-        ),
+        Effect.flatMap(ApnsDeliveries.ApnsDeliveries, (deliveries) =>
+          deliveries.processBatch(stream),
+        ).pipe(Effect.provide(layerRuntime)),
     );
 
     yield* Cloudflare.Queues.consumeQueueMessages<unknown>(
