@@ -274,12 +274,14 @@ describe("CLIProxyAPI built-in management API", () => {
     "https://tools.test/cliproxy/management.html#accounts",
     "https://tools.test/cliproxy/management.html/?tab=accounts",
     "https://tools.test/cliproxy/management.html/#accounts",
+    "https://tools.test/cliproxy/v0/management",
+    "https://tools.test/cliproxy/v0/management/",
   ])("keeps the path of a hub served under a prefix: %s", (url) =>
     Effect.gen(function* () {
       const test = fixture();
       const api = yield* test.api;
       yield* api.readAccounts({ ...config, url });
-      expect(test.requests.length).toBeGreaterThan(0);
+      expect(test.requests[0]?.path).toBe("/cliproxy/v0/management/auth-files");
       expect(
         test.requests.every((request) => request.path.startsWith("/cliproxy/v0/management/")),
       ).toBe(true);

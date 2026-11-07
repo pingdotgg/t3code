@@ -186,8 +186,8 @@ export const makeCliproxyApi = Effect.gen(function* () {
     const url = yield* Effect.try({
       try: () => {
         const base = new URL(hub.url);
-        // Users often paste the hub's web panel URL, which ends in management.html.
-        base.pathname = base.pathname.replace(/(\/management\.html)?\/?$/i, "/");
+        // Users often paste the web panel URL (management.html) or the API base (/v0/management).
+        base.pathname = base.pathname.replace(/(\/management\.html|\/v0\/management)?\/?$/i, "/");
         return new URL(`v0/management/${path}`, base).toString();
       },
       catch: () => new UsageLimitSourceError({ detail: "The hub URL is not valid." }),
