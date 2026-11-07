@@ -1467,7 +1467,9 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   await expect.element(screen.getByText("Needs permission to run the command")).toBeVisible();
   await vi.waitFor(() => {
     expect(
-      getComputedStyle(screen.getByLabelText("Command", { exact: true }).element()).userSelect,
+      getComputedStyle(
+        screen.getByLabelText("Command", { exact: true }).element().querySelector("code")!,
+      ).userSelect,
     ).toBe("text");
     expect(
       getComputedStyle(screen.getByText("Needs permission to run the command").element())
@@ -1475,6 +1477,29 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
     ).toBe("text");
   });
   await expect.element(screen.getByText("Safari", { exact: true })).toBeVisible();
+  const longLabelApproval: PendingApproval = {
+    ...approvals[1]!,
+    options: [
+      { decision: "decline", label: "Deny and stop Safari from asking again" },
+      { decision: "accept", label: "Allow Safari to open the current tab once" },
+    ],
+  };
+  screen.container.style.width = "360px";
+  await screen.rerender(ui({ pendingApprovals: [approvals[0]!, longLabelApproval] }));
+  await vi.waitFor(() => {
+    const card = screen
+      .getByRole("group", { name: "App permission approval" })
+      .element()
+      .getBoundingClientRect();
+    for (const option of longLabelApproval.options!) {
+      const box = screen.button(option.label).getBoundingClientRect();
+      expect(box.width).toBeGreaterThan(0);
+      expect(box.left).toBeGreaterThanOrEqual(card.left);
+      expect(box.right).toBeLessThanOrEqual(card.right);
+    }
+  });
+  screen.container.style.width = "900px";
+  await screen.rerender(ui());
   await click(screen.button("Why am I being asked this?"));
   await expect.element(page.getByText(/an ask rule in the agent's own settings/)).toBeVisible();
   await click(screen.button("Why am I being asked this?"));
@@ -1546,7 +1571,10 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   await expect
     .element(screen.getByRole("group", { name: "Command approval" }))
     .not.toBeInTheDocument();
-  await vi.waitFor(() => expect(screen.text()).not.toContain("Waiting for approval"));
+  await expect
+    .element(screen.getByRole("group", { name: "App permission approval" }))
+    .not.toBeInTheDocument();
+  await vi.waitFor(() => expect(screen.buttons("Approve")).toHaveLength(0));
   await screen.getByRole("button", { expanded: false }).click();
   await expect
     .element(screen.getByRole("button", { name: approvals[0]!.detail!, exact: true }))
