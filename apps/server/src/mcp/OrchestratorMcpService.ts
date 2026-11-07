@@ -2986,6 +2986,9 @@ const make = Effect.gen(function* () {
       const projectId = input.allProjects
         ? null
         : yield* resolveProjectTarget(parent, input.projectId);
+      if (!input.allProjects && input.projectId !== undefined) {
+        yield* requireProject(input.projectId);
+      }
       const projectThreads = yield* threadManagement
         .listProjectThreads({
           projectId: projectId ?? undefined,

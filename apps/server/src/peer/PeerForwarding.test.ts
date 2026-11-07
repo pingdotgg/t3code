@@ -166,7 +166,19 @@ const boxLaunches = (seen: Ref.Ref<Seen>) =>
 const boxProjects = (seen: Ref.Ref<Seen>) =>
   Layer.merge(
     Layer.mock(ProjectService.ProjectService)({
-      getById: () => Effect.succeedNone,
+      getById: (projectId) =>
+        projectId === boxProject
+          ? Effect.succeedSome({
+              id: boxProject,
+              title: "Box",
+              workspaceRoot: "/projects/box",
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: "2026-10-18T00:00:00.000Z",
+              updatedAt: "2026-10-18T00:00:00.000Z",
+              deletedAt: null,
+            })
+          : Effect.succeedNone,
       create: (input) =>
         Ref.update(seen, (current) => ({
           ...current,

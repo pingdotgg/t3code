@@ -35,6 +35,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -3533,7 +3534,7 @@ describe("OrchestratorMcpService thread list", () => {
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
-        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
@@ -3557,6 +3558,20 @@ describe("OrchestratorMcpService thread list", () => {
           ["thread:b-snoozed", "project:b"],
         ],
       );
+    }).pipe(Effect.provide(service)),
+  );
+
+  it.effect("refuses a projectId that names no project", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const listed = yield* mcp
+        .listThreads(client, { projectId: ProjectId.make("project:missing") })
+        .pipe(Effect.result);
+      if (Result.isSuccess(listed)) {
+        assert.fail(`listed threads for a missing project: ${JSON.stringify(listed.success)}`);
+      }
+      assert.equal(listed.failure.code, "invalid_request");
+      assert.include(listed.failure.message, "not found");
     }).pipe(Effect.provide(service)),
   );
 });
