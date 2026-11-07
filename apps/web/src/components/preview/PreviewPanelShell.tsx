@@ -121,7 +121,8 @@ function PreviewPanelShellFrame(
       data-workspace-focus-key={props.workspaceFocusKey}
       data-workspace-unavailable={collapsible && !open ? "true" : undefined}
       className={cn(
-        "relative flex h-full min-h-0 min-w-0 max-w-full flex-col self-stretch bg-background",
+        // One stacking context, so a details card fading above the panel stays above all of it.
+        "relative isolate flex h-full min-h-0 min-w-0 max-w-full flex-col self-stretch bg-background",
         isInline
           ? maximized
             ? // Maximizing meets the sidebar border or window edge; omit the duplicate border.
@@ -131,7 +132,9 @@ function PreviewPanelShellFrame(
         collapsible &&
           "[[data-panel-animations=true]_&]:transition-[width] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",
         collapsible && open && "[[data-panel-animations=true]_&]:starting:w-0!",
-        collapsible && !open && "pointer-events-none",
+        // A collapsing panel drops its border so it really ends at 0px, not at a 1px
+        // border that disappears only when it unmounts.
+        collapsible && !open && "pointer-events-none border-l-0",
       )}
       style={
         isInline
