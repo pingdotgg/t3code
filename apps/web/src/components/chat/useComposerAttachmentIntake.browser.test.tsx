@@ -3,6 +3,13 @@ import { expect, it, vi } from "vite-plus/test";
 
 import type { ComposerContextReference } from "~/lib/composerContextReferences";
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
+import { imageContextReference } from "~/lib/composerContextRecords";
+import { formatInlineContextReference } from "~/lib/composerContextReferences";
+import {
+  readConfirmDialogState,
+  respondToConfirmDialog,
+  subscribeConfirmDialogHost,
+} from "~/confirmDialog";
 import { render } from "../../../test/render";
 import { useComposerAttachmentIntake } from "./useComposerAttachmentIntake";
 
@@ -10,6 +17,8 @@ type Intake = ReturnType<typeof useComposerAttachmentIntake>;
 
 function Harness(props: {
   readonly prompt: string;
+  readonly images?: ComposerImageAttachment[];
+  readonly onRemove?: (id: string) => void;
   readonly insertAttachmentReferences: (
     references: ReadonlyArray<ComposerContextReference>,
   ) => boolean;
@@ -22,12 +31,11 @@ function Harness(props: {
     pendingUserInputs: [],
     supportsQuestionAttachments: false,
     isLiteralPendingAnswer: false,
-    projectSelectionRequired: false,
     questionAttachmentTarget: null,
     attachmentTargetKey: "thread-paste",
     fileStagingLimit: 1_000_000,
     promptRef: { current: props.prompt },
-    composerImagesRef: { current: [] },
+    composerImagesRef: { current: props.images ?? [] },
     composerFilesRef: { current: [] },
     composerEditorRef: { current: null },
     isRevertingCheckpointRef: { current: false },
@@ -36,7 +44,7 @@ function Harness(props: {
     addComposerImage: (image: ComposerImageAttachment) => [image.id],
     addComposerImagesToDraft: (images: ComposerImageAttachment[]) => images.map(({ id }) => id),
     addComposerFilesToDraft: (files: ComposerFileAttachment[]) => files.map(({ id }) => id),
-    removeComposerImageFromDraft: () => {},
+    removeComposerImageFromDraft: props.onRemove ?? (() => {}),
     insertAttachmentReferences: props.insertAttachmentReferences,
   });
   props.onIntake(intake);
@@ -50,7 +58,7 @@ const PNG = Uint8Array.from(
   (char) => char.charCodeAt(0),
 );
 
-it("pasting an image and a file after text inserts a chip for each", async () => {
+it("pasting after text keeps images in the strip and inserts file references", async () => {
   const insertAttachmentReferences = vi.fn(
     (_references: ReadonlyArray<ComposerContextReference>) => true,
   );
@@ -76,5 +84,45 @@ it("pasting an image and a file after text inserts a chip for each", async () =>
     insertAttachmentReferences.mock.calls.map(([references]) =>
       references.map(({ kind, label }) => `${kind}:${label}`),
     ),
-  ).toEqual([["file:notes.txt"], ["image:shot.png"]]);
+  ).toEqual([["file:notes.txt"]]);
 });
+
+it.each([false, true])(
+  "removing an image confirms only an explicit reference (%s)",
+  async (referenced) => {
+    const image: ComposerImageAttachment = {
+      type: "image",
+      id: "image",
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: PNG.length,
+      file: new File([PNG], "shot.png", { type: "image/png" }),
+      previewUrl: "blob:shot",
+    };
+    const onRemove = vi.fn();
+    const intakes: Intake[] = [];
+    await using _screen = await render(
+      <Harness
+        prompt={
+          referenced ? formatInlineContextReference(imageContextReference(image)) : "Look at this"
+        }
+        images={[image]}
+        onRemove={onRemove}
+        insertAttachmentReferences={() => true}
+        onIntake={(intake) => intakes.push(intake)}
+      />,
+    );
+    using _host = { [Symbol.dispose]: subscribeConfirmDialogHost(() => {}) };
+    intakes.at(-1)?.removeComposerImage(image.id);
+    if (referenced) {
+      expect(onRemove).not.toHaveBeenCalled();
+      expect(readConfirmDialogState()).toMatchObject({
+        status: "confirming",
+        confirmLabel: "Remove",
+      });
+      respondToConfirmDialog(true);
+      await Promise.resolve();
+    }
+    expect(onRemove).toHaveBeenCalledExactlyOnceWith(image.id);
+  },
+);
