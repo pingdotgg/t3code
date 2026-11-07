@@ -23,7 +23,6 @@ export function AppRouteModal({
   // Text selection that ends on the backdrop is not a dismissal.
   const backdropPressRef = useRef(false);
   // Focus the surface, not its first control: no stray focus ring, no phone keyboard.
-  // On close, leave focus alone; returning it to the opener paints a focus ring.
   const popupRef = useRef<HTMLDivElement>(null);
 
   return (
@@ -51,7 +50,6 @@ export function AppRouteModal({
         bottomStickOnMobile={false}
         ref={popupRef}
         initialFocus={popupRef}
-        finalFocus={false}
         aria-label={label}
         data-app-modal=""
         viewportProps={{
