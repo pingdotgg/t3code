@@ -985,7 +985,7 @@ export const make = Effect.gen(function* () {
         ...Json.toChangeRequest(listed, input),
         autoMergeEnabled: merging,
         headSha: pull.headOid,
-        body: pull.description ?? "",
+        body: Json.toBody(pull.description, input.host),
         ...(pull.sourceRepo === null
           ? {}
           : { headRepositoryNameWithOwner: `${pull.sourceRepo.owner}/${pull.sourceRepo.name}` }),

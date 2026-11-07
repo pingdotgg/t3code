@@ -295,6 +295,21 @@ export function toPeople(
   }));
 }
 
+// A markdown destination, a reference definition, or an HTML `src` that starts the path.
+const ATTACHMENT_LINK =
+  /(\]\(\s*<?|^ {0,3}\[[^\]\n]+\]:\s*<?|\bsrc\s*=\s*["']?)\/api\/attachments\//gimu;
+
+/**
+ * GitCafe links uploads by path from its own origin. Clients render a body away from that
+ * origin, so the attachments are made absolute here, where they become credentialed media.
+ */
+export function toBody(text: string | null, host: string): string {
+  return (text ?? "").replace(
+    ATTACHMENT_LINK,
+    (_, prefix: string) => `${prefix}https://${host}/api/attachments/`,
+  );
+}
+
 interface RepositoryOnHost {
   readonly repository: string;
   readonly host: string;
@@ -480,7 +495,7 @@ export function toActivity(input: {
   const remark = (comment: GitCafeComment) => ({
     id: comment.id,
     author: toActor(comment.author, host),
-    body: comment.body ?? "",
+    body: toBody(comment.body, host),
     createdAt: comment.createdAt,
     url: null,
     ...(comment.capabilities === undefined ? {} : { canEdit: comment.capabilities.edit }),
@@ -527,7 +542,7 @@ export function toActivity(input: {
       id: review.id,
       kind: "review" as const,
       author: toActor(review.author, host),
-      body: review.body ?? "",
+      body: toBody(review.body, host),
       createdAt: review.createdAt,
       url: null,
       path: null,
