@@ -8,6 +8,16 @@ import { expect, it, vi } from "vite-plus/test";
 
 import { page, userEvent } from "vite-plus/test/browser";
 
+const navigation = vi.hoisted(() => ({
+  navigate: vi.fn(),
+  params: { environmentId: "environment", threadId: "thread" },
+}));
+vi.mock(import("@tanstack/react-router"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useNavigate: () => navigation.navigate,
+  useParams: (() => navigation.params) as typeof import("@tanstack/react-router").useParams,
+}));
+
 import { findAssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { act, render } from "../../test/render";
 import {
@@ -179,3 +189,35 @@ it("reanchors the comment when the cited source mounts after activation", async 
     expect(highlight && [...highlight][0]?.startContainer.parentElement).toBe(source);
   });
 });
+
+it.each([
+  ["environment", "other-thread", "click"],
+  ["environment", "other-thread", "Enter"],
+  ["environment", "other-thread", " "],
+  ["other-environment", "thread", "click"],
+  ["other-environment", "thread", "Enter"],
+  ["other-environment", "thread", " "],
+])(
+  "edits a citation from draft %s/%s with %s without navigating",
+  async (environmentId, threadId, activation) => {
+    navigation.navigate.mockClear();
+    navigation.params = { environmentId, threadId };
+    try {
+      const editorRef = createRef<ComposerPromptEditorHandle>();
+      await using screen = await render(
+        <Composer question={false} editorRef={editorRef} sourceVisible={false} />,
+      );
+      const chip = screen.getByRole("link", { name: "View cited assistant text: hello" });
+      if (activation === "click") {
+        await chip.click();
+      } else {
+        chip.element().focus();
+        await userEvent.keyboard(activation === "Enter" ? "{Enter}" : " ");
+      }
+      await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
+      expect(navigation.navigate).not.toHaveBeenCalled();
+    } finally {
+      navigation.params = { environmentId: "environment", threadId: "thread" };
+    }
+  },
+);

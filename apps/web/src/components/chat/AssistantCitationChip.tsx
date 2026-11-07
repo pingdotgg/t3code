@@ -3,7 +3,7 @@ import {
   assistantCitationLabel,
   serializeAssistantCitation,
 } from "@t3tools/shared/assistantCitations";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { ArrowUpRightIcon, QuoteIcon } from "lucide-react";
 import {
   useEffect,
@@ -52,6 +52,7 @@ export function AssistantCitationChip({
   };
 }) {
   const navigate = useNavigate();
+  const { environmentId, threadId } = useParams({ strict: false });
   const chipRef = useRef<HTMLSpanElement>(null);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentPopupRef = useRef<HTMLDivElement>(null);
@@ -143,6 +144,13 @@ export function AssistantCitationChip({
         return;
       }
       event.preventDefault();
+      // Leaving the draft's route unmounts its comment editor.
+      if (
+        composer &&
+        commentEditor &&
+        (citation.environmentId !== environmentId || citation.threadId !== threadId)
+      )
+        return;
       void navigate(assistantCitationNavigation(citation));
     },
   };
