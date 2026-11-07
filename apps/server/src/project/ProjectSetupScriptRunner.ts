@@ -177,8 +177,9 @@ function resolveCompletionShell(shell: string): CompletionShell | null {
 }
 
 // A block with its own closing line protects the sentinel from trailing comments, heredocs and scripts reading stdin.
-// Interactive fish runs each submitted line alone and drops one that fails to parse, so it gets a single eval line
-// instead (abbreviations, which only the line editor expands, do not apply inside it).
+// Interactive fish runs each submitted line alone and drops one that fails to parse, so it gets a single line that
+// `source`s the body: fish parses all of it before running any (`eval` would skip only the failing statement).
+// Abbreviations, which only the line editor expands, do not apply inside it.
 function wrapCommandForCompletion(
   command: string,
   shell: CompletionShell,
@@ -189,7 +190,7 @@ function wrapCommandForCompletion(
     case "powershell":
       return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
     case "fish":
-      return `eval '${body.replace(/[\\']/g, "\\$&")}'; printf '\\n${sentinel}%s\\n' $status`;
+      return `source (printf '%s' '${body.replace(/[\\']/g, "\\$&")}' | psub); printf '\\n${sentinel}%s\\n' $status`;
     case "posix":
       return `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;
   }
