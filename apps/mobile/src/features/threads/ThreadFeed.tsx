@@ -3232,7 +3232,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // list holds the row with end maintenance off.
   const [loadedListKey, setLoadedListKey] = useState<string | null>(null);
   const { jumpToMessageId } = props;
-// Reveal once this thread's list has loaded; jump only after non-thinking content exists.
+  // Reveal once this thread's list has loaded; jump only after non-thinking content exists.
   const jumpListReady = !!jumpToMessageId && loadedListKey === feedThreadKey;
   if (jumpListReady && revealedMessageId !== jumpToMessageId) {
     setInteractionState((current) => ({ ...current, revealedMessageId: jumpToMessageId }));

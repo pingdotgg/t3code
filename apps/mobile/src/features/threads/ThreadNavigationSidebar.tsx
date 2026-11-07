@@ -134,7 +134,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const listRef = useRef<LegendListRef>(null);
   const sidebarScrollGesture = useNativeGesture();
-  const swipeRowActivation = useRef(createSwipeRowActivation()).current;
+  const swipeRowActivation = useMemo(() => createSwipeRowActivation(), []);
   const activationTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the row activation timer on unmount
   useEffect(() => () => clearTimeout(activationTimerRef.current), []);
