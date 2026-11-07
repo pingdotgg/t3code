@@ -1136,6 +1136,8 @@ export default function FilePreviewPanel({
     previewPath && attachment === undefined ? filePreviewDelimiter({ name: previewPath }) : null;
   // Mark jumps are path-scoped and yield once a newer external reveal arrives, so a prior
   // mark cannot steer another file or swallow a later line-link in this one.
+  // Mark ids stay above ordinary external reveal ids so a later equal external id is not treated as handled.
+  const markRequestIdRef = useRef(1_000_000_000);
   const [markReveal, setMarkReveal] = useState<{
     path: string;
     line: number;
@@ -1222,14 +1224,10 @@ export default function FilePreviewPanel({
   const jumpToMark = (line: number) => {
     if (relativePath === null) return;
     setHandledReveal(null);
-    // Stay above ordinary external reveal ids so a later equal external id is not treated as handled.
-    const markRequestBase = 1_000_000_000;
-    const priorMarkRequestId =
-      markReveal?.path === relativePath ? markReveal.requestId : markRequestBase;
     setMarkReveal({
       path: relativePath,
       line,
-      requestId: Math.max(markRequestBase, priorMarkRequestId) + 1,
+      requestId: ++markRequestIdRef.current,
       baselineExternalRequestId: revealRequestId,
     });
   };

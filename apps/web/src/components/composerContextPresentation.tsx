@@ -294,7 +294,11 @@ function ComposerReviewCommentDetails({ comment }: { comment: ReviewCommentConte
       {comment.text.trim() ? <ChatMarkdown text={comment.text.trim()} cwd={undefined} /> : null}
       {comment.diff.trim() ? (
         <div className="flex h-64 min-h-0 flex-col overflow-hidden rounded-md border border-border">
-          <ReadOnlySourcePreview name="review.diff" text={comment.diff} />
+          <ReadOnlySourcePreview
+            name="review.diff"
+            text={comment.diff}
+            xcodeMarkDecorations={(comment.fenceLanguage ?? "diff") !== "diff"}
+          />
         </div>
       ) : null}
     </div>

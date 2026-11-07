@@ -69,6 +69,7 @@ export function ReadOnlySourcePreview(props: {
   text: string;
   wordWrap?: boolean;
   marksMenu?: boolean;
+  xcodeMarkDecorations?: boolean;
 }) {
   return (
     <Suspense fallback={<FileSurfaceLoading className="p-4" />}>
