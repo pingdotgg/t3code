@@ -49,7 +49,7 @@ import {
 } from "react";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { type PullRequestDetailTab, useRightPanelStore } from "~/rightPanelStore";
-import { useEnvironmentSettings } from "~/hooks/useSettings";
+import { useEnvironmentSettings, useScrollingWorkspacesEnabled } from "~/hooks/useSettings";
 import { usePanelAnimationSettings } from "~/panelAnimations";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -336,6 +336,7 @@ export function PullRequestDetailPanel({
     detail,
   } = usePullRequestDetail(environmentId, reference, matchingListEntry);
   const [selectedTab, setTab] = useState<PullRequestDetailTab>(initialTab);
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const reviewGuidesEnabled = useEnvironmentSettings(
     environmentId,
     (settings) => settings.reviewGuidesEnabled,
@@ -1511,7 +1512,7 @@ export function PullRequestDetailPanel({
                   (typeof composerDraftTarget === "object" ? composerDraftTarget : null)
                 }
                 onOpenAsWorkspace={
-                  threadRef !== null && context !== "page"
+                  threadRef !== null && context !== "page" && scrollingWorkspaces
                     ? () => openPullRequestWorkspace(threadRef, reference.number)
                     : undefined
                 }
