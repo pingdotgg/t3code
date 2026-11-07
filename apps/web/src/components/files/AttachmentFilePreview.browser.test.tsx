@@ -304,7 +304,7 @@ describe("bounded binary previews", () => {
         await act(() => trigger.focus());
         await userEvent.keyboard("{Enter}");
         await expect
-          .element(page.getByRole("option", { name: "zzInventory (1 rows)" }))
+          .element(page.getByRole("option", { name: "zzInventory (1 row)" }))
           .toBeVisible();
         await userEvent.keyboard("{ArrowDown}{Enter}");
         await vi.waitFor(() =>
@@ -315,7 +315,7 @@ describe("bounded binary previews", () => {
         await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
         await userEvent.keyboard("{Enter}");
         await expect
-          .element(page.getByRole("option", { name: "zzInventory (1 rows)" }))
+          .element(page.getByRole("option", { name: "zzInventory (1 row)" }))
           .toBeVisible();
         await userEvent.keyboard("{Escape}");
       } finally {
