@@ -191,6 +191,25 @@ const makeStrictNdJsonRpcParser = () => {
       }
     },
     encode: (response: Parameters<typeof codec.encode>[0]) => {
+      // ACP peers consume JSON-RPC errors, not Effect's private Cause envelope.
+      if (response._tag === "Exit" && response.exit._tag === "Failure") {
+        const [failure] = response.exit.cause;
+        const error =
+          response.exit.cause.length === 1 &&
+          failure?._tag === "Fail" &&
+          isProtocolError(failure.error)
+            ? failure.error
+            : AcpError.AcpRequestError.internalError().toProtocolError();
+        return `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: response.requestId,
+          error: {
+            code: error.code,
+            message: error.message,
+            ...(error.data === undefined ? {} : { data: error.data }),
+          },
+        })}\n`;
+      }
       const encoded = codec.encode(response);
       return encoded === undefined ? undefined : `${encoded}\n`;
     },
