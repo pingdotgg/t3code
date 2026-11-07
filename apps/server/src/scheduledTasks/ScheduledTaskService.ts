@@ -59,6 +59,12 @@ import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 import {
+  expectedScheduledTaskMessageIds,
+  scheduledRunFailureReason,
+  scheduledTaskFireKey,
+  scheduledTaskMessageId,
+} from "./scheduledTaskRun.ts";
+import {
   redactHeaders,
   redactQuery,
   renderWebhookPrompt,
@@ -250,6 +256,12 @@ interface WebhookDeliveryRow {
   readonly error: string | null;
 }
 
+interface ScheduledTaskLastRunRow {
+  readonly task_id: string;
+  readonly last_run_at: string | null;
+  readonly last_run_webhook_delivery_id: string | null;
+}
+
 export class ScheduledTaskService extends Context.Service<
   ScheduledTaskService,
   {
@@ -291,6 +303,17 @@ export class ScheduledTaskService extends Context.Service<
     readonly triggerWebhook: (
       request: WebhookTriggerRequest,
     ) => Effect.Effect<WebhookTriggerResult, ScheduledTaskError>;
+    /** Marks the task failed, only if this message is its latest dispatch and that reads succeeded. */
+    readonly recordRunOutcome: (input: {
+      readonly taskId: ScheduledTaskId;
+      readonly messageId: MessageId;
+      readonly error: string;
+    }) => Effect.Effect<void, ScheduledTaskError>;
+    /** Where each task's latest dispatched message landed, for catching up after a restart. */
+    readonly listDispatchedMessages: () => Effect.Effect<
+      ReadonlyArray<{ readonly threadId: ThreadId; readonly messageId: MessageId }>,
+      ScheduledTaskError
+    >;
   }
 >()("t3/scheduledTasks/ScheduledTaskService") {}
 
@@ -349,6 +372,14 @@ function requireFutureOnce(
   return task.enabled && task.schedule.type === "once" && nextRunAt(task, now) === null
     ? taskError("The run time has passed. Pick a time in the future.", { taskId })
     : Effect.void;
+}
+
+function expectedMessageIds(row: ScheduledTaskLastRunRow) {
+  return expectedScheduledTaskMessageIds({
+    taskId: row.task_id,
+    lastRunAt: row.last_run_at,
+    webhookDeliveryId: row.last_run_webhook_delivery_id,
+  });
 }
 
 function errorMessage(error: unknown): string {
@@ -826,6 +857,94 @@ export const layer = Layer.effect(
         ),
     );
 
+    const recordRunOutcome: ScheduledTaskService["Service"]["recordRunOutcome"] = Effect.fn(
+      "ScheduledTaskService.recordRunOutcome",
+    )(
+      function* ({ taskId, messageId, error }) {
+        const [row] = yield* sql<ScheduledTaskLastRunRow>`
+          SELECT task_id, last_run_at, last_run_webhook_delivery_id
+          FROM scheduled_tasks WHERE task_id = ${taskId}
+        `;
+        if (row === undefined || !expectedMessageIds(row).includes(messageId)) return;
+        const updated = yield* sql`
+          UPDATE scheduled_tasks
+          SET last_run_status = 'failed',
+              last_run_error = ${error},
+              updated_at = ${iso(yield* localNow)}
+          WHERE task_id = ${taskId}
+            AND last_run_status = 'succeeded'
+            AND last_run_at IS ${row.last_run_at}
+            AND last_run_webhook_delivery_id IS ${row.last_run_webhook_delivery_id}
+          RETURNING task_id
+        `;
+        if (updated.length > 0) yield* notifyChanged;
+      },
+      (effect, { taskId }) =>
+        effect.pipe(
+          Effect.mapError((cause) =>
+            isScheduledTaskError(cause)
+              ? cause
+              : taskError("Could not record schedule task run.", { taskId, cause }),
+          ),
+        ),
+    );
+
+    const listDispatchedMessages: ScheduledTaskService["Service"]["listDispatchedMessages"] =
+      Effect.fn("ScheduledTaskService.listDispatchedMessages")(
+        function* () {
+          const tasks = yield* sql<ScheduledTaskLastRunRow>`
+            SELECT task_id, last_run_at, last_run_webhook_delivery_id
+            FROM scheduled_tasks WHERE last_run_status = 'succeeded'
+          `;
+          const messageIds = tasks.flatMap(expectedMessageIds);
+          if (messageIds.length === 0) return [];
+          const messages = yield* sql<{ message_id: MessageId; thread_id: ThreadId }>`
+            SELECT message_id, thread_id FROM orchestration_v2_projection_messages
+            WHERE message_id IN ${sql.in(messageIds)}
+          `;
+          return messages.map(({ message_id, thread_id }) => ({
+            messageId: message_id,
+            threadId: thread_id,
+          }));
+        },
+        NodeSqliteClient.readOnly,
+        Effect.mapError((cause) => taskError("Could not list schedule task runs.", { cause })),
+      );
+
+    // The run can end before markCompleted commits, and the reactor's update then matches nothing.
+    // A cancel this early is a Steer or a removed message, so only real failures count here.
+    const recordFinishedDispatch = Effect.fn("ScheduledTaskService.recordFinishedDispatch")(
+      function* (taskId: ScheduledTaskId, threadId: ThreadId, messageId: MessageId) {
+        const { messages } = yield* threadManagement.getThreadRecords(threadId, ["messages"], {
+          messageIds: [messageId],
+        });
+        const runId = messages.find((message) => message.id === messageId)?.runId ?? null;
+        if (runId === null) return null;
+        const { runs, turnItems } = yield* threadManagement.getThreadRecords(
+          threadId,
+          ["runs", "turnItems"],
+          {
+            runIds: [runId],
+            turnItemRunIds: [runId],
+            turnItemTypes: ["error", "run_interrupt_result"],
+          },
+        );
+        const run = runs.find((candidate) => candidate.id === runId);
+        if (run === undefined || run.userMessageId !== messageId || run.status === "cancelled") {
+          return null;
+        }
+        const error = scheduledRunFailureReason(run, turnItems);
+        if (error !== null) yield* recordRunOutcome({ taskId, messageId, error });
+        return error;
+      },
+      // Dispatch is already recorded; a failed read here must not reach releaseStuckRun.
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not record a finished schedule task run.", cause).pipe(
+          Effect.as(null),
+        ),
+      ),
+    );
+
     // The run already started the thread, so a failed write only costs the binding.
     // A thread deleted before the binding landed already ran its task cleanup, so apply that
     // cleanup here; a later deletion finds the binding. An unconfirmed lookup keeps the binding.
@@ -925,12 +1044,14 @@ export const layer = Layer.effect(
 
         yield* notifyChanged;
 
-        const fireKey =
+        const fireKey = scheduledTaskFireKey(
+          active.id,
           webhook === undefined
-            ? `${active.id}:${DateTime.toEpochMillis(startedAt)}:${trigger}`
-            : `${active.id}:webhook:${webhook.deliveryId}`;
+            ? { startedAtMs: DateTime.toEpochMillis(startedAt), trigger }
+            : { deliveryId: webhook.deliveryId },
+        );
         const commandId = CommandId.make(`scheduled-task:${fireKey}`);
-        const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
+        const messageId = scheduledTaskMessageId(fireKey);
         const prompt = webhook?.prompt ?? active.prompt;
         const threadMode = scheduledTaskThreadMode(active);
 
@@ -1078,8 +1199,19 @@ export const layer = Layer.effect(
             ),
           );
         if (written) yield* notifyChanged;
+        const finishedError =
+          written && threadId !== null
+            ? yield* recordFinishedDispatch(active.id, threadId, messageId)
+            : null;
         // The stored row can belong to a replacement, so report this dispatch separately.
-        return { task: recorded, threadId, dispatchFailed: !runSucceeded };
+        return {
+          task:
+            finishedError === null
+              ? recorded
+              : { ...recorded, lastRunStatus: "failed" as const, lastRunError: finishedError },
+          threadId,
+          dispatchFailed: !runSucceeded,
+        };
       }).pipe(
         Effect.onError((cause) =>
           releaseStuckRun(task, startedAtIso, errorMessage(cause), webhook?.deliveryId),
@@ -2487,6 +2619,8 @@ export const layer = Layer.effect(
       listWebhookDeliveries,
       getWebhookDelivery,
       triggerWebhook,
+      recordRunOutcome,
+      listDispatchedMessages,
     });
   }),
 );
