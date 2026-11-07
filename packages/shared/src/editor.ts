@@ -25,6 +25,40 @@ const isVersionedBundle = (entry: string, name: string) => {
   return /^\d[\d.]*$/.test(entry.slice(name.length + 1, -".app".length));
 };
 
+/**
+ * The program a Toolbox script line runs: its first word, or the operand of `exec`, `open -na` or
+ * `start`. Other paths on the line, such as `> /dev/null` or `JAVA_HOME="/opt/jdk"`, say nothing
+ * about whether the IDE is still installed. */
+const scriptWords = (line: string) =>
+  [...line.replace(/^\s*\(/, "").matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map((match) => ({
+    text: match[1] ?? match[2] ?? match[3] ?? "",
+    quoted: match[3] === undefined,
+  }));
+
+const launchedProgram = (line: string) => {
+  const words = scriptWords(line);
+  const launcher = words.shift();
+  if (!launcher) return undefined;
+  const name = launcher.text.toLowerCase();
+  if (name === "start") {
+    // CMD's `start` takes `/switch` options, some with an operand, and one quoted window title.
+    let title = false;
+    while (words[0]) {
+      const word = words[0];
+      if (!word.quoted && word.text.startsWith("/")) {
+        words.shift();
+        if (/^\/(d|node|affinity)$/i.test(word.text)) words.shift();
+      } else if (word.quoted && !title) {
+        title = true;
+        words.shift();
+      } else break;
+    }
+    return words[0]?.text;
+  }
+  if (name !== "exec" && name !== "open") return launcher.text;
+  return words.find((word) => word.quoted || !word.text.startsWith("-"))?.text;
+};
+
 export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(function* (
   editor: Editor,
   env: NodeJS.ProcessEnv,
@@ -47,6 +81,58 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const names = installNames[editor.id] ?? [editor.label];
   const command = editor.commands[0];
   const jetbrains = editor.launchStyle === "line-column";
+  // A Toolbox script launches its IDE by absolute path or a HOME-based path, so a script left
+  // behind by a removed IDE names only missing paths. The script is read, never run.
+  const launchTargetStatus = Effect.fn("editor.launchTargetStatus")(function* (script: string) {
+    const text = yield* fs.readFileString(script).pipe(Effect.orElseSucceed(() => ""));
+    const lines = text.split(/\r?\n/);
+    const expand = (word: string) =>
+      home ? word.replace(/^(?:\$HOME|\$\{HOME\}|~)(?=\/)/, () => home) : word;
+    const exists = (target: string) => fs.exists(target).pipe(Effect.orElseSucceed(() => false));
+    const programs = lines.flatMap((line) => launchedProgram(line) ?? []).map(expand);
+    const targets = programs.filter(
+      (program) => path.isAbsolute(program) && path.basename(program) !== "env",
+    );
+    for (const target of targets) {
+      if (yield* exists(target)) return "found";
+    }
+    // A variable other than HOME or the forwarded arguments (`$IDE_HOME`, `%IDE%`) or an escaped
+    // space (`IntelliJ\ IDEA.app`) can hide an installed IDE from this parser.
+    const ambiguous = /\$|%[\w~]|\\ /.test(text.replace(/\$(?:\{HOME\}|HOME\b|@|\*)|%\*/g, ""));
+    if (targets.length === 0 || ambiguous) return "unknown";
+    // Any other existing path, as in `env "/opt/idea/bin/idea"`, may be the IDE behind a launcher
+    // this parser does not know.
+    for (const { text: word } of lines.flatMap(scriptWords)) {
+      const target = expand(word);
+      if (path.isAbsolute(target) && (yield* exists(target))) return "unknown";
+    }
+    return "missing";
+  });
+  // Toolbox names a launch script `idea1`, `idea2`, ... when another installed version already
+  // has `idea`. The canonical script stays unless its IDE is positively gone; a numbered one needs
+  // a target that still exists.
+  const toolboxScripts = Effect.fn("editor.toolboxScripts")(function* (
+    dir: string,
+    suffix: string,
+  ) {
+    const canonical = path.join(dir, `${command}${suffix}`);
+    const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => []));
+    const numbered = entries
+      .filter(
+        (entry) =>
+          entry.startsWith(command) &&
+          entry.endsWith(suffix) &&
+          /^\d+$/.test(entry.slice(command.length, entry.length - suffix.length)),
+      )
+      .sort((a, b) => a.length - b.length || a.localeCompare(b))
+      .map((entry) => path.join(dir, entry));
+    return [
+      ...((yield* launchTargetStatus(canonical)) === "missing" ? [] : [canonical]),
+      ...(yield* Effect.filter(numbered, (script) =>
+        launchTargetStatus(script).pipe(Effect.map((status) => status === "found")),
+      )),
+    ];
+  });
   const candidates: string[] = [];
 
   if (platform === "darwin") {
@@ -73,9 +159,8 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       }
     }
     if (home && jetbrains) {
-      candidates.push(
-        path.join(home, "Library/Application Support/JetBrains/Toolbox/scripts", command),
-      );
+      const scripts = path.join(home, "Library/Application Support/JetBrains/Toolbox/scripts");
+      candidates.push(...(yield* toolboxScripts(scripts, "")));
     }
   } else if (platform === "win32") {
     const roots = [
@@ -86,7 +171,8 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
     ];
     if (jetbrains) {
       if (env.LOCALAPPDATA) {
-        candidates.push(path.join(env.LOCALAPPDATA, "JetBrains/Toolbox/scripts", `${command}.cmd`));
+        const scripts = path.join(env.LOCALAPPDATA, "JetBrains/Toolbox/scripts");
+        candidates.push(...(yield* toolboxScripts(scripts, ".cmd")));
       }
       for (const directory of roots.flatMap((root) => [root, path.join(root, "JetBrains")])) {
         const entries = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
@@ -126,10 +212,6 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       "/usr/bin",
       "/snap/bin",
     ];
-    if (jetbrains) {
-      const dataHome = env.XDG_DATA_HOME || (home ? path.join(home, ".local/share") : undefined);
-      if (dataHome) dirs.push(path.join(dataHome, "JetBrains/Toolbox/scripts"));
-    }
     if (preferZeditor) {
       // Linux packages use zeditor because OpenZFS owns the zed command.
       for (const name of ["zeditor", "zed"]) {
@@ -139,6 +221,12 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       for (const dir of dirs) {
         for (const name of editor.commands) candidates.push(path.join(dir, name));
       }
+    }
+    const dataHome = env.XDG_DATA_HOME || (home ? path.join(home, ".local/share") : undefined);
+    if (jetbrains && dataHome) {
+      candidates.push(
+        ...(yield* toolboxScripts(path.join(dataHome, "JetBrains/Toolbox/scripts"), "")),
+      );
     }
   }
 

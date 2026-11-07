@@ -631,6 +631,146 @@ it.effect("keeps the macOS VS Code Insiders bundle out of stable VS Code", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+interface ToolboxPaths {
+  readonly home: string;
+  readonly ide: string;
+  readonly removed: string;
+}
+
+const toolboxScriptsPath = {
+  darwin: "Library/Application Support/JetBrains/Toolbox/scripts",
+  linux: ".local/share/JetBrains/Toolbox/scripts",
+  win32: "JetBrains/Toolbox/scripts",
+} as const;
+
+it.effect.each<{
+  readonly case: string;
+  readonly platform: keyof typeof toolboxScriptsPath;
+  readonly expected: string;
+  readonly scripts: (paths: ToolboxPaths) => Record<string, string>;
+}>([
+  {
+    case: "start switches and a stale canonical script",
+    platform: "win32",
+    expected: "idea1.cmd",
+    scripts: ({ home, ide, removed }) => ({
+      "idea.cmd": `@echo off\r\nstart "" "${removed}" %*\r\n`,
+      "idea1.cmd": `@echo off\r\nstart /min /d "${home}" "" "${ide}" %*\r\n`,
+    }),
+  },
+  {
+    case: "stale $HOME scripts and numeric order",
+    platform: "linux",
+    expected: "idea2",
+    scripts: ({ home }) => ({
+      idea: `#!/bin/sh\nexec "$HOME/apps/removed/bin/idea" "$@"\n`,
+      idea1: `#!/bin/sh\nJAVA_HOME="${home}"\ncd "${home}"\nexec "$HOME/apps/removed/bin/idea" "$@"\n`,
+      idea10: `#!/bin/sh\nexec "$HOME/apps/idea/bin/idea" "$@"\n`,
+      idea2: `#!/bin/sh\nexec "$HOME/apps/idea/bin/idea" "$@"\n`,
+    }),
+  },
+  {
+    case: "a stale target behind an absolute env wrapper",
+    platform: "linux",
+    expected: "idea2",
+    scripts: ({ ide, removed }) => ({
+      idea1: `#!/bin/sh\nexec /usr/bin/env "${removed}" "$@"\n`,
+      idea2: `#!/bin/sh\nexec "${ide}" "$@"\n`,
+    }),
+  },
+  {
+    case: "stale ${HOME} scripts",
+    platform: "darwin",
+    expected: "idea2",
+    scripts: () => ({
+      idea: `#!/bin/sh\nopen -na "\${HOME}/apps/removed/bin/idea" --args "$@"\n`,
+      idea1: `#!/bin/sh\nopen -na "\${HOME}/apps/removed/bin/idea" --args "$@"\n`,
+      idea2: `#!/bin/sh\nopen -na "\${HOME}/apps/idea/bin/idea" --args "$@"\n`,
+    }),
+  },
+  {
+    case: "a variable launch",
+    platform: "linux",
+    expected: "idea",
+    scripts: ({ ide, removed }) => ({
+      idea: `#!/bin/sh\n${removed} --version\nIDE_HOME="${ide}"\nexec env "$IDE_HOME" "$@"\n`,
+      idea1: `#!/bin/sh\nexec "${ide}" "$@"\n`,
+    }),
+  },
+  {
+    case: "a tilde path",
+    platform: "linux",
+    expected: "idea",
+    scripts: ({ removed }) => ({
+      idea: `#!/bin/sh\n${removed} --version\nexec ~/apps/idea/bin/idea "$@"\n`,
+      idea1: `#!/bin/sh\nexec "$HOME/apps/idea/bin/idea" "$@"\n`,
+    }),
+  },
+  {
+    case: "an unknown launcher",
+    platform: "linux",
+    expected: "idea",
+    scripts: ({ ide, removed }) => ({
+      idea: `#!/bin/sh\n${removed} --version\nenv "${ide}" "$@"\n`,
+      idea1: `#!/bin/sh\nexec "${ide}" "$@"\n`,
+    }),
+  },
+  {
+    case: "an escaped path",
+    platform: "darwin",
+    expected: "idea",
+    scripts: ({ ide, removed }) => ({
+      idea: `#!/bin/sh\n${removed} --version\nopen -na ${ide.replaceAll(" ", "\\ ")} --args "$@"\n`,
+      idea1: `#!/bin/sh\nopen -na "${ide}" --args "$@"\n`,
+    }),
+  },
+  {
+    case: "a single-quoted target",
+    platform: "darwin",
+    expected: "idea",
+    scripts: ({ ide, removed }) => ({
+      idea: `#!/bin/sh\n${removed} --version\nopen -na '${ide}' --args "$@"\n`,
+      idea1: `#!/bin/sh\nopen -na "${ide}" --args "$@"\n`,
+    }),
+  },
+])(
+  "resolves the $expected Toolbox script on $platform with $case",
+  ({ platform, expected, scripts }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-toolbox-home with spaces-" });
+      const dir = path.join(home, toolboxScriptsPath[platform]);
+      const ide = path.join(home, "apps/idea/bin/idea");
+      yield* fs.makeDirectory(dir, { recursive: true });
+      yield* fs.makeDirectory(path.dirname(ide), { recursive: true });
+      yield* fs.writeFileString(ide, "");
+      const removed = path.join(home, "apps/removed/bin/idea");
+      for (const [name, script] of Object.entries(scripts({ home, ide, removed }))) {
+        const file = path.join(dir, name);
+        yield* fs.writeFileString(file, script);
+        yield* fs.chmod(file, 0o755);
+      }
+
+      const editor = EDITORS.find((editor) => editor.id === "idea")!;
+      const resolved = yield* resolveEditorCommand(editor, {
+        HOME: home,
+        LOCALAPPDATA: home,
+        PATH: path.join(home, "empty"),
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          stat: (file) =>
+            fs.stat(file.startsWith(`${home}${path.sep}`) ? file : path.join(home, "missing")),
+        }),
+      );
+
+      assert.deepEqual(resolved, Option.some({ command: path.join(dir, expected), baseArgs: [] }));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 for (const { platform, installPath, onPath } of [
   { platform: "darwin", installPath: ".local/bin/agy", onPath: true },
   { platform: "linux", installPath: ".local/bin/agy", onPath: false },
