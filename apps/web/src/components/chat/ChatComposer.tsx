@@ -247,7 +247,7 @@ import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelS
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import { isVideoAttachment, type SessionPhase, type Thread, type ThreadShell } from "../../types";
 import { type ComposerPromptHistoryPosition } from "./composerPromptHistory";
-import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/pending-user-input";
+import { usePendingUserInputDraft } from "./usePendingThreadRequests";
 import type {
   LatestProposedPlanState,
   PendingApproval,
@@ -400,22 +400,7 @@ export interface ChatComposerProps {
   pendingApprovals: PendingApproval[];
   onHeldRequestIdsChange: (requestIds: ReadonlySet<string>) => void;
   pendingUserInputs: PendingUserInput[];
-  activePendingProgress: {
-    questionIndex: number;
-    isLastQuestion: boolean;
-    canAdvance: boolean;
-    customAnswer: string;
-    activeQuestion: {
-      id: string;
-      initialAnswer?: string | undefined;
-      multiSelect?: boolean | undefined;
-      allowCustomAnswer?: boolean | undefined;
-    } | null;
-  } | null;
-  activePendingResolvedAnswers: Record<string, unknown> | null;
   activePendingIsResponding: boolean;
-  activePendingDraftAnswers: Record<string, PendingUserInputDraftAnswer>;
-  activePendingQuestionIndex: number;
   respondingRequestIds: RuntimeRequestId[];
 
   showPlanFollowUpPrompt: boolean;
@@ -544,11 +529,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pendingApprovals,
     onHeldRequestIdsChange,
     pendingUserInputs: incomingPendingUserInputs,
-    activePendingProgress: incomingPendingProgress,
-    activePendingResolvedAnswers,
     activePendingIsResponding: incomingPendingIsResponding,
-    activePendingDraftAnswers,
-    activePendingQuestionIndex,
     respondingRequestIds,
     showPlanFollowUpPrompt,
     activeProposedPlan,
@@ -614,6 +595,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     contextWindowLiveUsage,
     contextWindowProviderThread,
   );
+  const {
+    activePendingProgress: incomingPendingProgress,
+    activePendingResolvedAnswers,
+    activePendingDraftAnswers,
+    activePendingQuestionIndex,
+  } = usePendingUserInputDraft({
+    environmentId,
+    activeThreadId,
+    activePendingUserInput: incomingPendingUserInputs[0] ?? null,
+    supportsQuestionAttachments,
+  });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
   const {
