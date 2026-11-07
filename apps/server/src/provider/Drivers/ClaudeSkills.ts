@@ -1,8 +1,13 @@
+// @effect-diagnostics nodeBuiltinImport:off - fingerprinting hashes incrementally with Node's sha256 and reads the OS username.
+import * as NodeCrypto from "node:crypto";
+import * as NodeOS from "node:os";
+
 import type { ClaudeSettings, ServerProviderSkill } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
@@ -311,6 +316,19 @@ function isInsideDirectory(path: Path.Path, directory: string, candidate: string
   return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
+const resolveClaudePluginsPath = Effect.fn("resolveClaudePluginsPath")(function* (
+  configDirPath: string,
+  cwd: string | undefined,
+  environment: NodeJS.ProcessEnv,
+) {
+  const path = yield* Path.Path;
+  const home = yield* HostProcess.HomeDirectory;
+  const pluginDirectory = environment.CLAUDE_CODE_PLUGIN_CACHE_DIR;
+  return pluginDirectory
+    ? path.resolve(cwd ?? ".", expandHomePath(pluginDirectory, home))
+    : path.join(configDirPath, "plugins");
+});
+
 const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function* (
   configDirPath: string,
   cwd: string | undefined,
@@ -319,11 +337,7 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const home = yield* HostProcess.HomeDirectory;
-  const pluginDirectory = environment.CLAUDE_CODE_PLUGIN_CACHE_DIR;
-  const pluginsPath = pluginDirectory
-    ? path.resolve(cwd ?? ".", expandHomePath(pluginDirectory, home))
-    : path.join(configDirPath, "plugins");
+  const pluginsPath = yield* resolveClaudePluginsPath(configDirPath, cwd, environment);
   const installed = yield* fileSystem
     .readFileString(path.join(pluginsPath, "installed_plugins.json"))
     .pipe(
@@ -594,3 +608,256 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
 
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 });
+
+// The CLI's managed folder, which differs from `claudeManagedSettingsPath` on Windows.
+function claudeManagedDirectories(
+  path: Path.Path,
+  platform: NodeJS.Platform,
+  environment: NodeJS.ProcessEnv,
+) {
+  const settingsPath = claudeManagedSettingsPath(path, platform, environment);
+  const cliDirectory =
+    platform === "darwin"
+      ? "/Library/Application Support/ClaudeCode"
+      : platform === "win32"
+        ? "C:\\Program Files\\ClaudeCode"
+        : "/etc/claude-code";
+  return [...new Set([cliDirectory, ...(settingsPath ? [path.dirname(settingsPath)] : [])])];
+}
+
+const CLAUDE_COMMAND_SUBDIRECTORIES = ["commands", "skills", "workflows"];
+// Each makes the CLI load commands from somewhere the fingerprint does not walk.
+const CLAUDE_COMMAND_SOURCE_REDIRECTS = [
+  "CLAUDE_CODE_DESKTOP_SKILLS_PLUGIN_DIR",
+  "CLAUDE_CODE_HOST_SKILL_CATALOG",
+  "CLAUDE_CODE_MANAGED_SETTINGS_PATH",
+  "CLAUDE_CODE_PLUGIN_DIRS",
+  "CLAUDE_CODE_PLUGIN_SEED_DIR",
+  "CLAUDE_CODE_PLUGIN_USE_ZIP_CACHE",
+  "CLAUDE_CODE_REMOTE_SETTINGS_PATH",
+  "CLAUDE_CODE_USE_COWORK_PLUGINS",
+  "GIT_DIR",
+  "GIT_COMMON_DIR",
+  "GIT_WORK_TREE",
+  "GIT_CEILING_DIRECTORIES",
+];
+// The CLI rewrites these on its own: `store` on every start, the rest on background syncs.
+// Marketplace clones can be huge, and only their manifests, added separately, feed the list.
+const CLAUDE_PLUGIN_ROOT_IGNORED = new Set([
+  ".last_inuse_sweep",
+  "marketplaces",
+  "plugin-directory-cache.json",
+  "plugin-directory-cache-v2.json",
+  "store",
+]);
+// `.marketplaces.json` is a server listing whose timestamps move constantly; synced plugin files are its siblings.
+const CLAUDE_PLUGIN_SYNC_BOOKKEEPING = new Set([".last-complete-round", ".marketplaces.json"]);
+// Plugins from these load from the walked cache. A directory marketplace loads them live from
+// its own folder, verified against 2.1.316, so anything else is treated as unknowable.
+const CLAUDE_CACHED_MARKETPLACE_SOURCES = new Set(["git", "github"]);
+// Walking more than this would cost about as much as the probe it avoids.
+const MAX_COMMAND_SOURCE_ENTRIES = 2_000;
+
+const encodeMachineState = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const KnownMarketplaces = Schema.fromJsonString(
+  Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      source: Schema.Struct({ source: Schema.String }),
+      installLocation: Schema.optional(Schema.String),
+    }),
+  ),
+);
+const InstalledPluginPaths = Schema.fromJsonString(
+  Schema.Struct({
+    plugins: Schema.Record(
+      Schema.String,
+      Schema.Array(Schema.Struct({ installPath: Schema.optional(Schema.String) })),
+    ),
+  }),
+);
+
+/**
+ * A digest of local command sources, audited against the 2.1.316 loader and isolated probes.
+ * `undefined` means
+ * the sources cannot be vouched for, so the caller must probe. Account state and remote flags
+ * live outside these files, so callers also pass the health check's view as `machineState`.
+ */
+export const fingerprintClaudeCommandSources = Effect.fn("fingerprintClaudeCommandSources")(
+  function* (
+    config: Pick<ClaudeSettings, "homePath">,
+    cwd: string,
+    environment: NodeJS.ProcessEnv,
+    machineState: unknown,
+  ): Effect.fn.Return<string | undefined, never, FileSystem.FileSystem | Path.Path> {
+    if (CLAUDE_COMMAND_SOURCE_REDIRECTS.some((name) => environment[name] !== undefined)) {
+      return undefined;
+    }
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const platform = yield* HostProcess.Platform;
+    // Windows and WSL also load managed settings from registry keys outside this walk.
+    if (
+      platform === "win32" ||
+      (platform === "linux" &&
+        (environment.WSL_DISTRO_NAME !== undefined ||
+          environment.WSL_INTEROP !== undefined ||
+          /microsoft/i.test(NodeOS.release())))
+    ) {
+      return undefined;
+    }
+    const home = yield* HostProcess.HomeDirectory;
+    if (environment.HOME !== undefined && environment.HOME !== home) return undefined;
+    const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
+    const pluginsPath = yield* resolveClaudePluginsPath(configDirPath, cwd, environment);
+    const hash = NodeCrypto.createHash("sha256").update(encodeMachineState(machineState));
+    let remaining = MAX_COMMAND_SOURCE_ENTRIES;
+
+    // Untraced: this runs per directory entry, so spans would swamp the trace.
+    const addStat: (
+      entry: string,
+      ignored?: (child: string, parent: string) => boolean,
+    ) => Effect.Effect<void, PlatformError.PlatformError | "tooManyEntries"> = Effect.fnUntraced(
+      function* (entry: string, ignored?: (child: string, parent: string) => boolean) {
+        remaining -= 1;
+        if (remaining < 0) return yield* Effect.fail("tooManyEntries" as const);
+        const info = yield* fileSystem
+          .stat(entry)
+          .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined));
+        if (info === undefined) {
+          hash.update(`${entry}\0absent\n`);
+          return;
+        }
+        if (info.type !== "Directory") {
+          const modified = Option.getOrNull(Option.map(info.mtime, (date) => date.getTime()));
+          hash.update(`${entry}\0${info.type}\0${info.size}\0${modified}\n`);
+          return;
+        }
+        hash.update(`${entry}\0dir\n`);
+        const children = yield* fileSystem.readDirectory(entry);
+        for (const child of [...children].sort()) {
+          if (!ignored?.(child, entry)) yield* addStat(path.join(entry, child), ignored);
+        }
+      },
+    );
+    // Contents, not a stat: settings may name a redirect, which disables the fingerprint.
+    const addSettings = Effect.fnUntraced(function* (settingsPath: string) {
+      const contents = yield* fileSystem
+        .readFileString(settingsPath)
+        .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined));
+      if (
+        /\\u[0-9a-f]{4}/i.test(contents ?? "") ||
+        ["CLAUDE_CONFIG_DIR", "HOME", "USERPROFILE", "additionalDirectories", "policyHelpers"].some(
+          (name) => contents?.includes(name),
+        ) ||
+        contents?.includes("CLAUDE_CODE_PLUGIN_CACHE_DIR") ||
+        CLAUDE_COMMAND_SOURCE_REDIRECTS.some((name) => contents?.includes(name))
+      ) {
+        return yield* Effect.fail("redirected" as const);
+      }
+      hash.update(`${settingsPath}\0${contents ?? "absent"}\0`);
+    });
+    const readPluginRecord = <A>(file: string, schema: Schema.Codec<A, string>) =>
+      fileSystem.readFileString(path.join(pluginsPath, file)).pipe(
+        Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
+        Effect.flatMap((contents) =>
+          contents === undefined ? Effect.undefined : Schema.decodeEffect(schema)(contents),
+        ),
+      );
+
+    const walk = Effect.gen(function* () {
+      // The CLI's cwd has symlinks resolved. It searches upward, stopping before home and at the repository root.
+      const workspace = yield* fileSystem.realPath(cwd);
+      const repositoryRoot = yield* findRepositoryRoot(workspace);
+      const projectDirectories = new Set<string>();
+      for (let current = workspace; current !== home; current = path.dirname(current)) {
+        projectDirectories.add(current);
+        if (current === repositoryRoot || current === path.dirname(current)) break;
+      }
+      // A linked worktree also loads commands and skills from its main repository.
+      const mainRepository = yield* findPluginRepositoryRoot(workspace);
+      if (mainRepository !== undefined) projectDirectories.add(mainRepository);
+
+      for (const directory of projectDirectories) {
+        yield* addSettings(path.join(directory, ".claude", "settings.json"));
+        yield* addSettings(path.join(directory, ".claude", "settings.local.json"));
+        for (const subdirectory of CLAUDE_COMMAND_SUBDIRECTORIES) {
+          yield* addStat(path.join(directory, ".claude", subdirectory));
+        }
+      }
+
+      yield* addSettings(path.join(configDirPath, "settings.json"));
+      for (const subdirectory of [...CLAUDE_COMMAND_SUBDIRECTORIES, "synced"]) {
+        yield* addStat(path.join(configDirPath, subdirectory));
+      }
+      yield* addStat(path.join(configDirPath, "policy-limits.json"));
+
+      for (const directory of claudeManagedDirectories(path, platform, environment)) {
+        yield* addSettings(path.join(directory, "managed-settings.json"));
+        const managedSettingsDirectory = path.join(directory, "managed-settings.d");
+        yield* addStat(managedSettingsDirectory);
+        const managedSettingsFiles = yield* fileSystem
+          .readDirectory(managedSettingsDirectory)
+          .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed([])));
+        for (const file of managedSettingsFiles
+          .filter((file) => file.endsWith(".json") && !file.startsWith("."))
+          .sort()) {
+          yield* addSettings(path.join(managedSettingsDirectory, file));
+        }
+        for (const subdirectory of CLAUDE_COMMAND_SUBDIRECTORIES) {
+          yield* addStat(path.join(directory, ".claude", subdirectory));
+        }
+      }
+      // Remote policy also depends on signatures and consent, not just the settings bytes.
+      for (const settingsPath of [
+        path.join(configDirPath, "remote-settings.json"),
+        ...(platform === "darwin"
+          ? [
+              `/Library/Managed Preferences/${NodeOS.userInfo().username}/com.anthropic.claudecode.plist`,
+              "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+            ]
+          : []),
+      ]) {
+        const info = yield* fileSystem
+          .stat(settingsPath)
+          .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined));
+        if (info !== undefined) return yield* Effect.fail("redirected" as const);
+      }
+
+      yield* addStat(
+        pluginsPath,
+        (child, parent) =>
+          CLAUDE_PLUGIN_SYNC_BOOKKEEPING.has(child) ||
+          (parent === pluginsPath && CLAUDE_PLUGIN_ROOT_IGNORED.has(child)),
+      );
+      const installed = yield* readPluginRecord("installed_plugins.json", InstalledPluginPaths);
+      for (const installs of Object.values(installed?.plugins ?? {})) {
+        for (const { installPath } of installs) {
+          if (
+            installPath !== undefined &&
+            (!isInsideDirectory(path, pluginsPath, path.resolve(workspace, installPath)) ||
+              path.resolve(workspace, installPath) === pluginsPath ||
+              CLAUDE_PLUGIN_ROOT_IGNORED.has(
+                path
+                  .relative(pluginsPath, path.resolve(workspace, installPath))
+                  .split(path.sep)[0] ?? "",
+              ))
+          ) {
+            return yield* Effect.fail("pluginOutsideCache" as const);
+          }
+        }
+      }
+      const marketplaces = yield* readPluginRecord("known_marketplaces.json", KnownMarketplaces);
+      for (const { source, installLocation } of Object.values(marketplaces ?? {})) {
+        if (!CLAUDE_CACHED_MARKETPLACE_SOURCES.has(source.source)) {
+          return yield* Effect.fail("liveMarketplace" as const);
+        }
+        if (installLocation !== undefined) {
+          yield* addStat(path.join(installLocation, ".claude-plugin", "marketplace.json"));
+        }
+      }
+      return hash.digest("hex");
+    });
+    return yield* walk.pipe(Effect.orElseSucceed(() => undefined));
+  },
+);

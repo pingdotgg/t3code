@@ -30,6 +30,7 @@ import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
   probeClaudeCapabilities,
+  makeClaudeWorkspaceCommands,
   probeClaudeWorkspaceSnapshot,
   type ClaudeCapabilitiesProbe,
 } from "../ClaudeProvider.ts";
@@ -365,6 +366,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       ),
     );
 
+    const workspaceCommands = yield* makeClaudeWorkspaceCommands(
+      effectiveConfig,
+      processEnv,
+      (cwd) =>
+        probeClaudeCapabilities(effectiveConfig, processEnv, cwd, false).pipe(
+          Effect.map((capabilities) => capabilities.slashCommands),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+    );
+
     return {
       instanceId,
       driverKind: DRIVER_KIND,
@@ -376,11 +388,19 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       accentColor,
       enabled,
       snapshot,
-      invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
+      invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache).pipe(
+        Effect.andThen(workspaceCommands.invalidate),
+      ),
       snapshotForCwd: (cwd: string) =>
         snapshot.getSnapshot.pipe(
           Effect.flatMap((machineSnapshot) =>
-            probeClaudeWorkspaceSnapshot(effectiveConfig, machineSnapshot, cwd, processEnv),
+            probeClaudeWorkspaceSnapshot(
+              effectiveConfig,
+              machineSnapshot,
+              cwd,
+              processEnv,
+              workspaceCommands.get,
+            ),
           ),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),

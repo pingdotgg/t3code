@@ -6,9 +6,12 @@ import {
   type ServerProviderSlashCommand,
   type ServerProviderResetCredits,
 } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -40,7 +43,11 @@ import {
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
 import { hasClaudeManagedMcpConfig, makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
-import { discoverClaudeSkills, readClaudeSettingsEnv } from "./Drivers/ClaudeSkills.ts";
+import {
+  discoverClaudeSkills,
+  fingerprintClaudeCommandSources,
+  readClaudeSettingsEnv,
+} from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
@@ -483,11 +490,56 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
 });
 
-export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnapshot")(function* (
+// Twice the registry's snapshot cap, so a folder it evicts can return without a spawn.
+const WORKSPACE_COMMANDS_CAPACITY = 32;
+// Bounds staleness from anything the fingerprint cannot see.
+const WORKSPACE_COMMANDS_MAX_AGE = Duration.hours(1);
+
+/** Starting the CLI per folder is costly and its answer rarely changes, so reuse it until its sources do. */
+export const makeClaudeWorkspaceCommands = Effect.fn("makeClaudeWorkspaceCommands")(function* <E>(
+  claudeSettings: Pick<ClaudeSettings, "homePath">,
+  environment: NodeJS.ProcessEnv,
+  probeCommands: (cwd: string) => Effect.Effect<ReadonlyArray<ServerProviderSlashCommand>, E>,
+) {
+  const cache = yield* Cache.makeWith(
+    (key: { readonly cwd: string; readonly fingerprint: string }) => probeCommands(key.cwd),
+    {
+      capacity: WORKSPACE_COMMANDS_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? WORKSPACE_COMMANDS_MAX_AGE : Duration.zero),
+    },
+  );
+  return {
+    invalidate: Cache.invalidateAll(cache),
+    get: Effect.fn("ClaudeWorkspaceCommands.get")(function* (
+      machineSnapshot: Pick<ServerProvider, "version" | "auth" | "slashCommands">,
+      cwd: string,
+    ) {
+      // Taken before probing, so an edit during the probe forces another one next time.
+      const fingerprint = yield* fingerprintClaudeCommandSources(claudeSettings, cwd, environment, [
+        machineSnapshot.version,
+        machineSnapshot.auth,
+        machineSnapshot.slashCommands,
+      ]);
+      return yield* fingerprint === undefined
+        ? probeCommands(cwd)
+        : Cache.get(cache, { cwd, fingerprint });
+    }),
+  };
+});
+
+export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnapshot")(function* <E>(
   claudeSettings: ClaudeSettings,
   machineSnapshot: ServerProvider,
   cwd: string,
-  environment?: NodeJS.ProcessEnv,
+  environment: NodeJS.ProcessEnv | undefined,
+  resolveCommands: (
+    machineSnapshot: ServerProvider,
+    cwd: string,
+  ) => Effect.Effect<
+    ReadonlyArray<ServerProviderSlashCommand>,
+    E,
+    FileSystem.FileSystem | Path.Path
+  >,
 ): Effect.fn.Return<ProviderWorkspaceSnapshot, never, FileSystem.FileSystem | Path.Path> {
   if (!claudeSettings.enabled) return machineSnapshot;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
@@ -495,18 +547,14 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   // A deleted worktree can never answer the probe. Pending would make clients rescan it forever.
   const cwdExists = yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true));
   const probeResult = cwdExists
-    ? yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false).pipe(Effect.result)
+    ? yield* resolveCommands(machineSnapshot, cwd).pipe(Effect.result)
     : undefined;
-  const capabilities =
-    probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
+  const commands = probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
   return {
     ...machineSnapshot,
     skills,
-    slashCommands: dedupeSlashCommands([
-      COMPACT_SLASH_COMMAND,
-      ...(capabilities?.slashCommands ?? []),
-    ]),
-    slashCommandsPending: cwdExists && !capabilities,
+    slashCommands: dedupeSlashCommands([COMPACT_SLASH_COMMAND, ...(commands ?? [])]),
+    slashCommandsPending: cwdExists && !commands,
   };
 });
 
