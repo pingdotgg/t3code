@@ -319,6 +319,12 @@ describe("thread action permissions", () => {
     expect(state.requests).toEqual([
       expect.objectContaining({ action: "delete", environmentId: secondary }),
     ]);
+    expect(state.localEffects).toEqual([
+      "refresh-archive",
+      "release-uploads",
+      "clear-draft",
+      "clear-terminal-ui",
+    ]);
     expect(threadPanelStatePresence(target)).toEqual(panelStateCleared);
   });
 
