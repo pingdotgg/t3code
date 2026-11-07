@@ -4,6 +4,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as Electron from "electron";
 import { beforeEach, vi } from "vite-plus/test";
 
@@ -177,5 +178,34 @@ describe("ElectronWindow", () => {
       const current = yield* electronWindow.currentMainOrFirst;
       assert.isTrue(current._tag === "Some" && current.value === ordinary);
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("ignores capture overlays after the main window closes on macOS", () =>
+    Effect.gen(function* () {
+      const electronWindow = yield* ElectronWindow.ElectronWindow;
+      const main = {
+        isDestroyed: vi.fn(() => false),
+        isFocusable: () => true,
+      } as unknown as Electron.BrowserWindow;
+      const overlay = {
+        isDestroyed: () => false,
+        isFocusable: () => false,
+      } as unknown as Electron.BrowserWindow;
+      getAllWindowsMock.mockReturnValue([overlay]);
+      yield* electronWindow.setMain(main);
+      assert.equal(Option.getOrThrow(yield* electronWindow.currentMainOrFirst), main);
+
+      vi.mocked(main.isDestroyed).mockReturnValue(true);
+      assert.equal((yield* electronWindow.currentMainOrFirst)._tag, "None");
+      assert.equal((yield* electronWindow.focusedMainOrFirst)._tag, "None");
+
+      const ordinary = {
+        isDestroyed: () => false,
+        isFocusable: () => true,
+      } as unknown as Electron.BrowserWindow;
+      getAllWindowsMock.mockReturnValue([overlay, ordinary]);
+      assert.equal(Option.getOrThrow(yield* electronWindow.currentMainOrFirst), ordinary);
+      assert.equal(Option.getOrThrow(yield* electronWindow.focusedMainOrFirst), ordinary);
+    }).pipe(Effect.provide(layerTestFor("darwin"))),
   );
 });
