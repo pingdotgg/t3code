@@ -3526,6 +3526,7 @@ describe("orchestration v2 provider switching", () => {
             capabilities: ClaudeProviderCapabilitiesV2,
             modelSelection: CLAUDE_MODEL_SELECTION,
             responseByRunOrdinal: { 2: "The imported release marker is violet." },
+            failedRunOrdinals: new Set([2]),
             capturedTurns,
           }),
         ]);
@@ -3687,7 +3688,17 @@ describe("orchestration v2 provider switching", () => {
           if (queueBeforeFailure) {
             yield* Deferred.await(firstTurnStarted);
           } else {
-            yield* waitForIdle(importedThreadId);
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.threadId === importedThreadId &&
+                  event.payload.ordinal === 1 &&
+                  event.payload.status === "failed",
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
           }
           yield* orchestrator.dispatch({
             type: "message.dispatch",
@@ -3719,13 +3730,23 @@ describe("orchestration v2 provider switching", () => {
                 (event) =>
                   event.event.type === "run.updated" &&
                   event.event.runId === queued.runs[1]?.id &&
-                  event.event.payload.status === "completed",
+                  event.event.payload.status === "failed",
               ),
               Stream.runHead,
             );
             yield* worker.drain();
           } else {
-            yield* waitForIdle(importedThreadId);
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.threadId === importedThreadId &&
+                  event.payload.ordinal === 2 &&
+                  event.payload.status === "failed",
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
           }
           const beforeRebuild = yield* orchestrator.getThreadProjection(importedThreadId);
           for (const attempt of beforeRebuild.attempts) {
@@ -3738,6 +3759,43 @@ describe("orchestration v2 provider switching", () => {
           yield* maintenance.rebuild;
           const rebuilt = yield* orchestrator.getThreadProjection(importedThreadId);
           assert.deepEqual(rebuilt.attempts, beforeRebuild.attempts);
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:provider-switch:legacy-import:return"),
+            threadId: importedThreadId,
+            messageId: MessageId.make("message:provider-switch:legacy-import:return"),
+            text: "Return to the original provider.",
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* orchestrator.streamStoredEvents.pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "run.updated" &&
+                event.threadId === importedThreadId &&
+                event.payload.ordinal === 3 &&
+                event.payload.status === "completed",
+            ),
+            Stream.runHead,
+          );
+          yield* worker.drain();
+          const returned = yield* orchestrator.getThreadProjection(importedThreadId);
+          assert.equal(
+            returned.contextHandoffs.filter((handoff) => handoff.strategy === "manual_context")
+              .length,
+            2,
+          );
+          const turns = yield* Ref.get(capturedTurns);
+          assert.equal(turns[2]?.nativeThreadId, turns[0]?.nativeThreadId);
+          assert.notInclude(
+            turns[2]?.text ?? "",
+            "Remember that the imported release marker is violet.",
+          );
+          assert.notInclude(turns[2]?.text ?? "", "I will remember violet.");
+          assert.include(turns[2]?.text ?? "", recoveryPrompt);
           return rebuilt;
         }).pipe(Effect.provide(layerTest));
 
@@ -3746,7 +3804,7 @@ describe("orchestration v2 provider switching", () => {
           projection.runs.map((run) => [run.providerInstanceId, run.status]),
           [
             ["codex", "failed"],
-            ["claudeAgent", "completed"],
+            ["claudeAgent", "failed"],
           ],
         );
         assert.sameDeepMembers(

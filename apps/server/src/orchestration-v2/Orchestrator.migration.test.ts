@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 
 import { shouldPrepareLegacyImportHandoff } from "./Orchestrator.ts";
 
-it("reissues imported context until a V2 run completes", () => {
+it("prepares imported context only for a v1 import without a completed V2 run", () => {
   assert.isTrue(
     shouldPrepareLegacyImportHandoff({
       historyOrigin: "v1_import",

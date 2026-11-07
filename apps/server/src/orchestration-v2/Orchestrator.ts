@@ -1311,6 +1311,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
       );
 
+  const legacyImportCovered = Effect.fnUntraced(function* (
+    threadId: ThreadId,
+    providerThread: OrchestrationV2ProviderThread | undefined,
+  ) {
+    if (providerThread === undefined) return false;
+    const { contextHandoffs } = yield* projectionStore.getThreadRecords(threadId, [
+      "contextHandoffs",
+    ]);
+    const nativeId = providerThread.nativeThreadRef?.nativeId;
+    return contextHandoffs.some((handoff) => {
+      if (
+        handoff.strategy !== "manual_context" ||
+        handoff.status !== "ready" ||
+        handoff.fromProviderThreadIds.length !== 0 ||
+        handoff.toProviderThreadId !== providerThread.id
+      ) {
+        return false;
+      }
+      return (
+        nativeId !== undefined &&
+        handoff.delivery !== undefined &&
+        handoff.delivery.nativeThreadId === nativeId &&
+        handoff.delivery.status !== "pending"
+      );
+    });
+  });
+
   // Command reads omit settled tasks, but a completion notice counts its whole cohort.
   const notificationTasks = (
     threadId: ThreadId,
@@ -6571,22 +6598,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           driver: adapter.driver,
           nativeThreadId: `pending:${runId}`,
         });
-      const legacyImportHandoff = shouldPrepareLegacyImportHandoff({
-        historyOrigin: projection.thread.historyOrigin,
-        hasCompletedRun: latestCompletedRun !== undefined,
-        legacyImportItemCount: legacyImportItems.length,
-      })
-        ? yield* contextHandoffService
-            .prepareLegacyImport({
-              threadId: command.threadId,
-              targetRunId: runId,
-              toProviderThreadId: providerThreadId,
-              toProviderInstanceId: modelSelection.instanceId,
-              items: legacyImportItems,
-              createdAt: now,
-            })
-            .pipe(mapDispatchError(command))
-        : null;
+      const legacyImportHandoff =
+        shouldPrepareLegacyImportHandoff({
+          historyOrigin: projection.thread.historyOrigin,
+          hasCompletedRun: latestCompletedRun !== undefined,
+          legacyImportItemCount: legacyImportItems.length,
+        }) &&
+        !(yield* legacyImportCovered(command.threadId, activeProviderThread).pipe(
+          mapDispatchError(command),
+        ))
+          ? yield* contextHandoffService
+              .prepareLegacyImport({
+                threadId: command.threadId,
+                targetRunId: runId,
+                toProviderThreadId: providerThreadId,
+                toProviderInstanceId: modelSelection.instanceId,
+                items: legacyImportItems,
+                createdAt: now,
+              })
+              .pipe(mapDispatchError(command))
+          : null;
       const providerThread: OrchestrationV2ProviderThread =
         reusableProviderThread === undefined
           ? {
@@ -7270,7 +7301,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       isProviderSwitch &&
       !canResumeAcrossInstances &&
       latestCompletedRun === undefined &&
-      legacyImportItems.length > 0
+      legacyImportItems.length > 0 &&
+      !(yield* legacyImportCovered(command.threadId, ensuredProviderThread).pipe(
+        mapDispatchError(command),
+      ))
         ? yield* contextHandoffService
             .prepareLegacyImport({
               threadId: command.threadId,
