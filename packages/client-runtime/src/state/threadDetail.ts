@@ -249,6 +249,24 @@ export function sameThreadStructure(
   );
 }
 
+type RunStopInputs = Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems">;
+
+function isRunInterruptItem(item: TurnItem): boolean {
+  return item.type === "run_interrupt_request" || item.type === "run_interrupt_result";
+}
+
+/** Whether presentRunStop would return the same value: it only reads runs and interrupt items. */
+function sameRunStopInputs(previous: RunStopInputs, next: RunStopInputs): boolean {
+  if (previous.runs !== next.runs) return false;
+  if (previous.turnItems === next.turnItems) return true;
+  const replacedIndex = getProjectionArrayReplacementIndex(previous.turnItems, next.turnItems);
+  return (
+    replacedIndex !== undefined &&
+    !isRunInterruptItem(previous.turnItems[replacedIndex]!) &&
+    !isRunInterruptItem(next.turnItems[replacedIndex]!)
+  );
+}
+
 export function createEnvironmentThreadDetailAtoms<E>(
   threadStateAtom: (
     environmentId: ScopedThreadRef["environmentId"],
@@ -406,17 +424,14 @@ export function createEnvironmentThreadDetailAtoms<E>(
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-queue:${key}`));
   });
   const runStopAtomFamily = Atom.family((key: string) => {
-    let previous: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems"> | null = null;
+    let previous: RunStopInputs | null = null;
     let stop: RunStopPresentation | null = null;
     return Atom.make((get) => {
       const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
       if (projection === null) {
         previous = null;
         stop = null;
-      } else if (
-        projection.runs !== previous?.runs ||
-        projection.turnItems !== previous?.turnItems
-      ) {
+      } else if (previous === null || !sameRunStopInputs(previous, projection)) {
         const { runs, turnItems } = projection;
         previous = { runs, turnItems };
         const next = presentRunStop(previous);
@@ -427,6 +442,9 @@ export function createEnvironmentThreadDetailAtoms<E>(
           next?.background !== stop?.background
         )
           stop = next;
+      } else {
+        // Replacement hints only link consecutive arrays.
+        previous = { runs: projection.runs, turnItems: projection.turnItems };
       }
       return stop;
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-run-stop:${key}`));
