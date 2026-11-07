@@ -34,6 +34,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
+import * as DeviceService from "../device/DeviceService.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -588,6 +589,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   >([]);
   const summaryRecovery = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const invalidatedCwds = yield* Ref.make<ReadonlyArray<string>>([]);
+  const deviceCloses = yield* Ref.make<
+    ReadonlyArray<Parameters<DeviceService.DeviceService["Service"]["close"]>[0]>
+  >([]);
   const domainEvents = yield* PubSub.unbounded<OrchestrationV2DomainEvent>();
   const closedIdle = yield* Queue.unbounded<{ readonly threadId: string }>();
   const scriptRuns =
@@ -685,6 +689,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       closeOnSettle: (input) =>
         Queue.offer(closedIdle, input).pipe(Effect.andThen(options.onCloseIdle?.() ?? Effect.void)),
     }),
+    Layer.mock(DeviceService.DeviceService)({
+      close: (input) => Ref.update(deviceCloses, (closes) => [...closes, input]),
+    }),
     Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
       runForThread: (input) =>
         Queue.offer(scriptRuns, input).pipe(
@@ -735,6 +742,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     invalidatedCwds,
     closedIdle,
     scriptRuns,
+    deviceCloses,
     publishEvent: (event: OrchestrationV2DomainEvent) => PubSub.publish(domainEvents, event),
     updateSettings,
     publishMerge: PubSub.publish(mergedPullRequests, {
@@ -1473,6 +1481,33 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           yield* fixture.publishEvent(settledEvent(settled));
           yield* fixture.publishEvent(settledEvent(marker));
           assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: marker.id });
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("releases a settled thread's devices without shutting them down", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const settled = appThread("device-thread", "settled");
+        const marker = appThread("marker-thread", "settled");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          currentThreads: [settled, marker],
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(settledEvent(settled));
+          yield* fixture.publishEvent(settledEvent(marker));
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: settled.id });
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: marker.id });
+          const closes = yield* Ref.get(fixture.deviceCloses);
+          assert.deepStrictEqual(
+            closes.filter((close) => close.threadId === settled.id),
+            [{ threadId: settled.id }],
+          );
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
