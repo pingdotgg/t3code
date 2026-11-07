@@ -61,6 +61,7 @@ export async function openUrlInPreview<E>(input: {
   readonly url: string;
   readonly openPreview: OpenPreviewMutation<E>;
   readonly profileId?: PreviewOpenInput["profileId"];
+  readonly openerTabId?: PreviewOpenInput["openerTabId"];
   readonly background?: boolean;
 }): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
   // Read before any await: a side chat pane that unmounts meanwhile drops its host mapping.
@@ -86,6 +87,7 @@ export async function openUrlInPreview<E>(input: {
       viewport: defaults.viewport,
       profileId: input.profileId ?? defaults.profileId,
       ...(runtime === undefined ? {} : { runtime }),
+      ...(input.openerTabId === undefined ? {} : { openerTabId: input.openerTabId }),
     },
   });
   return mapAtomCommandResult(result, (snapshot) => {

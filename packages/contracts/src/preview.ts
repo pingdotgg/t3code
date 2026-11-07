@@ -176,6 +176,7 @@ export const PreviewOpenInput = Schema.Struct({
   profileId: Schema.optional(BrowserProfileId),
   runtime: Schema.optional(PreviewRuntime),
   reveal: Schema.optional(Schema.Boolean),
+  openerTabId: Schema.optional(PreviewTabId),
 });
 export type PreviewOpenInput = typeof PreviewOpenInput.Type;
 
