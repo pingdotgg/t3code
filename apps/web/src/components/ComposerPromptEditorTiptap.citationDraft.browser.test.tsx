@@ -9,6 +9,7 @@ import { expect, it } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { findAssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+import { isMacPlatform } from "~/lib/utils";
 import { act, render } from "../../test/render";
 import {
   ComposerPromptEditorTiptap as ComposerPromptEditor,
@@ -148,11 +149,15 @@ it("Delete citation removes a fresh citation and its inserted space, and undo re
   await comment.fill("unsaved");
   await page.getByRole("button", { name: "Delete citation", exact: true }).click();
   await expect.element(comment).not.toBeInTheDocument();
-  await expect.poll(() => screen.container.querySelector("output")?.dataset.prompt).toBe("See ");
-  await userEvent.keyboard("{Control>}z{/Control}");
   await expect
-    .poll(() => screen.container.querySelector("output")?.dataset.prompt)
-    .toBe(promptBefore);
+    .element(page.elementLocator(screen.container.querySelector("output")!))
+    .toHaveAttribute("data-prompt", "See ");
+  await userEvent.keyboard(
+    isMacPlatform(navigator.platform) ? "{Meta>}z{/Meta}" : "{Control>}z{/Control}",
+  );
+  await expect
+    .element(page.elementLocator(screen.container.querySelector("output")!))
+    .toHaveAttribute("data-prompt", promptBefore);
   await expect.element(comment).not.toBeInTheDocument();
 });
 
@@ -161,5 +166,7 @@ it("deletes an existing citation without removing surrounding spaces", async () 
   await using screen = await render(<Composer question={false} editorRef={editorRef} />);
   await page.getByRole("button", { name: "Add comment to citation" }).click();
   await page.getByRole("button", { name: "Delete citation" }).click();
-  await expect.poll(() => screen.container.querySelector("output")?.dataset.prompt).toBe("See  ");
+  await expect
+    .element(page.elementLocator(screen.container.querySelector("output")!))
+    .toHaveAttribute("data-prompt", "See  ");
 });
