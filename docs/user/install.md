@@ -164,7 +164,7 @@ on web and desktop. The store apps work with both stable and Nightly servers. Te
 - **Android:** download an APK from the
   [Android beta releases](https://github.com/pingdotgg/t3code/releases?q=android-beta-).
 
-If the app crashes during launch, open Settings → Diagnostics on the next launch
+If the app crashes during launch, open Settings → About → Diagnostics on the next launch
 that succeeds. It lists startup crashes from the last 7 days with the error and
 component stack that store crash reports leave out. Copy the report and paste it
 into a GitHub issue. Error messages can quote values from the app, so read it over
