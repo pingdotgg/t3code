@@ -1,7 +1,9 @@
+import { azureDevOpsMediaLocation } from "@t3tools/shared/azureDevOpsMedia";
 import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
   AssetSourceControlMediaUrlValidationError,
+  AssetAzureDevOpsMediaUrlValidationError,
   AssetPreviewTypeValidationError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
@@ -172,6 +174,14 @@ const AssetClaimsSchema = Schema.Union([
     repository: Schema.optionalKey(Schema.String),
     expiresAt: Schema.Number,
   }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("azure-devops-media"),
+    /** A host's `fetchUrl`, narrowed at mint time; the signature is what keeps it there. */
+    url: Schema.String,
+    cwd: Schema.String,
+    expiresAt: Schema.Number,
+  }),
 ]);
 type AssetClaims = typeof AssetClaimsSchema.Type;
 
@@ -195,7 +205,7 @@ export type ResolvedAsset =
       readonly mimeType: string;
     }
   | {
-      readonly kind: "source-control-media";
+      readonly kind: "source-control-media" | "azure-devops-media";
       readonly url: string;
       readonly cwd: string;
       readonly repository?: string;
@@ -827,6 +837,19 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = "native-app-icon.png";
       break;
     }
+    case "azure-devops-media": {
+      const media = azureDevOpsMediaLocation(input.resource.url);
+      if (media === null) return yield* new AssetAzureDevOpsMediaUrlValidationError({});
+      claims = {
+        version: 1,
+        kind: "azure-devops-media",
+        url: media.fetchUrl,
+        cwd: input.resource.cwd,
+        expiresAt,
+      };
+      fileName = media.fileName;
+      break;
+    }
     case SOURCE_CONTROL_MEDIA_ASSET: {
       const media = sourceControlDefinitions.mediaUrl(input.resource.url);
       if (media === null) {
@@ -946,6 +969,14 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     return faviconPath === claims.filePath ? yield* projectFaviconAsset(faviconPath) : null;
   }
 
+  if (claims.kind === "azure-devops-media") {
+    return {
+      kind: "azure-devops-media",
+      url: claims.url,
+      cwd: claims.cwd,
+      expiresAt: claims.expiresAt,
+    } satisfies ResolvedAsset;
+  }
   if (claims.kind === SOURCE_CONTROL_MEDIA_ASSET) {
     const { version: _version, ...media } = claims;
     return { ...media, kind: "source-control-media" } satisfies ResolvedAsset;
