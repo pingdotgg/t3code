@@ -155,6 +155,10 @@ const IOS_MSG_TOUCH = 0x03;
 const IOS_MSG_BUTTON = 0x04;
 const IOS_MSG_KEY = 0x06;
 const IOS_MSG_ORIENTATION = 0x07;
+// serve-sim writes the text to the simulator pasteboard, then presses Cmd+V.
+const IOS_MSG_PASTE = 0x12;
+// serve-sim closes the input socket on a larger message.
+const IOS_MAX_MESSAGE_BYTES = 4 * 1024 * 1024;
 const IOS_TAG_SCREEN_CONFIG = 0x82;
 const IOS_TAG_INPUT_ADMITTED = 0x83;
 
@@ -311,7 +315,6 @@ export interface DeviceStreamClient {
   /** Normalized 0..1 coordinates in the displayed frame. */
   readonly sendTouch: (phase: "begin" | "move" | "end", x: number, y: number) => void;
   readonly sendKey: (event: KeyboardEvent, phase: "down" | "up") => void;
-  /** Android only: iOS input is HID key codes, which cannot carry arbitrary text. */
   readonly sendText: (text: string) => void;
   readonly pressButton: (button: DeviceHardwareButton) => void;
   readonly rotate: () => void;
@@ -1394,6 +1397,11 @@ export function createDeviceStreamClient(
       }
     },
     sendText: (text) => {
+      if (platform === "ios") {
+        const packet = taggedJson(IOS_MSG_PASTE, { requestId: 1, text });
+        if (text.length > 0 && packet.length <= IOS_MAX_MESSAGE_BYTES) send(packet);
+        return;
+      }
       if (avcc) return;
       let chunk = "";
       let chunkBytes = 0;
