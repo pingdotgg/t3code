@@ -34,8 +34,9 @@ export function assertQueuedCancelledWhileActiveOutput(
     .get(ACTIVE_RUN_SHELL_SNAPSHOT_KEY)
     ?.threads.find((thread) => thread.id === projection.thread.id);
   assert.isDefined(capturedShell);
-  assert.equal(capturedShell.latestRunId, cancelledRun.id);
-  assert.equal(capturedShell.status, "cancelled");
+  // The cancelled queued run never started, so the active run presents as the latest.
+  assert.equal(capturedShell.latestRunId, activeRun.id);
+  assert.equal(capturedShell.status, "running");
   assert.equal(capturedShell.activeRunId, activeRun.id);
   assert.equal(capturedShell.activityRunStatus, "running");
   assert.deepEqual(

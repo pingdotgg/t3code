@@ -103,6 +103,8 @@ export function latestUnheldRun(
   let latest: OrchestrationV2Run | null = null;
   for (const run of runs) {
     if (run.status === "queued" && run.queueHeld === true) continue;
+    // A removed or steered queued message leaves a cancelled run that never started.
+    if (run.status === "cancelled" && run.startedAt === null) continue;
     if (latest === null || run.ordinal > latest.ordinal) latest = run;
   }
   return latest;
