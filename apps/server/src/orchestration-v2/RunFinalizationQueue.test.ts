@@ -70,6 +70,7 @@ it.effect.each([
       Layer.mergeAll(
         projections,
         observer,
+        Layer.mock(ThreadManagement.ThreadManagementService)({}),
         Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({
           execute: () =>
             Effect.gen(function* () {

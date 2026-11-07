@@ -207,10 +207,6 @@ const layerCheckpointCaptureServiceProvided = CheckpointCaptureService.layer.pip
     ),
   ),
 );
-const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
-  Layer.provide(Layer.merge(layerCheckpointCaptureServiceProvided, ProjectionStore.layer)),
-);
-
 const layerOrchestratorProvided = Orchestrator.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -255,6 +251,15 @@ const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImp
       layerLegacyV1ThreadImporterProvided,
       layerCommandReceiptStoreProvided,
       layerProviderSessionManagerProvided,
+    ),
+  ),
+);
+const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerCheckpointCaptureServiceProvided,
+      ProjectionStore.layer,
+      layerThreadManagementProvided,
     ),
   ),
 );

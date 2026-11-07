@@ -1,4 +1,5 @@
-import { CheckpointScopeId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
+import { CheckpointScopeId, CommandId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
+import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
@@ -10,6 +11,7 @@ import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
 
 export class RunFinalizationError extends Schema.TaggedError<RunFinalizationError>()(
   "RunFinalizationError",
@@ -33,9 +35,13 @@ export class RunFinalizationObserver extends Context.Reference<{
     readonly cwd: string;
     readonly threadId: ThreadId;
     readonly runId: RunId;
+    readonly followBranch?: (branch: string) => Effect.Effect<void>;
   }) => Effect.Effect<void, RunFinalizationRefreshError>;
 }>("t3/orchestration-v2/RunFinalizationObserver", {
-  defaultValue: () => ({ refresh: () => Effect.void, refreshAfterTurn: () => Effect.void }),
+  defaultValue: () => ({
+    refresh: () => Effect.void,
+    refreshAfterTurn: () => Effect.void,
+  }),
 }) {}
 
 export class RunFinalizationService extends Context.Service<
@@ -53,6 +59,54 @@ const make = Effect.gen(function* () {
   const checkpointCapture = yield* CheckpointCapture.CheckpointCaptureServiceV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const observer = yield* RunFinalizationObserver;
+  const threads = yield* ThreadManagement.ThreadManagementService;
+
+  // An agent can rename or switch the branch of a thread's own worktree. The
+  // stored branch feeds the sidebar and Copy branch, so follow it, but not
+  // into a shared worktree where the recorded branch is what keeps threads apart.
+  const followWorktreeBranch = Effect.fn("RunFinalizationService.followWorktreeBranch")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly runId: RunId;
+      readonly cwd: string;
+      readonly checkedOutBranch: string;
+    }) {
+      if (isTemporaryWorktreeBranch(input.checkedOutBranch)) return;
+      const thread = yield* projections.getThreadShell(input.threadId);
+      if (
+        !thread ||
+        thread.branch === null ||
+        isTemporaryWorktreeBranch(thread.branch) ||
+        thread.branch === input.checkedOutBranch ||
+        thread.worktreePath !== input.cwd
+      ) {
+        return;
+      }
+      const worktrees = yield* projections.getThreadWorktreePaths({ includeArchived: true });
+      if (
+        worktrees.some((other) => other.threadId !== thread.id && other.worktreePath === input.cwd)
+      ) {
+        return;
+      }
+      yield* threads.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make(`server:worktree-branch:${input.runId}`),
+        threadId: thread.id,
+        branch: input.checkedOutBranch,
+        expectedBranch: thread.branch,
+        expectedWorktreePath: input.cwd,
+      });
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to follow the worktree branch after checkpoint capture", {
+            threadId: input.threadId,
+            cause,
+          }),
+        ),
+      ),
+  );
 
   const finalize: RunFinalizationService["Service"]["finalize"] = Effect.fn(
     "RunFinalizationService.finalize",
@@ -74,15 +128,28 @@ const make = Effect.gen(function* () {
     const cwd = projection.checkpointScopes.find((scope) => scope.id === input.scopeId)?.cwd;
     if (cwd !== undefined) {
       // Retrying a display refresh after the checkpoint is durable blocks the next turn.
-      yield* observer.refresh({ cwd, threadId: input.threadId, runId: input.runId }).pipe(
-        Effect.catchTags({
-          RunFinalizationRefreshError: (cause) =>
-            Effect.logWarning("Failed to refresh workspace after checkpoint capture", {
-              ...input,
-              cause,
+      yield* observer
+        .refresh({
+          cwd,
+          threadId: input.threadId,
+          runId: input.runId,
+          followBranch: (checkedOutBranch) =>
+            followWorktreeBranch({
+              threadId: input.threadId,
+              runId: input.runId,
+              cwd,
+              checkedOutBranch,
             }),
-        }),
-      );
+        })
+        .pipe(
+          Effect.catchTags({
+            RunFinalizationRefreshError: (cause) =>
+              Effect.logWarning("Failed to refresh workspace after checkpoint capture", {
+                ...input,
+                cause,
+              }),
+          }),
+        );
     }
   });
   return RunFinalizationService.of({ finalize });
@@ -101,12 +168,14 @@ export const layerObserver = Layer.effect(
     return {
       refreshAfterTurn: pullRequests.refreshAfterTurn,
       refresh: Effect.fn("RunFinalizationService.refresh")(
-        function* ({ cwd, threadId, runId }) {
+        function* ({ cwd, threadId, runId, followBranch }) {
           const [, local] = yield* Effect.all(
             [workspaceEntries.refresh(cwd), vcsStatus.refreshLocalStatus(cwd)],
             { concurrency: "unbounded" },
           );
-          if (local.refName === null || local.isDefaultRef) return;
+          if (local.refName === null) return;
+          if (followBranch) yield* followBranch(local.refName);
+          if (local.isDefaultRef) return;
           const thread = yield* projections.getThreadShell(threadId);
           if (!thread || thread.branch !== local.refName) return;
           if (thread.activeRunId !== null && thread.activeRunId !== runId) return;

@@ -18,6 +18,7 @@ import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
 
 it.effect("completes finalization when the post-checkpoint workspace refresh fails", () => {
   const threadId = ThreadId.make("thread_refresh_failure");
@@ -41,6 +42,7 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
               checkpoints: [],
             }),
         }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({}),
         Layer.succeed(RunFinalization.RunFinalizationObserver, {
           refresh: () =>
             Effect.gen(function* () {
@@ -73,6 +75,14 @@ it.effect.each(
         expected: ["/repo"],
       },
       {
+        label: "discovers the renamed branch's PR in the same refresh",
+        branch: "feature",
+        checkedOut: "renamed",
+        follow: true,
+        activeRun: null,
+        expected: ["/repo"],
+      },
+      {
         label: "leaves the default branch's PR cache alone",
         branch: "main",
         checkedOut: "main",
@@ -97,6 +107,7 @@ it.effect.each(
   ).map((scenario) => [scenario.label, scenario] as const),
 )("%s", ([, scenario]) => {
   const refreshed: string[] = [];
+  let branch: string = scenario.branch;
   const lookedUp = Deferred.makeUnsafe<void>();
   const threadId = ThreadId.make("thread-pr-refresh");
   const runId = RunId.make("completed-run");
@@ -129,7 +140,7 @@ it.effect.each(
           getThreadShell: () =>
             Effect.succeed({
               id: threadId,
-              branch: scenario.branch,
+              branch,
               activeRunId: scenario.activeRun === null ? null : RunId.make(scenario.activeRun),
             } as OrchestrationV2ThreadShell),
         }),
@@ -138,7 +149,19 @@ it.effect.each(
   );
   return Effect.gen(function* () {
     const observer = yield* RunFinalization.RunFinalizationObserver;
-    yield* observer.refresh({ cwd: "/repo", threadId, runId });
+    yield* observer.refresh({
+      cwd: "/repo",
+      threadId,
+      runId,
+      ...("follow" in scenario
+        ? {
+            followBranch: (checkedOutBranch: string) =>
+              Effect.sync(() => {
+                branch = checkedOutBranch;
+              }),
+          }
+        : {}),
+    });
     if (scenario.expected.length > 0) yield* Deferred.await(lookedUp);
     assert.deepEqual(refreshed, [...scenario.expected]);
   }).pipe(Effect.provide(layer));
@@ -239,5 +262,122 @@ it.effect("replaces a still-running PR lookup when a newer turn finishes", () =>
     yield* Deferred.await(firstInterrupted);
     yield* Deferred.await(secondLookedUp);
     assert.strictEqual(lookups, 2);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect.each(
+  (
+    [
+      {
+        label: "follows a branch the agent renamed in the thread's own worktree",
+        checkedOut: "feat/renamed",
+        worktreePath: "/repo",
+        otherWorktrees: [],
+        expected: ["feat/renamed"],
+      },
+      {
+        label: "keeps the recorded branch while the worktree is on its temporary branch",
+        checkedOut: "t3/abcd1234",
+        worktreePath: "/repo",
+        otherWorktrees: [],
+        expected: [],
+      },
+      {
+        label: "preserves a temporary recorded branch during worktree adoption",
+        branch: "t3/abcd1234",
+        checkedOut: "feat/renamed",
+        worktreePath: "/repo",
+        otherWorktrees: [],
+        expected: [],
+      },
+      {
+        label: "keeps the recorded branch when the checkout is not the thread's worktree",
+        checkedOut: "feat/renamed",
+        worktreePath: "/elsewhere",
+        otherWorktrees: [],
+        expected: [],
+      },
+      {
+        label: "keeps the recorded branch in a worktree another thread shares",
+        checkedOut: "feat/renamed",
+        worktreePath: "/repo",
+        otherWorktrees: ["/repo"],
+        expected: [],
+      },
+    ] as const
+  ).map((scenario) => [scenario.label, scenario] as const),
+)("%s", ([, scenario]) => {
+  const threadId = ThreadId.make("thread-branch-drift");
+  const runId = RunId.make("run-branch-drift");
+  const scopeId = CheckpointScopeId.make("scope-branch-drift");
+  const followed: string[] = [];
+  const updates: Array<{
+    branch: unknown;
+    expectedBranch: unknown;
+    expectedWorktreePath: unknown;
+  }> = [];
+  const layer = RunFinalization.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({ execute: () => Effect.void }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getCheckpointContext: () =>
+            Effect.succeed({
+              runs: [],
+              checkpointScopes: [{ id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" }],
+              checkpoints: [],
+            }),
+          getThreadShell: () =>
+            Effect.succeed({
+              id: threadId,
+              branch: "branch" in scenario ? scenario.branch : "fix/original",
+              worktreePath: scenario.worktreePath,
+            } as OrchestrationV2ThreadShell),
+          getThreadWorktreePaths: () =>
+            Effect.succeed([
+              { threadId, worktreePath: scenario.worktreePath },
+              ...scenario.otherWorktrees.map((worktreePath) => ({
+                threadId: ThreadId.make("thread-other"),
+                worktreePath,
+              })),
+            ]),
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          dispatch: (command) =>
+            Effect.sync(() => {
+              assert.equal(command.type, "thread.metadata.update");
+              if (command.type === "thread.metadata.update") {
+                updates.push({
+                  branch: command.branch,
+                  expectedBranch: command.expectedBranch,
+                  expectedWorktreePath: command.expectedWorktreePath,
+                });
+              }
+              return {} as never;
+            }),
+        }),
+        Layer.succeed(RunFinalization.RunFinalizationObserver, {
+          refresh: ({ followBranch }) =>
+            Effect.gen(function* () {
+              if (followBranch) yield* followBranch(scenario.checkedOut);
+              followed.push(scenario.checkedOut);
+            }),
+          refreshAfterTurn: () => Effect.void,
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const service = yield* RunFinalization.RunFinalizationService;
+    yield* service.finalize({ threadId, runId, scopeId });
+    assert.deepEqual(
+      updates,
+      scenario.expected.map((branch) => ({
+        branch,
+        expectedBranch: "fix/original",
+        expectedWorktreePath: "/repo",
+      })),
+    );
+    assert.deepEqual(followed, [scenario.checkedOut]);
   }).pipe(Effect.provide(layer));
 });
