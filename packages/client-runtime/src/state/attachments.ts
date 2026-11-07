@@ -6,9 +6,14 @@ import {
   type AttachmentDeleteInput,
   type EnvironmentId,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
+import { ticketedRelativeUrl } from "../connection/model.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import { EnvironmentRpcUnavailableError, requestGuarded } from "../rpc/client.ts";
 import {
   createEnvironmentRpcCommand,
   executeAtomQuery,
@@ -17,6 +22,22 @@ import {
   type AtomCommand,
 } from "./runtime.ts";
 
+const createTicketedUploadUrl = Effect.fnUntraced(function* (
+  input: AttachmentCreateUploadUrlInput,
+) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  const upload = yield* requestGuarded(WS_METHODS.attachmentsCreateUploadUrl, input);
+  return yield* ticketedRelativeUrl(yield* SubscriptionRef.get(supervisor.prepared), upload).pipe(
+    Effect.mapError(
+      (error) =>
+        new EnvironmentRpcUnavailableError({
+          environmentId: supervisor.target.environmentId,
+          message: error.message,
+        }),
+    ),
+  );
+});
+
 export function createAttachmentEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
@@ -24,6 +45,7 @@ export function createAttachmentEnvironmentAtoms<R, E>(
     createUploadUrl: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:attachments:create-upload-url",
       tag: WS_METHODS.attachmentsCreateUploadUrl,
+      execute: createTicketedUploadUrl,
     }),
     remove: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:attachments:delete",

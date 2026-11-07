@@ -17,9 +17,14 @@ export const environmentEndpointUrl = (httpBaseUrl: string, pathname: string): s
   return next.toString();
 };
 
+const RELATIVE_URL_BASE = "http://relative.invalid";
+
+/** Takes an absolute URL or a server-relative one, and returns the same kind. */
 export const withGatewayTicket = (url: string, ticket: Option.Option<string>): string => {
   if (Option.isNone(ticket)) return url;
-  const next = new URL(url);
+  const next = new URL(url, RELATIVE_URL_BASE);
   next.searchParams.set("gatewayTicket", ticket.value);
-  return next.toString();
+  return next.origin === RELATIVE_URL_BASE
+    ? `${next.pathname}${next.search}${next.hash}`
+    : next.toString();
 };

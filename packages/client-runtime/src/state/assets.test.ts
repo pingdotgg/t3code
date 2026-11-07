@@ -29,7 +29,26 @@ import {
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
   makeRevisionedAssetUrlFamily,
+  resolveAssetUrl,
 } from "./assets.ts";
+
+describe("resolveAssetUrl", () => {
+  const gateway = "https://gateway.test/__t3_gateway/env_peer/";
+
+  it.each([
+    [gateway, "/api/assets/t/a.png", `${gateway}api/assets/t/a.png`],
+    [
+      gateway,
+      "/api/assets/t/a.png?gatewayTicket=hop#x",
+      `${gateway}api/assets/t/a.png?gatewayTicket=hop#x`,
+    ],
+    [gateway, "https://local.test/api/assets/t/a.png", "https://local.test/api/assets/t/a.png"],
+    ["https://remote.test/", "/api/assets/t/a.png", "https://remote.test/api/assets/t/a.png"],
+    ["https://remote.test/other/", "/api/assets/t/a.png", "https://remote.test/api/assets/t/a.png"],
+  ])("resolves against %s: %s", (base, relativeUrl, expected) => {
+    expect(resolveAssetUrl(base, relativeUrl)).toBe(expected);
+  });
+});
 
 describe("project favicon URL cache", () => {
   it("does not reuse another environment, workspace, or selected icon's cached URL", () => {
@@ -71,6 +90,7 @@ describe("project favicon URL cache", () => {
  */
 const makeAssetUrlHarness = Effect.fn("TestAssetUrl.makeHarness")(function* (
   environmentIds: ReadonlyArray<EnvironmentId>,
+  prepared: Option.Option<PreparedConnection> = Option.none(),
 ) {
   const started = yield* Queue.unbounded<EnvironmentId>();
   const inFlight = new Map<EnvironmentId, number>();
@@ -126,7 +146,7 @@ const makeAssetUrlHarness = Effect.fn("TestAssetUrl.makeHarness")(function* (
           generation: 1,
         }),
         session,
-        prepared: yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none()),
+        prepared: yield* SubscriptionRef.make(prepared),
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
@@ -164,6 +184,15 @@ const makeAssetUrlHarness = Effect.fn("TestAssetUrl.makeHarness")(function* (
     release: (environmentId: EnvironmentId) => Queue.offer(releases.get(environmentId)!, undefined),
     replaceSession: (environmentId: EnvironmentId) =>
       SubscriptionRef.set(sessions.get(environmentId)!, Option.some(makeSession(environmentId))),
+    imageUrl: (environmentId: EnvironmentId) =>
+      AtomRegistry.getResult(
+        registry,
+        atoms.createUrl({
+          environmentId,
+          input: { resource: { _tag: "attachment", attachmentId: "image-0" } },
+        }),
+        { suspendOnWaiting: true },
+      ),
     mountImages: (environmentId: EnvironmentId, count: number) => {
       for (let index = 0; index < count; index += 1) {
         registry.mount(
@@ -232,6 +261,56 @@ describe("asset URL requests", () => {
           yield* Queue.take(harness.started);
         }
         expect(harness.maxInFlight(remote)).toBe(ASSET_URL_MAX_IN_FLIGHT);
+      }),
+    ),
+  );
+});
+
+describe("asset URLs on a LAN gateway route", () => {
+  const peer = EnvironmentId.make("asset-peer");
+  const gatewayPrepared = (ticket: Option.Option<string>) =>
+    Option.some({
+      environmentId: peer,
+      label: "Peer",
+      httpBaseUrl: `https://gateway.test/__t3_gateway/${peer}/`,
+      socketUrl: `wss://gateway.test/__t3_gateway/${peer}/`,
+      httpAuthorization: null,
+      target: new PrimaryConnectionTarget({
+        environmentId: peer,
+        label: "Peer",
+        httpBaseUrl: "https://gateway.test",
+        wsBaseUrl: "wss://gateway.test",
+      }),
+      gatewayTicket: Effect.succeed(ticket),
+    } satisfies PreparedConnection);
+
+  it.effect("carries a ticket and expires with it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeAssetUrlHarness([peer], gatewayPrepared(Option.some("hop")));
+        harness.mountImages(peer, 1);
+        yield* Queue.take(harness.started);
+        yield* harness.release(peer);
+
+        const asset = yield* harness.imageUrl(peer);
+        expect(asset.relativeUrl).toBe("/api/assets/token/image.png?gatewayTicket=hop");
+        expect(asset.expiresAt).toBeLessThan(4_000_000_000_000);
+      }),
+    ),
+  );
+
+  it.effect("keeps the signed lifetime when a gateway cookie session needs no ticket", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeAssetUrlHarness([peer], gatewayPrepared(Option.none()));
+        harness.mountImages(peer, 1);
+        yield* Queue.take(harness.started);
+        yield* harness.release(peer);
+
+        expect(yield* harness.imageUrl(peer)).toEqual({
+          relativeUrl: "/api/assets/token/image.png",
+          expiresAt: 4_000_000_000_000,
+        });
       }),
     ),
   );

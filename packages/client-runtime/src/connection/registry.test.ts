@@ -2354,6 +2354,128 @@ describe("EnvironmentRegistry routes", () => {
     }),
   );
 
+  it.effect("learns a gateway route for a peer paired after the host advertised it", () =>
+    Effect.gen(function* () {
+      const gatewayTarget = new BearerConnectionTarget({
+        environmentId: EnvironmentId.make("env_gateway"),
+        label: "Gateway",
+        connectionId: "bearer:gateway",
+      });
+      const gatewayProfile = new BearerConnectionProfile({
+        connectionId: gatewayTarget.connectionId,
+        environmentId: gatewayTarget.environmentId,
+        label: gatewayTarget.label,
+        httpBaseUrl: "https://gateway.example.test/",
+        wsBaseUrl: "wss://gateway.example.test/",
+      });
+      const routeId = `gateway:${gatewayTarget.environmentId}:${LAN_TARGET.environmentId}@${LAN_TARGET.connectionId}`;
+      const harness = yield* makeHarness(
+        [BEARER_TARGET, gatewayTarget],
+        [BEARER_PROFILE, gatewayProfile],
+        [
+          [BEARER_TARGET.connectionId, BEARER_CREDENTIAL],
+          [gatewayTarget.connectionId, BEARER_CREDENTIAL],
+        ],
+        {
+          lanGatewayPeers: (environmentId) =>
+            environmentId === gatewayTarget.environmentId
+              ? Stream.make([
+                  { environmentId: BEARER_TARGET.environmentId, label: "Paired" },
+                  { environmentId: LAN_TARGET.environmentId, label: "Peer" },
+                ]).pipe(Stream.concat(Stream.never))
+              : Stream.never,
+        },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        // The already-paired peer's route shows the advertisement has been processed.
+        yield* SubscriptionRef.changes(registry.entries).pipe(
+          Stream.filter(
+            (entries) => connectionRoutes(entries.get(BEARER_TARGET.environmentId)!).length === 2,
+          ),
+          Stream.runHead,
+        );
+
+        yield* registry.register(
+          new BearerConnectionRegistration({
+            target: LAN_TARGET,
+            profile: LAN_PROFILE,
+            credential: BEARER_CREDENTIAL,
+          }),
+        );
+
+        const entry = (yield* SubscriptionRef.get(registry.entries)).get(LAN_TARGET.environmentId)!;
+        expect(connectionRoutes(entry).map((route) => connectionRouteId(route.target))).toContain(
+          routeId,
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("retries a waiting peer when its gateway reconnects with the same advertisement", () =>
+    Effect.gen(function* () {
+      const gatewayTarget = new BearerConnectionTarget({
+        environmentId: EnvironmentId.make("env_gateway"),
+        label: "Gateway",
+        connectionId: "bearer:gateway",
+      });
+      const gatewayProfile = new BearerConnectionProfile({
+        connectionId: gatewayTarget.connectionId,
+        environmentId: gatewayTarget.environmentId,
+        label: gatewayTarget.label,
+        httpBaseUrl: "https://gateway.example.test/",
+        wsBaseUrl: "wss://gateway.example.test/",
+      });
+      const routeId = `gateway:${gatewayTarget.environmentId}:${LAN_TARGET.environmentId}@${LAN_TARGET.connectionId}`;
+      let gatewayRouteDown = true;
+      let gatewayRouteAttempts = 0;
+      const away = new ConnectionTransientError({ reason: "remote-unavailable", detail: "away" });
+      const harness = yield* makeHarness(
+        [LAN_TARGET, gatewayTarget],
+        [LAN_PROFILE, gatewayProfile],
+        [
+          [LAN_TARGET.connectionId, BEARER_CREDENTIAL],
+          [gatewayTarget.connectionId, BEARER_CREDENTIAL],
+        ],
+        {
+          lanGatewayPeers: (environmentId) =>
+            environmentId === gatewayTarget.environmentId
+              ? Stream.make([{ environmentId: LAN_TARGET.environmentId, label: "Peer" }]).pipe(
+                  Stream.concat(Stream.never),
+                )
+              : Stream.never,
+          prepareRoute: (target) => {
+            const id = connectionRouteId(target);
+            if (id === LAN_TARGET.connectionId) return away;
+            if (id !== routeId) return undefined;
+            gatewayRouteAttempts += 1;
+            return gatewayRouteDown ? away : undefined;
+          },
+        },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* registry.stateChanges(LAN_TARGET.environmentId).pipe(
+          Stream.filter((state) => state.phase === "backoff" && gatewayRouteAttempts > 0),
+          Stream.runHead,
+        );
+
+        gatewayRouteDown = false;
+        yield* registry.setEnabled(gatewayTarget.environmentId, false);
+        yield* registry.setEnabled(gatewayTarget.environmentId, true);
+
+        // The test clock never advances, so only the reconnect can end this backoff.
+        yield* registry.stateChanges(LAN_TARGET.environmentId).pipe(
+          Stream.filter((state) => state.phase === "connected"),
+          Stream.runHead,
+        );
+        expect(yield* Ref.get(harness.connectedRoutes)).toContain(routeId);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("saves the Tailscale mark when the server reports a learned address as tailnet", () =>
     Effect.gen(function* () {
       const httpBaseUrl = "http://100.101.102.103:3773/";

@@ -29,4 +29,13 @@ describe("advertised endpoint helpers", () => {
       "https://example.com/api/auth/session",
     );
   });
+
+  it("adds a gateway ticket to server-relative URLs without making them absolute", () => {
+    expect(withGatewayTicket("/api/assets/token/a.png?v=1", Option.some("hop"))).toBe(
+      "/api/assets/token/a.png?v=1&gatewayTicket=hop",
+    );
+    expect(withGatewayTicket("/api/assets/token/a.png", Option.none())).toBe(
+      "/api/assets/token/a.png",
+    );
+  });
 });

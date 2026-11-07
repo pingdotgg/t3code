@@ -14,15 +14,19 @@ import {
   isProjectFaviconFallbackUrl,
 } from "@t3tools/shared/projectFavicon";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
+import { ticketedRelativeUrl } from "../connection/model.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import { gatewayPathPrefix } from "../environment/endpoint.ts";
 import { request } from "../rpc/client.ts";
 import type { ProjectFaviconCache, ProjectFaviconTarget } from "../projectFaviconCache.ts";
 import { createEnvironmentQueryAtomFamily } from "./runtime.ts";
@@ -30,6 +34,8 @@ import { createEnvironmentQueryAtomFamily } from "./runtime.ts";
 const ASSET_URL_REFRESH_INTERVAL_MS = 30 * 60_000;
 const ASSET_URL_STALE_TIME_MS = 5 * 60_000;
 const ASSET_URL_IDLE_TTL_MS = 60 * 60_000;
+// The server's media ticket lifetime. `gatewayTicket` yields only the ticket, not its expiry.
+const GATEWAY_TICKET_LIFETIME_MS = 5 * 60_000;
 export const ASSET_URL_MAX_IN_FLIGHT = 6;
 
 export class InvalidAssetCollectionKeyError extends Schema.TaggedError<InvalidAssetCollectionKeyError>()(
@@ -60,7 +66,12 @@ function parseAssetCollectionKey(
 
 export function resolveAssetUrl(httpBaseUrl: string, relativeUrl: string): string | null {
   try {
-    return new URL(relativeUrl, httpBaseUrl).toString();
+    const base = new URL(httpBaseUrl);
+    const rootRelative = relativeUrl.startsWith("/") && !relativeUrl.startsWith("//");
+    return new URL(
+      rootRelative ? `${gatewayPathPrefix(base)}${relativeUrl}` : relativeUrl,
+      base,
+    ).toString();
   } catch {
     return null;
   }
@@ -238,6 +249,18 @@ export function makeRevisionedAssetUrlFamily(
     family(JSON.stringify([target.environmentId, target.input.resource, target.revision]));
 }
 
+/** The ticket usually expires first, and the URL has to say so for readers to re-mint it. */
+const withGatewayTicketLifetime = Effect.fnUntraced(function* (asset: AssetCreateUrlResult) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  const ticketed = yield* ticketedRelativeUrl(
+    yield* SubscriptionRef.get(supervisor.prepared),
+    asset,
+  );
+  if (ticketed === asset) return asset;
+  const ticketExpiresAt = (yield* Clock.currentTimeMillis) + GATEWAY_TICKET_LIFETIME_MS;
+  return { ...ticketed, expiresAt: Math.min(asset.expiresAt, ticketExpiresAt) };
+});
+
 export function createAssetEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
   localMediaEnvironment?: Atom.Atom<{
@@ -255,7 +278,10 @@ export function createAssetEnvironmentAtoms<R, E>(
       limit = Semaphore.makeUnsafe(ASSET_URL_MAX_IN_FLIGHT);
       mintLimits.set(environmentId, limit);
     }
-    return request(WS_METHODS.assetsCreateUrl, input).pipe(limit.withPermit);
+    return request(WS_METHODS.assetsCreateUrl, input).pipe(
+      Effect.flatMap(withGatewayTicketLifetime),
+      limit.withPermit,
+    );
   };
   const execute = Effect.fn("assets.createUrl")(function* (input: AssetCreateUrlInput) {
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
