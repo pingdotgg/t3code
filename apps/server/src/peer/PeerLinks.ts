@@ -12,6 +12,7 @@ import {
   type PeerLinkSummary,
 } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -22,12 +23,14 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
@@ -163,6 +166,28 @@ const peerOrigin = (url: string) => {
   return Effect.succeed(parsed.origin);
 };
 
+/** The system error under a failed connection, such as ECONNREFUSED or ENOTFOUND. */
+const connectionCode = (cause: unknown) =>
+  [cause, Predicate.hasProperty(cause, "cause") ? cause.cause : undefined]
+    .map((error) => (Predicate.hasProperty(error, "code") ? error.code : undefined))
+    .find(Predicate.isString);
+
+/** Why `origin` did not answer as T3 Code, short enough for a toast. Never echoes a body. */
+const probeFailure = (
+  origin: string,
+  error: HttpClientError.HttpClientError | Schema.SchemaError | Cause.TimeoutError,
+  timeout: Duration.Duration,
+) => {
+  if (Cause.isTimeoutError(error)) {
+    return `${origin} did not answer within ${Duration.toSeconds(timeout)} seconds.`;
+  }
+  if (HttpClientError.isHttpClientError(error) && error.reason._tag === "TransportError") {
+    const code = connectionCode(error.reason.cause);
+    return code === undefined ? `${origin} did not answer.` : `${origin} did not answer (${code}).`;
+  }
+  return `${origin} answered, but not as a T3 Code environment this version understands.`;
+};
+
 /** Whether a peer holds a linked agent to its limits and keeps its work within its link. */
 const linkLimitsHold = (peer: { readonly capabilities: ExecutionEnvironmentCapabilities }) =>
   peer.capabilities.mcpModeLimitHeader === true && peer.capabilities.linkFence === true;
@@ -197,13 +222,25 @@ const make = Effect.gen(function* () {
       Effect.provideService(HttpClient.HttpClient, peerHttpClient),
     );
 
-  /** The environment answering at `origin`, or nothing when it does not answer as T3 Code. */
-  const describe = (origin: string) =>
-    clientFor(origin).pipe(
+  /** The environment answering at `origin`, or why nothing there answers as T3 Code. */
+  const probe = (origin: string) => {
+    const timeout = probeTimeout(origin);
+    return clientFor(origin).pipe(
       Effect.flatMap((client) => client.metadata.descriptor()),
-      Effect.timeout(probeTimeout(origin)),
-      Effect.option,
+      Effect.timeout(timeout),
+      // No cause: a decode error can carry the response body to the client.
+      Effect.mapError(
+        (error) =>
+          new PeerLinkError({
+            reason: "unreachable",
+            message: probeFailure(origin, error, timeout),
+          }),
+      ),
     );
+  };
+
+  /** The environment answering at `origin`, or nothing when it does not answer as T3 Code. */
+  const describe = (origin: string) => probe(origin).pipe(Effect.option);
 
   const toLink = Effect.fn("PeerLinks.toLink")(function* (row: PeerLinkRow) {
     return {
@@ -353,7 +390,8 @@ const make = Effect.gen(function* () {
   /**
    * The addresses that answer as `environmentId`, in the order given, with
    * what the first one answered. Addresses this environment would not send
-   * credentials to are skipped; when every one is, the failure says why.
+   * credentials to are skipped; when none answers as it, the failure says why
+   * for each.
    */
   const answeringAs = Effect.fn("PeerLinks.answeringAs")(function* (
     urls: ReadonlyArray<string>,
@@ -365,28 +403,28 @@ const make = Effect.gen(function* () {
       (url) =>
         Effect.gen(function* () {
           const origin = yield* peerOrigin(url);
-          return { origin, descriptor: yield* describe(origin) };
+          const descriptor = yield* probe(origin);
+          if (descriptor.environmentId !== environmentId) {
+            return yield* new PeerLinkError({
+              reason: "unreachable",
+              message: `${origin} answered as another environment, ${descriptor.label}.`,
+            });
+          }
+          return { origin, descriptor };
         }).pipe(Effect.result),
       { concurrency: "unbounded" },
     );
     const matching = checked.flatMap((result) =>
-      Result.isSuccess(result) &&
-      Option.isSome(result.success.descriptor) &&
-      result.success.descriptor.value.environmentId === environmentId
-        ? [{ origin: result.success.origin, descriptor: result.success.descriptor.value }]
-        : [],
+      Result.isSuccess(result) ? [result.success] : [],
     );
     const first = matching[0];
     if (first === undefined) {
-      const refusals = checked.flatMap((result) =>
+      const reasons = checked.flatMap((result) =>
         Result.isFailure(result) ? [result.failure.message] : [],
       );
       return yield* new PeerLinkError({
         reason: "unreachable",
-        message:
-          refusals.length === checked.length
-            ? `This environment could not reach ${name}: ${refusals.join(" ")}`
-            : `This environment could not reach ${name} at ${urls.join(", ")}.`,
+        message: `This environment could not reach ${name}: ${reasons.join(" ")}`,
       });
     }
     // Each address is kept once, even when two spellings share an origin.
@@ -398,14 +436,12 @@ const make = Effect.gen(function* () {
   const answeringAt = Effect.fn("PeerLinks.answeringAt")(function* (urls: ReadonlyArray<string>) {
     const origins = yield* Effect.forEach(urls, peerOrigin);
     const primary = origins[0]!;
-    const descriptor = yield* describe(primary);
-    if (Option.isNone(descriptor)) {
-      return yield* new PeerLinkError({
-        reason: "not_a_t3_environment",
-        message: `Nothing at ${primary} answered as a T3 Code environment.`,
-      });
-    }
-    return { primary, peer: descriptor.value, origins };
+    const peer = yield* probe(primary).pipe(
+      Effect.mapError(
+        ({ message }) => new PeerLinkError({ reason: "not_a_t3_environment", message }),
+      ),
+    );
+    return { primary, peer, origins };
   });
 
   const link: PeerLinks["Service"]["link"] = Effect.fn("PeerLinks.link")(function* (input) {
