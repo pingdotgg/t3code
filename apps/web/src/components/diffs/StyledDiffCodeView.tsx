@@ -180,28 +180,33 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   color: color-mix(in srgb, var(--code-foreground) 84%, var(--primary)) !important;
 }
 
-/* Expanding a file mounts its body all at once. The virtualizer opens the row height
-   immediately, so fading or clipping the body leaves a blank hole under the header.
-   Keep the body opaque and slide it one header-height out from under the sticky
-   header into that space. Timing matches the app's 200ms collapsibles. Departing
-   content cuts, the same one-way rule the pull request chrome fold follows. */
-[data-diff],
-[data-file] {
-  transform: translateY(0);
-  transition: transform 200ms ease-out;
-}
-
-@starting-style {
+/* Expanding a file mounts its body all at once. Grow the body's layout height so the
+   open area itself expands and following files are pushed down with it. Clip during
+   the transition so lines are revealed by the growing box rather than painting into
+   a pre-opened gap. Timing matches the app's 200ms collapsibles. Departing content
+   cuts, the same one-way rule the pull request chrome fold follows. Unsupported
+   browsers keep the instant open. */
+@supports (interpolate-size: allow-keywords) {
   [data-diff],
   [data-file] {
-    transform: translateY(-32px);
+    interpolate-size: allow-keywords;
+    overflow: clip;
+    height: auto;
+    transition: height 200ms ease-out;
   }
-}
 
-@media (prefers-reduced-motion: reduce) {
-  [data-diff],
-  [data-file] {
-    transition: none;
+  @starting-style {
+    [data-diff],
+    [data-file] {
+      height: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    [data-diff],
+    [data-file] {
+      transition: none;
+    }
   }
 }
 `;
