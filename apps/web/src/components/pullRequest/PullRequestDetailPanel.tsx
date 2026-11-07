@@ -1853,8 +1853,15 @@ export function PullRequestDetailPanel({
       </div>
 
       {detail ? (
-        <div className="absolute right-4 bottom-3 z-20">
+        <div
+          className={
+            tab === "summary" || tab === "timeline"
+              ? "mx-auto w-full max-w-2xl shrink-0 px-4 pt-2 pb-3 empty:hidden"
+              : "absolute right-4 bottom-3 z-20"
+          }
+        >
           <PullRequestComposer
+            compact={tab !== "summary" && tab !== "timeline"}
             key={JSON.stringify([
               environmentId,
               reference.projectId,

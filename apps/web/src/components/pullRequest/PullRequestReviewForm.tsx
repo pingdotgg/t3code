@@ -156,6 +156,7 @@ export function PullRequestReviewForm({
   return (
     <>
       <PullRequestMarkdownTextarea
+        unstyled
         ref={textareaRef}
         completionScope={completionScope}
         rows={3}
@@ -176,10 +177,25 @@ export function PullRequestReviewForm({
           }
         }}
       />
-      <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+      <div className="mt-2 flex flex-wrap items-center justify-end gap-2 px-1.5">
         <div className="mr-auto flex min-w-0 flex-wrap items-center gap-1">
           <TextFieldSpeechControls speech={speech} disabled={pending} />
         </div>
+        <Button
+          size="xs"
+          disabled={
+            speech.preparing ||
+            pending ||
+            selectedVerdict === undefined ||
+            (!canSubmit(selectedVerdict.value, body, comments.length) && !speech.blocksSubmission)
+          }
+          onClick={() => {
+            if (selectedVerdict !== undefined)
+              speech.submitAfterDictation((text) => void submit(selectedVerdict, text));
+          }}
+        >
+          {pending ? "Submitting..." : "Submit review"}
+        </Button>
         {offered.length > 1 ? (
           <Select
             value={selectedVerdict?.value ?? null}
@@ -206,21 +222,6 @@ export function PullRequestReviewForm({
             </SelectPopup>
           </Select>
         ) : null}
-        <Button
-          size="xs"
-          disabled={
-            speech.preparing ||
-            pending ||
-            selectedVerdict === undefined ||
-            (!canSubmit(selectedVerdict.value, body, comments.length) && !speech.blocksSubmission)
-          }
-          onClick={() => {
-            if (selectedVerdict !== undefined)
-              speech.submitAfterDictation((text) => void submit(selectedVerdict, text));
-          }}
-        >
-          {pending ? "Submitting..." : "Submit review"}
-        </Button>
       </div>
     </>
   );

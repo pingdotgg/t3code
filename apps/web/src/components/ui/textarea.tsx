@@ -38,6 +38,8 @@ function Textarea({
               size === "sm" && rows === undefined && "min-h-16.5 max-sm:min-h-19.5",
               size === "lg" && "py-[calc(--spacing(2)-1px)]",
               size === "lg" && rows === undefined && "min-h-18.5 max-sm:min-h-21.5",
+              // Without its frame the field grows with its content inside a host surface.
+              unstyled && "resize-none",
             )}
             // field-sizing: content ignores `rows`, so an explicit row count sets the minimum height.
             style={
