@@ -411,3 +411,70 @@ describe("global voice input", () => {
     expect(session.getSnapshot().focusedOwners.size).toBe(0);
   });
 });
+
+describe("live voice input session", () => {
+  beforeEach(() => resetVoiceInputGlobalsForTests());
+
+  it("publishes live words and streamed levels, then clears them when dictation ends", async () => {
+    let onTranscript!: (text: string) => void;
+    let text = "Draft: ";
+    const publishAudioLevels = vi.fn();
+    const session = new VoiceInputSession({
+      recorder: {
+        uri: null,
+        prepareToRecordAsync: vi.fn(async () => {}),
+        record: vi.fn(),
+        stop: vi.fn(async () => {}),
+      },
+      getTranscriber: () => ({
+        prepare: async () => ({
+          locale: "en-US",
+          transcribe: async () => "",
+          startStreaming: async (options) => {
+            onTranscript = options.onTranscript;
+            options.onTranscript("Use exponential backup");
+            return {
+              stop: async () => "Use exponential backoff.",
+              cancel: async () => {},
+              getStatus: () => ({ durationMillis: 3_200, metering: -12 }),
+            };
+          },
+        }),
+      }),
+      requestPermission: async () => ({ granted: true, canAskAgain: true }),
+      configureRecording: async () => {},
+      releaseRecording: async () => {},
+      deleteRecording: vi.fn(),
+      sampleRecording: () => null,
+      publishAudioLevels,
+      keepAwake: () => () => {},
+    });
+
+    await session.start(
+      createTarget(
+        "owner",
+        () => text,
+        (next) => {
+          text = next;
+        },
+        { start: 7, end: 7 },
+      ),
+    );
+
+    expect(session.getSnapshot()).toMatchObject({
+      state: { phase: "recording" },
+      liveTranscript: "Use exponential backup",
+      elapsedSeconds: 3,
+    });
+    expect(publishAudioLevels).toHaveBeenCalled();
+    expect(text).toBe("Draft: Use exponential backup");
+
+    onTranscript("Use exponential backoff and");
+    expect(session.getSnapshot().liveTranscript).toBe("Use exponential backoff and");
+
+    await session.controller.stop();
+    expect(text).toBe("Draft: Use exponential backoff.");
+    expect(session.getSnapshot()).toMatchObject({ state: { phase: "idle" }, liveTranscript: null });
+    session.dispose();
+  });
+});

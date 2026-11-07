@@ -1,7 +1,7 @@
 {
   "platforms": ["apple", "android"],
   "apple": {
-    "modules": ["T3VoiceTranscriptionModule"],
+    "modules": ["T3VoiceInputModule", "T3VoiceTranscriptionModule"],
     "podspecPath": "ios/T3VoiceTranscription.podspec"
   },
   "android": {
