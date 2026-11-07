@@ -37,6 +37,7 @@ const CODEX_TIMEOUT_MS = 180_000;
 const CODEX_MCP_LIST_TIMEOUT_MS = 10_000;
 // Bounds staleness from layers no file stamp sees: macOS MDM and cloud-delivered config.
 const CODEX_MCP_LIST_CACHE_TTL_MS = 60_000;
+const CODEX_MCP_LIST_CACHE_CAPACITY = 32;
 // Plugins/apps add MCP servers; use trailing config overrides because --disable loses to user -c flags.
 const CODEX_NO_PLUGIN_ARGS = [
   "--config",
@@ -249,7 +250,12 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         ),
       );
       const names = servers.filter((server) => server.enabled).map((server) => server.name);
+      mcpServerCache.delete(cacheKey);
       mcpServerCache.set(cacheKey, { configStamp, listedAt: now, names });
+      // Map keeps insertion order, so the first key is the least recently listed.
+      if (mcpServerCache.size > CODEX_MCP_LIST_CACHE_CAPACITY) {
+        mcpServerCache.delete(mcpServerCache.keys().next().value!);
+      }
       return names;
     },
     Effect.scoped,
