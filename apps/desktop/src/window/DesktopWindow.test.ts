@@ -8,6 +8,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -40,6 +41,9 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
+import * as DesktopApplicationMenu from "./DesktopApplicationMenu.ts";
+import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
@@ -230,6 +234,7 @@ function layerTest(input: {
   readonly setPreviewMainWindow?: (window: Electron.BrowserWindow) => Effect.Effect<void>;
   readonly destroyAll?: Effect.Effect<void>;
   readonly onWindowCreate?: Effect.Effect<void>;
+  readonly onMainClear?: Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly copiedTexts?: string[];
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
@@ -288,7 +293,10 @@ function layerTest(input: {
         ? Ref.get(input.mainWindow)
         : Effect.succeedSome(input.focusedWindow),
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
-    clearMain: () => Ref.set(input.mainWindow, Option.none()),
+    clearMain: () =>
+      Ref.set(input.mainWindow, Option.none()).pipe(
+        Effect.andThen(input.onMainClear ?? Effect.void),
+      ),
     prepareReveal: () => Effect.succeed(false),
     reveal: (window) => Effect.sync(() => input.onReveal?.(window)),
     sendAll: () => Effect.void,
@@ -525,11 +533,16 @@ describe("DesktopWindow", () => {
         const fakeWindow = makeFakeBrowserWindow();
         const createCount = yield* Ref.make(0);
         const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const createdWindows = yield* Queue.unbounded<void>();
+        const mainCleared = yield* Deferred.make<void>();
+        const menuTemplate = yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
         const layer = layerTest({
           window: fakeWindow.window,
           createCount,
           mainWindow,
           createdWindowOptions: [],
+          onWindowCreate: Queue.offer(createdWindows, undefined).pipe(Effect.asVoid),
+          onMainClear: Deferred.succeed(mainCleared, undefined).pipe(Effect.asVoid),
           desktopSettings: {
             ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
             localEnvironmentEnabled: false,
@@ -545,7 +558,46 @@ describe("DesktopWindow", () => {
           yield* Ref.set(mainWindow, Option.none());
           yield* desktopWindow.dispatchMenuAction("new-thread");
           assert.equal(yield* Ref.get(createCount), 3);
-        }).pipe(Effect.provide(layer));
+
+          yield* Queue.takeN(createdWindows, 3);
+          const closed = fakeWindow.windowListeners.get("closed");
+          assert.isDefined(closed);
+          closed();
+          yield* Deferred.await(mainCleared);
+          assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
+          const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
+          yield* menu.configure;
+          const fileMenu = (yield* Deferred.await(menuTemplate)).find(
+            (item) => item.label === "File",
+          );
+          if (!Array.isArray(fileMenu?.submenu)) {
+            throw new Error("Expected File menu submenu to be an array.");
+          }
+          const openWindow = fileMenu.submenu.find((item) => item.label === "Open Window");
+          if (typeof openWindow?.click !== "function") {
+            throw new Error("Expected Open Window menu item to have a click handler.");
+          }
+          openWindow.click({} as Electron.MenuItem, undefined, {} as KeyboardEvent);
+          yield* Queue.take(createdWindows);
+          assert.equal(yield* Ref.get(createCount), 4);
+        }).pipe(
+          Effect.provide(
+            DesktopApplicationMenu.layer.pipe(
+              Layer.provideMerge(layer),
+              Layer.provide(layerDesktopEnvironment),
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.mock(DesktopUpdates.DesktopUpdates)({}),
+                  Layer.mock(ElectronDialog.ElectronDialog)({}),
+                  Layer.mock(ElectronMenu.ElectronMenu)({
+                    setApplicationMenu: (template) =>
+                      Deferred.succeed(menuTemplate, template).pipe(Effect.asVoid),
+                  }),
+                ),
+              ),
+            ),
+          ),
+        );
       }),
   );
 

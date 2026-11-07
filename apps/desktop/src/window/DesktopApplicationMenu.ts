@@ -116,6 +116,7 @@ const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
 export const make = Effect.gen(function* () {
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const context = yield* Effect.context<DesktopApplicationMenuRuntimeServices>();
   const runPromise = Effect.runPromiseWith(context);
 
@@ -191,7 +192,12 @@ export const make = Effect.gen(function* () {
         label: "File",
         submenu: [
           ...(environment.platform === "darwin"
-            ? []
+            ? [
+                {
+                  label: "Open Window",
+                  click: () => runMenuEffect("open-window", desktopWindow.activate),
+                },
+              ]
             : [
                 {
                   label: "Settings...",
