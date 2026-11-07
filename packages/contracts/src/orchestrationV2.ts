@@ -1397,6 +1397,7 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
    * the workflow's opening instead and keep the script behind a disclosure.
    */
   workflowScript: Schema.optional(Schema.Boolean),
+  retryOfRunId: Schema.optional(RunId),
   id: MessageId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
@@ -1717,6 +1718,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     linkedSender: Schema.optional(OrchestrationV2LinkedSender),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
+    retryOfRunId: OrchestrationV2ConversationMessage.fields.retryOfRunId,
     freshContext: OrchestrationV2Run.fields.freshContext,
     inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
@@ -2612,6 +2614,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     linkedSender: Schema.optional(OrchestrationV2LinkedSender),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
+    retryOfRunId: OrchestrationV2ConversationMessage.fields.retryOfRunId,
     freshContext: OrchestrationV2Run.fields.freshContext,
     inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
@@ -3364,6 +3367,7 @@ export const OrchestrationV2Command = Schema.Union([
     senderThreadId: Schema.optional(ThreadId),
     linkedSender: Schema.optional(OrchestrationV2LinkedSender),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
+    retryOfRunId: OrchestrationV2ConversationMessage.fields.retryOfRunId,
     /** Start a new provider session without the thread's earlier context. Never steers. */
     freshContext: Schema.optional(Schema.Boolean),
     commandId: CommandId,

@@ -266,7 +266,10 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     runId: activeActivityRun?.runId ?? null,
     queued: activeActivityRun?.status === "queued",
     messageId:
-      dispatchedUserItem?.item.type === "user_message" ? dispatchedUserItem.item.messageId : null,
+      dispatchedUserItem?.item.type === "user_message" &&
+      dispatchedUserItem.item.retryOfRunId === undefined
+        ? dispatchedUserItem.item.messageId
+        : null,
   });
   if (!sameRunObservation(runObservation.observation, observedRun)) {
     setObservedRun(runObservation.observation);
