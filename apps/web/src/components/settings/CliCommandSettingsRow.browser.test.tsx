@@ -13,6 +13,11 @@ it("blocks installation behind another t3 without blocking removal of our instal
     installedPath: null,
     onPath: false,
     launcherPath: "/home/test/.t3/bin/t3",
+    wslSupported: false,
+    wslBackendEnabled: false,
+    wslInstalledPath: null,
+    wslInstalledDistro: null,
+    wslStatusUnavailable: false,
   };
   const getState = vi.fn(async (): Promise<DesktopCliCommandState> => ({
     ...state,

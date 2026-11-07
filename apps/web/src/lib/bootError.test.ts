@@ -15,6 +15,11 @@ const notOnPath = (launcherPath: string | null): DesktopCliCommandState => ({
   supported: launcherPath !== null,
   installedPath: null,
   onPath: false,
+  wslSupported: false,
+  wslBackendEnabled: false,
+  wslInstalledPath: null,
+  wslInstalledDistro: null,
+  wslStatusUnavailable: false,
   launcherPath,
 });
 
